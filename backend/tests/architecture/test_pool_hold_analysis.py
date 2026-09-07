@@ -115,6 +115,51 @@ async def only_a_get(session: AsyncSession, user_id: int) -> None:
     assert [site.dial for site in held] == ["client.get"]
 
 
+def test_a_transaction_opened_only_by_session_add_all_is_seen(tmp_path: Path) -> None:
+    """``session.add_all`` autobegins just as the already-modelled ``add`` does."""
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def only_add_all(session: AsyncSession) -> None:
+    session.add_all([])
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.only_add_all")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
+def test_a_transaction_opened_only_by_session_begin_nested_is_seen(tmp_path: Path) -> None:
+    """``begin_nested`` implicitly begins an outer transaction before its savepoint."""
+    _write(
+        tmp_path,
+        "handler.py",
+        """
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def only_begin_nested(session: AsyncSession) -> None:
+    async with session.begin_nested():
+        pass
+    async with httpx.AsyncClient() as client:
+        await client.get("https://example.invalid/")
+""",
+    )
+
+    held = analyse_tree(tmp_path).dials_held_open("handler.only_begin_nested")
+
+    assert [site.dial for site in held] == ["client.get"]
+
+
 def test_a_get_on_something_that_is_not_a_session_opens_nothing(tmp_path: Path) -> None:
     """Reading a mapping is not a query, and must not be mistaken for one.
 

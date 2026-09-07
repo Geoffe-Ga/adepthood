@@ -1,13 +1,11 @@
 """The gate: every connection held across an outbound call is one the census names.
 
-Report-only, in the only sense of the phrase that survives contact with a
-repository. Not "print a list and pass" -- a printed list is read once, by its
-author. This asserts set equality against the written census, which makes it
-green at HEAD on the day it lands, red the moment a route reaches a new outbound
-call with its connection held, and red again when a site is fixed and its row is
-left standing. There is no mode to switch. Enforcement is simply the state in
-which every remaining row is ``ALLOWED``, and the assertion that gets there is
-the one already written: rows leave by being fixed.
+Enforced in both directions. Set equality against the written census makes this
+red the moment a route reaches a new outbound call with its connection held, and
+red again when a site is fixed and its row is left standing. A separate
+assertion refuses every unresolved verdict and pins the two remaining, reasoned
+atomicity exceptions. An exception cannot omit its pool cost: the evidence gate
+rejects an ``ALLOWED`` row that names only what the hold buys.
 
 Every assertion here guards its own observation before it makes it. A walk
 pointed at the wrong directory reads nothing, finds nothing, and agrees with an
@@ -134,7 +132,8 @@ _CLASSES_IMPLEMENTING = {
 # How the census divides today. Written down so that reclassifying a row --
 # calling a defect deliberate, or calling the analyser wrong -- is a number that
 # changes in the diff rather than a word that changes inside a paragraph.
-_ROWS_BY_VERDICT = {Verdict.KNOWN: 1, Verdict.ALLOWED: 1, Verdict.MISMODELLED: 0}
+_ROWS_BY_VERDICT = {Verdict.KNOWN: 0, Verdict.ALLOWED: 2, Verdict.MISMODELLED: 0}
+_ALLOWED_HOLDS_AFTER_ENFORCEMENT = 2
 
 # Mapping writes that reach the storage without calling ``__setitem__`` in
 # CPython, and so slip a dependency override past the runtime observer's hook.
@@ -324,6 +323,20 @@ def test_the_census_divides_as_it_says_it_does() -> None:
 
     assert tally == _ROWS_BY_VERDICT
     assert sum(tally.values()) == len(HELD)
+
+
+def test_no_unresolved_connection_hold_remains_after_enforcement() -> None:
+    """Enforcement permits only the two fully reasoned atomicity exceptions.
+
+    Set equality stops a new unexamined hold; this assertion is the other half:
+    a row already known to the census cannot remain indefinitely as a report.
+    ``evidence_problems`` separately requires every allowed row to name its cost.
+    """
+    assert HELD, "there is no held-call population to enforce"
+    unresolved = [row.key for row in HELD if row.verdict is not Verdict.ALLOWED]
+
+    assert not unresolved, f"unresolved connection holds remain: {unresolved}"
+    assert len(HELD) == _ALLOWED_HOLDS_AFTER_ENFORCEMENT
 
 
 def test_no_module_takes_up_a_transport_without_a_decision_about_it() -> None:

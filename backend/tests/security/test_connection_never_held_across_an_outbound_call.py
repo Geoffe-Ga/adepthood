@@ -6,14 +6,12 @@ are safe -- lives in the observer's own docstring, at
 row here drives the real route and asks the observer what the request was
 holding at the moment it dialled out.
 
-A row known to be defective ships under ``xfail(strict=True, raises=...)``. That
-is not a skip and must not be read as one. A skipped test does not run; these
-run, on every suite, and assert exactly the same property as the rows that pass.
-The marker records a red row rather than hiding it, and it is strict, so the day
-somebody fixes a row the expected failure becomes an unexpected pass and the
-build goes red until the census is corrected. The alternative -- shipping every
-outstanding defect as a hard failure -- produces a gate that gets disabled
-rather than obeyed.
+A census row that holds deliberately ships under
+``xfail(strict=True, raises=...)``. That is not a skip and must not be read as
+one. A skipped test does not run; these run on every suite and assert exactly the
+same property as the rows that pass. The marker records the held observation
+rather than hiding it, and it is strict, so the day somebody releases a row the
+expected failure becomes an unexpected pass and the census must shrink.
 
 ``raises=ConnectionHeldAcrossOutboundCallError`` is the other half of that bargain,
 and it is what keeps an expected-red row honest. Only the property assertion
@@ -453,7 +451,7 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
 
 
 # ---------------------------------------------------------------------------
-# Rows still defective. Each runs; each asserts; each is expected red.
+# Reasoned atomicity exceptions. Each runs, asserts, and remains expected red.
 # ---------------------------------------------------------------------------
 
 
@@ -461,11 +459,9 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     strict=True,
     raises=ConnectionHeldAcrossOutboundCallError,
     reason=(
-        "Census row 2: the same open, write-holding transaction is held across the "
-        "whole reflection pass. Unlike the handshake above this is a trade the "
-        "handler argues for -- the pass, the persistence and the charge commit "
-        "together so a provider error never charges -- which makes it a candidate "
-        "for a reasoned allowlist entry rather than a fix."
+        "Allowed reflection hold: the staged deduction, marginalia, and usage commit "
+        "together so a provider failure rolls them all back. The census names the "
+        "pool-starvation cost and the compensating-refund design this avoids."
     ),
 )
 @pytest.mark.asyncio
@@ -473,7 +469,7 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
     async_client: AsyncClient,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Census row 2: POST /journal/{entry_id}/resonance, at the reflection itself."""
+    """Allowed atomicity row: POST /journal/{entry_id}/resonance reflection."""
     vault = _ScriptedVault(
         capabilities=frozenset({CreekCapability.REFLECT}),
         reflect_result=VaultReflection(

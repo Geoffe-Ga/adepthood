@@ -196,6 +196,8 @@ VENDOR_DIAL_METHODS: Mapping[str, str] = {
 SESSION_OPENERS = frozenset(
     {
         "add",
+        "add_all",
+        "begin_nested",
         "delete",
         "exec",
         "execute",
