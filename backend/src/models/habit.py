@@ -17,11 +17,13 @@ class Habit(SQLModel, table=True):
     ``revealed`` is the single source of truth for whether a habit is unlocked
     ("unlocked" == ``revealed is True`` in product terms). New and seeded
     habits default to locked. The list read reveals a regular program habit
-    once its stage or start date is open and stamps ``auto_revealed_at``. That
-    durable one-shot marker lets a later manual re-lock remain a real choice:
-    subsequent reads never auto-reveal the row again. Re-locking preserves
-    logged completions — those live on the habit's goals, never on this flag —
-    so a re-locked habit keeps its history for when the user unlocks it again.
+    once its stage or start date is open and stamps ``auto_revealed_at``. A
+    manual lock-state transition also consumes that invitation, including one
+    made before eligibility arrives. The durable one-shot marker lets a later
+    manual re-lock remain a real choice: subsequent reads never auto-reveal the
+    row again. Re-locking preserves logged completions — those live on the
+    habit's goals, never on this flag — so a re-locked habit keeps its history
+    for when the user unlocks it again.
 
     ``is_carryover`` marks a habit the user brought into APTITUDE from before
     the program: ``True`` keeps it on its own partition (tracked without

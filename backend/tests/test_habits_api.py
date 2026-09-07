@@ -890,6 +890,72 @@ async def test_list_respects_manual_relock_after_auto_reveal(
 
 
 @pytest.mark.asyncio
+async def test_list_respects_manual_relock_when_eligibility_arrives_later(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An early unlock and re-lock consumes the still-future invitation."""
+    headers = await _signup(async_client, "auto_reveal_early_relock")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    locked_payload = sample_payload(start_date=future.isoformat(), revealed=False)
+    created = await async_client.post("/habits/", json=locked_payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    unlocked = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**locked_payload, "revealed": True},
+        headers=headers,
+    )
+    assert unlocked.status_code == HTTPStatus.OK
+    relocked = await async_client.put(f"/habits/{habit_id}", json=locked_payload, headers=headers)
+    assert relocked.status_code == HTTPStatus.OK
+    assert relocked.json()["revealed"] is False
+
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is not None
+    persisted.start_date = today_in_tz("UTC") - timedelta(days=1)
+    db_session.add(persisted)
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is False
+
+
+@pytest.mark.asyncio
+async def test_unrelated_update_does_not_consume_future_auto_reveal(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Editing copy while locked is not mistaken for a lock-state decision."""
+    headers = await _signup(async_client, "auto_reveal_unrelated_update")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    payload = sample_payload(start_date=future.isoformat(), revealed=False)
+    created = await async_client.post("/habits/", json=payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    renamed = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**payload, "name": "Renamed future habit"},
+        headers=headers,
+    )
+    assert renamed.status_code == HTTPStatus.OK
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None
+    persisted.start_date = today_in_tz("UTC") - timedelta(days=1)
+    db_session.add(persisted)
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is True
+
+
+@pytest.mark.asyncio
 async def test_list_auto_reveals_habit_when_calendar_opens_its_stage(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

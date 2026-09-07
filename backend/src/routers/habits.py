@@ -55,6 +55,17 @@ def _recent_completions_cutoff() -> datetime:
     return datetime.now(UTC) - timedelta(days=_COMPLETIONS_WINDOW_DAYS)
 
 
+def _consume_auto_reveal_on_manual_change(habit: Habit, payload: HabitCreate) -> None:
+    """Record a regular habit's explicit lock-state decision exactly once."""
+    if payload.revealed == habit.revealed:
+        return
+    if habit.is_carryover:
+        return
+    if habit.auto_revealed_at is not None:
+        return
+    habit.auto_revealed_at = datetime.now(UTC)
+
+
 # Default goals seeded for every newly-created habit. Three tiers (low / clear
 # / stretch) so the habits feature is functional from the moment a habit
 # exists -- without these, ``POST /goal_completions`` always 404'd because no
@@ -292,6 +303,9 @@ async def update_habit(
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
     """Replace an existing habit's fields; 409 on rename collision."""
+    # A manual accept or decline consumes the same one-shot invitation. Without
+    # this, an early unlock followed by a re-lock would reopen at eligibility.
+    _consume_auto_reveal_on_manual_change(habit, payload)
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
