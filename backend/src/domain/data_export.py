@@ -260,6 +260,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         "anything. This is the row the whole feature exists for.",
         drop_columns=("vault_ref", "vault_tags"),
     ),
+    "licensebinding": Omitted(
+        "The processor's sale identifier for the licence this account "
+        "redeemed — an operational record the account did not write; the "
+        "receipt itself is already omitted.",
+    ),
     "llmusagelog": Omitted(
         "Per-request AI metering: token counts and prices. Operational "
         "accounting about the account's usage, not anything it wrote.",
