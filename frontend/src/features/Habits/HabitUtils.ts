@@ -689,10 +689,11 @@ export const calculateNetEnergy = (cost: number, returnValue: number): number =>
 
 /**
  * A habit is UNLOCKED iff `revealed === true` — the single source of truth for
- * the lock state. Habits are locked by default (new and seeded); the user opts
- * each one in. Neither the Spiral-Dynamics stage nor the calendar `start_date`
- * participates: nothing auto-unlocks over time, so a future or past start_date
- * never changes the result. Re-locking flips `revealed` back to `false` while
- * preserving the habit's logged completions.
+ * the lock state in the client. The backend reconciles calendar/start-date
+ * eligibility into this flag during `GET /habits/` and persists a server-only
+ * one-shot marker. The client deliberately does not repeat that calendar math:
+ * a later manual re-lock stays `false`, while an active Metta Return release
+ * also stays paused until the server records a recommit. Re-locking preserves
+ * the habit's logged completions.
  */
 export const isHabitUnlocked = (habit: Habit): boolean => habit.revealed === true;

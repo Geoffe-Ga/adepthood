@@ -944,7 +944,7 @@ describe('getGoalTier subtractive total-failure branch', () => {
   });
 });
 
-describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
+describe('isHabitUnlocked (server-reconciled flag)', () => {
   const make = (overrides: Partial<Habit>): Habit =>
     ({
       id: 1,
@@ -961,10 +961,9 @@ describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
       ...overrides,
     }) as Habit;
 
-  test('a high-stage habit stays locked even with a past start_date, unless revealed', () => {
-    // Under the old stage/calendar model this Clear Light habit (10th stage)
-    // would have unlocked once its start_date passed. Now only `revealed`
-    // decides, so it stays locked.
+  test('does not independently override a false server flag from stage or start_date', () => {
+    // The backend may leave this false after a one-shot manual re-lock. Repeating
+    // eligibility in the client would immediately undo that explicit choice.
     const habit = make({ stage: 'Clear Light', start_date: new Date('2000-01-01T00:00:00Z') });
     expect(isHabitUnlocked(habit)).toBe(false);
   });
@@ -983,7 +982,7 @@ describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
     expect(isHabitUnlocked(habit)).toBe(true);
   });
 
-  test('accepts ISO string start dates without affecting the result (server payloads arrive unparsed)', () => {
+  test('accepts ISO string start dates without re-deriving the server decision', () => {
     // The API delivers ``start_date`` as an ISO string before it is mapped to
     // a Date, so the helper must tolerate both without letting the date value
     // change the unlock outcome. Cast through ``unknown`` since the Habit type

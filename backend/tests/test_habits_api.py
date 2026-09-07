@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ClauseElement
 from sqlmodel import col, select
 
+from conftest import test_engine
+from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from models.metta_return_arc import MettaReturnArc
+from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.stage_progress import StageProgress
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
@@ -64,6 +74,30 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+@contextmanager
+def _record_for_update_statements() -> Iterator[list[str]]:
+    """Compile executed clauses as PostgreSQL and collect row-locking reads."""
+    statements: list[str] = []
+
+    def _before_execute(
+        _conn: Connection,
+        clause: ClauseElement,
+        _multiparams: object,
+        _params: object,
+        _execution_options: object,
+    ) -> None:
+        compiled = str(clause)
+        if "FOR UPDATE" in compiled.upper():
+            statements.append(compiled)
+
+    sync_engine = test_engine.sync_engine
+    event.listen(sync_engine, "before_execute", _before_execute)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_execute", _before_execute)
 
 
 # ── Unauthenticated access ──────────────────────────────────────────────
@@ -818,11 +852,285 @@ async def test_relock_preserves_completions(async_client: AsyncClient) -> None:
 async def test_list_habits_includes_revealed(async_client: AsyncClient) -> None:
     """GET /habits/ list items include the ``revealed`` unlock flag."""
     headers = await _signup(async_client, "list_revealed")
-    await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    future = today_in_tz("UTC") + timedelta(days=1)
+    await async_client.post(
+        "/habits/", json=sample_payload(start_date=future.isoformat()), headers=headers
+    )
     resp = await async_client.get("/habits/", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     [habit] = resp.json()
     assert habit["revealed"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_auto_reveals_past_start_once(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An eligible habit is revealed and stamped the first time its list is read."""
+    headers = await _signup(async_client, "auto_reveal_past")
+    past = today_in_tz("UTC") - timedelta(days=1)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(start_date=past.isoformat(), revealed=False),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    [habit] = listed.json()
+    assert habit["revealed"] is True
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.revealed is True
+    assert persisted.auto_revealed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_respects_manual_relock_after_auto_reveal(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The one-shot marker prevents a later manual re-lock from being undone."""
+    headers = await _signup(async_client, "auto_reveal_relock")
+    past = today_in_tz("UTC") - timedelta(days=1)
+    payload = sample_payload(start_date=past.isoformat(), revealed=False)
+    created = await async_client.post("/habits/", json=payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+    first_list = await async_client.get("/habits/", headers=headers)
+    assert first_list.status_code == HTTPStatus.OK
+    assert first_list.json()[0]["revealed"] is True
+
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    first_marker = persisted.auto_revealed_at
+    assert first_marker is not None
+
+    relocked = await async_client.put(f"/habits/{habit_id}", json=payload, headers=headers)
+    assert relocked.status_code == HTTPStatus.OK
+    assert relocked.json()["revealed"] is False
+
+    second_list = await async_client.get("/habits/", headers=headers)
+    assert second_list.status_code == HTTPStatus.OK
+    assert second_list.json()[0]["revealed"] is False
+    await db_session.refresh(persisted)
+    assert persisted.auto_revealed_at == first_marker
+
+
+@pytest.mark.asyncio
+async def test_list_respects_manual_relock_when_eligibility_arrives_later(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An early unlock and re-lock consumes the still-future invitation."""
+    headers = await _signup(async_client, "auto_reveal_early_relock")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    locked_payload = sample_payload(start_date=future.isoformat(), revealed=False)
+    created = await async_client.post("/habits/", json=locked_payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    unlocked = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**locked_payload, "revealed": True},
+        headers=headers,
+    )
+    assert unlocked.status_code == HTTPStatus.OK
+    relocked = await async_client.put(f"/habits/{habit_id}", json=locked_payload, headers=headers)
+    assert relocked.status_code == HTTPStatus.OK
+    assert relocked.json()["revealed"] is False
+
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is not None
+    persisted.start_date = today_in_tz("UTC") - timedelta(days=1)
+    db_session.add(persisted)
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is False
+
+
+@pytest.mark.asyncio
+async def test_unrelated_update_does_not_consume_future_auto_reveal(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Editing copy while locked is not mistaken for a lock-state decision."""
+    headers = await _signup(async_client, "auto_reveal_unrelated_update")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    payload = sample_payload(start_date=future.isoformat(), revealed=False)
+    created = await async_client.post("/habits/", json=payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    renamed = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**payload, "name": "Renamed future habit"},
+        headers=headers,
+    )
+    assert renamed.status_code == HTTPStatus.OK
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None
+    persisted.start_date = today_in_tz("UTC") - timedelta(days=1)
+    db_session.add(persisted)
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_auto_reveals_habit_when_calendar_opens_its_stage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A calendar-open Green stage reveals while the progress record still lags."""
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_stage")
+    now = datetime.now(UTC)
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            highest_stage_reached=1,
+            program_started_at=now - timedelta(days=sum(STAGE_DURATIONS_DAYS[:5])),
+        )
+    )
+    await db_session.commit()
+    future = today_in_tz("UTC") + timedelta(days=30)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(stage="Green", start_date=future.isoformat(), revealed=False),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_leaves_future_unopened_habit_locked(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A future invitation stays unconsumed without taking a row lock."""
+    headers = await _signup(async_client, "auto_reveal_future")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(stage="Green", start_date=future.isoformat(), revealed=False),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    with _record_for_update_statements() as locking_reads:
+        listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is False
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None
+    assert locking_reads == []
+
+
+@pytest.mark.asyncio
+async def test_manual_reveal_while_leaving_carryover_partition_consumes_invitation(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The resulting regular state controls manual invitation consumption."""
+    headers = await _signup(async_client, "auto_reveal_leave_carryover")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    carryover_payload = sample_payload(
+        start_date=future.isoformat(), revealed=False, is_carryover=True
+    )
+    created = await async_client.post("/habits/", json=carryover_payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    changed = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**carryover_payload, "revealed": True, "is_carryover": False},
+        headers=headers,
+    )
+
+    assert changed.status_code == HTTPStatus.OK
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.is_carryover is False
+    assert persisted.revealed is True
+    assert persisted.auto_revealed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_never_auto_reveals_carryover_habit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Pre-program carryover habits remain outside staged auto-reveal."""
+    headers = await _signup(async_client, "auto_reveal_carryover")
+    past = today_in_tz("UTC") - timedelta(days=30)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(start_date=past.isoformat(), revealed=False, is_carryover=True),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is False
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None
+
+
+@pytest.mark.asyncio
+async def test_list_keeps_active_metta_return_release_paused(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An unrecommitted Return release overrides calendar/date eligibility."""
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_return")
+    past = today_in_tz("UTC") - timedelta(days=30)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(start_date=past.isoformat(), revealed=False),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+    now = datetime.now(UTC)
+    arc = MettaReturnArc(user_id=user_id, started_at=now)
+    db_session.add(arc)
+    await db_session.flush()
+    assert arc.id is not None
+    db_session.add(
+        MettaReturnHabitRelease(
+            user_id=user_id,
+            arc_id=arc.id,
+            habit_id=habit_id,
+            released_at=now,
+        )
+    )
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is False
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None
 
 
 @pytest.mark.asyncio

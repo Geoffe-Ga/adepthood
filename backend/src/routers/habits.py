@@ -31,6 +31,7 @@ from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
+from services.habit_auto_reveal import reconcile_habit_auto_reveals
 from services.streaks import SubtractiveContext, compute_habit_streak
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,17 @@ _COMPLETIONS_WINDOW_DAYS = 90
 def _recent_completions_cutoff() -> datetime:
     """The oldest completion timestamp the habit GETs will embed."""
     return datetime.now(UTC) - timedelta(days=_COMPLETIONS_WINDOW_DAYS)
+
+
+def _consume_auto_reveal_on_manual_change(habit: Habit, payload: HabitCreate) -> None:
+    """Record a regular habit's explicit lock-state decision exactly once."""
+    if payload.revealed == habit.revealed:
+        return
+    if payload.is_carryover:
+        return
+    if habit.auto_revealed_at is not None:
+        return
+    habit.auto_revealed_at = datetime.now(UTC)
 
 
 # Default goals seeded for every newly-created habit. Three tiers (low / clear
@@ -249,6 +261,9 @@ async def list_habits(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    # This runs before pagination so eligible rows outside the requested page
+    # do not remain stale merely because the client has not fetched them yet.
+    await reconcile_habit_auto_reveals(session, current_user, user_tz)
     # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
     query = (
         select(Habit)
@@ -275,6 +290,9 @@ async def get_habit(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
+    # The Habits screen and progression flow consume the collection endpoint,
+    # which reconciles every invitation before pagination. This point read
+    # intentionally preserves its existing non-mutating contract.
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     await _populate_streaks_for(session, [habit], current_user, user_tz)
     return habit
@@ -288,6 +306,9 @@ async def update_habit(
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
     """Replace an existing habit's fields; 409 on rename collision."""
+    # A manual accept or decline consumes the same one-shot invitation. Without
+    # this, an early unlock followed by a re-lock would reopen at eligibility.
+    _consume_auto_reveal_on_manual_change(habit, payload)
     for key, value in payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
@@ -446,6 +467,8 @@ async def get_habit_stats(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> HabitStats:
     """Return aggregated statistics for a habit's goal completions."""
+    # Reveal progression is list-owned; a stats read intentionally remains
+    # non-mutating and does not expose lock state in its response.
     # All-time aggregates: deliberately NOT windowed (issue #294).
     habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]

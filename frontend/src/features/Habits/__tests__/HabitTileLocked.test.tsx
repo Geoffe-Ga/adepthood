@@ -101,8 +101,8 @@ describe('HabitTile locked state', () => {
   });
 
   it('never shows an "Unlocks in N days" countdown, even for a future start_date', () => {
-    // The calendar no longer drives unlock at all -- a day-count countdown
-    // would misleadingly imply this habit unlocks itself over time.
+    // The backend owns the one-shot transition. A client countdown would imply
+    // this branch can flip the flag itself and would misdescribe manual relocks.
     const habit = makeHabit({ start_date: new Date('2026-04-13T00:00:00Z') });
 
     const component = renderer.create(
