@@ -235,6 +235,24 @@
     "coveredBy": "frontend/e2e/course.e2e.test.ts"
   },
   {
+    "id": "course.write-note-on-passage",
+    "description": "A reader in a desktop browser opens a chapter, chooses Write a note on a passage, selects a passage with the mouse or the keyboard, confirms Write a note, and lands in JournalEntry with the passage prefilled as a blockquote. Uncovered because the selection is a browser gesture -- a drag, a double-click, Shift+Arrow inside a real textarea -- and this lane runs on the node environment with node_modules untransformed and cannot mount a screen, let alone drive a browser; the same constraint is recorded on welcome.first-run-walkthrough-to-journal. The owner's report (#2652) was that no desktop gesture enabled Write a note; a manual reproduction in Chromium 141 against the --dev web export at HEAD could not reproduce it (every gesture enabled the confirm and previewed the exact slice), so covering this journey needs a real-browser lane that boots the web bundle and the backend, not another spec here. Pinned meanwhile by unit tests in src/features/Journal/__tests__/QuoteSelectionSurface.test.tsx, src/features/Journal/__tests__/selectionSurfaceCopy.test.ts and src/features/Course/__tests__/ChapterReaderPassageSelection.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "stages", "course", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /stages",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /journal/"
+      ],
+      "tables": ["user", "stagecontent", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2652
+  },
+  {
     "id": "map.advance-stage",
     "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
