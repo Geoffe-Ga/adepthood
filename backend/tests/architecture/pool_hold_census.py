@@ -18,7 +18,7 @@ eventually be wrong about a site that is genuinely safe, and a gate with no way
 to say so gets deleted. So a row may be marked :attr:`Verdict.MISMODELLED` --
 but only by naming a runtime test that watches the same dial and *passes*.
 Whether it passes is not a matter of opinion: the runtime census marks its
-defective rows expected-failure, so a row claiming the analyser is wrong must
+held rows expected-failure, so a row claiming the analyser is wrong must
 name a test carrying no such marker, and the gate checks that by reading the
 file. Prose alone cannot buy an exemption; a green assertion at the same seam
 can. Today the list is empty, which is the state to keep it in.
@@ -119,16 +119,22 @@ HELD: tuple[CensusRow, ...] = (
         route="POST /journal/{entry_id}/resonance",
         holder="domain.resonance._one_pass",
         dial="complete",
-        verdict=Verdict.KNOWN,
+        verdict=Verdict.ALLOWED,
         reason=(
             "The reflection pass itself, on the same dirty write transaction. The "
             "handler documents this hold as intentional -- the pass, the persistence "
             "and the charge commit together, so a provider error rolls the deduction "
-            "back and a failed pass never charges. That argument is real, which is why "
-            "this row is the census's hardest: it is a correctness trade, not an "
-            "oversight, and settling it means either an exemption naming its cost or "
-            "the design change that stages the deduction in its own transaction and "
-            "compensates on failure."
+            "back and a failed pass never charges or leaves partial marginalia. That "
+            "is deliberate atomicity rather than an unexamined hold."
+        ),
+        costs=(
+            "A pooled connection is held for the cloud-or-vault reflection round trip "
+            "on every resonance pass. Fifteen concurrent passes exhaust the default "
+            "pool and make the next database-backed request wait at checkout. Releasing "
+            "would require committing the deduction before the provider call, then a "
+            "durable compensating refund and crash-window reconciliation so a failed "
+            "pass cannot remain charged; this exception chooses rollback atomicity "
+            "over that larger failure surface."
         ),
         observed_by="test_the_resonance_reflection_pass_is_dialled_off_the_pool",
     ),
