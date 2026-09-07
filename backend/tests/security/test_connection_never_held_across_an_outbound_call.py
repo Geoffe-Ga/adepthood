@@ -384,28 +384,17 @@ async def test_the_invitation_corpus_themes_are_dialled_off_the_pool(
 
 
 # ---------------------------------------------------------------------------
-# Rows still defective. Each runs; each asserts; each is expected red.
+# Resonance capability-probe row closed by a read-then-release boundary.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Census row 1: run_resonance loads the entry, stages an uncommitted wallet "
-        "deduction and gathers grounding before probing the vault's capabilities, "
-        "and its first commit is far below. The handler's atomicity argument covers "
-        "the reflection pass that follows, not this probe: a handshake's result is "
-        "not something a rollback can undo."
-    ),
-)
 @pytest.mark.asyncio
 async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Census row 1: POST /journal/{entry_id}/resonance, at the capability probe."""
+    """The resonance vault handshake runs after reads release and before the wallet write."""
     vault = _ScriptedVault(capabilities=frozenset())
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     headers, _user_id = await _signup(async_client, "resonance_handshake")
@@ -430,6 +419,11 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _HANDSHAKE), what="the vault handshake")
+
+
+# ---------------------------------------------------------------------------
+# Rows still defective. Each runs; each asserts; each is expected red.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.xfail(

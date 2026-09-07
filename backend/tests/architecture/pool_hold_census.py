@@ -25,10 +25,9 @@ can. Today the list is empty, which is the state to keep it in.
 
 **Why the evidence column exists.** The runtime observer and this analyser are
 blind in opposite places, and the field that says which rows have been seen by
-both is the field a reader most needs. Two rows below carry no runtime evidence
-at all, and they are not an oversight -- they are the two the running suite
-cannot currently reach, which is the whole argument for reading the source
-instead of watching it.
+both is the field a reader most needs. One row below carries no runtime evidence
+at all, and it is not an oversight -- the running suite cannot currently reach
+it, which is the whole argument for reading the source instead of watching it.
 """
 
 from __future__ import annotations
@@ -116,20 +115,6 @@ class ClearRoute:
 # --- Held: routes that dial while holding a connection ----------------------
 
 HELD: tuple[CensusRow, ...] = (
-    CensusRow(
-        route="POST /journal/{entry_id}/resonance",
-        holder="services.creek_vault_reflect.select_reflection_llm",
-        dial="handshake",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "A wallet deduction is staged without committing, grounding is gathered, "
-            "and then the vault is probed for capability -- so this dial runs on a "
-            "dirty write transaction. The handler's atomicity argument covers the "
-            "reflection pass below and does not reach here: a capability probe's "
-            "result is not something a rollback can undo."
-        ),
-        observed_by="test_the_resonance_vault_handshake_is_dialled_off_the_pool",
-    ),
     CensusRow(
         route="POST /journal/{entry_id}/resonance",
         holder="domain.resonance._one_pass",

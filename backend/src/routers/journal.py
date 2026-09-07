@@ -1387,10 +1387,14 @@ async def run_resonance(
     care = _care_response(_care_for(entry.message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
-    spent = await preflight_deduction(session, current_user)
     grounding = await _grounding_for(session, current_user, entry_id)
     byok_key = resolve_chat_api_key(clients.api_key)
     llm = BotmasonResonanceLLM(byok_key)
+    # The entry and grounding are fully materialized, and a vault capability
+    # probe has no state that belongs in the reflection's atomic write unit.
+    # Release the authenticated read transaction before the handshake; stage the
+    # wallet deduction only after the reflection source has been selected.
+    await session.commit()
     reflection_llm = await select_reflection_llm(
         clients.vault_client,
         body=entry.message,
@@ -1398,6 +1402,7 @@ async def run_resonance(
         care_flagged=care is not None,
         fallback=llm,
     )
+    spent = await preflight_deduction(session, current_user)
     try:
         anchored = await _resonance_pass_or_care(
             entry.message,

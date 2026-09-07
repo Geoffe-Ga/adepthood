@@ -134,7 +134,7 @@ _CLASSES_IMPLEMENTING = {
 # How the census divides today. Written down so that reclassifying a row --
 # calling a defect deliberate, or calling the analyser wrong -- is a number that
 # changes in the diff rather than a word that changes inside a paragraph.
-_ROWS_BY_VERDICT = {Verdict.KNOWN: 3, Verdict.ALLOWED: 1, Verdict.MISMODELLED: 0}
+_ROWS_BY_VERDICT = {Verdict.KNOWN: 2, Verdict.ALLOWED: 1, Verdict.MISMODELLED: 0}
 
 # Mapping writes that reach the storage without calling ``__setitem__`` in
 # CPython, and so slip a dependency override past the runtime observer's hook.
