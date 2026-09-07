@@ -2,19 +2,24 @@
 // RED: `QuoteSelectionSurface` does not yet render an instruction line, a live
 // preview, a guarded "Promote selection" Button, or an empty-tap hint -- every
 // testID below is missing until the implementation-specialist adds them.
-import { jest, describe, it, expect } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import QuoteSelectionSurface from '../QuoteSelectionSurface';
+import { buildSelectionSurfaceCopy } from '../selectionSurfaceCopy';
 
 import { editorialType } from '@/design/tokens';
 
+const Platform = require('react-native').Platform as { OS: string };
+
 const BODY = 'A steady daily walk to the river.';
 
-const INSTRUCTION_COPY = 'Touch and hold a passage, then drag to choose it.';
-const EMPTY_HINT_COPY = 'Choose a passage first — touch and hold the text.';
+// The jest preset mounts on ios, so the default-platform pins below are the
+// native long-press wording; ``selectionSurfaceCopy.test.ts`` pins the literals.
+const { instruction: INSTRUCTION_COPY, emptyHint: EMPTY_HINT_COPY } =
+  buildSelectionSurfaceCopy('ios');
 
 type SurfaceProps = React.ComponentProps<typeof QuoteSelectionSurface>;
 
@@ -138,6 +143,34 @@ describe('QuoteSelectionSurface -- custom testID prefix', () => {
     expect(getByTestId('src-1-confirm-guard')).toBeTruthy();
     expect(getByTestId('src-1-cancel')).toBeTruthy();
     expect(getByTestId('src-1-input')).toBeTruthy();
+  });
+});
+
+describe('QuoteSelectionSurface -- platform-appropriate instruction', () => {
+  let originalOS: string;
+
+  beforeEach(() => {
+    originalOS = Platform.OS;
+  });
+
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  it('on web neither the instruction nor the empty hint says touch and hold', () => {
+    Platform.OS = 'web';
+    const { getByTestId } = renderSurface();
+    expect(getByTestId('quote-select-instruction').props.children).not.toMatch(/touch and hold/i);
+    fireEvent.press(getByTestId('quote-select-confirm-guard'));
+    expect(getByTestId('quote-select-hint').props.children).not.toMatch(/touch and hold/i);
+  });
+
+  it('on ios the instruction and the empty hint keep the long-press wording', () => {
+    Platform.OS = 'ios';
+    const { getByTestId } = renderSurface();
+    expect(getByTestId('quote-select-instruction').props.children).toBe(INSTRUCTION_COPY);
+    fireEvent.press(getByTestId('quote-select-confirm-guard'));
+    expect(getByTestId('quote-select-hint').props.children).toBe(EMPTY_HINT_COPY);
   });
 });
 
