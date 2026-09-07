@@ -60,6 +60,17 @@ jest.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ logout: mockLogout, token: mockToken }),
 }));
 
+// ---------------------------------------------------------------------------
+// Config mock — this file pins the fully configured build, where all four
+// depths have a destination and so all four switches are offered. The
+// unconfigured branch (no Sangha switch without a Sangha door) lives in
+// ChooseDepthsSection.sanghaDoor.test.tsx.
+// ---------------------------------------------------------------------------
+
+jest.mock('@/config', () => ({
+  SANGHA_INVITE_URL: 'https://discord.gg/example-sangha',
+}));
+
 import ChooseDepthsSection from '../ChooseDepthsSection';
 
 import { touchTarget } from '@/design/tokens';

@@ -3,7 +3,9 @@
  * that mirrors a body so the reader can select a passage to promote without
  * editing it (soft keyboard suppressed, caret hidden; ``editable`` stays true so
  * Android text selection still works). It guides the whole gesture in place: a
- * warm instruction line, a live preview that echoes the raw selection back, and
+ * warm instruction line worded for the platform's own gesture (long press on a
+ * phone, mouse or keyboard in a browser -- see ``selectionSurfaceCopy.ts``), a
+ * live preview that echoes the raw selection back, and
  * an honestly disabled "Promote selection" confirm that only lights up once a
  * non-empty passage is chosen (an empty tap surfaces a gentle hint instead of
  * silently promoting nothing). Shared by the read-mode promote flow on
@@ -13,6 +15,7 @@
  */
 import React, { useCallback, useRef, useState } from 'react';
 import {
+  Platform,
   Pressable,
   Text,
   TextInput,
@@ -24,6 +27,7 @@ import {
 
 import { utf16ToCodePoint } from './codePoints';
 import styles from './JournalEntry.styles';
+import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useWebSelectionListener } from './webSelectionListener';
 
 import { Button } from '@/components/Button';
@@ -49,8 +53,6 @@ interface Utf16Span {
 /** Prefix for the surface's testIDs; the read-mode flow relies on this default. */
 const DEFAULT_TEST_ID = 'quote-select';
 
-const INSTRUCTION_COPY = 'Touch and hold a passage, then drag to choose it.';
-const EMPTY_HINT_COPY = 'Choose a passage first — touch and hold the text.';
 const DEFAULT_CONFIRM_LABEL = 'Promote selection';
 
 export interface QuoteSelectionSurfaceProps {
@@ -225,11 +227,15 @@ function QuoteSelectionSurface({
     useSelectionSurfaceState(body, onSelectionChange);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, emitSpan);
+  // Resolved per render rather than at module load so the wording follows the
+  // platform the surface is actually mounted on (and so a test that sets
+  // Platform.OS after import sees the copy change).
+  const copy = buildSelectionSurfaceCopy(Platform.OS);
 
   return (
     <View>
       <Text style={styles.quoteSelectInstruction} testID={`${testID}-instruction`}>
-        {INSTRUCTION_COPY}
+        {copy.instruction}
       </Text>
       <SelectionBody
         body={body}
@@ -254,7 +260,7 @@ function QuoteSelectionSurface({
       />
       {hintVisible && (
         <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
-          {EMPTY_HINT_COPY}
+          {copy.emptyHint}
         </Text>
       )}
     </View>

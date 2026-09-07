@@ -278,7 +278,7 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_GUMROAD_PRODUCT_URL` | `https://creekmasons.gumroad.com/l/aptitude` | Optional. Product page the Get Started CTA opens; defaults to this value |
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
-| `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows no Sangha door |
+| `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows neither the Sangha door nor its switch |
 | `PORT` | `80` | nginx listens on 80 |
 
 > **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
