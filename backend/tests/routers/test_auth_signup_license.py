@@ -28,6 +28,7 @@ from sqlmodel import select
 from integrations.gumroad import GumroadUnavailableError
 from models.entitlement import Entitlement
 from models.user import User
+from models.vault_activation import VaultActivation
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
@@ -457,6 +458,7 @@ async def test_successful_signup_creates_user_entitlement_and_jwt(
     assert entitlements[0].kind == COURSE_ACCESS_KIND
     assert entitlements[0].user_id == body["user_id"]
     assert entitlements[0].revoked_at is None
+    assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
 
 
 @pytest.mark.asyncio

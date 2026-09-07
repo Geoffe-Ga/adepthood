@@ -41,7 +41,14 @@ from sqlmodel import SQLModel
 # deletion's own output — pre-seeding it would make the receipt assertions
 # meaningless. ``revokedtoken`` carries no reference to any account, so a row in
 # it proves nothing either way.
-UNSEEDED_TABLES = frozenset({"user", "accountdeletionaudit", "revokedtoken"})
+UNSEEDED_TABLES = frozenset(
+    {
+        "user",
+        "accountdeletionaudit",
+        "revokedtoken",
+        "vaultteardownreceipt",
+    }
+)
 
 # Tables seeded once and shared by every account: the curriculum. Seeding them
 # per-account would trip their own uniqueness constraints, which is the schema

@@ -8,11 +8,13 @@ the seeders, idempotently, every time the app starts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Coroutine, Generator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -230,6 +232,41 @@ async def test_lifespan_logs_and_continues_when_pipeline_recovery_cannot_connect
         record for record in caplog.records if "pipeline recovery" in record.getMessage()
     ]
     assert recovery_logs, "expected a warning about deferred pipeline recovery"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_never_waits_for_optional_provisioning_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung Creek control plane cannot keep the journal server from booting."""
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    scheduled_names: list[str | None] = []
+
+    async def _blocked_recovery(*_args: object) -> None:
+        await asyncio.Event().wait()
+
+    def capture_task(
+        coroutine: Coroutine[object, object, None],
+        *,
+        name: str | None = None,
+    ) -> asyncio.Task[None]:
+        scheduled_names.append(name)
+        task = asyncio.tasks.Task(coroutine, name=name)
+        task.cancel()
+        return task
+
+    with (
+        patch("main.resume_vault_activations", new=_blocked_recovery),
+        patch(
+            "main.asyncio",
+            new=SimpleNamespace(
+                CancelledError=asyncio.CancelledError,
+                create_task=capture_task,
+            ),
+        ),
+    ):
+        async with _isolated_factory_patch(), lifespan(app):
+            assert scheduled_names == ["creek-provisioning-recovery"]
 
 
 @pytest.mark.asyncio

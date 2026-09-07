@@ -5,7 +5,7 @@ import ipaddress
 import logging
 import os
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Final
 from urllib.parse import urlparse
 
@@ -73,7 +73,9 @@ from routers.transcription import router as transcription_router
 from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
+from routers.vault_activation import router as vault_activation_router
 from routers.vault_config import router as vault_config_router
+from routers.vault_provisioning_internal import router as vault_provisioning_internal_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
@@ -85,6 +87,14 @@ from services.content_repository import (
     ContentRepositoryError,
     content_version_info,
     get_content_repository,
+)
+from services.creek_provisioning import (
+    reconcile_vault_teardowns,
+    resume_vault_activations,
+)
+from services.creek_provisioning_client import (
+    close_creek_provisioning_http_pool,
+    get_creek_provisioning_client,
 )
 from services.creek_vault_client import (
     CREEK_VAULT_URL_ENV_VAR,
@@ -99,12 +109,29 @@ from services.creek_vault_pipeline import (
 logger = logging.getLogger(__name__)
 
 VALID_ENVIRONMENTS = {"development", "staging", "production"}
+_PROVISIONING_RECOVERY_INTERVAL_SECONDS: Final[float] = 30.0
 
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:8080",
     "http://127.0.0.1:3000",
 ]
+
+
+async def _recover_provisioning_until_shutdown() -> None:
+    """Reconcile optional Creek work without ever delaying application startup."""
+    client = get_creek_provisioning_client()
+    while True:
+        try:
+            await resume_vault_activations(async_session_factory, client)
+        except (OSError, RuntimeError, SQLAlchemyError):
+            logger.warning("creek activation recovery could not read its durable state")
+        try:
+            await reconcile_vault_teardowns(async_session_factory, client)
+        except (OSError, RuntimeError, SQLAlchemyError):
+            logger.warning("creek teardown recovery could not read its durable state")
+        await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
+
 
 # CORS — only the methods the API actually serves are allowed.  Listing them
 # explicitly (BUG-INFRA-008) keeps the preflight surface tight.  PATCH is
@@ -925,7 +952,16 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
         # because asyncio.CancelledError is a BaseException.
         logger.warning("creek vault pipeline recovery could not read its run log")
 
+    provisioning_recovery = asyncio.create_task(
+        _recover_provisioning_until_shutdown(),
+        name="creek-provisioning-recovery",
+    )
+
     yield
+
+    provisioning_recovery.cancel()
+    with suppress(asyncio.CancelledError):
+        await provisioning_recovery
 
     # A cancelled continuation keeps its durable ``attempted`` row and job id;
     # the next lifespan resumes it before traffic. Stop those coroutines before
@@ -937,6 +973,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # httpx client to be reclaimed during interpreter teardown. A no-op when no
     # vault was ever contacted, since the pool builds lazily.
     await close_creek_vault_http_pool()
+    await close_creek_provisioning_http_pool()
 
     # Switching off the SDK's default integrations also switched off its atexit
     # flush, so the queue has to be drained here -- otherwise the report for the
@@ -1051,6 +1088,8 @@ app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
 app.include_router(vault_config_router)
+app.include_router(vault_activation_router)
+app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)
 
 

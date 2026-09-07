@@ -80,7 +80,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from domain.creek_vault import CreekVaultPipelineClient, resolve_vault_owner
+from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
+from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
     build_connected_vault_client,
@@ -261,6 +263,11 @@ async def resolve_creek_vault_client(
     connection = await load_vault_config(session, current_user)
     if connection is None:
         client: CreekVaultPipelineClient = deployment_vault_client(current_user)
+    elif connection.provisioned and not await _provisioned_connection_is_ready(
+        session,
+        current_user,
+    ):
+        client = LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
     else:
         vault_url, api_key = connection.vault_url, connection.api_key
         undialable = await _stored_host_is_undialable(session, vault_url)
@@ -271,6 +278,15 @@ async def resolve_creek_vault_client(
         )
     await session.commit()
     return client
+
+
+async def _provisioned_connection_is_ready(
+    session: AsyncSession,
+    user_id: int,
+) -> bool:
+    """Keep a handed-off credential inert until Creek completes the key ceremony."""
+    activation = await load_vault_activation(session, user_id)
+    return activation is not None and activation.state == VaultActivationState.READY.value
 
 
 async def _stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bool:

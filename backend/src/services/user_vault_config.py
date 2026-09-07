@@ -37,7 +37,12 @@ async def load_vault_config(session: AsyncSession, user_id: int) -> UserVaultCon
 
 
 async def store_vault_config(
-    session: AsyncSession, user_id: int, *, vault_url: str, api_key: str
+    session: AsyncSession,
+    user_id: int,
+    *,
+    vault_url: str,
+    api_key: str,
+    provisioned: bool = False,
 ) -> UserVaultConfig:
     """Replace this account's connection with ``vault_url`` and ``api_key``.
 
@@ -48,9 +53,15 @@ async def store_vault_config(
     URL would send one vault's secret to another.
     """
     existing = await load_vault_config(session, user_id)
-    config = existing or UserVaultConfig(user_id=user_id, vault_url=vault_url, api_key=api_key)
+    config = existing or UserVaultConfig(
+        user_id=user_id,
+        vault_url=vault_url,
+        api_key=api_key,
+        provisioned=provisioned,
+    )
     config.vault_url = vault_url
     config.api_key = api_key
+    config.provisioned = provisioned
     session.add(config)
     await session.commit()
     await session.refresh(config)

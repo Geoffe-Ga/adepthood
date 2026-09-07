@@ -65,6 +65,9 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         "domain.entitlements",
         "integrations.gumroad",
         "services.botmason",
+        # The async provisioning client dials Creek only through httpx; its
+        # request helpers release the injected database session first.
+        "services.creek_provisioning_client",
         "services.creek_vault_client",
         "services.creek_vault_pinned_transport",
         "services.creek_vault_url_resolution",

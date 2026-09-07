@@ -211,3 +211,14 @@ path     = "/user-practices/"
 category = "shared_catalog"
 field    = "practice_id"
 reason   = "practice_id names the shared preset catalog: require_visible_practice returns any approved preset to every authenticated user by design, so adopting one that another user also adopted is the feature, and probing it would report a false LEAK"
+
+# The ceremony id is a short-lived Creek capability bound to the authenticated
+# account's already-owned activation; it is not an Adepthood object reference
+# the two-identity ownership matrix can seed or substitute.
+
+[[route]]
+method   = "PUT"
+path     = "/vault/activation/key-ceremony"
+category = "capability_token"
+field    = "ceremony_id"
+reason   = "ceremony_id is a short-lived Creek-issued capability bound to the caller's existing activation, not an Adepthood object id that another account can own"

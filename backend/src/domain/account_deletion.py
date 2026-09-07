@@ -272,6 +272,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "the account controls, so leaving the row behind would keep a working "
         "key to somebody else's system after they asked to be forgotten.",
     ),
+    "vaultactivation": _erase(
+        "user_id",
+        "The content-free private-vault provisioning handle. Its upstream job "
+        "is copied into a detached teardown receipt before this account link is erased.",
+    ),
     "vaultpipelinerun": _erase(
         "user_id",
         "When each stage of the account's vault ontologization last ran, and "
@@ -279,6 +284,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "account, so a record of how far its classification got is a record "
         "about nobody once the account is gone -- and it names the account "
         "directly, which is what the counts alone would not.",
+    ),
+    "vaultteardownreceipt": _retain(
+        "An opaque Creek job id and teardown state retained after the account "
+        "is gone so operations can prove no billable allocation survived. It "
+        "has no user id, content, endpoint, or credential.",
     ),
     "walletaudit": _erase(
         "user_id",

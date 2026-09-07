@@ -6878,6 +6878,213 @@
         "title": "ValidationErrorResponse",
         "type": "object"
       },
+      "VaultActivationResponse": {
+        "description": "Everything the frontend may learn about private-vault progress.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "attested_confidential": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attested Confidential"
+          },
+          "credential_received": {
+            "title": "Credential Received",
+            "type": "boolean"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_unavailable",
+                  "provider_rejected",
+                  "handoff_failed",
+                  "internal_error",
+                  "malformed_completion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "inactive",
+              "submitting",
+              "pending",
+              "provisioning",
+              "awaiting_key_ceremony",
+              "awaiting_handoff",
+              "ready",
+              "failed",
+              "deleting",
+              "deleted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "active",
+          "state",
+          "retryable",
+          "failure_reason",
+          "credential_received",
+          "attested_confidential"
+        ],
+        "title": "VaultActivationResponse",
+        "type": "object"
+      },
+      "VaultArgon2idParameters": {
+        "additionalProperties": false,
+        "description": "Fixed protocol-1 passphrase derivation parameters.",
+        "properties": {
+          "algorithm": {
+            "const": "argon2id",
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "lanes": {
+            "const": 4,
+            "title": "Lanes",
+            "type": "integer"
+          },
+          "memory_kib": {
+            "const": 65536,
+            "title": "Memory Kib",
+            "type": "integer"
+          },
+          "salt": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Salt",
+            "type": "string"
+          },
+          "time_cost": {
+            "const": 3,
+            "title": "Time Cost",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "algorithm",
+          "salt",
+          "time_cost",
+          "lanes",
+          "memory_kib"
+        ],
+        "title": "VaultArgon2idParameters",
+        "type": "object"
+      },
+      "VaultAttestationStatement": {
+        "additionalProperties": false,
+        "description": "Public measured-recipient statement signed by Creek's trust root.",
+        "properties": {
+          "challenge_nonce": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Challenge Nonce",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "format": {
+            "const": "creek-ed25519-x25519-v1",
+            "title": "Format",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "measurement": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Measurement",
+            "type": "string"
+          },
+          "recipient_public_key": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Recipient Public Key",
+            "type": "string"
+          },
+          "signature": {
+            "pattern": "^[A-Za-z0-9_-]{86}$",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "measurement",
+          "challenge_nonce",
+          "recipient_public_key",
+          "issued_at",
+          "expires_at",
+          "signature"
+        ],
+        "title": "VaultAttestationStatement",
+        "type": "object"
+      },
+      "VaultCeremonyBinding": {
+        "additionalProperties": false,
+        "description": "Public replay binding authenticated by both wrapped VMK copies.",
+        "properties": {
+          "activation_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Activation Id",
+            "type": "string"
+          },
+          "ceremony_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Ceremony Id",
+            "type": "string"
+          },
+          "client_nonce": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Client Nonce",
+            "type": "string"
+          },
+          "protocol_version": {
+            "const": "1.0.0",
+            "title": "Protocol Version",
+            "type": "string"
+          },
+          "server_nonce": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Server Nonce",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "activation_id",
+          "ceremony_id",
+          "server_nonce",
+          "client_nonce"
+        ],
+        "title": "VaultCeremonyBinding",
+        "type": "object"
+      },
       "VaultConnectionRequest": {
         "description": "Where a user's own vault lives and the credential that opens it.\n\n``api_key`` is write-only by construction: it exists on this request and on\nno response, so there is no code path that could return it and no reviewer\nwho has to check that none does.",
         "properties": {
@@ -6949,6 +7156,156 @@
         "title": "VaultDisposition",
         "type": "object"
       },
+      "VaultKeyCeremonyChallenge": {
+        "additionalProperties": false,
+        "description": "Public Creek challenge relayed without its requester credential.",
+        "properties": {
+          "activation_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Activation Id",
+            "type": "string"
+          },
+          "ceremony_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Ceremony Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "job_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Job Id",
+            "type": "string"
+          },
+          "protocol_version": {
+            "const": "1.0.0",
+            "title": "Protocol Version",
+            "type": "string"
+          },
+          "server_nonce": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Server Nonce",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "job_id",
+          "activation_id",
+          "ceremony_id",
+          "server_nonce",
+          "expires_at"
+        ],
+        "title": "VaultKeyCeremonyChallenge",
+        "type": "object"
+      },
+      "VaultKeyCeremonySubmission": {
+        "additionalProperties": false,
+        "description": "Strict ciphertext-only completion body relayed to Creek.",
+        "properties": {
+          "attestation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultAttestationStatement"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ceremony_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Ceremony Id",
+            "type": "string"
+          },
+          "key_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultKeyReleaseEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protocol_version": {
+            "const": "1.0.0",
+            "title": "Protocol Version",
+            "type": "string"
+          },
+          "recovery_saved": {
+            "const": true,
+            "title": "Recovery Saved",
+            "type": "boolean"
+          },
+          "server_nonce": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Server Nonce",
+            "type": "string"
+          },
+          "wrapped_artifact": {
+            "$ref": "#/components/schemas/VaultWrappedKeyArtifact"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "ceremony_id",
+          "server_nonce",
+          "recovery_saved",
+          "wrapped_artifact",
+          "attestation",
+          "key_release"
+        ],
+        "title": "VaultKeyCeremonySubmission",
+        "type": "object"
+      },
+      "VaultKeyReleaseEnvelope": {
+        "additionalProperties": false,
+        "description": "Opaque VMK envelope addressed to an attested X25519 recipient.",
+        "properties": {
+          "algorithm": {
+            "const": "x25519-hkdf-sha256-aes256gcm",
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "ciphertext": {
+            "pattern": "^[A-Za-z0-9_-]{64}$",
+            "title": "Ciphertext",
+            "type": "string"
+          },
+          "ephemeral_public_key": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Ephemeral Public Key",
+            "type": "string"
+          },
+          "nonce": {
+            "pattern": "^[A-Za-z0-9_-]{16}$",
+            "title": "Nonce",
+            "type": "string"
+          },
+          "recipient_public_key": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Recipient Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "algorithm",
+          "recipient_public_key",
+          "ephemeral_public_key",
+          "nonce",
+          "ciphertext"
+        ],
+        "title": "VaultKeyReleaseEnvelope",
+        "type": "object"
+      },
       "VaultPraxisKind": {
         "description": "The five kinds a praxis page may be, spelled Creek's way.\n\nCreek's vocabulary rather than one adepthood invented, for the reason\n:class:`VaultReflectionStatus` is: these are wire strings a payload is\nmatched against, and a member spelled our way would never match anything a\nvault sent. Unlike a margin note's kind there is no projection onto an\nadepthood word, because adepthood has no praxis vocabulary of its own to\nproject onto -- a praxis page is the writer's own, named by their vault.",
         "enum": [
@@ -6972,6 +7329,59 @@
         "title": "VaultPraxisStatus",
         "type": "string"
       },
+      "VaultTeardownStatus": {
+        "description": "Content-free reconciliation state visible only to operations.",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "creek_job_id": {
+            "title": "Creek Job Id",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "provider_unavailable",
+                  "provider_rejected",
+                  "handoff_failed",
+                  "internal_error",
+                  "malformed_completion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "deleting",
+              "deleted",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "creek_job_id",
+          "state",
+          "attempts",
+          "retryable",
+          "failure_reason"
+        ],
+        "title": "VaultTeardownStatus",
+        "type": "object"
+      },
       "VaultUploadStatus": {
         "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"uploads do not\nwork between these two versions yet\", and ``DEGRADED`` is \"it broke, try\nagain\". Values are the wire strings the API answers with, so they are\ncontract and must not be reworded casually.\n\n``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is\nbehind. Either side can be: a vault too old to take files, or a vault\noffering an upload route this client recognises but cannot yet speak. What\nthe user needs from the status is the same in both -- that no retry helps --\nand splitting it would add a fourth wire value every consumer of this enum\nwould have to learn before it could render anything at all.",
         "enum": [
@@ -6982,6 +7392,60 @@
         ],
         "title": "VaultUploadStatus",
         "type": "string"
+      },
+      "VaultWrappedCiphertext": {
+        "additionalProperties": false,
+        "description": "One AES-256-GCM nonce and ciphertext-authentication-tag pair.",
+        "properties": {
+          "ciphertext": {
+            "pattern": "^[0-9a-f]{96}$",
+            "title": "Ciphertext",
+            "type": "string"
+          },
+          "nonce": {
+            "pattern": "^[0-9a-f]{24}$",
+            "title": "Nonce",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nonce",
+          "ciphertext"
+        ],
+        "title": "VaultWrappedCiphertext",
+        "type": "object"
+      },
+      "VaultWrappedKeyArtifact": {
+        "additionalProperties": false,
+        "description": "Ciphertext-only version-2 key vault safe for the backend to relay.",
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/VaultCeremonyBinding"
+          },
+          "kdf": {
+            "$ref": "#/components/schemas/VaultArgon2idParameters"
+          },
+          "passphrase_wrapped": {
+            "$ref": "#/components/schemas/VaultWrappedCiphertext"
+          },
+          "recovery_wrapped": {
+            "$ref": "#/components/schemas/VaultWrappedCiphertext"
+          },
+          "version": {
+            "const": 2,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "kdf",
+          "passphrase_wrapped",
+          "recovery_wrapped",
+          "binding"
+        ],
+        "title": "VaultWrappedKeyArtifact",
+        "type": "object"
       },
       "VoiceDraftListResponse": {
         "description": "One page of the Voice Drafts shelf, with its total and a next-page flag.",
@@ -8086,6 +8550,110 @@
           }
         },
         "summary": "Get User Summary",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/vault-teardowns": {
+      "get": {
+        "description": "Expose every unconfirmed, content-free Creek teardown to operations.",
+        "operationId": "get_stuck_vault_teardowns_admin_vault_teardowns_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VaultTeardownStatus"
+                  },
+                  "title": "Response Get Stuck Vault Teardowns Admin Vault Teardowns Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Stuck Vault Teardowns",
         "tags": [
           "admin"
         ]
@@ -12693,6 +13261,109 @@
           }
         },
         "summary": "Readiness"
+      }
+    },
+    "/internal/vault-provisioning/completions": {
+      "post": {
+        "description": "Store Creek's one-time URL/credential delivery without ever echoing it.",
+        "operationId": "receive_creek_connection_handoff_internal_vault_provisioning_completions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Receive Creek Connection Handoff",
+        "tags": [
+          "internal-vault-provisioning"
+        ]
       }
     },
     "/invitations": {
@@ -22477,6 +23148,612 @@
         "summary": "Create Plan",
         "tags": [
           "energy"
+        ]
+      }
+    },
+    "/vault/activation": {
+      "get": {
+        "description": "Return stable progress, polling Creek outside the request transaction.",
+        "operationId": "get_private_vault_activation_vault_activation_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultActivationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Private Vault Activation",
+        "tags": [
+          "vault"
+        ]
+      },
+      "post": {
+        "description": "Explicitly create or replay this account's one durable Creek activation.",
+        "operationId": "activate_private_vault_vault_activation_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultActivationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Activate Private Vault",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/activation/key-ceremony": {
+      "get": {
+        "description": "Relay this account's public challenge without exposing Creek credentials.",
+        "operationId": "get_private_vault_key_ceremony_vault_activation_key_ceremony_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultKeyCeremonyChallenge"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Private Vault Key Ceremony",
+        "tags": [
+          "vault"
+        ]
+      },
+      "put": {
+        "description": "Relay only a validated ciphertext artifact and return secret-free progress.",
+        "operationId": "complete_private_vault_key_ceremony_vault_activation_key_ceremony_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VaultKeyCeremonySubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultActivationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Complete Private Vault Key Ceremony",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/activation/retry": {
+      "post": {
+        "description": "Retry exactly the existing activation after a safe, retryable failure.",
+        "operationId": "retry_private_vault_activation_vault_activation_retry_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultActivationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Retry Private Vault Activation",
+        "tags": [
+          "vault"
         ]
       }
     },

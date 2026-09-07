@@ -39,6 +39,7 @@ from integrations.gumroad import GumroadUnavailableError
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.entitlement import Entitlement
 from models.user import User
+from models.vault_activation import VaultActivation
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 from services.oauth_google import (
@@ -932,6 +933,7 @@ async def test_new_email_with_valid_license_creates_the_account(
     identity = await _only_identity(db_session)
     assert identity.subject == NEW_SUBJECT
     assert identity.user_id == body["user_id"]
+    assert await _count_rows(db_session, VaultActivation) == 0
     assert _log_carries_marker(caplog, REASON_SIGNUP)
 
 
