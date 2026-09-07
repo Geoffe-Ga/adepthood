@@ -46,6 +46,7 @@ const EXPECTED_JOURNEYS = [
   'data-export.e2e.test.ts',
   'depth.e2e.test.ts',
   'habits-empty.e2e.test.ts',
+  'habits-reveal.e2e.test.ts',
   'habits.e2e.test.ts',
   'journal-delete.e2e.test.ts',
   'journal.e2e.test.ts',

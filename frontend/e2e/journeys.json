@@ -114,6 +114,18 @@
     "issue": 2399
   },
   {
+    "id": "habits.stage-opens-reveals-next-habit",
+    "description": "The program calendar opens a stage and the habit sitting in that slot appears on the next read of the Habits screen without anyone tapping unlock; a relock afterwards is respected forever, because the server stamps the one offer it made and never repeats it. Carryover habits and habits resting in a live Metta Return release are untouched. This is the owner ruling of 2026-09-06 on #2576 and deliberately supersedes #1332 / PR #1349 (\"nothing auto-unlocks\"). The arrange rewinds the program anchor out of band through the same backend module the Map journey uses, because no request schema accepts a start date in the past; every assert reads through the production client.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/", "GET /habits/", "PUT /habits/{habit_id}"],
+      "tables": ["habit", "stageprogress"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-reveal.e2e.test.ts"
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
     "crosses": {
