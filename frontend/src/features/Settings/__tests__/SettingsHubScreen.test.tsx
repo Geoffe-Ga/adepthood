@@ -403,6 +403,10 @@ describe('SettingsHubScreen — the corpus-consent destination', () => {
 
 describe('SettingsHubScreen — the Digital Sangha door', () => {
   const SANGHA_URL = 'https://discord.gg/hub-test-sangha';
+  /** Habits, Practices and Course: depths whose destinations ship in every build. */
+  const ALWAYS_OFFERED_SWITCHES = 3;
+  /** Those three plus the Sangha, once its door exists. */
+  const ALL_SWITCHES = ALWAYS_OFFERED_SWITCHES + 1;
 
   afterEach(() => {
     mockSanghaInviteUrl = '';
@@ -416,12 +420,37 @@ describe('SettingsHubScreen — the Digital Sangha door', () => {
     expect(queryByTestId('settings-group-sangha')).toBeNull();
   });
 
+  test('offers no Sangha switch either when no invite is configured', () => {
+    // A switch with no door behind it would persist a choice that changes
+    // nothing visible, so Choose-your-depths reads the same gate as the door.
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    expect(queryByTestId('depth-toggle-sangha')).toBeNull();
+    expect(within(getByTestId('settings-group-depths')).getAllByRole('switch')).toHaveLength(
+      ALWAYS_OFFERED_SWITCHES,
+    );
+  });
+
   test('mounts the section once an invite is configured', () => {
     mockSanghaInviteUrl = SANGHA_URL;
 
     const { getByTestId } = render(<SettingsHubScreen />);
 
     expect(getByTestId('settings-group-sangha')).toBeTruthy();
+  });
+
+  test('never shows the door without the switch that closes it', () => {
+    // SANGHA_DECLINE_HINT points at the Sangha switch; that sentence is only
+    // truthful if the switch is in the same tree whenever the door is.
+    mockSanghaInviteUrl = SANGHA_URL;
+
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-sangha')).toBeTruthy();
+    expect(getByTestId('depth-toggle-sangha')).toBeTruthy();
+    expect(within(getByTestId('settings-group-depths')).getAllByRole('switch')).toHaveLength(
+      ALL_SWITCHES,
+    );
   });
 
   test('hands the invite to the platform browser rather than opening it inside', () => {
