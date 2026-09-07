@@ -31,6 +31,7 @@ from schemas.habit import Habit as HabitSchema
 from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
+from services.habit_auto_reveal import reconcile_habit_auto_reveals
 from services.streaks import SubtractiveContext, compute_habit_streak
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,9 @@ async def list_habits(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
     """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    # This runs before pagination so eligible rows outside the requested page
+    # do not remain stale merely because the client has not fetched them yet.
+    await reconcile_habit_auto_reveals(session, current_user, user_tz)
     # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
     query = (
         select(Habit)

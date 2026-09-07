@@ -497,9 +497,9 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
 
-// The calendar no longer participates in unlock — a locked habit is a standing
-// invitation the user accepts by tapping, never a timer that counts down. So
-// the label is a static "Stage X · Locked" regardless of start_date.
+// The server has already reconciled calendar eligibility into ``revealed``.
+// If a row still reaches this branch it is a standing invitation (including a
+// deliberate re-lock), never a client-side countdown that may unlock it again.
 const getUnlockLabel = (habit: Habit): string => `Stage ${habit.stage} · Locked`;
 
 interface LockedTileProps {

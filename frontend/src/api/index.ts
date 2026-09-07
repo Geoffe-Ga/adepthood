@@ -1119,7 +1119,8 @@ export interface ApiHabit {
   sort_order?: number | null;
   stage: string;
   streak: number;
-  // Persisted unlock flag (revealed === unlocked). Optional so fixtures/payloads
+  // Persisted unlock flag (revealed === unlocked), including one-shot calendar
+  // reconciliation performed by the backend. Optional so fixtures/payloads
   // predating the column still typecheck; the live backend always sends it.
   revealed?: boolean;
   // Carryover flag (negative-lap habits). Optional for legacy fixtures/payloads.

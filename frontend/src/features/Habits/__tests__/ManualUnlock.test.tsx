@@ -63,9 +63,8 @@ const makeFutureHabit = (overrides: Partial<Habit> = {}): Habit => ({
 describe('HabitTile unlocked visual style (no early/natural distinction)', () => {
   // The old model drew a dashed border for a "manually early-unlocked"
   // habit (revealed ahead of its calendar start_date) versus a solid border
-  // for one "naturally" reached by the calendar. Since the calendar no
-  // longer participates in unlock at all, every revealed habit is unlocked
-  // the same way — there is nothing left to distinguish visually.
+  // for one "naturally" reached by the calendar. The server now resolves both
+  // paths into the same persisted flag, so there is nothing to distinguish.
   it('renders with a solid border for any revealed habit, regardless of start_date', () => {
     const future = makeFutureHabit({ revealed: true });
     const past = makePastHabit({ revealed: true });
@@ -105,8 +104,8 @@ describe('HabitTile locked tile long-press', () => {
 
   it('confirms unlock with non-"early" copy for a habit whose stage sits far ahead of any current stage', () => {
     const onUnlockHabit = jest.fn();
-    // A Clear Light (final-stage) habit unlocking out of order — the calendar
-    // and stage gates are both gone, so nothing blocks the manual unlock.
+    // A Clear Light (final-stage) habit can still be accepted ahead of its
+    // automatic invitation; the calendar does not block a manual choice.
     const habit = makeFutureHabit({ revealed: false, stage: 'Clear Light' });
     const component = renderer.create(
       <HabitTile habit={habit} locked onUnlockHabit={onUnlockHabit} />,
@@ -116,7 +115,7 @@ describe('HabitTile locked tile long-press', () => {
       tile.props.onLongPress();
     });
     // New tone: a plain "Unlock \"<name>\"?" question, no "early" framing and
-    // no mention of a "recommended start date" (the calendar no longer unlocks).
+    // no countdown that could contradict the backend's one-shot decision.
     expect(mentionsText(component, `Unlock "${habit.name}"?`)).toBe(true);
     expect(mentionsText(component, 'Early')).toBe(false);
     expect(mentionsText(component, 'recommended start date')).toBe(false);

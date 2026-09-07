@@ -57,6 +57,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.calendar-auto-reveal-once",
+    "description": "A regular program habit appears when either its calendar stage opens or its start date arrives. The habits list read persists that invitation as revealed exactly once; if the person then re-locks it, another read respects the decline instead of re-opening it. The server owns eligibility and its private marker, while the client renders only the reconciled revealed flag. Carryover habits and unrecommitted Metta Return releases remain outside this automatic path, pinned by the backend API suite.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/", "GET /habits/", "PUT /habits/{habit_id}"],
+      "tables": ["habit", "stageprogress", "mettareturnhabitrelease"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-auto-reveal.e2e.test.ts"
+  },
+  {
     "id": "habits.successful-empty-is-first-use",
     "description": "A newly registered person whose live habits request succeeds with an empty collection sees an honest first-use state with an Add a habit action, never the fictional names, streaks, or completion history reserved for an explicitly configured demo build. The real-wire spec proves the fresh account and production client receive an empty Page; habitManager.test.ts pins that the service preserves the empty list, and HabitsEmptyState.test.tsx pins the rendered CTA.",
     "crosses": {

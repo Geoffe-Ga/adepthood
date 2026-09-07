@@ -26,9 +26,9 @@ export function countDoneToday(habits: readonly Habit[], tz: string = DEFAULT_TI
 
 /**
  * The subset of unlocked habits — those the user has revealed. Unlock is
- * governed solely by `revealed` (see {@link isHabitUnlocked}); neither the
- * Spiral-Dynamics stage nor the calendar `start_date` participates, so no
- * current-stage argument is needed.
+ * represented solely by the backend-reconciled `revealed` flag (see
+ * {@link isHabitUnlocked}). No stage argument is needed because the client must
+ * not independently repeat eligibility and undo a manual re-lock.
  */
 export function unlockedHabits(habits: readonly Habit[]): Habit[] {
   return habits.filter((h) => isHabitUnlocked(h));

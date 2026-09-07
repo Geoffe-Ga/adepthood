@@ -4033,3 +4033,74 @@ def test_corpus_sweep_migration_round_trips_on_sqlite(
     command.upgrade(cfg, _CORPUS_SWEEP_REVISION)
     assert _table_exists(db_url, "corpussweep")
     assert "fragments_added" not in _columns_of(db_url, "corpusconsentevent")
+
+
+# -- habit.auto_revealed_at one-shot marker -------------------------------
+
+_HABIT_AUTO_REVEAL_BASE_REVISION = "e9a4c6d8f0b2"  # pragma: allowlist secret
+_HABIT_AUTO_REVEAL_REVISION = "f2c7a1d9e4b6"  # pragma: allowlist secret
+
+
+def _bootstrap_habit_auto_reveal_baseline(sync_url: str) -> None:
+    """Create the current habit shape without the new one-shot marker."""
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE habit ( id INTEGER PRIMARY KEY, revealed BOOLEAN NOT NULL DEFAULT 0)"
+            )
+        )
+        conn.execute(text("INSERT INTO habit (id, revealed) VALUES (1, 0), (2, 1)"))
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_habit_auto_reveal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config immediately before the marker migration."""
+    db_path = tmp_path / "habit_auto_reveal_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    _bootstrap_habit_auto_reveal_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HABIT_AUTO_REVEAL_BASE_REVISION)
+    return cfg
+
+
+def _habit_auto_reveal_rows(db_url: str) -> list[tuple[int, Any, Any]]:
+    """Return both baseline rows without involving the ORM model."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return list(
+                conn.execute(
+                    text("SELECT id, revealed, auto_revealed_at FROM habit ORDER BY id")
+                ).tuples()
+            )
+    finally:
+        engine.dispose()
+
+
+def test_habit_auto_reveal_marker_migration_round_trips_on_sqlite(
+    alembic_sqlite_config_habit_auto_reveal: Config,
+) -> None:
+    """The nullable marker arrives without consuming any existing invitation."""
+    cfg = alembic_sqlite_config_habit_auto_reveal
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _HABIT_AUTO_REVEAL_REVISION)
+    assert _habit_auto_reveal_rows(db_url) == [(1, 0, None), (2, 1, None)]
+
+    command.downgrade(cfg, _HABIT_AUTO_REVEAL_BASE_REVISION)
+    assert "auto_revealed_at" not in _columns_of(db_url, "habit")
+
+    command.upgrade(cfg, _HABIT_AUTO_REVEAL_REVISION)
+    assert _habit_auto_reveal_rows(db_url) == [(1, 0, None), (2, 1, None)]

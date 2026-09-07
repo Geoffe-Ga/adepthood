@@ -78,7 +78,7 @@ describe('unlockedHabits', () => {
     expect(unlockedHabits([habit0, habit1, habit2])).toEqual([habit1]);
   });
 
-  it('ignores stage and start_date entirely — only revealed matters', () => {
+  it('trusts the reconciled revealed flag instead of repeating eligibility', () => {
     const habits = [
       makeHabit({
         id: 30,
