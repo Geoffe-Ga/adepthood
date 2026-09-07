@@ -291,13 +291,16 @@ async def spend_one_message(
     return None
 
 
-async def _reverse_monthly_spend(session: AsyncSession, user_id: int) -> SpendResult | None:
+async def _reverse_monthly_spend(
+    session: AsyncSession, user_id: int, reason: str
+) -> SpendResult | None:
     """Give one monthly slot back, or ``None`` when there is none to give back.
 
     The ``> 0`` predicate is what keeps the counter off negative numbers: a
     refund is only ever a reversal, so a caller holding a stale
     :class:`SpendResult` (or one whose spend was already rolled back) buys
-    nothing rather than manufacturing free capacity.
+    nothing rather than manufacturing free capacity.  ``reason`` is the
+    caller's name for why the slot comes back, stamped on the audit row.
     """
     result = await session.execute(
         update(User)
@@ -315,7 +318,7 @@ async def _reverse_monthly_spend(session: AsyncSession, user_id: int) -> SpendRe
             user_id=user_id,
             actor_user_id=user_id,
             bucket=BUCKET_MONTHLY,
-            reason=REASON_REFUND_NO_NOTES,
+            reason=reason,
             # The monthly bucket counts *up*, so returning a slot is a
             # negative delta and the spend/refund pair sums to zero.
             delta=Decimal(-1),
@@ -326,8 +329,14 @@ async def _reverse_monthly_spend(session: AsyncSession, user_id: int) -> SpendRe
     return SpendResult(monthly_used=new_used, offering_balance=balance, bucket=BUCKET_MONTHLY)
 
 
-async def _reverse_offering_spend(session: AsyncSession, user_id: int) -> SpendResult | None:
-    """Put one paid credit back, or ``None`` when the user row is gone."""
+async def _reverse_offering_spend(
+    session: AsyncSession, user_id: int, reason: str
+) -> SpendResult | None:
+    """Put one paid credit back, or ``None`` when the user row is gone.
+
+    ``reason`` is the caller's name for why the credit comes back, stamped on
+    the audit row.
+    """
     result = await session.execute(
         update(User)
         .where(col(User.id) == user_id)
@@ -344,7 +353,7 @@ async def _reverse_offering_spend(session: AsyncSession, user_id: int) -> SpendR
             user_id=user_id,
             actor_user_id=user_id,
             bucket=BUCKET_OFFERING,
-            reason=REASON_REFUND_NO_NOTES,
+            reason=reason,
             delta=Decimal(1),
             balance_before=Decimal(new_balance - 1),
             balance_after=Decimal(new_balance),
@@ -354,7 +363,11 @@ async def _reverse_offering_spend(session: AsyncSession, user_id: int) -> SpendR
 
 
 async def refund_one_message(
-    session: AsyncSession, user_id: int, spent: SpendResult
+    session: AsyncSession,
+    user_id: int,
+    spent: SpendResult,
+    *,
+    reason: str = REASON_REFUND_NO_NOTES,
 ) -> SpendResult:
     """Reverse ``spent`` into the bucket it actually came from.
 
@@ -367,13 +380,19 @@ async def refund_one_message(
     ``rollback`` would erase those too, including our own record of what the
     provider charged us).
 
+    ``reason`` names why the slot comes back in the audit trail.  The default
+    keeps the empty-pass semantics exactly as they were; a caller settling a
+    pass that *failed* after its deduction committed passes
+    ``REASON_REFUND_FAILED_RESONANCE`` so the compensating credit is
+    distinguishable from a quality reversal.
+
     Returns the post-refund balances, or ``spent`` unchanged when there was
     nothing to reverse (the row vanished, or the counter is already at zero) —
     a refund that cannot happen must never invent capacity, and the caller's
     response then simply reports the balances it already had.
     """
     reverse = _reverse_monthly_spend if spent.bucket == BUCKET_MONTHLY else _reverse_offering_spend
-    refunded = await reverse(session, user_id)
+    refunded = await reverse(session, user_id, reason)
     if refunded is None:
         logger.warning("wallet_refund_noop", extra={"user_id": user_id, "bucket": spent.bucket})
         return spent

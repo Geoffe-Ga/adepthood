@@ -25,7 +25,7 @@ from tests.architecture.pool_hold_census import (
 
 # The runtime census carries one test per row plus the helpers around them; a
 # read that finds fewer than this found the wrong file or parsed nothing.
-_FEWEST_RUNTIME_ROWS = 10
+_FEWEST_RUNTIME_ROWS = 11
 
 # Marker shapes kept as real modules, because the validator's job is to read a
 # file the way pytest would and a string fixture would not exercise that.
@@ -479,7 +479,8 @@ def test_the_runtime_census_is_read_from_the_file_rather_than_imported() -> None
     found = runtime_tests()
 
     assert len(found) >= _FEWEST_RUNTIME_ROWS
-    assert found["test_the_resonance_reflection_pass_is_dialled_off_the_pool"] is True
+    assert found["test_the_page_transcription_is_dialled_off_the_pool"] is True
+    assert found["test_the_resonance_reflection_pass_is_dialled_off_the_pool"] is False
     assert found["test_the_essay_llm_is_dialled_off_the_pool"] is False
     assert found["test_the_apple_oauth_license_check_is_dialled_off_the_pool"] is False
     assert found["test_the_deployment_wide_vault_wheel_is_dialled_off_the_pool"] is False

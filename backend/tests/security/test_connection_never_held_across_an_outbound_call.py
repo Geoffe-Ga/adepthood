@@ -412,18 +412,13 @@ async def test_the_invitation_corpus_themes_are_dialled_off_the_pool(
     )
 
 
-# ---------------------------------------------------------------------------
-# Resonance capability-probe row closed by a read-then-release boundary.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """The resonance vault handshake runs after reads release and before the wallet write."""
+    """Clear route: POST /journal/{entry_id}/resonance, at the capability probe."""
     vault = _ScriptedVault(capabilities=frozenset())
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     headers, _user_id = await _signup(async_client, "resonance_handshake")
@@ -450,26 +445,12 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     assert_dialled_off_the_pool(_at(outbound_boundary, _HANDSHAKE), what="the vault handshake")
 
 
-# ---------------------------------------------------------------------------
-# Reasoned atomicity exceptions. Each runs, asserts, and remains expected red.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Allowed reflection hold: the staged deduction, marginalia, and usage commit "
-        "together so a provider failure rolls them all back. The census names the "
-        "pool-starvation cost and the compensating-refund design this avoids."
-    ),
-)
 @pytest.mark.asyncio
 async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
     async_client: AsyncClient,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Allowed atomicity row: POST /journal/{entry_id}/resonance reflection."""
+    """Clear route: POST /journal/{entry_id}/resonance, at the reflection itself."""
     vault = _ScriptedVault(
         capabilities=frozenset({CreekCapability.REFLECT}),
         reflect_result=VaultReflection(
@@ -491,53 +472,85 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
     assert_dialled_off_the_pool(_at(outbound_boundary, _REFLECT), what="the vault reflection pass")
 
 
-# ---------------------------------------------------------------------------
-# Completion-detection row closed by a separate additive transaction.
-# ---------------------------------------------------------------------------
+async def _seed_habit_with_goal(db_session: AsyncSession, user_id: int) -> None:
+    """Seed one habit with a goal so completion detection has a candidate.
+
+    Without a candidate the detection cost guard never dials, and a test about
+    that dial would fail its own non-emptiness floor instead of observing it.
+    """
+    habit = Habit(
+        name="Walking",
+        icon="🚶",
+        start_date=date(2025, 1, 1),
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    db_session.add(
+        Goal(
+            habit_id=habit.id,
+            title="clear",
+            tier="clear",
+            target=1.0,
+            target_unit="x",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        )
+    )
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
-async def test_the_resonance_completion_detection_is_dialled_off_the_pool(
+async def test_the_completion_detection_is_dialled_off_the_pool(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """A seeded candidate reaches detection off-pool, observed apart from reflection."""
-    headers, user_id = await _signup(async_client, "resonance_detection")
-    await _seed_completion_candidate(db_session, user_id)
-    entry_id = await _create_entry(async_client, headers)
+    """Clear route: POST /journal/{entry_id}/resonance, at the completion-detection dial.
 
-    async def _complete(
+    The vault serves the reflection, so the Botmason seam answers exactly one
+    call on this request -- the detection pass -- and the observation at that
+    leaf isolates the dial this row is about.
+    """
+    vault = _ScriptedVault(
+        capabilities=frozenset({CreekCapability.REFLECT}),
+        reflect_result=VaultReflection(
+            status=VaultReflectionStatus.OK,
+            notes=(VaultReflectionNote(kind="theme", quote=_QUOTE, note="You return to water."),),
+            essay=None,
+            essay_grounded=False,
+            routed_tier=VaultTierCeiling.PERSONAL,
+        ),
+    )
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "resonance_detection")
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_habit_with_goal(db_session, user_id)
+
+    async def _detect(
         prompt: str, history: object, *, system_prompt: object, api_key: object
     ) -> LLMResponse:
-        del history, system_prompt, api_key
-        payload = (
-            {"hits": [{"index": 0, "quote": _QUOTE}]}
-            if '"hits"' in prompt or "COMPLETED" in prompt
-            else {"notes": [{"kind": "theme", "quote": _QUOTE, "note": "It holds."}]}
-        )
+        del prompt, history, system_prompt, api_key
         return LLMResponse(
-            text=json.dumps(payload),
+            text=json.dumps({"hits": [{"index": 0, "quote": _QUOTE}]}),
             provider="stub",
             model=STUB_MODEL_NAME,
             prompt_tokens=0,
             completion_tokens=0,
         )
 
-    monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+    monkeypatch.setattr(marginalia_service, "generate_response", _detect)
     outbound_boundary.reset()
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
     assert resp.status_code == HTTPStatus.OK, resp.text
-    assert resp.json()["suggestions"], "the seeded candidate produced no completion suggestion"
-    detection = [
-        record
-        for record in _at(outbound_boundary, _LLM)
-        if "detection.py:detect_completions" in record.frames
-    ]
-    assert_dialled_off_the_pool(detection, what="the resonance completion-detection dial")
+    assert_dialled_off_the_pool(_at(outbound_boundary, _LLM), what="the completion-detection dial")
 
 
 @pytest.mark.asyncio
@@ -664,6 +677,13 @@ async def test_the_apple_oauth_license_check_is_dialled_off_the_pool(
     assert_dialled_off_the_pool(
         _at(outbound_boundary, _LICENSE), what="the Apple OAuth licence check"
     )
+
+
+# ---------------------------------------------------------------------------
+# The one remaining expected-red row: the deliberately ALLOWED transcription
+# hold. It runs; it asserts; it is expected red until the trade it names is
+# unmade.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.xfail(

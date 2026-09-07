@@ -77,6 +77,13 @@ REASON_GUMROAD_REFUND = "gumroad_refund"
 # ``gumroad_refund`` so product-quality reversals can be counted apart from
 # payment ones — a rising count here is a reflection-quality signal.
 REASON_REFUND_NO_NOTES = "refund_no_notes"
+# ``refund_failed_pass`` — a pass that failed after its deduction had already
+# committed: a provider error, a spent balance, the vault's care escalation,
+# or a persistence failure after the dials.  The compensating credit reverses
+# the spend so a failed pass never charges; the distinct token keeps the audit
+# trail honest about *why* the slot came back — a rising count here is a
+# provider-health signal where ``refund_no_notes`` is a reflection-quality one.
+REASON_REFUND_FAILED_RESONANCE = "refund_failed_pass"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

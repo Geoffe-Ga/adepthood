@@ -48,6 +48,7 @@ from domain.creek_vault import (
 from main import app
 from models.marginalia import Marginalia
 from models.user import User
+from models.wallet_audit import REASON_REFUND_FAILED_RESONANCE, REASON_SPEND_MONTHLY, WalletAudit
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
@@ -564,11 +565,11 @@ async def test_vault_escalation_returns_adepthoods_own_care_surface(
 async def test_vault_escalation_never_charges_the_wallet(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The staged deduction is rolled back, so an escalation costs the writer nothing.
+    """The committed deduction is refunded, so an escalation costs the writer nothing.
 
-    The pre-flight deduction is staged before the reflection runs, so an
-    escalation that returned without rolling back would charge a person in acute
-    distress for a reflection they never received.
+    The pre-flight deduction commits before the reflection runs, so an
+    escalation that returned without the compensating credit would charge a
+    person in acute distress for a reflection they never received.
     """
     fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
     _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
@@ -591,6 +592,53 @@ async def test_vault_escalation_never_charges_the_wallet(
         await db_session.execute(select(func.count()).select_from(Marginalia))
     ).scalar_one()
     assert persisted == 0
+
+
+@pytest.mark.asyncio
+async def test_vault_escalation_refunds_the_committed_charge(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The escalation's uncharged promise is now kept by compensation, and audited.
+
+    The deduction commits before the vault is dialled, so the escalation path
+    cannot roll it back any more — it reverses the committed spend with a
+    crediting entry instead, and the audit pair is what proves the promise was
+    kept rather than the charge never landing.
+    """
+    fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
+    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "vault_read_escalate_audit")
+    entry_id = await _create_entry(async_client, headers)
+    before = await _read_user(db_session, "vault_read_escalate_audit@example.com")
+    used_before = before.monthly_messages_used
+    balance_before = before.offering_balance
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    # Discard anything merely flushed on the shared test session: production's
+    # get_session teardown rolls uncommitted work back, so the refund and its
+    # audit row below must be durable to satisfy these assertions.
+    await db_session.rollback()
+    after = await _read_user(db_session, "vault_read_escalate_audit@example.com")
+    assert after.monthly_messages_used == used_before
+    assert after.offering_balance == balance_before
+    audit_rows = (
+        (
+            await db_session.execute(
+                select(WalletAudit)
+                .where(col(WalletAudit.user_id) == after.id)
+                .order_by(col(WalletAudit.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.reason for row in audit_rows] == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
 
 
 @pytest.mark.asyncio

@@ -15,12 +15,19 @@ from sqlmodel import col
 
 from domain.frequencies import Frequency
 from domain.resonance import NO_NOTES_MESSAGES, DropReason, NoNotesReason
+from models.completion_suggestion import CompletionSuggestion
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
-from models.wallet_audit import REASON_REFUND_NO_NOTES, REASON_SPEND_MONTHLY, WalletAudit
+from models.wallet_audit import (
+    REASON_REFUND_FAILED_RESONANCE,
+    REASON_REFUND_NO_NOTES,
+    REASON_SPEND_MONTHLY,
+    WalletAudit,
+)
+from routers import journal as journal_router
 from services import botmason as botmason_service
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
@@ -195,20 +202,190 @@ async def test_resonance_other_users_entry_is_404(
 async def test_resonance_llm_error_is_502_without_charge(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A provider error rolls back the deduction — 502 and nothing persisted/charged."""
+    """A provider error refunds the committed deduction — 502 and nothing persisted/charged."""
     _raise_llm(monkeypatch)
     headers = await _signup(async_client, "err")
     entry_id = await _create_entry(async_client, headers)
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
     assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    # Only committed state may pass: uncommitted flushes die at session teardown.
+    await db_session.rollback()
     rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert rows == 0
-    # The deduction was rolled back: the user's monthly usage is still zero.
+    # The deduction was refunded by a compensating credit: monthly usage nets to zero.
     user = (
         await db_session.execute(select(User).where(col(User.email) == "err@example.com"))
     ).scalar_one()
     assert user.monthly_messages_used == 0
+
+
+async def _audit_reasons(db_session: AsyncSession, email: str) -> list[str]:
+    """Return the wallet-audit reasons for ``email``'s account, in insertion order."""
+    user = (await db_session.execute(select(User).where(col(User.email) == email))).scalar_one()
+    rows = (
+        (
+            await db_session.execute(
+                select(WalletAudit)
+                .where(col(WalletAudit.user_id) == user.id)
+                .order_by(col(WalletAudit.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [row.reason for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pass_is_refunded_with_its_own_audit_reason(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deduction commits before the dial, so a failure settles by compensation.
+
+    A rollback would leave no trace at all; the compensating credit leaves the
+    spend and its reversal side by side, which is what lets an operator tell a
+    failed pass from an account that never spent.
+    """
+    _raise_llm(monkeypatch)
+    headers = await _signup(async_client, "refund_audit")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    # Discard anything merely flushed on the shared test session: production's
+    # get_session teardown rolls uncommitted work back, so only *committed*
+    # state may satisfy the assertions below — the refund must be durable.
+    await db_session.rollback()
+    rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
+    assert rows == 0
+    user = (
+        await db_session.execute(select(User).where(col(User.email) == "refund_audit@example.com"))
+    ).scalar_one()
+    assert user.monthly_messages_used == 0
+    assert await _audit_reasons(db_session, "refund_audit@example.com") == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_the_dials_still_never_charges(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure in our own persistence phase is compensated exactly like a provider's.
+
+    The committed deduction cannot be un-charged by a rollback any more, so the
+    settlement helper's ``finally`` must issue the compensating credit whenever
+    its commit did not land — even when the failure is ours rather than the
+    provider's.
+    """
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "Water."})
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise RuntimeError("usage metering broke")
+
+    monkeypatch.setattr(journal_router, "record_llm_usage", _boom)
+    headers = await _signup(async_client, "late_failure")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    # The catch-all handler sanitises the failure to a 500; what matters here
+    # is the wallet's committed state after it.
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR, resp.text
+    # Roll back the shared test session so only committed state can pass:
+    # a merely-flushed refund would vanish at production's session teardown.
+    await db_session.rollback()
+    marginalia = (
+        await db_session.execute(select(func.count()).select_from(Marginalia))
+    ).scalar_one()
+    assert marginalia == 0
+    suggestions = (
+        await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
+    ).scalar_one()
+    assert suggestions == 0
+    user = (
+        await db_session.execute(select(User).where(col(User.email) == "late_failure@example.com"))
+    ).scalar_one()
+    assert user.monthly_messages_used == 0
+    assert await _audit_reasons(db_session, "late_failure@example.com") == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_byok_key_is_rejected_before_the_charge_commits(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A garbage BYOK header costs the writer nothing — not even a refund pair.
+
+    Key resolution can raise before any dial, so it must run while the
+    deduction is still merely staged: the 400 leaves the transaction to be
+    rolled back at session teardown, and the durable wallet state shows no
+    spend at all. Resolving the key *after* the pre-dial commit would charge
+    one message per malformed header, user-triggerable at will.
+    """
+    headers = await _signup(async_client, "badkey")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(
+        f"/journal/{entry_id}/resonance",
+        headers={**headers, _BYOK_HEADER: "garbage-not-a-key"},
+    )
+
+    assert resp.status_code == HTTPStatus.BAD_REQUEST, resp.text
+    assert resp.json()["detail"] == "invalid_llm_api_key_format"
+    # Only committed state may pass: production's get_session teardown rolls
+    # the staged deduction back, and this rollback stands in for it.
+    await db_session.rollback()
+    user = (
+        await db_session.execute(select(User).where(col(User.email) == "badkey@example.com"))
+    ).scalar_one()
+    assert user.monthly_messages_used == 0
+    assert await _audit_reasons(db_session, "badkey@example.com") == []
+
+
+@pytest.mark.asyncio
+async def test_an_empty_pass_whose_commit_fails_refunds_exactly_once(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The staged empty-pass refund never doubles up with the failed-pass credit.
+
+    An empty pass stages a ``refund_no_notes`` credit before the settlement
+    commit; when that commit then fails, the compensator's leading rollback
+    must discard the staged credit so the wallet nets to zero rather than
+    gaining a free slot — the offering-bucket reversal has no zero-guard, so
+    a double refund would manufacture credit.
+    """
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+
+    async def _boom(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise RuntimeError("usage metering broke")
+
+    monkeypatch.setattr(journal_router, "record_llm_usage", _boom)
+    headers = await _signup(async_client, "empty_late_failure")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR, resp.text
+    # Only committed state may pass: uncommitted flushes die at session teardown.
+    await db_session.rollback()
+    user = (
+        await db_session.execute(
+            select(User).where(col(User.email) == "empty_late_failure@example.com")
+        )
+    ).scalar_one()
+    assert user.monthly_messages_used == 0
+    assert await _audit_reasons(db_session, "empty_late_failure@example.com") == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
 
 
 @pytest.mark.asyncio
@@ -322,8 +499,9 @@ async def test_distress_entry_returns_care_even_when_llm_fails(
 ) -> None:
     """Care must not depend on the LLM: a flagged entry surfaces care on an LLM error.
 
-    The reflection is absent (marginalia empty) and the charge is rolled back, but
-    the human + professional pointers are returned regardless (NORTH-STAR §10).
+    The reflection is absent (marginalia empty) and the committed charge is
+    refunded by a compensating credit, but the human + professional pointers
+    are returned regardless (NORTH-STAR §10).
     """
     _raise_llm(monkeypatch)
     headers = await _signup(async_client, "flagged_err")
@@ -335,7 +513,7 @@ async def test_distress_entry_returns_care_even_when_llm_fails(
     assert body["care"] is not None
     _assert_care_routes_to_human_and_professional(body["care"])
     assert body["marginalia"] == []
-    # No reflection persisted, and the charge was rolled back.
+    # No reflection persisted, and the committed charge was refunded.
     rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert rows == 0
     user = (
@@ -820,11 +998,22 @@ def _raise_credit_exhausted(monkeypatch: pytest.MonkeyPatch, provider: str = "an
 
 
 async def _assert_nothing_was_charged(db_session: AsyncSession, email: str) -> None:
-    """No note landed and the monthly deduction was rolled back."""
+    """No note landed and the committed monthly deduction was refunded.
+
+    Both callers spend from the monthly bucket, so the audit trail must show
+    the spend and its compensating reversal side by side — net zero, but never
+    silence. The leading rollback discards anything merely flushed on the
+    shared test session, so only committed (durable) state can satisfy this.
+    """
+    await db_session.rollback()
     rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert rows == 0
     user = (await db_session.execute(select(User).where(col(User.email) == email))).scalar_one()
     assert user.monthly_messages_used == 0
+    assert await _audit_reasons(db_session, email) == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
 
 
 @pytest.mark.asyncio

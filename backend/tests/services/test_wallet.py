@@ -24,6 +24,7 @@ from models.wallet_audit import (
     REASON_ADMIN_GRANT,
     REASON_GUMROAD_PURCHASE,
     REASON_MONTHLY_RESET,
+    REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_NOTES,
     REASON_SELF_GRANT,
     REASON_SPEND_MONTHLY,
@@ -664,6 +665,31 @@ class TestRefundOneMessage:
         assert sum(row.delta for row in rows) == Decimal(0)
         assert rows[1].delta == Decimal(-1)
         assert rows[1].balance_after == Decimal(2)
+
+    @pytest.mark.asyncio
+    async def test_refund_reason_parameter_is_stamped_on_the_audit_row(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A caller that names why the slot comes back sees that name in the log.
+
+        The default keeps the empty-pass rows byte-for-byte identical, so the
+        one thing to prove is that a compensating refund — a pass that failed
+        after its deduction committed — is distinguishable from silence.
+        """
+        user = await _make_user(db_session, monthly_used=0, offering_balance=0)
+        assert user.id is not None
+        spent = await spend_one_message(db_session, user.id, _MONTHLY_CAP)
+        assert spent is not None
+
+        await refund_one_message(db_session, user.id, spent, reason=REASON_REFUND_FAILED_RESONANCE)
+        await db_session.commit()
+
+        rows = await _audit_rows(db_session, user.id)
+        assert [row.reason for row in rows] == [
+            REASON_SPEND_MONTHLY,
+            "refund_failed_pass",
+        ]
+        assert sum(row.delta for row in rows) == Decimal(0)
 
     @pytest.mark.asyncio
     async def test_a_monthly_refund_at_zero_is_a_no_op_with_no_audit_row(
