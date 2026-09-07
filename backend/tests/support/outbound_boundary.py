@@ -119,8 +119,8 @@ from a request, including the ones that are *fine*, and why each is fine. A
 census that lists only failures cannot tell a reader whether an unlisted site
 was examined or missed.
 
-Live and defective (eight)
---------------------------
+Original defective groups (eight; four now closed)
+--------------------------------------------------
 
 **1. POST /journal/{entry_id}/resonance -> CreekVaultClient.handshake**, through
 ``run_resonance`` -> ``select_reflection_llm``. The handler loads the entry
@@ -142,16 +142,18 @@ decision, not an oversight, and it is one of the two rows an enforcing gate
 should eventually allowlist in prose rather than "fix".
 
 **3. POST /journal/marginalia/{marginalia_id}/essay -> generate_response**,
-through ``_cache_essay`` -> ``generate_essay``. Two SELECTs, then the language
-model, then a commit. Nothing about the essay is transactional; the commit is
-simply in the wrong place.
+through ``_cache_essay`` -> ``generate_essay``. **Closed by a subsequent
+change.** The cache seam now commits after both ownership reads and the
+persisted INTIMATE guard, while the transaction is still read-only, then calls
+the language model. Essay text and usage remain staged and committed together
+only after a successful response.
 
 **4. GET /invitations -> CreekVaultClient.handshake / .wheel**, through
 ``generate_invitation_signals`` -> ``_gather_aggregates`` ->
-``_gather_corpus_themes``. The aggregate's four arguments evaluate in order:
-three database gathers, then the vault. The transaction is open here regardless
-of which vault branch the dependency took, because those three gathers reopen
-it. On a polled list endpoint.
+``_gather_corpus_themes``. **Closed by a subsequent change.** The aggregate now
+materializes its three database sources, commits their read-only transaction,
+and only then gathers vault themes. Candidate computation and every signal
+write remain below the remote call.
 
 **5. POST /auth/password-reset/confirm -> EmailSender.send**, through
 ``_send_change_notification_safely``. ``_apply_reset_to_user`` commits and then

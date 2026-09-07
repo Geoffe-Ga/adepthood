@@ -7,8 +7,10 @@ from http import HTTPStatus
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from models.journal_entry import JournalEntry
+from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
 from routers import journal as journal_router
 from services import botmason as botmason_service
@@ -90,7 +92,12 @@ async def test_essay_generates_then_caches(
     assert "user_id" not in body
     assert fake.calls == 1
 
+    async def _must_not_recache(*_args: object, **_kwargs: object) -> Marginalia:
+        raise AssertionError("a cached essay reached the cache-and-commit seam")
+
+    monkeypatch.setattr(journal_router, "_cache_essay", _must_not_recache)
     second = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
     assert second.status_code == HTTPStatus.OK
     assert second.json()["essay"] == "A warm letter about beginnings."
     assert fake.calls == 1  # cached — no second LLM call
@@ -154,12 +161,39 @@ def _refuse_for_credit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _assert_no_essay_cached(session: AsyncSession, marg_id: int) -> None:
-    """A refused pass leaves the note exactly as it was."""
+    """A refused pass leaves both the note and its usage ledger exactly as they were."""
     note = await session.get(Marginalia, marg_id)
     assert note is not None
     await session.refresh(note)
     assert note.essay is None
     assert note.essay_generated_at is None
+    result = await session.execute(
+        select(LLMUsageLog).where(col(LLMUsageLog.journal_entry_id) == note.journal_entry_id)
+    )
+    assert list(result.scalars()) == []
+
+
+@pytest.mark.asyncio
+async def test_essay_provider_error_is_502_without_partial_writes(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient provider failure crosses the release boundary without persisting state."""
+
+    async def _fail(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> None:
+        del prompt, history, system_prompt, api_key
+        raise botmason_service.LLMProviderError("provider down")
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _fail)
+    headers, user_id = await _signup(async_client, "essay_provider")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY, resp.text
+    assert resp.json()["detail"] == "llm_provider_error"
+    await _assert_no_essay_cached(db_session, marg_id)
 
 
 @pytest.mark.asyncio

@@ -1762,12 +1762,20 @@ async def _cache_essay(
 ) -> Marginalia:
     """Generate the essay via the cloud LLM, cache it on the note, and persist.
 
+    The caller has already loaded and authorized both the note and its parent
+    entry, then applied the persisted INTIMATE privacy floor. Neither object has
+    been mutated, so committing that read-only transaction here makes nothing
+    partially durable and releases its pooled connection before the potentially
+    long provider call. Essay text and usage are staged together only after a
+    successful response and remain committed atomically below the call.
+
     A transient provider error maps to 502 with no write; a spent balance maps to
     its own permanent status, checked first because it subclasses the generic
     type. Called only for non-intimate entries — the intimate guard in
     :func:`expand_marginalia_essay` returns before this seam, so the cloud is
     never reached for an intimate entry's essay.
     """
+    await session.commit()
     byok_key = resolve_chat_api_key(api_key)
     llm = BotmasonResonanceLLM(byok_key)
     try:
