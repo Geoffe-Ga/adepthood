@@ -248,7 +248,7 @@
   },
   {
     "id": "depth.choose-rings",
-    "description": "Someone turns a depth ring on and the app they come back to is the one they chose.",
+    "description": "Someone turns a depth ring on or off and the app they come back to is the one they chose: Habits, Practice and Course each add or remove their primary destination; Sangha adds or removes the Digital Sangha door in Settings (SanghaSection.tsx), and its switch is offered only in a build with EXPO_PUBLIC_SANGHA_INVITE_URL configured, because a switch with nothing to close would be a false choice. The live-wire spec proves enable_sangha round-trips independently; the in-process pairing of each switch with its destination is pinned by src/features/Settings/__tests__/depthSwitchesHaveEffect.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ChooseDepthsSection.tsx",
       "client": ["depthPreferences"],
