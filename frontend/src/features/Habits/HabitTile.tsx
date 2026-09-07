@@ -497,9 +497,10 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
 const LOCKED_BACKGROUND = '#e8e8e8';
 const LOCKED_OPACITY = 0.4;
 
-// The calendar no longer participates in unlock — a locked habit is a standing
-// invitation the user accepts by tapping, never a timer that counts down. So
-// the label is a static "Stage X · Locked" regardless of start_date.
+// The tile never counts down. A locked habit is a standing invitation the user
+// accepts by tapping, and the calendar's own reveal is a server-side one-shot
+// on the habit list read (#2576) that this tile cannot predict. So the label is
+// a static "Stage X · Locked" regardless of start_date.
 const getUnlockLabel = (habit: Habit): string => `Stage ${habit.stage} · Locked`;
 
 interface LockedTileProps {

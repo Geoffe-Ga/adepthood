@@ -101,8 +101,9 @@ describe('HabitTile locked state', () => {
   });
 
   it('never shows an "Unlocks in N days" countdown, even for a future start_date', () => {
-    // The calendar no longer drives unlock at all -- a day-count countdown
-    // would misleadingly imply this habit unlocks itself over time.
+    // The tile never counts down: the calendar's reveal is a server-side
+    // one-shot on the habit list read (#2576), not something a tile can
+    // predict, so a day-count label would promise a moment it cannot know.
     const habit = makeHabit({ start_date: new Date('2026-04-13T00:00:00Z') });
 
     const component = renderer.create(

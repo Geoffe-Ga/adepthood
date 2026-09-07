@@ -49,8 +49,9 @@ export function describeHabits(
     };
   }
   if (unlockedCount === 0) {
-    // Habits are locked by default now; with a corpus but nothing unlocked,
-    // invite the user to open one rather than implying a timed auto-unlock.
+    // Habits are locked by default; with a corpus but nothing unlocked, invite
+    // the user to open one. No countdown: the calendar's reveal is a server-side
+    // one-shot on the next habit list read, not a moment this tile can predict.
     return {
       loading: false,
       stat: 'Unlock a habit to begin',

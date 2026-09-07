@@ -3,7 +3,7 @@
 Issue #2576. Until this module existed nothing ever revealed a habit but the
 user: ``PUT /habits/{id}`` with ``revealed=true``, the Habits screen's unlock
 affordances, or a Return re-commit. That was a ratified decision (#1332 /
-PR #1349, "nothing auto-unlocks") and it produced the stall the issue
+PR #1349: the manual-only invariant) and it produced the stall the issue
 describes: once a person stops unlocking by hand, the habits past Blue never
 appear. The owner ruling of 2026-09-06 reversed it -- **calendar/stage
 eligibility auto-reveals each habit once; a persisted one-shot marker prevents

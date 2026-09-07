@@ -1522,6 +1522,8 @@ export const habitManager = {
    * unlocked. Re-locking is an allowed, declinable bulk action; it only hides
    * the tile — the underlying completions are preserved, so unlocking again
    * restores full history. Keys strictly off completions, never the calendar.
+   * Relocking a habit the calendar auto-revealed is final: the server stamps
+   * its one offer (`auto_revealed_at`) and never re-reveals a stamped habit.
    */
   lockUntouchedHabits: (): void => {
     const next = getHabits().map((h) => ({

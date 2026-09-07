@@ -449,7 +449,9 @@ const useHabitTileRenderer = (
   const renderHabitTile = useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
       // Unlock is governed solely by the persisted ``revealed`` flag — locked by
-      // default, opened only when the user chooses. Stage/calendar never gate it.
+      // default, opened by the user or, once per habit, by the server when the
+      // calendar opens its slot (#2576). The client itself never gates on stage
+      // or date, and a relock the user makes is never undone.
       const isLocked = !isHabitUnlocked(item);
       // globalIndex is the habit's true flat-list position — it drives icon
       // editing into that array. colorIndex is the signed display slot

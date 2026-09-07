@@ -944,7 +944,7 @@ describe('getGoalTier subtractive total-failure branch', () => {
   });
 });
 
-describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
+describe('isHabitUnlocked reads only the persisted revealed flag (the server, not the client, flips it)', () => {
   const make = (overrides: Partial<Habit>): Habit =>
     ({
       id: 1,
@@ -962,9 +962,11 @@ describe('isHabitUnlocked (stage/calendar no longer participate)', () => {
     }) as Habit;
 
   test('a high-stage habit stays locked even with a past start_date, unless revealed', () => {
-    // Under the old stage/calendar model this Clear Light habit (10th stage)
-    // would have unlocked once its start_date passed. Now only `revealed`
-    // decides, so it stays locked.
+    // The client never derives unlock from stage or start_date: only the
+    // persisted `revealed` flag decides. The calendar's one-shot reveal is the
+    // server's (#2576) and arrives as `revealed: true` on the next read, so a
+    // Clear Light habit (10th stage) with a past start_date stays locked until
+    // that flag says otherwise.
     const habit = make({ stage: 'Clear Light', start_date: new Date('2000-01-01T00:00:00Z') });
     expect(isHabitUnlocked(habit)).toBe(false);
   });
