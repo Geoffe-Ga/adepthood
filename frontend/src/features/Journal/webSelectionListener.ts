@@ -1,10 +1,14 @@
 /**
- * Web-only bridge for the quote-selection surface. react-native-web 0.19.13
- * wires TextInput.onSelectionChange to React's onSelect, which iOS Safari never
- * synthesizes for native long-press selection-handle drags inside a textarea.
- * On web we subscribe to the document 'selectionchange' event and read the host
- * textarea's selection directly. Accepted trade-off: a document-wide event may
- * re-emit the textarea's persisted span, but emitSpan is idempotent.
+ * Web-only bridge for the quote-selection surface. react-native-web 0.21.2
+ * wires TextInput.onSelectionChange to React's onSelect
+ * (``react-native-web/dist/exports/TextInput/index.js``), and Chromium fires
+ * that ``select`` event once a mouse drag, a double-click, or a Shift+Arrow
+ * extension settles (verified in a real browser for #2652). iOS Safari never
+ * synthesizes it for native long-press selection-handle drags inside a
+ * textarea, so on web we also subscribe to the document 'selectionchange'
+ * event and read the host textarea's selection directly. Accepted trade-off:
+ * a document-wide event may re-emit the textarea's persisted span, but
+ * emitSpan is idempotent.
  */
 import { useEffect, type RefObject } from 'react';
 import { Platform, type TextInput } from 'react-native';
