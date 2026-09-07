@@ -21,6 +21,12 @@ describe('buildSelectionSurfaceCopy', () => {
     expect(instruction).toMatch(/shift/i);
   });
 
+  it('on web the empty hint still asks for a passage and says how to select one', () => {
+    const { emptyHint } = buildSelectionSurfaceCopy('web');
+    expect(emptyHint).toMatch(/choose a passage first/i);
+    expect(emptyHint).toMatch(/select/i);
+  });
+
   it('on ios keeps the long-press wording byte for byte', () => {
     expect(buildSelectionSurfaceCopy('ios')).toEqual({
       instruction: NATIVE_INSTRUCTION,
