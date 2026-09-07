@@ -11,9 +11,9 @@ is not a skip and must not be read as one. A skipped test does not run; these
 run, on every suite, and assert exactly the same property as the rows that pass.
 The marker records a red row rather than hiding it, and it is strict, so the day
 somebody fixes a row the expected failure becomes an unexpected pass and the
-build goes red until the census is corrected. The alternative -- shipping seven
-genuine failures on day one -- produces a gate that gets disabled rather than
-obeyed.
+build goes red until the census is corrected. The alternative -- shipping every
+outstanding defect as a hard failure -- produces a gate that gets disabled
+rather than obeyed.
 
 ``raises=ConnectionHeldAcrossOutboundCallError`` is the other half of that bargain,
 and it is what keeps an expected-red row honest. Only the property assertion
@@ -502,17 +502,6 @@ async def test_the_essay_llm_is_dialled_off_the_pool(
     assert_dialled_off_the_pool(_at(outbound_boundary, _LLM), what="the essay dial")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Census row 5: _apply_reset_to_user commits and then calls session.refresh "
-        "on the very next line; the refresh emits a SELECT and autobegins a fresh "
-        "transaction, undoing the release the commit just made. The notification "
-        "email is then sent under it. Its sibling request_password_reset is safe and "
-        "differs by exactly that one line."
-    ),
-)
 @pytest.mark.usefixtures("wire_email_sender")
 @pytest.mark.asyncio
 async def test_the_password_change_notification_is_sent_off_the_pool(
@@ -540,15 +529,6 @@ async def test_the_password_change_notification_is_sent_off_the_pool(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Census row 6: resolving an existing account issues an identity SELECT and "
-        "an email SELECT; on the create path both return nothing and the handler "
-        "then dials a third-party licensing host under the transaction they opened."
-    ),
-)
 @pytest.mark.asyncio
 async def test_the_oauth_license_check_is_dialled_off_the_pool(
     async_client: AsyncClient,
@@ -579,6 +559,41 @@ async def test_the_oauth_license_check_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _LICENSE), what="the OAuth licence check")
+
+
+@pytest.mark.asyncio
+async def test_the_apple_oauth_license_check_is_dialled_off_the_pool(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    outbound_boundary: OutboundBoundaryObserver,
+) -> None:
+    """Census row 6: POST /auth/oauth/apple, on the new-account create path."""
+
+    async def _identity(_id_token: str) -> OIDCIdentity:
+        return OIDCIdentity(
+            subject="apple-sub-boundary-1",
+            email="apple_oauth_boundary@example.com",
+            email_verified=True,
+            name=None,
+        )
+
+    monkeypatch.setattr(auth_router, "verify_apple_id_token", _identity)
+    outbound_boundary.reset()
+
+    resp = await async_client.post(
+        "/auth/oauth/apple",
+        json={
+            "id_token": "an-id-token-the-stub-ignores",
+            "license_key": "AAAA1111-BBBB-2222",
+            "timezone": "America/Los_Angeles",
+            "full_name": "Boundary Newcomer",
+        },
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert_dialled_off_the_pool(
+        _at(outbound_boundary, _LICENSE), what="the Apple OAuth licence check"
+    )
 
 
 @pytest.mark.xfail(

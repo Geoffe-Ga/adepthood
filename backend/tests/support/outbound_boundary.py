@@ -119,8 +119,8 @@ from a request, including the ones that are *fine*, and why each is fine. A
 census that lists only failures cannot tell a reader whether an unlisted site
 was examined or missed.
 
-Original defective groups (eight; four now closed)
---------------------------------------------------
+Original defective groups (eight; six now closed)
+-------------------------------------------------
 
 **1. POST /journal/{entry_id}/resonance -> CreekVaultClient.handshake**, through
 ``run_resonance`` -> ``select_reflection_llm``. The handler loads the entry
@@ -156,20 +156,19 @@ and only then gathers vault themes. Candidate computation and every signal
 write remain below the remote call.
 
 **5. POST /auth/password-reset/confirm -> EmailSender.send**, through
-``_send_change_notification_safely``. ``_apply_reset_to_user`` commits and then
-calls ``session.refresh`` on the very next line; the refresh emits a SELECT and
-autobegins a fresh transaction, undoing the release the commit just made. The
-notification email -- SMTP, capped at thirty seconds by its connect timeout --
-is then sent under it. This is the sharpest row in the census, because its
-sibling ``request_password_reset`` is safe and the two differ by exactly one
-``session.refresh`` line.
+``_send_change_notification_safely``. **Closed by a subsequent change.** The
+reset commit is now the final session operation before the notification. Because
+the session factory does not expire instances on commit, the response can still
+read the user's id, email, and timezone without the refresh that previously
+reopened a transaction.
 
 **6. POST /auth/oauth/google and POST /auth/oauth/apple -> verify_aptitude_license
 -> verify_license**, through ``_resolve_oauth_user`` -> ``_create_oauth_account``
 -> ``_verify_oauth_license``. Resolving an existing account first issues an
-identity SELECT and an email SELECT; on the create path those return nothing and
-the handler dials a third-party licensing host, with its own retry loop, under
-the transaction they opened.
+identity SELECT and an email SELECT. **Closed by a subsequent change.** The
+shared provider-neutral ladder now commits those read-only lookups before the
+new-account rung dials the licensing host; separate Google and Apple runtime
+tests prove both routes reach that release.
 
 **7. GET /stages/wheel -> CreekVaultClient.handshake / .wheel**, through
 ``select_wheel_balance`` -> ``fetch_vault_wheel``, for a caller served the
