@@ -41,8 +41,8 @@ const PLAINTEXT_CAUTION =
 const GENERIC_FAILURE =
   'Could not build the export. Nothing was saved. Check your connection and try again.';
 
-function failureMessage(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : GENERIC_FAILURE;
+function failureMessage(): string {
+  return GENERIC_FAILURE;
 }
 
 function receiptLine(saved: SavedExport): string {
@@ -51,9 +51,11 @@ function receiptLine(saved: SavedExport): string {
 }
 
 function followUpLine(saved: SavedExport): string {
-  return saved.shared
-    ? 'It is on its way to wherever you sent it.'
-    : 'It is on this device. Open it again from Files to move it somewhere safe.';
+  if (saved.destination === 'browser-download') {
+    return 'Your browser downloaded it. Move it somewhere safe before you leave.';
+  }
+  if (saved.destination === 'shared') return 'It is on its way to wherever you sent it.';
+  return 'It is on this device. Open it again from Files to move it somewhere safe.';
 }
 
 interface ExportButtonProps {
@@ -116,8 +118,8 @@ function useExportRunner(): [ExportState, (_format: ExportFormat) => Promise<voi
     try {
       const saved = await saveDataExport(format);
       setState({ running: null, error: null, saved });
-    } catch (err) {
-      setState({ running: null, error: failureMessage(err), saved: null });
+    } catch {
+      setState({ running: null, error: failureMessage(), saved: null });
     }
   }, []);
   return [state, run];
