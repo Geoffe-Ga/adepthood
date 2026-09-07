@@ -188,12 +188,7 @@ def _build_receipt(
 ) -> DeletionReceipt:
     """Turn raw row counts into the receipt returned to the caller and stored."""
     configured = vault_disposition is not None or _vault_is_configured()
-    if vault_disposition == "deleted":
-        guidance = VAULT_GUIDANCE_TEARDOWN_COMPLETE
-    elif vault_disposition is not None:
-        guidance = VAULT_GUIDANCE_TEARDOWN_PENDING
-    else:
-        guidance = VAULT_GUIDANCE_CONFIGURED if configured else VAULT_GUIDANCE_NONE
+    guidance = _vault_guidance(vault_disposition, configured=configured)
     return DeletionReceipt(
         user_id=account.user_id,
         rows_erased=sum(counts.values()),
@@ -205,6 +200,15 @@ def _build_receipt(
         vault_disposition=vault_disposition or VAULT_NOT_PURGED,
         vault_guidance=guidance,
     )
+
+
+def _vault_guidance(vault_disposition: str | None, *, configured: bool) -> str:
+    """Choose deletion guidance without mixing it into receipt construction."""
+    if vault_disposition == "deleted":
+        return VAULT_GUIDANCE_TEARDOWN_COMPLETE
+    if vault_disposition is not None:
+        return VAULT_GUIDANCE_TEARDOWN_PENDING
+    return VAULT_GUIDANCE_CONFIGURED if configured else VAULT_GUIDANCE_NONE
 
 
 async def delete_account(

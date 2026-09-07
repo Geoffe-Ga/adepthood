@@ -25,13 +25,15 @@ from schemas.vault_activation import (
 )
 from services import journal_encryption
 from services.creek_provisioning import (
+    reconcile_vault_teardowns,
+    request_vault_teardown,
+    resume_vault_activations,
+)
+from services.creek_provisioning_client import (
     CreekProvisioningJob,
     ProvisioningRejectedError,
     ProvisioningUnavailableError,
     get_creek_provisioning_client,
-    reconcile_vault_teardowns,
-    request_vault_teardown,
-    resume_vault_activations,
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 

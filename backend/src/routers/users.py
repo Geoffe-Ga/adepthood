@@ -34,10 +34,12 @@ from schemas.account_deletion import (
 from schemas.timezone import TimezoneRead, TimezoneUpdate
 from services.account_deletion import Account, DeletionReceipt, delete_account
 from services.creek_provisioning import (
-    CreekProvisioningClient,
-    get_creek_provisioning_client,
     load_vault_activation,
     request_vault_teardown,
+)
+from services.creek_provisioning_client import (
+    CreekProvisioningClient,
+    get_creek_provisioning_client,
 )
 
 logger = logging.getLogger(__name__)

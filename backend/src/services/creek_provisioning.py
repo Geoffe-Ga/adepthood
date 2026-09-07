@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-import hmac
-import os
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from http import HTTPStatus
-from pathlib import Path
-from typing import Annotated, Final, Literal, Protocol
+from typing import Final
 from uuid import uuid4
 
-import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -24,47 +17,17 @@ from models.vault_activation import (
     VaultActivationState,
     VaultTeardownReceipt,
 )
-from schemas.vault_activation import (
-    VaultKeyCeremonyChallenge,
-    VaultKeyCeremonySubmission,
+from schemas.vault_activation import VaultKeyCeremonyChallenge, VaultKeyCeremonySubmission
+from services.creek_provisioning_client import (
+    FAILURE_MALFORMED_RESPONSE,
+    FAILURE_PROVIDER_REJECTED,
+    FAILURE_PROVIDER_UNAVAILABLE,
+    CreekProvisioningClient,
+    CreekProvisioningJob,
+    ProvisioningRejectedError,
+    ProvisioningUnavailableError,
 )
-from services.creek_vault_url import classify_vault_url
 
-PROVISIONING_URL_ENV_VAR: Final[str] = "CREEK_PROVISIONING_URL"
-PROVISIONING_AUTH_FILE_ENV_VAR: Final[str] = "CREEK_PROVISIONING_AUTH_FILE"
-HANDOFF_AUTH_FILE_ENV_VAR: Final[str] = "CREEK_PROVISIONING_HANDOFF_AUTH_FILE"
-
-_EXPECTED_CONTRACT_MAJOR: Final[str] = "1"
-_CONTRACT_HEADER: Final[str] = "Creek-Provisioning-Version"
-_FAILURE_PROVIDER_UNAVAILABLE: Final[str] = "provider_unavailable"
-_FAILURE_PROVIDER_REJECTED: Final[str] = "provider_rejected"
-_FAILURE_MALFORMED_RESPONSE: Final[str] = "malformed_completion"
-_CEREMONY_REJECTION_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "invalid_request",
-        "job_unavailable",
-        "invalid_transition",
-        "ceremony_conflict",
-        "ceremony_expired",
-    }
-)
-_IDENTIFIER = Annotated[str, Field(min_length=1, max_length=200)]
-_STATUS_URL = Annotated[str, Field(min_length=1, max_length=500)]
-_UPSTREAM_STATE = Literal[
-    "pending",
-    "provisioning",
-    "awaiting_key_ceremony",
-    "ready",
-    "failed",
-    "deleting",
-    "deleted",
-]
-_UPSTREAM_FAILURE = Literal[
-    "provider_unavailable",
-    "provider_rejected",
-    "handoff_failed",
-    "internal_error",
-]
 _ACTIVE_STATES: Final[frozenset[str]] = frozenset(
     {
         VaultActivationState.SUBMITTING.value,
@@ -74,320 +37,6 @@ _ACTIVE_STATES: Final[frozenset[str]] = frozenset(
         VaultActivationState.AWAITING_HANDOFF.value,
     }
 )
-_ALL_STATES: Final[frozenset[str]] = frozenset(state.value for state in VaultActivationState)
-
-
-class ProvisioningUnavailableError(RuntimeError):
-    """The Creek control plane could not give a trustworthy answer."""
-
-
-class ProvisioningRejectedError(RuntimeError):
-    """Creek refused an operation without exposing its response payload."""
-
-    def __init__(self, code: str = _FAILURE_PROVIDER_REJECTED) -> None:
-        """Retain only one allowlisted stable code, never Creek's raw body."""
-        safe_code = code if code in _CEREMONY_REJECTION_CODES else _FAILURE_PROVIDER_REJECTED
-        super().__init__(safe_code)
-        self.code = safe_code
-
-
-@dataclass(frozen=True, slots=True)
-class CreekProvisioningJob:
-    """Secret-free subset of the Creek job contract used by Adepthood."""
-
-    job_id: str
-    activation_id: str
-    state: str
-    attempts: int
-    retryable: bool
-    failure_reason: str | None
-    attested_confidential: bool | None
-
-
-class CreekProvisioningClient(Protocol):
-    """Network boundary used by routes, startup recovery, and tests."""
-
-    async def activate(
-        self,
-        activation_id: str,
-        consumer_identity: str,
-    ) -> CreekProvisioningJob:
-        """Create or replay one durable allocation request."""
-
-    async def status(self, job_id: str) -> CreekProvisioningJob:
-        """Read one owned job."""
-
-    async def retry(self, job_id: str) -> CreekProvisioningJob:
-        """Retry one safely retryable job."""
-
-    async def delete(self, job_id: str) -> CreekProvisioningJob:
-        """Idempotently request upstream teardown."""
-
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        """Fetch one public challenge for an awaiting job."""
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        """Relay one strictly validated ciphertext-only completion."""
-
-
-class _CreekJobWire(BaseModel):
-    """Strict parser for the current Creek v1 public job response."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    job_id: _IDENTIFIER
-    activation_id: _IDENTIFIER
-    state: _UPSTREAM_STATE
-    attempts: Annotated[int, Field(ge=0)]
-    retryable: bool
-    failure_reason: _UPSTREAM_FAILURE | None
-    created_at: datetime
-    updated_at: datetime
-    attested_confidential: bool | None
-    status_url: _STATUS_URL
-
-    @field_validator("created_at", "updated_at")
-    @classmethod
-    def _timezone_aware(cls, value: datetime) -> datetime:
-        """Reject ambiguous upstream clocks before they enter recovery logic."""
-        if value.tzinfo is None:
-            raise ValueError("provisioning timestamp must be timezone-aware")
-        return value
-
-
-def _stable_rejection_code(response: httpx.Response) -> str:
-    """Extract only Creek's allowlisted code and discard every other body field."""
-    try:
-        payload = response.json()
-    except ValueError:
-        return _FAILURE_PROVIDER_REJECTED
-    if not isinstance(payload, dict):
-        return _FAILURE_PROVIDER_REJECTED
-    code = payload.get("code")
-    if not isinstance(code, str) or code not in _CEREMONY_REJECTION_CODES:
-        return _FAILURE_PROVIDER_REJECTED
-    return code
-
-
-class HttpCreekProvisioningClient:
-    """Bearer-authenticated Creek v1 transport with secret-free failures."""
-
-    def __init__(self, base_url: str, token: str, client: httpx.AsyncClient) -> None:
-        """Bind one requester bearer to the shared bounded transport."""
-        self._base_url = base_url.rstrip("/")
-        self._token = token
-        self._client = client
-
-    async def activate(
-        self,
-        activation_id: str,
-        consumer_identity: str,
-    ) -> CreekProvisioningJob:
-        return await self._request(
-            "POST",
-            "/control/v1/activations",
-            json={
-                "activation_id": activation_id,
-                "consumer_identity": consumer_identity,
-            },
-            expected_status=202,
-        )
-
-    async def status(self, job_id: str) -> CreekProvisioningJob:
-        return await self._request(
-            "GET",
-            f"/control/v1/jobs/{job_id}",
-            expected_status=200,
-        )
-
-    async def retry(self, job_id: str) -> CreekProvisioningJob:
-        return await self._request(
-            "POST",
-            f"/control/v1/jobs/{job_id}/retry",
-            expected_status=202,
-        )
-
-    async def delete(self, job_id: str) -> CreekProvisioningJob:
-        return await self._request(
-            "DELETE",
-            f"/control/v1/jobs/{job_id}",
-            expected_status=202,
-        )
-
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        response = await self._send(
-            "GET",
-            f"/control/v1/jobs/{job_id}/key-ceremony",
-            expected_status=200,
-        )
-        try:
-            return VaultKeyCeremonyChallenge.model_validate(response.json())
-        except (ValueError, ValidationError):
-            raise ProvisioningUnavailableError("provisioning response malformed") from None
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        return await self._request(
-            "PUT",
-            f"/control/v1/jobs/{job_id}/key-ceremony",
-            json=submission.model_dump(mode="json"),
-            expected_status=200,
-        )
-
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        expected_status: int,
-        json: dict[str, object] | None = None,
-    ) -> CreekProvisioningJob:
-        response = await self._send(
-            method,
-            path,
-            expected_status=expected_status,
-            json=json,
-        )
-        try:
-            wire = _CreekJobWire.model_validate(response.json())
-        except (ValueError, ValidationError):
-            raise ProvisioningUnavailableError("provisioning response malformed") from None
-        if wire.state not in _ALL_STATES:
-            raise ProvisioningUnavailableError("provisioning response malformed")
-        return CreekProvisioningJob(
-            job_id=wire.job_id,
-            activation_id=wire.activation_id,
-            state=wire.state,
-            attempts=wire.attempts,
-            retryable=wire.retryable,
-            failure_reason=wire.failure_reason,
-            attested_confidential=wire.attested_confidential,
-        )
-
-    async def _send(
-        self,
-        method: str,
-        path: str,
-        *,
-        expected_status: int,
-        json: dict[str, object] | None = None,
-    ) -> httpx.Response:
-        """Send one authenticated request and retain no untrusted response detail."""
-        try:
-            response = await self._client.request(
-                method,
-                f"{self._base_url}{path}",
-                headers={"Authorization": f"Bearer {self._token}"},
-                json=json,
-            )
-        except httpx.HTTPError:
-            raise ProvisioningUnavailableError("provisioning unavailable") from None
-        if response.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise ProvisioningUnavailableError("provisioning unavailable")
-        version = response.headers.get(_CONTRACT_HEADER, "")
-        if version.partition(".")[0] != _EXPECTED_CONTRACT_MAJOR:
-            raise ProvisioningUnavailableError("provisioning contract unavailable")
-        if response.status_code != expected_status:
-            raise ProvisioningRejectedError(_stable_rejection_code(response))
-        return response
-
-
-class _UnavailableProvisioningClient:
-    """Configured absence that activation records as a retryable failure."""
-
-    @staticmethod
-    def _raise() -> CreekProvisioningJob:
-        raise ProvisioningUnavailableError("provisioning unavailable")
-
-    async def activate(
-        self,
-        activation_id: str,
-        consumer_identity: str,
-    ) -> CreekProvisioningJob:
-        del activation_id, consumer_identity
-        return self._raise()
-
-    async def status(self, job_id: str) -> CreekProvisioningJob:
-        del job_id
-        return self._raise()
-
-    async def retry(self, job_id: str) -> CreekProvisioningJob:
-        del job_id
-        return self._raise()
-
-    async def delete(self, job_id: str) -> CreekProvisioningJob:
-        del job_id
-        return self._raise()
-
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        del job_id
-        raise ProvisioningUnavailableError("provisioning unavailable")
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        del job_id, submission
-        return self._raise()
-
-
-@dataclass(slots=True)
-class _HttpClientPool:
-    """Mutable holder avoids rebinding module globals during lazy lifecycle."""
-
-    client: httpx.AsyncClient | None = None
-
-
-_HTTP_POOL = _HttpClientPool()
-
-
-def _read_mounted_token(env_var: str) -> str | None:
-    """Read a non-empty bearer from its mounted file without logging its value."""
-    raw_path = os.getenv(env_var, "").strip()
-    if not raw_path:
-        return None
-    try:
-        token = Path(raw_path).read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return token or None
-
-
-def handoff_bearer_is_valid(authorization: str | None) -> bool:
-    """Authenticate Creek's callback against a separately mounted bearer."""
-    expected = _read_mounted_token(HANDOFF_AUTH_FILE_ENV_VAR)
-    if expected is None or authorization is None:
-        return False
-    scheme, separator, supplied = authorization.partition(" ")
-    if separator != " " or scheme.lower() != "bearer" or not supplied:
-        return False
-    return hmac.compare_digest(supplied, expected)
-
-
-def get_creek_provisioning_client() -> CreekProvisioningClient:
-    """Resolve the backend-only Creek client; an incomplete config fails softly."""
-    base_url = os.getenv(PROVISIONING_URL_ENV_VAR, "").strip()
-    token = _read_mounted_token(PROVISIONING_AUTH_FILE_ENV_VAR)
-    if not base_url or token is None or classify_vault_url(base_url) is not None:
-        return _UnavailableProvisioningClient()
-    if _HTTP_POOL.client is None:
-        _HTTP_POOL.client = httpx.AsyncClient(timeout=10.0)
-    return HttpCreekProvisioningClient(base_url, token, _HTTP_POOL.client)
-
-
-async def close_creek_provisioning_http_pool() -> None:
-    """Close the lazily allocated control-plane transport on app shutdown."""
-    client, _HTTP_POOL.client = _HTTP_POOL.client, None
-    if client is not None:
-        await client.aclose()
 
 
 async def load_vault_activation(
@@ -443,14 +92,12 @@ def _mark_local_failure(
 
 def _apply_job(activation: VaultActivation, job: CreekProvisioningJob) -> None:
     """Apply only a response bound to this durable activation."""
-    if job.activation_id != activation.activation_id:
-        _mark_local_failure(activation, _FAILURE_MALFORMED_RESPONSE, retryable=True)
-        return
-    if activation.creek_job_id is not None and job.job_id != activation.creek_job_id:
-        _mark_local_failure(activation, _FAILURE_MALFORMED_RESPONSE, retryable=True)
+    job_id_matches = activation.creek_job_id is None or job.job_id == activation.creek_job_id
+    if job.activation_id != activation.activation_id or not job_id_matches:
+        _mark_local_failure(activation, FAILURE_MALFORMED_RESPONSE, retryable=True)
         return
     activation.creek_job_id = job.job_id
-    if job.state == VaultActivationState.READY.value and activation.credential_received_at is None:
+    if _job_awaits_handoff(activation, job):
         activation.state = VaultActivationState.AWAITING_HANDOFF.value
         activation.retryable = False
         activation.failure_reason = None
@@ -464,6 +111,16 @@ def _apply_job(activation: VaultActivation, job: CreekProvisioningJob) -> None:
     activation.updated_at = datetime.now(UTC)
 
 
+def _job_awaits_handoff(
+    activation: VaultActivation,
+    job: CreekProvisioningJob,
+) -> bool:
+    """Keep Creek's ready state inert until its credential callback arrives."""
+    return (
+        job.state == VaultActivationState.READY.value and activation.credential_received_at is None
+    )
+
+
 async def _store_job(
     session: AsyncSession,
     activation: VaultActivation,
@@ -473,9 +130,9 @@ async def _store_job(
     try:
         job = await operation()
     except ProvisioningUnavailableError:
-        _mark_local_failure(activation, _FAILURE_PROVIDER_UNAVAILABLE, retryable=True)
+        _mark_local_failure(activation, FAILURE_PROVIDER_UNAVAILABLE, retryable=True)
     except ProvisioningRejectedError:
-        _mark_local_failure(activation, _FAILURE_PROVIDER_REJECTED, retryable=False)
+        _mark_local_failure(activation, FAILURE_PROVIDER_REJECTED, retryable=False)
     else:
         _apply_job(activation, job)
     session.add(activation)
@@ -585,43 +242,84 @@ async def request_vault_teardown(
     if job_id is None:
         await session.commit()
         return None
-    result = await session.execute(
-        select(VaultTeardownReceipt).where(VaultTeardownReceipt.creek_job_id == job_id)
-    )
-    receipt = result.scalars().first()
-    if receipt is None:
-        receipt = VaultTeardownReceipt(creek_job_id=job_id)
-        session.add(receipt)
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            result = await session.execute(
-                select(VaultTeardownReceipt).where(VaultTeardownReceipt.creek_job_id == job_id)
-            )
-            receipt = result.scalars().first()
-            if receipt is None:
-                raise
-            await session.commit()
-    else:
-        await session.commit()
-    try:
-        job = await client.delete(job_id)
-    except ProvisioningUnavailableError:
-        receipt.state = VaultActivationState.FAILED.value
-        receipt.retryable = True
-        receipt.failure_reason = _FAILURE_PROVIDER_UNAVAILABLE
-    except ProvisioningRejectedError:
-        receipt.state = VaultActivationState.FAILED.value
-        receipt.retryable = False
-        receipt.failure_reason = _FAILURE_PROVIDER_REJECTED
-    else:
-        _apply_teardown_job(receipt, job)
+    receipt = await _ensure_teardown_receipt(session, job_id)
+    update = await _fetch_teardown_update(client, job_id, issue_delete=True)
+    _apply_teardown_update(receipt, update)
     receipt.attempts += 1
     receipt.updated_at = datetime.now(UTC)
     session.add(receipt)
     await session.commit()
     return receipt
+
+
+async def _load_teardown_receipt(
+    session: AsyncSession,
+    job_id: str,
+) -> VaultTeardownReceipt | None:
+    result = await session.execute(
+        select(VaultTeardownReceipt).where(VaultTeardownReceipt.creek_job_id == job_id)
+    )
+    return result.scalars().first()
+
+
+async def _create_teardown_receipt(
+    session: AsyncSession,
+    job_id: str,
+) -> VaultTeardownReceipt:
+    receipt = VaultTeardownReceipt(creek_job_id=job_id)
+    session.add(receipt)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        winner = await _load_teardown_receipt(session, job_id)
+        if winner is None:
+            raise
+        await session.commit()
+        return winner
+    return receipt
+
+
+async def _ensure_teardown_receipt(
+    session: AsyncSession,
+    job_id: str,
+) -> VaultTeardownReceipt:
+    receipt = await _load_teardown_receipt(session, job_id)
+    if receipt is not None:
+        await session.commit()
+        return receipt
+    return await _create_teardown_receipt(session, job_id)
+
+
+TeardownUpdate = tuple[CreekProvisioningJob | None, str | None, bool]
+
+
+async def _fetch_teardown_update(
+    client: CreekProvisioningClient,
+    job_id: str,
+    *,
+    issue_delete: bool,
+) -> TeardownUpdate:
+    operation = client.delete if issue_delete else client.status
+    try:
+        return await operation(job_id), None, False
+    except ProvisioningUnavailableError:
+        return None, FAILURE_PROVIDER_UNAVAILABLE, True
+    except ProvisioningRejectedError:
+        return None, FAILURE_PROVIDER_REJECTED, False
+
+
+def _apply_teardown_update(
+    receipt: VaultTeardownReceipt,
+    update: TeardownUpdate,
+) -> None:
+    job, failure_reason, retryable = update
+    if job is not None:
+        _apply_teardown_job(receipt, job)
+        return
+    receipt.state = VaultActivationState.FAILED.value
+    receipt.failure_reason = failure_reason
+    receipt.retryable = retryable
 
 
 def _apply_teardown_job(
@@ -635,7 +333,7 @@ def _apply_teardown_job(
     }:
         receipt.state = VaultActivationState.FAILED.value
         receipt.retryable = True
-        receipt.failure_reason = _FAILURE_MALFORMED_RESPONSE
+        receipt.failure_reason = FAILURE_MALFORMED_RESPONSE
         return
     receipt.state = job.state
     receipt.retryable = job.retryable
@@ -652,6 +350,20 @@ async def reconcile_vault_teardowns(
     client: CreekProvisioningClient,
 ) -> None:
     """Resume every unconfirmed upstream deletion after a process restart."""
+    pending = await _pending_teardowns(session_factory)
+    for job_id, prior_state, retryable in pending:
+        update = await _fetch_teardown_update(
+            client,
+            job_id,
+            issue_delete=prior_state == VaultActivationState.FAILED.value and retryable,
+        )
+        await _store_reconciled_teardown(session_factory, job_id, update)
+
+
+async def _pending_teardowns(
+    session_factory: SessionFactory,
+) -> tuple[tuple[str, str, bool], ...]:
+    """Remove confirmed receipts and snapshot work before any network call."""
     async with session_factory() as session:
         result = await session.execute(select(VaultTeardownReceipt))
         receipts = tuple(result.scalars())
@@ -664,42 +376,28 @@ async def reconcile_vault_teardowns(
             if confirmed_receipt.confirmed_at is not None:
                 await session.delete(confirmed_receipt)
         await session.commit()
-    for job_id, prior_state, retryable in pending:
-        job: CreekProvisioningJob | None = None
-        failure_reason: str | None = None
-        failure_retryable = False
-        try:
-            if prior_state == VaultActivationState.FAILED.value and retryable:
-                job = await client.delete(job_id)
-            else:
-                job = await client.status(job_id)
-        except ProvisioningUnavailableError:
-            failure_reason = _FAILURE_PROVIDER_UNAVAILABLE
-            failure_retryable = True
-        except ProvisioningRejectedError:
-            failure_reason = _FAILURE_PROVIDER_REJECTED
-        async with session_factory() as session:
-            result = await session.execute(
-                select(VaultTeardownReceipt).where(VaultTeardownReceipt.creek_job_id == job_id)
-            )
-            current_receipt = result.scalars().first()
-            if current_receipt is None or current_receipt.confirmed_at is not None:
-                await session.commit()
-                continue
-            if job is None:
-                current_receipt.state = VaultActivationState.FAILED.value
-                current_receipt.failure_reason = failure_reason
-                current_receipt.retryable = failure_retryable
-            else:
-                _apply_teardown_job(current_receipt, job)
-            if current_receipt.confirmed_at is not None:
-                await session.delete(current_receipt)
-                await session.commit()
-                continue
-            current_receipt.attempts += 1
-            current_receipt.updated_at = datetime.now(UTC)
-            session.add(current_receipt)
+    return pending
+
+
+async def _store_reconciled_teardown(
+    session_factory: SessionFactory,
+    job_id: str,
+    update: TeardownUpdate,
+) -> None:
+    """Apply a network result only if its content-free receipt still exists."""
+    async with session_factory() as session:
+        current = await _load_teardown_receipt(session, job_id)
+        if current is None or current.confirmed_at is not None:
             await session.commit()
+            return
+        _apply_teardown_update(current, update)
+        if current.confirmed_at is not None:
+            await session.delete(current)
+        else:
+            current.attempts += 1
+            current.updated_at = datetime.now(UTC)
+            session.add(current)
+        await session.commit()
 
 
 async def resume_vault_activations(

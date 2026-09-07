@@ -73,9 +73,9 @@ from routers.transcription import router as transcription_router
 from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
-from routers.vault_activation import internal_router as vault_activation_internal_router
 from routers.vault_activation import router as vault_activation_router
 from routers.vault_config import router as vault_config_router
+from routers.vault_provisioning_internal import router as vault_provisioning_internal_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
 from seed_practices import seed_practices
@@ -89,10 +89,12 @@ from services.content_repository import (
     get_content_repository,
 )
 from services.creek_provisioning import (
-    close_creek_provisioning_http_pool,
-    get_creek_provisioning_client,
     reconcile_vault_teardowns,
     resume_vault_activations,
+)
+from services.creek_provisioning_client import (
+    close_creek_provisioning_http_pool,
+    get_creek_provisioning_client,
 )
 from services.creek_vault_client import (
     CREEK_VAULT_URL_ENV_VAR,
@@ -1087,7 +1089,7 @@ app.include_router(invitations_router)
 app.include_router(metta_return_router)
 app.include_router(vault_config_router)
 app.include_router(vault_activation_router)
-app.include_router(vault_activation_internal_router)
+app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)
 
 

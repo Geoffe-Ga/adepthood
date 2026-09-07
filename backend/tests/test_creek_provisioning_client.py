@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from schemas.vault_activation import VaultKeyCeremonySubmission
-from services.creek_provisioning import (
+from services.creek_provisioning_client import (
     HttpCreekProvisioningClient,
     ProvisioningRejectedError,
     ProvisioningUnavailableError,
@@ -236,7 +236,7 @@ def test_insecure_control_plane_url_never_builds_a_bearer_transport(
     def fail_transport(*_args: object, **_kwargs: object) -> None:
         pytest.fail("an insecure control-plane URL built an HTTP transport")
 
-    monkeypatch.setattr("services.creek_provisioning.httpx.AsyncClient", fail_transport)
+    monkeypatch.setattr("services.creek_provisioning_client.httpx.AsyncClient", fail_transport)
 
     client = get_creek_provisioning_client()
 
