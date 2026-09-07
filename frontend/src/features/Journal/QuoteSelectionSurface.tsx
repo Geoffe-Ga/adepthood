@@ -175,8 +175,10 @@ interface SelectionActionsProps {
 }
 
 /**
- * The confirm/cancel row. Exactly one of {guard, Button} is enabled, so an empty
- * tap lands on the guard (a hint) and ``onConfirm`` never fires on an empty span.
+ * The confirm/cancel row. An empty tap lands on the guard (a hint) and
+ * ``onConfirm`` never fires on an empty span. The guard loses its handler once
+ * the Button enables; it must not become a disabled ancestor, because web
+ * accessibility semantics would then disable the enabled descendant too.
  */
 function SelectionActions({
   isEmpty,
@@ -190,8 +192,7 @@ function SelectionActions({
     <View style={styles.quoteSelectActions}>
       <Pressable
         accessible={false}
-        disabled={!isEmpty}
-        onPress={showHint}
+        onPress={isEmpty ? showHint : undefined}
         testID={`${testID}-confirm-guard`}
       >
         <Button

@@ -45,10 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: "frontend/.nvmrc"
           cache: "npm"
@@ -73,7 +73,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: aptitude
-          POSTGRES_PASSWORD: aptitude  # pragma: allowlist secret
+          POSTGRES_PASSWORD: aptitude # pragma: allowlist secret
           POSTGRES_DB: aptitude
         ports:
           - 5432:5432
@@ -87,17 +87,17 @@ jobs:
       # writes to the database named here. An unset value is a hard failure in
       # globalSetup rather than a skip -- a lane that silently tests nothing is
       # the defect this whole job exists to remove.
-      TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude  # pragma: allowlist secret
+      TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude # pragma: allowlist secret
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: backend/requirements*.txt
@@ -108,7 +108,7 @@ jobs:
         run: uv pip install --system -r backend/requirements-lock.txt
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: "frontend/.nvmrc"
           cache: "npm"
@@ -123,3 +123,63 @@ jobs:
         env:
           E2E_PYTHON: python
         run: npm run test:e2e
+
+  # Native textarea selection and accessibility semantics do not exist in the
+  # Node journey process. This lane drives the production Expo web bundle in a
+  # real Chromium process against the same real FastAPI/Postgres boundary.
+  browser-journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aptitude
+          POSTGRES_PASSWORD: aptitude # pragma: allowlist secret
+          POSTGRES_DB: aptitude
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aptitude"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      TEST_POSTGRES_URL: postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/requirements*.txt
+
+      - name: Install backend runtime deps
+        run: uv pip install --system -r backend/requirements-lock.txt
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: "frontend/.nvmrc"
+          cache: "npm"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install the browser runtime
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the real-browser journey
+        working-directory: frontend
+        env:
+          E2E_PYTHON: python
+        run: npm run test:e2e:web

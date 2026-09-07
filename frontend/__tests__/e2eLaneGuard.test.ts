@@ -29,6 +29,7 @@ const FRONTEND_ROOT = resolve(__dirname, '..');
 const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
 const E2E_CONFIG = join(FRONTEND_ROOT, 'jest.e2e.config.js');
+const BROWSER_E2E_CONFIG = join(FRONTEND_ROOT, 'playwright.config.ts');
 const E2E_DIR = join(FRONTEND_ROOT, 'e2e');
 const GLOBAL_SETUP = join(E2E_DIR, 'globalSetup.ts');
 const FAKE_CREEK = join(E2E_DIR, 'fakeCreekServer.mjs');
@@ -36,6 +37,8 @@ const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
 const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 
 const E2E_SCRIPT = 'test:e2e';
+const BROWSER_E2E_SCRIPT = 'test:e2e:web';
+const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
@@ -174,6 +177,11 @@ function e2eFiles(suffix: string): string[] {
   return readdirSync(E2E_DIR).filter((name) => name.endsWith(suffix));
 }
 
+/** API-client journeys run in Jest; browser journeys have their own Playwright contract. */
+function apiJourneyFiles(): string[] {
+  return e2eFiles('.e2e.test.ts').filter((name) => !name.endsWith('.browser.e2e.test.ts'));
+}
+
 function launcherText(): string {
   return read(
     SERVER_LAUNCHER,
@@ -270,6 +278,29 @@ describe('package.json exposes the lane as its own script', () => {
   );
 });
 
+describe('the real-browser journey is wired as a separate mandatory lane', () => {
+  it(`declares ${BROWSER_E2E_SCRIPT} against the Playwright config`, () => {
+    expect(packageScripts()[BROWSER_E2E_SCRIPT]).toContain('playwright.config.ts');
+  });
+
+  it('runs the browser script in the e2e workflow', () => {
+    const workflow = workflowText();
+    expect(workflow).toMatch(/^ {2}browser-journey:/m);
+    expect(workflow).toContain(BROWSER_E2E_SCRIPT);
+    expect(workflow).toContain('playwright install --with-deps chromium');
+  });
+
+  it('ships one enabled Playwright journey through the real browser UI', () => {
+    const config = read(BROWSER_E2E_CONFIG, 'The browser journey needs a Playwright config.');
+    const spec = read(join(E2E_DIR, BROWSER_JOURNEY), 'The browser journey spec is missing.');
+
+    expect(config).toContain("testMatch: '**/*.browser.e2e.test.ts'");
+    expect(spec).toContain("from '@playwright/test'");
+    expect(spec).toContain("getByRole('button', { name: 'Create account' })");
+    expect(spec).toContain("getByRole('textbox', { name: 'Entry body' })");
+  });
+});
+
 describe('jest.e2e.config.js isolates the lane without weakening anything', () => {
   it('declares no coverage gate of its own', () => {
     const text = read(E2E_CONFIG, 'The e2e jest project config is missing.');
@@ -291,11 +322,12 @@ describe('jest.e2e.config.js isolates the lane without weakening anything', () =
 
 describe('e2e specs drive the unmocked production client', () => {
   it('ships exactly the journeys the lane is built around', () => {
-    expect(e2eFiles('.e2e.test.ts').sort()).toEqual(EXPECTED_JOURNEYS);
+    expect(apiJourneyFiles().sort()).toEqual(EXPECTED_JOURNEYS);
+    expect(e2eFiles('.browser.e2e.test.ts')).toEqual([BROWSER_JOURNEY]);
   });
 
   it('imports the real API client in every journey', () => {
-    for (const name of e2eFiles('.e2e.test.ts')) {
+    for (const name of apiJourneyFiles()) {
       const text = readFileSync(join(E2E_DIR, name), 'utf8');
       if (!/from '@\/api'/.test(text)) {
         throw new Error(`e2e/${name} never imports from "@/api"; it exercises nothing real.`);
