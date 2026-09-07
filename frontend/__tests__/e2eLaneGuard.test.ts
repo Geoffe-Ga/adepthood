@@ -299,6 +299,14 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(spec).toContain("getByRole('button', { name: 'Create account' })");
     expect(spec).toContain("getByRole('textbox', { name: 'Entry body' })");
   });
+
+  it('keeps Playwright specs out of the Jest API journey lane', () => {
+    const config = read(E2E_CONFIG, 'The API journey needs a Jest config.');
+
+    expect(config).toContain(
+      "testPathIgnorePatterns: ['<rootDir>/e2e/.*[.]browser[.]e2e[.]test[.]ts$']",
+    );
+  });
 });
 
 describe('jest.e2e.config.js isolates the lane without weakening anything', () => {
