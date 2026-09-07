@@ -547,6 +547,7 @@ interface CompletionOptions {
   mounted: MountedRef;
   prepared: PreparedCeremony | null;
   recoverySaved: boolean;
+  loadStatus: () => Promise<void>;
   setPrepared: Dispatch<SetStateAction<PreparedCeremony | null>>;
   setActivation: SetActivation;
   setBusy: Dispatch<SetStateAction<boolean>>;
@@ -560,6 +561,7 @@ function useCeremonyCompletion(options: CompletionOptions): () => Promise<void> 
     mounted,
     prepared,
     recoverySaved,
+    loadStatus,
     setPrepared,
     setActivation,
     setBusy,
@@ -578,14 +580,15 @@ function useCeremonyCompletion(options: CompletionOptions): () => Promise<void> 
       if (mounted.current) setActivation(next);
     } catch {
       if (mounted.current) {
-        setError('The wrapped key was not accepted. Prepare a new recovery key to try again.');
-        setActivation({ ...AWAITING_CEREMONY_STATE });
+        setError('The wrapped key was not accepted. Your journal still works.');
+        await loadStatus();
       }
     } finally {
       if (mounted.current) setBusy(false);
     }
   }, [
     clearFeedback,
+    loadStatus,
     mounted,
     prepared,
     recoverySaved,
@@ -625,6 +628,7 @@ function useActivationController(): ActivationController {
     mounted,
     prepared: preparation.prepared,
     recoverySaved,
+    loadStatus: status.loadStatus,
     setPrepared: preparation.setPrepared,
     setActivation: status.setActivation,
     setBusy,
@@ -731,15 +735,6 @@ const PrivateVaultActivationScreen = ({ navigation }: Props): React.JSX.Element 
       </View>
     </ScreenScaffold>
   );
-};
-
-const AWAITING_CEREMONY_STATE: VaultActivation = {
-  active: true,
-  state: 'awaiting_key_ceremony',
-  retryable: false,
-  failure_reason: null,
-  credential_received: false,
-  attested_confidential: null,
 };
 
 const styles = StyleSheet.create({

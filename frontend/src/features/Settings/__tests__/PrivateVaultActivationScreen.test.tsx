@@ -255,6 +255,29 @@ describe('client-held key ceremony', () => {
     expect(view.queryByText(RECOVERY)).toBeNull();
   });
 
+  it('reconciles server truth when ceremony completion is rejected', async () => {
+    const failed: VaultActivation = {
+      ...PROVISIONING,
+      state: 'failed',
+      retryable: true,
+      failure_reason: 'provider_rejected',
+    };
+    const view = await renderActivation(AWAITING);
+    await prepareRecovery(view);
+    mockComplete.mockRejectedValue(new Error('response lost'));
+    mockStatus.mockResolvedValue(failed);
+
+    fireEvent.press(view.getByTestId('vault-recovery-saved'));
+    await act(async () => fireEvent.press(view.getByTestId('complete-vault-ceremony')));
+
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(2));
+    expect(view.queryByText(RECOVERY)).toBeNull();
+    expect(view.getByTestId('activation-failed')).toBeTruthy();
+    expect(
+      view.getByText('The wrapped key was not accepted. Your journal still works.'),
+    ).toBeTruthy();
+  });
+
   it('forgets an unsubmitted recovery copy when the screen leaves', async () => {
     const first = await renderActivation(AWAITING);
     await prepareRecovery(first);
