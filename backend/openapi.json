@@ -13329,6 +13329,16 @@
             },
             "description": "No such resource -- or none this caller is allowed to see."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
           "422": {
             "content": {
               "application/json": {

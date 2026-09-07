@@ -24,6 +24,7 @@ from services.user_vault_config import load_vault_config, store_vault_config
 router = build_router(
     prefix="/internal/vault-provisioning",
     tags=["internal-vault-provisioning"],
+    extra_statuses=(status.HTTP_409_CONFLICT,),
 )
 
 
