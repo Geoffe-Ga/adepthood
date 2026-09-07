@@ -9,12 +9,19 @@ Entitlement one transaction.
 
 from __future__ import annotations
 
+import logging
+from unittest.mock import AsyncMock
+
 import pytest
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
+from domain.entitlements import REASON_LICENSE_ALREADY_BOUND, REASON_SIGNUP_REDEMPTION
+from domain.license_claims import ClaimOutcome, claim_license, find_binding, stage_license_claim
+from models.entitlement import Entitlement
+from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.license_binding import LicenseBinding
 from models.user import User
 
@@ -24,6 +31,9 @@ SALE_ID = "S-900"
 SECOND_SALE_ID = "S-901"
 PRODUCT_ID = "prod_alpha"
 DISTINCT_SALE_COUNT = 2
+FIND_BINDING_SEAM = "domain.license_claims.find_binding"
+BOUND_EVENT = "license_bound"
+REJECTED_EVENT = "license_claim_rejected"
 
 
 async def _persist_user(db_session: AsyncSession, email: str = USER_EMAIL) -> tuple[User, int]:
@@ -77,3 +87,219 @@ async def test_one_account_may_hold_bindings_for_distinct_sales(
     await db_session.commit()
 
     assert await _count_bindings(db_session) == DISTINCT_SALE_COUNT
+
+
+async def _count_entitlements(db_session: AsyncSession) -> int:
+    """Return the number of Entitlement rows in the test database."""
+    result = await db_session.execute(select(func.count()).select_from(Entitlement))
+    return int(result.scalar_one())
+
+
+async def _active_entitlements(db_session: AsyncSession, user_id: int) -> list[Entitlement]:
+    """Return the user's live entitlement rows, read fresh."""
+    result = await db_session.execute(
+        select(Entitlement)
+        .where(col(Entitlement.user_id) == user_id, col(Entitlement.revoked_at).is_(None))
+        .execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+async def _persist_sale(db_session: AsyncSession) -> int:
+    """Persist the stored webhook row for ``SALE_ID`` and return its id."""
+    sale = GumroadSale(
+        gumroad_sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        email=OTHER_EMAIL,
+        resource_name=SALE_RESOURCE_NAME,
+        raw_payload={"sale_id": SALE_ID},
+    )
+    db_session.add(sale)
+    await db_session.commit()
+    await db_session.refresh(sale)
+    if sale.id is None:
+        msg = "sale id missing after commit"
+        raise RuntimeError(msg)
+    return sale.id
+
+
+def _records_for(caplog: pytest.LogCaptureFixture, event: str) -> list[logging.LogRecord]:
+    """Return the captured records whose message is ``event``."""
+    return [record for record in caplog.records if record.getMessage() == event]
+
+
+@pytest.mark.asyncio
+async def test_stage_claim_binds_an_unbound_sale_and_stages_one_entitlement(
+    db_session: AsyncSession,
+) -> None:
+    """A first claim stages the binding and the grant without committing either."""
+    user, user_id = await _persist_user(db_session)
+
+    outcome = await stage_license_claim(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+    )
+    assert outcome is ClaimOutcome.BOUND
+    await db_session.commit()
+
+    binding = await find_binding(db_session, SALE_ID)
+    assert binding is not None
+    assert binding.user_id == user_id
+    assert binding.product_id == PRODUCT_ID
+    entitlements = await _active_entitlements(db_session, user_id)
+    assert len(entitlements) == 1
+    assert entitlements[0].product_id == PRODUCT_ID
+    assert entitlements[0].source_sale_id is None
+
+
+@pytest.mark.asyncio
+async def test_stage_claim_links_the_stored_sale_when_it_exists(
+    db_session: AsyncSession,
+) -> None:
+    """When the webhook beat the claim, the entitlement points at the stored sale."""
+    user, user_id = await _persist_user(db_session)
+    sale_row_id = await _persist_sale(db_session)
+
+    outcome = await stage_license_claim(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+    )
+    await db_session.commit()
+
+    assert outcome is ClaimOutcome.BOUND
+    entitlements = await _active_entitlements(db_session, user_id)
+    assert len(entitlements) == 1
+    assert entitlements[0].source_sale_id == sale_row_id
+
+
+@pytest.mark.asyncio
+async def test_stage_claim_from_the_bound_account_is_idempotent(
+    db_session: AsyncSession,
+) -> None:
+    """Re-presenting a key from its own account adds no binding and no second grant."""
+    user, user_id = await _persist_user(db_session)
+    await claim_license(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    outcome = await claim_license(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    assert outcome is ClaimOutcome.ALREADY_OWN
+    assert await _count_bindings(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
+    assert len(await _active_entitlements(db_session, user_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_stage_claim_from_another_account_is_bound_elsewhere_and_writes_nothing(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A second account presenting a bound key is refused before anything is staged."""
+    caplog.set_level(logging.DEBUG)
+    first, _first_id = await _persist_user(db_session)
+    second, second_id = await _persist_user(db_session, OTHER_EMAIL)
+    await claim_license(
+        db_session,
+        first,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    outcome = await stage_license_claim(
+        db_session,
+        second,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+    )
+    await db_session.commit()
+
+    assert outcome is ClaimOutcome.BOUND_ELSEWHERE
+    assert await _count_bindings(db_session) == 1
+    assert await _active_entitlements(db_session, second_id) == []
+    rejected = _records_for(caplog, REJECTED_EVENT)
+    assert len(rejected) == 1
+    assert rejected[0].levelno == logging.WARNING
+    assert getattr(rejected[0], "reason_code", None) == REASON_LICENSE_ALREADY_BOUND
+    assert getattr(rejected[0], "user_id", None) == second_id
+
+
+@pytest.mark.asyncio
+async def test_claim_license_losing_the_unique_race_rolls_back_to_bound_elsewhere(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rival that commits between the lookup and the insert loses nothing to us.
+
+    The pre-check is silenced so the insert reaches the UNIQUE constraint,
+    which is the only line of defence that matters under real concurrency.
+    """
+    first, _first_id = await _persist_user(db_session)
+    second, second_id = await _persist_user(db_session, OTHER_EMAIL)
+    await claim_license(
+        db_session,
+        first,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+    monkeypatch.setattr(FIND_BINDING_SEAM, AsyncMock(return_value=None))
+
+    outcome = await claim_license(
+        db_session,
+        second,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    assert outcome is ClaimOutcome.BOUND_ELSEWHERE
+    assert await _count_bindings(db_session) == 1
+    assert await _active_entitlements(db_session, second_id) == []
+    assert await _count_entitlements(db_session) == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_logs_ids_only(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The bound line carries the reason and row ids — never an address or a key."""
+    caplog.set_level(logging.DEBUG)
+    user, user_id = await _persist_user(db_session)
+
+    outcome = await claim_license(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    assert outcome is ClaimOutcome.BOUND
+    bound = _records_for(caplog, BOUND_EVENT)
+    assert len(bound) == 1
+    binding = await find_binding(db_session, SALE_ID)
+    assert binding is not None
+    assert getattr(bound[0], "reason_code", None) == REASON_SIGNUP_REDEMPTION
+    assert getattr(bound[0], "user_id", None) == user_id
+    assert getattr(bound[0], "binding_id", None) == binding.id
+    assert isinstance(getattr(bound[0], "entitlement_id", None), int)
+    # The record's whole attribute bag, not just the message: an address or a
+    # key smuggled in through ``extra`` would never show up in the message.
+    assert "@" not in repr(vars(bound[0]))

@@ -51,6 +51,7 @@ __all__ = [
     "REASON_CANCELLATION",
     "REASON_DUPLICATE_SIGNUP",
     "REASON_EMAIL_MISMATCH",
+    "REASON_LICENSE_ALREADY_BOUND",
     "REASON_REFUND",
     "REASON_SIGNUP_REDEMPTION",
     "REASON_WEBHOOK_SALE",
@@ -66,6 +67,7 @@ __all__ = [
     "is_token_pack_product_id",
     "revoke_course_access",
     "revoke_entitlement_by_id",
+    "stage_course_access",
     "token_pack_product_ids",
     "token_pack_size",
     "verify_aptitude_license",
@@ -89,6 +91,10 @@ REASON_CANCELLATION = "cancellation"
 REASON_ADMIN_OVERRIDE = "admin_override"
 REASON_DUPLICATE_SIGNUP = "duplicate_signup"
 REASON_EMAIL_MISMATCH = "email_mismatch"
+# A valid key presented by an account other than the one it is bound to. The
+# WARNING carrying it is the anomalous-claim signal ADR 0008 Decision 6 asks
+# for; the caller's response stays the generic refusal.
+REASON_LICENSE_ALREADY_BOUND = "license_already_bound"
 
 # Comma-separated allowlist of Gumroad product ids that count as "the
 # APTITUDE course". Read at call time so a rotation needs no restart (and so
@@ -172,6 +178,29 @@ def _apply_grant_provenance(
         entitlement.product_id = product_id
 
 
+async def stage_course_access(
+    session: AsyncSession,
+    user_id: int,
+    sale: GumroadSale | None,
+    product_id: str | None,
+) -> Entitlement:
+    """Find-or-create the user's active ``course_access`` row without committing.
+
+    The staging half of :func:`grant_course_access`, split out so a caller
+    that needs the grant inside a larger transaction — the licence claim,
+    which lands User, binding and Entitlement together — can add it to the
+    session and commit once. Idempotent against the partial unique index:
+    an existing active row is refreshed in place, never duplicated, and its
+    provenance is only overwritten by non-``None`` derivations.
+    """
+    entitlement = await _find_active_entitlement(session, user_id)
+    if entitlement is None:
+        entitlement = Entitlement(user_id=user_id)
+    _apply_grant_provenance(entitlement, sale, product_id)
+    session.add(entitlement)
+    return entitlement
+
+
 async def grant_course_access(
     session: AsyncSession,
     user: User,
@@ -196,11 +225,7 @@ async def grant_course_access(
     if user.id is None:
         msg = "user id missing before entitlement grant"
         raise ValueError(msg)
-    entitlement = await _find_active_entitlement(session, user.id)
-    if entitlement is None:
-        entitlement = Entitlement(user_id=user.id)
-    _apply_grant_provenance(entitlement, sale, product_id)
-    session.add(entitlement)
+    entitlement = await stage_course_access(session, user.id, sale, product_id)
     await session.commit()
     await session.refresh(entitlement)
     logger.info(
