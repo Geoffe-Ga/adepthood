@@ -434,7 +434,8 @@ def test_the_runtime_census_is_read_from_the_file_rather_than_imported() -> None
     found = runtime_tests()
 
     assert len(found) >= _FEWEST_RUNTIME_ROWS
-    assert found["test_the_essay_llm_is_dialled_off_the_pool"] is True
+    assert found["test_the_resonance_reflection_pass_is_dialled_off_the_pool"] is True
+    assert found["test_the_essay_llm_is_dialled_off_the_pool"] is False
     assert found["test_the_deployment_wide_vault_wheel_is_dialled_off_the_pool"] is False
 
 

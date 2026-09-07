@@ -159,19 +159,6 @@ HELD: tuple[CensusRow, ...] = (
         observed_by="test_the_password_change_notification_is_sent_off_the_pool",
     ),
     CensusRow(
-        route="POST /journal/marginalia/{marginalia_id}/essay",
-        holder="domain.resonance.generate_essay",
-        dial="complete",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "Two ownership SELECTs precede the essay call and the commit comes only "
-            "after it, so a full long-form language-model completion is paid for in "
-            "one pooled connection -- the longest single hold the survey behind this "
-            "census timed."
-        ),
-        observed_by="test_the_essay_llm_is_dialled_off_the_pool",
-    ),
-    CensusRow(
         route="POST /journal/{entry_id}/resonance",
         holder="services.creek_vault_reflect.select_reflection_llm",
         dial="handshake",
@@ -247,6 +234,16 @@ HELD: tuple[CensusRow, ...] = (
 # --- Clear: routes examined and found to release before dialling ------------
 
 CLEAR: tuple[ClearRoute, ...] = (
+    ClearRoute(
+        route="POST /journal/marginalia/{marginalia_id}/essay",
+        handler="routers.journal.expand_marginalia_essay",
+        reason=(
+            "After both ownership reads and the persisted INTIMATE guard, the cache "
+            "seam commits the still-read-only transaction before constructing and "
+            "calling the language model. Essay text and usage are staged together "
+            "only after the provider succeeds."
+        ),
+    ),
     ClearRoute(
         route="GET /invitations",
         handler="routers.invitations.list_invitations",

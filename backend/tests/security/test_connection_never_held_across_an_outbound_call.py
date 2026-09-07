@@ -470,15 +470,6 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
     assert_dialled_off_the_pool(_at(outbound_boundary, _REFLECT), what="the vault reflection pass")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Census row 3: _cache_essay runs two SELECTs, then the language model, then "
-        "a commit. Nothing about an essay is transactional; the commit is simply on "
-        "the wrong side of the call."
-    ),
-)
 @pytest.mark.asyncio
 async def test_the_essay_llm_is_dialled_off_the_pool(
     async_client: AsyncClient,
@@ -486,7 +477,7 @@ async def test_the_essay_llm_is_dialled_off_the_pool(
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Census row 3: POST /journal/marginalia/{marginalia_id}/essay."""
+    """Clear route: POST /journal/marginalia/{marginalia_id}/essay."""
     headers, user_id = await _signup(async_client, "essay_boundary")
     note_id = await _seed_marginalia(db_session, user_id)
 
