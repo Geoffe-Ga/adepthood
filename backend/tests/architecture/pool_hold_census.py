@@ -25,9 +25,9 @@ can. Today the list is empty, which is the state to keep it in.
 
 **Why the evidence column exists.** The runtime observer and this analyser are
 blind in opposite places, and the field that says which rows have been seen by
-both is the field a reader most needs. One row below carries no runtime evidence
-at all, and it is not an oversight -- the running suite cannot currently reach
-it, which is the whole argument for reading the source instead of watching it.
+both is the field a reader most needs. Every remaining row is now seen by both;
+keeping that field explicit prevents a future analyser-only finding from being
+mistaken for a route the running suite has exercised.
 """
 
 from __future__ import annotations
@@ -131,22 +131,6 @@ HELD: tuple[CensusRow, ...] = (
             "compensates on failure."
         ),
         observed_by="test_the_resonance_reflection_pass_is_dialled_off_the_pool",
-    ),
-    CensusRow(
-        route="POST /journal/{entry_id}/resonance",
-        holder="domain.detection.detect_completions",
-        dial="complete",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "A third language-model call on the same route, after the reflection pass "
-            "and still ahead of the commit: persisting the resonance runs completion "
-            "detection, which gathers candidates with a SELECT and then completes "
-            "against the provider. No runtime test reaches it and no hand-written "
-            "survey found it -- it is here because the analyser reads the call chain "
-            "rather than the sites somebody thought to look at, which is the argument "
-            "for having it."
-        ),
-        observed_by="",
     ),
     CensusRow(
         route="POST /journal/transcribe-page",
