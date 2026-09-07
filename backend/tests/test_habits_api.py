@@ -12,10 +12,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from models.metta_return_arc import MettaReturnArc
+from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.stage_progress import StageProgress
 
 
 def sample_payload(**overrides: object) -> dict[str, object]:
@@ -1233,3 +1237,238 @@ async def test_create_and_update_ignore_auto_revealed_at(
     persisted = await db_session.get(Habit, habit_id)
     assert persisted is not None
     assert persisted.auto_revealed_at is None
+
+
+# ── Calendar auto-reveal: eligibility and the one-shot rule (#2576) ──────
+
+# Program slots on the non-carryover partition (0-based, as the client writes
+# ``sort_order``). ``THIRD_SLOT`` sits past a calendar that has opened stage 2.
+_FIRST_SLOT = 0
+_SECOND_SLOT = 1
+_THIRD_SLOT = 2
+_SECOND_STAGE = 2
+# A start_date well in the future: the reveal must key off the slot, never off
+# the calendar date the habit carries.
+_FAR_FUTURE_DAYS = 30
+
+
+async def _seed_progress_opened_through(db_session: AsyncSession, user_id: int, stage: int) -> None:
+    """Rewind ``program_started_at`` so the CALENDAR (not the record) has opened ``stage``.
+
+    The record stays at stage 1 on purpose: the reveal must follow
+    ``open_through``, the union of both answers, and this fixture only moves
+    the calendar half.
+    """
+    days_into_stage = sum(STAGE_DURATIONS_DAYS[: stage - 1]) + 1
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=1,
+            completed_stages=[],
+            highest_stage_reached=1,
+            program_started_at=datetime.now(UTC) - timedelta(days=days_into_stage),
+        )
+    )
+    await db_session.commit()
+
+
+async def _post_program_habit(
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    name: str,
+    sort_order: int | None,
+    is_carryover: bool = False,
+) -> dict[str, object]:
+    """POST a locked habit at ``sort_order`` with a blank stage and a future start_date."""
+    payload = sample_payload(
+        name=name,
+        sort_order=sort_order,
+        is_carryover=is_carryover,
+        stage="",
+        start_date=str((datetime.now(UTC) + timedelta(days=_FAR_FUTURE_DAYS)).date()),
+    )
+    resp = await client.post("/habits/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    body: dict[str, object] = resp.json()
+    return body
+
+
+async def _list_habits(client: AsyncClient, headers: dict[str, str]) -> list[dict[str, object]]:
+    """GET /habits/ and return the bare list, asserting the read succeeded."""
+    resp = await client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    habits: list[dict[str, object]] = resp.json()
+    return habits
+
+
+@pytest.mark.asyncio
+async def test_list_habits_auto_reveals_habits_the_calendar_has_opened(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Slots the calendar has opened are revealed once and stamped; the slot beyond stays locked.
+
+    With ``program_started_at`` one day into stage 2, ``open_through`` is 2, so
+    the habits at slots 0 and 1 come back ``revealed`` with ``auto_revealed_at``
+    set and slot 2 stays locked and unstamped. The habits carry ``stage=""``
+    and a start_date a month out, so neither can be what decided it.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_calendar")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    for slot in (_FIRST_SLOT, _SECOND_SLOT, _THIRD_SLOT):
+        created = await _post_program_habit(
+            async_client, headers, name=f"Slot {slot}", sort_order=slot
+        )
+        assert created["revealed"] is False
+
+    habits = await _list_habits(async_client, headers)
+
+    assert [h["sort_order"] for h in habits] == [_FIRST_SLOT, _SECOND_SLOT, _THIRD_SLOT]
+    assert habits[0]["revealed"] is True
+    assert habits[0]["auto_revealed_at"] is not None
+    assert habits[1]["revealed"] is True
+    assert habits[1]["auto_revealed_at"] is not None
+    assert habits[2]["revealed"] is False
+    assert habits[2]["auto_revealed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_respects_a_manual_relock(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A relock after the calendar's one offer is final: later reads never re-reveal.
+
+    The stamp is what makes the decline stick (NORTH-STAR: declinable, never
+    re-nagging), so it must survive the relock byte-for-byte.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_relock")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    await _post_program_habit(async_client, headers, name="Slot 0", sort_order=_FIRST_SLOT)
+    [revealed] = await _list_habits(async_client, headers)
+    assert revealed["revealed"] is True
+    stamp = revealed["auto_revealed_at"]
+    assert stamp is not None
+
+    put_resp = await async_client.put(
+        f"/habits/{revealed['id']}",
+        json=sample_payload(
+            name="Slot 0", sort_order=_FIRST_SLOT, is_carryover=False, revealed=False
+        ),
+        headers=headers,
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+
+    for _ in range(2):
+        [again] = await _list_habits(async_client, headers)
+        assert again["revealed"] is False
+        assert again["auto_revealed_at"] == stamp
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_is_idempotent_across_reads(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A second GET in the same window changes nothing: every stamp is byte-identical."""
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_idempotent")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    for slot in (_FIRST_SLOT, _SECOND_SLOT, _THIRD_SLOT):
+        await _post_program_habit(async_client, headers, name=f"Slot {slot}", sort_order=slot)
+
+    first = await _list_habits(async_client, headers)
+    second = await _list_habits(async_client, headers)
+
+    assert [h["auto_revealed_at"] for h in first] == [h["auto_revealed_at"] for h in second]
+    assert [h["revealed"] for h in second] == [True, True, False]
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_without_progress_row_opens_only_slot_zero(
+    async_client: AsyncClient,
+) -> None:
+    """No StageProgress row means ``FIRST_STAGE``: slot 0 reveals, slot 1 does not."""
+    headers = await _signup(async_client, "auto_reveal_no_progress")
+    await _post_program_habit(async_client, headers, name="Slot 0", sort_order=_FIRST_SLOT)
+    await _post_program_habit(async_client, headers, name="Slot 1", sort_order=_SECOND_SLOT)
+
+    first, second = await _list_habits(async_client, headers)
+
+    assert first["revealed"] is True
+    assert first["auto_revealed_at"] is not None
+    assert second["revealed"] is False
+    assert second["auto_revealed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_never_touches_carryover_habits(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A carryover habit lives on its own partition and is never calendar-revealed."""
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_carryover")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    await _post_program_habit(
+        async_client, headers, name="Brought along", sort_order=_FIRST_SLOT, is_carryover=True
+    )
+
+    [habit] = await _list_habits(async_client, headers)
+
+    assert habit["is_carryover"] is True
+    assert habit["revealed"] is False
+    assert habit["auto_revealed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_skips_null_sort_order(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit with no slot has no position the calendar can open; it is never revealed."""
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_null_slot")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    await _post_program_habit(async_client, headers, name="Unslotted", sort_order=None)
+
+    [habit] = await _list_habits(async_client, headers)
+
+    assert habit["sort_order"] is None
+    assert habit["revealed"] is False
+    assert habit["auto_revealed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_reveal_respects_a_live_return_release(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit resting in a live Return release stays paused; once recommitted it reveals once.
+
+    Phase 1: the release row has ``recommitted_at`` NULL, so the reveal skips
+    the habit even though its slot is open. Phase 2: stamping ``recommitted_at``
+    ends the rest; the still-locked habit is then revealed and stamped.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_return")
+    await _seed_progress_opened_through(db_session, user_id, _SECOND_STAGE)
+    created = await _post_program_habit(
+        async_client, headers, name="Resting", sort_order=_FIRST_SLOT
+    )
+    arc = MettaReturnArc(user_id=user_id, started_at=datetime.now(UTC))
+    db_session.add(arc)
+    await db_session.commit()
+    await db_session.refresh(arc)
+    release = MettaReturnHabitRelease(
+        user_id=user_id,
+        arc_id=arc.id,
+        habit_id=created["id"],
+        released_at=datetime.now(UTC),
+        recommitted_at=None,
+    )
+    db_session.add(release)
+    await db_session.commit()
+
+    [resting] = await _list_habits(async_client, headers)
+    assert resting["revealed"] is False
+    assert resting["auto_revealed_at"] is None
+
+    release.recommitted_at = datetime.now(UTC)
+    db_session.add(release)
+    await db_session.commit()
+
+    [recommitted] = await _list_habits(async_client, headers)
+    assert recommitted["revealed"] is True
+    assert recommitted["auto_revealed_at"] is not None

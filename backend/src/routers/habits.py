@@ -16,6 +16,7 @@ from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
+from domain.habit_reveal import reveal_habits_the_calendar_opened
 from domain.habit_stats import compute_habit_stats
 from error_responses import build_router
 from errors import conflict, forbidden, not_found
@@ -248,7 +249,21 @@ async def list_habits(
     pagination: Annotated[PaginationParams, Depends()],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
-    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.
+
+    Before reading, reveals once each program habit whose partition slot the
+    calendar has opened (:mod:`domain.habit_reveal`, issue #2576 -- the owner
+    ruling of 2026-09-06 that superseded #1332 / PR #1349's "nothing
+    auto-unlocks"). ``NORTH-STAR.md`` line 34 has the cadence govern when a
+    habit is *offered*; lines 38 and 62 make every offer one-tap declinable and
+    never repeated. So the flip is a one-shot: ``auto_revealed_at`` is stamped
+    and a later relock (Lock Unstarted, Switch, ``PUT revealed=false``) is
+    final. Carryover habits and habits resting in a live Return release are
+    left alone. The reveal is the first statement so its commit carries nothing
+    else; the SELECT below runs ``populate_existing`` and therefore reads the
+    flipped rows.
+    """
+    await reveal_habits_the_calendar_opened(session, current_user, tz=user_tz)
     # Eager-load goals + completions; dropping this triggers MissingGreenlet downstream.
     query = (
         select(Habit)

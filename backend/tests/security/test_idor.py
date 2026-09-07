@@ -34,6 +34,7 @@ from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from domain.constants import STAGE_DURATIONS_DAYS
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.habit import Habit
@@ -1176,3 +1177,64 @@ async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
     assert alice_body["total"] == 1
     assert bob_body["items"] == []
     assert bob_body["total"] == 0
+
+
+# ── Habit list: the calendar reveal must never reach another user's habit ─────
+
+
+@pytest.mark.asyncio
+async def test_habit_list_auto_reveal_never_flips_another_users_habit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's ``GET /habits/`` reveals her own opened slot and leaves Bob's row untouched.
+
+    The reveal is a bulk UPDATE with no path parameter to authorise, so its
+    tenant scope has to be proven directly: Bob has a locked habit at the same
+    slot and no progress row, never reads, and must end with ``revealed``
+    False and ``auto_revealed_at`` None in the database.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_reveal")
+    _bob_headers, bob_id = await _signup(async_client, "bob_reveal")
+    first_slot = 0
+    one_day_into_stage_two = STAGE_DURATIONS_DAYS[0] + 1
+
+    db_session.add(
+        StageProgress(
+            user_id=alice_id,
+            current_stage=1,
+            completed_stages=[],
+            highest_stage_reached=1,
+            program_started_at=datetime.now(UTC) - timedelta(days=one_day_into_stage_two),
+        )
+    )
+    bob_habit = Habit(
+        name="Bob sits",
+        icon="🕯️",
+        start_date=date(2024, 1, 1),
+        energy_cost=1,
+        energy_return=2,
+        user_id=bob_id,
+        sort_order=first_slot,
+        revealed=False,
+    )
+    db_session.add(bob_habit)
+    await db_session.commit()
+    await db_session.refresh(bob_habit)
+    bob_habit_id = bob_habit.id
+
+    created = await async_client.post(
+        "/habits/", json={**_HABIT_PAYLOAD, "sort_order": first_slot}, headers=alice_headers
+    )
+    assert created.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=alice_headers)
+    assert listed.status_code == HTTPStatus.OK
+    [alices] = listed.json()
+    assert alices["revealed"] is True
+    assert alices["auto_revealed_at"] is not None
+
+    db_session.expire_all()
+    persisted = await db_session.get(Habit, bob_habit_id)
+    assert persisted is not None
+    assert persisted.revealed is False
+    assert persisted.auto_revealed_at is None
