@@ -39,6 +39,7 @@ from domain.entitlements import PRODUCT_IDS_ENV_VAR
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.entitlement import Entitlement
 from models.user import User
+from models.vault_activation import VaultActivation
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 from services.oauth_apple import (
     APPLE_ISSUERS,
@@ -782,6 +783,7 @@ async def test_private_relay_email_with_a_license_creates_the_account(
     assert identity.subject == RELAY_SUBJECT
     assert identity.user_id == body["user_id"]
     assert identity.email_at_link_time == RELAY_EMAIL
+    assert await _count_rows(db_session, VaultActivation) == 0
     assert _log_carries_marker(caplog, REASON_SIGNUP)
 
 

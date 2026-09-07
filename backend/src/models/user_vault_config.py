@@ -9,7 +9,7 @@ without adepthood ever having to ask Creek to keep two people apart inside one
 corpus -- which the ratified ``/v1`` contract has no field to express, and which
 this table therefore never needs.
 
-Two columns, and they are not alike.
+The connection fields are deliberately not treated alike.
 
 ``vault_url`` is an endpoint. It is judged by
 :func:`~services.creek_vault_url.classify_vault_url` before it is ever written,
@@ -18,7 +18,9 @@ accepted here and refused at request time. It is stored exactly as the user
 wrote it: normalizing an operator's configuration into something they did not
 type is the one thing this seam refuses to do, since a deployment replicating to
 an endpoint subtly different from the configured one is worse than one
-replicating nowhere and saying so.
+replicating nowhere and saying so. A manually supplied endpoint remains visible
+to the user who configured it; a provisioned endpoint is an internal allocation
+address and the public connection route returns only that it is connected.
 
 ``api_key`` is a **third-party secret at rest**, and everything about how it is
 declared follows from that. It is :class:`~services.journal_encryption.EncryptedString`,
@@ -32,6 +34,11 @@ defect and the source of the configuration, never a value read out of this row.
 ``user_id`` is unique. One user has at most one vault, so reconnecting replaces
 rather than accumulates, and there is no state in which two rows disagree about
 where a user's writing goes.
+
+``provisioned`` distinguishes Creek's internal one-time handoff from the legacy
+manual connection flow. It is not an encryption switch: the credential is
+always encrypted, and a provisioned connection additionally remains inert until
+its activation reaches ``ready`` after the user-held key ceremony.
 """
 
 from typing import TYPE_CHECKING
@@ -66,4 +73,5 @@ class UserVaultConfig(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     vault_url: str = Field(max_length=VAULT_URL_MAX_LENGTH)
     api_key: str = Field(sa_column=Column(EncryptedString(), nullable=False))
+    provisioned: bool = Field(default=False, nullable=False)
     user: "User" = Relationship(back_populates="vault_config")

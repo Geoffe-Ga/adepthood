@@ -402,11 +402,19 @@ MANIFEST: Mapping[str, ExportRule] = {
         "copying into a plaintext file. The vault's own contents are "
         "exported from the vault.",
     ),
+    "vaultactivation": Omitted(
+        "Private-vault provisioning state and opaque control-plane handles. "
+        "They describe application housekeeping, not anything the account wrote.",
+    ),
     "vaultpipelinerun": Omitted(
         "Scheduling state: when adepthood last asked the account's vault to "
         "classify and link itself. It describes this app's housekeeping "
         "rather than anything the account wrote, and the ontology the passes "
         "produced lives in the vault, which exports itself.",
+    ),
+    "vaultteardownreceipt": Omitted(
+        "Content-free post-deletion reconciliation state. It has no account "
+        "reference and belongs to operations, not to an export.",
     ),
     "walletaudit": Omitted(
         "The offering-balance ledger. Operational accounting, and rows about "

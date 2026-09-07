@@ -8,6 +8,7 @@ the seeders, idempotently, every time the app starts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator, Generator
@@ -230,6 +231,25 @@ async def test_lifespan_logs_and_continues_when_pipeline_recovery_cannot_connect
         record for record in caplog.records if "pipeline recovery" in record.getMessage()
     ]
     assert recovery_logs, "expected a warning about deferred pipeline recovery"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_never_waits_for_optional_provisioning_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung Creek control plane cannot keep the journal server from booting."""
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def _blocked_recovery(*_args: object) -> None:
+        started.set()
+        await never.wait()
+
+    with patch("main.resume_vault_activations", new=_blocked_recovery):
+        async with asyncio.timeout(1):
+            async with _isolated_factory_patch(), lifespan(app):
+                await started.wait()
 
 
 @pytest.mark.asyncio

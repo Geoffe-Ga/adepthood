@@ -29,6 +29,7 @@ from domain.entitlements import TOKEN_PACK_PRODUCT_IDS_ENV_VAR, TOKEN_PACK_SIZES
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
 from models.user import User
+from models.vault_activation import VaultActivation
 from models.wallet_audit import REASON_GUMROAD_PURCHASE, WalletAudit
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
@@ -179,6 +180,7 @@ async def test_sale_ping_grants_entitlement_to_existing_user(
     assert entitlement.kind == COURSE_ACCESS_KIND
     assert entitlement.source_sale_id == sale_row.id
     assert entitlement.revoked_at is None
+    assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
     assert _log_carries_marker(caplog, WEBHOOK_SALE_MARKER)
 
 

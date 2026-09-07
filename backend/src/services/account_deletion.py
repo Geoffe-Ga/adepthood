@@ -14,9 +14,10 @@ code produces the same result on Postgres and on the SQLite the tests run
 against. Cascades are still declared, still correct, and still checked against
 this policy — but they are a second belt, not the mechanism.
 
-**It never reaches outside adepthood.** No vault call is made, so an
-unreachable vault cannot block or slow an erasure. What that means for a user
-who has one is stated in the receipt rather than silently assumed.
+**The sweep never reaches outside adepthood.** The HTTP route first detaches a
+content-free Creek teardown receipt and asks the provisioning service with no
+database transaction held. This module then performs local erasure regardless
+of that answer; an unreachable vault cannot block the sweep.
 """
 
 from __future__ import annotations
@@ -44,9 +45,9 @@ from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 
 logger = logging.getLogger(__name__)
 
-# The only vault disposition adepthood can honestly claim. Creek's published
-# capability set carries no purge verb, so an account deletion here does not and
-# cannot reach into a vault; saying so plainly is the alternative to pretending.
+# The legacy disposition for a manually connected vault. Provisioned vaults use
+# Creek's separately tracked delete states; a manual connection still has no
+# upstream allocation handle Adepthood could honestly claim to purge.
 VAULT_NOT_PURGED = "not_purged"
 
 VAULT_GUIDANCE_NONE = "No Creek Vault was connected, so nothing of yours is held outside Adepthood."
@@ -54,6 +55,14 @@ VAULT_GUIDANCE_CONFIGURED = (
     "Your Creek Vault is yours, not ours. Adepthood cannot purge it — the vault "
     "contract has no purge capability — so anything it holds is still there. Run "
     "`creek purge` against your vault to erase that copy."
+)
+VAULT_GUIDANCE_TEARDOWN_PENDING = (
+    "Your private vault deletion has been requested. Adepthood will keep "
+    "reconciling the content-free cleanup receipt until Creek confirms that no "
+    "billable resource remains."
+)
+VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
+    "Creek confirmed that the provisioned private-vault allocation was deleted."
 )
 
 
@@ -172,9 +181,19 @@ async def _sweep(session: AsyncSession, account: Account) -> dict[str, int]:
     return counts
 
 
-def _build_receipt(account: Account, counts: dict[str, int]) -> DeletionReceipt:
+def _build_receipt(
+    account: Account,
+    counts: dict[str, int],
+    vault_disposition: str | None,
+) -> DeletionReceipt:
     """Turn raw row counts into the receipt returned to the caller and stored."""
-    configured = _vault_is_configured()
+    configured = vault_disposition is not None or _vault_is_configured()
+    if vault_disposition == "deleted":
+        guidance = VAULT_GUIDANCE_TEARDOWN_COMPLETE
+    elif vault_disposition is not None:
+        guidance = VAULT_GUIDANCE_TEARDOWN_PENDING
+    else:
+        guidance = VAULT_GUIDANCE_CONFIGURED if configured else VAULT_GUIDANCE_NONE
     return DeletionReceipt(
         user_id=account.user_id,
         rows_erased=sum(counts.values()),
@@ -183,11 +202,17 @@ def _build_receipt(account: Account, counts: dict[str, int]) -> DeletionReceipt:
         anonymised=_tables_with(Disposition.ANONYMISE),
         retained=_tables_with(Disposition.RETAIN),
         vault_configured=configured,
-        vault_guidance=VAULT_GUIDANCE_CONFIGURED if configured else VAULT_GUIDANCE_NONE,
+        vault_disposition=vault_disposition or VAULT_NOT_PURGED,
+        vault_guidance=guidance,
     )
 
 
-async def delete_account(session: AsyncSession, account: Account) -> DeletionReceipt:
+async def delete_account(
+    session: AsyncSession,
+    account: Account,
+    *,
+    vault_disposition: str | None = None,
+) -> DeletionReceipt:
     """Erase one account and everything the policy assigns to it, then commit.
 
     Returns a receipt describing what was removed, what survives anonymised,
@@ -197,7 +222,7 @@ async def delete_account(session: AsyncSession, account: Account) -> DeletionRec
     """
     _require_total_policy()
     counts = await _sweep(session, account)
-    receipt = _build_receipt(account, counts)
+    receipt = _build_receipt(account, counts, vault_disposition)
     session.add(
         AccountDeletionAudit(
             user_id=receipt.user_id,

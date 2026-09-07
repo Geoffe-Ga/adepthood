@@ -33,6 +33,12 @@ from schemas.account_deletion import (
 )
 from schemas.timezone import TimezoneRead, TimezoneUpdate
 from services.account_deletion import Account, DeletionReceipt, delete_account
+from services.creek_provisioning import (
+    CreekProvisioningClient,
+    get_creek_provisioning_client,
+    load_vault_activation,
+    request_vault_teardown,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +101,7 @@ def _to_receipt(receipt: DeletionReceipt) -> AccountDeletionReceipt:
         retained=list(receipt.retained),
         vault=VaultDisposition(
             configured=receipt.vault_configured,
-            # Never true: adepthood has no purge verb on the vault contract.
-            purged=False,
+            purged=receipt.vault_disposition == "deleted",
             guidance=receipt.vault_guidance,
         ),
     )
@@ -107,6 +112,10 @@ async def delete_my_account(
     payload: AccountDeletionRequest,
     current_user: Annotated[User, Depends(get_current_user_model)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    provisioning: Annotated[
+        CreekProvisioningClient,
+        Depends(get_creek_provisioning_client),
+    ],
 ) -> AccountDeletionReceipt:
     """Erase the authenticated caller's account and personal data, irreversibly.
 
@@ -125,5 +134,13 @@ async def delete_my_account(
     user_id = current_user.id
     if user_id is None:  # pragma: no cover - a persisted row always has an id
         raise bad_request("account_not_persisted")
-    receipt = await delete_account(session, Account(user_id=user_id, email=current_user.email))
+    teardown = None
+    activation = await load_vault_activation(session, user_id)
+    if activation is not None:
+        teardown = await request_vault_teardown(session, activation, provisioning)
+    receipt = await delete_account(
+        session,
+        Account(user_id=user_id, email=current_user.email),
+        vault_disposition=None if teardown is None else teardown.state,
+    )
     return _to_receipt(receipt)

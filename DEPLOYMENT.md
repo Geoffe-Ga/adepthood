@@ -756,6 +756,9 @@ journal_encryption_enabled=True
 | `SECURITY_CONTACT_ADDRESS` | No (recommended in prod) | `security@adepthood.example` | Address printed inside the change-notification email body so users with a compromised account have somewhere to escalate. Set this to a real, monitored mailbox before launching publicly. |
 | `SENTRY_DSN` | No (recommended in prod) | *(empty)* | Sentry DSN unhandled exceptions are reported to. Empty means no vendor: crashes are still caught, still answered with the sanitised 500 envelope, and still logged in full — only the operator inbox is lost. A value that will not parse degrades the same way with one boot warning; it never fails the deploy. See "Error monitoring" below for what a report does and does not contain. |
 | `SENTRY_RELEASE` | No | `RAILWAY_GIT_COMMIT_SHA`, else `unknown` | Version string every event is tagged with, so a regression can be pinned to a deploy. `ENV` is sent as the Sentry environment, which is what keeps a production alert distinguishable from a staging one. |
+| `CREEK_PROVISIONING_URL` | For private-vault activation | *(empty)* | Creek's provisioning-control-plane base URL. It must use HTTPS except for loopback development. Empty or unusable configuration degrades activation to a retryable failure and never blocks signup or writing. |
+| `CREEK_PROVISIONING_AUTH_FILE` | With provisioning | *(empty)* | Path to a mounted file containing Adepthood's Creek service bearer. The bearer itself must not be stored in the environment. |
+| `CREEK_PROVISIONING_HANDOFF_AUTH_FILE` | With provisioning | *(empty)* | Path to a separately rotated mounted bearer used to authenticate Creek's one-time connection handoff callback. |
 
 **Auto-injected by Railway (do not set manually):**
 
@@ -1175,6 +1178,47 @@ configures one deployment-wide vault bound to a single user and it is
 **deprecated** (`backend/.env.example`, ADR 0004). Reaching for it to
 get around this trades a security control for a road that is being
 removed.
+
+### Demand-provisioned private-vault operations
+
+Private-vault activation is explicit and asynchronous. `POST /vault/activation`
+creates or replays one account-scoped activation; `GET /vault/activation`
+returns only stable progress; and `POST /vault/activation/retry` reuses the same
+activation or Creek job after a retryable failure. The committed
+`backend/openapi.json` is the authoritative request/response contract. It never
+contains the vault endpoint or credential.
+
+When progress reaches `awaiting_key_ceremony`, the authenticated client reads
+the public challenge from `GET /vault/activation/key-ceremony` and sends the
+ciphertext-only protocol body to `PUT /vault/activation/key-ceremony` after the
+user has saved the one-time recovery code. Adepthood validates the exact Creek
+1.0.0 shape, rejects extra fields, and releases its database transaction before
+relaying either call with the backend-only Creek bearer. The passphrase,
+recovery code/value, and unwrapped volume key never belong in either request.
+Both successful proxy responses are non-cacheable.
+
+Configure the three `CREEK_PROVISIONING_*` variables above with mounted secret
+files. Adepthood commits its local job identity before contacting Creek and
+releases every database transaction before network I/O. Creek posts the
+completed URL and one-time credential to
+`POST /internal/vault-provisioning/completions`; that endpoint authenticates the
+dedicated handoff bearer before parsing the body, encrypts the credential at
+rest through `UserVaultConfig`, and returns no body. Provisioned connection URLs
+are never returned by the frontend-facing connection route.
+
+Account deletion first writes a detached, content-free teardown receipt and
+then requests Creek deletion outside the database transaction. Local erasure
+continues during a Creek outage. A background recovery pass polls active jobs
+and unconfirmed teardowns every 30 seconds; it starts without delaying server
+readiness and is cancelled before the shared HTTP pool closes. Until Creek
+confirms `deleted`, the receipt is
+visible to administrators at `GET /admin/vault-teardowns`; it retains only the
+opaque Creek job id and cleanup state, with no user id, URL, credential, or
+content. A `failed` row with `retryable=true` means the next reconciliation must
+reissue deletion. A non-retryable row needs operator investigation; never copy
+provider response bodies or credentials into the receipt while resolving it.
+Confirmed receipts are removed on reconciliation because their sole retention
+purpose has ended.
 
 ### Error monitoring
 

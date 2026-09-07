@@ -29,6 +29,7 @@ from models.gumroad_sale import GumroadSale
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
 from models.user import User
+from models.vault_activation import VaultActivationState, VaultTeardownReceipt
 from models.wallet_audit import WalletAudit
 from rate_limit import limiter
 from schemas import PaginationParams
@@ -49,6 +50,7 @@ from schemas.admin import (
     WalletAuditEntry,
 )
 from schemas.pagination import count_query_total, page_has_more, paginate_query
+from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
@@ -96,6 +98,29 @@ def _to_decimal(value: object) -> Decimal:
 logger = logging.getLogger(__name__)
 
 router = build_router(prefix="/admin", tags=["admin"])
+
+
+@router.get("/vault-teardowns", response_model=list[VaultTeardownStatus])
+async def get_stuck_vault_teardowns(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> list[VaultTeardownStatus]:
+    """Expose every unconfirmed, content-free Creek teardown to operations."""
+    result = await session.execute(
+        select(VaultTeardownReceipt)
+        .where(col(VaultTeardownReceipt.state) != VaultActivationState.DELETED.value)
+        .order_by(col(VaultTeardownReceipt.updated_at), col(VaultTeardownReceipt.id))
+    )
+    return [
+        VaultTeardownStatus(
+            creek_job_id=row.creek_job_id,
+            state=row.state,
+            attempts=row.attempts,
+            retryable=row.retryable,
+            failure_reason=row.failure_reason,
+        )
+        for row in result.scalars()
+    ]
 
 
 async def _fetch_per_user(

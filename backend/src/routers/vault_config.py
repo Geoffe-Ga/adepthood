@@ -133,6 +133,8 @@ def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     """
     if config is None:
         return VaultConnectionResponse(connected=False, vault_url=None)
+    if config.provisioned:
+        return VaultConnectionResponse(connected=True, vault_url=None)
     return VaultConnectionResponse(connected=True, vault_url=config.vault_url)
 
 
