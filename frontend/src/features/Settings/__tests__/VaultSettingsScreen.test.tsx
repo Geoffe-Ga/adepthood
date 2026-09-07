@@ -248,6 +248,25 @@ describe('VaultSettingsScreen — rendering', () => {
   }
 });
 
+describe('VaultSettingsScreen — managed private vault', () => {
+  test('offers the optional activation from an unconnected account', async () => {
+    mockConnection.mockResolvedValue(NOT_CONNECTED);
+    const navigate = jest.fn();
+    const view = render(<VaultSettingsScreen navigation={{ navigate }} />);
+    await waitFor(() => expect(view.queryByTestId('vault-loading')).toBeNull());
+
+    fireEvent.press(view.getByTestId('open-vault-activation'));
+
+    expect(navigate).toHaveBeenCalledWith('VaultActivation');
+  });
+
+  test('does not offer a second allocation when a vault is already connected', async () => {
+    const view = await renderVault(CONNECTED);
+
+    expect(view.queryByTestId('open-vault-activation')).toBeNull();
+  });
+});
+
 describe('VaultSettingsScreen — accessibility', () => {
   test('gives the floor block accessibilityRole="text"', async () => {
     const { getByTestId } = await renderVault();

@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { ApiError, ApiValidationError, vault } from '../index';
+import { ApiError, ApiValidationError, vault, vaultActivation } from '../index';
 
 /**
  * The client half of the vault-connection wire.
@@ -25,6 +25,46 @@ const CONNECTION_URL = 'http://test/vault/connection';
 const VAULT_URL = 'https://vault.example';
 const API_KEY = 'vault-key-do-not-echo'; // pragma: allowlist secret
 const HTTP_UNPROCESSABLE = 422;
+const ACTIVATION_URL = 'http://test/vault/activation';
+const CEREMONY_URL = `${ACTIVATION_URL}/key-ceremony`;
+
+const INACTIVE_ACTIVATION = {
+  active: false,
+  state: 'inactive' as const,
+  retryable: false,
+  failure_reason: null,
+  credential_received: false,
+  attested_confidential: null,
+};
+
+const CHALLENGE = {
+  protocol_version: '1.0.0' as const,
+  job_id: 'job-1',
+  activation_id: 'activation-1',
+  ceremony_id: 'ceremony-1',
+  server_nonce: 'A'.repeat(43),
+  expires_at: '2026-09-08T12:00:00Z',
+};
+
+const WRAPPED_ARTIFACT = {
+  version: 2 as const,
+  kdf: {
+    algorithm: 'argon2id' as const,
+    salt: 'a'.repeat(32),
+    time_cost: 3 as const,
+    lanes: 4 as const,
+    memory_kib: 65_536 as const,
+  },
+  passphrase_wrapped: { nonce: 'b'.repeat(24), ciphertext: 'c'.repeat(96) },
+  recovery_wrapped: { nonce: 'd'.repeat(24), ciphertext: 'e'.repeat(96) },
+  binding: {
+    protocol_version: '1.0.0' as const,
+    activation_id: CHALLENGE.activation_id,
+    ceremony_id: CHALLENGE.ceremony_id,
+    server_nonce: CHALLENGE.server_nonce,
+    client_nonce: 'F'.repeat(43),
+  },
+};
 
 function jsonResponse(data: unknown, status = 200) {
   return Promise.resolve({
@@ -143,5 +183,85 @@ describe('vault.disconnect', () => {
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
+  });
+});
+
+describe('vaultActivation', () => {
+  test('reads durable progress without creating an allocation', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(INACTIVE_ACTIVATION));
+
+    await expect(vaultActivation.status('tok')).resolves.toEqual(INACTIVE_ACTIVATION);
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(ACTIVATION_URL);
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(init?.body).toBeUndefined();
+  });
+
+  test('starts and retries only on explicit POST actions', async () => {
+    mockFetch
+      .mockReturnValueOnce(
+        jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'pending' }, 202),
+      )
+      .mockReturnValueOnce(
+        jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'pending' }, 202),
+      );
+
+    await vaultActivation.activate('tok');
+    await vaultActivation.retry('tok');
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[0][0]).toBe(ACTIVATION_URL);
+    expect(mockFetch.mock.calls[0][1].method).toBe('POST');
+    expect(mockFetch.mock.calls[0][1].body).toBeUndefined();
+    expect(mockFetch.mock.calls[1][0]).toBe(`${ACTIVATION_URL}/retry`);
+    expect(mockFetch.mock.calls[1][1].method).toBe('POST');
+  });
+
+  test('validates the short-lived public ceremony challenge', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(CHALLENGE));
+
+    await expect(vaultActivation.keyCeremony('tok')).resolves.toEqual(CHALLENGE);
+
+    expect(mockFetch.mock.calls[0][0]).toBe(CEREMONY_URL);
+    expect(mockFetch.mock.calls[0][1]?.method ?? 'GET').toBe('GET');
+  });
+
+  test('rejects a challenge whose nonce is not protocol-shaped', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...CHALLENGE, server_nonce: 'too-short' }));
+
+    await expect(vaultActivation.keyCeremony('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('submits exactly the wrapped artifact and explicit recovery acknowledgement', async () => {
+    const submission = {
+      protocol_version: '1.0.0' as const,
+      ceremony_id: CHALLENGE.ceremony_id,
+      server_nonce: CHALLENGE.server_nonce,
+      recovery_saved: true as const,
+      wrapped_artifact: WRAPPED_ARTIFACT,
+      attestation: null,
+      key_release: null,
+    };
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'awaiting_handoff' }),
+    );
+
+    await vaultActivation.completeCeremony(submission, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(CEREMONY_URL);
+    expect(init.method).toBe('PUT');
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toEqual(submission);
+    expect(body).not.toHaveProperty('passphrase');
+    expect(body).not.toHaveProperty('recoveryCode');
+    expect(body).not.toHaveProperty('recovery_code');
+  });
+
+  test('rejects drifted activation progress at the client edge', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...INACTIVE_ACTIVATION, state: 'almost_ready' }));
+
+    await expect(vaultActivation.status('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 });

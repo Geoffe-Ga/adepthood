@@ -48,6 +48,7 @@ module.exports = {
     '^expo-web-browser$': '<rootDir>/src/__mocks__/expo-web-browser.js',
     '^expo-document-picker$': '<rootDir>/src/__mocks__/expo-document-picker.js',
     '^expo-file-system$': '<rootDir>/src/__mocks__/expo-file-system.js',
+    '^expo-crypto$': '<rootDir>/src/__mocks__/expo-crypto.js',
     '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
     '^expo-screen-orientation$': '<rootDir>/src/__mocks__/expo-screen-orientation.js',
     '^expo-image-manipulator$': '<rootDir>/src/__mocks__/expo-image-manipulator.js',
@@ -69,6 +70,7 @@ module.exports = {
       'unimodules|' +
       'sentry-expo|' +
       'native-base|' +
+      '@noble/.*|' +
       'react-native-markdown-display|' +
       // chart-kit 7 ships ESM where 6 shipped CJS, so the real module now needs
       // transforming. Nothing caught this for a while because every StatsModal

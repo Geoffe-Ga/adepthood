@@ -30,6 +30,8 @@ const WORKFLOW = join(REPO_ROOT, '.github', 'workflows', 'e2e.yml');
 const PACKAGE_JSON = join(FRONTEND_ROOT, 'package.json');
 const E2E_CONFIG = join(FRONTEND_ROOT, 'jest.e2e.config.js');
 const E2E_DIR = join(FRONTEND_ROOT, 'e2e');
+const GLOBAL_SETUP = join(E2E_DIR, 'globalSetup.ts');
+const FAKE_CREEK = join(E2E_DIR, 'fakeCreekServer.mjs');
 const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
 const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 
@@ -52,6 +54,7 @@ const EXPECTED_JOURNEYS = [
   'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
   'prompt-history.e2e.test.ts',
+  'vault-activation.e2e.test.ts',
   'vault-connection.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];
@@ -322,6 +325,27 @@ describe('e2e specs drive the unmocked production client', () => {
       );
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('the external Creek boundary stays protocol-shaped and secret hostile', () => {
+  it('launches the fake as a separate process and wires only production provisioning settings', () => {
+    const setup = read(GLOBAL_SETUP, 'The activation journey needs its external Creek boundary.');
+
+    expect(setup).toContain("spawn(process.execPath, [join(__dirname, 'fakeCreekServer.mjs')]");
+    expect(setup).toContain('CREEK_PROVISIONING_URL:');
+    expect(setup).toContain('CREEK_PROVISIONING_AUTH_FILE:');
+    expect(setup).toContain('CREEK_PROVISIONING_HANDOFF_AUTH_FILE:');
+    expect(setup).not.toContain('dependency_overrides');
+  });
+
+  it('requires the version header and rejects raw recovery or passphrase fields', () => {
+    const fake = read(FAKE_CREEK, 'The activation journey needs a protocol-shaped Creek fake.');
+
+    expect(fake).toContain("const CONTRACT_HEADER = 'Creek-Provisioning-Version'");
+    expect(fake).toContain("const CONTRACT_VERSION = '1.0.0'");
+    expect(fake).toContain("['passphrase', 'recovery_code', 'recoveryCode']");
+    expect(fake).toContain('/internal/vault-provisioning/completions');
   });
 });
 

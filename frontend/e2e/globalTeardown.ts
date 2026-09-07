@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
 
 import {
   BACKEND_DIR,
@@ -82,8 +83,10 @@ export default async function globalTeardown(): Promise<void> {
   if (state === null) return;
   try {
     await stopServer(state.pid);
+    await stopServer(state.creekPid);
     dropDatabase(state);
   } finally {
+    rmSync(state.credentialDir, { recursive: true, force: true });
     clearLaneState();
   }
 }

@@ -1090,6 +1090,54 @@ export const vaultConnectionResponseSchema = z.object({
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
 
+/** Durable, secret-free progress for an explicitly requested Creek allocation. */
+export const vaultActivationResponseSchema = z
+  .object({
+    active: z.boolean(),
+    state: z.enum([
+      'inactive',
+      'submitting',
+      'pending',
+      'provisioning',
+      'awaiting_key_ceremony',
+      'awaiting_handoff',
+      'ready',
+      'failed',
+      'deleting',
+      'deleted',
+    ]),
+    retryable: z.boolean(),
+    failure_reason: z
+      .enum([
+        'provider_unavailable',
+        'provider_rejected',
+        'handoff_failed',
+        'internal_error',
+        'malformed_completion',
+      ])
+      .nullable(),
+    credential_received: z.boolean(),
+    attested_confidential: z.boolean().nullable(),
+  })
+  .strict();
+
+const protocolNonceSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
+
+/** Creek's short-lived public challenge; it contains no credential or key material. */
+export const vaultKeyCeremonyChallengeSchema = z
+  .object({
+    protocol_version: z.literal('1.0.0'),
+    job_id: z.string().min(1).max(200),
+    activation_id: z.string().min(1).max(200),
+    ceremony_id: z.string().min(1).max(200),
+    server_nonce: protocolNonceSchema,
+    expires_at: isoDateTime,
+  })
+  .strict();
+
+export type VaultActivationT = z.infer<typeof vaultActivationResponseSchema>;
+export type VaultKeyCeremonyChallengeT = z.infer<typeof vaultKeyCeremonyChallengeSchema>;
+
 // ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
 // ---------------------------------------------------------------------------

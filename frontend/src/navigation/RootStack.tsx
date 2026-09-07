@@ -13,6 +13,7 @@ import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import ExportDataScreen from '../features/Settings/ExportDataScreen';
+import PrivateVaultActivationScreen from '../features/Settings/PrivateVaultActivationScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -45,6 +46,7 @@ export type RootStackParamList = {
   ExportData: undefined;
   SupportCare: undefined;
   VaultSettings: undefined;
+  VaultActivation: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
@@ -172,6 +174,11 @@ const RootStack = (): React.JSX.Element => (
       name="VaultSettings"
       component={VaultSettingsScreen}
       options={{ title: 'Private vault' }}
+    />
+    <Stack.Screen
+      name="VaultActivation"
+      component={PrivateVaultActivationScreen}
+      options={{ title: 'Create private vault' }}
     />
     <Stack.Screen
       name="SharePreview"
