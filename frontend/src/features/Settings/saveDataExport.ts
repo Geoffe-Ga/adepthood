@@ -1,5 +1,5 @@
 import { File, Paths } from 'expo-file-system';
-import { Share } from 'react-native';
+import { Platform, Share } from 'react-native';
 
 import { users, type DataExportArchive } from '@/api';
 
@@ -21,16 +21,19 @@ import { users, type DataExportArchive } from '@/api';
 /** The two things an export can be. */
 export type ExportFormat = 'json' | 'markdown';
 
+/** The platform handoff that made the completed export reachable. */
+export type ExportDestination = 'browser-download' | 'shared' | 'device-file';
+
 /** What one completed export produced. */
 export interface SavedExport {
   /** The name the file was written under, which the receipt shows the user. */
   filename: string;
-  /** Its on-device URI, handed to the share sheet. */
-  uri: string;
+  /** Its on-device URI on native; browser object URLs are released immediately. */
+  uri: string | null;
   /** Rows in the archive; ``null`` for Markdown, which is prose, not records. */
   records: number | null;
-  /** Whether the share sheet actually took it. */
-  shared: boolean;
+  /** Where the person can retrieve the completed copy. */
+  destination: ExportDestination;
 }
 
 /** Title the share sheet shows above the file. */
@@ -62,6 +65,49 @@ function writeTextFile(filename: string, contents: string): File {
   return file;
 }
 
+interface DownloadAnchor {
+  href: string;
+  download: string;
+  click: () => void;
+  remove: () => void;
+}
+
+interface WebDownloadHost {
+  Blob?: new (_parts: string[], _options: { type: string }) => unknown;
+  URL?: {
+    createObjectURL?: (_value: unknown) => string;
+    revokeObjectURL?: (_value: string) => void;
+  };
+  document?: {
+    createElement?: (_tag: 'a') => DownloadAnchor;
+    body?: { appendChild: (_anchor: DownloadAnchor) => void };
+  };
+}
+
+/** Hand the bytes to the browser without touching Expo's native-only File API. */
+function downloadOnWeb(filename: string, contents: string, mediaType: string): void {
+  const host = globalThis as unknown as WebDownloadHost;
+  const createObjectURL = host.URL?.createObjectURL;
+  const revokeObjectURL = host.URL?.revokeObjectURL;
+  const createElement = host.document?.createElement;
+  const body = host.document?.body;
+  if (!host.Blob || !createObjectURL || !revokeObjectURL || !createElement || !body) {
+    throw new Error('browser download is unavailable');
+  }
+
+  const objectUrl = createObjectURL(new host.Blob([contents], { type: mediaType }));
+  try {
+    const anchor = createElement.call(host.document, 'a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    revokeObjectURL.call(host.URL, objectUrl);
+  }
+}
+
 /** Offer a written file to the platform share sheet; never throw. */
 async function offerToShare(uri: string): Promise<boolean> {
   try {
@@ -84,8 +130,18 @@ async function fetchMarkdownExport(): Promise<{ contents: string; records: null 
 }
 
 const FORMATS = {
-  json: { filename: 'adepthood-export', extension: 'json', fetch: fetchJsonExport },
-  markdown: { filename: 'adepthood-journal', extension: 'md', fetch: fetchMarkdownExport },
+  json: {
+    filename: 'adepthood-export',
+    extension: 'json',
+    mediaType: 'application/json;charset=utf-8',
+    fetch: fetchJsonExport,
+  },
+  markdown: {
+    filename: 'adepthood-journal',
+    extension: 'md',
+    mediaType: 'text/markdown;charset=utf-8',
+    fetch: fetchMarkdownExport,
+  },
 } as const;
 
 /**
@@ -100,7 +156,16 @@ export async function saveDataExport(format: ExportFormat): Promise<SavedExport>
   const spec = FORMATS[format];
   const { contents, records } = await spec.fetch();
   const filename = `${spec.filename}-${today()}.${spec.extension}`;
+  if (Platform.OS === 'web') {
+    downloadOnWeb(filename, contents, spec.mediaType);
+    return { filename, uri: null, records, destination: 'browser-download' };
+  }
   const file = writeTextFile(filename, contents);
   const shared = await offerToShare(file.uri);
-  return { filename, uri: file.uri, records, shared };
+  return {
+    filename,
+    uri: file.uri,
+    records,
+    destination: shared ? 'shared' : 'device-file',
+  };
 }

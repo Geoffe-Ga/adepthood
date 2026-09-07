@@ -18,14 +18,21 @@ const JSON_RESULT: SavedExport = {
   filename: 'adepthood-export-2026-08-22.json',
   uri: 'file:///documents/adepthood-export-2026-08-22.json',
   records: 1240,
-  shared: true,
+  destination: 'shared',
 };
 
 const MARKDOWN_RESULT: SavedExport = {
   filename: 'adepthood-journal-2026-08-22.md',
   uri: 'file:///documents/adepthood-journal-2026-08-22.md',
   records: null,
-  shared: false,
+  destination: 'device-file',
+};
+
+const WEB_RESULT: SavedExport = {
+  filename: 'adepthood-export-2026-08-22.json',
+  uri: null,
+  records: 1240,
+  destination: 'browser-download',
 };
 
 beforeEach(() => {
@@ -82,6 +89,18 @@ describe('ExportDataScreen', () => {
     );
   });
 
+  test('a web export says that the browser downloaded the file', async () => {
+    mockSaveDataExport.mockResolvedValue(WEB_RESULT);
+    const { getByTestId } = render(<ExportDataScreen />);
+
+    fireEvent.press(getByTestId('export-data-json'));
+
+    await waitFor(() => expect(getByTestId('export-data-receipt')).toBeTruthy());
+    expect(getByTestId('export-data-receipt-next').props.children as string).toContain(
+      'browser downloaded',
+    );
+  });
+
   test('a failed export says nothing was saved rather than showing a receipt', async () => {
     mockSaveDataExport.mockRejectedValue(new Error('The server is unreachable.'));
     const { getByTestId, queryByTestId } = render(<ExportDataScreen />);
@@ -89,9 +108,9 @@ describe('ExportDataScreen', () => {
     fireEvent.press(getByTestId('export-data-json'));
 
     await waitFor(() => expect(getByTestId('export-data-error')).toBeTruthy());
-    expect(getByTestId('export-data-error').props.children as string).toContain(
-      'The server is unreachable.',
-    );
+    const message = getByTestId('export-data-error').props.children as string;
+    expect(message).toContain('Could not build the export');
+    expect(message).not.toContain('The server is unreachable.');
     expect(queryByTestId('export-data-receipt')).toBeNull();
   });
 
