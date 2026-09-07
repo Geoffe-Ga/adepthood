@@ -311,6 +311,70 @@ describe('habitManager', () => {
       expect(useHabitStore.getState().habits[0]!.revealed).toBe(false);
     });
 
+    it('mapApiHabits carries the server-owned auto_revealed_at stamp through to the store', async () => {
+      const stamped = '2026-09-07T12:34:56Z';
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 6,
+          name: 'Sit',
+          icon: '\u{1F56F}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Purple',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: true,
+          auto_revealed_at: stamped,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      expect(useHabitStore.getState().habits[0]!.auto_revealed_at).toBe(stamped);
+    });
+
+    it('mapApiHabits reads a null auto_revealed_at as null, and an absent one as null too', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
+        {
+          id: 7,
+          name: 'Walk',
+          icon: '\u{1F6B6}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Red',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: false,
+          auto_revealed_at: null,
+          goals: [],
+        },
+        {
+          id: 8,
+          name: 'Read',
+          icon: '\u{1F4D6}',
+          start_date: '2025-01-01',
+          energy_cost: 1,
+          energy_return: 2,
+          stage: 'Blue',
+          streak: 0,
+          milestone_notifications: false,
+          revealed: false,
+          goals: [],
+        },
+      ] as never);
+
+      await habitManager.loadHabits();
+
+      const [walk, read] = useHabitStore.getState().habits;
+      expect(walk!.auto_revealed_at).toBeNull();
+      expect(read!.auto_revealed_at).toBeNull();
+    });
+
     it('does NOT seed FALLBACK_HABITS when the live store already has habits', async () => {
       // Cache empty + API empty + live store has habits → leave them alone.
       const userBuilt: Habit[] = [makeHabit({ id: 1, name: 'My Habit' })];
@@ -1400,6 +1464,19 @@ describe('habitManager', () => {
       expect(habitsApi.update).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ revealed: false }),
+      );
+    });
+    it('never sends auto_revealed_at in the PUT payload: the stamp is server-owned', () => {
+      useHabitStore.setState({
+        habits: [makeHabit({ id: 1, revealed: true, auto_revealed_at: '2026-09-07T12:34:56Z' })],
+      });
+      const updated = { ...makeHabit(), revealed: false, auto_revealed_at: '2026-09-07T12:34:56Z' };
+
+      habitManager.updateHabit(updated);
+
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.not.objectContaining({ auto_revealed_at: expect.anything() }),
       );
     });
   });

@@ -170,6 +170,29 @@ describe('habitSchema start_date validation', () => {
   });
 });
 
+describe('habitSchema auto_revealed_at (server-owned one-shot reveal marker)', () => {
+  const stamped = '2026-09-07T12:34:56Z';
+
+  it('retains an ISO datetime stamp', () => {
+    const parsed = habitSchema.parse({ ...baseHabit, auto_revealed_at: stamped });
+    expect(parsed.auto_revealed_at).toBe(stamped);
+  });
+
+  it('accepts null for a habit the calendar has never revealed', () => {
+    const parsed = habitSchema.parse({ ...baseHabit, auto_revealed_at: null });
+    expect(parsed.auto_revealed_at).toBeNull();
+  });
+
+  it('accepts an absent field so payloads captured before the column shipped still validate', () => {
+    const parsed = habitSchema.parse(baseHabit);
+    expect(parsed.auto_revealed_at).toBeUndefined();
+  });
+
+  it('rejects a free-form string in place of the datetime', () => {
+    expect(() => habitSchema.parse({ ...baseHabit, auto_revealed_at: 'yesterday' })).toThrow();
+  });
+});
+
 describe('habitWithGoalsSchema end-to-end', () => {
   it('accepts a fully-populated payload with embedded completions', () => {
     expect(() =>

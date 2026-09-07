@@ -239,6 +239,10 @@ export const habitSchema = z.object({
   // payloads captured before the column shipped still validate; the live
   // backend always sends it.
   revealed: z.boolean().optional(),
+  // Server-owned one-shot marker: when the program calendar first revealed
+  // this habit (null = never). Read-only on the client; optional on the wire so
+  // payloads captured before the column shipped still validate.
+  auto_revealed_at: isoDateTime.nullish(),
   // Carryover flag (habit predates the program, shown on negative laps).
   // Optional on the wire so payloads captured before the column shipped
   // still validate.

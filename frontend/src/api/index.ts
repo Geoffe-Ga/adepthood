@@ -1122,6 +1122,10 @@ export interface ApiHabit {
   // Persisted unlock flag (revealed === unlocked). Optional so fixtures/payloads
   // predating the column still typecheck; the live backend always sends it.
   revealed?: boolean;
+  // Server-owned one-shot marker: stamped the first time the program calendar
+  // revealed this habit's slot (GET /habits/), null if it never has. Read-only;
+  // optional on the wire for payloads captured before the column shipped.
+  auto_revealed_at?: string | null;
   // Carryover flag (negative-lap habits). Optional for legacy fixtures/payloads.
   is_carryover?: boolean;
 }
@@ -1211,6 +1215,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
     })),
     completions: flattenGoalCompletions(apiHabit.goals),
     revealed: apiHabit.revealed,
+    auto_revealed_at: apiHabit.auto_revealed_at ?? null,
     is_carryover: apiHabit.is_carryover,
     notificationTimes: apiHabit.notification_times ?? undefined,
     notificationFrequency: isNotificationFrequency(apiHabit.notification_frequency)

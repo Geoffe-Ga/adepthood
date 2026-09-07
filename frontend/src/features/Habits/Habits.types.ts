@@ -35,6 +35,13 @@ export interface Habit {
   notificationIds?: string[];
   last_completion_date?: Date;
   revealed?: boolean;
+  /**
+   * Server-stamped the first time the program calendar revealed this habit
+   * (``GET /habits/``), ``null`` if it never has. Read-only on the client and
+   * never sent back on a PUT: the stamp is what makes a relock after the
+   * calendar's one offer final.
+   */
+  auto_revealed_at?: string | null;
   /** Marks the offline/demo placeholder tiles, whose hard-coded start dates are not a real program start. */
   isDemoSeed?: boolean;
   /**
