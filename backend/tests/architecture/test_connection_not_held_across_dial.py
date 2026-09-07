@@ -132,8 +132,8 @@ _CLASSES_IMPLEMENTING = {
 # How the census divides today. Written down so that reclassifying a row --
 # calling a defect deliberate, or calling the analyser wrong -- is a number that
 # changes in the diff rather than a word that changes inside a paragraph.
-_ROWS_BY_VERDICT = {Verdict.KNOWN: 0, Verdict.ALLOWED: 2, Verdict.MISMODELLED: 0}
-_ALLOWED_HOLDS_AFTER_ENFORCEMENT = 2
+_ROWS_BY_VERDICT = {Verdict.KNOWN: 0, Verdict.ALLOWED: 1, Verdict.MISMODELLED: 0}
+_ALLOWED_HOLDS_AFTER_ENFORCEMENT = 1
 
 # Mapping writes that reach the storage without calling ``__setitem__`` in
 # CPython, and so slip a dependency override past the runtime observer's hook.
@@ -326,7 +326,7 @@ def test_the_census_divides_as_it_says_it_does() -> None:
 
 
 def test_no_unresolved_connection_hold_remains_after_enforcement() -> None:
-    """Enforcement permits only the two fully reasoned atomicity exceptions.
+    """Enforcement permits only the one fully reasoned atomicity exception.
 
     Set equality stops a new unexamined hold; this assertion is the other half:
     a row already known to the census cannot remain indefinitely as a report.

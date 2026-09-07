@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -30,7 +31,7 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultPipelineClient,
 )
-from domain.detection import CompletionDetected, detect_completions
+from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
@@ -64,6 +65,7 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
+from models.wallet_audit import REASON_REFUND_FAILED_RESONANCE
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
@@ -917,26 +919,29 @@ def _suggestion_from_hit(
     )
 
 
-async def _detect_and_persist_suggestions(
-    session: AsyncSession, entry_id: int, message: str, user_id: int, llm: BotmasonResonanceLLM
-) -> list[CompletionSuggestion]:
-    """Run additive completion detection off-pool; commit its rows and metering.
+async def _detect_hits(
+    message: str,
+    *,
+    candidates: Sequence[DetectionCandidate],
+    llm: BotmasonResonanceLLM,
+    user_id: int,
+    entry_id: int,
+) -> list[CompletionDetected]:
+    """Best-effort completion detection against the pre-read candidates.
 
-    The primary reflection, marginalia, and wallet charge have already committed.
-    Candidate gathering opens a read transaction, so it is committed before the
-    provider call; a successful detection then commits its PENDING suggestions and
-    usage rows as a separate additive unit. Empty candidates short-circuit with no
-    LLM call (cost guard). A provider error is swallowed (returns ``[]``), leaving
-    the primary pass intact. A spent balance is swallowed on the same terms but
-    logged with its ``provider``: it is permanent where a dropped socket is
-    transient, and the account is the only thing an operator can act on.
+    Runs with no transaction open — the candidates were read and committed
+    before the first dial, so the provider round trip holds no pooled
+    connection. Empty candidates short-circuit with no LLM call (cost guard).
+    A provider error is swallowed (returns ``[]``) so the literary pass and the
+    wallet charge are never disturbed — detection is strictly additive. A spent
+    balance is swallowed on the same terms but logged with its ``provider``: it
+    is permanent where a dropped socket is transient, and the account is the
+    only thing an operator can act on.
     """
-    candidates = await gather_candidates(session, user_id, include_practices=True)
-    await session.commit()
     if not candidates:
         return []
     try:
-        hits = await detect_completions(message, candidates=candidates, llm=llm)
+        return await detect_completions(message, candidates=candidates, llm=llm)
     except LLMCreditExhaustedError as exc:
         logger.warning(
             "journal_detection_failed",
@@ -946,16 +951,14 @@ async def _detect_and_persist_suggestions(
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
         return []
+
+
+def _stage_suggestions(
+    session: AsyncSession, entry_id: int, user_id: int, hits: list[CompletionDetected]
+) -> list[CompletionSuggestion]:
+    """Stage one PENDING suggestion row per detected hit."""
     rows = [_suggestion_from_hit(entry_id, user_id, hit) for hit in hits]
     session.add_all(rows)
-    await record_llm_usage(
-        session,
-        user_id=user_id,
-        journal_entry_id=entry_id,
-        responses=llm.usage,
-    )
-    await session.commit()
-    await _refresh_persisted(session, [], rows)
     return rows
 
 
@@ -995,21 +998,41 @@ class _ResonancePassContext:
     spent provider balance is reported — a bill the caller can settle, or one
     only an operator can. ``care`` is the standby surface a distress-flagged
     entry falls back to when the pass fails, so care never depends on the LLM.
+    ``spent`` is the deduction a failure path must compensate — it committed
+    before the dial, so a rollback can no longer un-charge it — and
+    ``user_id`` is whose wallet the compensating credit lands in.
     """
 
     session: AsyncSession
     care: CareResponse | None
     byok: bool
+    user_id: int
+    spent: SpendResult
+
+
+async def _refund_failed_pass(session: AsyncSession, user_id: int, spent: SpendResult) -> None:
+    """Compensate the committed deduction for a pass that delivered nothing.
+
+    The deduction is already durable (it committed before the first dial), so a
+    rollback can no longer un-charge; the failed pass is settled with a
+    compensating credit instead.  ``rollback()`` first clears whatever failed
+    transaction (and staged rows) the failure left behind, so the commit here
+    lands exactly two things: the credit and its audit row.
+    """
+    await session.rollback()
+    await refund_one_message(session, user_id, spent, reason=REASON_REFUND_FAILED_RESONANCE)
+    await session.commit()
 
 
 async def _generate_marginalia_or_error(
     message: str, llm: ResonanceLLM, prior: list[str], context: _ResonancePassContext
 ) -> MarginaliaOutcome:
-    """Run the literary pass; a provider error rolls back the charge and fails.
+    """Run the literary pass; a provider error refunds the committed charge and fails.
 
-    This is the only charged LLM call — a failure here must un-deduct the wallet
-    so a failed pass never charges (the detection pass that follows is best-effort
-    and never triggers a rollback).
+    This is the only charged LLM call — a failure here must settle the already
+    committed deduction with a compensating credit (and commit it) so a failed
+    pass never charges (the detection pass that follows is best-effort and
+    never touches the wallet).
 
     A spent balance is caught first because it subclasses the generic provider
     error: it is permanent, so it earns the status whose remedy the caller can
@@ -1018,10 +1041,10 @@ async def _generate_marginalia_or_error(
     try:
         return await generate_marginalia(message, llm=llm, prior_entries=prior)
     except LLMCreditExhaustedError as exc:
-        await context.session.rollback()
+        await _refund_failed_pass(context.session, context.user_id, context.spent)
         raise credit_exhausted_error(exc, byok=context.byok) from exc
     except LLMProviderError as exc:
-        await context.session.rollback()
+        await _refund_failed_pass(context.session, context.user_id, context.spent)
         raise bad_gateway("llm_provider_error") from exc
 
 
@@ -1125,9 +1148,10 @@ async def _care_only_response(
 
     Used when an elevated entry's LLM pass fails, and when a connected vault
     answers with its care escalation. Either way the marginalia charge has
-    already been rolled back, so the wallet is unspent; we surface the human +
-    professional pointers regardless, because care must never depend on the
-    reflection succeeding (NORTH-STAR §10).
+    already been refunded — a committed compensating credit — so the fresh
+    read below reports unspent balances; we surface the human + professional
+    pointers regardless, because care must never depend on the reflection
+    succeeding (NORTH-STAR §10).
     """
     user = await require_user_fresh(session, user_id)
     return _unspent_resonance(user, care=care)
@@ -1141,7 +1165,9 @@ async def _refresh_persisted(
         await session.refresh(row)
 
 
-async def _escalated_care_response(session: AsyncSession, user_id: int) -> ResonanceResponse:
+async def _escalated_care_response(
+    session: AsyncSession, user_id: int, spent: SpendResult
+) -> ResonanceResponse:
     """Answer a vault care escalation with adepthood's own care surface, uncharged.
 
     The vault's care guard declined to produce a reflection because the writing
@@ -1149,9 +1175,9 @@ async def _escalated_care_response(session: AsyncSession, user_id: int) -> Reson
     human rather than an error or a cloud answer — falling back would hand them
     exactly the model prose that guard refused.
 
-    The rollback is load-bearing: ``preflight_deduction`` has already staged one
-    message against the wallet, and returning without it would charge a person in
-    distress for a reflection they never received.
+    The refund is load-bearing: ``preflight_deduction``'s charge has already
+    committed, and returning without the compensating credit would charge a
+    person in distress for a reflection they never received.
 
     The care payload is built fresh rather than threaded in from the handler's own
     screen, and that is provably right: an entry adepthood flagged locally
@@ -1160,7 +1186,7 @@ async def _escalated_care_response(session: AsyncSession, user_id: int) -> Reson
     surface — Creek's reason, message, and resource list are Creek's writing and
     are dropped at the adapter.
     """
-    await session.rollback()
+    await _refund_failed_pass(session, user_id, spent)
     return await _care_only_response(session, user_id, _care_surface(build_care_payload()))
 
 
@@ -1169,8 +1195,10 @@ async def _resonance_pass_or_care(
 ) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
-    A flagged entry swallows the provider failure (the charge was already rolled
-    back) and yields ``None`` so the caller can return a care-only response — care
+    A flagged entry swallows the provider failure (the committed charge was
+    already settled by a compensating refund in
+    :func:`_generate_marginalia_or_error`'s except arms) and yields ``None``
+    so the caller can return a care-only response — care
     must never depend on the LLM succeeding. An ordinary entry re-raises,
     preserving today's behavior exactly.
     """
@@ -1180,6 +1208,85 @@ async def _resonance_pass_or_care(
         if context.care is not None:
             return None
         raise
+
+
+@dataclass(frozen=True, slots=True)
+class _ChargedPass:
+    """Inputs to the post-dial settlement transaction.
+
+    Everything here was produced with no transaction open: ``anchored`` by the
+    reflection dial, ``hits`` by the detection dial, ``spent`` by the deduction
+    that committed before either. ``llm`` carries the usage the settlement
+    records beside the rows it stages.
+    """
+
+    entry_id: int
+    user_id: int
+    spent: SpendResult
+    anchored: MarginaliaOutcome
+    hits: list[CompletionDetected]
+    llm: BotmasonResonanceLLM
+
+
+@dataclass(frozen=True, slots=True)
+class _SettledPass:
+    """What the committed settlement hands back to the response builder."""
+
+    rows: list[Marginalia]
+    suggestions: list[CompletionSuggestion]
+    spent: SpendResult
+    no_notes_message: str | None
+    reset_date: datetime
+
+
+async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -> _SettledPass:
+    """Open the post-dial transaction: stage, settle, record usage, commit.
+
+    Every dial is already behind us.  If anything here fails before the commit
+    lands, the ``finally`` settles the committed deduction with a compensating
+    refund — a failed pass never charges, even when the failure is ours rather
+    than the provider's.  ``spent`` is rebound by the empty-pass settlement
+    before the commit; the refund only needs its ``bucket``, which both the
+    settled and unsettled values carry identically, and the leading rollback
+    inside :func:`_refund_failed_pass` discards any staged empty-pass refund
+    so the compensating credit can never double up.
+
+    Compensation without an idempotency key is ambiguous in *both* directions:
+    if the commit raises after the database durably applied it (a lost ack),
+    the ``finally`` still refunds — the writer keeps a delivered pass free,
+    and an already-landed empty-pass refund gains a second credit. That
+    low-probability over-refund is accepted alongside the crash window that
+    over-charges; the audit trail records every entry either way.
+    """
+    committed = False
+    spent = charged.spent
+    try:
+        rows = _persist_marginalia(
+            session, charged.entry_id, charged.user_id, charged.anchored.notes
+        )
+        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, charged.hits)
+        spent, no_notes_message = await _settle_empty_pass(
+            session, charged.user_id, spent, charged.anchored
+        )
+        spent_user = await require_user_fresh(session, charged.user_id)
+        await record_llm_usage(
+            session,
+            user_id=charged.user_id,
+            journal_entry_id=charged.entry_id,
+            responses=charged.llm.usage,
+        )
+        await session.commit()
+        committed = True
+    finally:
+        if not committed:
+            await _refund_failed_pass(session, charged.user_id, spent)
+    return _SettledPass(
+        rows=rows,
+        suggestions=suggestions,
+        spent=spent,
+        no_notes_message=no_notes_message,
+        reset_date=spent_user.monthly_reset_date,
+    )
 
 
 # A user with no StageProgress row yet has never reached any stage, so their
@@ -1328,10 +1435,21 @@ async def run_resonance(
 ) -> ResonanceResponse:
     """Run a resonance pass over the caller's entry, persist notes, charge one unit.
 
-    Wallet pre-flight deducts one message (402 when out of capacity). The
-    reflection pass + marginalia persistence + the charge commit atomically; any
-    reflection-provider error rolls the deduction back so a failed pass never
-    charges (502 ``llm_provider_error``).
+    Wallet pre-flight deducts one message (402 when out of capacity), and the
+    deduction commits in its own transaction, together with every read the pass
+    depends on, before the first outbound call — no pooled connection is held
+    across the vault probe, the reflection pass, or completion detection. A
+    failed pass is settled by compensation, not rollback: the committed charge
+    is reversed by a crediting entry (``refund_failed_pass`` in the wallet
+    audit) and committed, so a failed pass still never charges (502
+    ``llm_provider_error``). This buys an invariant the code between the
+    deduction commit and the first refund-guarded call must keep: nothing
+    there may raise, because an exception in that gap — like a process crash
+    anywhere before the refund lands — leaves the writer charged for a pass
+    that never arrived, with no compensating path. That exposure is the
+    accepted price of not holding a pooled connection across up to three
+    provider round trips; it is bounded by the provider timeout, and the
+    audit trail (an unpaired spend row) is what makes it findable.
 
     A pass that *succeeds* and still persists no notes is neither an error nor a
     non-event: it is a writer who waited and received nothing. Those get the
@@ -1339,13 +1457,8 @@ async def run_resonance(
     client has to interpret — and the deduction is reversed in the bucket it
     came from, so silence costs the writer nothing. The reversal is a crediting
     entry rather than a rollback on purpose: the provider call really happened,
-    and rolling back would erase the usage record of what it cost us.
-
-    Completion detection is additive to that primary unit. After the reflection
-    commits, its candidate reads are materialized and released before the second
-    provider call; successful suggestions and their usage records then commit in
-    their own transaction. A detection-provider failure therefore cannot roll
-    back the marginalia or charge, and its provider wait holds no pooled connection.
+    and rolling back would erase the usage record of what it cost us along with
+    any completion suggestions the same pass legitimately found.
 
     The entry is first screened for an acute-distress signal with a pure, local
     check; on an elevated signal the response carries a ``care`` surface (human +
@@ -1372,8 +1485,8 @@ async def run_resonance(
     care guard read acute distress in writing adepthood's local screen did not
     flag. That is a 200 carrying adepthood's own reviewed care surface and no
     reflection — never a 502, and never the cloud's answer, since falling back
-    would hand the writer exactly the model prose the guard refused. The staged
-    deduction is rolled back, so the pass costs them nothing.
+    would hand the writer exactly the model prose the guard refused. The
+    committed deduction is refunded, so the pass costs them nothing.
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
@@ -1388,13 +1501,15 @@ async def run_resonance(
     care = _care_response(_care_for(entry.message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
+    spent = await preflight_deduction(session, current_user)
     grounding = await _grounding_for(session, current_user, entry_id)
+    candidates = await gather_candidates(session, current_user, include_practices=True)
+    # Key resolution is pure (no DB, no dial) and can raise 400/402 — it must
+    # run while the deduction is still merely staged, so its errors cost nothing.
     byok_key = resolve_chat_api_key(clients.api_key)
     llm = BotmasonResonanceLLM(byok_key)
-    # The entry and grounding are fully materialized, and a vault capability
-    # probe has no state that belongs in the reflection's atomic write unit.
-    # Release the authenticated read transaction before the handshake; stage the
-    # wallet deduction only after the reflection source has been selected.
+    # The deduction is durable and every read the dials depend on is in hand:
+    # release the pooled connection before the first provider round trip.
     await session.commit()
     reflection_llm = await select_reflection_llm(
         clients.vault_client,
@@ -1403,49 +1518,54 @@ async def run_resonance(
         care_flagged=care is not None,
         fallback=llm,
     )
-    spent = await preflight_deduction(session, current_user)
     try:
         anchored = await _resonance_pass_or_care(
             entry.message,
             reflection_llm,
             list(grounding.bodies),
-            _ResonancePassContext(session=session, care=care, byok=byok_key is not None),
+            _ResonancePassContext(
+                session=session,
+                care=care,
+                byok=byok_key is not None,
+                user_id=current_user,
+                spent=spent,
+            ),
         )
     except CreekVaultCareEscalationError:
         # The vault's care guard fired: answer with adepthood's own care surface
-        # instead of a reflection, and roll the staged charge back.
-        return await _escalated_care_response(session, current_user)
+        # instead of a reflection, and refund the committed charge.
+        return await _escalated_care_response(session, current_user, spent)
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    persisted_entry_id = cast("int", entry.id)
-    rows = _persist_marginalia(session, persisted_entry_id, current_user, anchored.notes)
-    spent, no_notes_message = await _settle_empty_pass(session, current_user, spent, anchored)
-    spent_user = await require_user_fresh(session, current_user)
-    await record_llm_usage(
-        session,
-        user_id=current_user,
-        journal_entry_id=persisted_entry_id,
-        responses=llm.usage,
+    hits = await _detect_hits(
+        entry.message, candidates=candidates, llm=llm, user_id=current_user, entry_id=entry_id
     )
-    await session.commit()
-    await _refresh_persisted(session, rows, [])
-    suggestions = await _detect_and_persist_suggestions(
+    settled = await _persist_settle_commit(
         session,
-        persisted_entry_id,
-        entry.message,
-        current_user,
-        BotmasonResonanceLLM(byok_key),
+        _ChargedPass(
+            entry_id=entry_id,
+            user_id=current_user,
+            spent=spent,
+            anchored=anchored,
+            hits=hits,
+            llm=llm,
+        ),
     )
-    _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
+    await _refresh_persisted(session, settled.rows, settled.suggestions)
+    _log_resonance_outcome(
+        anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
+    )
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
         care=care,
         contraction=contraction,
-        no_notes_message=no_notes_message,
+        no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
     )
-    return _resonance_response(rows, suggestions, spent, spent_user.monthly_reset_date, surfaces)
+    return _resonance_response(
+        settled.rows, settled.suggestions, settled.spent, settled.reset_date, surfaces
+    )
 
 
 @router.get("/{entry_id}/marginalia", response_model=MarginaliaListResponse)

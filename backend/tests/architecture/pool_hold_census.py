@@ -116,29 +116,6 @@ class ClearRoute:
 
 HELD: tuple[CensusRow, ...] = (
     CensusRow(
-        route="POST /journal/{entry_id}/resonance",
-        holder="domain.resonance._one_pass",
-        dial="complete",
-        verdict=Verdict.ALLOWED,
-        reason=(
-            "The reflection pass itself, on the same dirty write transaction. The "
-            "handler documents this hold as intentional -- the pass, the persistence "
-            "and the charge commit together, so a provider error rolls the deduction "
-            "back and a failed pass never charges or leaves partial marginalia. That "
-            "is deliberate atomicity rather than an unexamined hold."
-        ),
-        costs=(
-            "A pooled connection is held for the cloud-or-vault reflection round trip "
-            "on every resonance pass. Fifteen concurrent passes exhaust the default "
-            "pool and make the next database-backed request wait at checkout. Releasing "
-            "would require committing the deduction before the provider call, then a "
-            "durable compensating refund and crash-window reconciliation so a failed "
-            "pass cannot remain charged; this exception chooses rollback atomicity "
-            "over that larger failure surface."
-        ),
-        observed_by="test_the_resonance_reflection_pass_is_dialled_off_the_pool",
-    ),
-    CensusRow(
         route="POST /journal/transcribe-page",
         holder="routers.transcription._run_transcription",
         dial="services.botmason.generate_response",
@@ -192,6 +169,19 @@ CLEAR: tuple[ClearRoute, ...] = (
             "The reset commit is the last session operation before the notification. "
             "With expire_on_commit disabled, the response fields remain available "
             "without the refresh that previously reopened a transaction."
+        ),
+    ),
+    ClearRoute(
+        route="POST /journal/{entry_id}/resonance",
+        handler="routers.journal.run_resonance",
+        reason=(
+            "The wallet deduction commits in its own transaction together with "
+            "every pre-dial read -- entry, grounding, detection candidates -- so "
+            "the vault probe, the reflection pass and the completion-detection "
+            "call all run with no connection checked out. A failed pass is "
+            "settled by compensation instead of rollback: refund_one_message "
+            "credits the bucket the spend came from and commits, so a failed "
+            "pass still never charges."
         ),
     ),
     ClearRoute(

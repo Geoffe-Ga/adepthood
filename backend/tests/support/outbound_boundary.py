@@ -119,27 +119,25 @@ from a request, including the ones that are *fine*, and why each is fine. A
 census that lists only failures cannot tell a reader whether an unlisted site
 was examined or missed.
 
-Original defective groups (eight; six now closed)
+Original defective groups (eight; all now closed)
 -------------------------------------------------
 
 **1. POST /journal/{entry_id}/resonance -> CreekVaultClient.handshake**, through
-``run_resonance`` -> ``select_reflection_llm``. The handler loads the entry
-(SELECT), stages a wallet deduction that deliberately does not commit, gathers
-grounding (more SELECTs), and only then probes the vault's capabilities. The
-first commit is far below. A dirty, write-holding transaction is held across an
-HTTP handshake. The handler's docstring offers an atomicity argument for the
-LLM pass that follows; that argument does not reach here, because a capability
-probe's result is not something a rollback can undo.
+``run_resonance`` -> ``select_reflection_llm``. **Closed by a subsequent
+change.** The deduction now commits in its own transaction, with the grounding
+and candidate reads, before any dial; ``services.wallet.refund_one_message``
+compensates on failure, so a failed pass still never charges. The capability
+probe therefore runs with no connection checked out.
 
 **2. POST /journal/{entry_id}/resonance -> the reflection pass**, through
 ``_resonance_pass_or_care`` to either ``CreekVaultClient.reflect`` or
-``generate_response``. The same open dirty transaction, held across a full
-language-model reflection -- the longest hold in the repository alongside the
-essay row. Unlike row 1 this is a genuine trade the handler argues for: the
-pass, the persistence and the charge commit together, so a provider error rolls
-the deduction back and a failed pass never charges. It is a correctness
-decision, not an oversight, and it is one of the two rows an enforcing gate
-should eventually allowlist in prose rather than "fix".
+``generate_response``. **Closed by a subsequent change.** This was the row that
+argued an atomicity trade -- the pass, the persistence and the charge committing
+together so a provider error rolls the deduction back -- and it was settled by
+the compensate-on-failure design the census row named: the deduction commits
+before the dial, a failure is reversed by a committed crediting entry
+(``refund_failed_pass`` in the wallet audit), and the reflection -- with the
+completion-detection pass behind it -- runs off the pool.
 
 **3. POST /journal/marginalia/{marginalia_id}/essay -> generate_response**,
 through ``_cache_essay`` -> ``generate_essay``. **Closed by a subsequent
