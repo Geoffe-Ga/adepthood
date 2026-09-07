@@ -16,6 +16,9 @@ module.exports = {
   rootDir: __dirname,
   roots: ['<rootDir>/e2e'],
   testMatch: ['<rootDir>/e2e/**/*.e2e.test.ts'],
+  // Playwright owns browser gestures and rejects execution inside Jest. Keep
+  // those specs beside the journey ledger without letting this glob collect them.
+  testPathIgnorePatterns: ['<rootDir>/e2e/.*[.]browser[.]e2e[.]test[.]ts$'],
   testEnvironment: 'node',
   // One server, one database, journeys that read back what they wrote.
   maxWorkers: 1,

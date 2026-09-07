@@ -20,6 +20,6 @@
     "types": ["jest", "react", "react-native", "expo"]
   },
   "exclude": ["node_modules", "babel.config.js", "metro.config.js", "jest.config.js"],
-  "include": ["src", "__tests__", "e2e", "@types"],
+  "include": ["src", "__tests__", "e2e", "@types", "playwright.config.ts"],
   "extends": "expo/tsconfig.base"
 }

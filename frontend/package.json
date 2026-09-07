@@ -56,6 +56,7 @@
     "@commitlint/cli": "21.2.2",
     "@commitlint/config-conventional": "21.2.2",
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "1.63.0",
     "@react-native/jest-preset": "0.86.3",
     "@testing-library/jest-native": "5.4.3",
     "@testing-library/react-native": "13.3.3",
@@ -91,6 +92,7 @@
     "web:build": "expo export --platform web",
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --config jest.e2e.config.js",
+    "test:e2e:web": "playwright test --config playwright.config.ts",
     "check:journeys": "jest __tests__/journeyLedger.test.ts",
     "complexity": "eslint . --format json | node -e \"const r=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const msgs=r.flatMap(f=>f.messages.filter(m=>['complexity','sonarjs/cognitive-complexity'].includes(m.ruleId)).map(m=>({file:f.filePath,line:m.line,rule:m.ruleId,msg:m.message})));console.table(msgs);console.log('Total complexity warnings:',msgs.length)\""
   },

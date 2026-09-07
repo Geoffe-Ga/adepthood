@@ -76,6 +76,8 @@ describe('QuoteSelectionSurface -- nonempty ASCII selection', () => {
     expect(getByTestId('quote-select-preview').props.children).toBe(BODY.slice(2, 8));
     expect(onSelectionChange).toHaveBeenCalledWith({ start: 2, end: 8 });
     expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBeFalsy();
+    expect(getByTestId('quote-select-confirm-guard').props.disabled).toBeUndefined();
+    expect(getByTestId('quote-select-confirm-guard').props.onPress).toBeUndefined();
 
     await act(async () => {
       fireEvent.press(getByTestId('quote-select-confirm'));

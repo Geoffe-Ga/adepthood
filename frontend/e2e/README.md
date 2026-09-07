@@ -6,11 +6,13 @@ test files mock `src/api` outright and the rest never reach the network.
 Both can be green while the two halves have never met — which is how six
 shipped features turned out to be wired to nothing.
 
-This lane is the one place they meet. It imports the production API client from
+The API lane imports the production API client from
 `src/api/index.ts` — unmocked, with its real Zod response validation, its real
 retry and refresh loop, and a real `fetch` over a real socket — and drives it
 through the journeys registered in `journeys.json` against a live FastAPI app on
-a real Postgres whose schema was built by `alembic upgrade head`.
+a real Postgres whose schema was built by `alembic upgrade head`. The browser
+lane adds the production Expo web bundle and a real Chromium process for seams
+such as textarea selection that a Node process cannot represent.
 
 ## Running it locally
 
@@ -21,6 +23,10 @@ docker run -d --name adepthood-e2e-pg \
 
 cd frontend
 TEST_POSTGRES_URL=postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude npm run test:e2e  # pragma: allowlist secret
+
+# The browser journey needs the pinned Chromium build once per machine.
+npx playwright install chromium
+TEST_POSTGRES_URL=postgresql+asyncpg://aptitude:aptitude@localhost:5432/aptitude npm run test:e2e:web  # pragma: allowlist secret
 ```
 
 The account in `TEST_POSTGRES_URL` needs `CREATE DATABASE`. The lane never
@@ -35,6 +41,13 @@ it explicitly:
 ```bash
 E2E_PYTHON=/path/to/adepthood/.venv/bin/python npm run test:e2e
 ```
+
+`test:e2e:web` uses the same backend launcher, database contract, and Python
+selection. It additionally starts the production Expo web entry point at
+`http://127.0.0.1:3000`, the explicit development-CORS origin, and drives it
+with Playwright. A local machine that already has Google Chrome can avoid the
+separate Chromium download with `PLAYWRIGHT_BROWSER_CHANNEL=chrome`; CI always
+installs and runs the package-pinned Chromium build.
 
 ## What is real, and the two external boundaries that are not
 
