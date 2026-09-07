@@ -59,7 +59,7 @@ def _consume_auto_reveal_on_manual_change(habit: Habit, payload: HabitCreate) ->
     """Record a regular habit's explicit lock-state decision exactly once."""
     if payload.revealed == habit.revealed:
         return
-    if habit.is_carryover:
+    if payload.is_carryover:
         return
     if habit.auto_revealed_at is not None:
         return
@@ -290,6 +290,9 @@ async def get_habit(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
     """Return a single habit (with eager-loaded goals + completions) for the caller."""
+    # The Habits screen and progression flow consume the collection endpoint,
+    # which reconciles every invitation before pagination. This point read
+    # intentionally preserves its existing non-mutating contract.
     habit = await _get_habit_with_completions(habit_id, current_user, session)
     await _populate_streaks_for(session, [habit], current_user, user_tz)
     return habit
@@ -464,6 +467,8 @@ async def get_habit_stats(
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> HabitStats:
     """Return aggregated statistics for a habit's goal completions."""
+    # Reveal progression is list-owned; a stats read intentionally remains
+    # non-mutating and does not expose lock state in its response.
     # All-time aggregates: deliberately NOT windowed (issue #294).
     habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]

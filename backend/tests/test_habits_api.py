@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ClauseElement
 from sqlmodel import col, select
 
+from conftest import test_engine
 from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import today_in_tz
 from models.goal import Goal
@@ -68,6 +74,30 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+@contextmanager
+def _record_for_update_statements() -> Iterator[list[str]]:
+    """Compile executed clauses as PostgreSQL and collect row-locking reads."""
+    statements: list[str] = []
+
+    def _before_execute(
+        _conn: Connection,
+        clause: ClauseElement,
+        _multiparams: object,
+        _params: object,
+        _execution_options: object,
+    ) -> None:
+        compiled = str(clause)
+        if "FOR UPDATE" in compiled.upper():
+            statements.append(compiled)
+
+    sync_engine = test_engine.sync_engine
+    event.listen(sync_engine, "before_execute", _before_execute)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_execute", _before_execute)
 
 
 # ── Unauthenticated access ──────────────────────────────────────────────
@@ -988,9 +1018,10 @@ async def test_list_auto_reveals_habit_when_calendar_opens_its_stage(
 
 @pytest.mark.asyncio
 async def test_list_leaves_future_unopened_habit_locked(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient,
+    db_session: AsyncSession,
 ) -> None:
-    """Neither a future date nor an unopened stage consumes the one-shot reveal."""
+    """A future invitation stays unconsumed without taking a row lock."""
     headers = await _signup(async_client, "auto_reveal_future")
     future = today_in_tz("UTC") + timedelta(days=30)
     created = await async_client.post(
@@ -1001,13 +1032,43 @@ async def test_list_leaves_future_unopened_habit_locked(
     assert created.status_code == HTTPStatus.OK
     habit_id = created.json()["id"]
 
-    listed = await async_client.get("/habits/", headers=headers)
+    with _record_for_update_statements() as locking_reads:
+        listed = await async_client.get("/habits/", headers=headers)
 
     assert listed.status_code == HTTPStatus.OK
     assert listed.json()[0]["revealed"] is False
     persisted = await db_session.get(Habit, habit_id)
     assert persisted is not None
     assert persisted.auto_revealed_at is None
+    assert locking_reads == []
+
+
+@pytest.mark.asyncio
+async def test_manual_reveal_while_leaving_carryover_partition_consumes_invitation(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The resulting regular state controls manual invitation consumption."""
+    headers = await _signup(async_client, "auto_reveal_leave_carryover")
+    future = today_in_tz("UTC") + timedelta(days=30)
+    carryover_payload = sample_payload(
+        start_date=future.isoformat(), revealed=False, is_carryover=True
+    )
+    created = await async_client.post("/habits/", json=carryover_payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+
+    changed = await async_client.put(
+        f"/habits/{habit_id}",
+        json={**carryover_payload, "revealed": True, "is_carryover": False},
+        headers=headers,
+    )
+
+    assert changed.status_code == HTTPStatus.OK
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.is_carryover is False
+    assert persisted.revealed is True
+    assert persisted.auto_revealed_at is not None
 
 
 @pytest.mark.asyncio

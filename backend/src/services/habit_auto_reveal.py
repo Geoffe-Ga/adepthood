@@ -27,12 +27,31 @@ def _is_open(habit: Habit, *, local_today: date, open_stage: int) -> bool:
     return habit.start_date <= local_today or (stage is not None and stage <= open_stage)
 
 
-async def _locked_candidates(session: AsyncSession, user_id: int) -> list[Habit]:
-    """Lock every regular habit whose automatic invitation is unconsumed."""
+async def _unconsumed_candidates(session: AsyncSession, user_id: int) -> list[Habit]:
+    """Read regular habits whose automatic invitation is still unconsumed."""
     result = await session.execute(
         select(Habit)
         .where(
             Habit.user_id == user_id,
+            col(Habit.is_carryover).is_(False),
+            col(Habit.auto_revealed_at).is_(None),
+        )
+        .order_by(col(Habit.id))
+    )
+    return list(result.scalars().all())
+
+
+async def _locked_candidates(
+    session: AsyncSession, user_id: int, habit_ids: list[int]
+) -> list[Habit]:
+    """Re-read only prospective writes under a row lock."""
+    if not habit_ids:
+        return []
+    result = await session.execute(
+        select(Habit)
+        .where(
+            Habit.user_id == user_id,
+            col(Habit.id).in_(habit_ids),
             col(Habit.is_carryover).is_(False),
             col(Habit.auto_revealed_at).is_(None),
         )
@@ -113,14 +132,21 @@ async def reconcile_habit_auto_reveals(
 ) -> int:
     """Persist every newly eligible habit reveal for ``user_id`` exactly once.
 
-    All unconsumed, non-carryover rows are locked before eligibility is applied,
-    so concurrent list reads cannot consume the same invitation twice. A live
-    Metta Return release is an explicit pause and wins over both eligibility
-    paths until the user recommits. Already-revealed eligible rows are stamped
-    too: the marker records that their automatic invitation has been consumed,
-    allowing a future manual re-lock to remain locked.
+    Eligibility is checked without a lock first; only the rows that might be
+    written are re-read under a lock and revalidated. This keeps the common
+    no-op list read free of row locks while concurrent reads still cannot
+    consume the same invitation twice. A live Metta Return release is an
+    explicit pause and wins over both eligibility paths until the user
+    recommits. Already-revealed eligible rows are stamped too: the marker
+    records that their automatic invitation has been consumed, allowing a
+    future manual re-lock to remain locked.
     """
     moment = now or datetime.now(UTC)
-    candidates = await _locked_candidates(session, user_id)
-    opened = await _open_candidates(session, user_id, user_tz, candidates, moment)
+    candidates = await _unconsumed_candidates(session, user_id)
+    prospective = await _open_candidates(session, user_id, user_tz, candidates, moment)
+    prospective_ids = [habit.id for habit in prospective if habit.id is not None]
+    if not prospective_ids:
+        return 0
+    locked = await _locked_candidates(session, user_id, prospective_ids)
+    opened = await _open_candidates(session, user_id, user_tz, locked, moment)
     return await _persist_reveals(session, opened, moment)
