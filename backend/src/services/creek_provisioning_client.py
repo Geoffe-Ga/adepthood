@@ -30,7 +30,7 @@ FAILURE_MALFORMED_RESPONSE: Final[str] = "malformed_completion"
 
 _EXPECTED_CONTRACT_MAJOR: Final[str] = "1"
 _CONTRACT_HEADER: Final[str] = "Creek-Provisioning-Version"
-_CEREMONY_REJECTION_CODES: Final[frozenset[str]] = frozenset(
+CEREMONY_REJECTION_CODES: Final[frozenset[str]] = frozenset(
     {
         "invalid_request",
         "job_unavailable",
@@ -68,7 +68,7 @@ class ProvisioningRejectedError(RuntimeError):
 
     def __init__(self, code: str = FAILURE_PROVIDER_REJECTED) -> None:
         """Retain only one allowlisted stable code, never Creek's raw body."""
-        safe_code = code if code in _CEREMONY_REJECTION_CODES else FAILURE_PROVIDER_REJECTED
+        safe_code = code if code in CEREMONY_REJECTION_CODES else FAILURE_PROVIDER_REJECTED
         super().__init__(safe_code)
         self.code = safe_code
 
@@ -150,7 +150,7 @@ def _stable_rejection_code(response: httpx.Response) -> str:
     if not isinstance(payload, dict):
         return FAILURE_PROVIDER_REJECTED
     code = payload.get("code")
-    if not isinstance(code, str) or code not in _CEREMONY_REJECTION_CODES:
+    if not isinstance(code, str) or code not in CEREMONY_REJECTION_CODES:
         return FAILURE_PROVIDER_REJECTED
     return code
 

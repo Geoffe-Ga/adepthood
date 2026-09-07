@@ -26,6 +26,7 @@ from services.creek_provisioning import (
     submit_vault_activation,
 )
 from services.creek_provisioning_client import (
+    CEREMONY_REJECTION_CODES,
     CreekProvisioningClient,
     ProvisioningRejectedError,
     ProvisioningUnavailableError,
@@ -52,12 +53,6 @@ _POLLABLE_STATES = {
     VaultActivationState.AWAITING_KEY_CEREMONY.value,
     VaultActivationState.AWAITING_HANDOFF.value,
 }
-_CEREMONY_REJECTIONS = {
-    "job_unavailable",
-    "invalid_transition",
-    "ceremony_conflict",
-    "ceremony_expired",
-}
 
 
 def _to_response(activation: VaultActivation | None) -> VaultActivationResponse:
@@ -75,7 +70,7 @@ def _to_response(activation: VaultActivation | None) -> VaultActivationResponse:
 
 def _raise_ceremony_error(error: Exception) -> NoReturn:
     """Translate Creek's bounded failures without exposing its response body."""
-    if isinstance(error, ProvisioningRejectedError) and error.code in _CEREMONY_REJECTIONS:
+    if isinstance(error, ProvisioningRejectedError) and error.code in CEREMONY_REJECTION_CODES:
         raise conflict(error.code) from None
     raise service_unavailable("vault_provisioning_unavailable") from None
 

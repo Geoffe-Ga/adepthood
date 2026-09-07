@@ -812,19 +812,30 @@ async def test_key_ceremony_proxy_rejects_secret_fields_without_echo_or_forwardi
 
 
 @pytest.mark.asyncio
-async def test_key_ceremony_proxy_preserves_stable_expiry_failure(
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "invalid_request",
+        "job_unavailable",
+        "invalid_transition",
+        "ceremony_conflict",
+        "ceremony_expired",
+    ],
+)
+async def test_key_ceremony_proxy_preserves_every_stable_rejection(
     async_client: AsyncClient,
     db_session: AsyncSession,
     creek_client: FakeProvisioningClient,
+    failure_code: str,
 ) -> None:
-    """The recovery UI can distinguish an expired allocation and start over."""
-    headers, _, _ = await _signup(async_client, "ceremony-expired")
+    """The recovery UI receives every bounded Creek refusal without drift."""
+    headers, _, _ = await _signup(async_client, f"ceremony-{failure_code}")
     await _activate(async_client, headers)
     activation = (await db_session.execute(select(VaultActivation))).scalar_one()
     activation.state = "awaiting_key_ceremony"
     db_session.add(activation)
     await db_session.commit()
-    creek_client.fail_ceremony_code = "ceremony_expired"
+    creek_client.fail_ceremony_code = failure_code
 
     refused = await async_client.put(
         "/vault/activation/key-ceremony",
@@ -833,7 +844,7 @@ async def test_key_ceremony_proxy_preserves_stable_expiry_failure(
     )
 
     assert refused.status_code == HTTPStatus.CONFLICT
-    assert refused.json() == {"detail": "ceremony_expired"}
+    assert refused.json() == {"detail": failure_code}
 
 
 @pytest.mark.asyncio
