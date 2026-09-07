@@ -12176,7 +12176,7 @@
     },
     "/habits/": {
       "get": {
-        "description": "Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.",
+        "description": "Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.\n\nBefore reading, reveals once each program habit whose partition slot the\ncalendar has opened (:mod:`domain.habit_reveal`, issue #2576 -- the owner\nruling of 2026-09-06 that superseded #1332 / PR #1349's \"nothing\nauto-unlocks\"). ``NORTH-STAR.md`` line 34 has the cadence govern when a\nhabit is *offered*; lines 38 and 62 make every offer one-tap declinable and\nnever repeated. So the flip is a one-shot: ``auto_revealed_at`` is stamped\nand a later relock (Lock Unstarted, Switch, ``PUT revealed=false``) is\nfinal. Carryover habits and habits resting in a live Return release are\nleft alone. The reveal is the first statement so its commit carries nothing\nelse; the SELECT below runs ``populate_existing`` and therefore reads the\nflipped rows.",
         "operationId": "list_habits_habits__get",
         "parameters": [
           {
