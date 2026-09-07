@@ -920,16 +920,19 @@ def _suggestion_from_hit(
 async def _detect_and_persist_suggestions(
     session: AsyncSession, entry_id: int, message: str, user_id: int, llm: BotmasonResonanceLLM
 ) -> list[CompletionSuggestion]:
-    """Best-effort completion detection on the same pass; stage PENDING rows.
+    """Run additive completion detection off-pool; commit its rows and metering.
 
-    Empty candidates short-circuit with no LLM call (cost guard). A provider error
-    is swallowed (returns ``[]``) so the literary pass, the wallet charge, and the
-    commit are never rolled back — detection is strictly additive. A spent balance
-    is swallowed on the same terms but logged with its ``provider``: it is permanent
-    where a dropped socket is transient, and the account is the only thing an
-    operator can act on.
+    The primary reflection, marginalia, and wallet charge have already committed.
+    Candidate gathering opens a read transaction, so it is committed before the
+    provider call; a successful detection then commits its PENDING suggestions and
+    usage rows as a separate additive unit. Empty candidates short-circuit with no
+    LLM call (cost guard). A provider error is swallowed (returns ``[]``), leaving
+    the primary pass intact. A spent balance is swallowed on the same terms but
+    logged with its ``provider``: it is permanent where a dropped socket is
+    transient, and the account is the only thing an operator can act on.
     """
     candidates = await gather_candidates(session, user_id, include_practices=True)
+    await session.commit()
     if not candidates:
         return []
     try:
@@ -945,6 +948,14 @@ async def _detect_and_persist_suggestions(
         return []
     rows = [_suggestion_from_hit(entry_id, user_id, hit) for hit in hits]
     session.add_all(rows)
+    await record_llm_usage(
+        session,
+        user_id=user_id,
+        journal_entry_id=entry_id,
+        responses=llm.usage,
+    )
+    await session.commit()
+    await _refresh_persisted(session, [], rows)
     return rows
 
 
@@ -1171,22 +1182,6 @@ async def _resonance_pass_or_care(
         raise
 
 
-async def _persist_resonance(
-    session: AsyncSession,
-    entry: JournalEntry,
-    user_id: int,
-    llm: BotmasonResonanceLLM,
-    anchored: list[MarginaliaAnchored],
-) -> tuple[list[Marginalia], list[CompletionSuggestion]]:
-    """Stage the anchored notes and best-effort completion suggestions for an entry."""
-    entry_id = cast("int", entry.id)
-    rows = _persist_marginalia(session, entry_id, user_id, anchored)
-    suggestions = await _detect_and_persist_suggestions(
-        session, entry_id, entry.message, user_id, llm
-    )
-    return rows, suggestions
-
-
 # A user with no StageProgress row yet has never reached any stage, so their
 # lifetime high-water mark is the earliest reach. This keeps the contraction gate
 # on the simple ease-off variant rather than the deeper Return, which is correct
@@ -1333,9 +1328,10 @@ async def run_resonance(
 ) -> ResonanceResponse:
     """Run a resonance pass over the caller's entry, persist notes, charge one unit.
 
-    Wallet pre-flight deducts one message (402 when out of capacity). The LLM
-    pass + persistence + the charge commit atomically; any provider error rolls
-    the deduction back so a failed pass never charges (502 ``llm_provider_error``).
+    Wallet pre-flight deducts one message (402 when out of capacity). The
+    reflection pass + marginalia persistence + the charge commit atomically; any
+    reflection-provider error rolls the deduction back so a failed pass never
+    charges (502 ``llm_provider_error``).
 
     A pass that *succeeds* and still persists no notes is neither an error nor a
     non-event: it is a writer who waited and received nothing. Those get the
@@ -1343,8 +1339,13 @@ async def run_resonance(
     client has to interpret — and the deduction is reversed in the bucket it
     came from, so silence costs the writer nothing. The reversal is a crediting
     entry rather than a rollback on purpose: the provider call really happened,
-    and rolling back would erase the usage record of what it cost us along with
-    any completion suggestions the same pass legitimately found.
+    and rolling back would erase the usage record of what it cost us.
+
+    Completion detection is additive to that primary unit. After the reflection
+    commits, its candidate reads are materialized and released before the second
+    provider call; successful suggestions and their usage records then commit in
+    their own transaction. A detection-provider failure therefore cannot roll
+    back the marginalia or charge, and its provider wait holds no pooled connection.
 
     The entry is first screened for an acute-distress signal with a pure, local
     check; on an elevated signal the response carries a ``care`` surface (human +
@@ -1417,17 +1418,25 @@ async def run_resonance(
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    rows, suggestions = await _persist_resonance(session, entry, current_user, llm, anchored.notes)
+    persisted_entry_id = cast("int", entry.id)
+    rows = _persist_marginalia(session, persisted_entry_id, current_user, anchored.notes)
     spent, no_notes_message = await _settle_empty_pass(session, current_user, spent, anchored)
     spent_user = await require_user_fresh(session, current_user)
     await record_llm_usage(
         session,
         user_id=current_user,
-        journal_entry_id=cast("int", entry.id),
+        journal_entry_id=persisted_entry_id,
         responses=llm.usage,
     )
     await session.commit()
-    await _refresh_persisted(session, rows, suggestions)
+    await _refresh_persisted(session, rows, [])
+    suggestions = await _detect_and_persist_suggestions(
+        session,
+        persisted_entry_id,
+        entry.message,
+        current_user,
+        BotmasonResonanceLLM(byok_key),
+    )
     _log_resonance_outcome(anchored, user_id=current_user, entry_id=entry_id, count=len(rows))
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(

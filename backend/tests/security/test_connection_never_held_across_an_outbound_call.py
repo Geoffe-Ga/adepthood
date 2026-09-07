@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterator, Sequence
+from datetime import date
 from http import HTTPStatus
 
 import pytest
@@ -51,6 +52,8 @@ from domain.creek_vault import (
 )
 from main import app
 from models.course_stage import CourseStage
+from models.goal import Goal
+from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from routers import auth as auth_router
@@ -193,6 +196,34 @@ async def _seed_marginalia(session: AsyncSession, user_id: int) -> int:
     await session.refresh(note)
     assert note.id is not None
     return note.id
+
+
+async def _seed_completion_candidate(session: AsyncSession, user_id: int) -> None:
+    """Persist one active habit with a representative goal for detection."""
+    habit = Habit(
+        name="Meditation",
+        icon="flame",
+        start_date=date(2025, 1, 1),
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    session.add(habit)
+    await session.commit()
+    await session.refresh(habit)
+    session.add(
+        Goal(
+            habit_id=habit.id,
+            title="clear",
+            tier="clear",
+            target=1.0,
+            target_unit="x",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        )
+    )
+    await session.commit()
 
 
 def _bind_deployment_vault(monkeypatch: pytest.MonkeyPatch, user_id: int) -> None:
@@ -462,6 +493,55 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _REFLECT), what="the vault reflection pass")
+
+
+# ---------------------------------------------------------------------------
+# Completion-detection row closed by a separate additive transaction.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_resonance_completion_detection_is_dialled_off_the_pool(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    outbound_boundary: OutboundBoundaryObserver,
+) -> None:
+    """A seeded candidate reaches detection off-pool, observed apart from reflection."""
+    headers, user_id = await _signup(async_client, "resonance_detection")
+    await _seed_completion_candidate(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+
+    async def _complete(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del history, system_prompt, api_key
+        payload = (
+            {"hits": [{"index": 0, "quote": _QUOTE}]}
+            if '"hits"' in prompt or "COMPLETED" in prompt
+            else {"notes": [{"kind": "theme", "quote": _QUOTE, "note": "It holds."}]}
+        )
+        return LLMResponse(
+            text=json.dumps(payload),
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+    outbound_boundary.reset()
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["suggestions"], "the seeded candidate produced no completion suggestion"
+    detection = [
+        record
+        for record in _at(outbound_boundary, _LLM)
+        if "detection.py:detect_completions" in record.frames
+    ]
+    assert_dialled_off_the_pool(detection, what="the resonance completion-detection dial")
 
 
 @pytest.mark.asyncio
