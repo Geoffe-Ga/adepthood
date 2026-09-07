@@ -354,6 +354,36 @@ async def test_the_deployment_wide_vault_upload_is_dialled_off_the_pool(
 
 
 # ---------------------------------------------------------------------------
+# Row closed by the invitation aggregate's read-only release boundary.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_invitation_corpus_themes_are_dialled_off_the_pool(
+    async_client: AsyncClient,
+    outbound_boundary: OutboundBoundaryObserver,
+) -> None:
+    """Clear route: GET /invitations releases before its optional vault read."""
+    vault = _ScriptedVault(
+        capabilities=frozenset({CreekCapability.WHEEL}), wheel_result=_full_wheel()
+    )
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, _user_id = await _signup(async_client, "invitations_boundary")
+    outbound_boundary.reset()
+
+    first = await async_client.get("/invitations", headers=headers)
+    second = await async_client.get("/invitations", headers=headers)
+
+    assert first.status_code == HTTPStatus.OK, first.text
+    assert first.json(), "the first pass generated no invitation to deduplicate"
+    assert second.status_code == HTTPStatus.OK, second.text
+    assert second.json() == first.json()
+    assert_dialled_off_the_pool(
+        _at(outbound_boundary, _HANDSHAKE, _WHEEL), what="the invitation corpus-theme read"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Rows still defective. Each runs; each asserts; each is expected red.
 # ---------------------------------------------------------------------------
 
@@ -479,37 +509,6 @@ async def test_the_essay_llm_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _LLM), what="the essay dial")
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=ConnectionHeldAcrossOutboundCallError,
-    reason=(
-        "Census row 4: _gather_aggregates evaluates its four arguments in order -- "
-        "three database gathers, then the vault -- so the transaction is open at the "
-        "dial regardless of which branch the vault dependency took. On a polled list "
-        "endpoint."
-    ),
-)
-@pytest.mark.asyncio
-async def test_the_invitation_corpus_themes_are_dialled_off_the_pool(
-    async_client: AsyncClient,
-    outbound_boundary: OutboundBoundaryObserver,
-) -> None:
-    """Census row 4: GET /invitations."""
-    vault = _ScriptedVault(
-        capabilities=frozenset({CreekCapability.WHEEL}), wheel_result=_full_wheel()
-    )
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
-    headers, _user_id = await _signup(async_client, "invitations_boundary")
-    outbound_boundary.reset()
-
-    resp = await async_client.get("/invitations", headers=headers)
-
-    assert resp.status_code == HTTPStatus.OK, resp.text
-    assert_dialled_off_the_pool(
-        _at(outbound_boundary, _HANDSHAKE, _WHEEL), what="the invitation corpus-theme read"
-    )
 
 
 @pytest.mark.xfail(

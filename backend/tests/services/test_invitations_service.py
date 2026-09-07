@@ -844,6 +844,41 @@ async def test_degraded_vault_yields_behavioral_only(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
+async def test_vault_failure_after_snapshot_leaves_no_partial_signal_state(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-vault commit contains reads only; a crash cannot strand a partial signal."""
+    user_id = await _make_user(db_session, "inv_vault_boundary@example.com")
+    await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(3, 0.95))
+    observed: list[tuple[bool, bool, bool, bool]] = []
+
+    async def _stop_after_snapshot(_client: object) -> None:
+        observed.append(
+            (
+                db_session.in_transaction(),
+                bool(db_session.new),
+                bool(db_session.dirty),
+                bool(db_session.deleted),
+            )
+        )
+        raise RuntimeError("simulated process stop after the snapshot commit")
+
+    monkeypatch.setattr("services.invitations.fetch_vault_wheel", _stop_after_snapshot)
+
+    with pytest.raises(RuntimeError, match="simulated process stop"):
+        await generate_invitation_signals(db_session, user_id, vault_client=client)
+
+    assert observed, "the vault boundary was not observed"
+    assert observed == [(False, False, False, False)]
+    result = await db_session.execute(
+        select(InvitationSignal).where(col(InvitationSignal.user_id) == user_id)
+    )
+    assert list(result.scalars()) == []
+
+
+@pytest.mark.asyncio
 async def test_dismissed_course_readiness_row_blocks_regeneration(
     db_session: AsyncSession,
 ) -> None:

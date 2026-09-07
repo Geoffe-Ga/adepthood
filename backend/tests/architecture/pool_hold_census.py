@@ -117,32 +117,6 @@ class ClearRoute:
 
 HELD: tuple[CensusRow, ...] = (
     CensusRow(
-        route="GET /invitations",
-        holder="services.creek_vault_wheel.fetch_vault_wheel",
-        dial="handshake",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "_gather_aggregates evaluates its four arguments in order: three database "
-            "gathers and then the vault. The transaction is open at the dial whichever "
-            "branch the vault dependency took, because those three gathers re-open it "
-            "after the dependency released. On a polled list endpoint, so the hold "
-            "recurs on a timer rather than on a user action."
-        ),
-        observed_by="test_the_invitation_corpus_themes_are_dialled_off_the_pool",
-    ),
-    CensusRow(
-        route="GET /invitations",
-        holder="services.creek_vault_wheel._read_balance",
-        dial="wheel",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "The second half of the same vault round trip: the capability probe is "
-            "followed by the read it gates, both under the transaction the three "
-            "aggregate gathers left open."
-        ),
-        observed_by="test_the_invitation_corpus_themes_are_dialled_off_the_pool",
-    ),
-    CensusRow(
         route="POST /auth/oauth/google",
         holder="integrations.gumroad._post_once",
         dial="client.post",
@@ -273,6 +247,17 @@ HELD: tuple[CensusRow, ...] = (
 # --- Clear: routes examined and found to release before dialling ------------
 
 CLEAR: tuple[ClearRoute, ...] = (
+    ClearRoute(
+        route="GET /invitations",
+        handler="routers.invitations.list_invitations",
+        reason=(
+            "The readiness service materializes its three database-backed aggregate "
+            "sources, commits their read-only transaction, and only then gathers the "
+            "optional vault themes. Candidate computation and signal writes remain "
+            "below the remote call, so the release cannot make partial invitations "
+            "durable."
+        ),
+    ),
     ClearRoute(
         route="POST /journal/",
         handler="routers.journal.create_journal_entry",
