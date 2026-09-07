@@ -3088,6 +3088,119 @@ def test_habit_carryover_migration_round_trip_on_sqlite(
     assert bool(_habit_row(db_url, habit_id=1)["is_carryover"]) is False
 
 
+# -- #2576 habit.auto_revealed_at one-shot reveal marker round-trip ----------
+
+# Revision anchors for the ``habit.auto_revealed_at`` migration round-trip:
+# the base is the single head the column was authored on top of, the second
+# is the migration that adds it.
+_HABIT_AUTO_REVEALED_BASE_REVISION = "e9a4c6d8f0b2"  # pragma: allowlist secret
+_HABIT_AUTO_REVEALED_REVISION = "de6c2ca1ab1b"  # pragma: allowlist secret
+
+
+def _bootstrap_habit_table_for_auto_revealed(sync_url: str) -> None:
+    """Pre-create the ``habit`` table as it stands just before ``auto_revealed_at``.
+
+    Mirrors the columns in place at ``e9a4c6d8f0b2`` (``revealed`` and
+    ``is_carryover`` both already present) without replaying every earlier
+    migration. One legacy row is seeded so the nullable column's default can
+    be observed on a pre-existing habit: ``NULL`` means "never auto-revealed",
+    which is true of every row that predates the feature.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE habit ("
+                " id INTEGER PRIMARY KEY,"
+                " name VARCHAR(255) NOT NULL,"
+                " icon VARCHAR(100) NOT NULL,"
+                " start_date DATE NOT NULL,"
+                " energy_cost INTEGER NOT NULL,"
+                " energy_return INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " milestone_notifications BOOLEAN NOT NULL DEFAULT 0,"
+                " sort_order INTEGER,"
+                " stage VARCHAR(100) NOT NULL DEFAULT '',"
+                " streak INTEGER NOT NULL DEFAULT 0,"
+                " revealed BOOLEAN NOT NULL DEFAULT 0,"
+                " is_carryover BOOLEAN NOT NULL DEFAULT 0"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO habit"
+                " (id, name, icon, start_date, energy_cost, energy_return, user_id)"
+                " VALUES (1, 'Legacy', '*', '2024-01-01', 1, 2, 1)"
+            )
+        )
+    bootstrap_engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_habit_auto_revealed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the ``auto_revealed_at`` migration."""
+    db_path = tmp_path / "habit_auto_revealed_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_habit_table_for_auto_revealed(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _HABIT_AUTO_REVEALED_BASE_REVISION)
+    return cfg
+
+
+def _habit_auto_revealed_at(db_url: str, habit_id: int) -> object:
+    """Read one habit's ``auto_revealed_at`` straight from the table."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return conn.execute(
+                text("SELECT auto_revealed_at FROM habit WHERE id = :id"),
+                {"id": habit_id},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def test_habit_auto_revealed_at_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_habit_auto_revealed: Config,
+) -> None:
+    """Round-trip ``auto_revealed_at``: upgrade adds a nullable column; downgrade drops it.
+
+    Phase 1: upgrade adds ``auto_revealed_at`` and the pre-existing legacy row
+    reads back ``NULL`` — "never auto-revealed", the only honest answer for a
+    habit that predates the one-shot marker.
+    Phase 2: downgrade removes the column.
+    Phase 3: re-upgrade is idempotent.
+    """
+    cfg = alembic_sqlite_config_habit_auto_revealed
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the column; the legacy row has never been auto-revealed.
+    command.upgrade(cfg, _HABIT_AUTO_REVEALED_REVISION)
+    assert "auto_revealed_at" in _columns_of(db_url, "habit")
+    assert _habit_auto_revealed_at(db_url, habit_id=1) is None
+
+    # Phase 2: downgrade removes the column.
+    command.downgrade(cfg, _HABIT_AUTO_REVEALED_BASE_REVISION)
+    assert "auto_revealed_at" not in _columns_of(db_url, "habit")
+
+    # Phase 3: re-upgrade reproduces the additive column (idempotent cycle).
+    command.upgrade(cfg, _HABIT_AUTO_REVEALED_REVISION)
+    assert "auto_revealed_at" in _columns_of(db_url, "habit")
+    assert _habit_auto_revealed_at(db_url, habit_id=1) is None
+
+
 # -- cross-tenant reference quarantine + detach -----------------------------
 #
 # Two body-parameter authorisation holes (``PUT /goals/{id}`` accepting a

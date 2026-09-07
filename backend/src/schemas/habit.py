@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -43,6 +43,9 @@ class Habit(OwnedResourcePublic):
     stage: str = ""
     streak: int = 0
     revealed: bool = False
+    # Server-owned one-shot marker: when the calendar first revealed this habit,
+    # ``None`` if it never has. Read-only — ``HabitCreate`` deliberately omits it.
+    auto_revealed_at: datetime | None = None
     is_carryover: bool = False
 
 

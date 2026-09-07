@@ -1,7 +1,7 @@
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column
+from sqlalchemy import Column, DateTime
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.types import String
 from sqlmodel import Field, Relationship, SQLModel
@@ -16,10 +16,18 @@ class Habit(SQLModel, table=True):
 
     ``revealed`` is the single source of truth for whether a habit is unlocked
     ("unlocked" == ``revealed is True`` in product terms). New and seeded
-    habits default to locked; the user opts each one in. Re-locking (flipping
-    ``revealed`` back to ``False``) preserves logged completions — those live
-    on the habit's goals, never on this flag — so a re-locked habit keeps its
-    history for when the user unlocks it again.
+    habits default to locked. Two things flip the flag on: the user, at any
+    time; and the server, exactly once per habit, when the program calendar
+    opens the habit's slot on its partition (``domain.habit_reveal``, run by
+    ``GET /habits/``). That server flip stamps ``auto_revealed_at``, and the
+    stamp is the one-shot marker: a habit whose stamp is set is never
+    auto-revealed again, so a relock after the calendar's offer is final
+    (#2576, superseding #1332 / PR #1349 by the owner ruling of 2026-09-06).
+    Carryover habits and habits resting in a live Metta Return release are
+    never auto-revealed. Re-locking (flipping ``revealed`` back to ``False``)
+    preserves logged completions — those live on the habit's goals, never on
+    this flag — so a re-locked habit keeps its history for when the user
+    unlocks it again.
 
     ``is_carryover`` marks a habit the user brought into APTITUDE from before
     the program: ``True`` keeps it on its own partition (tracked without
@@ -54,6 +62,10 @@ class Habit(SQLModel, table=True):
     stage: str = Field(default="", max_length=100)
     streak: int = 0
     revealed: bool = Field(default=False)
+    # Server-owned: when the calendar first revealed this habit; NULL = never.
+    auto_revealed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     is_carryover: bool = Field(default=False)
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(

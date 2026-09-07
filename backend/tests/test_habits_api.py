@@ -1184,3 +1184,52 @@ async def test_list_orders_within_each_carryover_partition(async_client: AsyncCl
     carryover = [h["name"] for h in habits if h["is_carryover"] is True]
     assert program == ["Program A", "Program B"]
     assert carryover == ["Carryover X", "Carryover Y"]
+
+
+# ── Calendar auto-reveal: one-shot marker (#2576) ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_habits_exposes_auto_revealed_at_null_by_default(
+    async_client: AsyncClient,
+) -> None:
+    """GET /habits/ carries ``auto_revealed_at``, ``None`` until the calendar reveals the habit."""
+    headers = await _signup(async_client, "auto_revealed_default")
+    await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    resp = await async_client.get("/habits/", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    [habit] = resp.json()
+    assert habit["auto_revealed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_ignore_auto_revealed_at(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``auto_revealed_at`` is server-owned: a POST or PUT carrying it is accepted and ignored.
+
+    The marker is what makes a relock final, so a client must not be able to
+    clear or forge it. ``HabitCreate`` does not declare the field, so pydantic
+    drops it silently and the column stays ``None`` on disk.
+    """
+    headers = await _signup(async_client, "auto_revealed_readonly")
+    forged = "2026-01-01T00:00:00Z"
+    create_resp = await async_client.post(
+        "/habits/", json=sample_payload(auto_revealed_at=forged), headers=headers
+    )
+    assert create_resp.status_code == HTTPStatus.OK
+    assert create_resp.json()["auto_revealed_at"] is None
+    habit_id = create_resp.json()["id"]
+
+    put_resp = await async_client.put(
+        f"/habits/{habit_id}",
+        json=sample_payload(auto_revealed_at=forged),
+        headers=headers,
+    )
+    assert put_resp.status_code == HTTPStatus.OK
+    assert put_resp.json()["auto_revealed_at"] is None
+
+    db_session.expire_all()
+    persisted = await db_session.get(Habit, habit_id)
+    assert persisted is not None
+    assert persisted.auto_revealed_at is None

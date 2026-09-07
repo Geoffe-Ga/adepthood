@@ -2009,6 +2009,18 @@
       "Habit-Output": {
         "description": "Public representation of a :class:`models.habit.Habit`.\n\nMirrors the SQLModel definition so API consumers can rely on a stable\ncontract. Includes notification fields and client-controlled sort order.\n\n``user_id`` is intentionally excluded (BUG-HABIT-001 / BUG-SCHEMA-001):\nthe client already knows its own identity from the JWT, so emitting\nsurrogate user keys only aids enumeration.",
         "properties": {
+          "auto_revealed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Revealed At"
+          },
           "energy_cost": {
             "title": "Energy Cost",
             "type": "integer"
@@ -2349,6 +2361,18 @@
       "HabitWithGoals": {
         "description": "Habit + nested goals each carrying their embedded completions (BUG-FE-HABIT-301).",
         "properties": {
+          "auto_revealed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Revealed At"
+          },
           "energy_cost": {
             "title": "Energy Cost",
             "type": "integer"
