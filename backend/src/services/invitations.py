@@ -190,12 +190,31 @@ async def _gather_aggregates(
     user_timezone: str,
     vault_client: CreekVaultClient | None = None,
 ) -> ReadinessAggregates:
-    """Assemble the readiness snapshot from the batched per-source gathers."""
+    """Assemble one readiness snapshot without renting a connection to the vault.
+
+    The three local gathers run first, then their read-only transaction is
+    committed before the optional Creek round trip. Nothing is staged or made
+    partially durable at that boundary: candidate computation and every signal
+    insert happen only after the vault has answered (or degraded to no themes).
+    This ordering therefore leaves a coherent no-write state even if the process
+    stops immediately after the commit, while preventing a polled endpoint from
+    holding one pooled connection for the duration of a remote handshake and
+    wheel read.
+    """
+    habits = await _gather_habit_signals(session, user_id)
+    practices = await _gather_practice_signals(session, user_id, user_timezone)
+    active_days_in_window = await _gather_active_days(session, user_id, user_timezone)
+
+    # These gathers are reads. End the transaction they autobegan before the
+    # optional network call; all writes remain below the call.
+    await session.commit()
+    corpus_themes = await _gather_corpus_themes(vault_client)
+
     return ReadinessAggregates(
-        habits=await _gather_habit_signals(session, user_id),
-        practices=await _gather_practice_signals(session, user_id, user_timezone),
-        active_days_in_window=await _gather_active_days(session, user_id, user_timezone),
-        corpus_themes=await _gather_corpus_themes(vault_client),
+        habits=habits,
+        practices=practices,
+        active_days_in_window=active_days_in_window,
+        corpus_themes=corpus_themes,
     )
 
 
