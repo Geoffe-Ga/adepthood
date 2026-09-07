@@ -117,48 +117,6 @@ class ClearRoute:
 
 HELD: tuple[CensusRow, ...] = (
     CensusRow(
-        route="POST /auth/oauth/google",
-        holder="integrations.gumroad._post_once",
-        dial="client.post",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "Resolving an existing account issues an identity SELECT and an email "
-            "SELECT. On the create path both return nothing, and the handler then "
-            "posts to a third-party licensing host under the transaction those two "
-            "lookups opened. The JWKS fetch earlier in the same handler is not this "
-            "row: it is the handler's first awaited statement, before any query, and "
-            "is safe by position rather than by release."
-        ),
-        observed_by="test_the_oauth_license_check_is_dialled_off_the_pool",
-    ),
-    CensusRow(
-        route="POST /auth/oauth/apple",
-        holder="integrations.gumroad._post_once",
-        dial="client.post",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "The same defect down the sibling provider, reached through the same "
-            "account-resolution helper. It is a separate row because it is a separate "
-            "route, and because a fix applied to one provider's handler and not the "
-            "other would leave this one standing."
-        ),
-        observed_by="",
-    ),
-    CensusRow(
-        route="POST /auth/password-reset/confirm",
-        holder="routers.auth._send_change_notification_safely",
-        dial="send",
-        verdict=Verdict.KNOWN,
-        reason=(
-            "The reset is committed and then a session.refresh on the very next line "
-            "emits a SELECT, which autobegins a fresh transaction; the out-of-band "
-            "notification email is sent under it. The near-identical sibling route "
-            "POST /auth/password-reset/request is clear, and the whole difference "
-            "between them is that one line."
-        ),
-        observed_by="test_the_password_change_notification_is_sent_off_the_pool",
-    ),
-    CensusRow(
         route="POST /journal/{entry_id}/resonance",
         holder="services.creek_vault_reflect.select_reflection_llm",
         dial="handshake",
@@ -234,6 +192,33 @@ HELD: tuple[CensusRow, ...] = (
 # --- Clear: routes examined and found to release before dialling ------------
 
 CLEAR: tuple[ClearRoute, ...] = (
+    ClearRoute(
+        route="POST /auth/oauth/google",
+        handler="routers.auth.google_oauth_signin",
+        reason=(
+            "The shared OAuth ladder commits the read-only identity and email lookup "
+            "transaction before its new-account rung verifies a licence. Account and "
+            "identity writes begin only after the provider returns."
+        ),
+    ),
+    ClearRoute(
+        route="POST /auth/oauth/apple",
+        handler="routers.auth.apple_oauth_signin",
+        reason=(
+            "Uses the same release in the provider-neutral OAuth ladder as Google; a "
+            "separate runtime test drives this route so provider parity is observed, "
+            "not inferred from shared source."
+        ),
+    ),
+    ClearRoute(
+        route="POST /auth/password-reset/confirm",
+        handler="routers.auth.confirm_password_reset",
+        reason=(
+            "The reset commit is the last session operation before the notification. "
+            "With expire_on_commit disabled, the response fields remain available "
+            "without the refresh that previously reopened a transaction."
+        ),
+    ),
     ClearRoute(
         route="POST /journal/marginalia/{marginalia_id}/essay",
         handler="routers.journal.expand_marginalia_essay",

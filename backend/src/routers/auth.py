@@ -1567,6 +1567,11 @@ async def _apply_reset_to_user(
     plaintext exactly once (the previous shape hashed twice -- one
     upfront validation throwaway, one inside this helper -- doubling
     the bcrypt budget on every confirm).
+
+    The committed ``user`` remains usable because this service's session factory
+    sets ``expire_on_commit=False``.  Do not refresh it here: a refresh would
+    immediately check out another pooled connection and hold it across the
+    best-effort notification email the caller sends next.
     """
     # Single ``now`` so the JWT-revocation floor and the token's
     # consumed-at stamp are exactly identical -- avoids confusing
@@ -1579,7 +1584,6 @@ async def _apply_reset_to_user(
     session.add(token_row)
     await _clear_recent_failed_attempts(session, user.email)
     await session.commit()
-    await session.refresh(user)
 
 
 @router.post("/password-reset/confirm", response_model=AuthResponse)
@@ -2187,6 +2191,11 @@ async def _resolve_oauth_user(
     not just a tidiness one: the moment a provider gets its own copy, the two
     drift, and a divergence in which refusals collapse onto the single 409
     reopens the account-enumeration oracle on whichever route drifted.
+
+    The two existing-account lookups autobegin a read transaction.  On the
+    create rung, release it before the third-party licence check; account and
+    identity creation happen only after that check and retain their existing
+    race handling and commit boundaries.
     """
     resolved = await _resolve_existing_account(session, attempt)
     if resolved is not None:
@@ -2194,6 +2203,7 @@ async def _resolve_oauth_user(
     email = _linkable_email(attempt.claims)
     if email is None:
         raise await _needs_license_conflict(attempt.claims.email)
+    await session.commit()
     return await _create_oauth_account(request, session, payload, attempt, email)
 
 
