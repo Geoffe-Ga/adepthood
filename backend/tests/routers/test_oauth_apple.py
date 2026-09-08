@@ -41,6 +41,7 @@ from models.entitlement import Entitlement
 from models.license_binding import LicenseBinding
 from models.user import User
 from models.vault_activation import VaultActivation
+from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 from services.oauth_apple import (
     APPLE_ISSUERS,
@@ -111,9 +112,16 @@ NO_LICENSE_SUBJECT = "000128.91d6f708192a3b4c5d6e7f8091a2b3c4.0006"
 LINKED_SUBJECT = "000129.a2e708192a3b4c5d6e7f8091a2b3c4d5.0007"
 BOUND_KEY_SUBJECT = "000130.b3f8192a3b4c5d6e7f8091a2b3c4d5e6.0008"
 GOOGLE_SUBJECT = "109876543210987654321"
+# Subjects and addresses for the hourly-cap grind: one distinct pair per
+# attempt, so every request reaches the licence-gated creation rung.
+THROTTLE_SUBJECT_PREFIX = "000131.c40a1b2c3d4e5f60718293a4b5c6d7e8."
+THROTTLE_SUBJECT_FINAL = "000132.d51b2c3d4e5f60718293a4b5c6d7e8f90.0011"
+THROTTLE_EMAIL_PREFIX = "throttle-attempt-"
+THROTTLE_FINAL_EMAIL = "throttle-final@example.com"
 
 VALID_LICENSE_KEY = "AAAA1111-BBBB-2222-APPLE"  # pragma: allowlist secret
 RELAY_LICENSE_KEY = "CCCC3333-DDDD-4444-APPLE"  # pragma: allowlist secret
+INVALID_LICENSE_KEY = "ZZZZ9999-YYYY-8888-APPLE"  # pragma: allowlist secret
 SALE_ID = "S-APPLE-1"
 LICENSE_USES = 1
 COURSE_ACCESS_KIND = "course_access"
@@ -139,6 +147,7 @@ VERIFIED_FALSE_STRING = "false"
 
 DETAIL_INVALID_TOKEN = "invalid_oauth_token"
 DETAIL_NEEDS_LICENSE = "needs_license"
+DETAIL_THROTTLED = "too_many_license_attempts"
 
 REASON_INVALID_TOKEN = "oauth_invalid_token"
 REASON_LOGIN = "oauth_login"
@@ -1093,3 +1102,56 @@ async def test_apple_links_alongside_an_existing_google_identity(
     assert via_google.json()["user_id"] == _user_id(user)
     assert via_apple.json()["user_id"] == _user_id(user)
     assert await _count_rows(db_session, AuthIdentity) == DUAL_IDENTITY_COUNT
+
+
+# ---------------------------------------------------------------------------
+# I. The invalid-license hourly cap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_a_bound_key_charges_the_oauth_cap_like_an_unknown_one(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """A valid-but-already-redeemed key costs a cap unit exactly as junk does.
+
+    Apple shares Google's ladder verbatim, so it shares the charge -- and the
+    pin has to live here too, or a provider-specific refactor could make the
+    Apple route the free oracle Google's tests forbid. This is the licence
+    cap, not the 5/minute per-IP limiter that section B exercises.
+    """
+    holder = await _seed_user(db_session)
+    license_verifier.grant(VALID_LICENSE_KEY, REAL_PURCHASE_EMAIL)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT,
+        )
+    )
+    await db_session.commit()
+
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
+        id_token = _mint_token(
+            sub=f"{THROTTLE_SUBJECT_PREFIX}{attempt:04d}",
+            email=f"{THROTTLE_EMAIL_PREFIX}{attempt}@example.com",
+        )
+        bound = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(id_token, license_key=VALID_LICENSE_KEY),
+        )
+        assert bound.status_code == HTTPStatus.CONFLICT
+        assert bound.json()["detail"] == DETAIL_NEEDS_LICENSE
+
+    final_token = _mint_token(sub=THROTTLE_SUBJECT_FINAL, email=THROTTLE_FINAL_EMAIL)
+    throttled = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(final_token, license_key=INVALID_LICENSE_KEY),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    assert await _count_rows(db_session, User) == 1
