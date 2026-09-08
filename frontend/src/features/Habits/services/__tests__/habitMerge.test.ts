@@ -157,3 +157,60 @@ describe('a habit that changes lap gets a place in the lap it enters', () => {
     expect(byId.get(7)?.sort_order).toBe(1);
   });
 });
+
+describe('a store onboarded before slots existed', () => {
+  it('gives a slot only to the rows this pass named, on a store that holds none', () => {
+    // The legacy population: every row NULL, because these habits were created
+    // before `sort_order` was stamped client-side. A pass that re-rates two of
+    // them must number those two and leave the rest exactly as it found them --
+    // silently numbering an unmentioned row would reshuffle a list the user
+    // never asked to reorder.
+    const existing = [
+      habit({ id: 1, name: 'Alpha', sort_order: null }),
+      habit({ id: 2, name: 'Bravo', sort_order: null }),
+      habit({ id: 3, name: 'Charlie', sort_order: null }),
+      habit({ id: 4, name: 'Delta', sort_order: null }),
+      habit({ id: 5, name: 'Echo', sort_order: null }),
+    ];
+    const plan: HabitMergePlan = [
+      { kind: 're-rated', habitId: 4, habit: pick({ name: 'Delta', energy_cost: 9 }) },
+      { kind: 're-rated', habitId: 5, habit: pick({ name: 'Echo', energy_cost: 9 }) },
+      { kind: 'retained', habitId: 1 },
+      { kind: 'retained', habitId: 2 },
+      { kind: 'retained', habitId: 3 },
+    ];
+
+    const ops = planHabitMerge(plan, existing);
+
+    expect(ops.updates.map((u) => [u.id, u.sort_order])).toEqual([
+      [4, 0],
+      [5, 1],
+    ]);
+    expect(ops.creates).toEqual([]);
+    expect(ops.nextStore.filter((h) => [1, 2, 3].includes(h.id)).map((h) => h.sort_order)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+  });
+});
+
+describe('an unmentioned demo tile', () => {
+  it('drops an unmentioned demo tile from the next store', () => {
+    // A demo tile is scaffolding, not a habit the user built. The rule that
+    // keeps an unmentioned row alive exists so a forgetful plan cannot delete
+    // real work; it must not also resurrect the placeholder the user has
+    // already moved past.
+    const existing = [
+      habit({ id: 1, name: 'Alpha', sort_order: 0 }),
+      habit({ id: -99, name: 'Demo tile', sort_order: 1, isDemoSeed: true }),
+    ];
+    const plan: HabitMergePlan = [
+      { kind: 're-rated', habitId: 1, habit: pick({ name: 'Alpha', energy_cost: 9 }) },
+    ];
+
+    const ops = planHabitMerge(plan, existing);
+
+    expect(ops.nextStore.map((h) => h.id)).toEqual([1]);
+  });
+});

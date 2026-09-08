@@ -198,6 +198,16 @@ export const deriveMergePlan = (
 };
 
 /**
+ * Whether this habit has a beginning the user has already lived through.
+ *
+ * A logged day proves it. So does a streak with no logged days at all, which is
+ * the normal state of an abstention habit: nothing to record is the success,
+ * and the run is measured from the start date rather than from any row.
+ */
+export const hasBegun = (habit: Habit): boolean =>
+  (habit.completions?.length ?? 0) > 0 || (habit.streak ?? 0) > 0;
+
+/**
  * Overwrite a kept row with what the user just chose, and nothing else.
  *
  * The scaffolder cannot be reused here. It zeroes the streak, empties the
@@ -209,16 +219,6 @@ export const deriveMergePlan = (
  * the program, so its start date is not a program date and its stage is not a
  * program stage. It takes the new rating and icon; it keeps its own beginning.
  */
-/**
- * Whether this habit has a beginning the user has already lived through.
- *
- * A logged day proves it. So does a streak with no logged days at all, which is
- * the normal state of an abstention habit: nothing to record is the success,
- * and the run is measured from the start date rather than from any row.
- */
-export const hasBegun = (habit: Habit): boolean =>
-  (habit.completions?.length ?? 0) > 0 || (habit.streak ?? 0) > 0;
-
 const carryKept = (original: Habit, pick: OnboardingHabit, keepsItsOwnLap: boolean): Habit => ({
   ...original,
   name: pick.name,

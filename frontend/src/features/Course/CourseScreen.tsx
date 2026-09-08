@@ -267,13 +267,65 @@ const CourseErrorState = ({ onRetry }: { onRetry: () => void }): React.JSX.Eleme
   </View>
 );
 
-const CourseLoadingState = (): React.JSX.Element => (
-  <SafeAreaView style={styles.container}>
-    <View style={styles.loadingContainer}>
-      <ActivityIndicator testID="course-loading" size="large" />
-    </View>
-  </SafeAreaView>
+/**
+ * How long the cold-start spinner may hold the whole Course tab before it
+ * offers a way out. ``loading`` only flips back when the stage-list request
+ * settles, so a dropped connection, a backgrounded app or a proxy holding the
+ * socket open leaves it true for good — long enough that a slow-but-alive
+ * network still lands first, short enough that nobody is asked to trust an
+ * indefinite spinner. Valued to match ``MAP_LOADING_TIMEOUT_MS``: the two cold
+ * starts must not disagree about how long a person is asked to wait.
+ */
+export const COURSE_LOADING_TIMEOUT_MS = 12_000;
+
+// The cold start's last dead end: a spinner with no timeout and nothing to
+// press. After the bounded wait it says so plainly and offers the same explicit
+// "Try again" the error state uses.
+const CourseLoadingTimedOut = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
+  <View
+    style={styles.emptyContainer}
+    testID="course-loading-timeout"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
+    <Text style={styles.emptyIcon}>{'⏳'}</Text>
+    <Text style={styles.emptyTitle}>The course is taking longer than it should</Text>
+    <Text style={styles.emptySubtitle}>
+      It may still be on its way. Check your connection and try again.
+    </Text>
+    <RetryButton onRetry={onRetry} testID="course-loading-retry" />
+  </View>
 );
+
+// Retrying re-arms the wait, so a second slow attempt gets the spinner back
+// rather than a stale message; the timer is dropped on unmount and when
+// ``loading`` settles, because that unmounts this component with it.
+const CourseLoadingState = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => {
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (timedOut) return undefined;
+    const timer = setTimeout(() => setTimedOut(true), COURSE_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [timedOut]);
+
+  const handleRetry = useCallback(() => {
+    setTimedOut(false);
+    onRetry();
+  }, [onRetry]);
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {timedOut ? (
+        <CourseLoadingTimedOut onRetry={handleRetry} />
+      ) : (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator testID="course-loading" size="large" />
+        </View>
+      )}
+    </SafeAreaView>
+  );
+};
 
 const ContentLoadingIndicator = (): React.JSX.Element => (
   <View style={styles.loadingContainer}>
@@ -727,7 +779,7 @@ const CourseScreen = (): React.JSX.Element => {
     );
   }
 
-  if (loading) return <CourseLoadingState />;
+  if (loading) return <CourseLoadingState onRetry={retry} />;
 
   // Stage-list fetch failed: show error+retry, not an empty course.
   if (error) {

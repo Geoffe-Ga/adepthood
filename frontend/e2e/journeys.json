@@ -286,7 +286,7 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself. The cold start's bounded wait is a state of this journey, not a journey of its own: it crosses no screen, client wrapper, route or table this entry does not already name -- it is a client-side timer over the same GET /stages read, and it is reached precisely when that read never answers, which no lane against a live server can arrange. Pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx, the way the Map's identical bounded wait is pinned by MapScreenColdStart.test.tsx and declared nowhere in this ledger.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
       "client": ["course", "stages"],
@@ -616,6 +616,18 @@
     },
     "status": "uncovered",
     "issue": 2399
+  },
+  {
+    "id": "habits.legacy-unnumbered-habits-keep-their-order",
+    "description": "A user whose habits were created before sort_order existed holds NULL in every row. GET /habits/ used to order by sort_order ASC with no NULLS placement and no secondary key, so the order among those rows was undefined and PostgreSQL sorted them last -- the first numbered habit the user added leapfrogged every habit they had onboarded with, and because tile colour is positional (HabitsScreen colorIndices) the whole lap repainted around it. The list query now orders by sort_order ASC NULLS FIRST, then id: the unnumbered rows keep the head position they have always displayed in, a later numbered add lands after them, and the id key makes the order total even for a fully numbered store, where two rows may legitimately share a slot because slots restart at zero inside each is_carryover partition. Uncovered because the e2e lane cannot mint a pre-2026-09-02 store: the production client always stamps a slot on the rows it creates, so reaching the NULL population needs a fixture the lane has no seam for. Pinned meanwhile by backend/tests/test_habits_list_ordering.py, which asserts the ORDER BY the endpoint actually emitted, compiled to the PostgreSQL dialect -- the test lane is SQLite, which sorts NULLs first natively and cannot tell the fix from the defect.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2634
   },
   {
     "id": "vault.connect-your-own",
