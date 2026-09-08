@@ -57,6 +57,14 @@ const ALL_DECLARED_VARIABLES: readonly string[] = [
 ];
 
 describe('frontend Dockerfile build arguments', () => {
+  it('copies dependency patches before the clean install runs postinstall', () => {
+    const patchesAt = DOCKERFILE.indexOf('COPY frontend/patches/ ./patches/');
+    const installAt = DOCKERFILE.indexOf('RUN npm ci');
+
+    expect(patchesAt).toBeGreaterThan(-1);
+    expect(installAt).toBeGreaterThan(patchesAt);
+  });
+
   it.each(NO_DEFAULT_VARIABLES)('declares ARG %s', (name) => {
     expect(DOCKERFILE).toContain(`ARG ${name}\n`);
   });

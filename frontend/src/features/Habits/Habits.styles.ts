@@ -467,6 +467,8 @@ export const styles = StyleSheet.create({
   reorderModalContent: {
     width: '90%',
     height: '85%',
+    minHeight: 0,
+    overflow: 'hidden',
     backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.lg,
@@ -508,9 +510,32 @@ export const styles = StyleSheet.create({
   },
   reorderList: {
     flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
     marginVertical: SPACING.md,
   },
+  reorderPageMarker: {
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    backgroundColor: surface.sunken,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: surface.hairline,
+  },
+  reorderPageMarkerTitle: {
+    color: ink.primary,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  reorderPageMarkerHint: {
+    color: ink.muted,
+    fontFamily: fonts.sans,
+    fontSize: 12,
+    marginTop: SPACING.xs,
+  },
   reorderItem: {
+    width: '100%',
     padding: SPACING.lg,
     borderBottomWidth: 1,
     borderColor: surface.hairline,
@@ -525,7 +550,27 @@ export const styles = StyleSheet.create({
     justifyContent: JUSTIFY_SPACE_BETWEEN,
     alignItems: 'center',
   },
+  reorderItemIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  reorderDragHandle: {
+    color: ink.muted,
+    fontFamily: fonts.sans,
+    fontSize: 20,
+    marginRight: SPACING.sm,
+  },
+  reorderPosition: {
+    minWidth: 28,
+    color: ink.soft,
+    fontFamily: fonts.sans,
+    fontSize: 13,
+    fontVariant: ['tabular-nums'],
+  },
   reorderItemText: {
+    flexShrink: 1,
     fontSize: 16,
     fontWeight: '500',
     color: ink.primary,
@@ -534,6 +579,7 @@ export const styles = StyleSheet.create({
   reorderItemDate: {
     fontSize: 14,
     color: ink.soft,
+    marginLeft: SPACING.md,
   },
 
   // ===== Missed Days Modal =====
