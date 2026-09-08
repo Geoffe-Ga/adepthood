@@ -33,6 +33,7 @@ from sqlmodel import col, select
 
 from models.entitlement import Entitlement, EntitlementKind
 from models.gumroad_sale import GumroadSale
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.wallet_audit import WalletAudit
 
@@ -471,37 +472,61 @@ async def test_revoke_rejects_a_blank_reason(
 
 
 @pytest.mark.asyncio
-async def test_summary_matches_sales_whose_email_differs_only_by_case(
+async def test_summary_reports_sales_through_the_binding_even_when_the_sale_email_differs(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A sale typed with different capitalisation still belongs to the account.
+    """A sale the account redeemed shows up whatever address the buyer typed.
 
-    ``GumroadSale.email`` is stored exactly as Gumroad reports it, while
-    ``User.email`` is normalised at signup — so the two legitimately differ in
-    case for the same person. ``routers/gumroad._find_user_by_email`` already
-    folds case for this reason; a summary that did not would show
-    ``gumroad_sales: []`` for a buyer who *did* pay, which is precisely the
-    account most likely to be the subject of the support ticket that sent the
-    operator here.
+    ``GumroadSale.email`` is whoever paid; under ADR 0008 that may be a gift
+    buyer, a Hide-My-Email relay's real owner, or the same person with another
+    capitalisation. The summary joins sales through the licence binding, so a
+    gift recipient's redeemed sale is listed rather than silently absent —
+    which is the account most likely to be the subject of the support ticket
+    that sent the operator here.
     """
     _, admin_headers = await _signup_admin(async_client, db_session)
-    target_email = "jane.doe@example.com"
-    target = await _make_user(db_session, target_email)
+    target = await _make_user(db_session, "recipient@example.com")
     db_session.add(
         GumroadSale(
-            gumroad_sale_id="mixed-case-sale",
+            gumroad_sale_id="gift-sale",
             product_id="prod-1",
-            # As Gumroad reports it: the address the buyer typed.
-            email="Jane.Doe@Example.com",
+            email="Generous.Buyer@Example.com",
             resource_name="sale",
         )
     )
+    db_session.add(LicenseBinding(user_id=target, gumroad_sale_id="gift-sale", product_id="prod-1"))
     await db_session.commit()
 
     resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
     assert resp.status_code == HTTPStatus.OK, resp.text
     sale_ids = {sale["gumroad_sale_id"] for sale in resp.json()["gumroad_sales"]}
-    assert sale_ids == {"mixed-case-sale"}
+    assert sale_ids == {"gift-sale"}
+
+
+@pytest.mark.asyncio
+async def test_summary_lists_the_users_license_bindings(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The bindings — sale id, product, when — are reported alongside the sales."""
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "bound@example.com")
+    db_session.add(LicenseBinding(user_id=target, gumroad_sale_id="bound-1", product_id="prod-1"))
+    db_session.add(LicenseBinding(user_id=target, gumroad_sale_id="bound-2", product_id="prod-2"))
+    await db_session.commit()
+
+    resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    bindings = resp.json()["license_bindings"]
+
+    assert {(row["gumroad_sale_id"], row["product_id"]) for row in bindings} == {
+        ("bound-1", "prod-1"),
+        ("bound-2", "prod-2"),
+    }
+    assert all(isinstance(row["id"], int) and row["created_at"] for row in bindings)
+    # Ids only: a binding summary carries no address and no key.
+    assert all(
+        set(row) == {"id", "gumroad_sale_id", "product_id", "created_at"} for row in bindings
+    )
 
 
 @pytest.mark.asyncio
@@ -521,6 +546,7 @@ async def test_summary_reports_the_users_access_picture(
             resource_name="sale",
         )
     )
+    db_session.add(LicenseBinding(user_id=target, gumroad_sale_id="sale-1", product_id="prod-1"))
     await db_session.commit()
 
     resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
@@ -532,6 +558,8 @@ async def test_summary_reports_the_users_access_picture(
     assert len(body["entitlements"]) == 1
     assert len(body["gumroad_sales"]) == 1
     assert body["gumroad_sales"][0]["gumroad_sale_id"] == "sale-1"
+    assert len(body["license_bindings"]) == 1
+    assert body["license_bindings"][0]["gumroad_sale_id"] == "sale-1"
     assert "offering_balance" in body
     assert "monthly_messages_used" in body
     assert body["wallet_audit"] == []
@@ -573,6 +601,9 @@ async def test_summary_caps_and_orders_its_history(
                 created_at=base + timedelta(minutes=index),
             )
         )
+        db_session.add(
+            LicenseBinding(user_id=target, gumroad_sale_id=f"sale-{index}", product_id="prod-1")
+        )
     await db_session.commit()
 
     resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
@@ -587,28 +618,49 @@ async def test_summary_caps_and_orders_its_history(
 
 
 @pytest.mark.asyncio
-async def test_summary_matches_sales_by_email_not_user_id(
+async def test_summary_omits_a_same_email_sale_that_is_bound_to_nobody_or_someone_else(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Sales join on email, and another address's sales must not leak in.
+    """Sales join through the binding, so email equality alone lists nothing.
 
-    ``GumroadSale`` carries no user id, so email is the only link -- which is
-    exactly why the match has to be exact rather than partial.
+    A sale under the account's own address that nobody redeemed is an
+    unclaimed gift, and one another account redeemed is theirs — neither is
+    this account's purchase picture, however the addresses line up.
     """
     _, admin_headers = await _signup_admin(async_client, db_session)
     target_email = "mine@example.com"
     target = await _make_user(db_session, target_email)
-    db_session.add(
-        GumroadSale(
-            gumroad_sale_id="mine-1", product_id="p", email=target_email, resource_name="sale"
+    other = await _make_user(db_session, "other@example.com")
+    for sale_id in ("mine-1", "unclaimed-1", "theirs-1"):
+        db_session.add(
+            GumroadSale(
+                gumroad_sale_id=sale_id, product_id="p", email=target_email, resource_name="sale"
+            )
         )
-    )
+    db_session.add(LicenseBinding(user_id=target, gumroad_sale_id="mine-1", product_id="p"))
+    db_session.add(LicenseBinding(user_id=other, gumroad_sale_id="theirs-1", product_id="p"))
+    await db_session.commit()
+
+    resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    sale_ids = {sale["gumroad_sale_id"] for sale in resp.json()["gumroad_sales"]}
+    assert sale_ids == {"mine-1"}
+
+
+@pytest.mark.asyncio
+async def test_summary_includes_a_token_pack_receipt_credited_to_the_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A pack sale is not licence-bound; it joins through the credit's own user link."""
+    _, admin_headers = await _signup_admin(async_client, db_session)
+    target = await _make_user(db_session, "pack-buyer@example.com")
     db_session.add(
         GumroadSale(
-            gumroad_sale_id="theirs-1",
-            product_id="p",
-            email="other@example.com",
+            gumroad_sale_id="pack-1",
+            product_id="prod-pack",
+            email="whoever@example.com",
             resource_name="sale",
+            token_pack_credited_user_id=target,
         )
     )
     await db_session.commit()
@@ -616,7 +668,7 @@ async def test_summary_matches_sales_by_email_not_user_id(
     resp = await async_client.get(f"/admin/users/{target}/summary", headers=admin_headers)
     assert resp.status_code == HTTPStatus.OK, resp.text
     sale_ids = {sale["gumroad_sale_id"] for sale in resp.json()["gumroad_sales"]}
-    assert sale_ids == {"mine-1"}
+    assert sale_ids == {"pack-1"}
 
 
 @pytest.mark.asyncio
