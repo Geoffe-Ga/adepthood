@@ -286,7 +286,7 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself. The cold start's bounded wait is a state of this journey, not a journey of its own: it crosses no screen, client wrapper, route or table this entry does not already name -- it is a client-side timer over the same GET /stages read, and it is reached precisely when that read never answers, which no lane against a live server can arrange. Pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx, the way the Map's identical bounded wait is pinned by MapScreenColdStart.test.tsx and declared nowhere in this ledger.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
       "client": ["course", "stages"],
