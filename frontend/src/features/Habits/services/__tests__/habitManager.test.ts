@@ -86,7 +86,13 @@ import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { buildMergePlan, buildReviewRows } from '../../components/onboardingReview';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import type { Goal, Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
-import { buildPagedHabits, carryoverSlot, countCarryover, stageAtIndex } from '../../HabitUtils';
+import {
+  buildPagedHabits,
+  calculateHabitStartDate,
+  carryoverSlot,
+  countCarryover,
+  stageAtIndex,
+} from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
 
@@ -236,6 +242,9 @@ const freshServerGoal = (id: number, title: string, tier: string, target: number
 
 const resetStore = () => {
   useHabitStore.setState({ habits: [], loading: false, error: null });
+  // ``buildAddedHabit`` now reads the program anchor, so an anchor derived by an
+  // earlier test would leak forward and make every add test order-dependent.
+  useProgramStore.getState().hydrateProgramStartDate(null);
 };
 
 beforeEach(() => {
@@ -1590,6 +1599,170 @@ describe('habitManager', () => {
         1,
         expect.objectContaining({ is_carryover: true }),
       );
+    });
+  });
+
+  describe('addHabit lays a program row on the cadence', () => {
+    // The program's start, held deliberately AHEAD of today. The anchor half of
+    // this defect only bites when a row stamped with the wall clock can undercut
+    // a start date the user picked in the future, so a hard-coded past ISO would
+    // let these tests rot into vacuity the moment the calendar walked past it.
+    const DAYS_AHEAD = 30;
+    const futureBeige = (): Date => {
+      const d = new Date();
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() + DAYS_AHEAD);
+      return d;
+    };
+
+    /** Echo a store row back in the shape ``mapApiHabits`` consumes, for the reload inside ``addHabit``. */
+    const echoRow = (h: Habit) => ({
+      id: h.id,
+      name: h.name,
+      icon: h.icon,
+      start_date: h.start_date.toISOString().slice(0, 10),
+      energy_cost: h.energy_cost,
+      energy_return: h.energy_return,
+      stage: h.stage,
+      streak: 0,
+      milestone_notifications: false,
+      goals: [],
+    });
+
+    /** Hold ``habitsApi.create`` open so the optimistic row can be read before the round-trip resolves. */
+    const holdCreateOpen = (): (() => void) => {
+      let release: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (release = () => r({}))),
+      );
+      return () => release?.();
+    };
+
+    const lastHabit = (): Habit => {
+      const { habits } = useHabitStore.getState();
+      return habits[habits.length - 1]!;
+    };
+
+    const storedAnchor = (): Date => useProgramStore.getState().programStartDate!;
+
+    it('stamps a program add on its own rung of the cadence, not the day it was added', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(futureBeige());
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Survive' })] });
+      const release = holdCreateOpen();
+
+      const inFlight = habitManager.addHabit({ name: 'Brand New', icon: '\u{1F195}' });
+
+      const added = lastHabit();
+      expect(added.sort_order).toBe(1);
+      expect(added.start_date.getTime()).toBe(calculateHabitStartDate(storedAnchor(), 1).getTime());
+
+      release();
+      await inFlight;
+    });
+
+    it('an add made before the program starts does not become the program’s beginning after a logout', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(futureBeige());
+      const beige = storedAnchor();
+      const existing = makeHabit({ id: 1, name: 'Survive', start_date: new Date(beige) });
+      useHabitStore.setState({ habits: [existing] });
+      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() =>
+        Promise.resolve([echoRow(existing), echoRow(lastHabit())]),
+      );
+
+      await habitManager.addHabit({ name: 'Brand New', icon: '\u{1F195}' });
+      const roundTripped = useHabitStore.getState().habits.map(echoRow);
+
+      // The logout wipe, then the next cold load that re-derives the anchor.
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => Promise.resolve(roundTripped));
+      await habitManager.loadHabits();
+
+      expect(storedAnchor().getTime()).toBe(beige.getTime());
+    });
+
+    it('with no anchor stored the add lands after the rows that already exist', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      const beige = futureBeige();
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'Survive', start_date: new Date(beige) }),
+          makeHabit({ id: 2, name: 'Purple', start_date: calculateHabitStartDate(beige, 1) }),
+        ],
+      });
+      const release = holdCreateOpen();
+
+      const inFlight = habitManager.addHabit({ name: 'Red', icon: '\u{1F534}' });
+
+      const added = lastHabit();
+      expect(added.start_date.getTime()).toBe(calculateHabitStartDate(beige, 2).getTime());
+      // The fixed point that matters: the new row can never become a new, earlier
+      // minimum, so the next derivation returns the same anchor it started from.
+      expect(added.start_date.getTime()).toBeGreaterThan(beige.getTime());
+
+      release();
+      await inFlight;
+    });
+
+    // Characterization: green before the fix as well as after. The day-one case is
+    // the one branch where the wall clock is still the right answer, because this
+    // row is itself defining the ladder's first rung.
+    it('the first habit on an empty, unanchored store still begins today', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(null);
+      useHabitStore.setState({ habits: [] });
+
+      await habitManager.addHabit({ name: 'Survive', icon: '\u{1F9D8}' });
+
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ start_date: new Date().toISOString().slice(0, 10) }),
+      );
+    });
+
+    // Characterization: green before the fix as well as after. It mirrors the pin
+    // at 'posts a carryover payload with is_carryover true...' but WITH an anchor
+    // stored, which is the branch the cadence change could have regressed.
+    it('a carryover add is still stamped today and stays off the ladder', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(futureBeige());
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Survive' })] });
+
+      await habitManager.addHabit({ name: 'Morning Walk', icon: '\u{1F6B6}' }, true);
+
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          is_carryover: true,
+          start_date: new Date().toISOString().slice(0, 10),
+        }),
+      );
+    });
+
+    it('a second-lap add saturates at the last rung, exactly as the reorder modal does', async () => {
+      useProgramStore.getState().hydrateProgramStartDate(futureBeige());
+      const beige = storedAnchor();
+      useHabitStore.setState({
+        habits: Array.from({ length: 10 }, (_, i) =>
+          makeHabit({
+            id: i + 1,
+            name: `Program ${i}`,
+            start_date: calculateHabitStartDate(beige, i),
+          }),
+        ),
+      });
+      const release = holdCreateOpen();
+
+      const inFlight = habitManager.addHabit({ name: 'Eleventh', icon: '\u{1F51F}' });
+
+      const added = lastHabit();
+      expect(added.sort_order).toBe(10);
+      // STAGE_DURATIONS_DAYS has exactly ten entries, so the ladder saturates past
+      // the tenth rung while ``stageAtIndex`` keeps wrapping. Pinned deliberately,
+      // not endorsed: this matches ``updateStartDates`` in ReorderHabitsModal, and
+      // changing it means changing that function in the same breath.
+      expect(added.start_date.getTime()).toBe(calculateHabitStartDate(beige, 10).getTime());
+      expect(calculateHabitStartDate(beige, 11).getTime()).toBe(
+        calculateHabitStartDate(beige, 10).getTime(),
+      );
+
+      release();
+      await inFlight;
     });
   });
 
@@ -3156,7 +3329,10 @@ describe('habitManager', () => {
     it('does not re-set the program anchor when it already matches the earliest habit start date', async () => {
       const anchor = new Date('2026-01-01T00:00:00Z');
       useProgramStore.getState().hydrateProgramStartDate(anchor);
-      const setStateSpy = jest.spyOn(useProgramStore, 'setState');
+      // Spied on the action the sync actually reaches for, not on the store's
+      // ``setState``: the store closes over its own setter at creation, so a
+      // spy installed on the store object is never the function an action calls.
+      const setAnchorSpy = jest.spyOn(useProgramStore.getState(), 'setProgramStartDate');
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
       (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
         {
@@ -3175,8 +3351,8 @@ describe('habitManager', () => {
 
       await habitManager.loadHabits();
 
-      expect(setStateSpy).not.toHaveBeenCalled();
-      setStateSpy.mockRestore();
+      expect(setAnchorSpy).not.toHaveBeenCalled();
+      setAnchorSpy.mockRestore();
     });
   });
 
