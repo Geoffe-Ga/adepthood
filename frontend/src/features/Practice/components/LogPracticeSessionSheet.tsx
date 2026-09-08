@@ -122,15 +122,20 @@ function useLogSessionForm(
   defaultDurationMinutes: number,
   clearError: () => void,
 ): LogSessionForm {
-  const [minutes, setMinutes] = useState<number | null>(defaultDurationMinutes);
+  // `default_duration_minutes` is a float on the wire (backend/src/schemas/
+  // practice.py, models/practice.py), but the field below asks for whole
+  // minutes. Seeding it raw would open the sheet already refusing to save,
+  // showing the correction copy before the writer had touched anything.
+  const seedMinutes = Math.round(defaultDurationMinutes);
+  const [minutes, setMinutes] = useState<number | null>(seedMinutes);
   const [endedAt, setEndedAt] = useState<Date>(() => new Date());
 
   useEffect(() => {
     if (!visible) return;
-    setMinutes(defaultDurationMinutes);
+    setMinutes(seedMinutes);
     setEndedAt(new Date());
     clearError();
-  }, [visible, defaultDurationMinutes, clearError]);
+  }, [visible, seedMinutes, clearError]);
 
   const shiftEnd = useCallback((deltaMs: number) => {
     setEndedAt((current) => {

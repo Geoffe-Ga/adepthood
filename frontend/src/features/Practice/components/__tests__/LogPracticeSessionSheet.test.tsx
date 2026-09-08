@@ -17,10 +17,12 @@ jest.mock('@/api', () => ({
 // eslint-disable-next-line import/order
 const { act, fireEvent, render, waitFor } = require('@testing-library/react-native');
 const LogPracticeSessionSheet = require('../LogPracticeSessionSheet').default;
-const { LOG_SAVE_FALLBACK, LOG_WINDOW_REFUSED_COPY } = require('../LogPracticeSessionSheet') as {
-  LOG_SAVE_FALLBACK: string;
-  LOG_WINDOW_REFUSED_COPY: string;
-};
+const { LOG_SAVE_FALLBACK, LOG_WINDOW_REFUSED_COPY, DURATION_PROBLEM_COPY } =
+  require('../LogPracticeSessionSheet') as {
+    LOG_SAVE_FALLBACK: string;
+    LOG_WINDOW_REFUSED_COPY: string;
+    DURATION_PROBLEM_COPY: string;
+  };
 const { SESSION_WINDOW_COPY, SESSION_WINDOW_HINT } = require('../../utils/sessionWindow') as {
   SESSION_WINDOW_COPY: Record<string, string>;
   SESSION_WINDOW_HINT: string;
@@ -115,6 +117,28 @@ describe('LogPracticeSessionSheet payload', () => {
 
     expect(getByTestId('log-session-duration').props.value).toBe(String(DEFAULT_MINUTES));
     expect(getByTestId('log-session-ended-label').props.children).toMatch(/^Today, 3:00\s?PM$/);
+  });
+
+  it('opens ready to save when the practice default is fractional', () => {
+    // `default_duration_minutes` is a float in the schema and the model
+    // (backend/src/schemas/practice.py, models/practice.py), so a practice
+    // can legitimately arrive with 20.5. Seeding the field with it raw and
+    // then demanding a whole number opened the sheet already refusing to
+    // save, with the correction copy showing before the writer had touched
+    // anything.
+    const { getByTestId, queryByText } = render(
+      <LogPracticeSessionSheet
+        visible
+        userPracticeId={7}
+        practiceName="Breath Awareness"
+        defaultDurationMinutes={20.5}
+        userTimezone="UTC"
+        {...handlers()}
+      />,
+    );
+
+    expect(getByTestId('log-session-save').props.accessibilityState.disabled).toBe(false);
+    expect(queryByText(DURATION_PROBLEM_COPY)).toBeNull();
   });
 
   it('names the practice being logged', () => {
