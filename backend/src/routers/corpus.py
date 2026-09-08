@@ -21,9 +21,17 @@ decision on the record, not two. The audit log holds decisions, not requests;
 Neither decision is only a change of state, and they reach the corpus in
 opposite directions. A revocation deletes the fragments that source put there.
 A grant ontologizes the writing the account already had, so that saying yes
-after weeks of journalling is not an agreement about the future only. Both
-happen in the same transaction as the event that records them, so a sweep and
-its receipt land together or neither does.
+after weeks of journalling is not an agreement about the future only. Only the
+revocation happens in the same transaction as the event that records it, so a
+purge and its receipt land together or not at all --
+:func:`services.corpus_consent.set_consent` owns that. A grant cannot: its
+sweep ends the transaction before every classification so that no pooled
+connection is held across a provider call, which makes the decision durable at
+the first entry and each fragment durable where it is produced -- see
+:mod:`services.corpus_backfill`. So a request abandoned halfway leaves the
+permission recorded and the writing the sweep reached already ontologized, but
+not the sweep's own receipt, which is appended last and dies with the caller's
+transaction.
 
 ``POST /import`` is the third verb and the reason the other two now have
 something to gate. It takes one document a person chose -- exported journal
