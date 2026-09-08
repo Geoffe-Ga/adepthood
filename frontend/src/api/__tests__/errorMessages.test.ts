@@ -137,12 +137,18 @@ describe('practice tag codes', () => {
 
 describe('gumroad license codes', () => {
   // ``invalid_license`` is deliberately indistinguishable from a duplicate
-  // email on the wire (anti-enumeration), so the copy must not claim to know
-  // which of the two happened.
+  // email and from a key another account already redeemed (anti-enumeration),
+  // so the copy must not claim to know which happened.
   it('maps invalid_license to the approved ambiguous copy', () => {
     expect(messageForCode('invalid_license')).toBe(
-      "We couldn't verify that key — double-check it matches the email and product.",
+      "We couldn't verify that key — double-check it against your Gumroad receipt.",
     );
+  });
+
+  // ADR 0008: a key may be bought for someone else, so the copy must never
+  // send a gift recipient checking that the key "matches" their email.
+  it('does not tell the user the key must match their email', () => {
+    expect(messageForCode('invalid_license')).not.toMatch(/email/i);
   });
 
   it('does not tell the user their email is already registered', () => {

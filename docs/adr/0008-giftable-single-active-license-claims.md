@@ -5,7 +5,7 @@
 - **Issue:** [#1987](https://github.com/Geoffe-Ga/adepthood/issues/1987)
 - **Amends:** the email-equality rule implemented by the original Gumroad
   signup epic [#1938](https://github.com/Geoffe-Ga/adepthood/issues/1938).
-  The current code continues to enforce that older rule until #1987 ships.
+  Implemented by #1987.
 
 ## Context
 

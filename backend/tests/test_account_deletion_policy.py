@@ -29,7 +29,7 @@ from httpx import AsyncClient
 from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, col
 
 from domain.account_deletion import (
     POLICY,
@@ -38,6 +38,7 @@ from domain.account_deletion import (
     policy_gaps,
 )
 from models.goal_group import GoalGroup
+from models.license_binding import LicenseBinding
 from models.wallet_audit import BUCKET_OFFERING, REASON_ADMIN_GRANT
 from tests.helpers.account_seed import (
     SeedAccount,
@@ -333,6 +334,44 @@ async def test_deletion_leaves_the_other_account_untouched(
     assert resp.status_code == HTTPStatus.OK
 
     assert await _references_to(db_session, bystander.user_id) == before
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_account_releases_its_license_binding(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The licence binding goes with the account (ADR 0008 Decision 3).
+
+    Signup writes the binding; deletion must erase it, or the sale would stay
+    bound to an account that no longer exists and the key could never be
+    redeemed again.
+    """
+    headers, user_id, email = await _signup(async_client, "licensed")
+    bindings_before = await _count_where(
+        db_session,
+        SQLModel.metadata.tables["licensebinding"],
+        col(LicenseBinding.user_id) == user_id,
+    )
+    assert bindings_before == 1
+
+    resp = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": email},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    assert (
+        await _count_where(
+            db_session,
+            SQLModel.metadata.tables["licensebinding"],
+            col(LicenseBinding.user_id) == user_id,
+        )
+        == 0
+    )
+    assert "licensebinding" in resp.json()["erased"]
 
 
 @pytest.mark.asyncio

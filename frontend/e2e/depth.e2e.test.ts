@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { ApiError, auth, depthPreferences, setTokenGetter } from '@/api';
 import type { DepthPreferences } from '@/api';
 
@@ -21,7 +23,8 @@ import type { DepthPreferences } from '@/api';
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
+const SECOND_LICENSE_KEY = freshLicenseKey();
 const HTTP_UNPROCESSABLE = 422;
 
 /** What a fresh account is provisioned with: nothing declined yet. */
@@ -122,7 +125,7 @@ describe('depth-ring journey against a live server', () => {
       email: neighbourEmail,
       password: PASSWORD,
       timezone: TIMEZONE,
-      license_key: LICENSE_KEY,
+      license_key: SECOND_LICENSE_KEY,
     });
     sessionToken = neighbour.token;
 

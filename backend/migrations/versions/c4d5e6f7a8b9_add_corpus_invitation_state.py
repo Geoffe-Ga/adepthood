@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c4d5e6f7a8b9"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "f2c7a1d9e4b6"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "a9b8c7d6e5f4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

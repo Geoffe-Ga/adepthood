@@ -186,6 +186,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "The writing. Encrypted at rest and erased outright — this is the "
         "single most important row in the sweep.",
     ),
+    "licensebinding": _erase(
+        "user_id",
+        "The claim tying a Gumroad sale to this account. Erased with the "
+        "account so the same key can be redeemed by exactly one new account "
+        "(ADR 0008 Decision 3); the sale receipt survives separately.",
+    ),
     "llmusagelog": _erase(
         "user_id",
         "Per-request AI metering rows, each one tied to the account that spent it.",

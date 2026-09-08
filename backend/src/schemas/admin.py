@@ -210,11 +210,14 @@ class WalletAuditEntry(BaseModel):
 
 
 class GumroadSaleSummary(BaseModel):
-    """One Gumroad sale matched to the user by email.
+    """One Gumroad sale the account is joined to.
 
-    ``GumroadSale`` carries no user id, so email is the only link available;
-    the summary reports what matched so a mismatch is visible rather than
-    silently absent.
+    A course sale reaches the summary through the account's licence binding
+    (ADR 0008); a token-pack sale through the credit's own user link. Email
+    equality alone lists nothing — a purchase made under a different address
+    by a gift buyer still appears here once redeemed, and a same-address sale
+    nobody redeemed does not. The buyer's address is reported as Gumroad sent
+    it so an operator can see who paid.
 
     No price field: :class:`models.gumroad_sale.GumroadSale` stores none. The
     amount lives only inside ``raw_payload``, which is the verbatim webhook
@@ -232,12 +235,26 @@ class GumroadSaleSummary(BaseModel):
     created_at: datetime
 
 
+class LicenseBindingSummary(BaseModel):
+    """One redeemed licence: which Gumroad sale this account holds, and since when.
+
+    Ids only. The binding is the answer to "is this key spent, and by whom?" —
+    the raw licence key is never stored, so there is nothing else to show.
+    """
+
+    id: int
+    gumroad_sale_id: str
+    product_id: str
+    created_at: datetime
+
+
 class AdminUserSummary(BaseModel):
     """Everything the operator needs about one account, in a single call.
 
     Deliberately a read-only aggregate: the point is to replace a SQL console
-    session, so it gathers the entitlement, wallet and purchase pictures that
-    would otherwise require three separate queries against three tables.
+    session, so it gathers the entitlement, licence-binding, wallet and
+    purchase pictures that would otherwise require four separate queries
+    against four tables.
     """
 
     user_id: int
@@ -245,6 +262,7 @@ class AdminUserSummary(BaseModel):
     created_at: datetime
     is_admin: bool
     entitlements: list[EntitlementSummary]
+    license_bindings: list[LicenseBindingSummary]
     offering_balance: int
     monthly_messages_used: int
     wallet_audit: list[WalletAuditEntry]

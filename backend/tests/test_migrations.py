@@ -4106,10 +4106,80 @@ def test_habit_auto_reveal_marker_migration_round_trips_on_sqlite(
     assert _habit_auto_reveal_rows(db_url) == [(1, 0, None), (2, 1, None)]
 
 
+# -- licensebinding: one Gumroad sale, one active account (ADR 0008) ---------
+
+_LICENSE_BINDING_BASE_REVISION = "f2c7a1d9e4b6"  # pragma: allowlist secret
+_LICENSE_BINDING_REVISION = "a9b8c7d6e5f4"  # pragma: allowlist secret
+_LICENSE_BINDING_TABLE = "licensebinding"
+_LICENSE_BINDING_COLUMNS = {"id", "user_id", "gumroad_sale_id", "product_id", "created_at"}
+_LICENSE_BINDING_UNIQUE = "uq_licensebinding_gumroad_sale_id"
+_LICENSE_BINDING_USER_INDEX = "ix_licensebinding_user_id"
+
+
+def _unique_constraint_names(db_url: str, table: str) -> set[str]:
+    """Return the named UNIQUE constraints installed on ``table``."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        return {
+            constraint["name"]
+            for constraint in inspect(engine).get_unique_constraints(table)
+            if constraint["name"] is not None
+        }
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_license_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config immediately before the license-binding migration.
+
+    Only ``user`` is bootstrapped: the new table's single foreign key points
+    at it, and nothing else in the migration touches an existing table.
+    """
+    db_path = tmp_path / "license_binding_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    _bootstrap_user_table_for_depth_prefs(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _LICENSE_BINDING_BASE_REVISION)
+    return cfg
+
+
+def test_license_binding_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_license_binding: Config,
+) -> None:
+    """The binding table, its user index and its sale-id UNIQUE arrive and leave together."""
+    cfg = alembic_sqlite_config_license_binding
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _LICENSE_BINDING_REVISION)
+    assert _table_exists(db_url, _LICENSE_BINDING_TABLE)
+    assert _columns_of(db_url, _LICENSE_BINDING_TABLE) == _LICENSE_BINDING_COLUMNS
+    assert _LICENSE_BINDING_UNIQUE in _unique_constraint_names(db_url, _LICENSE_BINDING_TABLE)
+    assert _LICENSE_BINDING_USER_INDEX in _index_names(db_url, _LICENSE_BINDING_TABLE)
+
+    command.downgrade(cfg, _LICENSE_BINDING_BASE_REVISION)
+    assert not _table_exists(db_url, _LICENSE_BINDING_TABLE)
+
+    command.upgrade(cfg, _LICENSE_BINDING_REVISION)
+    assert _table_exists(db_url, _LICENSE_BINDING_TABLE)
+    assert _LICENSE_BINDING_UNIQUE in _unique_constraint_names(db_url, _LICENSE_BINDING_TABLE)
+
+
 # -- corpusinvitationstate table migration round-trip ----------------------------
 
-# down_revision is f2c7a1d9e4b6 (the habit auto-reveal migration, current head).
-_CORPUS_INVITATION_BASE_REVISION = "f2c7a1d9e4b6"  # pragma: allowlist secret
+# down_revision is a9b8c7d6e5f4 (the licence-binding migration from #1987, which
+# landed on main while this branch was open and is now the head this one sits on).
+_CORPUS_INVITATION_BASE_REVISION = "a9b8c7d6e5f4"  # pragma: allowlist secret
 _CORPUS_INVITATION_REVISION = "c4d5e6f7a8b9"  # pragma: allowlist secret
 _CORPUS_INVITATION_TABLE = "corpusinvitationstate"
 

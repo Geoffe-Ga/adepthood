@@ -120,10 +120,14 @@ Three things, each for a stated reason:
    same applies to share links you minted: recipients may already hold the URL.
 2. **Purchase receipts.** The row stays, and so does the email address on it.
    This is the one identifier that deliberately outlives a deletion. It has to:
-   the address is how a licence or token pack you paid for is matched back to
-   you, so erasing it would quietly confiscate something you bought if you ever
-   came back. Retaining a payment record is also the ordinary GDPR Art. 17(3)
-   exemption. Nothing in the row points at an account any more.
+   the address is how a token pack you paid for is matched back to you, so
+   erasing it would quietly confiscate something you bought if you ever came
+   back. Retaining a payment record is also the ordinary GDPR Art. 17(3)
+   exemption. Nothing in the row points at an account any more. A course
+   licence works differently: the record binding it to your account is erased
+   with the account, and the same key can then be redeemed by exactly one new
+   account — yours again, or someone you give it to. Access is all that
+   transfers; nothing the deleted account held goes with it.
 3. **A note that a deletion happened.** Date, an internal id that now names
    nobody, and per-table counts of how many rows went. No content, no address.
 

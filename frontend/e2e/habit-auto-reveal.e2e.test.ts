@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { auth, habits, setTokenGetter } from '@/api';
 
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
 const ISO_DATE_LENGTH = 10;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ENERGY_COST = 2;

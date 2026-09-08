@@ -30,6 +30,7 @@ from models import (
     GoalGroup,
     Habit,
     JournalEntry,
+    LicenseBinding,
     LLMUsageLog,
     LoginAttempt,
     PasswordResetToken,
@@ -76,6 +77,7 @@ EXPECTED_TABLES: dict[type, str] = {
     CourseStage: "coursestage",
     LoginAttempt: "loginattempt",
     RevokedToken: "revokedtoken",  # pragma: allowlist secret
+    LicenseBinding: "licensebinding",
 }
 
 # (Model, column, target_table, expected_ondelete) — ``None`` means no ondelete.
@@ -111,6 +113,7 @@ FOREIGN_KEYS: list[tuple[type, str, str, str | None]] = [
     (LLMUsageLog, "user_id", "user", "CASCADE"),
     (LLMUsageLog, "journal_entry_id", "journalentry", None),
     (PasswordResetToken, "user_id", "user", "CASCADE"),
+    (LicenseBinding, "user_id", "user", "CASCADE"),
 ]
 
 # Named composite UNIQUE constraints that must exist on the table.
@@ -118,6 +121,7 @@ COMPOSITE_UNIQUES: list[tuple[type, str]] = [
     (PromptResponse, "uq_promptresponse_user_week"),
     (PracticeSessionSpend, "uq_practicesessionspend_user_idem_key"),
     (ContentCompletion, "uq_contentcompletion_user_content"),
+    (LicenseBinding, "uq_licensebinding_gumroad_sale_id"),
 ]
 
 # (Model, attr, expected back_populates) relationship pairs.

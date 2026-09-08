@@ -32,6 +32,7 @@ WEBHOOK_SECRET = "signup-claim-shared-secret"  # pragma: allowlist secret
 WEBHOOK_SECRET_ENV_VAR = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
 BUYER_EMAIL = "late-buyer@example.com"
 MIXED_CASE_BUYER_EMAIL = "Late-Buyer@Example.COM"
+BYSTANDER_EMAIL = "bystander@example.com"
 SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
 LICENSE_KEY = "SIGNUP-CLAIM-TEST-KEY"  # pragma: allowlist secret
 PACK_PRODUCT_ID = "prod_pack_small"
@@ -88,6 +89,17 @@ async def _signup(client: AsyncClient, email: str = BUYER_EMAIL) -> int:
     )
     assert response.status_code == HTTPStatus.OK
     return int(response.json()["user_id"])
+
+
+async def _signup_with_token(client: AsyncClient, email: str = BUYER_EMAIL) -> tuple[int, str]:
+    """Sign up ``email``; return the created user id and its bearer token."""
+    response = await client.post(
+        SIGNUP_PATH,
+        json={"email": email, "password": SIGNUP_PASSWORD, "license_key": LICENSE_KEY},
+    )
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    return int(body["user_id"]), str(body["token"])
 
 
 async def _balance(db_session: AsyncSession, user_id: int) -> int:
@@ -240,3 +252,38 @@ async def test_signup_then_webhook_credits_once_across_a_replay(
 
     assert await _balance(db_session, user_id) == PACK_SIZE
     assert await _count_purchase_audits(db_session) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_credited_pack_is_not_recredited_after_the_account_is_deleted(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Deleting the credited account leaves the pack spent for whoever signs up next.
+
+    ``token_pack_credited_at`` deliberately outlives the account (the deletion
+    policy anonymises only the user link), so the sweep skips the sale and the
+    re-registered address opens an empty wallet with no purchase audit row.
+    A bystander account is created after the buyer's so the test database
+    cannot hand the erased id straight back to the successor.
+    """
+    user_id, token = await _signup_with_token(async_client)
+    await _signup(async_client, BYSTANDER_EMAIL)
+    await _post_ping(async_client, _pack_payload())
+    assert await _balance(db_session, user_id) == PACK_SIZE
+    deletion = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": BUYER_EMAIL},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert deletion.status_code == HTTPStatus.OK
+
+    successor_id = await _signup(async_client)
+
+    assert successor_id != user_id
+    assert await _balance(db_session, successor_id) == 0
+    assert await _count_purchase_audits(db_session) == 0
+    sale = await _reload_sale(db_session, SALE_ID)
+    assert sale.token_pack_credited_at is not None
+    assert sale.token_pack_credited_user_id is None

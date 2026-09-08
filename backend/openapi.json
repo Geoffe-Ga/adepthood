@@ -88,7 +88,7 @@
         "type": "object"
       },
       "AdminUserSummary": {
-        "description": "Everything the operator needs about one account, in a single call.\n\nDeliberately a read-only aggregate: the point is to replace a SQL console\nsession, so it gathers the entitlement, wallet and purchase pictures that\nwould otherwise require three separate queries against three tables.",
+        "description": "Everything the operator needs about one account, in a single call.\n\nDeliberately a read-only aggregate: the point is to replace a SQL console\nsession, so it gathers the entitlement, licence-binding, wallet and\npurchase pictures that would otherwise require four separate queries\nagainst four tables.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -117,6 +117,13 @@
             "title": "Is Admin",
             "type": "boolean"
           },
+          "license_bindings": {
+            "items": {
+              "$ref": "#/components/schemas/LicenseBindingSummary"
+            },
+            "title": "License Bindings",
+            "type": "array"
+          },
           "monthly_messages_used": {
             "title": "Monthly Messages Used",
             "type": "integer"
@@ -143,6 +150,7 @@
           "created_at",
           "is_admin",
           "entitlements",
+          "license_bindings",
           "offering_balance",
           "monthly_messages_used",
           "wallet_audit",
@@ -1955,7 +1963,7 @@
         "type": "string"
       },
       "GumroadSaleSummary": {
-        "description": "One Gumroad sale matched to the user by email.\n\n``GumroadSale`` carries no user id, so email is the only link available;\nthe summary reports what matched so a mismatch is visible rather than\nsilently absent.\n\nNo price field: :class:`models.gumroad_sale.GumroadSale` stores none. The\namount lives only inside ``raw_payload``, which is the verbatim webhook\nform and is deliberately not surfaced here — it carries the whole Gumroad\npayload, more than an entitlement question needs.",
+        "description": "One Gumroad sale the account is joined to.\n\nA course sale reaches the summary through the account's licence binding\n(ADR 0008); a token-pack sale through the credit's own user link. Email\nequality alone lists nothing — a purchase made under a different address\nby a gift buyer still appears here once redeemed, and a same-address sale\nnobody redeemed does not. The buyer's address is reported as Gumroad sent\nit so an operator can see who paid.\n\nNo price field: :class:`models.gumroad_sale.GumroadSale` stores none. The\namount lives only inside ``raw_payload``, which is the verbatim webhook\nform and is deliberately not surfaced here — it carries the whole Gumroad\npayload, more than an entitlement question needs.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -3058,6 +3066,36 @@
         ],
         "title": "JournalTag",
         "type": "string"
+      },
+      "LicenseBindingSummary": {
+        "description": "One redeemed licence: which Gumroad sale this account holds, and since when.\n\nIds only. The binding is the answer to \"is this key spent, and by whom?\" —\nthe raw licence key is never stored, so there is nothing else to show.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "gumroad_sale_id": {
+            "title": "Gumroad Sale Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "gumroad_sale_id",
+          "product_id",
+          "created_at"
+        ],
+        "title": "LicenseBindingSummary",
+        "type": "object"
       },
       "MarginaliaKind": {
         "description": "What a margin note surfaces about the anchored span.",
@@ -8492,7 +8530,7 @@
     },
     "/admin/users/{user_id}/summary": {
       "get": {
-        "description": "One account's entitlement, wallet and purchase picture in a single call.\n\nRead-only, and deliberately an aggregate: answering \"why does this person\nsay they paid but have no access?\" otherwise means three queries against\nthree tables, which is the SQL-console habit these endpoints replace.\n\nThe wallet ledger and sale history are capped at the newest\n``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales match on\nemail because :class:`models.gumroad_sale.GumroadSale` carries no user id —\na purchase made under a different address will not appear here, which is\nitself usually the answer.",
+        "description": "One account's entitlement, licence, wallet and purchase picture in a single call.\n\nRead-only, and deliberately an aggregate: answering \"why does this person\nsay they paid but have no access?\" otherwise means four queries against\nfour tables, which is the SQL-console habit these endpoints replace.\n\nThe wallet ledger and sale history are capped at the newest\n``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales join through\nthe account's licence bindings (ADR 0008 — a gift bought under another\naddress appears once redeemed) and through the token-pack credit's own\nuser link; email equality is never consulted. A same-address sale nobody\nhas redeemed is an unclaimed gift and is deliberately absent, which is\nitself usually the answer.",
         "operationId": "get_user_summary_admin_users__user_id__summary_get",
         "parameters": [
           {
@@ -9491,7 +9529,7 @@
     },
     "/auth/signup": {
       "post": {
-        "description": "Create an account gated on a verified APTITUDE Gumroad license.\n\nVerify-then-create: no ``User`` or ``Entitlement`` row is written until\nthe license verifies against the product allowlist, its purchase email\nmatches, and the signup email is unclaimed.  Every rejection returns a\ngeneric detail with matched timing (anti-enumeration), and a Gumroad\noutage fails closed with 503.  Only the JWT leaves the backend — never\nany Gumroad verify-response field.\n\nOnce the account exists, any token pack bought under the same email\nbefore signup is swept into the new wallet.",
+        "description": "Create an account gated on a verified APTITUDE Gumroad license.\n\nVerify-then-create: no ``User``, ``LicenseBinding`` or ``Entitlement`` row\nis written until the license verifies against the product allowlist and\nthe signup email is unclaimed. The purchase email is not compared with\nthe signup email — a key may have been bought for someone else (ADR\n0008) — but one sale binds to exactly one active account, so a key\nalready redeemed by another account is refused with the same generic\ndetail an unknown key gets. Every rejection returns that generic detail\nwith matched timing (anti-enumeration), and a Gumroad outage fails closed\nwith 503. Only the JWT leaves the backend — never any Gumroad\nverify-response field.\n\nOnce the account exists, any token pack bought under the same email\nbefore signup is swept into the new wallet.",
         "operationId": "signup_auth_signup_post",
         "requestBody": {
           "content": {

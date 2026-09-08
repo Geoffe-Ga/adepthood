@@ -13,16 +13,23 @@ finds the claim spent and does nothing. One shared column across all four
 event types is deliberate — a subscription that is cancelled and then
 refunded must lose its access once, not twice.
 
-Two rules keep the reversal honest:
+Three rules keep the reversal honest:
 
 * **Nothing but the idempotency key comes from the payload.** The product,
-  the buyer, the pack size, and the account that actually received the
-  credits are all read off the stored purchase row, so a forged ping cannot
-  redirect a claw-back or aim a revocation at somebody else's account.
+  the pack size, and the account that actually received the credits are all
+  read off the stored purchase row, so a forged ping cannot redirect a
+  claw-back or aim a revocation at somebody else's account.
 * **The purchase is resolved as a purchase.** An orphan reversal ping is
   itself persisted verbatim by the webhook, so the lookup requires
   ``resource_name == "sale"`` or a redelivery would find the row it just
   created and "reverse" it.
+* **Course access is revoked on the account the licence binding names** (ADR
+  0008 Decision 4) — never on an account looked up by the buyer's email. A
+  gift recipient's access is revoked when the buyer's purchase is refunded,
+  and a buyer whose address changed is still found. The binding itself
+  survives the revocation, so a sale Gumroad later reports live again cannot
+  drift to a second account while the first lives. A sale nobody has bound
+  reverses nothing and is logged ``sale_not_bound``.
 
 The two handlers are asymmetric about product class on purpose.
 ``process_refund`` reverses whatever the sale delivered and claims every sale
@@ -43,7 +50,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import CursorResult, func, update
+from sqlalchemy import CursorResult, update
 from sqlmodel import col, select
 
 from domain.entitlements import (
@@ -54,8 +61,8 @@ from domain.entitlements import (
     revoke_course_access,
     token_pack_size,
 )
+from domain.license_claims import find_binding
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
-from models.user import User
 from services.wallet import claw_back_purchase_credit
 
 if TYPE_CHECKING:
@@ -70,9 +77,8 @@ logger = logging.getLogger(__name__)
 # but deliberately moved less than a naive reading would expect.
 _REASON_UNKNOWN_SALE = "unknown_sale"
 _REASON_UNKNOWN_PRODUCT = "unknown_product"
-_REASON_COVERED = "covered_by_other_sale"
 _REASON_NOT_APPLICABLE = "cancellation_not_applicable"
-_REASON_BUYER_NOT_REGISTERED = "buyer_not_registered"
+_REASON_SALE_NOT_BOUND = "sale_not_bound"
 _REASON_NEVER_CREDITED = "token_pack_never_credited"
 _REASON_CREDITED_USER_MISSING = "credited_user_missing"
 # Same spelling the sale-dispatch path already uses for a priced-out pack, so
@@ -97,7 +103,6 @@ class _StoredSale:
 
     sale_id: str
     product_id: str
-    email: str
     token_pack_credited_at: datetime | None
     token_pack_credited_user_id: int | None
 
@@ -116,7 +121,6 @@ async def _resolve_stored_sale(
     result = await session.execute(
         select(
             GumroadSale.product_id,
-            GumroadSale.email,
             GumroadSale.token_pack_credited_at,
             GumroadSale.token_pack_credited_user_id,
         ).where(
@@ -131,7 +135,6 @@ async def _resolve_stored_sale(
     return _StoredSale(
         sale_id=sale_id,
         product_id=row.product_id,
-        email=row.email,
         token_pack_credited_at=row.token_pack_credited_at,
         token_pack_credited_user_id=row.token_pack_credited_user_id,
     )
@@ -179,69 +182,24 @@ async def _take_revocation_claim(
     return bool(cast("CursorResult[Any]", result).rowcount)
 
 
-async def _is_covered_by_another_sale(session: AsyncSession, stored: _StoredSale) -> bool:
-    """Return True when another live APTITUDE purchase still earns this access.
-
-    A buyer who owns the course twice and reverses one copy keeps their
-    access — the entitlement belongs to the person, not to the receipt. A
-    sale stops covering the moment it is itself refunded *or* claimed by any
-    reversal, which is why the predicate cannot lean on ``refunded`` alone: a
-    cancellation stamps only the claim.
-
-    Filters in SQL down to the rows a cover could ever come from and
-    classifies the product in Python, the same split
-    :func:`services.token_packs._unclaimed_token_pack_sales` uses, because
-    both allowlists are environment configuration rather than columns. The
-    email predicate folds case to ride ``ix_gumroadsale_lower_email``.
-    """
-    result = await session.execute(
-        select(GumroadSale.product_id).where(
-            col(GumroadSale.resource_name) == SALE_RESOURCE_NAME,
-            col(GumroadSale.gumroad_sale_id) != stored.sale_id,
-            func.lower(GumroadSale.email) == stored.email.strip().lower(),
-            col(GumroadSale.refunded).is_(False),
-            col(GumroadSale.revocation_processed_at).is_(None),
-        )
-    )
-    return any(is_aptitude_product_id(row.product_id) for row in result.all())
-
-
-async def _find_user_id_by_email(session: AsyncSession, email: str) -> int | None:
-    """Return the id of the account registered under ``email``, or ``None``.
-
-    Folds case exactly as the webhook's own lookup does: Gumroad reports the
-    buyer's address as they typed it while accounts are stored normalized.
-    Resolving the buyer here rather than in the router keeps the dependency
-    pointing one way — routers import services, never the reverse.
-    """
-    normalized = email.strip().lower()
-    if not normalized:
-        return None
-    result = await session.execute(select(User.id).where(func.lower(User.email) == normalized))
-    return result.scalars().first()
-
-
 async def _revoke_course_access_for(
     session: AsyncSession,
     stored: _StoredSale,
     reason: str,
 ) -> None:
-    """Revoke the buyer's course access unless another purchase still covers it.
+    """Revoke course access on the account the sale's licence binding names.
 
-    A buyer who never registered is a clean no-op: the sale granted nothing
-    at purchase time, so there is nothing to take back. The claim is still
-    spent by the caller either way, which closes the sale out rather than
-    leaving it armed for a redelivery to reverse an account that appears
-    later.
+    A sale nobody has bound is a clean no-op: it granted nothing, so there is
+    nothing to take back. The claim is still spent by the caller either way,
+    which closes the sale out rather than leaving it armed for a redelivery
+    to reverse an account that appears later. The binding is deliberately
+    left in place (ADR 0008 Decision 4).
     """
-    if await _is_covered_by_another_sale(session, stored):
-        logger.info(_SKIPPED_EVENT, extra={"reason_code": _REASON_COVERED})
+    binding = await find_binding(session, stored.sale_id)
+    if binding is None:
+        logger.info(_SKIPPED_EVENT, extra={"reason_code": _REASON_SALE_NOT_BOUND})
         return
-    user_id = await _find_user_id_by_email(session, stored.email)
-    if user_id is None:
-        logger.info(_SKIPPED_EVENT, extra={"reason_code": _REASON_BUYER_NOT_REGISTERED})
-        return
-    await revoke_course_access(session, user_id, reason)
+    await revoke_course_access(session, binding.user_id, reason)
 
 
 def _claw_back_amount(stored: _StoredSale) -> int | None:

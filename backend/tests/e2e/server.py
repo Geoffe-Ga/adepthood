@@ -85,6 +85,7 @@ _MIGRATIONS_DIR = _BACKEND_ROOT / "migrations"
 
 _STUB_LICENSE_PRODUCT_ID = "prod_e2e_aptitude"
 _STUB_LICENSE_SALE_PREFIX = "e2e-sale-"
+_STUB_LICENSE_PURCHASER_EMAIL = "gumroad-buyer@example.com"
 
 
 class E2EServerError(RuntimeError):
@@ -205,22 +206,25 @@ def _assert_provenance(dialect: str, stamped: set[str], heads: set[str]) -> None
 
 
 async def _stub_license_check(
-    email: str,
+    license_key: str | None,
     *_args: object,
     **_kwargs: object,
 ) -> AptitudeLicenseCheck:
-    """Verify any license, echoing the submitted email so the match check passes.
+    """Verify any key as a live purchase whose sale id is the key itself.
 
     Stands in for the live Gumroad call the real gate makes. Everything the gate
     does with the answer -- the duplicate-email refusal, password hashing, the
-    entitlement grant -- still runs for real. The signature swallows the license
-    key and the optional client the real function takes, because the stub's
-    answer does not depend on either.
+    licence binding, the entitlement grant -- still runs for real. Keying the
+    sale on the licence key is what lets a journey prove the single-active-
+    account invariant across the seam: two signups presenting one key are two
+    claims on one sale, exactly as they would be against Gumroad. The purchase
+    email is a fixed placeholder because the gate no longer reads it. The
+    signature swallows the optional client the real function takes.
     """
     purchase = GumroadPurchase(
-        email=email,
+        email=_STUB_LICENSE_PURCHASER_EMAIL,
         product_id=_STUB_LICENSE_PRODUCT_ID,
-        sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{email}",
+        sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{(license_key or '').strip()}",
         refunded=False,
         chargebacked=False,
     )

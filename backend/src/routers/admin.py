@@ -13,7 +13,7 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
@@ -26,6 +26,7 @@ from error_responses import build_router
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
+from models.license_binding import LicenseBinding
 from models.llm_usage_log import LLMUsageLog
 from models.stage_progress import StageProgress
 from models.user import User
@@ -40,6 +41,7 @@ from schemas.admin import (
     EntitlementRevokeRequest,
     EntitlementSummary,
     GumroadSaleSummary,
+    LicenseBindingSummary,
     ModelUsageBreakdown,
     StageProgressGap,
     StageProgressGapsPage,
@@ -539,16 +541,18 @@ async def get_user_summary(
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
 ) -> AdminUserSummary:
-    """One account's entitlement, wallet and purchase picture in a single call.
+    """One account's entitlement, licence, wallet and purchase picture in a single call.
 
     Read-only, and deliberately an aggregate: answering "why does this person
-    say they paid but have no access?" otherwise means three queries against
-    three tables, which is the SQL-console habit these endpoints replace.
+    say they paid but have no access?" otherwise means four queries against
+    four tables, which is the SQL-console habit these endpoints replace.
 
     The wallet ledger and sale history are capped at the newest
-    ``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales match on
-    email because :class:`models.gumroad_sale.GumroadSale` carries no user id —
-    a purchase made under a different address will not appear here, which is
+    ``_WALLET_AUDIT_LIMIT`` / ``_GUMROAD_SALE_LIMIT`` rows. Sales join through
+    the account's licence bindings (ADR 0008 — a gift bought under another
+    address appears once redeemed) and through the token-pack credit's own
+    user link; email equality is never consulted. A same-address sale nobody
+    has redeemed is an unclaimed gift and is deliberately absent, which is
     itself usually the answer.
     """
     target = await _require_user(session, user_id)
@@ -576,16 +580,30 @@ async def get_user_summary(
         .scalars()
         .all()
     )
+    binding_rows = (
+        (
+            await session.execute(
+                select(LicenseBinding)
+                .where(col(LicenseBinding.user_id) == user_id)
+                .order_by(col(LicenseBinding.created_at).desc(), col(LicenseBinding.id).desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    bound_sale_ids = select(col(LicenseBinding.gumroad_sale_id)).where(
+        col(LicenseBinding.user_id) == user_id
+    )
     sale_rows = (
         (
             await session.execute(
                 select(GumroadSale)
-                # Case-folded, like routers/gumroad._find_user_by_email. Gumroad
-                # stores the address the buyer typed while accounts are
-                # normalised at signup, so an exact match hides the sales of
-                # anyone who capitalised their email differently — the very
-                # account most likely to be the reason an operator opened this.
-                .where(func.lower(col(GumroadSale.email)) == target.email.strip().lower())
+                .where(
+                    or_(
+                        col(GumroadSale.gumroad_sale_id).in_(bound_sale_ids),
+                        col(GumroadSale.token_pack_credited_user_id) == user_id,
+                    )
+                )
                 .order_by(col(GumroadSale.created_at).desc(), col(GumroadSale.id).desc())
                 .limit(_GUMROAD_SALE_LIMIT)
             )
@@ -605,6 +623,9 @@ async def get_user_summary(
         created_at=target.created_at,
         is_admin=target.is_admin,
         entitlements=[_entitlement_summary(row) for row in entitlement_rows],
+        license_bindings=[
+            LicenseBindingSummary.model_validate(row, from_attributes=True) for row in binding_rows
+        ],
         offering_balance=target.offering_balance,
         monthly_messages_used=target.monthly_messages_used,
         wallet_audit=[

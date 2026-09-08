@@ -2,17 +2,24 @@
 
 Contract: signup requires a license_key; every rejection path returns the
 same generic detail (license_required for a missing key, invalid_license for
-everything else) without creating User or Entitlement rows or leaking that
-an account exists; the verifier is consulted only for products on the
-GUMROAD_APTITUDE_PRODUCT_IDS allowlist and stops on the first success; a
+everything else) without creating User, Entitlement or LicenseBinding rows or
+leaking that an account exists; the verifier is consulted only for products on
+the GUMROAD_APTITUDE_PRODUCT_IDS allowlist and stops on the first success; a
 Gumroad outage fails closed with 503; more than ten invalid-license attempts
 per client per hour are throttled with 429 and cost Gumroad nothing, because
 the cap is consulted before any outbound verify; every failure path still
 spends a dummy bcrypt verify for timing parity.
+
+ADR 0008: possession of a live, allowlisted key is the whole claim proof — the
+purchase email is never compared — and one sale binds to exactly one active
+account. A key already bound to another account is refused with the very
+bytes an unknown key gets, charges the same cap, and the raw key is never
+persisted or logged.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -20,13 +27,15 @@ from http import HTTPStatus
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx import AsyncClient
+import sqlalchemy as sa
+from httpx import AsyncClient, Response
 from sqlalchemy import func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import SQLModel, select
 
 from integrations.gumroad import GumroadUnavailableError
 from models.entitlement import Entitlement
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.vault_activation import VaultActivation
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
@@ -51,9 +60,13 @@ UNLISTED_PRODUCT = "prod_unlisted"
 SIGNUP_EMAIL = "seeker@example.com"
 MIXED_CASE_LICENSE_EMAIL = "Seeker@Example.COM"
 OTHER_EMAIL = "someone-else@example.com"
+THIRD_EMAIL = "third-party@example.com"
 SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
 LICENSE_KEY = "ABCD1234-EF56-7890-TEST"  # pragma: allowlist secret
+UNKNOWN_LICENSE_KEY = "UNKN0000-0000-0000-TEST"  # pragma: allowlist secret
+REFUNDED_LICENSE_KEY = "RFND1111-1111-1111-TEST"  # pragma: allowlist secret
 SALE_ID = "S-900"
+RIVAL_SALE_ID = "S-901"
 COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 JWT_SEGMENT_COUNT = 3
@@ -72,8 +85,18 @@ DETAIL_LICENSE_REQUIRED = "license_required"
 DETAIL_INVALID_LICENSE = "invalid_license"
 DETAIL_UNAVAILABLE = "license_verification_unavailable"
 DETAIL_THROTTLED = "too_many_license_attempts"
-EMAIL_MISMATCH_MARKER = "email_mismatch"
+# Retired by ADR 0008: the purchase email is no longer compared, so no path may
+# write this marker any more.
+RETIRED_EMAIL_MISMATCH_MARKER = "email_mismatch"
+ALREADY_BOUND_MARKER = "license_already_bound"
+SIGNUP_REJECTED_EVENT = "signup_license_rejected"
 DUPLICATE_SIGNUP_MARKER = "duplicate_signup"
+# Both pre-checks -- the router's post-verify one and the domain seam's own --
+# read through this function; silencing it is what lets a test reach the
+# UNIQUE constraint, the only defence that holds under a real race.
+FIND_BINDING_SEAM = "domain.license_claims.find_binding"
+CONCURRENT_RACERS = 2
+RACER_STATUSES = sorted([HTTPStatus.OK, HTTPStatus.BAD_REQUEST])
 GUMROAD_DOWN_MESSAGE = "gumroad unavailable in test"
 
 VerifyStub = Callable[..., Awaitable[GumroadLicenseResult | None]]
@@ -150,6 +173,28 @@ def _make_verify_stub(
     return _verify
 
 
+def _make_keyed_verify_stub(
+    results_by_key: Mapping[str, GumroadLicenseResult | None],
+) -> VerifyStub:
+    """Build a verify_license stand-in that answers per license key, alpha product only."""
+
+    async def _verify(
+        product_id: str,
+        license_key: str,
+        **_kwargs: object,
+    ) -> GumroadLicenseResult | None:
+        if product_id != ALLOWED_PRODUCT_ALPHA:
+            return None
+        return results_by_key.get(license_key)
+
+    return _verify
+
+
+def _fingerprint(response: Response) -> tuple[int, str | None, bytes]:
+    """Return everything an unauthenticated observer can see about a rejection."""
+    return (response.status_code, response.headers.get("content-type"), response.content)
+
+
 def _signup_payload(
     email: str = SIGNUP_EMAIL,
     license_key: str | None = LICENSE_KEY,
@@ -171,6 +216,43 @@ async def _count_entitlements(db_session: AsyncSession) -> int:
     """Return the number of Entitlement rows in the test database."""
     result = await db_session.execute(select(func.count()).select_from(Entitlement))
     return int(result.scalar_one())
+
+
+async def _count_bindings(db_session: AsyncSession) -> int:
+    """Return the number of LicenseBinding rows in the test database."""
+    result = await db_session.execute(select(func.count()).select_from(LicenseBinding))
+    return int(result.scalar_one())
+
+
+async def _count_via(factory: async_sessionmaker[AsyncSession], model: type[SQLModel]) -> int:
+    """Return the number of ``model`` rows in the concurrency fixture's database."""
+    async with factory() as session:
+        result = await session.execute(select(func.count()).select_from(model))
+        return int(result.scalar_one())
+
+
+def _holds_text(column: sa.Column[object]) -> bool:
+    """Whether a column stores strings (SQLModel's AutoString hides its python type)."""
+    if isinstance(column.type, sa.String):
+        return True
+    try:
+        return column.type.python_type is str
+    except NotImplementedError:
+        return True
+
+
+async def _rows_holding(db_session: AsyncSession, needle: str) -> dict[str, int]:
+    """Row counts, per ``table.column``, whose text equals ``needle`` — anywhere at all."""
+    counts: dict[str, int] = {}
+    for table in SQLModel.metadata.sorted_tables:
+        for column in table.columns:
+            if not _holds_text(column):
+                continue
+            result = await db_session.execute(
+                sa.select(sa.func.count()).select_from(table).where(column == needle)
+            )
+            counts[f"{table.name}.{column.name}"] = int(result.scalar_one())
+    return counts
 
 
 @pytest.mark.asyncio
@@ -250,9 +332,9 @@ async def test_refunded_license_is_invalid_license_and_writes_nothing(
     assert response.json()["detail"] == DETAIL_INVALID_LICENSE
     assert await _count_users(db_session) == 0
     assert await _count_entitlements(db_session) == 0
-    # The email matches the purchase, so a refund must not leak via the
-    # email-mismatch marker: the rejection is indistinguishable from a bad key.
-    assert not _log_carries_marker(caplog, EMAIL_MISMATCH_MARKER)
+    # A refunded key is refused as unknown, never as "bound to someone": the
+    # rejection is indistinguishable from a bad key in the log as well.
+    assert not _log_carries_marker(caplog, ALREADY_BOUND_MARKER)
 
 
 @pytest.mark.asyncio
@@ -387,13 +469,19 @@ async def test_verification_stops_on_the_first_matching_product(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products")
-async def test_license_email_mismatch_is_invalid_license_and_logged(
+async def test_gifted_license_bought_under_another_email_creates_the_account(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A valid key issued to another email is rejected generically but logged."""
+    """A valid key bought under someone else's email still creates the account.
+
+    ADR 0008 Decision 1: possession of a live, allowlisted key is the whole
+    claim proof. The purchase email is financial data, not authorization data,
+    so a gift recipient signing up under their own address is admitted and no
+    ``email_mismatch`` marker is written anywhere.
+    """
     caplog.set_level(logging.DEBUG)
     calls: list[tuple[str, str]] = []
     results = {ALLOWED_PRODUCT_ALPHA: _license_result(email=OTHER_EMAIL)}
@@ -401,21 +489,28 @@ async def test_license_email_mismatch_is_invalid_license_and_logged(
 
     response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
 
-    assert response.status_code == HTTPStatus.BAD_REQUEST
-    assert response.json()["detail"] == DETAIL_INVALID_LICENSE
-    assert _log_carries_marker(caplog, EMAIL_MISMATCH_MARKER)
-    assert await _count_users(db_session) == 0
-    assert await _count_entitlements(db_session) == 0
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert len(body["token"].split(".")) == JWT_SEGMENT_COUNT
+    assert await _count_users(db_session) == 1
+    entitlement = (await db_session.execute(select(Entitlement))).scalar_one()
+    assert entitlement.revoked_at is None
+    assert entitlement.user_id == body["user_id"]
+    binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
+    assert binding.user_id == body["user_id"]
+    assert binding.gumroad_sale_id == SALE_ID
+    assert binding.product_id == ALLOWED_PRODUCT_ALPHA
+    assert not _log_carries_marker(caplog, RETIRED_EMAIL_MISMATCH_MARKER)
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products")
-async def test_license_email_match_is_case_insensitive(
+async def test_purchase_email_case_is_irrelevant_to_the_claim(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A license issued to a mixed-case spelling of the signup email still matches."""
+    """The purchase address is not compared at all, so its spelling cannot matter."""
     calls: list[tuple[str, str]] = []
     results = {ALLOWED_PRODUCT_ALPHA: _license_result(email=MIXED_CASE_LICENSE_EMAIL)}
     monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
@@ -527,6 +622,295 @@ async def test_race_duplicate_matches_precheck_rejection_shape(
     assert "token" not in race.json()
     assert await _count_users(db_session) == 1
     assert await _count_entitlements(db_session) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_password_refusals_are_byte_identical_for_unknown_and_already_bound_keys(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unknown key, a refunded key and a key bound to someone else look the same.
+
+    ADR 0008 Decision 2: "valid but already claimed" must never be readable
+    off the wire. Only the server log knows, as the WARNING carrying
+    ``license_already_bound``.
+    """
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(
+        VERIFY_SEAM,
+        _make_keyed_verify_stub(
+            {
+                LICENSE_KEY: _license_result(email=OTHER_EMAIL),
+                REFUNDED_LICENSE_KEY: _license_result(reversal=_Reversal(refunded=True)),
+            }
+        ),
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+
+    unknown = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+    bound = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=LICENSE_KEY)
+    )
+    refunded = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=REFUNDED_LICENSE_KEY)
+    )
+
+    fingerprints = {_fingerprint(unknown), _fingerprint(bound), _fingerprint(refunded)}
+    assert len(fingerprints) == 1
+    assert bound.status_code == HTTPStatus.BAD_REQUEST
+    assert bound.json() == {"detail": DETAIL_INVALID_LICENSE}
+    assert await _count_users(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
+    assert await _count_bindings(db_session) == 1
+    assert _log_carries_marker(caplog, ALREADY_BOUND_MARKER)
+    # The router's own refusal line carries the client's email fingerprint so an
+    # operator can correlate a grind of redeemed keys (ADR 0008 Decision 6);
+    # the fingerprint is not the address.
+    refusals = [
+        record
+        for record in caplog.records
+        if record.getMessage() == SIGNUP_REJECTED_EVENT
+        and getattr(record, "reason_code", None) == ALREADY_BOUND_MARKER
+    ]
+    assert len(refusals) == 1
+    fingerprint = getattr(refusals[0], "email_fingerprint", "")
+    assert fingerprint
+    assert "@" not in fingerprint
+    assert OTHER_EMAIL not in repr(vars(refusals[0]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_a_bound_key_charges_the_cap_even_under_a_registered_email(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redeemed key costs the same whether or not the address has an account.
+
+    The refusal bytes were already identical; the *cost* was not. Because the
+    duplicate-email check ran before the bound-key check and only the latter
+    charges, presenting one redeemed key under two addresses spent a cap unit
+    for the unregistered one and nothing for the registered one -- and the
+    429 boundary made that difference readable, which is the account-existence
+    inference ``_reject_duplicate_signup_email`` exists to prevent.
+
+    Nine unknown keys, then the redeemed key under the address that already
+    has an account, then one more unknown key: the probe must consume the
+    tenth unit so the eleventh guess is throttled. Were the probe uncharged,
+    that eleventh guess would still answer 400 -- one bit per throttle bucket
+    saying whether an arbitrary address is registered.
+    """
+    monkeypatch.setattr(
+        VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
+        guess = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(
+                email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com",
+                license_key=UNKNOWN_LICENSE_KEY,
+            ),
+        )
+        assert guess.status_code == HTTPStatus.BAD_REQUEST
+
+    # SIGNUP_EMAIL is registered (``first`` created it) AND LICENSE_KEY is
+    # bound to it, so both refusal paths are live and the ordering decides
+    # which one answers.
+    probe = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert probe.status_code == HTTPStatus.BAD_REQUEST
+    assert probe.json() == {"detail": DETAIL_INVALID_LICENSE}
+
+    throttled = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_losing_the_email_race_does_not_charge_the_invalid_license_cap(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A benign duplicate-email race is not a licence guess and spends no budget.
+
+    Nine unknown keys, then the race loser, then one more unknown key: the
+    tenth guess still answers 400 and only the eleventh is throttled. Were
+    the race loser charged, the tenth unknown key would already be the 429.
+    """
+    monkeypatch.setattr(
+        VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
+        guess = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(
+                email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com",
+                license_key=UNKNOWN_LICENSE_KEY,
+            ),
+        )
+        assert guess.status_code == HTTPStatus.BAD_REQUEST
+    # Silence the pre-check so the same email reaches the unique index; the
+    # bound pre-check must also pass, which it does for the holder's own key.
+    monkeypatch.setattr(REJECT_DUPLICATE_SEAM, AsyncMock(return_value=None))
+    for seam in (FIND_BINDING_SEAM,):
+        monkeypatch.setattr(seam, AsyncMock(return_value=None))
+    race = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert race.status_code == HTTPStatus.BAD_REQUEST
+    assert race.json()["detail"] == DETAIL_INVALID_LICENSE
+
+    tenth = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+    eleventh = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+
+    assert tenth.status_code == HTTPStatus.BAD_REQUEST
+    assert eleventh.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_raw_license_key_never_reaches_rows_logs_or_responses(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After a claim and after every refusal, the key exists nowhere but the request."""
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(
+        VERIFY_SEAM,
+        _make_keyed_verify_stub(
+            {
+                LICENSE_KEY: _license_result(email=OTHER_EMAIL),
+                REFUNDED_LICENSE_KEY: _license_result(reversal=_Reversal(refunded=True)),
+            }
+        ),
+    )
+    responses = [
+        await async_client.post(SIGNUP_PATH, json=_signup_payload()),
+        await async_client.post(
+            SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+        ),
+        await async_client.post(
+            SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=LICENSE_KEY)
+        ),
+        await async_client.post(
+            SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=REFUNDED_LICENSE_KEY)
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [
+        HTTPStatus.OK,
+        HTTPStatus.BAD_REQUEST,
+        HTTPStatus.BAD_REQUEST,
+        HTTPStatus.BAD_REQUEST,
+    ]
+    for key in (LICENSE_KEY, UNKNOWN_LICENSE_KEY, REFUNDED_LICENSE_KEY):
+        assert key not in caplog.text
+        assert all(key.encode() not in response.content for response in responses)
+        held = await _rows_holding(db_session, key)
+        assert {name: count for name, count in held.items() if count} == {}
+    assert await _count_bindings(db_session) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_losing_the_binding_race_leaves_no_orphan_account(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the UNIQUE constraint, not a pre-check, refuses the claim, nothing survives.
+
+    Both pre-checks are silenced so the binding insert reaches the constraint
+    — the only defence that holds under a real race — and the User row
+    flushed in the same transaction must roll back with it.
+    """
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(email=OTHER_EMAIL)}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+    monkeypatch.setattr(FIND_BINDING_SEAM, AsyncMock(return_value=None))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL))
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json() == {"detail": DETAIL_INVALID_LICENSE}
+    assert await _count_users(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
+    assert await _count_bindings(db_session) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_two_racers_presenting_one_key_yield_one_account(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two simultaneous signups with the same key: one account, one generic refusal."""
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _license_result(email=THIRD_EMAIL)}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+    payloads = [_signup_payload(email=SIGNUP_EMAIL), _signup_payload(email=OTHER_EMAIL)]
+    assert len(payloads) == CONCURRENT_RACERS
+
+    responses = await asyncio.gather(
+        *[concurrent_async_client.post(SIGNUP_PATH, json=payload) for payload in payloads]
+    )
+
+    assert sorted(response.status_code for response in responses) == RACER_STATUSES
+    loser = next(r for r in responses if r.status_code == HTTPStatus.BAD_REQUEST)
+    assert loser.json() == {"detail": DETAIL_INVALID_LICENSE}
+    assert await _count_via(concurrent_session_factory, User) == 1
+    assert await _count_via(concurrent_session_factory, Entitlement) == 1
+    assert await _count_via(concurrent_session_factory, LicenseBinding) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_a_bound_key_is_charged_against_the_invalid_license_cap(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grinding a stolen-but-bound key counts against the throttle like an unknown one.
+
+    ADR 0008 Decision 6: ten bound-key attempts spend the whole hourly budget
+    and the eleventh is refused with 429 before Gumroad is contacted, exactly
+    as ten unknown keys would be. Were the bound key free, every one of them
+    would answer 400 forever.
+    """
+    monkeypatch.setattr(
+        VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
+        bound = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com"),
+        )
+        assert bound.status_code == HTTPStatus.BAD_REQUEST
+        assert bound.json()["detail"] == DETAIL_INVALID_LICENSE
+    throttled = await async_client.post(SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL))
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
 
 
 @pytest.mark.asyncio

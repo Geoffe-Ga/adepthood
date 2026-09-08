@@ -15,10 +15,14 @@ The second is the course-access entitlement itself: the grant is idempotent
 unique index on the model) and every grant / revoke emits a structured log
 line carrying a ``reason_code`` — never a raw email or license key, only ids.
 
-:func:`verify_aptitude_license` is the signup gate's verifier: it walks the
-``GUMROAD_APTITUDE_PRODUCT_IDS`` allowlist calling the Gumroad client's
-``verify_license`` (tests patch ``domain.entitlements.verify_license``) and
-folds the answers into a three-way :class:`LicenseOutcome`. A Gumroad outage
+:func:`verify_aptitude_license` is the account-creation gate's verifier: it
+walks the ``GUMROAD_APTITUDE_PRODUCT_IDS`` allowlist calling the Gumroad
+client's ``verify_license`` (tests patch ``domain.entitlements.verify_license``)
+and folds the answers into a three-way :class:`LicenseOutcome`. Possession of
+a live, allowlisted key is the whole claim proof (ADR 0008 Decision 1): the
+purchase email is financial data Gumroad reports, never compared with the
+account's address. Which account a verified purchase may then be *bound* to
+is :mod:`domain.license_claims`' question. A Gumroad outage
 (:class:`GumroadUnavailableError`, re-exported here for callers) propagates
 untouched so the route can fail closed.
 """
@@ -50,7 +54,7 @@ __all__ = [
     "REASON_ADMIN_OVERRIDE",
     "REASON_CANCELLATION",
     "REASON_DUPLICATE_SIGNUP",
-    "REASON_EMAIL_MISMATCH",
+    "REASON_LICENSE_ALREADY_BOUND",
     "REASON_REFUND",
     "REASON_SIGNUP_REDEMPTION",
     "REASON_WEBHOOK_SALE",
@@ -66,6 +70,7 @@ __all__ = [
     "is_token_pack_product_id",
     "revoke_course_access",
     "revoke_entitlement_by_id",
+    "stage_course_access",
     "token_pack_product_ids",
     "token_pack_size",
     "verify_aptitude_license",
@@ -88,7 +93,10 @@ REASON_CANCELLATION = "cancellation"
 # to supply carries the specifics.
 REASON_ADMIN_OVERRIDE = "admin_override"
 REASON_DUPLICATE_SIGNUP = "duplicate_signup"
-REASON_EMAIL_MISMATCH = "email_mismatch"
+# A valid key presented by an account other than the one it is bound to. The
+# WARNING carrying it is the anomalous-claim signal ADR 0008 Decision 6 asks
+# for; the caller's response stays the generic refusal.
+REASON_LICENSE_ALREADY_BOUND = "license_already_bound"
 
 # Comma-separated allowlist of Gumroad product ids that count as "the
 # APTITUDE course". Read at call time so a rotation needs no restart (and so
@@ -119,7 +127,6 @@ class LicenseOutcome(enum.Enum):
 
     VERIFIED = "verified"
     INVALID = "invalid"
-    EMAIL_MISMATCH = "email_mismatch"
     LICENSE_REQUIRED = "license_required"
 
 
@@ -172,6 +179,29 @@ def _apply_grant_provenance(
         entitlement.product_id = product_id
 
 
+async def stage_course_access(
+    session: AsyncSession,
+    user_id: int,
+    sale: GumroadSale | None,
+    product_id: str | None,
+) -> Entitlement:
+    """Find-or-create the user's active ``course_access`` row without committing.
+
+    The staging half of :func:`grant_course_access`, split out so a caller
+    that needs the grant inside a larger transaction — the licence claim,
+    which lands User, binding and Entitlement together — can add it to the
+    session and commit once. Idempotent against the partial unique index:
+    an existing active row is refreshed in place, never duplicated, and its
+    provenance is only overwritten by non-``None`` derivations.
+    """
+    entitlement = await _find_active_entitlement(session, user_id)
+    if entitlement is None:
+        entitlement = Entitlement(user_id=user_id)
+    _apply_grant_provenance(entitlement, sale, product_id)
+    session.add(entitlement)
+    return entitlement
+
+
 async def grant_course_access(
     session: AsyncSession,
     user: User,
@@ -196,11 +226,7 @@ async def grant_course_access(
     if user.id is None:
         msg = "user id missing before entitlement grant"
         raise ValueError(msg)
-    entitlement = await _find_active_entitlement(session, user.id)
-    if entitlement is None:
-        entitlement = Entitlement(user_id=user.id)
-    _apply_grant_provenance(entitlement, sale, product_id)
-    session.add(entitlement)
+    entitlement = await stage_course_access(session, user.id, sale, product_id)
     await session.commit()
     await session.refresh(entitlement)
     logger.info(
@@ -463,7 +489,6 @@ def is_aptitude_product_id(product_id: str | None) -> bool:
 
 
 async def verify_aptitude_license(
-    email: str,
     license_key: str | None,
     *,
     client: httpx.AsyncClient | None = None,
@@ -473,11 +498,10 @@ async def verify_aptitude_license(
     A missing or blank ``license_key`` short-circuits to LICENSE_REQUIRED
     before any Gumroad call. Otherwise walks ``GUMROAD_APTITUDE_PRODUCT_IDS``
     in order, stopping on the first ``success`` answer: a reversed purchase
-    (refunded, charged back, or under an unresolved dispute) yields INVALID, a
-    case-insensitive email match on a live purchase yields VERIFIED (with the
-    purchase attached), any other
-    holder yields EMAIL_MISMATCH. A ``None`` / ``success=False`` answer moves
-    on to the next product; no match across the whole allowlist is INVALID.
+    (refunded, charged back, or under an unresolved dispute) yields INVALID,
+    any live purchase yields VERIFIED with the purchase attached — whoever
+    bought it. A ``None`` / ``success=False`` answer moves on to the next
+    product; no match across the whole allowlist is INVALID.
 
     Raises:
         GumroadUnavailableError: propagated untouched from ``verify_license``
@@ -486,8 +510,7 @@ async def verify_aptitude_license(
     key = (license_key or "").strip()
     if not key:
         return AptitudeLicenseCheck(LicenseOutcome.LICENSE_REQUIRED)
-    normalized_email = email.strip().lower()
-    return await _first_license_match(key, normalized_email, client)
+    return await _first_license_match(key, client)
 
 
 def _is_reversed_purchase(purchase: GumroadPurchase) -> bool:
@@ -504,33 +527,28 @@ def _is_reversed_purchase(purchase: GumroadPurchase) -> bool:
     return purchase.refunded or purchase.chargebacked or unresolved_dispute
 
 
-def _classify_verified_purchase(
-    purchase: GumroadPurchase,
-    normalized_email: str,
-) -> AptitudeLicenseCheck:
-    """Map a successful verify result onto INVALID, VERIFIED, or EMAIL_MISMATCH.
+def _classify_verified_purchase(purchase: GumroadPurchase) -> AptitudeLicenseCheck:
+    """Map a successful verify result onto INVALID or VERIFIED.
 
-    A reversed purchase folds to INVALID before the email is even compared, so
-    the rejection is byte-for-byte identical to an unknown key and never leaks
-    that the license was once valid. This is pre-grant verification only;
-    revoking an already-granted entitlement after a later refund is separate,
-    deferred work.
+    A reversed purchase folds to INVALID, so the rejection is byte-for-byte
+    identical to an unknown key and never leaks that the license was once
+    valid. The purchase email is deliberately not consulted: a gift recipient
+    holds a key bought under somebody else's address (ADR 0008). This is
+    pre-grant verification only; revoking an already-granted entitlement after
+    a later refund is the webhook's job.
     """
     if _is_reversed_purchase(purchase):
         return AptitudeLicenseCheck(LicenseOutcome.INVALID)
-    if purchase.email.strip().lower() == normalized_email:
-        return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)
-    return AptitudeLicenseCheck(LicenseOutcome.EMAIL_MISMATCH)
+    return AptitudeLicenseCheck(LicenseOutcome.VERIFIED, purchase)
 
 
 async def _first_license_match(
     license_key: str,
-    normalized_email: str,
     client: httpx.AsyncClient | None,
 ) -> AptitudeLicenseCheck:
     """Return the first allowlisted product's verdict, or INVALID if none match."""
     for product_id in _allowlisted_product_ids():
         result = await verify_license(product_id, license_key, client=client)
         if result is not None and result.success:
-            return _classify_verified_purchase(result.purchase, normalized_email)
+            return _classify_verified_purchase(result.purchase)
     return AptitudeLicenseCheck(LicenseOutcome.INVALID)

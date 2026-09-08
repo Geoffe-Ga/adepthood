@@ -2,12 +2,14 @@
 
 Contract: a ``refund`` or ``dispute`` ping resolves the ORIGINAL stored sale
 row (``resource_name == "sale"``, same ``sale_id``) and reverses exactly what
-that sale delivered. An APTITUDE sale loses ``course_access`` unless another
-live APTITUDE purchase by the same buyer still covers it; a token-pack sale
-has the full configured pack size clawed back from the account that actually
-received the credits, even when that drives the balance negative. The two
-reversals are disjoint: a course refund writes no wallet audit, a pack refund
-touches no entitlement.
+that sale delivered. An APTITUDE sale's ``course_access`` is revoked on the
+account its licence binding names — never an account looked up by email (ADR
+0008 Decision 4) — and the binding itself survives, so a reactivated sale
+cannot drift to a second account. A sale nobody has bound revokes nothing. A
+token-pack sale has the full configured pack size clawed back from the
+account that actually received the credits, even when that drives the balance
+negative. The two reversals are disjoint: a course refund writes no wallet
+audit, a pack refund touches no entitlement.
 
 Every reversal is claimed exactly once via ``revocation_processed_at``, so a
 replayed delivery moves nothing. Nothing in the refund payload steers the
@@ -35,6 +37,7 @@ from domain.entitlements import (
 )
 from models.entitlement import Entitlement
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.wallet_audit import (
     BUCKET_OFFERING,
@@ -42,6 +45,7 @@ from models.wallet_audit import (
     REASON_GUMROAD_REFUND,
     WalletAudit,
 )
+from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
 WEBHOOK_PATH = "/webhooks/gumroad/ping"
 WEBHOOK_SECRET = "gumroad-refund-shared-secret-test-only"  # pragma: allowlist secret
@@ -55,8 +59,14 @@ TOKEN_PACK_PRODUCT_ID = "prod_pack_small"
 TOKEN_PACK_SIZE = 100
 
 BUYER_EMAIL = "buyer@example.com"
-MIXED_CASE_BUYER_EMAIL = "Buyer@Example.COM"
 OTHER_EMAIL = "other-buyer@example.com"
+RECIPIENT_EMAIL = "gift-recipient@example.com"
+SIGNUP_PATH = "/auth/signup"
+SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
+LICENSE_KEY = "REFUND-SUITE-LICENSE-KEY"  # pragma: allowlist secret
+LICENSE_USES = 1
+VERIFY_SEAM = "domain.entitlements.verify_license"
+DETAIL_INVALID_LICENSE = "invalid_license"
 
 SALE_ID = "S-100"
 SECOND_SALE_ID = "S-101"
@@ -68,7 +78,7 @@ DISPUTE_RESOURCE = "dispute"
 CANCELLATION_RESOURCE = "cancellation"
 
 UNKNOWN_SALE_MARKER = "unknown_sale"
-COVERED_MARKER = "covered_by_other_sale"
+SALE_NOT_BOUND_MARKER = "sale_not_bound"
 PREVIOUSLY_REVERSED_MARKER = "sale_previously_reversed"
 
 # The buyer spent part of the pack before charging back, so the full-size
@@ -232,6 +242,49 @@ async def _count_sales(db_session: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+async def _bindings(db_session: AsyncSession) -> list[tuple[int, str]]:
+    """Return every ``(user_id, sale_id)`` binding, read fresh and ordered by insertion."""
+    result = await db_session.execute(
+        select(LicenseBinding)
+        .order_by(col(LicenseBinding.id))
+        .execution_options(populate_existing=True)
+    )
+    return [(row.user_id, row.gumroad_sale_id) for row in result.scalars().all()]
+
+
+def _verify_stub_for(sale_id: str) -> object:
+    """Build a verify_license stand-in reporting ``LICENSE_KEY`` as ``sale_id``."""
+
+    async def _verify(
+        product_id: str,
+        license_key: str,
+        **_kwargs: object,
+    ) -> GumroadLicenseResult | None:
+        if license_key != LICENSE_KEY or product_id != APTITUDE_PRODUCT_ID:
+            return None
+        return GumroadLicenseResult(
+            success=True,
+            uses=LICENSE_USES,
+            purchase=GumroadPurchase(
+                email=BUYER_EMAIL,
+                product_id=APTITUDE_PRODUCT_ID,
+                sale_id=sale_id,
+                refunded=False,
+                chargebacked=False,
+            ),
+        )
+
+    return _verify
+
+
+async def _signup(client: AsyncClient, email: str) -> Response:
+    """POST a licence-gated signup for ``email`` with the suite's key."""
+    return await client.post(
+        SIGNUP_PATH,
+        json={"email": email, "password": SIGNUP_PASSWORD, "license_key": LICENSE_KEY},
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resource_name", [REFUND_RESOURCE, DISPUTE_RESOURCE])
 async def test_reversal_event_revokes_course_access(
@@ -328,95 +381,76 @@ async def test_a_refund_ping_row_never_satisfies_its_own_sale_lookup(
 
 
 @pytest.mark.asyncio
-async def test_refund_of_a_covered_purchase_keeps_access(
+@pytest.mark.real_license_gate
+async def test_refund_revokes_the_account_bound_to_the_sale_even_when_its_email_differs(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second live APTITUDE purchase keeps access alive through the refund.
+    """The refund follows the binding, not the buyer's address (ADR 0008 Decision 4).
 
-    The covering sale is recorded under a mixed-case spelling of the same
-    address, so coverage has to fold email case the way every other Gumroad
-    lookup does.
+    A gift recipient redeemed the key under their own email; the buyer also
+    has an account. Refunding the sale revokes the recipient — the account
+    that actually holds the access — and leaves the buyer's untouched.
     """
-    caplog.set_level(logging.DEBUG)
-    await _persist_user(db_session)
+    buyer_id = await _persist_user(db_session)
+    monkeypatch.setattr(VERIFY_SEAM, _verify_stub_for(SALE_ID))
+    signup = await _signup(async_client, RECIPIENT_EMAIL)
+    assert signup.status_code == HTTPStatus.OK
+    recipient_id = int(signup.json()["user_id"])
     await _ping(async_client, _sale_payload())
-    await _ping(
-        async_client,
-        _sale_payload(
-            sale_id=SECOND_SALE_ID,
-            product_id=SECOND_APTITUDE_PRODUCT_ID,
-            email=MIXED_CASE_BUYER_EMAIL,
-        ),
-    )
 
     response = await _ping(async_client, _refund_payload())
 
     assert response.status_code == HTTPStatus.OK
-    assert (await _sole_entitlement(db_session)).revoked_at is None
-    refunded_sale = await _reload_sale(db_session, SALE_ID)
-    assert refunded_sale.refunded is True
-    assert refunded_sale.revocation_processed_at is not None
-    assert _log_carries_marker(caplog, COVERED_MARKER)
+    entitlement = await _sole_entitlement(db_session)
+    assert entitlement.user_id == recipient_id
+    assert entitlement.revoked_at is not None
+    assert await has_course_access(db_session, buyer_id) is False
+    assert await _bindings(db_session) == [(recipient_id, SALE_ID)]
 
 
 @pytest.mark.asyncio
-async def test_refunding_every_purchase_finally_revokes_access(
+async def test_refund_of_an_unclaimed_second_sale_touches_nobody(
     async_client: AsyncClient,
     db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An already-refunded sale stops covering, so the last refund revokes."""
-    await _persist_user(db_session)
-    await _ping(async_client, _sale_payload())
-    second_sale = _sale_payload(sale_id=SECOND_SALE_ID, product_id=SECOND_APTITUDE_PRODUCT_ID)
-    await _ping(async_client, second_sale)
+    """A member's second purchase is an unbound gift; refunding it revokes no one.
 
-    await _ping(async_client, _refund_payload())
-    assert (await _sole_entitlement(db_session)).revoked_at is None
-    await _ping(async_client, {**second_sale, "resource_name": REFUND_RESOURCE})
-
-    assert (await _sole_entitlement(db_session)).revoked_at is not None
-
-
-@pytest.mark.asyncio
-async def test_a_cancelled_sale_no_longer_covers_a_later_refund(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """A cancelled purchase keeps ``refunded`` False yet must stop covering.
-
-    Cancellation stamps only the shared claim, so coverage cannot lean on
-    ``refunded`` alone — it has to exclude any sale whose revocation was
-    already processed.
+    Under the old email rule this second sale "covered" the first; under the
+    binding it is simply a sale nobody has redeemed, so its refund stamps the
+    claim and leaves the buyer's own bound access alone.
     """
-    await _persist_user(db_session)
+    caplog.set_level(logging.DEBUG)
+    user_id = await _persist_user(db_session)
     await _ping(async_client, _sale_payload())
     second_sale = _sale_payload(sale_id=SECOND_SALE_ID, product_id=SECOND_APTITUDE_PRODUCT_ID)
     await _ping(async_client, second_sale)
 
-    await _ping(async_client, {**second_sale, "resource_name": CANCELLATION_RESOURCE})
-    assert (await _reload_sale(db_session, SECOND_SALE_ID)).refunded is False
-    await _ping(async_client, _refund_payload())
+    response = await _ping(async_client, {**second_sale, "resource_name": REFUND_RESOURCE})
 
-    assert (await _sole_entitlement(db_session)).revoked_at is not None
+    assert response.status_code == HTTPStatus.OK
+    assert (await _sole_entitlement(db_session)).revoked_at is None
+    assert await has_course_access(db_session, user_id) is True
+    refunded = await _reload_sale(db_session, SECOND_SALE_ID)
+    assert refunded.refunded is True
+    assert refunded.revocation_processed_at is not None
+    assert await _bindings(db_session) == [(user_id, SALE_ID)]
+    assert _log_carries_marker(caplog, SALE_NOT_BOUND_MARKER)
 
 
 @pytest.mark.asyncio
-async def test_another_buyers_purchase_does_not_cover_a_refund(
+async def test_refunding_the_bound_sale_revokes_even_with_an_unclaimed_sale_waiting(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A live APTITUDE sale belonging to someone else never keeps access alive."""
+    """An unbound second sale does not keep the bound one's access alive."""
     await _persist_user(db_session)
     await _ping(async_client, _sale_payload())
     await _ping(
         async_client,
-        _sale_payload(
-            sale_id=SECOND_SALE_ID,
-            product_id=SECOND_APTITUDE_PRODUCT_ID,
-            email=OTHER_EMAIL,
-        ),
+        _sale_payload(sale_id=SECOND_SALE_ID, product_id=SECOND_APTITUDE_PRODUCT_ID),
     )
 
     await _ping(async_client, _refund_payload())
@@ -428,14 +462,16 @@ async def test_another_buyers_purchase_does_not_cover_a_refund(
 async def test_refund_for_a_buyer_who_never_signed_up_is_a_clean_no_op(
     async_client: AsyncClient,
     db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A refund can land before the buyer ever registers, and must not blow up.
+    """A refund can land before anyone redeems the key, and must not blow up.
 
-    A sale for an unknown address grants nothing at purchase time, so the
-    refund has no entitlement to revoke. It still has to answer 200 and still
-    has to take the claim, so the sale is closed out rather than left waiting
-    for a redelivery to reverse an account that may appear later.
+    An unbound sale granted nothing at purchase time, so the refund has no
+    entitlement to revoke. It still has to answer 200 and still has to take
+    the claim, so the sale is closed out rather than left waiting for a
+    redelivery to reverse an account that may appear later.
     """
+    caplog.set_level(logging.DEBUG)
     await _ping(async_client, _sale_payload())
 
     response = await _ping(async_client, _refund_payload())
@@ -446,6 +482,8 @@ async def test_refund_for_a_buyer_who_never_signed_up_is_a_clean_no_op(
     sale = await _reload_sale(db_session, SALE_ID)
     assert sale.refunded is True
     assert sale.revocation_processed_at is not None
+    assert await _bindings(db_session) == []
+    assert _log_carries_marker(caplog, SALE_NOT_BOUND_MARKER)
 
 
 @pytest.mark.asyncio
@@ -630,6 +668,44 @@ async def test_a_replayed_sale_ping_does_not_reinstate_refunded_access(
     assert claimed_at is not None
     assert (await _reload_sale(db_session, SALE_ID)).revocation_processed_at == claimed_at
     assert _log_carries_marker(caplog, PREVIOUSLY_REVERSED_MARKER)
+    # The binding outlives the revocation (ADR 0008 Decision 4): the sale stays
+    # this account's, so a reactivation can never drift to somebody else.
+    assert await _bindings(db_session) == [(user_id, SALE_ID)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.real_license_gate
+async def test_a_reactivated_sale_stays_bound_to_its_first_account(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a refund, nobody else can redeem the key — and the holder cannot self-reinstate.
+
+    Gumroad may report the sale live again; the binding still names the
+    first account, so a second account presenting the key gets the generic
+    refusal, and the refunded holder presenting it again is a duplicate
+    signup rather than a fresh grant.
+    """
+    monkeypatch.setattr(VERIFY_SEAM, _verify_stub_for(SALE_ID))
+    signup = await _signup(async_client, BUYER_EMAIL)
+    assert signup.status_code == HTTPStatus.OK
+    holder_id = int(signup.json()["user_id"])
+    await _ping(async_client, _sale_payload())
+    await _ping(async_client, _refund_payload())
+    assert await has_course_access(db_session, holder_id) is False
+
+    second_account = await _signup(async_client, OTHER_EMAIL)
+    holder_again = await _signup(async_client, BUYER_EMAIL)
+
+    assert second_account.status_code == HTTPStatus.BAD_REQUEST
+    assert second_account.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert holder_again.status_code == HTTPStatus.BAD_REQUEST
+    assert holder_again.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert await _bindings(db_session) == [(holder_id, SALE_ID)]
+    assert await _active_entitlements(db_session) == []
+    users = (await db_session.execute(select(func.count()).select_from(User))).scalar_one()
+    assert users == 1
 
 
 @pytest.mark.asyncio
