@@ -1,0 +1,13 @@
+diff --git a/node_modules/@expo/plist/build/parse.js b/node_modules/@expo/plist/build/parse.js
+index 572d7f8..49c9e59 100644
+--- a/node_modules/@expo/plist/build/parse.js
++++ b/node_modules/@expo/plist/build/parse.js
+@@ -66,7 +66,7 @@ function isEmptyNode(node) {
+  */
+ function parse(xml) {
+     // prevent the parser from logging non-fatal errors
+-    const doc = new xmldom_1.DOMParser({ errorHandler() { } }).parseFromString(xml);
++    const doc = new xmldom_1.DOMParser({ errorHandler() { } }).parseFromString(xml, 'text/xml');
+     (0, assert_1.default)(doc.documentElement.nodeName === 'plist', 'malformed document. First element should be <plist>');
+     let plist = parsePlistXML(doc.documentElement);
+     // the root <plist> node gets interpreted as an Array,

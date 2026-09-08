@@ -9,8 +9,10 @@ WORKDIR /app
 # below are therefore rooted at the repo root and reference `frontend/`
 # explicitly.  See frontend/Dockerfile.dockerignore for context exclusions.
 
-# Install dependencies first (layer caching)
+# Install dependencies first (layer caching). Dependency patches must already
+# be present because npm ci runs patch-package through postinstall.
 COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/patches/ ./patches/
 RUN npm ci
 
 # Copy source and build for web
