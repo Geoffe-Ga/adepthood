@@ -3156,7 +3156,10 @@ describe('habitManager', () => {
     it('does not re-set the program anchor when it already matches the earliest habit start date', async () => {
       const anchor = new Date('2026-01-01T00:00:00Z');
       useProgramStore.getState().hydrateProgramStartDate(anchor);
-      const setStateSpy = jest.spyOn(useProgramStore, 'setState');
+      // Spied on the action the sync actually reaches for, not on the store's
+      // ``setState``: the store closes over its own setter at creation, so a
+      // spy installed on the store object is never the function an action calls.
+      const setAnchorSpy = jest.spyOn(useProgramStore.getState(), 'setProgramStartDate');
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
       (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([
         {
@@ -3175,8 +3178,8 @@ describe('habitManager', () => {
 
       await habitManager.loadHabits();
 
-      expect(setStateSpy).not.toHaveBeenCalled();
-      setStateSpy.mockRestore();
+      expect(setAnchorSpy).not.toHaveBeenCalled();
+      setAnchorSpy.mockRestore();
     });
   });
 
