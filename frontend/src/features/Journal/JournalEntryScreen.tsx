@@ -26,6 +26,7 @@ import AspectChordControl, { EMPTY_CHORD, type AspectChordValue } from './Aspect
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
+import CorpusInvitationNote from './CorpusInvitationNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import FromYourCreekPanel from './FromYourCreekPanel';
 import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
@@ -2483,6 +2484,24 @@ function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | nu
   );
 }
 
+/**
+ * The corpus decision, offered beside the page once a first reflection has
+ * actually arrived (#2407). A screen-level sibling like the care surfaces --
+ * never in the margin column -- and, like them, silent unless the server says
+ * otherwise. Looking at the decision is routed here because the screen owns
+ * navigation; the note owns everything else.
+ */
+function EntryCorpusInvitation({
+  ctl,
+  navigation,
+}: {
+  ctl: Controller;
+  navigation: ScreenNavigation;
+}): React.JSX.Element {
+  const onOpen = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
+  return <CorpusInvitationNote completedPasses={ctl.resonance.completedPasses} onOpen={onOpen} />;
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -2505,6 +2524,7 @@ function JournalEntryScreen({
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />
       <EntryCreekSurface ctl={ctl} />
+      <EntryCorpusInvitation ctl={ctl} navigation={navigation} />
       <LoadErrorBanner message={ctl.autosave.loadError} />
       <EntryExitControls
         returnTo={route.params?.returnTo}

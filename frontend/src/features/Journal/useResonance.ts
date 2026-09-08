@@ -81,6 +81,14 @@ export interface UseResonanceResult {
   relatedPraxis: RelatedPraxis[];
   /** Recurring corpus patterns related by the latest completed resonance pass. */
   relatedEddies: RelatedEddy[];
+  /**
+   * How many generate passes have resolved on this screen, excluding any the
+   * privacy floor withheld (``private: true``). A signal, not a thing to show:
+   * ``CorpusInvitationNote`` asks the server whether a moment has arrived when
+   * it moves (#2407). It starts at zero on every mount and never counts the
+   * load-on-open read or a rejected pass.
+   */
+  completedPasses: number;
   loading: boolean;
   error: string | null;
   requestResonance: () => Promise<void>;
@@ -184,6 +192,8 @@ interface LatestPassState {
   noNotesMessage: string | null;
   relatedPraxis: RelatedPraxis[];
   relatedEddies: RelatedEddy[];
+  /** Resolved, non-intimate passes so far; survives ``clear`` because it counts history. */
+  completedPasses: number;
   clear: () => void;
   receive: (_result: ResonanceResponse) => void;
 }
@@ -196,6 +206,7 @@ function useLatestPassState(): LatestPassState {
   const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
   const [relatedPraxis, setRelatedPraxis] = useState<RelatedPraxis[]>([]);
   const [relatedEddies, setRelatedEddies] = useState<RelatedEddy[]>([]);
+  const [completedPasses, setCompletedPasses] = useState(0);
 
   const clear = useCallback((): void => {
     setCare(null);
@@ -214,6 +225,10 @@ function useLatestPassState(): LatestPassState {
     setNoNotesMessage(result.no_notes_message ?? null);
     setRelatedPraxis(result.related_praxis ?? []);
     setRelatedEddies(result.related_eddies ?? []);
+    // The server never counts an intimate pass, and neither does this: a
+    // client that did would ask for an offer and render "sent once to the
+    // language-model provider" beneath the line saying this entry stays put.
+    if (result.private !== true) setCompletedPasses((n) => n + 1);
   }, []);
 
   return {
@@ -223,6 +238,7 @@ function useLatestPassState(): LatestPassState {
     noNotesMessage,
     relatedPraxis,
     relatedEddies,
+    completedPasses,
     clear,
     receive,
   };
@@ -311,6 +327,7 @@ export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseReso
     noNotesMessage: latestPass.noNotesMessage,
     relatedPraxis: latestPass.relatedPraxis,
     relatedEddies: latestPass.relatedEddies,
+    completedPasses: latestPass.completedPasses,
     loading,
     error,
     requestResonance,

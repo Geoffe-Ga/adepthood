@@ -82,6 +82,32 @@ export const CORPUS_CONSENT_ROW_LABEL = 'What reflections draw on';
 export const CORPUS_CONSENT_ROW_DESCRIPTION =
   'Choose whether your own writing is sorted for reflections to quote. Off unless you turn it on.';
 
+/**
+ * The invitation offered once, after a first completed reflection (#2407).
+ *
+ * It reuses ``CORPUS_CONSENT_LEAD`` and ``CORPUS_CONSENT_CONSEQUENCE_SENDING``
+ * verbatim, so the journal and Settings cannot drift apart on what agreeing
+ * does, and adds one sentence Settings does not need: that a yes reaches back
+ * over what is already written, because ``backfill_after_consent`` runs on a
+ * grant and an invitation vague about that would be vague about egress.
+ */
+export const CORPUS_INVITATION_REACH =
+  'Saying yes also sorts the entries you have already written, apart from any you marked ' +
+  'Intimate — the same one call per entry — so a reflection can draw on all of it and not only ' +
+  'on what comes after.';
+
+/** Leads to the decision itself; matches the shelf band's wording. */
+export const CORPUS_INVITATION_OPEN_LABEL = 'Look at the decision';
+export const CORPUS_INVITATION_OPEN_A11Y = 'Open the decision about your corpus';
+
+/** A plain decline. The question may return, quietly, after a while. */
+export const CORPUS_INVITATION_NOT_NOW_LABEL = 'Not now';
+export const CORPUS_INVITATION_NOT_NOW_A11Y = 'Set the question about your corpus aside for now';
+
+/** A final decline. The question is not offered again. */
+export const CORPUS_INVITATION_NEVER_LABEL = 'Do not ask again';
+export const CORPUS_INVITATION_NEVER_A11Y = 'Do not offer the question about your corpus again';
+
 /** One source's name and what it covers, in the reader's language. */
 export interface CorpusSourceCopy {
   readonly label: string;
@@ -178,6 +204,13 @@ export const CORPUS_CONSENT_COPY_ENTRIES: readonly string[] = [
   CORPUS_CONSENT_SOURCES_HEADING,
   CORPUS_CONSENT_ROW_LABEL,
   CORPUS_CONSENT_ROW_DESCRIPTION,
+  CORPUS_INVITATION_REACH,
+  CORPUS_INVITATION_OPEN_LABEL,
+  CORPUS_INVITATION_OPEN_A11Y,
+  CORPUS_INVITATION_NOT_NOW_LABEL,
+  CORPUS_INVITATION_NOT_NOW_A11Y,
+  CORPUS_INVITATION_NEVER_LABEL,
+  CORPUS_INVITATION_NEVER_A11Y,
   CORPUS_REVOKE_PROMPT,
   CORPUS_REVOKE_CONFIRM_LABEL,
   CORPUS_REVOKE_CANCEL_LABEL,

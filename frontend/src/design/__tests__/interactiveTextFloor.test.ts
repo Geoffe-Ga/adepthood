@@ -93,6 +93,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
   'features/Journal/CompletionSuggestionNote.tsx::streak',
+  // Audited: the corpus invitation's eyebrow is a section label above the body;
+  // its tap targets are the open CTA (editorialType.action) and two
+  // ReflectionDismiss controls (editorialType.note).
+  'features/Journal/CorpusInvitationNote.tsx::label',
   // Audited: the expanded Creek panel's section eyebrow and lifecycle/count
   // captions are read-only metadata. Its only tap target is the collapsed
   // header, whose two labels both use editorialType.action.
