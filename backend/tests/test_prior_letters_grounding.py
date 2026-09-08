@@ -216,6 +216,35 @@ async def test_another_accounts_letter_never_goes_out(db_session: AsyncSession) 
 
 
 @pytest.mark.asyncio
+async def test_a_letter_denormalized_to_me_but_hanging_off_anothers_entry_never_goes_out(
+    db_session: AsyncSession,
+) -> None:
+    """The parent entry's owner is authoritative, not the denormalized column.
+
+    ``Marginalia.user_id`` is a denormalized copy whose correctness the model
+    explicitly defers to the endpoint layer, so it is the half that can be
+    wrong. This is the row that proves the second ownership clause earns its
+    place: denormalized to *me*, but hanging off an entry somebody else wrote.
+    Scoping on the denormalized column alone would hand a stranger's entry --
+    and the letter quoting it -- to my reflection's prompt.
+
+    The sibling test above, where both columns say "stranger", cannot show this:
+    the denormalized filter excludes that row on its own, so dropping
+    ``JournalEntry.user_id == user_id`` leaves it green.
+    """
+    user_id = await _seed_user(db_session, "denorm-me@example.com")
+    stranger_id = await _seed_user(db_session, "denorm-them@example.com")
+    entry_id = await _seed_entry(db_session, user_id)
+    their_entry = await _seed_entry(db_session, stranger_id)
+    await _seed_letter(
+        db_session, user_id=user_id, entry_id=their_entry, essay="Their page, my label."
+    )
+    await db_session.commit()
+
+    assert await _prior_letter_essays(db_session, user_id=user_id, exclude_entry_id=entry_id) == []
+
+
+@pytest.mark.asyncio
 async def test_only_the_newest_letters_go_out_and_only_that_many(
     db_session: AsyncSession,
 ) -> None:
