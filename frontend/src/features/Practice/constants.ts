@@ -17,6 +17,7 @@
  * null stage; until then this constant is the single, named place that
  * encodes the workaround.
  */
+import { MS_PER_MINUTE, MS_PER_SECOND } from '@/features/Practice/engine/types';
 
 export const MIN_STAGE = 1;
 export const MAX_STAGE = 10;
@@ -28,3 +29,32 @@ export const WEEKLY_TARGET = 4;
 /** The inclusive integer stage range ``MIN_STAGE..MAX_STAGE`` as an array. */
 export const stageRange = (): number[] =>
   Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);
+
+/**
+ * Client mirror of the server's practice-session window.
+ *
+ * The source of truth is ``backend/src/schemas/practice.py`` —
+ * ``MAX_FUTURE_SKEW``, ``MAX_BACKDATE_WINDOW`` and ``MAX_SESSION_DURATION``
+ * (BUG-PRACTICE-006, BUG-SCHEMA-008). The manual-log form mirrors them so a
+ * person is told their chosen time is outside the window instead of spending
+ * a doomed request on it; `__tests__/sessionWindowDrift.test.ts` reads those
+ * literals out of the Python and fails when either side moves.
+ *
+ * All three bounds are **inclusive** on the server (`<=` on every rule), so
+ * the client's guards are inclusive too — see `utils/sessionWindow.ts`.
+ */
+export const MAX_FUTURE_SKEW_SECONDS = 60;
+export const MAX_BACKDATE_HOURS = 24;
+export const MAX_SESSION_HOURS = 8;
+
+/** Minutes in one hour — the multiplier the millisecond bounds are built from. */
+export const MINUTES_PER_HOUR = 60;
+/** Milliseconds in one hour, derived from the engine's minute constant. */
+export const MS_PER_HOUR = MINUTES_PER_HOUR * MS_PER_MINUTE;
+
+/** How far ahead of "now" a session may end (clock-skew tolerance). */
+export const MAX_FUTURE_SKEW_MS = MAX_FUTURE_SKEW_SECONDS * MS_PER_SECOND;
+/** How far in the past a session may have started. */
+export const MAX_BACKDATE_WINDOW_MS = MAX_BACKDATE_HOURS * MS_PER_HOUR;
+/** The longest single sitting the server will record. */
+export const MAX_SESSION_DURATION_MS = MAX_SESSION_HOURS * MS_PER_HOUR;

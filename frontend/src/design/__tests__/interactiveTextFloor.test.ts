@@ -141,6 +141,14 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // editorialType.action, and the ReflectionDismiss control — matching the
   // two sibling bands above.
   'features/Journal/VoiceReadinessBand.tsx::label',
+  // Audited: all three are read, never tapped — the sheet's standing
+  // explanation of the loggable window, the reason the current choice is
+  // refused, and the line naming which practice is being logged. Its two tap
+  // targets (Log this practice, Cancel) and its end-time steppers sit at
+  // editorialType.action.
+  'features/Practice/components/LogPracticeSessionSheet.tsx::hint',
+  'features/Practice/components/LogPracticeSessionSheet.tsx::note',
+  'features/Practice/components/LogPracticeSessionSheet.tsx::subtitle',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
   'features/Practice/configurator/RitualConfiguratorSheet.tsx::aspectText',

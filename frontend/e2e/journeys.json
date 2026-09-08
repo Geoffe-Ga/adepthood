@@ -244,6 +244,18 @@
     "coveredBy": "frontend/e2e/practice.e2e.test.ts"
   },
   {
+    "id": "practice.log-past-session",
+    "description": "A practitioner who sat without the app logs that sitting afterwards, choosing when it ended and how long it ran, and finds it counted in the week it happened.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/", "GET /practice-sessions/insights"],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-log-past.e2e.test.ts"
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {

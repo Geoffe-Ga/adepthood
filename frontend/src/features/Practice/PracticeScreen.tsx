@@ -23,6 +23,10 @@
  *   - `PracticeIdentityHeader` pins the player identity (title, tappable
  *     stage chip, effective ritual name, customize pencil) to the top region
  *     and collapses to the title alone while a session runs.
+ *   - `LogPracticeSessionSheet`, opened from the drawer, records a sitting done
+ *     away from the app. It is hosted here rather than inside the session
+ *     because it needs the `user_practice_id` only `useActivePractice`
+ *     resolves, and it drives the same optimistic weekly trio the timer does.
  *
  * When no practice is set for the stage the screen shows a minimal dark
  * empty state whose only action flips to the embedded Catalog tab.
@@ -67,6 +71,7 @@ import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession, {
   type ActiveRitualSessionHandle,
 } from '@/features/Practice/components/ActiveRitualSession';
+import LogPracticeSessionSheet from '@/features/Practice/components/LogPracticeSessionSheet';
 import PracticeCatalogSwitcher, {
   type PracticeTab,
 } from '@/features/Practice/components/PracticeCatalogSwitcher';
@@ -157,6 +162,23 @@ interface PracticeScreenModel extends PracticeTabsState {
   status: RitualStatus;
   setStatus: (_next: RitualStatus) => void;
   showSwitcher: boolean;
+  logSheetOpen: boolean;
+  openLogSheet: () => void;
+  closeLogSheet: () => void;
+}
+
+interface LogSheetState {
+  logSheetOpen: boolean;
+  openLogSheet: () => void;
+  closeLogSheet: () => void;
+}
+
+/** Open/closed state for the manual-log sheet; the sheet owns its own form. */
+function useLogSheet(): LogSheetState {
+  const [logSheetOpen, setLogSheetOpen] = useState(false);
+  const openLogSheet = useCallback(() => setLogSheetOpen(true), []);
+  const closeLogSheet = useCallback(() => setLogSheetOpen(false), []);
+  return { logSheetOpen, openLogSheet, closeLogSheet };
 }
 
 /** Wires every hook the player composes; the component below only renders. */
@@ -176,6 +198,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   const sessionRef = useRef<ActiveRitualSessionHandle>(null);
   const insets = useSafeAreaInsets();
   const tabs = usePracticeTabs(active.refresh);
+  const logSheet = useLogSheet();
   // Mirror of the engine status, lifted to screen level so the tab switcher
   // can hide while a session holds the screen (running or paused).
   const [status, setStatus] = useState<RitualStatus>('idle');
@@ -187,6 +210,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   );
   return {
     ...tabs,
+    ...logSheet,
     active,
     userTimezone,
     weekly,
@@ -242,17 +266,30 @@ const PracticeScreen = (): React.JSX.Element => {
           testID="practice-ground-fade"
         />
       </View>
-      <PracticeScreenDrawer
-        drawer={s.drawer}
-        hasActivePractice={s.hasActivePractice}
-        practiceId={s.active.practice?.id}
-        onCustomize={s.openConfigurator}
-        onBrowseCatalog={s.openCatalogTab}
-        sessionActive={!s.showSwitcher}
-      />
+      <PracticeScreenOverlays model={s} />
     </>
   );
 };
+
+/**
+ * The two things that float above the player: the header drawer and the
+ * manual-log sheet it opens. Grouped so the screen's own render stays a
+ * readable description of the body rather than a list of every layer.
+ */
+const PracticeScreenOverlays = ({ model }: { model: PracticeScreenModel }): React.JSX.Element => (
+  <>
+    <PracticeScreenDrawer
+      drawer={model.drawer}
+      hasActivePractice={model.hasActivePractice}
+      practiceId={model.active.practice?.id}
+      onCustomize={model.openConfigurator}
+      onBrowseCatalog={model.openCatalogTab}
+      sessionActive={!model.showSwitcher}
+      onLogSession={model.openLogSheet}
+    />
+    <LogSheetHost model={model} />
+  </>
+);
 
 interface PracticeBodyProps {
   active: ActivePracticeHook;
@@ -308,11 +345,12 @@ interface PracticeScreenDrawerProps {
   onCustomize: () => void;
   onBrowseCatalog: () => void;
   sessionActive: boolean;
+  onLogSession: () => void;
 }
 
-// The header drawer: catalog/customize/details/create actions in the active
-// state, browse/create when empty. Kept as its own component so the screen's
-// render stays small and the drawer wiring lives in one place.
+// The header drawer: catalog/customize/log/details/create actions in the
+// active state, browse/create when empty. Kept as its own component so the
+// screen's render stays small and the drawer wiring lives in one place.
 const PracticeScreenDrawer = ({
   drawer,
   hasActivePractice,
@@ -320,6 +358,7 @@ const PracticeScreenDrawer = ({
   onCustomize,
   onBrowseCatalog,
   sessionActive,
+  onLogSession,
 }: PracticeScreenDrawerProps): React.JSX.Element => (
   <ScreenDrawer
     visible={drawer.isOpen}
@@ -334,10 +373,36 @@ const PracticeScreenDrawer = ({
       onCustomize={onCustomize}
       onBrowseCatalog={onBrowseCatalog}
       sessionActive={sessionActive}
+      onLogSession={onLogSession}
       onClose={drawer.close}
     />
   </ScreenDrawer>
 );
+
+/**
+ * Mounts the manual-log sheet only once a practice is actually resolved.
+ *
+ * Both values are needed and neither can be invented: the sheet posts against
+ * `activeUserPractice.id`, and it seeds its minutes field from the practice's
+ * own declared length rather than a made-up default.
+ */
+const LogSheetHost = ({ model }: { model: PracticeScreenModel }): React.JSX.Element | null => {
+  const { activeUserPractice, practice, effectiveName } = model.active;
+  if (!activeUserPractice || !practice) return null;
+  return (
+    <LogPracticeSessionSheet
+      visible={model.logSheetOpen}
+      userPracticeId={activeUserPractice.id}
+      practiceName={effectiveName ?? practice.name}
+      defaultDurationMinutes={practice.default_duration_minutes}
+      userTimezone={model.userTimezone}
+      onClose={model.closeLogSheet}
+      onSessionApply={model.weekly.increment}
+      onSessionRollback={model.weekly.decrement}
+      onSessionCommitted={() => void model.weekly.refresh()}
+    />
+  );
+};
 
 /**
  * Button-shaped entry point to the embedded Catalog tab — the empty state's

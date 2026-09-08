@@ -48,6 +48,26 @@ const resolveZone = (tz: string | null | undefined): string => {
 };
 
 /**
+ * The wall-clock time of `date` in `tz`, e.g. `"3:00 PM"`.
+ *
+ * The locale is pinned to `en-US` rather than left to the device: a label the
+ * user reads back to confirm *when* they practised should not silently change
+ * shape with the host's locale, and pinning it is what lets tests assert the
+ * label at all. A malformed zone falls back to UTC through `resolveZone`
+ * rather than throwing mid-render.
+ *
+ * @param date - The instant to render.
+ * @param tz - The user's IANA timezone.
+ * @returns The hour and minute with an AM/PM marker.
+ */
+export const formatTimeInTZ = (date: Date, tz: string): string =>
+  new Intl.DateTimeFormat('en-US', {
+    timeZone: resolveZone(tz),
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+
+/**
  * Detect the device's IANA timezone for sending on signup.
  *
  * Prefer reading from a stored user record; this helper is for the brief

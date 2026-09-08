@@ -23,6 +23,7 @@ const activeProps = {
   onCustomize: noop,
   onBrowseCatalog: noop,
   sessionActive: false,
+  onLogSession: noop,
   onClose: noop,
 };
 
@@ -31,6 +32,7 @@ const emptyProps = {
   onCustomize: noop,
   onBrowseCatalog: noop,
   sessionActive: false,
+  onLogSession: noop,
   onClose: noop,
 };
 
@@ -39,7 +41,7 @@ afterEach(() => {
 });
 
 describe('PracticeDrawer active state', () => {
-  it('renders the five active-state rows in order', () => {
+  it('renders the six active-state rows in order', () => {
     const { getAllByRole } = render(<PracticeDrawer {...activeProps} />);
     const rows = getAllByRole('button');
     const labels = rows.map(
@@ -49,9 +51,23 @@ describe('PracticeDrawer active state', () => {
       'Change practice',
       'Browse all practices',
       'Customize this practice',
+      'Log a practice',
       'Practice details',
       'Create a practice',
     ]);
+    expect(getAllByRole('button')).toHaveLength(6);
+  });
+
+  it('pressing "Log a practice" calls onLogSession once and closes the drawer', () => {
+    const onLogSession = jest.fn();
+    const onClose = jest.fn();
+    const { getByTestId } = render(
+      <PracticeDrawer {...activeProps} onLogSession={onLogSession} onClose={onClose} />,
+    );
+    fireEvent.press(getByTestId('practice-drawer-log'));
+    expect(onLogSession).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('pressing "Change practice" flips to the embedded catalog and closes the drawer', () => {
@@ -117,6 +133,8 @@ describe('PracticeDrawer active state', () => {
     const { getByLabelText, getByText } = render(<PracticeDrawer {...activeProps} />);
     expect(getByLabelText('Customize this practice')).toBeTruthy();
     expect(getByText('Customize this practice')).toBeTruthy();
+    expect(getByLabelText('Log a practice')).toBeTruthy();
+    expect(getByText('Log a practice')).toBeTruthy();
   });
 
   it('withholds the in-place catalog rows while a session is active', () => {
@@ -130,6 +148,8 @@ describe('PracticeDrawer active state', () => {
     expect(labels).toEqual(['Customize this practice', 'Practice details', 'Create a practice']);
     expect(queryByTestId('practice-drawer-change')).toBeNull();
     expect(queryByTestId('practice-drawer-browse')).toBeNull();
+    // Logging a second sitting while one is running is not a coherent action.
+    expect(queryByTestId('practice-drawer-log')).toBeNull();
   });
 });
 
@@ -144,6 +164,8 @@ describe('PracticeDrawer empty state (no active practice)', () => {
     expect(queryByTestId('practice-drawer-change')).toBeNull();
     expect(queryByTestId('practice-drawer-customize')).toBeNull();
     expect(queryByTestId('practice-drawer-details')).toBeNull();
+    // Nothing to log against until a practice is set for the stage.
+    expect(queryByTestId('practice-drawer-log')).toBeNull();
   });
 
   it('pressing "Browse all practices" flips to the embedded catalog and closes the drawer', () => {
