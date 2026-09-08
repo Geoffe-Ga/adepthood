@@ -111,10 +111,18 @@ logger = logging.getLogger(__name__)
 VALID_ENVIRONMENTS = {"development", "staging", "production"}
 _PROVISIONING_RECOVERY_INTERVAL_SECONDS: Final[float] = 30.0
 
+# Local development origins.  ``localhost`` and ``127.0.0.1`` resolve to the
+# same interface but are *different origins* to a browser, so every port has to
+# be listed under both spellings: a port named only one way is CORS-refused for
+# anyone who typed the other, and the browser tells JavaScript nothing about
+# why, so the app blames the network instead (#2661).
+# ``test_dev_origins_name_both_loopback_host_forms_on_every_port`` guards the
+# symmetry so the next port added cannot reintroduce the gap.
 DEV_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:8080",
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080",
 ]
 
 

@@ -1,7 +1,9 @@
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,9 +21,43 @@ client = TestClient(app)
 
 ALLOWED_ORIGIN = "http://localhost:3000"
 FORBIDDEN_ORIGIN = "http://malicious.com"
+# The two spellings of the loopback interface a browser can be sitting on.  A
+# page served from one of them is a *different origin* from the same page served
+# from the other, so an allow-list that names only one silently refuses half the
+# ways a developer can open the local web build (#2661).
+LOOPBACK_HOST_FORMS = frozenset({"localhost", "127.0.0.1"})
+# The origin the issue reproduces from: Expo's web build on the port README
+# tells developers to use, opened by IP rather than by name.
+LOOPBACK_IP_WEB_ORIGIN = "http://127.0.0.1:8080"
 
 
 # --- get_cors_origins unit tests ---
+
+
+def test_dev_origins_name_both_loopback_host_forms_on_every_port() -> None:
+    """#2661: every dev port must be reachable by name *and* by IP.
+
+    ``localhost`` and ``127.0.0.1`` are the same interface but not the same
+    origin, so a port listed under only one of them is CORS-refused for anyone
+    who typed the other -- and the browser hands JavaScript no way to say why,
+    so the app reports itself offline while the backend is up and answering.
+
+    Asserted as a symmetry over whatever the list happens to contain rather
+    than as a check for one hard-coded entry, so the next port added under a
+    single host form fails here instead of in someone's browser.
+    """
+    hosts_by_port: defaultdict[tuple[str, int | None], set[str]] = defaultdict(set)
+    for origin in DEV_ORIGINS:
+        parts = urlsplit(origin)
+        if parts.hostname in LOOPBACK_HOST_FORMS:
+            hosts_by_port[(parts.scheme, parts.port)].add(parts.hostname)
+
+    asymmetric = {
+        port: sorted(LOOPBACK_HOST_FORMS - hosts)
+        for port, hosts in hosts_by_port.items()
+        if hosts != LOOPBACK_HOST_FORMS
+    }
+    assert not asymmetric, f"dev ports missing a loopback host form: {asymmetric}"
 
 
 def test_development_returns_dev_origins() -> None:
@@ -249,6 +285,22 @@ def test_cross_origin_post_omits_credentials_header() -> None:
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
     # Header omitted entirely (credentials mode off), not set to any value.
     assert response.headers.get("access-control-allow-credentials") is None
+
+
+def test_preflight_from_the_loopback_ip_on_the_web_port() -> None:
+    """#2661: the local web build opened at ``127.0.0.1:8080`` can log in.
+
+    This is the exact reproduction from the issue -- a login preflight from the
+    IP spelling of the port README hands developers -- and it 400s whenever the
+    allow-list carries only the ``localhost`` spelling of that port.
+    """
+    headers = {
+        "Origin": LOOPBACK_IP_WEB_ORIGIN,
+        "Access-Control-Request-Method": "POST",
+    }
+    response = client.options("/auth/login", headers=headers)
+    assert response.status_code == HTTPStatus.OK
+    assert response.headers.get("access-control-allow-origin") == LOOPBACK_IP_WEB_ORIGIN
 
 
 def test_forbidden_origin_no_cors_headers() -> None:
