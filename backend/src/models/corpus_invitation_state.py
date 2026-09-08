@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Integer
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Index, Integer
 from sqlmodel import Field, SQLModel
 
 # Counters start at zero on the database side, so a row inserted with only its
@@ -35,6 +35,10 @@ _DISABLED_SERVER_DEFAULT = "0"
 # A count of passes is a count: never negative, and a negative value would read
 # as a sentinel nobody defined.
 _MIN_PASSES = 0
+
+# Must equal the name the migration creates, or a rename silently becomes a
+# drop-and-create of the rule that keeps one row per account.
+_USER_INDEX = "ix_corpusinvitationstate_user_id"
 
 
 def _range_check(column: str) -> CheckConstraint:
@@ -58,11 +62,19 @@ class CorpusInvitationState(SQLModel, table=True):
     __tablename__ = "corpusinvitationstate"
 
     # Declared here as well as in the migration so ``alembic check`` sees no
-    # drift.
-    __table_args__ = (_range_check("completed_passes"), _range_check("passes_at_dismissal"))
+    # drift. The owner index carries the one-row-per-account rule as a unique
+    # INDEX rather than a column-level UNIQUE, which is both what the migration
+    # creates and the shape every sibling here uses (``metta_return_offer_dismissal``,
+    # ``invitation_signal``); the two spellings are not interchangeable to
+    # ``alembic check``.
+    __table_args__ = (
+        Index(_USER_INDEX, "user_id", unique=True),
+        _range_check("completed_passes"),
+        _range_check("passes_at_dismissal"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
     completed_passes: int = Field(
         default=0,
         sa_column=Column(Integer(), nullable=False, server_default=_ZERO_SERVER_DEFAULT),
