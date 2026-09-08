@@ -635,6 +635,17 @@ async def _refuse_signup_creation(
     raise bad_request(_DETAIL_INVALID_LICENSE)
 
 
+async def _signup_email_taken(session: AsyncSession, email: str) -> bool:
+    """Whether ``email`` already has an account, without refusing anything.
+
+    Split out from :func:`_reject_duplicate_signup_email` so the licence
+    refusal can name the more accurate reason without letting that knowledge
+    change what the caller is charged. Runs only on a refusal path.
+    """
+    result = await session.execute(select(User).where(User.email == email))
+    return result.scalars().first() is not None
+
+
 async def _reject_duplicate_signup_email(session: AsyncSession, email: str) -> None:
     """Reject a signup for an already-registered email with the generic 400.
 
@@ -759,19 +770,36 @@ async def signup(
     Once the account exists, any token pack bought under the same email
     before signup is swept into the new wallet.
     """
-    # Verify the license (a live Gumroad call) before the duplicate-email DB
-    # check is deliberate: running the same first check for every email keeps an
-    # attacker from inferring account existence from which check ran first.
+    # Both licence verdicts are reached before the duplicate-email DB check,
+    # and the order is load-bearing twice over. Running the same first check
+    # for every email keeps an attacker from inferring account existence from
+    # which check ran first -- and settling the licence *entirely* first keeps
+    # the invalid-licence cap from being charged on a schedule that depends on
+    # whether the address exists. Only the duplicate-email refusal is free;
+    # were it able to answer ahead of a bound key, one redeemed key presented
+    # under two addresses would cost a cap unit for the unregistered one and
+    # nothing for the registered one, and the 429 boundary would read that
+    # difference back out as the very inference this check exists to prevent.
     purchase = await _verify_signup_license(request, payload)
-    await _reject_duplicate_signup_email(session, payload.email)
     if await new_claim_refused(session, purchase.sale_id):
         # A reversed sale, or a valid key another account has already redeemed
         # (ADR 0008 Decisions 2 and 4). Refused before any hash or row, with
         # the unknown key's exact charge, dummy verify and bytes, so "valid
         # but claimed" is never readable off the wire. The UNIQUE constraint
         # still decides a genuine race below.
-        _log_signup_rejected(REASON_LICENSE_ALREADY_BOUND, payload.email)
+        #
+        # The reason is chosen after the refusal is already certain, so it
+        # cannot move the charge: someone re-submitting their own signup is a
+        # benign duplicate and is logged as one, rather than inflating the
+        # redeemed-key grind signal Decision 6 asks operators to watch.
+        reason = (
+            REASON_DUPLICATE_SIGNUP
+            if await _signup_email_taken(session, payload.email)
+            else REASON_LICENSE_ALREADY_BOUND
+        )
+        _log_signup_rejected(reason, payload.email)
         await _reject_invalid_license(request)
+    await _reject_duplicate_signup_email(session, payload.email)
     created = await _create_signup_user(session, payload, purchase)
     if isinstance(created, _CreationRefusal):
         await _refuse_signup_creation(request, payload.license_key, created)

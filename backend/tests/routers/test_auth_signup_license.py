@@ -687,6 +687,55 @@ async def test_password_refusals_are_byte_identical_for_unknown_and_already_boun
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_a_bound_key_charges_the_cap_even_under_a_registered_email(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redeemed key costs the same whether or not the address has an account.
+
+    The refusal bytes were already identical; the *cost* was not. Because the
+    duplicate-email check ran before the bound-key check and only the latter
+    charges, presenting one redeemed key under two addresses spent a cap unit
+    for the unregistered one and nothing for the registered one -- and the
+    429 boundary made that difference readable, which is the account-existence
+    inference ``_reject_duplicate_signup_email`` exists to prevent.
+
+    Nine unknown keys, then the redeemed key under the address that already
+    has an account, then one more unknown key: the probe must consume the
+    tenth unit so the eleventh guess is throttled. Were the probe uncharged,
+    that eleventh guess would still answer 400 -- one bit per throttle bucket
+    saying whether an arbitrary address is registered.
+    """
+    monkeypatch.setattr(
+        VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
+        guess = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(
+                email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com",
+                license_key=UNKNOWN_LICENSE_KEY,
+            ),
+        )
+        assert guess.status_code == HTTPStatus.BAD_REQUEST
+
+    # SIGNUP_EMAIL is registered (``first`` created it) AND LICENSE_KEY is
+    # bound to it, so both refusal paths are live and the ordering decides
+    # which one answers.
+    probe = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert probe.status_code == HTTPStatus.BAD_REQUEST
+    assert probe.json() == {"detail": DETAIL_INVALID_LICENSE}
+
+    throttled = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
 async def test_losing_the_email_race_does_not_charge_the_invalid_license_cap(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
