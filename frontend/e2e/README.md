@@ -60,8 +60,15 @@ Stubbed in-process: exactly one function, `routers.auth.verify_aptitude_license`
 gated on a live HTTPS call to Gumroad's license API, and an e2e lane that
 depended on a third party's uptime would be a flake generator. `backend/conftest.py`
 stubs the same seam for the same reason. Everything the gate does with the
-answer — the duplicate-email refusal, the password hashing, the entitlement
-grant — still runs for real.
+answer — the duplicate-email refusal, the password hashing, the licence binding,
+the entitlement grant — still runs for real.
+
+The stub reports the licence key itself as Gumroad's sale id. One sale binds to
+exactly one active account (ADR 0008), so every account a journey creates needs
+its own key — `freshLicenseKey()` in `e2e/licenseKey.ts` mints one — and a
+journey that presents the same key twice is deliberately proving the invariant
+across the seam (`auth.e2e.test.ts`), or the release of the key when the first
+account is deleted (`account-deletion.e2e.test.ts`).
 
 The launcher also disarms the rate limiter. Signup is capped at three per minute
 per client address and every journey here shares `127.0.0.1`, so leaving it

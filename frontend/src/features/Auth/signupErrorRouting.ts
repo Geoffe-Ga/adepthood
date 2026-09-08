@@ -17,10 +17,11 @@ export const LICENSE_FIELD_DETAILS: ReadonlySet<string> = new Set([
 ]);
 
 // ``invalid_license`` alone stands in for four distinct backend outcomes —
-// wrong key, wrong product, mismatched email, and an already-registered
-// email — deliberately collapsed into one generic code (anti-enumeration).
-// The UI must not appear to know which of the four happened, so it renders
-// the same inline copy for all of them.
+// wrong key, wrong product, a key already redeemed by another account, and
+// an already-registered email — deliberately collapsed into one generic code
+// (anti-enumeration). The purchase email is not one of them: a key may have
+// been bought for someone else (ADR 0008). The UI must not appear to know
+// which of the four happened, so it renders the same inline copy for all.
 
 function detailOf(err: unknown): string | undefined {
   if (err == null || typeof err !== 'object') return undefined;

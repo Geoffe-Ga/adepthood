@@ -2,13 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { auth, practiceSessions, practices, setTokenGetter, userPractices } from '@/api';
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
 
 // Stage 1 is the curriculum's entry point and the only stage a fresh account
 // has unlocked; logging against any other one is 403 `stage_locked`.
