@@ -41,6 +41,7 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
+import SaveAsHabitOffer from './SaveAsHabitOffer';
 import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
@@ -2446,11 +2447,18 @@ function ResonanceControls({
  * count. The reading view carries its own inline resonance action instead, and
  * has nothing to time.
  */
+/**
+ * What a finished writing session is offered as. A module-level constant, not a
+ * closure: it has nothing to capture, and a new function each render would
+ * remount the offer under a writer's thumb every time the page repainted.
+ */
+const renderSessionOffer = (): React.ReactNode => <SaveAsHabitOffer />;
+
 function EntryWritingSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element | null {
   if (!ctl.editGate.editMode) return null;
   return (
     <>
-      <WritingSessionSurface />
+      <WritingSessionSurface renderOffer={renderSessionOffer} />
       <ResonanceControls
         visible={ctl.visible}
         disabled={ctl.resonanceDisabled}

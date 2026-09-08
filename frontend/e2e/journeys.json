@@ -561,15 +561,15 @@
   },
   {
     "id": "journal.timed-writing-session-becomes-a-habit",
-    "description": "A person sets a length on the journal's writing timer, writes until it runs out, and is offered the session as a habit they can keep — accepting it on their own account, so the habit exists on the server afterwards. Uncovered because the timer itself persists nothing: it produces a session result and hands it on, and the seam this journey names is only crossed once the offer that consumes that result is built. The timer half is covered by the Jest specs beside it; the gap is the stitch from a finished session to a saved habit.",
+    "description": "A person sets a length on the journal's writing timer, writes until it runs out, is offered the session as a habit, and chooses where it sits among the habits they already signed up for — first position by default, with every other habit moving along one stage. The spec drives that write on its own account: it creates the habits the writer already had, then makes the placement the offer makes — one POST for the new habit carrying its stage and its place, one PUT per displaced row carrying theirs — and reads the list back. What only a live server can answer is whether the placement survives: that PUT /habits/{habit_id} keeps sort_order and stage instead of replacing them with the schema defaults, and that GET /habits/ then returns the rows in the order those numbers name, which is what makes the arrangement outlive a cold rehydrate. It also settles the lock: the row is created revealed=false like every other new habit, and the server's own one-shot reconciliation then opens it because Beige is a stage the writer has already reached — the spec pins both halves, and a habit at a stage they have not reached stays locked in the same pass. The offer's own rules (one-tap decline, a decline never re-asked, the stage preview) are pinned by the Jest specs beside SaveAsHabitOffer, and the offer's reachability from the writing page by JournalEntryScreenTimer.test.tsx; neither can cross the wire.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["habits"],
-      "routes": ["POST /habits/"],
+      "client": ["auth", "setTokenGetter", "habits"],
+      "routes": ["POST /auth/signup", "POST /habits/", "PUT /habits/{habit_id}", "GET /habits/"],
       "tables": ["habit"]
     },
-    "status": "uncovered",
-    "issue": 2486
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-habit-offer.e2e.test.ts"
   },
   {
     "id": "habits.re-scaffold-keeps-what-you-already-built",
@@ -590,7 +590,7 @@
   },
   {
     "id": "journal.a-standing-offer-survives-an-abandoned-next-session",
-    "description": "A person finishes a timed writing session, is offered that session as a habit inside the note the page leaves them, then starts a second session and abandons it partway. The offer is still there afterwards, and accepting it still saves the habit on their own account. That is the lifetime the note's children slot promises: an offer goes away only when the writer closes the note, or when a later session runs its full length and replaces the note with one about that newer session -- never because a session was merely started, paused, or stopped early. Uncovered because nothing occupies the slot yet: the surface half of the rule is pinned by the Jest specs beside WritingSessionSurface, and the seam this journey names is crossed only once the offer that lives in the slot writes to the server.",
+    "description": "A person finishes a timed writing session, is offered that session as a habit inside the note the page leaves them, then starts a second session and abandons it partway. The offer is still there afterwards, still holding whatever they had chosen, and accepting it still saves the habit on their own account. That is the lifetime the note's children slot promises: an offer goes away only when the writer closes the note, or when a later session runs its full length and replaces the note with one about that newer session — never because a session was merely started, paused, or stopped early. The slot now holds a real offer, and both halves of the rule are pinned by the Jest specs beside WritingSessionSurface (WritingSessionOfferSlot.test.tsx: a standing offer survives an abandoned session, and is rebuilt when a newer session replaces the note). Still uncovered across the wire because the claim is about a mounted component surviving an interaction, and this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all — the constraint #2324 records. The write the offer performs is covered end to end by journal.timed-writing-session-becomes-a-habit; what is missing is a rendering lane that can drive the surviving offer to it.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["habits"],
@@ -598,7 +598,7 @@
       "tables": ["habit"]
     },
     "status": "uncovered",
-    "issue": 2486
+    "issue": 2324
   },
   {
     "id": "habits.rescaffold-review-existing-habits",

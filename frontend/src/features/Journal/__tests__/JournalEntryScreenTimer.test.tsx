@@ -48,6 +48,9 @@ jest.mock('@/navigation/hooks', () => ({
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
+/** The timer's default length, in milliseconds — long enough to run one out. */
+const TWENTY_MINUTES_MS = 20 * 60 * 1000;
+
 function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   return {
     id: 7,
@@ -160,5 +163,39 @@ describe('JournalEntryScreen — the timer does not interrupt the writing', () =
 
     expect(getByTestId('writing-timer-readout').props.children).toBe('19:54');
     expect(getByTestId('journal-body-input').props.value).toBe('The willow leans over');
+  });
+});
+
+/**
+ * Reachability, not behaviour: the offer's own rules are pinned beside it in
+ * `SaveAsHabitOffer.test.tsx`. What no test there can show is that a writer on
+ * the real page ever meets it — six shipped features in this repo turned out to
+ * be reachable by nobody while testing green the whole way. So this drives the
+ * page itself, runs a session out, and looks for the offer in the note.
+ */
+describe('JournalEntryScreen — a finished session is offered as a habit', () => {
+  it('puts the offer in the note the page leaves, once the session has run', async () => {
+    jest.useFakeTimers();
+    const { getByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    expect(queryByTestId('writing-session-banner')).not.toBeNull();
+    await waitFor(() => expect(queryByTestId('save-as-habit-accept')).not.toBeNull());
+    expect(
+      within(getByTestId('writing-session-banner')).queryByTestId('save-as-habit-decline'),
+    ).not.toBeNull();
+  });
+
+  it('offers nothing to a writer who stopped early, because nothing was reported', async () => {
+    jest.useFakeTimers();
+    const { getByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(60_000);
+    fireEvent.press(getByTestId('writing-timer-stop'));
+
+    expect(queryByTestId('save-as-habit-accept')).toBeNull();
   });
 });

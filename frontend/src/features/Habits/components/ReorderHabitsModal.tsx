@@ -9,12 +9,8 @@ import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import {
-  calculateHabitStartDate,
-  carryoverSlot,
-  isCarryoverHabit,
-  stageAtIndex,
-} from '../HabitUtils';
+import { calculateHabitStartDate, stageAtIndex } from '../HabitUtils';
+import { displaySlots } from '../services/habitOrdering';
 
 import ModalHeader from './ModalHeader';
 
@@ -30,32 +26,6 @@ if (Platform.OS !== 'web') {
 
 const formatDate = (date: Date): string =>
   date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-/**
- * Each row's display slot: program habits count 0, 1, 2... along the cadence,
- * while carryover habits take the mirrored negative slots they are given
- * everywhere else in the app (the first one is -1).
- *
- * The list is mixed, and a carryover habit can sort ahead of every program
- * habit, so a raw row index describes neither partition. Both the date a row is
- * stamped with and the stage it is labelled with are read off this one function,
- * which is what stops a row from announcing a stage that contradicts the date
- * printed beside it.
- */
-const displaySlots = (habits: Habit[]): number[] => {
-  let programIndex = 0;
-  let carryoverIndex = 0;
-  return habits.map((habit) => {
-    if (isCarryoverHabit(habit)) {
-      const slot = carryoverSlot(carryoverIndex);
-      carryoverIndex += 1;
-      return slot;
-    }
-    const slot = programIndex;
-    programIndex += 1;
-    return slot;
-  });
-};
 
 /**
  * Lay the program cadence out from ``startDate`` -- over the program habits

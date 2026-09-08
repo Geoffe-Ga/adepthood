@@ -45,23 +45,54 @@ import type { EngineDeps } from '@/features/Practice/engine/types';
 export interface WritingSessionSurfaceProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /**
+   * What to hang in the note's ``children`` slot for a session that finished.
+   *
+   * A render prop rather than an import, so this module keeps the scope floor
+   * ``writingTimerScope`` holds it to: an offer that saves a habit or a
+   * practice reaches a store and the server, and it is the hosting screen that
+   * supplies it. Absent, the note is exactly what it was — a sentence and a
+   * way to close it.
+   */
+  renderOffer?: (_result: WritingSessionResult) => React.ReactNode;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
 
+/**
+ * A finished session, plus a number that changes for every session reported.
+ *
+ * The number is what keys the offer. Two sessions of the same length produce
+ * equal results, and the banner is REPLACED rather than remounted, so without
+ * it an offer halfway through an interaction would carry its state across onto
+ * a sentence about a different session — which is precisely what
+ * ``WritingSessionBanner``'s docstring tells the slot's occupant not to allow.
+ */
+interface StandingNote {
+  result: WritingSessionResult;
+  ordinal: number;
+}
+
 function WritingSessionSurface({
   initialMinutes,
+  renderOffer,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
-  const [session, setSession] = useState<WritingSessionResult | null>(null);
-  const dismiss = useCallback(() => setSession(null), []);
+  const [note, setNote] = useState<StandingNote | null>(null);
+  const dismiss = useCallback(() => setNote(null), []);
   const record = useCallback((result: WritingSessionResult) => {
     if (!result.reachedFullDuration) return;
-    setSession(result);
+    setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
   }, []);
   return (
     <>
-      {session === null ? null : <WritingSessionBanner result={session} onDismiss={dismiss} />}
+      {note === null ? null : (
+        <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+          {renderOffer === undefined ? null : (
+            <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
+          )}
+        </WritingSessionBanner>
+      )}
       <WritingTimer initialMinutes={initialMinutes} onComplete={record} deps={deps} />
     </>
   );
