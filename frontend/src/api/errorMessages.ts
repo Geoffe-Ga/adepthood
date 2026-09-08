@@ -15,6 +15,8 @@
  * place that turns those contract strings into copy that a real person can
  * act on. If you add a new backend error code, add its translation here too.
  */
+import { isDeviceKnownOffline } from './networkSignal';
+
 import { ApiError, ApiTimeoutError, ApiValidationError } from './index';
 
 // Shared copy fragments — duplicated strings trip sonarjs/no-duplicate-string
@@ -294,6 +296,19 @@ function readableMessage(errish: ErrorLike): string | undefined {
  */
 export const TIMEOUT_MESSAGE =
   'The request took too long. Check your connection and try again in a moment.';
+/**
+ * #2661 — copy for a request that never produced a response.
+ *
+ * A browser refuses a cross-origin response and a browser that cannot reach the
+ * host both reject ``fetch`` with the same bare ``TypeError``: same message,
+ * same (absent) properties, no status. Measured in Chromium against a live
+ * server sending no ``Access-Control-Allow-Origin``, a refused connection and
+ * an unroutable host — all three identical. Hiding that difference is the
+ * same-origin policy working as designed, so the client cannot name the cause
+ * and must not invent one. This says only what is known, and stays true whether
+ * the wifi is off, the API is down, or its allow-list is missing the origin.
+ */
+export const UNREACHABLE_MESSAGE = `We couldn't reach the server. ${CHECK_CONNECTION}`;
 export const VALIDATION_MESSAGE =
   "Something changed on the server and we couldn't read the response. Update the app if an update is available, or try again shortly.";
 
@@ -358,9 +373,14 @@ function isFetchNetworkError(err: unknown): boolean {
 function classifyNetworkError(err: unknown): string | undefined {
   if (isTimeout(err)) return TIMEOUT_MESSAGE;
   if (isValidation(err)) return VALIDATION_MESSAGE;
-  // A raw fetch failure (TypeError) — show the same friendly offline copy as an
-  // explicit ``network_error`` rather than leaking the engine's debug string.
-  if (isFetchNetworkError(err)) return USER_FACING_ERROR_MESSAGES.network_error;
+  // A raw fetch failure (TypeError) — never leak the engine's debug string, and
+  // never diagnose it. Only the ``network_error`` code carries the offline
+  // claim, and the client raises that solely behind its own connectivity signal
+  // (``isDeviceKnownOffline``), which is the one observable that actually
+  // differs between a blocked request and a dead network (#2661).
+  if (isFetchNetworkError(err)) {
+    return isDeviceKnownOffline() ? USER_FACING_ERROR_MESSAGES.network_error : UNREACHABLE_MESSAGE;
+  }
   return undefined;
 }
 
