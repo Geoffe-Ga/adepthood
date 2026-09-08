@@ -182,8 +182,18 @@ export const TILE_BORDER_WIDTH = 3;
 // Empirical vertical budget reserved for the screen chrome the hook cannot
 // measure directly: the top action bar, the SafeAreaView container padding, a
 // footer/pagination allowance, and one grid gutter. Kept flat so the hook stays
-// A-grade. When a footer or pagination bar is visible the small remainder falls
-// to the FlatList scroll (the documented short-viewport degrade).
+// A-grade.
+//
+// It is a density heuristic, not a fit guarantee, and it does not claim to be
+// one. `e2e/habits-viewport.browser.e2e.test.ts` measures a full page of ten
+// habits in a real browser: the grid's content overruns its box by 147px at
+// 1280x720 (more than one 127px row) and by 129px at 390x844. Shrinking the
+// reserve does not close that gap either -- a run with the reserve driven up
+// until `tileMinHeight` clamped to `touchTarget.minimum` still measured 638px
+// of content in a 496px box, because at desktop widths it is the tile's own
+// intrinsic height (~116px in the icon-above-name layout) that binds, not this
+// number. The remainder falls to the FlatList scroll, which is how a full page
+// is read at these viewports rather than a degrade at the margin.
 const habitGridChrome = (scale: number, gridGutter: number): number =>
   2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
 

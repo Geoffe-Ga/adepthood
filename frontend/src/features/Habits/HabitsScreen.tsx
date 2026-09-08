@@ -273,8 +273,14 @@ export const HabitList = ({ habits, columns, gridGutter, renderItem }: HabitList
       // an invariant ("Changing numColumns on the fly is not supported") when
       // numColumns changes on a live instance (FlatList.js), so a column flip
       // (portrait↔landscape) must remount. It only changes on that flip — not
-      // on every render — and this grid is paginated to fit the viewport, so
-      // there is no in-page scroll position to preserve.
+      // on every render.
+      //
+      // The remount does discard scroll position, and a full page has some to
+      // discard: `e2e/habits-viewport.browser.e2e.test.ts` measures 147px of
+      // scroll at 1280x720 and 129px at 390x844. Carrying the pixel offset
+      // across the flip would not help — the same offset addresses a different
+      // row once the column count changes — so it is dropped deliberately
+      // rather than because there is nothing there.
       key={`cols-${columns}`}
       testID="habits-list"
       data={habits}

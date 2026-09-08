@@ -39,6 +39,13 @@ const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 const E2E_SCRIPT = 'test:e2e';
 const BROWSER_E2E_SCRIPT = 'test:e2e:web';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
+const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
+/**
+ * Sorted, because `e2eFiles` is a bare `readdirSync` filter and directory order
+ * is not guaranteed: an unsorted two-element comparison is an order-dependent
+ * flake waiting for the first checkout that reads them the other way round.
+ */
+const EXPECTED_BROWSER_JOURNEYS = [BROWSER_JOURNEY, HABITS_VIEWPORT_JOURNEY].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
@@ -292,14 +299,35 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(workflow).toContain('playwright install --with-deps chromium');
   });
 
-  it('ships one enabled Playwright journey through the real browser UI', () => {
+  it('drives every Playwright journey through the real browser UI', () => {
     const config = read(BROWSER_E2E_CONFIG, 'The browser journey needs a Playwright config.');
-    const spec = read(join(E2E_DIR, BROWSER_JOURNEY), 'The browser journey spec is missing.');
 
     expect(config).toContain("testMatch: '**/*.browser.e2e.test.ts'");
-    expect(spec).toContain("from '@playwright/test'");
-    expect(spec).toContain("getByRole('button', { name: 'Create account' })");
+    for (const name of EXPECTED_BROWSER_JOURNEYS) {
+      const spec = read(join(E2E_DIR, name), `The browser journey spec ${name} is missing.`);
+
+      expect(spec).toContain("from '@playwright/test'");
+      expect(spec).toContain("getByRole('button', { name: 'Create account' })");
+    }
+  });
+
+  it('keeps the passage journey driving the journal editor it exists for', () => {
+    const spec = read(join(E2E_DIR, BROWSER_JOURNEY), 'The browser journey spec is missing.');
+
     expect(spec).toContain("getByRole('textbox', { name: 'Entry body' })");
+  });
+
+  it('keeps the habits journey measuring the grid against its own footer controls', () => {
+    const spec = read(
+      join(E2E_DIR, HABITS_VIEWPORT_JOURNEY),
+      'The habits viewport journey spec is missing.',
+    );
+
+    // Geometry, not text: a spec that stopped reading these boxes would still
+    // sign up and still pass, and would prove nothing about the layout.
+    expect(spec).toContain("getByTestId('habits-list')");
+    expect(spec).toContain("getByTestId('habits-pagination')");
+    expect(spec).toContain('boundingBox()');
   });
 
   it('keeps Playwright specs out of the Jest API journey lane', () => {
@@ -333,7 +361,7 @@ describe('jest.e2e.config.js isolates the lane without weakening anything', () =
 describe('e2e specs drive the unmocked production client', () => {
   it('ships exactly the journeys the lane is built around', () => {
     expect(apiJourneyFiles().sort()).toEqual(EXPECTED_JOURNEYS);
-    expect(e2eFiles('.browser.e2e.test.ts')).toEqual([BROWSER_JOURNEY]);
+    expect(e2eFiles('.browser.e2e.test.ts').sort()).toEqual(EXPECTED_BROWSER_JOURNEYS);
   });
 
   it('imports the real API client in every journey', () => {
