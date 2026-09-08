@@ -62,6 +62,7 @@ import {
   planHabitMerge,
   toApiPayload,
 } from './habitMerge';
+import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
 import {
   ClientMintedIdError,
   isNotDemoSeed,
@@ -286,8 +287,12 @@ const startDateForAdd = (prev: readonly Habit[], isCarryover: boolean, slotIndex
  * keeps wrapping; that is ``calculateHabitStartDate``'s own behaviour, shared
  * with ``updateStartDates``, and matching it here is the point.
  */
-const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit => {
-  const slotIndex = isCarryover ? countCarryover(prev) : prev.filter(isNotCarryoverHabit).length;
+const buildAddedHabitAtSlot = (
+  input: AddHabitInput,
+  prev: Habit[],
+  isCarryover: boolean,
+  slotIndex: number,
+): Habit => {
   const stage = stageAtIndex(isCarryover ? carryoverSlot(slotIndex) : slotIndex);
   const tempId = -Date.now();
   const name = input.name.trim();
@@ -310,6 +315,17 @@ const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boole
     ...(isCarryover ? { is_carryover: true } : {}),
   };
 };
+
+/** The slot an append takes: one past the end of the row's own partition. */
+const appendSlot = (prev: Habit[], isCarryover: boolean): number =>
+  isCarryover ? countCarryover(prev) : prev.filter(isNotCarryoverHabit).length;
+
+/**
+ * A brand-new habit at the end of its own partition — the shape every add
+ * outside ``insertHabitAt`` takes.
+ */
+const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit =>
+  buildAddedHabitAtSlot(input, prev, isCarryover, appendSlot(prev, isCarryover));
 
 /**
  * The universal program anchor, derived from the habits the program actually
@@ -1266,11 +1282,84 @@ export const habitManager = {
   },
 
   /**
+   * Create a habit at a position the person chose, moving everything at or
+   * after that position one place along.
+   *
+   * The one write in this file that is BOTH an add and a reorder, which is why
+   * it exists rather than being ``addHabit`` followed by ``saveHabitOrder``:
+   * run as two writes, a failure of the second would leave a habit created at
+   * the end of the list with no way back to the order the person confirmed,
+   * and each write would take its own rollback.
+   *
+   * ``sort_order`` is stamped GLOBALLY, straight down the mixed list, and
+   * ``stage`` from the row's own partition slot — the split written out in
+   * ``habitOrdering``. A per-partition ``sort_order`` cannot express a mixed
+   * order at all: a carryover row and a program row would both claim the same
+   * number and the server's ``sort_order ASC, id ASC`` would break the tie by
+   * id, rearranging exactly the order the person had just arranged.
+   *
+   * The new row takes the cadence date of the rung it LANDS on rather than the
+   * rung an append would have given it, so its date and the stage it now names
+   * agree. The rows it displaced keep their own dates: moving a habit's stage
+   * label is what an insert was asked to do, and pushing the day someone's
+   * existing habit begins further into the future is not. ``ReorderHabitsModal``
+   * remains the surface that moves dates, because there the person is looking
+   * at them.
+   *
+   * One rollback for the whole thing, per ``saveHabitOrder``: the create and
+   * the fanned-out PUTs sit under a single ``try``, so however many rows fail
+   * the previous order is restored once — in the store AND on disk — and the
+   * person is told once.
+   *
+   * Resolves TRUE only when the habit is really on the server. Unlike the other
+   * mutations here it reports rather than swallowing, because its caller is an
+   * offer that has to decide whether to tell the writer their habit was kept —
+   * and an offer that says so over a rolled-back write is worse than one that
+   * quietly stays open.
+   */
+  insertHabitAt: async (input: AddHabitInput, position: number): Promise<boolean> => {
+    const prev = getHabits();
+    const at = clampPosition(prev.length, position);
+    const newHabit = buildAddedHabitAtSlot(
+      input,
+      prev,
+      false,
+      prev.slice(0, at).filter(isNotCarryoverHabit).length,
+    );
+    const next = stampPositionalOrder(insertAt(prev, newHabit, at));
+    setHabits(next);
+    void persistHabits(next);
+    try {
+      await habitsApi.create(toApiPayload(next[at] ?? newHabit));
+      await Promise.all(
+        next
+          .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
+          .map((habit) => habitsApi.update(habit.id, toApiPayload(habit))),
+      );
+      await loadHabits();
+      return true;
+    } catch (err) {
+      revertOnFailure(
+        prev,
+        "We couldn't save that habit in the place you chose. Your habits are as they were — check your connection and try again.",
+      )(err);
+      return false;
+    }
+  },
+
+  /**
    * Persist a user-chosen ordering. Stamps each habit with a positional
-   * ``sort_order`` (the backend orders the list ascending by it) and PUTs
-   * the rows so the order survives a logout — without the per-row PUT, the
-   * reorder used to live only in AsyncStorage and was wiped on the next
-   * cold rehydrate.
+   * ``sort_order`` (the backend orders the list ascending by it) AND the
+   * ``stage`` that position names, then PUTs the rows so the order survives a
+   * logout — without the per-row PUT, the reorder used to live only in
+   * AsyncStorage and was wiped on the next cold rehydrate.
+   *
+   * The stage half was missing until this stamping moved into
+   * ``stampPositionalOrder``: a reorder moved a habit's position, and the tile
+   * gradient followed it because ``HabitsScreen`` derives the colour from the
+   * slot — but every surface reading the stored field (the settings sheet, the
+   * stats calendar tint, the goal sheet's rule, a locked tile's "Stage X"
+   * label) went on naming the rung the habit used to sit on.
    *
    * Updates fan out via ``Promise.all`` so a single rejection triggers one
    * deterministic rollback rather than one per failure: the previous
@@ -1284,7 +1373,7 @@ export const habitManager = {
    */
   saveHabitOrder: (ordered: Habit[]): void => {
     const prev = getHabits();
-    const stamped = ordered.map((h, index) => ({ ...h, sort_order: index }));
+    const stamped = stampPositionalOrder(ordered);
     setHabits(stamped);
     void persistHabits(stamped);
     const updates: Array<Promise<unknown>> = [];

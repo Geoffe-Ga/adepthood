@@ -1844,6 +1844,268 @@ describe('habitManager', () => {
     });
   });
 
+  describe('saveHabitOrder restamps the stage the new position names', () => {
+    it('gives the row that moved into first place the first stage', () => {
+      const h1 = makeHabit({ id: 1, name: 'First', stage: 'Beige' });
+      const h2 = makeHabit({ id: 2, name: 'Second', stage: 'Purple' });
+      useHabitStore.setState({ habits: [h1, h2] });
+
+      habitManager.saveHabitOrder([h2, h1]);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.stage)).toEqual(['Beige', 'Purple']);
+      expect(habitsApi.update).toHaveBeenCalledWith(2, expect.objectContaining({ stage: 'Beige' }));
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ stage: 'Purple' }),
+      );
+    });
+
+    it('stamps a carryover row from its own mirrored lap rather than its list index', () => {
+      const carried = makeHabit({ id: 1, name: 'Carried', is_carryover: true, stage: 'Beige' });
+      const program = makeHabit({ id: 2, name: 'Program', stage: 'Purple' });
+      useHabitStore.setState({ habits: [carried, program] });
+
+      habitManager.saveHabitOrder([carried, program]);
+
+      expect(useHabitStore.getState().habits.map((h) => h.stage)).toEqual(['Clear Light', 'Beige']);
+    });
+  });
+
+  describe('insertHabitAt', () => {
+    /** The mocked ``Alert.alert``, read late so ``clearMocks`` cannot hand back a stale spy. */
+    const alertMock = (): jest.Mock =>
+      (jest.requireMock('react-native') as { Alert: { alert: jest.Mock } }).Alert.alert;
+
+    // ``clearMocks`` zeroes call counts but leaves implementations standing, so
+    // an implementation installed here would follow the suite into every later
+    // test. Put the module mock's own default back rather than trusting that.
+    afterEach(() => {
+      (habitsApi.listAll as jest.Mock).mockImplementation(() => Promise.resolve([]) as never);
+      (habitsApi.create as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
+      (habitsApi.update as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
+    });
+
+    /** Echo the store back through the list endpoint so the reload is a no-op. */
+    const echoStore = (): void => {
+      (habitsApi.listAll as jest.Mock).mockImplementation(
+        () =>
+          Promise.resolve(
+            useHabitStore.getState().habits.map((h) => ({
+              ...h,
+              start_date: h.start_date.toISOString().slice(0, 10),
+              goals: [],
+            })),
+          ) as never,
+      );
+    };
+
+    it('places the new habit first and moves every other habit up one stage', async () => {
+      echoStore();
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'Meditate', stage: 'Beige' }),
+          makeHabit({ id: 2, name: 'Walk', stage: 'Purple' }),
+          makeHabit({ id: 3, name: 'Read', stage: 'Red' }),
+        ],
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Journaling', 'Meditate', 'Walk', 'Read']);
+      expect(stored.map((h) => h.stage)).toEqual(['Beige', 'Purple', 'Red', 'Blue']);
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('creates the new habit locked, like every other new habit', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(useHabitStore.getState().habits[0]?.revealed).toBe(false);
+    });
+
+    it('numbers sort_order across a mixed list rather than restarting inside each partition', async () => {
+      echoStore();
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'Carried', is_carryover: true, sort_order: 0 }),
+          makeHabit({ id: 2, name: 'Meditate', sort_order: 0 }),
+        ],
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Journaling', 'Carried', 'Meditate']);
+      expect(stored.map((h) => h.sort_order)).toEqual([0, 1, 2]);
+      // The carryover row keeps its own mirrored lap; only the program rows walk the gradient.
+      expect(stored.map((h) => h.stage)).toEqual(['Beige', 'Clear Light', 'Purple']);
+    });
+
+    it('wraps an eleventh habit back to Beige rather than overflowing past Clear Light', async () => {
+      echoStore();
+      useHabitStore.setState({
+        habits: Array.from({ length: 10 }, (_, i) => makeHabit({ id: i + 1, name: `H${i + 1}` })),
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 10);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored).toHaveLength(11);
+      expect(stored[10]?.name).toBe('Journaling');
+      expect(stored[10]?.stage).toBe('Beige');
+    });
+
+    it('POSTs the new habit and PUTs each displaced row exactly once', async () => {
+      echoStore();
+      useHabitStore.setState({
+        habits: [makeHabit({ id: 1, name: 'Meditate' }), makeHabit({ id: 2, name: 'Walk' })],
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(habitsApi.create).toHaveBeenCalledTimes(1);
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Journaling', sort_order: 0, stage: 'Beige' }),
+      );
+      expect(habitsApi.update).toHaveBeenCalledTimes(2);
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ sort_order: 1, stage: 'Purple' }),
+      );
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ sort_order: 2, stage: 'Red' }),
+      );
+    });
+
+    it('never PUTs a row whose id was minted on this device', async () => {
+      echoStore();
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'Demo', isDemoSeed: true }),
+          makeHabit({ id: 42, name: 'Real' }),
+        ],
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(habitsApi.update).toHaveBeenCalledTimes(1);
+      expect(habitsApi.update).toHaveBeenCalledWith(42, expect.objectContaining({ sort_order: 2 }));
+    });
+
+    it('rolls back to the previous order exactly once when two of the PUTs fail', async () => {
+      // The discriminator against a per-row ``revertOnFailure`` chain: two
+      // failures under one ``Promise.all`` must produce one restore and one
+      // alert, not one of each per rejection.
+      echoStore();
+      const original = [
+        makeHabit({ id: 1, name: 'Meditate', stage: 'Beige' }),
+        makeHabit({ id: 2, name: 'Walk', stage: 'Purple' }),
+      ];
+      useHabitStore.setState({ habits: original });
+      (habitsApi.update as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('boom')) as never,
+      );
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      const stored = useHabitStore.getState().habits;
+      expect(stored.map((h) => h.name)).toEqual(['Meditate', 'Walk']);
+      expect(stored.map((h) => h.stage)).toEqual(['Beige', 'Purple']);
+      expect(alertMock()).toHaveBeenCalledTimes(1);
+      expect(saveHabits).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 1, name: 'Meditate', stage: 'Beige' }),
+          expect.objectContaining({ id: 2, name: 'Walk', stage: 'Purple' }),
+        ]),
+      );
+    });
+
+    it('rolls back once and displaces nobody when the new habit itself cannot be created', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate', stage: 'Beige' })] });
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => Promise.reject(new Error('nope')) as never,
+      );
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(habitsApi.update).not.toHaveBeenCalled();
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Meditate']);
+      expect(alertMock()).toHaveBeenCalledTimes(1);
+    });
+
+    it('dates the new habit by the rung it lands on, not the rung an append would have given it', async () => {
+      echoStore();
+      const anchor = new Date();
+      anchor.setUTCHours(0, 0, 0, 0);
+      anchor.setUTCDate(anchor.getUTCDate() + 30);
+      useProgramStore.getState().hydrateProgramStartDate(anchor);
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'Meditate', start_date: new Date(anchor) }),
+          makeHabit({ id: 2, name: 'Walk' }),
+          makeHabit({ id: 3, name: 'Read' }),
+        ],
+      });
+      let optimistic: Habit | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(() => {
+        optimistic = useHabitStore.getState().habits[0];
+        return Promise.resolve({}) as never;
+      });
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(optimistic?.name).toBe('Journaling');
+      expect(optimistic?.start_date.getTime()).toBe(calculateHabitStartDate(anchor, 0).getTime());
+    });
+
+    it('tells the caller the habit is on the server, so an offer can say so', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+
+      await expect(
+        habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0),
+      ).resolves.toBe(true);
+    });
+
+    it('tells the caller when the write rolled back, so nothing claims a habit that is gone', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => Promise.reject(new Error('nope')) as never,
+      );
+
+      await expect(
+        habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0),
+      ).resolves.toBe(false);
+    });
+
+    it('shows the new habit before the server has answered', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      let resolveCreate: (() => void) | undefined;
+      (habitsApi.create as jest.Mock).mockImplementationOnce(
+        () => new Promise<unknown>((r) => (resolveCreate = () => r({}))),
+      );
+
+      const inFlight = habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([
+        'Journaling',
+        'Meditate',
+      ]);
+      expect(saveHabits).toHaveBeenCalled();
+
+      resolveCreate?.();
+      await inFlight;
+    });
+  });
+
   describe('logUnit primitives (apply / commit / rollback)', () => {
     it('prepareLogUnit + applyLogUnitContext appends a completion and returns the updated habit', () => {
       useHabitStore.setState({ habits: [makeHabit()] });
