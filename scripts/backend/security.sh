@@ -12,6 +12,13 @@ FULL=false
 VERBOSE=false
 BANDIT_ONLY=false
 
+# Exit codes, documented in --help below. Named rather than spelled inline
+# because the difference between them is the whole point of this file: "the
+# scanner found something" and "the scanner never ran" call for opposite
+# responses, and this script used to report the first when it meant the second.
+readonly EXIT_ISSUES_FOUND=1
+readonly EXIT_ANALYSIS_ERROR=2
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,7 +49,9 @@ OPTIONS:
 EXIT CODES:
     0           No security issues found
     1           Security issues found
-    2           Error running checks
+    2           Error running checks, including a scanner that is not installed
+                (a missing scanner is a result we failed to obtain, never a
+                finding)
 
 EXAMPLES:
     $(basename "$0")                 # Run basic security checks
@@ -54,7 +63,7 @@ EOF
             ;;
         *)
             echo "Error: Unknown option: $1" >&2
-            exit 2
+            exit "$EXIT_ANALYSIS_ERROR"
             ;;
     esac
 done
@@ -64,6 +73,28 @@ cd "$PROJECT_ROOT"
 # Set verbosity
 if $VERBOSE; then
     set -x
+fi
+
+# A missing scanner is an error, not a finding: this script used to answer a
+# bare `bandit: command not found` with "✗ Bandit found issues", asserting a
+# security verdict nobody obtained. That is the same failure the pre-commit
+# entry had one layer up -- a gate reporting a result it never produced.
+# complexity.sh:80-88 already gets this right; this is the same shape.
+require_tool() {
+    local tool="$1"
+    local remedy="$2"
+    if ! command -v "$tool" &> /dev/null; then
+        echo "Error: $tool is not installed, so security cannot be checked" >&2
+        echo "Install with: $remedy" >&2
+        exit "$EXIT_ANALYSIS_ERROR"
+    fi
+}
+
+require_tool bandit "pip install -r backend/requirements-dev.txt"
+# pip-audit is not in any requirements file -- it is a standalone auditor with
+# its own pinned pre-commit hook -- so its remedy names itself.
+if ! $BANDIT_ONLY; then
+    require_tool pip-audit "pip install pip-audit"
 fi
 
 echo "=== Security Checks (Bandit) ==="
@@ -85,7 +116,7 @@ if $VERBOSE; then
     echo "Running Bandit security scanner..."
 fi
 ( cd "$REPO_ROOT" && bandit -c backend/.bandit -r backend ) \
-    || { echo "✗ Bandit found issues" >&2; exit 1; }
+    || { echo "✗ Bandit found issues" >&2; exit "$EXIT_ISSUES_FOUND"; }
 
 # The pre-commit `bandit` hook delegates here rather than restating the config
 # path and target, so the hook and check-all.sh can never scan different trees
@@ -106,7 +137,7 @@ if $VERBOSE; then
     echo "Running pip-audit dependency checker..."
 fi
 pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-183 \
-    || { echo "✗ pip-audit found issues" >&2; exit 1; }
+    || { echo "✗ pip-audit found issues" >&2; exit "$EXIT_ISSUES_FOUND"; }
 
 if $FULL; then
     echo "=== Comprehensive Security Scan ==="

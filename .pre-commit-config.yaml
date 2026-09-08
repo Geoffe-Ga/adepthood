@@ -155,11 +155,15 @@ repos:
   # makes the two one gate rather than two gates that happen to share a
   # version -- the same reasoning as `backend-complexity` below, which
   # delegates instead of restating its thresholds.
+  #
+  # The entry routes through scripts/backend/with-venv.sh, which refuses to run
+  # the gate at all until the interpreter is proven to be at the pins; see that
+  # script's header for why the invariant is "at the pins" and not ".venv exists".
   - repo: local
     hooks:
       - id: bandit
         name: bandit
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/security.sh --bandit-only'
+        entry: scripts/backend/with-venv.sh ./scripts/backend/security.sh --bandit-only
         language: system
         pass_filenames: false
         files: ^backend/
@@ -263,9 +267,11 @@ repos:
       # ~10s while still gating pushes on the full quality suite.
       # Delegates to the script rather than restating the thresholds, so the
       # hook and `check-all.sh` can never gate at different grades again.
+      # with-venv.sh runs first so the grade can never come from an interpreter
+      # nothing verified.
       - id: backend-complexity
         name: backend complexity gate (xenon + radon)
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/complexity.sh'
+        entry: scripts/backend/with-venv.sh ./scripts/backend/complexity.sh
         language: system
         pass_filenames: false
         files: ^backend/.*\.py$
@@ -286,7 +292,10 @@ repos:
         # so the measured set stays the single [tool.coverage.run] declaration
         # (= {src, scripts}) that backend-ci.yml's branch-coverage step asserts
         # over, and ``--cov-fail-under=90``.
-        entry: bash -c '[ -f .venv/bin/activate ] && source .venv/bin/activate; ./scripts/backend/test.sh --all --coverage'
+        #
+        # with-venv.sh runs first so a coverage number can never be reported
+        # from an interpreter nothing verified.
+        entry: scripts/backend/with-venv.sh ./scripts/backend/test.sh --all --coverage
         pass_filenames: false
         files: ^backend/
         stages: [pre-push]
