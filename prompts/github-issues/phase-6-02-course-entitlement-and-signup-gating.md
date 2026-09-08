@@ -28,10 +28,10 @@ are covered in phase-6-05.
   cohort-gated content, etc.), and because entitlements have their own
   lifecycle (granted, revoked, source sale, timestamps) that doesn't
   belong on the user record.
-- **Email as the join key**: Gumroad's identity is the buyer's email.
-  At signup we require the user to use the same email they used on
-  Gumroad; the license verification proves they hold the key for a sale
-  issued to that email.
+- ~~**Email as the join key**~~ (superseded by ADR 0008 / #1987): the
+  licence key is the claim proof and Gumroad's stable `sale_id` is the
+  join key. The purchase email is never compared with the account email;
+  one sale binds to exactly one active account via `licensebinding`.
 - **License key required for the primary signup flow**: Per the epic,
   every user must have a Gumroad sale. The signup request therefore
   requires `license_key` in addition to `email` and `password`.
@@ -90,10 +90,11 @@ are covered in phase-6-05.
   2. On no match → `raise bad_request("invalid_license")` with the
      same generic message used for the other account-enumeration
      defenses (200 ms dummy-hash delay kept).
-  3. On match → assert the license's email matches
-     `payload.email` (case-insensitive). If not, return
-     `invalid_license` (don't expose that the key is valid for a
-     different account).
+  3. ~~On match → assert the license's email matches `payload.email`~~
+     (superseded by ADR 0008 / #1987): on match, claim the sale for the
+     new account through `domain/license_claims.py`; a sale already bound
+     to another account returns the same `invalid_license` (don't expose
+     that the key is valid but claimed).
   4. Find or create the `User` row. If found with no active
      entitlement (webhook-preregistered), continue; if found with
      an active entitlement, return the same `invalid_license` to
@@ -126,8 +127,10 @@ are covered in phase-6-05.
   created, no entitlement created.
 - Integration: signup with a valid key for a non-APTITUDE product → 400
   (license matches but product not on allowlist).
-- Integration: signup with a valid key but mismatched email → 400 with
-  same `invalid_license` message; server logs `email_mismatch`.
+- ~~Integration: signup with a valid key but mismatched email → 400~~
+  (superseded by ADR 0008 / #1987): signup with a valid key bought under
+  another email → 200; a key already bound to another account → 400 with
+  the same `invalid_license` message; server logs `license_already_bound`.
 - Integration: signup with a valid key, matched product, matched email
   → 201, user row, entitlement row, JWT returned.
 - Integration: duplicate signup (same email, same key) returns

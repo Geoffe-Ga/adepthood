@@ -51,7 +51,10 @@ noticed.
 
 **What you buy.** Purchases go through Gumroad. Adepthood stores the sale
 record Gumroad sends back — including the email address on it — plus the
-wallet balance and the ledger of what was spent on model calls.
+wallet balance and the ledger of what was spent on model calls. Once a
+licence is redeemed, Adepthood also records which account it is bound to,
+keyed by Gumroad's identifier for the sale; the licence key itself is never
+stored.
 
 **Metering.** Every model call is logged with the provider, the model, the
 token counts and the estimated cost. The prompt and the response are not in

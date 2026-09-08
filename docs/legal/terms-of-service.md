@@ -43,8 +43,10 @@ change to a prescription is between you and a prescriber.
 You need a working email address. Keep the credentials to yourself: someone
 with your password can read everything you have written here.
 
-One account is for one person. Do not share an account, and do not create
-one for someone else.
+One account is for one person. Do not share an account or its sign-in. A
+licence may be bought as a gift for someone else: the person who will use
+the account creates it themselves, with their own email address, and redeems
+the key. One licence unlocks one account at a time.
 
 You can delete your account from **Settings → Delete account**. It is
 immediate and irreversible, and what it reaches — and the little it does
@@ -72,7 +74,8 @@ differently, that page is the more specific one and it governs.
 Do not use Adepthood to break the law, to harm someone, or to store
 material you have no right to hold. Do not attack the service: no probing
 other people's accounts, no automated scraping, no attempts to exhaust its
-model budget or its rate limits, no reselling access to it.
+model budget or its rate limits, no reselling access to it, and no sharing
+one licence across several accounts at once.
 
 The shared practice catalogue and share links are surfaces other people
 see. Anything you contribute there should be something you are content for

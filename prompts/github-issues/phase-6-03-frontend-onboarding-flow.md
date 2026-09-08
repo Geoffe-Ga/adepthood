@@ -48,8 +48,9 @@ users understand that they're not being upsold.
   library.
 - The form's error display must handle the backend's `invalid_license`
   error specifically, surfacing it as "We couldn't verify that key —
-  double-check it matches the email and product." rather than the
-  generic "Request failed".
+  double-check it against your Gumroad receipt." rather than the generic
+  "Request failed". (Wording amended by ADR 0008 / #1987: the key need not
+  match the account's email, so the copy no longer says so.)
 
 ## Scope
 
