@@ -43,6 +43,7 @@ from models.completion_suggestion import CompletionSuggestion
 from models.content_completion import ContentCompletion
 from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment
+from models.corpus_invitation_state import CorpusInvitationState
 from models.corpus_sweep import CorpusSweep
 from models.energy_plan import EnergyPlan
 from models.goal import Goal
@@ -197,6 +198,15 @@ MANIFEST: Mapping[str, ExportRule] = {
         "separately, which is exactly why leaving it out would be leaving out "
         "the journal in another shape.",
         drop_columns=("embedding",),
+    ),
+    "corpusinvitationstate": _include(
+        "corpus_invitation",
+        CorpusInvitationState,
+        "Whether the account asked not to be offered the corpus decision "
+        "again, and when it last set the question aside -- a choice the "
+        "account made about being asked, not a measurement taken of it. The "
+        "pass counters travel with it because they are what the cooldown is "
+        "computed from; they count moments, not the writing.",
     ),
     "corpussweep": _include(
         "corpus_sweep_history",

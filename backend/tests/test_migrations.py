@@ -4104,3 +4104,122 @@ def test_habit_auto_reveal_marker_migration_round_trips_on_sqlite(
 
     command.upgrade(cfg, _HABIT_AUTO_REVEAL_REVISION)
     assert _habit_auto_reveal_rows(db_url) == [(1, 0, None), (2, 1, None)]
+
+
+# -- corpusinvitationstate table migration round-trip ----------------------------
+
+# down_revision is f2c7a1d9e4b6 (the habit auto-reveal migration, current head).
+_CORPUS_INVITATION_BASE_REVISION = "f2c7a1d9e4b6"  # pragma: allowlist secret
+_CORPUS_INVITATION_REVISION = "c4d5e6f7a8b9"  # pragma: allowlist secret
+_CORPUS_INVITATION_TABLE = "corpusinvitationstate"
+
+
+@pytest.fixture
+def alembic_sqlite_config_corpus_invitation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the invitation migration.
+
+    Reuses the two-user bootstrap from the ui-flags round-trip: the point is
+    the same, that existing accounts are *not* backfilled with a row.
+    """
+    db_path = tmp_path / "corpus_invitation_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_user_table_for_ui_flags(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CORPUS_INVITATION_BASE_REVISION)
+    return cfg
+
+
+def _execute_on(db_url: str, statement: str, params: dict[str, Any]) -> None:
+    """Run one write against the round-trip database and commit it."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(statement), params)
+    finally:
+        engine.dispose()
+
+
+def _corpus_invitation_row(db_url: str, user_id: int) -> dict[str, Any]:
+    """Fetch one ``corpusinvitationstate`` row by owner."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT completed_passes, passes_at_dismissal, dismissed_at,"
+                        " do_not_ask_again FROM corpusinvitationstate WHERE user_id = :u"
+                    ),
+                    {"u": user_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_corpus_invitation_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_corpus_invitation: Config,
+) -> None:
+    """Round-trip the invitation-state migration.
+
+    Phase 1: upgrade creates the table empty despite two existing users.
+    Phase 2: a row naming only ``user_id`` is a complete quiet state -- both
+    counters zero, never dismissed, still askable -- proving the server defaults.
+    Phase 3: a second row for the same account is refused by the unique index,
+    and a negative counter is refused by its CHECK.
+    Phase 4: downgrade drops the table; Phase 5: re-upgrade recreates it empty.
+    """
+    cfg = alembic_sqlite_config_corpus_invitation
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _CORPUS_INVITATION_REVISION)
+    assert _table_exists(db_url, _CORPUS_INVITATION_TABLE)
+    assert {
+        "id",
+        "user_id",
+        "completed_passes",
+        "passes_at_dismissal",
+        "dismissed_at",
+        "do_not_ask_again",
+    } <= _columns_of(db_url, _CORPUS_INVITATION_TABLE)
+    engine = create_engine(_sync_url(db_url))
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM corpusinvitationstate")).scalar_one() == 0
+    engine.dispose()
+
+    _execute_on(db_url, "INSERT INTO corpusinvitationstate (user_id) VALUES (:u)", {"u": 1})
+    row = _corpus_invitation_row(db_url, user_id=1)
+    assert row["completed_passes"] == 0
+    assert row["passes_at_dismissal"] == 0
+    assert row["dismissed_at"] is None
+    assert bool(row["do_not_ask_again"]) is False
+
+    with pytest.raises(IntegrityError):
+        _execute_on(db_url, "INSERT INTO corpusinvitationstate (user_id) VALUES (:u)", {"u": 1})
+    with pytest.raises(IntegrityError):
+        _execute_on(
+            db_url,
+            "INSERT INTO corpusinvitationstate (user_id, completed_passes) VALUES (:u, -1)",
+            {"u": 2},
+        )
+
+    command.downgrade(cfg, _CORPUS_INVITATION_BASE_REVISION)
+    assert not _table_exists(db_url, _CORPUS_INVITATION_TABLE)
+
+    command.upgrade(cfg, _CORPUS_INVITATION_REVISION)
+    assert _table_exists(db_url, _CORPUS_INVITATION_TABLE)
