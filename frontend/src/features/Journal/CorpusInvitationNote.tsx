@@ -90,6 +90,15 @@ function useCorpusInvitation(completedPasses: number) {
   // declined comes back when that read lands. ``active`` cannot cover it: it
   // is scoped to one effect run and is cleared only by unmount or the next
   // increment, and a decline is neither.
+  //
+  // It is never reset, so for the life of this mount no read can reopen the
+  // offer -- including one the cooldown would allow. That is the intended
+  // bias, not an oversight: the two mistakes are not symmetric, and re-asking
+  // someone who just declined is the one NORTH-STAR §6 forbids. A guard
+  // scoped to a single effect run would also be weaker than it looks, since
+  // ``dismiss`` is fire-and-forget and a later pass's read can still overtake
+  // it. The cost is an invitation withheld from someone who sat on one entry
+  // for the seven days and three passes the cooldown needs.
   const declined = useRef(false);
 
   useEffect(() => {
