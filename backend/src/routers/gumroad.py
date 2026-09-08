@@ -57,7 +57,7 @@ from domain.entitlements import (
     is_token_pack_product_id,
     token_pack_size,
 )
-from domain.license_claims import claim_license, find_binding
+from domain.license_claims import claim_license, find_binding, sale_reversed
 from error_responses import build_router
 from errors import bad_request
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
@@ -179,22 +179,6 @@ async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
     return result.scalars().first()
 
 
-async def _reversed_stored_sale(session: AsyncSession, sale_id: str) -> bool:
-    """Return whether the stored sale's reversal claim is already spent.
-
-    Read with ``populate_existing`` because a reversal writes the claim
-    through SQL alone, so an instance this session already holds would still
-    read as unreversed; the guard has to see the row as the database has it.
-    """
-    result = await session.execute(
-        select(GumroadSale)
-        .where(GumroadSale.gumroad_sale_id == sale_id)
-        .execution_options(populate_existing=True)
-    )
-    sale = result.scalars().first()
-    return sale is not None and sale.revocation_processed_at is not None
-
-
 async def _resolve_claimant(session: AsyncSession, payload: dict[str, str]) -> User | None:
     """Return the account this sale should grant, or ``None`` to leave it be.
 
@@ -226,8 +210,9 @@ async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> Non
     (a later license-gated signup converges by binding it). The claim is
     idempotent, so webhook replays never duplicate a binding or an entitlement.
 
-    Requires the stored sale to be unreversed: a reversal is permanent for the
-    sale that funded the access, and it deliberately leaves the holder with no
+    Requires the stored sale to be unreversed (:func:`sale_reversed`, the same
+    guard the creation paths consult): a reversal is permanent for the sale
+    that funded the access, and it deliberately leaves the holder with no
     active entitlement. Since the grant is only idempotent against a live one,
     a stale redelivery of the original purchase would mint a fresh grant and
     hand a refunded buyer back the access they were charged back for. The
@@ -237,7 +222,7 @@ async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> Non
     product_id = payload.get(_PRODUCT_ID_FIELD, "")
     if not is_aptitude_product_id(product_id):
         return
-    if await _reversed_stored_sale(session, payload["sale_id"]):
+    if await sale_reversed(session, payload["sale_id"]):
         logger.info("gumroad_webhook_event", extra={"reason_code": _REASON_PREVIOUSLY_REVERSED})
         return
     user = await _resolve_claimant(session, payload)

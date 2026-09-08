@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import enum
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError
@@ -49,16 +50,21 @@ __all__ = [
     "bound_elsewhere",
     "claim_license",
     "find_binding",
+    "new_claim_refused",
+    "sale_reversed",
     "stage_license_claim",
 ]
 
 logger = logging.getLogger(__name__)
 
 # Structured-log event names. ``license_bound`` marks every successful claim;
-# ``license_claim_rejected`` (WARNING) marks a valid key presented by an
-# account other than its holder — the anomalous-claim signal.
+# ``license_claim_rejected`` marks a claim the seam refused — at WARNING for a
+# valid key presented by an account other than its holder (the anomalous-claim
+# signal), at INFO for a sale whose reversal claim is already spent.
 _BOUND_EVENT = "license_bound"
 _REJECTED_EVENT = "license_claim_rejected"
+# Same spelling the webhook uses for a redelivered, already-reversed sale.
+_REASON_PREVIOUSLY_REVERSED = "sale_previously_reversed"
 
 
 class ClaimOutcome(enum.Enum):
@@ -92,8 +98,9 @@ def _log_rejected(claimant_id: int | None, binding_id: int | None) -> None:
     """Emit the anomalous-claim WARNING: a valid key presented by a non-holder.
 
     Ids only. ``claimant_id`` is ``None`` on an account-creation path, where
-    the would-be holder has no row yet; the caller's own refusal line carries
-    whatever fingerprint that surface logs.
+    the would-be holder has no row yet; the router's own refusal line
+    (``signup_license_rejected`` / ``oauth_signin``) carries that surface's
+    client fingerprint so the two can be correlated.
     """
     logger.warning(
         _REJECTED_EVENT,
@@ -105,6 +112,39 @@ def _log_rejected(claimant_id: int | None, binding_id: int | None) -> None:
     )
 
 
+async def _stored_sale(session: AsyncSession, sale_id: str) -> GumroadSale | None:
+    """Return the webhook's stored row for ``sale_id``, if the ping has arrived yet.
+
+    Read with ``populate_existing`` because a reversal writes its claim through
+    SQL alone, so an instance this session already holds would still read as
+    unreversed; the guards below have to see the row as the database has it.
+    """
+    result = await session.execute(
+        select(GumroadSale)
+        .where(col(GumroadSale.gumroad_sale_id) == sale_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalars().first()
+
+
+async def sale_reversed(session: AsyncSession, sale_id: str) -> bool:
+    """Return whether the stored sale's reversal claim is already spent.
+
+    A refund, dispute, cancellation or subscription end is permanent for the
+    sale that funded the access (ADR 0008 Decision 4), and Gumroad's verify
+    keeps answering ``success`` for an ended subscription. The stamp on the
+    stored row is therefore the one thing standing between a lapsed key and a
+    fresh grant — including after the holder deletes their account and the
+    binding goes with it. A sale the webhook has not stored yet is not
+    reversed. Logs ``sale_previously_reversed`` when it answers ``True``.
+    """
+    sale = await _stored_sale(session, sale_id)
+    if sale is None or sale.revocation_processed_at is None:
+        return False
+    logger.info(_REJECTED_EVENT, extra={"reason_code": _REASON_PREVIOUSLY_REVERSED})
+    return True
+
+
 async def bound_elsewhere(
     session: AsyncSession,
     sale_id: str,
@@ -113,13 +153,9 @@ async def bound_elsewhere(
 ) -> bool:
     """Return whether ``sale_id`` is bound to an account other than ``claimant_id``.
 
-    The pre-check behind every generic refusal of a valid-but-claimed key. It
-    runs after the outbound verify and before any hash or row, so a key
-    another account has redeemed costs its presenter exactly what an unknown
-    key costs and nothing is ever staged for it. It is a courtesy, not the
-    invariant: the UNIQUE constraint on the binding still decides a genuine
-    race, and :func:`claim_license` folds the loser into the same answer.
-    Logs the WARNING when it answers ``True``.
+    A courtesy pre-check, not the invariant: the UNIQUE constraint on the
+    binding still decides a genuine race, and :func:`claim_license` folds the
+    loser into the same answer. Logs the WARNING when it answers ``True``.
     """
     binding = await find_binding(session, sale_id)
     if binding is None or binding.user_id == claimant_id:
@@ -128,12 +164,25 @@ async def bound_elsewhere(
     return True
 
 
-async def _stored_sale(session: AsyncSession, sale_id: str) -> GumroadSale | None:
-    """Return the webhook's stored row for ``sale_id``, if the ping has arrived yet."""
-    result = await session.execute(
-        select(GumroadSale).where(col(GumroadSale.gumroad_sale_id) == sale_id)
-    )
-    return result.scalars().first()
+async def new_claim_refused(session: AsyncSession, sale_id: str) -> bool:
+    """Return whether a brand-new account may not claim ``sale_id``.
+
+    The post-verify pre-check behind both creation paths' generic refusals.
+    It runs after the outbound verify and before any hash or row, so a key
+    that is reversed or already redeemed costs its presenter exactly what an
+    unknown key costs and nothing is ever staged for it. No same-account case
+    exists here, because the account does not exist yet.
+    """
+    return await sale_reversed(session, sale_id) or await bound_elsewhere(session, sale_id)
+
+
+@dataclass(frozen=True)
+class _StagedClaim:
+    """What :func:`_stage_claim` put into the session, for the caller's log line."""
+
+    outcome: ClaimOutcome
+    binding: LicenseBinding | None = None
+    entitlement: Entitlement | None = None
 
 
 async def _stage_grant(
@@ -153,6 +202,28 @@ async def _stage_grant(
     return await stage_course_access(session, user_id, sale, product_id)
 
 
+async def _stage_claim(
+    session: AsyncSession,
+    user: User,
+    *,
+    sale_id: str,
+    product_id: str,
+) -> _StagedClaim:
+    """Stage the claim and hand back the rows it staged, ids pending flush."""
+    user_id = _require_user_id(user)
+    binding = await find_binding(session, sale_id)
+    if binding is None:
+        binding = LicenseBinding(user_id=user_id, gumroad_sale_id=sale_id, product_id=product_id)
+        session.add(binding)
+        entitlement = await _stage_grant(session, user_id, sale_id=sale_id, product_id=product_id)
+        return _StagedClaim(ClaimOutcome.BOUND, binding, entitlement)
+    if binding.user_id == user_id:
+        entitlement = await _stage_grant(session, user_id, sale_id=sale_id, product_id=product_id)
+        return _StagedClaim(ClaimOutcome.ALREADY_OWN, binding, entitlement)
+    _log_rejected(user_id, binding.id)
+    return _StagedClaim(ClaimOutcome.BOUND_ELSEWHERE)
+
+
 async def stage_license_claim(
     session: AsyncSession,
     user: User,
@@ -167,51 +238,27 @@ async def stage_license_claim(
     sale link, for instance) and adds no second binding; ``BOUND_ELSEWHERE``
     writes nothing and logs the WARNING. The caller commits — or, on
     ``BOUND_ELSEWHERE``, rolls back whatever else it had staged, because a
-    claim that fails must leave no orphan account behind it. The rejection
-    line carries its own fixed reason code; the success line is the
-    committing caller's to write, since only it knows the claim landed.
+    claim that fails must leave no orphan account behind it. The success
+    line is the committing caller's to write, since only it knows the claim
+    landed.
     """
-    user_id = _require_user_id(user)
-    binding = await find_binding(session, sale_id)
-    if binding is None:
-        session.add(LicenseBinding(user_id=user_id, gumroad_sale_id=sale_id, product_id=product_id))
-        await _stage_grant(session, user_id, sale_id=sale_id, product_id=product_id)
-        return ClaimOutcome.BOUND
-    if binding.user_id == user_id:
-        await _stage_grant(session, user_id, sale_id=sale_id, product_id=product_id)
-        return ClaimOutcome.ALREADY_OWN
-    _log_rejected(user_id, binding.id)
-    return ClaimOutcome.BOUND_ELSEWHERE
+    return (await _stage_claim(session, user, sale_id=sale_id, product_id=product_id)).outcome
 
 
-async def _log_bound(
-    session: AsyncSession,
-    user_id: int,
-    *,
-    sale_id: str,
-    reason_code: str,
-) -> None:
-    """Emit ``license_bound`` with ids only, read back after the commit."""
-    binding_id = (
-        await session.execute(
-            select(col(LicenseBinding.id)).where(col(LicenseBinding.gumroad_sale_id) == sale_id)
-        )
-    ).scalar_one_or_none()
-    entitlement_id = (
-        await session.execute(
-            select(col(Entitlement.id)).where(
-                col(Entitlement.user_id) == user_id,
-                col(Entitlement.revoked_at).is_(None),
-            )
-        )
-    ).scalar_one_or_none()
+def _log_bound(user_id: int, staged: _StagedClaim, *, reason_code: str) -> None:
+    """Emit ``license_bound`` with ids only, read off the rows the claim staged.
+
+    Safe after the commit because both session factories run with
+    ``expire_on_commit=False``: the ids were assigned at flush and are still
+    loaded, so no query and no lazy load is needed.
+    """
     logger.info(
         _BOUND_EVENT,
         extra={
             "reason_code": reason_code,
             "user_id": user_id,
-            "binding_id": binding_id,
-            "entitlement_id": entitlement_id,
+            "binding_id": None if staged.binding is None else staged.binding.id,
+            "entitlement_id": None if staged.entitlement is None else staged.entitlement.id,
         },
     )
 
@@ -233,13 +280,13 @@ async def claim_license(
     answer is the same generic ``BOUND_ELSEWHERE`` the pre-check gives.
     """
     try:
-        outcome = await stage_license_claim(session, user, sale_id=sale_id, product_id=product_id)
-        if outcome is ClaimOutcome.BOUND_ELSEWHERE:
+        staged = await _stage_claim(session, user, sale_id=sale_id, product_id=product_id)
+        if staged.outcome is ClaimOutcome.BOUND_ELSEWHERE:
             await session.rollback()
-            return outcome
+            return staged.outcome
         await session.commit()
     except IntegrityError:
         await session.rollback()
         return ClaimOutcome.BOUND_ELSEWHERE
-    await _log_bound(session, _require_user_id(user), sale_id=sale_id, reason_code=reason_code)
-    return outcome
+    _log_bound(_require_user_id(user), staged, reason_code=reason_code)
+    return staged.outcome

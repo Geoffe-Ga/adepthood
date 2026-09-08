@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from urllib.parse import urlparse
 
 import jwt
@@ -65,6 +66,7 @@ LOGIN_PATH = "/auth/login"
 JWKS_SEAM = "services.oauth_google._get_jwk_client"
 VERIFY_SEAM = "domain.entitlements.verify_license"
 CAP_PEEK_SEAM = "routers.auth.invalid_license_cap_exhausted"
+FIND_BINDING_SEAM = "domain.license_claims.find_binding"
 
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
@@ -1004,6 +1006,46 @@ async def test_gifted_license_creates_the_google_account_regardless_of_purchase_
     binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
     assert binding.user_id == response.json()["user_id"]
     assert binding.gumroad_sale_id == _sale_id_for(VALID_LICENSE_KEY)
+
+
+@pytest.mark.asyncio
+async def test_losing_the_binding_race_on_oauth_is_the_generic_409_with_no_orphan(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """When the UNIQUE constraint, not a pre-check, refuses the claim, the ladder answers 409.
+
+    Both pre-checks are silenced so the binding insert reaches the constraint;
+    the flushed User rolls back with it and the re-walked ladder finds no
+    account for the subject, so the refusal is the one every other 409 is.
+    """
+    holder = await _seed_user(db_session)
+    license_verifier.grant(VALID_LICENSE_KEY, GIFT_BUYER_EMAIL)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT_ALPHA,
+        )
+    )
+    await db_session.commit()
+    reference = await _needs_license_reference(async_client)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FIND_BINDING_SEAM, AsyncMock(return_value=None))
+        response = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(
+                _mint_token(sub=BOUND_KEY_SUBJECT, email=BOUND_KEY_EMAIL),
+                license_key=VALID_LICENSE_KEY,
+            ),
+        )
+
+    assert _fingerprint(response) == reference
+    assert await _count_rows(db_session, User) == 1
+    assert await _count_rows(db_session, AuthIdentity) == 0
+    assert await _count_rows(db_session, LicenseBinding) == 1
 
 
 @pytest.mark.asyncio

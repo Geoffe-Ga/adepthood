@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import hashlib
 import logging
 import os
@@ -28,12 +29,13 @@ from database import get_session
 from domain.dates import ensure_aware
 from domain.entitlements import (
     REASON_DUPLICATE_SIGNUP,
+    REASON_LICENSE_ALREADY_BOUND,
     REASON_SIGNUP_REDEMPTION,
     GumroadUnavailableError,
     LicenseOutcome,
     verify_aptitude_license,
 )
-from domain.license_claims import ClaimOutcome, bound_elsewhere, claim_license
+from domain.license_claims import ClaimOutcome, claim_license, new_claim_refused
 from domain.timezone import normalize_timezone
 from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
@@ -602,6 +604,37 @@ async def _verify_signup_license(request: Request, payload: SignupRequest) -> Gu
     return check.purchase
 
 
+def _log_signup_rejected(reason_code: str, email: str) -> None:
+    """Emit the router's refusal line: a reason code plus the client's email fingerprint.
+
+    The fingerprint is what lets an operator correlate a grind of redeemed
+    keys across requests (ADR 0008 Decision 6); it is never the address.
+    """
+    logger.info(
+        "signup_license_rejected",
+        extra={"reason_code": reason_code, "email_fingerprint": _email_log_fingerprint(email)},
+    )
+
+
+async def _refuse_signup_creation(
+    request: Request,
+    license_key: str | None,
+    refusal: _CreationRefusal,
+) -> NoReturn:
+    """Answer a refused account creation with the pre-check paths' exact bytes.
+
+    Either a concurrent request won the unique-index race after our pre-check
+    passed, or a rival bound the sale between the pre-check and the commit.
+    Only the latter is a licence guess, so only it charges the hourly cap —
+    no path around the pre-check is free (ADR 0008 Decision 6) and no benign
+    retry pays for it. ``_create_signup_user`` already spent one real bcrypt
+    hash, matching the dummy verify the pre-check spends — timing holds.
+    """
+    if refusal is _CreationRefusal.LICENSE_BOUND:
+        await _count_invalid_license_attempt(request, license_key)
+    raise bad_request(_DETAIL_INVALID_LICENSE)
+
+
 async def _reject_duplicate_signup_email(session: AsyncSession, email: str) -> None:
     """Reject a signup for an already-registered email with the generic 400.
 
@@ -615,15 +648,22 @@ async def _reject_duplicate_signup_email(session: AsyncSession, email: str) -> N
     result = await session.execute(select(User).where(User.email == email))
     if result.scalars().first() is None:
         return
-    logger.info(
-        "signup_license_rejected",
-        extra={
-            "reason_code": REASON_DUPLICATE_SIGNUP,
-            "email_fingerprint": _email_log_fingerprint(email),
-        },
-    )
+    _log_signup_rejected(REASON_DUPLICATE_SIGNUP, email)
     await _consume_dummy_password_verify()
     raise bad_request(_DETAIL_INVALID_LICENSE)
+
+
+class _CreationRefusal(enum.Enum):
+    """Why :func:`_create_licensed_account` wrote nothing.
+
+    Both answer with the same generic bytes on the wire; they differ only in
+    what the server charges. A lost email race is an ordinary retry and costs
+    nothing; a licence bound elsewhere is a claim on somebody's key and is
+    charged against the hourly cap like an unknown key (ADR 0008 Decision 6).
+    """
+
+    EMAIL_TAKEN = "email_taken"
+    LICENSE_BOUND = "license_bound"
 
 
 async def _create_licensed_account(
@@ -632,17 +672,17 @@ async def _create_licensed_account(
     purchase: GumroadPurchase,
     *,
     reason_code: str,
-) -> User | None:
+) -> User | _CreationRefusal:
     """Land the account, its licence binding and its entitlement in one transaction.
 
-    ``None`` means the account was not created and nothing was written, for
-    one of two reasons the caller must not distinguish on the wire: a
+    A refusal means the account was not created and nothing was written: a
     concurrent request won the email unique-index race after the pre-check
-    (the ``ix_user_lower_email_unique`` IntegrityError at flush), or the sale
-    is already bound to another account (ADR 0008 Decision 2 — the claim
-    rolls the flushed ``User`` row back with it, so a refused claim leaves no
-    orphan account). Both answer with the same generic refusal the pre-check
-    paths return, so a caller cannot tell which check fired.
+    (the ``ix_user_lower_email_unique`` IntegrityError at flush), or a rival
+    bound the sale between the pre-check and the commit (ADR 0008 Decision 2
+    — the claim rolls the flushed ``User`` row back with it, so a refused
+    claim leaves no orphan account). The caller answers both with the generic
+    refusal its pre-check paths return, so nothing on the wire says which
+    check fired.
 
     The commit is the claim's: :func:`claim_license` commits User, binding and
     Entitlement together and folds a lost UNIQUE race into
@@ -653,7 +693,7 @@ async def _create_licensed_account(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        return None
+        return _CreationRefusal.EMAIL_TAKEN
     outcome = await claim_license(
         session,
         user,
@@ -662,7 +702,7 @@ async def _create_licensed_account(
         reason_code=reason_code,
     )
     if outcome is ClaimOutcome.BOUND_ELSEWHERE:
-        return None
+        return _CreationRefusal.LICENSE_BOUND
     await session.refresh(user)
     return user
 
@@ -671,8 +711,8 @@ async def _create_signup_user(
     session: AsyncSession,
     payload: SignupRequest,
     purchase: GumroadPurchase,
-) -> User | None:
-    """Hash the password and persist the licensed user; ``None`` when refused.
+) -> User | _CreationRefusal:
+    """Hash the password and persist the licensed user, or say why not.
 
     Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
     before we get here (BUG-AUTH-017), so the only failure mode left is a
@@ -724,25 +764,18 @@ async def signup(
     # attacker from inferring account existence from which check ran first.
     purchase = await _verify_signup_license(request, payload)
     await _reject_duplicate_signup_email(session, payload.email)
-    if await bound_elsewhere(session, purchase.sale_id):
-        # A valid key another account has already redeemed (ADR 0008
-        # Decision 2). Refused before any hash or row, with the unknown key's
-        # exact charge, dummy verify and bytes, so "valid but claimed" is
-        # never readable off the wire; only the WARNING the pre-check logged
-        # knows. The UNIQUE constraint still decides a genuine race below.
+    if await new_claim_refused(session, purchase.sale_id):
+        # A reversed sale, or a valid key another account has already redeemed
+        # (ADR 0008 Decisions 2 and 4). Refused before any hash or row, with
+        # the unknown key's exact charge, dummy verify and bytes, so "valid
+        # but claimed" is never readable off the wire. The UNIQUE constraint
+        # still decides a genuine race below.
+        _log_signup_rejected(REASON_LICENSE_ALREADY_BOUND, payload.email)
         await _reject_invalid_license(request)
-    user = await _create_signup_user(session, payload, purchase)
-    if user is None:
-        # Either a concurrent request won the unique-index race after our
-        # pre-check passed, or a rival bound the sale between the pre-check
-        # and the commit. Answer with the exact rejection the pre-check paths
-        # return so neither is distinguishable from an invalid license, and
-        # charge the hourly cap so no path around the pre-check is free
-        # (Decision 6). ``_create_signup_user`` already spent one real bcrypt
-        # hash, matching the dummy verify the pre-check spends — timing holds.
-        await _count_invalid_license_attempt(request, payload.license_key)
-        raise bad_request(_DETAIL_INVALID_LICENSE)
-
+    created = await _create_signup_user(session, payload, purchase)
+    if isinstance(created, _CreationRefusal):
+        await _refuse_signup_creation(request, payload.license_key, created)
+    user = created
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
@@ -2102,7 +2135,7 @@ async def _verify_oauth_license(
     if (
         check.outcome is LicenseOutcome.VERIFIED
         and check.purchase is not None
-        and not await bound_elsewhere(session, check.purchase.sale_id)
+        and not await new_claim_refused(session, check.purchase.sale_id)
     ):
         return check.purchase
     await _count_invalid_license_attempt(request, license_key)
@@ -2115,8 +2148,8 @@ async def _insert_social_user(
     timezone: str,
     display_name: str | None,
     purchase: GumroadPurchase,
-) -> User | None:
-    """Create the licensed account behind a social sign-in; ``None`` when refused.
+) -> User | _CreationRefusal:
+    """Create the licensed account behind a social sign-in, or say why not.
 
     The stored hash is a fresh 256-bit random run through the same bcrypt cost
     the password flow uses.  That satisfies the NOT NULL hash contract while
@@ -2171,9 +2204,9 @@ async def _create_oauth_account(
     account, its binding and its entitlement then land in one transaction, and
     any token pack bought under the same address before this sign-in is swept
     into the new wallet, exactly as ``/auth/signup`` does.  A refused creation
-    -- a lost email race or a sale bound to another account -- charges the
-    invalid-license cap and re-walks the ladder once, whose miss is the same
-    generic 409 every other refusal returns.
+    re-walks the ladder once, whose miss is the same generic 409 every other
+    refusal returns; only a lost licence race is charged against the
+    invalid-license cap, a lost email race being an ordinary retry.
 
     The identity link is written last, and the response is built before it, so
     that losing the link race (a concurrent caller resolved the same subject
@@ -2182,12 +2215,16 @@ async def _create_oauth_account(
     greenlet; the racer's row points at the same account anyway.
     """
     purchase = await _verify_oauth_license(request, session, email, payload.license_key)
-    user = await _insert_social_user(
+    created = await _insert_social_user(
         session, email, payload.timezone, attempt.display_name, purchase
     )
-    if user is None:
-        await _count_invalid_license_attempt(request, payload.license_key)
+    if isinstance(created, _CreationRefusal):
+        # Only a lost licence race is a guess worth charging; a lost email race
+        # re-walks the ladder and, as a rule, logs into the winner's account.
+        if created is _CreationRefusal.LICENSE_BOUND:
+            await _count_invalid_license_attempt(request, payload.license_key)
         return await _reresolve_after_create_race(session, attempt)
+    user = created
     await claim_token_pack_sales(session, user)
     response = _auth_response_for(user)
     if not await _insert_identity(

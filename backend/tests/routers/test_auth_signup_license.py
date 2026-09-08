@@ -89,6 +89,7 @@ DETAIL_THROTTLED = "too_many_license_attempts"
 # write this marker any more.
 RETIRED_EMAIL_MISMATCH_MARKER = "email_mismatch"
 ALREADY_BOUND_MARKER = "license_already_bound"
+SIGNUP_REJECTED_EVENT = "signup_license_rejected"
 DUPLICATE_SIGNUP_MARKER = "duplicate_signup"
 # Both pre-checks -- the router's post-verify one and the domain seam's own --
 # read through this function; silencing it is what lets a test reach the
@@ -668,6 +669,66 @@ async def test_password_refusals_are_byte_identical_for_unknown_and_already_boun
     assert await _count_entitlements(db_session) == 1
     assert await _count_bindings(db_session) == 1
     assert _log_carries_marker(caplog, ALREADY_BOUND_MARKER)
+    # The router's own refusal line carries the client's email fingerprint so an
+    # operator can correlate a grind of redeemed keys (ADR 0008 Decision 6);
+    # the fingerprint is not the address.
+    refusals = [
+        record
+        for record in caplog.records
+        if record.getMessage() == SIGNUP_REJECTED_EVENT
+        and getattr(record, "reason_code", None) == ALREADY_BOUND_MARKER
+    ]
+    assert len(refusals) == 1
+    fingerprint = getattr(refusals[0], "email_fingerprint", "")
+    assert fingerprint
+    assert "@" not in fingerprint
+    assert OTHER_EMAIL not in repr(vars(refusals[0]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
+async def test_losing_the_email_race_does_not_charge_the_invalid_license_cap(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A benign duplicate-email race is not a licence guess and spends no budget.
+
+    Nine unknown keys, then the race loser, then one more unknown key: the
+    tenth guess still answers 400 and only the eleventh is throttled. Were
+    the race loser charged, the tenth unknown key would already be the 429.
+    """
+    monkeypatch.setattr(
+        VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
+    )
+    first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert first.status_code == HTTPStatus.OK
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
+        guess = await async_client.post(
+            SIGNUP_PATH,
+            json=_signup_payload(
+                email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com",
+                license_key=UNKNOWN_LICENSE_KEY,
+            ),
+        )
+        assert guess.status_code == HTTPStatus.BAD_REQUEST
+    # Silence the pre-check so the same email reaches the unique index; the
+    # bound pre-check must also pass, which it does for the holder's own key.
+    monkeypatch.setattr(REJECT_DUPLICATE_SEAM, AsyncMock(return_value=None))
+    for seam in (FIND_BINDING_SEAM,):
+        monkeypatch.setattr(seam, AsyncMock(return_value=None))
+    race = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+    assert race.status_code == HTTPStatus.BAD_REQUEST
+    assert race.json()["detail"] == DETAIL_INVALID_LICENSE
+
+    tenth = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+    eleventh = await async_client.post(
+        SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
+    )
+
+    assert tenth.status_code == HTTPStatus.BAD_REQUEST
+    assert eleventh.status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
 @pytest.mark.asyncio

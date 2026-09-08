@@ -31,6 +31,9 @@ pytestmark = pytest.mark.real_license_gate
 
 SIGNUP_PATH = "/auth/signup"
 DELETE_PATH = "/users/me"
+WEBHOOK_PATH = "/webhooks/gumroad/ping"
+WEBHOOK_SECRET = "reclaim-suite-shared-secret"  # pragma: allowlist secret
+WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
 PRODUCT_IDS_ENV = "GUMROAD_APTITUDE_PRODUCT_IDS"
 VERIFY_SEAM = "domain.entitlements.verify_license"
 PRODUCT_ID = "prod_reclaim"
@@ -265,3 +268,48 @@ async def test_reclaiming_a_key_transfers_access_and_nothing_else(
     assert sorted(await _binding_holders(db_session)) == sorted(
         [(second.user_id, SALE_ID), (control.user_id, CONTROL_SALE_ID)]
     )
+
+
+async def _ping(client: AsyncClient, resource_name: str) -> None:
+    """Deliver one authenticated Gumroad ping for ``SALE_ID``."""
+    response = await client.post(
+        WEBHOOK_PATH,
+        params={"secret": WEBHOOK_SECRET},
+        data={
+            "sale_id": SALE_ID,
+            "product_id": PRODUCT_ID,
+            "email": PURCHASE_EMAIL,
+            "resource_name": resource_name,
+            "is_recurring_charge": "false",
+            "refunded": "false",
+        },
+    )
+    assert response.status_code == HTTPStatus.OK, response.text
+
+
+@pytest.mark.asyncio
+async def test_a_reversed_sales_key_is_not_reclaimable_after_deletion(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting the account releases the binding, not the reversal (ADR 0008 D4).
+
+    An ended subscription's key still verifies at Gumroad. Once the holder is
+    gone the binding no longer refuses it, so the stored sale's own reversal
+    stamp has to — otherwise anybody holding the lapsed key gets the course.
+    """
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    first = await _signed_up(async_client, FIRST_EMAIL)
+    await _ping(async_client, "sale")
+    await _ping(async_client, "subscription_ended")
+    await _delete(async_client, first)
+
+    second = await _signup(async_client, SECOND_EMAIL)
+    unknown = await _signup(async_client, SECOND_EMAIL, UNKNOWN_LICENSE_KEY)
+
+    assert second.status_code == HTTPStatus.BAD_REQUEST
+    assert second.json()["detail"] == DETAIL_INVALID_LICENSE
+    assert _fingerprint(second) == _fingerprint(unknown)
+    assert await _count(db_session, User) == 0
+    assert await _binding_holders(db_session) == []

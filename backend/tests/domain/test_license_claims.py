@@ -10,6 +10,7 @@ Entitlement one transaction.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,6 +25,7 @@ from domain.license_claims import (
     bound_elsewhere,
     claim_license,
     find_binding,
+    new_claim_refused,
     stage_license_claim,
 )
 from models.entitlement import Entitlement
@@ -40,6 +42,7 @@ DISTINCT_SALE_COUNT = 2
 FIND_BINDING_SEAM = "domain.license_claims.find_binding"
 BOUND_EVENT = "license_bound"
 REJECTED_EVENT = "license_claim_rejected"
+REASON_PREVIOUSLY_REVERSED = "sale_previously_reversed"
 
 
 async def _persist_user(db_session: AsyncSession, email: str = USER_EMAIL) -> tuple[User, int]:
@@ -111,7 +114,7 @@ async def _active_entitlements(db_session: AsyncSession, user_id: int) -> list[E
     return list(result.scalars().all())
 
 
-async def _persist_sale(db_session: AsyncSession) -> int:
+async def _persist_sale(db_session: AsyncSession, *, reversed_sale: bool = False) -> int:
     """Persist the stored webhook row for ``SALE_ID`` and return its id."""
     sale = GumroadSale(
         gumroad_sale_id=SALE_ID,
@@ -119,6 +122,7 @@ async def _persist_sale(db_session: AsyncSession) -> int:
         email=OTHER_EMAIL,
         resource_name=SALE_RESOURCE_NAME,
         raw_payload={"sale_id": SALE_ID},
+        revocation_processed_at=datetime.now(UTC) if reversed_sale else None,
     )
     db_session.add(sale)
     await db_session.commit()
@@ -339,3 +343,42 @@ async def test_bound_elsewhere_answers_for_a_claimant_with_no_account_yet(
     assert getattr(rejected[0], "reason_code", None) == REASON_LICENSE_ALREADY_BOUND
     assert getattr(rejected[0], "user_id", "missing") is None
     assert "@" not in repr(vars(rejected[0]))
+
+
+@pytest.mark.asyncio
+async def test_a_reversed_sale_refuses_every_new_claimant(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A sale whose reversal claim is spent is not claimable, bound or not (ADR 0008 D4).
+
+    Gumroad's verify keeps answering ``success`` for an ended subscription, so
+    the stored sale's own reversal stamp is the only thing standing between a
+    lapsed key and a fresh grant — including after the holder deletes their
+    account and the binding goes with it.
+    """
+    caplog.set_level(logging.DEBUG)
+    await _persist_sale(db_session, reversed_sale=True)
+
+    assert await new_claim_refused(db_session, SALE_ID) is True
+    assert await bound_elsewhere(db_session, SALE_ID) is False
+    rejected = _records_for(caplog, REJECTED_EVENT)
+    assert [getattr(record, "reason_code", None) for record in rejected] == [
+        REASON_PREVIOUSLY_REVERSED
+    ]
+
+
+@pytest.mark.asyncio
+async def test_new_claim_refused_folds_the_bound_check_in(db_session: AsyncSession) -> None:
+    """An unbound live sale is claimable; a bound one is refused through the same gate."""
+    user, _user_id = await _persist_user(db_session)
+    assert await new_claim_refused(db_session, SALE_ID) is False
+    await claim_license(
+        db_session,
+        user,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    assert await new_claim_refused(db_session, SALE_ID) is True
