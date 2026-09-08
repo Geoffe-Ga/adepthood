@@ -21,6 +21,7 @@ cloud call made by both endpoints.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import cast
 
@@ -30,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
@@ -619,3 +620,159 @@ async def test_intimate_non_distress_unchanged(
     assert body["care"] is None
     assert body["private_message"] == _INTIMATE_PRIVATE_MESSAGE
     assert spy.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# 12. Egress guard for prior letters: only eligible letters may ride along in
+#     the ``<prior_letters>`` anti-repetition block (issue #2574).
+# ---------------------------------------------------------------------------
+# The reflection prompt now carries at most PRIOR_DRAFT_LIMIT of the letters
+# this app has already written the account, so a new note does not repeat an
+# observation already made. That is new egress of the account's own writing --
+# a letter quotes and paraphrases the entry it was written about -- so it needs
+# the same exclusions the entry bodies got.
+#
+# Every sentinel below is planted as a ``Marginalia.essay`` value and NOWHERE
+# else. Putting one in a ``JournalEntry.message`` would make the test vacuous:
+# a live Personal entry's body already reaches the prompt through the
+# pre-existing ``<prior>`` grounding block, so a bare ``sentinel in prompt``
+# would pass on code that has no prior-letters feature at all.
+
+_DELETED_ESSAY_SENTINEL = "DELETED_LETTER_SENTINEL_c41b"
+_INTIMATE_ESSAY_SENTINEL = "INTIMATE_LETTER_SENTINEL_9de2"
+_ELIGIBLE_ESSAY_SENTINEL = "ELIGIBLE_LETTER_SENTINEL_5a70"
+
+# Cap arithmetic, and it is load-bearing: ``1 + (rows a single mutation
+# un-filters) must be <= PRIOR_DRAFT_LIMIT``. Both excluded letters are stamped
+# STRICTLY NEWER than the eligible one, so removing exactly one exclusion yields
+# 1 leaked + 1 eligible = 2 = PRIOR_DRAFT_LIMIT: the leak lands INSIDE the cap
+# and the absence assertion fires. Seeding more excluded rows than that would
+# let the limit squeeze a leak back out, and an exclusion arm that passes only
+# because the cap was already exhausted proves nothing at all.
+_ELIGIBLE_STAMP = datetime(2024, 3, 1, 12, 0, tzinfo=UTC)
+_NEWER_STAMPS = (datetime(2024, 6, 1, 12, 0, tzinfo=UTC), datetime(2024, 9, 1, 12, 0, tzinfo=UTC))
+
+_PRIOR_LETTERS_OPEN = "<prior_letters>"
+_PRIOR_LETTERS_CLOSE = "</prior_letters>"
+
+
+async def _attach_letter(
+    session: AsyncSession, *, entry_id: int, user_id: int, essay: str, stamped: datetime
+) -> None:
+    """Attach one already-expanded margin note carrying ``essay`` to ``entry_id``.
+
+    ``essay_generated_at`` travels with ``essay``: the model's paired-nullability
+    CHECK turns setting one alone into an ``IntegrityError`` rather than a clean
+    test failure.
+    """
+    session.add(
+        Marginalia(
+            journal_entry_id=entry_id,
+            user_id=user_id,
+            kind=MarginaliaKind.SYMBOL,
+            anchor_start=0,
+            anchor_end=4,
+            anchor_text="Some",
+            note="An earlier reading.",
+            essay=essay,
+            essay_generated_at=stamped,
+        )
+    )
+
+
+def _prior_letters_sections(prompts: list[str]) -> list[str]:
+    """Return the ``<prior_letters>`` slice of every prompt that carries one."""
+    sections = []
+    for prompt in prompts:
+        if _PRIOR_LETTERS_OPEN in prompt and _PRIOR_LETTERS_CLOSE in prompt:
+            start = prompt.index(_PRIOR_LETTERS_OPEN) + len(_PRIOR_LETTERS_OPEN)
+            sections.append(prompt[start : prompt.index(_PRIOR_LETTERS_CLOSE)])
+    return sections
+
+
+@pytest.mark.asyncio
+async def test_only_eligible_prior_letters_reach_the_cloud_prompt(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deleted entry's letter and an Intimate entry's letter never leave; a live one does.
+
+    The positive half matters as much as the two negative ones: without it, a
+    provider that returned nothing at all would satisfy both exclusions and the
+    test would pass while the feature did nothing.
+
+    ``async_client`` and ``db_session`` share one session (``conftest`` overrides
+    ``get_session`` to yield the fixture's), so rows staged here are the rows the
+    endpoint reads.
+    """
+    spy = _CapturingSpyLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    headers, _ = await _signup(async_client, "prior_letter_egress")
+
+    target_id = await _create_entry(
+        async_client, headers, classification="personal", body=_PERSONAL_BODY
+    )
+    deleted_id = await _create_entry(
+        async_client, headers, classification="personal", body="An entry later deleted."
+    )
+    intimate_id = await _create_entry(
+        async_client, headers, classification="personal", body="An entry later made private."
+    )
+    eligible_id = await _create_entry(
+        async_client, headers, classification="personal", body="An entry that stays readable."
+    )
+
+    entries = {
+        entry.id: entry
+        for entry in (
+            await db_session.execute(
+                select(JournalEntry).where(
+                    col(JournalEntry.id).in_([deleted_id, intimate_id, eligible_id])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
+    user_id = entries[eligible_id].user_id
+    entries[deleted_id].deleted_at = datetime.now(UTC)
+    entries[intimate_id].classification = JournalClassification.INTIMATE
+
+    await _attach_letter(
+        db_session,
+        entry_id=deleted_id,
+        user_id=user_id,
+        essay=_DELETED_ESSAY_SENTINEL,
+        stamped=_NEWER_STAMPS[0],
+    )
+    await _attach_letter(
+        db_session,
+        entry_id=intimate_id,
+        user_id=user_id,
+        essay=_INTIMATE_ESSAY_SENTINEL,
+        stamped=_NEWER_STAMPS[1],
+    )
+    await _attach_letter(
+        db_session,
+        entry_id=eligible_id,
+        user_id=user_id,
+        essay=_ELIGIBLE_ESSAY_SENTINEL,
+        stamped=_ELIGIBLE_STAMP,
+    )
+    await db_session.commit()
+
+    resp = await async_client.post(f"/journal/{target_id}/resonance", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert spy.calls >= 1, "the personal-entry resonance path never reached the cloud"
+
+    sections = _prior_letters_sections(spy.captured_prompts)
+    assert any(_ELIGIBLE_ESSAY_SENTINEL in section for section in sections), (
+        "the eligible letter never reached the <prior_letters> block; the "
+        "exclusion assertions below would then pass on a feature doing nothing"
+    )
+    for index, captured in enumerate(spy.captured_prompts):
+        assert _DELETED_ESSAY_SENTINEL not in captured, (
+            f"prompt #{index} carries a letter about a DELETED entry to the cloud"
+        )
+        assert _INTIMATE_ESSAY_SENTINEL not in captured, (
+            f"prompt #{index} carries a letter about an INTIMATE entry to the cloud"
+        )

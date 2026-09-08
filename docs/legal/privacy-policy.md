@@ -130,7 +130,9 @@ corpus of your own writing** — the writing you have brought into Adepthood,
 sorted by which of the ten frequencies it speaks in and picked for the one
 you are standing in now — or, while that corpus is still empty, **your
 recent entries**. It is one source or the other, never both, and never more
-than three either way.
+than three either way. Reflections the app has already written you may go
+with it too, for the single purpose of not repeating themselves; the section
+on who receives your data says how many.
 
 **Intimate** is the tier that changes what the software is allowed to do:
 
@@ -222,7 +224,12 @@ deployment is configured, or on your own key if you supply one). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
 an essay, up to three other pieces of your own non-Intimate writing as
 context — passages chosen out of the corpus of your own writing, or your
-recent entries while that corpus is empty — the photograph of a
+recent entries while that corpus is empty — **at most two** of the
+reflections it has already written you, which quote and paraphrase the
+entries they were written about, sent back only so that the same thing is
+not said to you twice and never as a voice to imitate; never one written
+about an Intimate entry, and never one about an entry you have deleted —
+the photograph of a
 handwritten page when you ask for it to be transcribed, and, **only if you
 have turned the corpus on**, the body of each non-Intimate entry once as it
 is saved — and once for each non-Intimate entry that was already in your

@@ -710,3 +710,53 @@ def test_nothing_surfaces_before_the_reflection_is_asked_for() -> None:
     )
 
     assert related_surfaces(adapter) == VaultRelatedSurfaces()
+
+
+# ---------------------------------------------------------------------------
+# The prior-letters block stops at this seam (issue #2574)
+# ---------------------------------------------------------------------------
+
+_PRIOR_LETTER_SENTINEL = "PRIOR_LETTER_SENTINEL_b62d"
+
+
+@pytest.mark.asyncio
+async def test_prior_letters_never_cross_the_vault_seam() -> None:
+    """A connected vault discards the ``<prior_letters>`` block along with the whole prompt.
+
+    Recorded deliberately, because the shape is easy to misread. The
+    anti-repetition context added in issue #2574 is threaded into
+    ``domain.resonance.build_prompt``, and every prompt-assembly test for it is
+    green -- but on the vault-success path ``VaultResonanceLLM.complete``
+    answers from its own enclave-side retrieval over the *body* and never looks
+    at the router's prompt at all. So for an account with a connected,
+    REFLECT-capable vault the resonance half of that feature is a no-op, and
+    nobody should later read those green prompt tests as coverage of it.
+
+    The asymmetry is worth stating precisely, because it does not extend to the
+    other half: ``routers.journal._cache_essay`` builds a cloud LLM
+    unconditionally with no ``select_reflection_llm`` on that path, so the essay
+    prompt's prior letters DO reach every account.
+
+    The silver lining is a privacy one, and it is why the policy's Creek Vault
+    paragraph needed no amendment: a prompt the vault never receives cannot
+    egress prior letters to a vault.
+    """
+    client = RecordingVaultClient(
+        reflect_result=_reflection(_note("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE))
+    )
+    fallback = RecordingFallbackLLM()
+    adapter = VaultResonanceLLM(
+        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
+    )
+
+    completion = await adapter.complete(
+        f"<prior_letters>\n{_PRIOR_LETTER_SENTINEL}\n</prior_letters>"
+    )
+
+    assert json.loads(completion) == {
+        "notes": [{"kind": "connection", "quote": _LOOP_RIVER_QUOTE, "note": _RIVER_NOTE}]
+    }, "the vault's answer must be its own reflection, not anything derived from the prompt"
+    assert all(_PRIOR_LETTER_SENTINEL not in body for body, _ in client.reflect_calls), (
+        "a prior letter crossed into the vault request"
+    )
+    assert fallback.prompts == [], "the vault answered; the cloud fallback must not have run"
