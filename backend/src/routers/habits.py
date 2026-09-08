@@ -260,7 +260,17 @@ async def list_habits(
     pagination: Annotated[PaginationParams, Depends()],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Page[HabitWithGoals] | list[HabitWithGoals]:
-    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``."""
+    """Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.
+
+    Unnumbered legacy rows come first: they predate slots, so they are the
+    habits the user onboarded with, and a later numbered add belongs after
+    them -- PostgreSQL's default ``ASC`` would put them last. Then ascending
+    slot, ties broken by ``id``. That ``id`` key is not decoration: slots are
+    partition-scoped by ``is_carryover``, so two rows may legitimately hold
+    the same slot, and ``paginate_query`` adds no ordering of its own -- an
+    untiebroken key would leave LIMIT/OFFSET paging free to repeat or drop
+    rows inside a tie group.
+    """
     # This runs before pagination so eligible rows outside the requested page
     # do not remain stale merely because the client has not fetched them yet.
     await reconcile_habit_auto_reveals(session, current_user, user_tz)
@@ -272,7 +282,7 @@ async def list_habits(
         # See _get_habit_with_completions: keep the windowed view authoritative
         # even when an unwindowed loader ran earlier on this session.
         .execution_options(populate_existing=True)
-        .order_by(Habit.sort_order.asc())  # type: ignore[union-attr]
+        .order_by(col(Habit.sort_order).asc().nulls_first(), col(Habit.id).asc())
     )
     items, total = await paginate_query(session, query, pagination)
     await _populate_streaks_for(session, items, current_user, user_tz)
