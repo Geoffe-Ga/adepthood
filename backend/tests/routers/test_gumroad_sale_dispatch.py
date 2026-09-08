@@ -1,11 +1,15 @@
 """Sale-event dispatch tests for POST /webhooks/gumroad/ping.
 
-Contract: an authenticated sale ping grants an idempotent active
-course_access entitlement when a user with the buyer's email already exists
-(matched case-insensitively) and links it to the persisted GumroadSale row;
-with no matching user only the sale row is persisted; a later license-gated
-signup for that email converges by linking its entitlement to the stored
-sale; non-sale events never grant.
+Contract: an authenticated sale ping grants through the licence binding
+(ADR 0008). A sale already bound to an account grants that account and no
+other, however many times it is redelivered. An unbound sale is auto-claimed
+for the account registered under the buyer's email (matched
+case-insensitively) only when that account holds no active course access —
+the re-purchase-after-refund shape; a buyer who already has access is buying
+a gift, so the sale is left unclaimed for whoever redeems the key. With no
+matching user only the sale row is persisted; a later license-gated signup
+converges by binding the sale and linking its entitlement to the stored row;
+non-sale events never grant.
 
 The token-pack branch is exercised alongside it: a sale of an allowlisted
 token-pack product credits the buyer's offering wallet exactly once, by the
@@ -23,11 +27,12 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from domain.entitlements import TOKEN_PACK_PRODUCT_IDS_ENV_VAR, TOKEN_PACK_SIZES_ENV_VAR
 from models.entitlement import Entitlement
 from models.gumroad_sale import GumroadSale
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.vault_activation import VaultActivation
 from models.wallet_audit import REASON_GUMROAD_PURCHASE, WalletAudit
@@ -42,7 +47,9 @@ PRODUCT_IDS_ENV = "GUMROAD_APTITUDE_PRODUCT_IDS"
 VERIFY_SEAM = "domain.entitlements.verify_license"
 BUYER_EMAIL = "buyer@example.com"
 MIXED_CASE_BUYER_EMAIL = "Buyer@Example.COM"
+RECIPIENT_EMAIL = "gift-recipient@example.com"
 SALE_ID = "S-100"
+GIFT_SALE_ID = "S-101"
 PRODUCT_ID = "prod_abc123"
 OFF_ALLOWLIST_PRODUCT_ID = "prod_token_packs"
 NON_SALE_RESOURCE = "refund"
@@ -51,6 +58,7 @@ SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
 COURSE_ACCESS_KIND = "course_access"
 LICENSE_USES = 1
 WEBHOOK_SALE_MARKER = "webhook_sale"
+LEFT_UNCLAIMED_MARKER = "sale_left_unclaimed"
 TOKEN_PACK_PRODUCT_ID = "prod_pack_small"
 UNSIZED_TOKEN_PACK_PRODUCT_ID = "prod_pack_unsized"
 UNKNOWN_PRODUCT_ID = "prod_not_sold_here"
@@ -108,8 +116,10 @@ def _log_carries_marker(caplog: pytest.LogCaptureFixture, marker: str) -> bool:
     return any(getattr(record, "reason_code", None) == marker for record in caplog.records)
 
 
-def _make_success_stub() -> Callable[..., Awaitable[GumroadLicenseResult | None]]:
-    """Build a verify_license stand-in that succeeds only for the webhook's sale."""
+def _make_success_stub(
+    sale_id: str = SALE_ID,
+) -> Callable[..., Awaitable[GumroadLicenseResult | None]]:
+    """Build a verify_license stand-in that reports ``LICENSE_KEY`` as ``sale_id``."""
 
     async def _verify(
         product_id: str,
@@ -125,13 +135,23 @@ def _make_success_stub() -> Callable[..., Awaitable[GumroadLicenseResult | None]
             purchase=GumroadPurchase(
                 email=BUYER_EMAIL,
                 product_id=PRODUCT_ID,
-                sale_id=SALE_ID,
+                sale_id=sale_id,
                 refunded=False,
                 chargebacked=False,
             ),
         )
 
     return _verify
+
+
+async def _signup_with_license(client: AsyncClient, email: str) -> int:
+    """Redeem ``LICENSE_KEY`` for a new account under ``email``; return its id."""
+    response = await client.post(
+        SIGNUP_PATH,
+        json={"email": email, "password": SIGNUP_PASSWORD, "license_key": LICENSE_KEY},
+    )
+    assert response.status_code == HTTPStatus.OK
+    return int(response.json()["user_id"])
 
 
 async def _persist_user(db_session: AsyncSession, email: str = BUYER_EMAIL) -> tuple[User, int]:
@@ -158,6 +178,24 @@ async def _count_entitlements(db_session: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+async def _active_entitlements_of(db_session: AsyncSession, user_id: int) -> int:
+    """Return how many live course_access rows ``user_id`` holds, read fresh."""
+    result = await db_session.execute(
+        select(func.count())
+        .select_from(Entitlement)
+        .where(col(Entitlement.user_id) == user_id, col(Entitlement.revoked_at).is_(None))
+    )
+    return int(result.scalar_one())
+
+
+async def _bindings(db_session: AsyncSession) -> list[LicenseBinding]:
+    """Return every binding row, read fresh."""
+    result = await db_session.execute(
+        select(LicenseBinding).execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
 @pytest.mark.asyncio
 async def test_sale_ping_grants_entitlement_to_existing_user(
     async_client: AsyncClient,
@@ -180,6 +218,10 @@ async def test_sale_ping_grants_entitlement_to_existing_user(
     assert entitlement.kind == COURSE_ACCESS_KIND
     assert entitlement.source_sale_id == sale_row.id
     assert entitlement.revoked_at is None
+    binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
+    assert binding.user_id == user_id
+    assert binding.gumroad_sale_id == SALE_ID
+    assert binding.product_id == PRODUCT_ID
     assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
     assert _log_carries_marker(caplog, WEBHOOK_SALE_MARKER)
 
@@ -319,6 +361,76 @@ async def test_webhook_first_then_signup_links_entitlement_to_stored_sale(
     assert entitlement.user_id == signup.json()["user_id"]
     assert entitlement.kind == COURSE_ACCESS_KIND
     assert entitlement.revoked_at is None
+    binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
+    assert binding.user_id == signup.json()["user_id"]
+    assert binding.gumroad_sale_id == SALE_ID
+
+
+@pytest.mark.asyncio
+async def test_a_sale_bound_by_a_gift_recipient_never_grants_the_buyers_account(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the recipient has redeemed the key, the buyer-email ping follows the binding.
+
+    The buyer has an account and no access — exactly the shape the email
+    auto-claim exists for — yet the sale is already bound elsewhere, so the
+    ping (and its replay) grants the recipient, not the buyer.
+    """
+    _buyer, buyer_id = await _persist_user(db_session)
+    monkeypatch.setattr(VERIFY_SEAM, _make_success_stub())
+    recipient_id = await _signup_with_license(async_client, RECIPIENT_EMAIL)
+
+    first = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=_sale_payload()
+    )
+    replay = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=_sale_payload()
+    )
+
+    assert [first.status_code, replay.status_code] == [HTTPStatus.OK, HTTPStatus.OK]
+    assert await _active_entitlements_of(db_session, buyer_id) == 0
+    assert await _active_entitlements_of(db_session, recipient_id) == 1
+    assert await _count_entitlements(db_session) == 1
+    bindings = await _bindings(db_session)
+    assert [(row.user_id, row.gumroad_sale_id) for row in bindings] == [(recipient_id, SALE_ID)]
+
+
+@pytest.mark.asyncio
+async def test_a_second_sale_for_a_buyer_who_already_has_access_is_left_unclaimed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A member buying again is buying a gift: the sale waits for whoever holds the key."""
+    caplog.set_level(logging.DEBUG)
+    _buyer, buyer_id = await _persist_user(db_session)
+    await async_client.post(WEBHOOK_PATH, params={"secret": webhook_secret}, data=_sale_payload())
+    assert await _active_entitlements_of(db_session, buyer_id) == 1
+
+    gift = await async_client.post(
+        WEBHOOK_PATH,
+        params={"secret": webhook_secret},
+        data=_sale_payload(sale_id=GIFT_SALE_ID),
+    )
+
+    assert gift.status_code == HTTPStatus.OK
+    assert [row.gumroad_sale_id for row in await _bindings(db_session)] == [SALE_ID]
+    assert await _count_entitlements(db_session) == 1
+    assert _log_carries_marker(caplog, LEFT_UNCLAIMED_MARKER)
+
+    monkeypatch.setattr(VERIFY_SEAM, _make_success_stub(sale_id=GIFT_SALE_ID))
+    recipient_id = await _signup_with_license(async_client, RECIPIENT_EMAIL)
+
+    assert await _active_entitlements_of(db_session, recipient_id) == 1
+    assert sorted((row.user_id, row.gumroad_sale_id) for row in await _bindings(db_session)) == [
+        (buyer_id, SALE_ID),
+        (recipient_id, GIFT_SALE_ID),
+    ]
 
 
 # -- Token-pack credit branch ------------------------------------------------

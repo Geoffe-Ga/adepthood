@@ -462,6 +462,42 @@ def test_the_purchase_receipt_outlives_deletion_in_both_documents() -> None:
     assert "receipt" in _read(_YOUR_DATA)
 
 
+def test_the_terms_permit_a_gift_and_still_forbid_resale() -> None:
+    """The terms say what ADR 0008 makes true: a licence may be given, not resold.
+
+    Decision 5 in prose form. The old "do not create one for someone else"
+    sentence prohibited the ordinary gift the code now supports, so it must be
+    gone; the prohibitions that survive — resale and simultaneous sharing —
+    must still be there, in the words a reader will look for.
+    """
+    terms = _prose(_TERMS_OF_SERVICE)
+
+    assert "do not create one for someone else" not in terms
+    assert "gift for someone else" in terms
+    assert "one licence unlocks one account at a time" in terms
+    assert "no reselling access to it" in terms
+    assert "no sharing one licence across several accounts at once" in terms
+
+
+def test_the_policy_and_your_data_describe_the_licence_binding() -> None:
+    """Both documents describe the binding the code keeps and the key it does not.
+
+    The privacy policy names the new record (which account a redeemed licence
+    is bound to, keyed by the sale identifier) and says the key itself is
+    never stored — the one claim in this area a reader can hold against the
+    schema. ``your-data.md`` says what deletion does to it: released, so one
+    new account may redeem the key, with access alone transferring.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    your_data = _prose(_YOUR_DATA)
+
+    assert "which account it is bound to" in policy
+    assert "the licence key itself is never stored" in policy
+    assert "erased with the account" in your_data
+    assert "redeemed by exactly one new account" in your_data
+    assert "access is all that transfers" in your_data
+
+
 def test_the_policy_claims_no_confidentiality_the_code_lacks() -> None:
     """No phrase in the policy reads as a guarantee against the operator.
 

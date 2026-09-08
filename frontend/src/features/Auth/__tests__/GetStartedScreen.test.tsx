@@ -45,6 +45,15 @@ describe('GetStartedScreen', () => {
     expect(getByText(/starting at zero/i)).toBeTruthy();
   });
 
+  // ADR 0008 Decision 5: a licence can be given to someone else, and the copy
+  // must never instruct a recipient to use the purchaser's email.
+  it('says a key can be a gift and never mentions an email', () => {
+    const { getByText, queryByText } = render(<GetStartedScreen navigation={mockNavigation} />);
+
+    expect(getByText(/as a gift/i)).toBeTruthy();
+    expect(queryByText(/email/i)).toBeNull();
+  });
+
   it('opens the Gumroad product page from config when the buy CTA is pressed', async () => {
     const { getByText } = render(<GetStartedScreen navigation={mockNavigation} />);
 

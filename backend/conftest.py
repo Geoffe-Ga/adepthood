@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Muta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from uuid import uuid4
 
 # Set SECRET_KEY for tests before any app modules are imported
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
@@ -55,6 +56,7 @@ from schemas.gumroad import GumroadPurchase  # noqa: E402
 # genuine Gumroad-backed gate; every other test just needs signup to succeed.
 _STUB_LICENSE_PRODUCT_ID = "prod_stub_aptitude"
 _STUB_LICENSE_SALE_PREFIX = "stub-sale-"
+_STUB_LICENSE_PURCHASER_EMAIL = "gumroad-buyer@example.com"
 
 # ---------------------------------------------------------------------------
 # Test database: SQLite in-memory (no external services needed)
@@ -264,26 +266,28 @@ def _stub_signup_license_gate(
 ) -> None:
     """Stub the signup license gate open for tests that do not opt into it.
 
-    Account creation now requires a verified Gumroad license, so the dozens of
+    Account creation requires a verified Gumroad license, so the dozens of
     suites that create users via ``POST /auth/signup`` would otherwise all fail
     the gate. This autouse fixture replaces ``verify_aptitude_license`` (as the
-    auth router looks it up) with a stub that verifies any request, echoing the
-    submitted email so the email-match check always passes. Tests carrying the
-    ``real_license_gate`` marker are skipped so they exercise the genuine gate.
+    auth router looks it up) with a stub that verifies any key as a live
+    purchase. Every call mints a fresh sale id: the licence binding is UNIQUE
+    per sale (ADR 0008), and suites sign up several accounts with the same or
+    no key, so a stable id would refuse the second account as "bound
+    elsewhere". Tests carrying the ``real_license_gate`` marker are skipped so
+    they exercise the genuine gate.
     """
     if request.node.get_closest_marker("real_license_gate") is not None:
         return
 
     async def _verify_stub(
-        email: str,
         license_key: str | None,  # noqa: ARG001 — stub verifies unconditionally
         *,
         client: object | None = None,  # noqa: ARG001 — matches the real signature
     ) -> AptitudeLicenseCheck:
         purchase = GumroadPurchase(
-            email=email,
+            email=_STUB_LICENSE_PURCHASER_EMAIL,
             product_id=_STUB_LICENSE_PRODUCT_ID,
-            sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{email}",
+            sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{uuid4().hex}",
             refunded=False,
             chargebacked=False,
         )

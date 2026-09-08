@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { auth, journal, setTokenGetter, users } from '@/api';
 
 /**
@@ -23,7 +25,8 @@ import { auth, journal, setTokenGetter, users } from '@/api';
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
+const SECOND_LICENSE_KEY = freshLicenseKey();
 
 const email = `e2e-data-export-${randomUUID()}${EMAIL_DOMAIN}`;
 const somebodyElse = `e2e-not-my-export-${randomUUID()}${EMAIL_DOMAIN}`;
@@ -89,7 +92,7 @@ describe('data-export journey against a live server', () => {
       email: somebodyElse,
       password: PASSWORD,
       timezone: TIMEZONE,
-      license_key: LICENSE_KEY,
+      license_key: SECOND_LICENSE_KEY,
     });
     const mine = sessionToken;
     sessionToken = theirs.token;

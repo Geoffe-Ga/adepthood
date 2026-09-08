@@ -17,6 +17,7 @@ from .gumroad_sale import GumroadSale
 from .habit import Habit
 from .invitation_signal import InvitationSignal
 from .journal_entry import JournalEntry
+from .license_binding import LicenseBinding
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
 from .marginalia import Marginalia
@@ -63,6 +64,7 @@ __all__ = [
     "InvitationSignal",
     "JournalEntry",
     "LLMUsageLog",
+    "LicenseBinding",
     "LoginAttempt",
     "Marginalia",
     "MettaReturnArc",

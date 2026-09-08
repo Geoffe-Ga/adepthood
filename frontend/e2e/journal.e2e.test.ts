@@ -2,13 +2,15 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { auth, journal, setTokenGetter } from '@/api';
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
 
 const email = `e2e-journal-${randomUUID()}${EMAIL_DOMAIN}`;
 // Non-ASCII on purpose: a UTF-8 mishandling anywhere on the wire (request

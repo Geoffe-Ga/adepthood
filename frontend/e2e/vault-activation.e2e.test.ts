@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import {
   auth,
   setTokenGetter,
@@ -14,7 +16,7 @@ import {
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
 const email = `e2e-vault-activation-${randomUUID()}${EMAIL_DOMAIN}`;
 
 function artifactFor(challenge: VaultKeyCeremonyChallenge): VaultWrappedKeyArtifact {

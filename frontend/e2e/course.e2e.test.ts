@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { ApiError, auth, course, setTokenGetter } from '@/api';
 import type { ContentItem } from '@/api';
 import { STAGE_DURATIONS_DAYS } from '@/constants/program';
@@ -10,7 +12,7 @@ import { STAGE_DURATIONS_DAYS } from '@/constants/program';
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+const LICENSE_KEY = freshLicenseKey();
 const HTTP_NOT_FOUND = 404;
 
 // A fresh account is provisioned on stage 1 and has sat on it for one day, so

@@ -2,8 +2,9 @@
 
 Contract: a ``cancellation`` or ``subscription_ended`` ping ends future access
 without reversing money. It applies ONLY to an APTITUDE sale — a subscription
-is the only thing there is to cancel. The buyer's ``course_access`` is revoked
-(unless another live APTITUDE purchase still covers it), the original sale
+is the only thing there is to cancel. The ``course_access`` of the account the
+sale's licence binding names is revoked — never an account looked up by email
+(ADR 0008 Decision 4) — while the binding itself survives; the original sale
 keeps ``refunded`` False because the seller kept the payment, and the wallet is
 never touched.
 
@@ -39,8 +40,10 @@ from domain.entitlements import (
 )
 from models.entitlement import Entitlement
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.wallet_audit import REASON_GUMROAD_REFUND, WalletAudit
+from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
 
 WEBHOOK_PATH = "/webhooks/gumroad/ping"
 WEBHOOK_SECRET = "gumroad-cancellation-shared-secret-test-only"  # pragma: allowlist secret
@@ -53,7 +56,12 @@ TOKEN_PACK_PRODUCT_ID = "prod_pack_small"
 TOKEN_PACK_SIZE = 100
 
 BUYER_EMAIL = "buyer@example.com"
-MIXED_CASE_BUYER_EMAIL = "Buyer@Example.COM"
+RECIPIENT_EMAIL = "gift-recipient@example.com"
+SIGNUP_PATH = "/auth/signup"
+SIGNUP_PASSWORD = "securepassword123"  # pragma: allowlist secret
+LICENSE_KEY = "CANCEL-SUITE-LICENSE-KEY"  # pragma: allowlist secret
+LICENSE_USES = 1
+VERIFY_SEAM = "domain.entitlements.verify_license"
 
 SALE_ID = "S-100"
 SECOND_SALE_ID = "S-101"
@@ -65,7 +73,6 @@ SUBSCRIPTION_ENDED_RESOURCE = "subscription_ended"
 REFUND_RESOURCE = "refund"
 
 UNKNOWN_SALE_MARKER = "unknown_sale"
-COVERED_MARKER = "covered_by_other_sale"
 NOT_APPLICABLE_MARKER = "cancellation_not_applicable"
 PREVIOUSLY_REVERSED_MARKER = "sale_previously_reversed"
 
@@ -189,6 +196,41 @@ async def _count_sales(db_session: AsyncSession) -> int:
     return int(result.scalar_one())
 
 
+async def _bindings(db_session: AsyncSession) -> list[tuple[int, str]]:
+    """Return every ``(user_id, sale_id)`` binding, read fresh and ordered by insertion."""
+    result = await db_session.execute(
+        select(LicenseBinding)
+        .order_by(col(LicenseBinding.id))
+        .execution_options(populate_existing=True)
+    )
+    return [(row.user_id, row.gumroad_sale_id) for row in result.scalars().all()]
+
+
+def _verify_stub_for(sale_id: str) -> object:
+    """Build a verify_license stand-in reporting ``LICENSE_KEY`` as ``sale_id``."""
+
+    async def _verify(
+        product_id: str,
+        license_key: str,
+        **_kwargs: object,
+    ) -> GumroadLicenseResult | None:
+        if license_key != LICENSE_KEY or product_id != APTITUDE_PRODUCT_ID:
+            return None
+        return GumroadLicenseResult(
+            success=True,
+            uses=LICENSE_USES,
+            purchase=GumroadPurchase(
+                email=BUYER_EMAIL,
+                product_id=APTITUDE_PRODUCT_ID,
+                sale_id=sale_id,
+                refunded=False,
+                chargebacked=False,
+            ),
+        )
+
+    return _verify
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resource_name", [CANCELLATION_RESOURCE, SUBSCRIPTION_ENDED_RESOURCE])
 async def test_ending_event_revokes_course_access_without_a_refund(
@@ -210,6 +252,7 @@ async def test_ending_event_revokes_course_access_without_a_refund(
     assert sale.refunded is False
     assert sale.revocation_processed_at is not None
     assert await _refund_audits(db_session) == []
+    assert await _bindings(db_session) == [(user_id, SALE_ID)]
 
 
 @pytest.mark.asyncio
@@ -283,32 +326,34 @@ async def test_a_cancellation_ping_row_never_satisfies_its_own_sale_lookup(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_of_a_covered_purchase_keeps_access(
+@pytest.mark.real_license_gate
+async def test_cancellation_revokes_the_account_bound_to_the_sale_even_when_its_email_differs(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second live APTITUDE purchase survives one of them being cancelled."""
-    caplog.set_level(logging.DEBUG)
-    await _persist_user(db_session)
-    await _ping(async_client, _sale_payload())
-    await _ping(
-        async_client,
-        _sale_payload(
-            sale_id=SECOND_SALE_ID,
-            product_id=SECOND_APTITUDE_PRODUCT_ID,
-            email=MIXED_CASE_BUYER_EMAIL,
-        ),
+    """The cancellation follows the binding, not the buyer's address (ADR 0008 Decision 4)."""
+    buyer_id = await _persist_user(db_session)
+    monkeypatch.setattr(VERIFY_SEAM, _verify_stub_for(SALE_ID))
+    signup = await async_client.post(
+        SIGNUP_PATH,
+        json={"email": RECIPIENT_EMAIL, "password": SIGNUP_PASSWORD, "license_key": LICENSE_KEY},
     )
+    assert signup.status_code == HTTPStatus.OK
+    recipient_id = int(signup.json()["user_id"])
+    await _ping(async_client, _sale_payload())
 
     response = await _ping(async_client, _cancellation_payload())
 
     assert response.status_code == HTTPStatus.OK
-    assert (await _sole_entitlement(db_session)).revoked_at is None
+    entitlement = await _sole_entitlement(db_session)
+    assert entitlement.user_id == recipient_id
+    assert entitlement.revoked_at is not None
+    assert await has_course_access(db_session, buyer_id) is False
     cancelled_sale = await _reload_sale(db_session, SALE_ID)
     assert cancelled_sale.refunded is False
     assert cancelled_sale.revocation_processed_at is not None
-    assert _log_carries_marker(caplog, COVERED_MARKER)
+    assert await _bindings(db_session) == [(recipient_id, SALE_ID)]
 
 
 @pytest.mark.asyncio
@@ -447,6 +492,7 @@ async def test_a_replayed_sale_ping_does_not_reinstate_cancelled_access(
     assert sale.revocation_processed_at == claimed_at
     assert sale.refunded is False
     assert _log_carries_marker(caplog, PREVIOUSLY_REVERSED_MARKER)
+    assert await _bindings(db_session) == [(user_id, SALE_ID)]
 
 
 @pytest.mark.asyncio

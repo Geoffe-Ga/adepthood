@@ -15,8 +15,10 @@ const TITLE = 'Choose your depth';
 // Gift economy first, price never. Nothing here should read as urgency,
 // scarcity, or a favour owed — the invitation has to be genuinely declinable.
 const LEAD = 'Adepthood is offered in the gift economy: pay what feels right, starting at zero.';
+// A key can be bought for someone else (ADR 0008): the recipient makes the
+// account with their own email, so nothing here may mention the purchaser's.
 const BODY =
-  'Take the course home from Gumroad, then bring your license key back here to make an account.';
+  'Take the course home from Gumroad — for yourself or as a gift — then bring the license key back here to make an account.';
 
 const BUY_LABEL = 'Get Adepthood on Gumroad';
 const HAVE_KEY_LABEL = 'I have a license key';

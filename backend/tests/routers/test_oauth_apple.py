@@ -38,6 +38,7 @@ from sqlmodel import SQLModel, select
 from domain.entitlements import PRODUCT_IDS_ENV_VAR
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.entitlement import Entitlement
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.vault_activation import VaultActivation
 from schemas.gumroad import GumroadLicenseResult, GumroadPurchase
@@ -95,6 +96,10 @@ EXISTING_EMAIL = "seeker@example.com"
 NEW_EMAIL = "newcomer@example.com"
 SECOND_NEW_EMAIL = "second-newcomer@example.com"
 RELAY_EMAIL = "a1b2c3d4e5@privaterelay.appleid.com"
+# The address the Hide-My-Email buyer actually bought under — never seen by
+# Adepthood as an account address, and irrelevant to the claim.
+REAL_PURCHASE_EMAIL = "real-address@example.com"
+THIRD_NEW_EMAIL = "third-newcomer@example.com"
 
 # Apple subjects are opaque ~44 character strings, not digits like Google's.
 KNOWN_SUBJECT = "000123.4c8f1a2b3d4e5f60718293a4b5c6d7e8.0001"
@@ -104,6 +109,7 @@ RELAY_SUBJECT = "000126.7fb4d5e6f708192a3b4c5d6e7f809012.0004"
 UNVERIFIED_SUBJECT = "000127.80c5e6f7089a1b2c3d4e5f60718293a4.0005"
 NO_LICENSE_SUBJECT = "000128.91d6f708192a3b4c5d6e7f8091a2b3c4.0006"
 LINKED_SUBJECT = "000129.a2e708192a3b4c5d6e7f8091a2b3c4d5.0007"
+BOUND_KEY_SUBJECT = "000130.b3f8192a3b4c5d6e7f8091a2b3c4d5e6.0008"
 GOOGLE_SUBJECT = "109876543210987654321"
 
 VALID_LICENSE_KEY = "AAAA1111-BBBB-2222-APPLE"  # pragma: allowlist secret
@@ -142,7 +148,7 @@ REASON_SIGNUP = "oauth_signup"
 JWT_SEGMENT_COUNT = 3
 SOLE_APPLE_ISSUER_COUNT = 1
 OAUTH_RATE_LIMIT_PER_MINUTE = 5
-BYTE_IDENTICAL_REJECTIONS = 2
+BYTE_IDENTICAL_REJECTIONS = 3
 DUAL_IDENTITY_COUNT = 2
 
 # Upper bounds the JWKS client must stay inside. An unbounded fetch timeout
@@ -269,15 +275,20 @@ def _fingerprint(response: Response) -> tuple[int, str | None, bytes]:
     return (response.status_code, response.headers.get("content-type"), response.content)
 
 
-def _license_result(email: str) -> GumroadLicenseResult:
-    """Build a live, unreversed Gumroad verify answer for ``email``."""
+def _sale_id_for(license_key: str) -> str:
+    """The stable Gumroad sale id the stub reports for ``license_key`` (one per key)."""
+    return f"{SALE_ID}-{license_key}"
+
+
+def _license_result(email: str, license_key: str) -> GumroadLicenseResult:
+    """Build a live, unreversed Gumroad verify answer for ``email``'s ``license_key``."""
     return GumroadLicenseResult(
         success=True,
         uses=LICENSE_USES,
         purchase=GumroadPurchase(
             email=email,
             product_id=ALLOWED_PRODUCT,
-            sale_id=SALE_ID,
+            sale_id=_sale_id_for(license_key),
             refunded=False,
             chargebacked=False,
             disputed=False,
@@ -317,7 +328,7 @@ class _LicenseVerifier:
 
     def grant(self, license_key: str, email: str) -> None:
         """Make ``license_key`` verify as a live purchase made by ``email``."""
-        self.results[license_key] = _license_result(email)
+        self.results[license_key] = _license_result(email, license_key)
 
     async def verify(
         self,
@@ -744,10 +755,13 @@ async def test_private_relay_email_with_a_license_creates_the_account(
     """A ``privaterelay.appleid.com`` address is a first-class account address.
 
     Apple's Hide My Email users never present anything else, so the relay
-    address is stored verbatim and is the address the license must match.
+    address is stored verbatim. The licence was bought under their real
+    address, which Adepthood never sees and never needs: ADR 0008 makes
+    possession of the key the whole claim, so the purchase email is not
+    compared with anything.
     """
     caplog.set_level(logging.INFO)
-    license_verifier.grant(RELAY_LICENSE_KEY, RELAY_EMAIL)
+    license_verifier.grant(RELAY_LICENSE_KEY, REAL_PURCHASE_EMAIL)
 
     response = await async_client.post(
         OAUTH_PATH,
@@ -783,6 +797,9 @@ async def test_private_relay_email_with_a_license_creates_the_account(
     assert identity.subject == RELAY_SUBJECT
     assert identity.user_id == body["user_id"]
     assert identity.email_at_link_time == RELAY_EMAIL
+    binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
+    assert binding.user_id == body["user_id"]
+    assert binding.gumroad_sale_id == _sale_id_for(RELAY_LICENSE_KEY)
     assert await _count_rows(db_session, VaultActivation) == 0
     assert _log_carries_marker(caplog, REASON_SIGNUP)
 
@@ -965,13 +982,23 @@ async def test_needs_license_refusals_are_byte_identical(
     db_session: AsyncSession,
     license_verifier: _LicenseVerifier,
 ) -> None:
-    """A brand-new email with no license and an unverified one look the same.
+    """No licence, an unverified address, and a key bound elsewhere all look the same.
 
-    Any difference between the two -- one byte of body, one header, one status
-    -- would tell an unauthenticated caller which addresses Apple has verified
-    and which accounts already exist.
+    Any difference between them -- one byte of body, one header, one status
+    -- would tell an unauthenticated caller which addresses Apple has verified,
+    which accounts already exist, or (ADR 0008) which keys are valid but
+    already redeemed.
     """
     license_verifier.grant(VALID_LICENSE_KEY, SECOND_NEW_EMAIL)
+    holder = await _seed_user(db_session)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT,
+        )
+    )
+    await db_session.commit()
 
     no_license = await async_client.post(
         OAUTH_PATH,
@@ -989,13 +1016,26 @@ async def test_needs_license_refusals_are_byte_identical(
         ),
     )
 
-    fingerprints = [_fingerprint(no_license), _fingerprint(unverified)]
+    bound_elsewhere = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(
+            _mint_token(sub=BOUND_KEY_SUBJECT, email=THIRD_NEW_EMAIL),
+            license_key=VALID_LICENSE_KEY,
+        ),
+    )
+
+    fingerprints = [
+        _fingerprint(no_license),
+        _fingerprint(unverified),
+        _fingerprint(bound_elsewhere),
+    ]
     assert len(fingerprints) == BYTE_IDENTICAL_REJECTIONS
     assert all(status == HTTPStatus.CONFLICT for status, _, _ in fingerprints)
     assert all(DETAIL_NEEDS_LICENSE.encode() in body for _, _, body in fingerprints)
     assert len(set(fingerprints)) == 1
-    assert await _count_rows(db_session, User) == 0
+    assert await _count_rows(db_session, User) == 1
     assert await _count_rows(db_session, AuthIdentity) == 0
+    assert await _count_rows(db_session, LicenseBinding) == 1
 
 
 # ---------------------------------------------------------------------------

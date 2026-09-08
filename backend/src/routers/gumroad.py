@@ -10,11 +10,19 @@ Each event type this router understands is routed through ``_EVENT_HANDLERS``,
 the single table that also defines what counts as a known event.
 
 A ``sale`` event dispatches two side effects guarded by disjoint product
-allowlists, so at most one fires: the buyer's ``course_access`` entitlement
-for an APTITUDE product, and a BotMason wallet credit for a token pack. Both
-are idempotent, so replays stay safe. The credited amount comes solely from
-the operator-configured pack-size map — never from a payload field, which a
+allowlists, so at most one fires: a ``course_access`` grant for an APTITUDE
+product, and a BotMason wallet credit for a token pack. Both are idempotent,
+so replays stay safe. The credited amount comes solely from the
+operator-configured pack-size map — never from a payload field, which a
 forged ping would control.
+
+The course grant goes through the licence binding (ADR 0008): a sale already
+bound to an account grants that account and no other, whatever email the
+ping carries. An unbound sale is auto-claimed for the buyer-email account
+only when that account holds no active access — the re-purchase-after-refund
+shape. A member who buys again is buying a gift, and Gumroad's ping always
+lands before the recipient can sign up, so binding it to the buyer would
+kill the recipient's key; the sale is left unclaimed for whoever redeems it.
 
 The reversal events unwind that delivery. ``refund`` and ``dispute`` return
 the money; ``cancellation`` and ``subscription_ended`` only stop the
@@ -44,11 +52,12 @@ from sqlmodel import select
 from database import get_session
 from domain.entitlements import (
     REASON_WEBHOOK_SALE,
-    grant_course_access,
+    has_course_access,
     is_aptitude_product_id,
     is_token_pack_product_id,
     token_pack_size,
 )
+from domain.license_claims import claim_license, find_binding, sale_reversed
 from error_responses import build_router
 from errors import bad_request
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
@@ -66,6 +75,7 @@ _TRUE_FORM_VALUE = "true"
 # Payload keys this router reads by name more than once.
 _PRODUCT_ID_FIELD = "product_id"
 _EMAIL_FIELD = "email"
+_LICENSE_KEY_FIELD = "license_key"  # pragma: allowlist secret
 _REFUNDED_FIELD = "refunded"
 
 # Structured-log reason codes for the sale-dispatch outcomes an operator
@@ -76,6 +86,9 @@ _REASON_REFUNDED_SALE = "refunded_sale"
 _REASON_PREVIOUSLY_REVERSED = "sale_previously_reversed"
 _REASON_SIZE_UNCONFIGURED = "token_pack_size_unconfigured"
 _REASON_PACK_CREDITED = "token_pack_credited"
+# An unbound APTITUDE sale whose buyer already holds access: a gift, waiting
+# for whoever redeems the key rather than bound to the buyer.
+_REASON_LEFT_UNCLAIMED = "sale_left_unclaimed"
 
 
 def _require_valid_secret(provided: str | None) -> None:
@@ -133,6 +146,20 @@ async def _sale_already_recorded(session: AsyncSession, sale_id: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+def _without_licence_key(payload: dict[str, str]) -> dict[str, str]:
+    """The ping minus ``license_key``, which is never persisted.
+
+    Gumroad sends the key on the sale ping for a licensed product, and ADR
+    0008 made possession of that key the entire claim proof -- so a stored
+    copy would be a standing bearer credential for the account the sale can
+    claim, and would falsify the privacy policy's plain statement that the
+    key itself is never kept. Only this one field is dropped: the rest of the
+    ping is the record of the sale, and the admin summary reads the amount
+    out of it.
+    """
+    return {field: value for field, value in payload.items() if field != _LICENSE_KEY_FIELD}
+
+
 async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
     """Insert the GumroadSale row; a concurrent replay collapses to a no-op."""
     sale = GumroadSale(
@@ -142,7 +169,7 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
         resource_name=payload.get("resource_name", ""),
         is_recurring_charge=_coerce_form_flag(payload, "is_recurring_charge"),
         refunded=_coerce_form_flag(payload, _REFUNDED_FIELD),
-        raw_payload=payload,
+        raw_payload=_without_licence_key(payload),
     )
     session.add(sale)
     try:
@@ -167,45 +194,62 @@ async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
     return result.scalars().first()
 
 
+async def _resolve_claimant(session: AsyncSession, payload: dict[str, str]) -> User | None:
+    """Return the account this sale should grant, or ``None`` to leave it be.
+
+    A bound sale answers its holder, whatever email the ping carries (ADR
+    0008 Decision 4). An unbound sale answers the buyer-email account only
+    when that account holds no active course access; a buyer who already has
+    access is buying a gift, and the sale stays unclaimed for the recipient.
+    """
+    binding = await find_binding(session, payload["sale_id"])
+    if binding is not None:
+        return await session.get(User, binding.user_id)
+    user = await _find_user_by_email(session, payload.get(_EMAIL_FIELD, ""))
+    if user is None or user.id is None:
+        return None
+    if await has_course_access(session, user.id):
+        logger.info("gumroad_webhook_event", extra={"reason_code": _REASON_LEFT_UNCLAIMED})
+        return None
+    return user
+
+
 async def _grant_for_sale(session: AsyncSession, payload: dict[str, str]) -> None:
-    """Grant course access for a sale ping when the buyer already signed up.
+    """Claim a sale ping's course access for the account the binding names.
 
     Grants only for a sale of an APTITUDE product (the ping's ``product_id``
     must be on ``GUMROAD_APTITUDE_PRODUCT_IDS`` — the same allowlist the signup
     path enforces), so a future non-APTITUDE product sold on the same Gumroad
-    account never silently grants course access. With no matching user the
-    sale row alone is the outcome (the buyer's later license-gated signup
-    converges by linking to it). The grant is idempotent, so webhook replays
-    never duplicate an entitlement.
+    account never silently grants course access. The claimant comes from
+    :func:`_resolve_claimant`; with none the sale row alone is the outcome
+    (a later license-gated signup converges by binding it). The claim is
+    idempotent, so webhook replays never duplicate a binding or an entitlement.
 
-    Requires the stored sale to be unreversed: a sale whose reversal claim is
-    already spent grants nothing, however many times Gumroad redelivers it.
+    Requires the stored sale to be unreversed (:func:`sale_reversed`, the same
+    guard the creation paths consult): a reversal is permanent for the sale
+    that funded the access, and it deliberately leaves the holder with no
+    active entitlement. Since the grant is only idempotent against a live one,
+    a stale redelivery of the original purchase would mint a fresh grant and
+    hand a refunded buyer back the access they were charged back for. The
+    token-pack side needs no twin of this guard: ``token_pack_credited_at`` is
+    a permanent one-way gate that no reversal ever clears.
     """
-    if not is_aptitude_product_id(payload.get(_PRODUCT_ID_FIELD)):
+    product_id = payload.get(_PRODUCT_ID_FIELD, "")
+    if not is_aptitude_product_id(product_id):
         return
-    user = await _find_user_by_email(session, payload.get(_EMAIL_FIELD, ""))
-    if user is None:
-        return
-    sale_result = await session.execute(
-        select(GumroadSale)
-        .where(GumroadSale.gumroad_sale_id == payload["sale_id"])
-        # A reversal writes the claim through SQL alone, so an instance this
-        # session already holds would still read as unreversed; the guard
-        # below has to see the row as the database has it.
-        .execution_options(populate_existing=True)
-    )
-    sale = sale_result.scalars().first()
-    if sale is not None and sale.revocation_processed_at is not None:
-        # A reversal is permanent for the sale that funded the access, and it
-        # deliberately leaves the buyer with no active entitlement. Since the
-        # grant is only idempotent against a live one, a stale redelivery of
-        # the original purchase would mint a fresh grant and hand a refunded
-        # buyer back the access they were charged back for. The token-pack
-        # side needs no twin of this guard: ``token_pack_credited_at`` is a
-        # permanent one-way gate that no reversal ever clears.
+    if await sale_reversed(session, payload["sale_id"]):
         logger.info("gumroad_webhook_event", extra={"reason_code": _REASON_PREVIOUSLY_REVERSED})
         return
-    await grant_course_access(session, user, sale=sale, reason_code=REASON_WEBHOOK_SALE)
+    user = await _resolve_claimant(session, payload)
+    if user is None:
+        return
+    await claim_license(
+        session,
+        user,
+        sale_id=payload["sale_id"],
+        product_id=product_id,
+        reason_code=REASON_WEBHOOK_SALE,
+    )
 
 
 def _token_pack_credit_amount(payload: dict[str, str]) -> int | None:

@@ -52,7 +52,7 @@ const HELP_LINK_LABEL = 'Find your license key';
 const HELP_LINK_COPY = "Where's my key?";
 
 const INVALID_LICENSE_COPY =
-  "We couldn't verify that key — double-check it matches the email and product.";
+  "We couldn't verify that key — double-check it against your Gumroad receipt.";
 const LICENSE_REQUIRED_COPY = 'Add the license key from your Gumroad receipt to continue.';
 const TOO_MANY_ATTEMPTS_COPY =
   "That's several tries in a row. Give it an hour, then try again with the key from your receipt.";

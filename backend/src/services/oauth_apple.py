@@ -30,12 +30,14 @@ exchange happens, so no client secret is needed. That matters because Apple's
 server would have to mint and rotate from a downloaded private key — an entire
 key-custody problem this flow simply never acquires.
 
-**The APTITUDE license gate applies unchanged.** Creating an account still
-requires a license whose Gumroad purchase email matches the address the token
-carries. For a Hide My Email user whose purchase was made under their real
-address those two differ, so the create rung refuses — as the generic 409 that
-every other refusal also returns, which is the point: the response says nothing
-about why. That is a known, accepted consequence of keeping one ladder with no
+**The APTITUDE license gate applies unchanged, and Hide My Email is
+first-class.** Creating an account still requires a live, allowlisted licence,
+but the purchase email is never compared with the address the token carries
+(ADR 0008): a Hide My Email user whose purchase was made under their real
+address is admitted exactly like anyone else, and the relay address is the
+account's address. What the gate does refuse -- a key another account has
+already redeemed -- answers with the generic 409 every other refusal returns,
+which is the point: the response says nothing about why. One ladder, no
 provider-shaped exceptions in it.
 """
 

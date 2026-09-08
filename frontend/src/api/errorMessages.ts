@@ -72,9 +72,12 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
 
   // --- Gumroad license verification (signup) ---------------------------
   // ``invalid_license`` is deliberately indistinguishable from "this email is
-  // already registered" on the wire (anti-enumeration), so the copy must not
-  // claim to know which of the two happened.
-  invalid_license: "We couldn't verify that key — double-check it matches the email and product.",
+  // already registered" and from "this key is already redeemed by another
+  // account" on the wire (anti-enumeration), so the copy must not claim to
+  // know which happened. It must not mention the email either: a key may have
+  // been bought for someone else (ADR 0008), so "matches the email" would send
+  // a gift recipient looking for a mistake that is not one.
+  invalid_license: "We couldn't verify that key — double-check it against your Gumroad receipt.",
   license_required: ADD_LICENSE_KEY,
   too_many_license_attempts:
     "That's several tries in a row. Give it an hour, then try again with the key from your receipt.",

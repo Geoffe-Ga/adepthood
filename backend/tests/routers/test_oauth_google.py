@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from urllib.parse import urlparse
 
 import jwt
@@ -38,6 +39,7 @@ from domain.entitlements import PRODUCT_IDS_ENV_VAR
 from integrations.gumroad import GumroadUnavailableError
 from models.auth_identity import AuthIdentity, AuthProvider
 from models.entitlement import Entitlement
+from models.license_binding import LicenseBinding
 from models.user import User
 from models.vault_activation import VaultActivation
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
@@ -64,6 +66,7 @@ LOGIN_PATH = "/auth/login"
 JWKS_SEAM = "services.oauth_google._get_jwk_client"
 VERIFY_SEAM = "domain.entitlements.verify_license"
 CAP_PEEK_SEAM = "routers.auth.invalid_license_cap_exhausted"
+FIND_BINDING_SEAM = "domain.license_claims.find_binding"
 
 ALLOWED_PRODUCT_ALPHA = "prod_alpha"
 ALLOWED_PRODUCT_BETA = "prod_beta"
@@ -97,6 +100,8 @@ NEW_EMAIL = "newcomer@example.com"
 SECOND_NEW_EMAIL = "second-newcomer@example.com"
 UNCLAIMED_EMAIL = "stranger@example.com"
 UNVERIFIED_NEW_EMAIL = "unverified-newcomer@example.com"
+BOUND_KEY_EMAIL = "bound-key-newcomer@example.com"
+GIFT_BUYER_EMAIL = "gift-buyer@example.com"
 DISPLAY_NAME = "Seeker Example"
 
 KNOWN_SUBJECT = "google-sub-known-0001"
@@ -108,6 +113,8 @@ NO_KEY_SUBJECT = "google-sub-nokey-0006"
 BAD_KEY_SUBJECT = "google-sub-badkey-0007"
 COLLISION_SUBJECT = "google-sub-collision-0008"
 UNVERIFIED_SUBJECT = "google-sub-unverified-0009"
+BOUND_KEY_SUBJECT = "google-sub-boundkey-0010"
+GIFT_SUBJECT = "google-sub-gift-0011"
 THROTTLE_SUBJECT_PREFIX = "google-sub-throttle-"
 THROTTLE_SUBJECT_FINAL = f"{THROTTLE_SUBJECT_PREFIX}final"
 THROTTLE_EMAIL_PREFIX = "throttle-attempt-"
@@ -152,7 +159,7 @@ GARBAGE_TOKEN = "not.a.jwt"
 OAUTH_RATE_LIMIT_PER_MINUTE = 5
 CONCURRENT_REQUESTS = 2
 SOCIAL_ACCOUNT_COUNT = 2
-BYTE_IDENTICAL_REJECTIONS = 4
+BYTE_IDENTICAL_REJECTIONS = 5
 
 # One 2048-bit keypair per module: generation is expensive enough that doing it
 # per test would dominate the suite's runtime. The second, unrelated key exists
@@ -294,15 +301,24 @@ async def _needs_license_reference(client: AsyncClient) -> tuple[int, str | None
     )
 
 
-def _license_result(email: str) -> GumroadLicenseResult:
-    """Build a live, unreversed Gumroad verify answer for ``email``."""
+def _sale_id_for(license_key: str) -> str:
+    """The stable Gumroad sale id the stub reports for ``license_key``.
+
+    One sale per key, because the binding is UNIQUE per sale: two keys that
+    reported the same sale would be one licence in the eyes of the claim.
+    """
+    return f"{SALE_ID}-{license_key}"
+
+
+def _license_result(email: str, license_key: str) -> GumroadLicenseResult:
+    """Build a live, unreversed Gumroad verify answer for ``email``'s ``license_key``."""
     return GumroadLicenseResult(
         success=True,
         uses=LICENSE_USES,
         purchase=GumroadPurchase(
             email=email,
             product_id=ALLOWED_PRODUCT_ALPHA,
-            sale_id=SALE_ID,
+            sale_id=_sale_id_for(license_key),
             refunded=False,
             chargebacked=False,
             disputed=False,
@@ -343,7 +359,7 @@ class _LicenseVerifier:
 
     def grant(self, license_key: str, email: str) -> None:
         """Make ``license_key`` verify as a live purchase made by ``email``."""
-        self.results[license_key] = _license_result(email)
+        self.results[license_key] = _license_result(email, license_key)
 
     async def verify(
         self,
@@ -967,6 +983,72 @@ async def test_created_account_takes_its_display_name_from_the_name_claim(
 
 
 @pytest.mark.asyncio
+async def test_gifted_license_creates_the_google_account_regardless_of_purchase_email(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """A key bought under someone else's address creates the account and binds the sale."""
+    license_verifier.grant(VALID_LICENSE_KEY, GIFT_BUYER_EMAIL)
+
+    response = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(
+            _mint_token(sub=GIFT_SUBJECT, email=NEW_EMAIL), license_key=VALID_LICENSE_KEY
+        ),
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    users = (await db_session.execute(select(User))).scalars().all()
+    assert len(users) == 1
+    assert users[0].email == NEW_EMAIL
+    assert await _count_rows(db_session, Entitlement) == 1
+    binding = (await db_session.execute(select(LicenseBinding))).scalar_one()
+    assert binding.user_id == response.json()["user_id"]
+    assert binding.gumroad_sale_id == _sale_id_for(VALID_LICENSE_KEY)
+
+
+@pytest.mark.asyncio
+async def test_losing_the_binding_race_on_oauth_is_the_generic_409_with_no_orphan(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """When the UNIQUE constraint, not a pre-check, refuses the claim, the ladder answers 409.
+
+    Both pre-checks are silenced so the binding insert reaches the constraint;
+    the flushed User rolls back with it and the re-walked ladder finds no
+    account for the subject, so the refusal is the one every other 409 is.
+    """
+    holder = await _seed_user(db_session)
+    license_verifier.grant(VALID_LICENSE_KEY, GIFT_BUYER_EMAIL)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT_ALPHA,
+        )
+    )
+    await db_session.commit()
+    reference = await _needs_license_reference(async_client)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FIND_BINDING_SEAM, AsyncMock(return_value=None))
+        response = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(
+                _mint_token(sub=BOUND_KEY_SUBJECT, email=BOUND_KEY_EMAIL),
+                license_key=VALID_LICENSE_KEY,
+            ),
+        )
+
+    assert _fingerprint(response) == reference
+    assert await _count_rows(db_session, User) == 1
+    assert await _count_rows(db_session, AuthIdentity) == 0
+    assert await _count_rows(db_session, LicenseBinding) == 1
+
+
+@pytest.mark.asyncio
 async def test_social_accounts_get_distinct_unusable_passwords(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -1053,6 +1135,7 @@ async def test_concurrent_first_logins_create_exactly_one_account(
     assert all(response.status_code != HTTPStatus.INTERNAL_SERVER_ERROR for response in responses)
     assert await _count_rows_via(concurrent_session_factory, User) == 1
     assert await _count_rows_via(concurrent_session_factory, AuthIdentity) == 1
+    assert await _count_rows_via(concurrent_session_factory, LicenseBinding) == 1
 
 
 async def _exhaust_invalid_license_cap(async_client: AsyncClient) -> None:
@@ -1169,7 +1252,11 @@ async def test_racing_past_the_peek_is_still_refused_by_the_charge(
 
 
 def _needs_license_payloads() -> tuple[dict[str, str], ...]:
-    """The four distinct ways to land on step 5, which must be indistinguishable."""
+    """The five distinct ways to land on step 5, which must be indistinguishable.
+
+    The fifth is ADR 0008's: a perfectly valid key that another account has
+    already redeemed. "Valid but claimed" must not be readable off the wire.
+    """
     return (
         _oauth_payload(_mint_token(sub=NO_KEY_SUBJECT, email=NEW_EMAIL)),
         _oauth_payload(
@@ -1183,6 +1270,10 @@ def _needs_license_payloads() -> tuple[dict[str, str], ...]:
             _mint_token(sub=UNVERIFIED_SUBJECT, email=UNVERIFIED_NEW_EMAIL, email_verified=False),
             license_key=VALID_LICENSE_KEY,
         ),
+        _oauth_payload(
+            _mint_token(sub=BOUND_KEY_SUBJECT, email=BOUND_KEY_EMAIL),
+            license_key=VALID_LICENSE_KEY,
+        ),
     )
 
 
@@ -1194,8 +1285,18 @@ async def test_every_needs_license_rejection_is_byte_identical(
     license_verifier: _LicenseVerifier,
 ) -> None:
     """No 409 reveals whether the email exists, whether it is verified, or key validity."""
-    await _seed_user(db_session)
+    user = await _seed_user(db_session)
     license_verifier.grant(VALID_LICENSE_KEY, UNVERIFIED_NEW_EMAIL)
+    # The seeded account already holds the valid key's sale, so the fifth
+    # payload presents a bound key from a brand-new verified address.
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(user),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT_ALPHA,
+        )
+    )
+    await db_session.commit()
 
     fingerprints = [
         _fingerprint(await async_client.post(OAUTH_PATH, json=payload))
@@ -1209,6 +1310,7 @@ async def test_every_needs_license_rejection_is_byte_identical(
     assert await _count_rows(db_session, User) == 1
     assert await _count_rows(db_session, Entitlement) == 0
     assert await _count_rows(db_session, AuthIdentity) == 0
+    assert await _count_rows(db_session, LicenseBinding) == 1
 
 
 @pytest.mark.asyncio
