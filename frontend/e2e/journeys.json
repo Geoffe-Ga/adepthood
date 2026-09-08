@@ -114,6 +114,18 @@
     "issue": 2491
   },
   {
+    "id": "habits.added-habit-joins-the-program-cadence",
+    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and the date on its tile is the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: driving this journey means opening the add-habit sheet and reading the date on the tile it creates, and while the POST /habits/ body does carry the start_date, observing only that would not prove the user sees the rung, which is the half that regressed. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["POST /habits/", "GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2708
+  },
+  {
     "id": "habits.scaffolding-start-date-anchors-the-program",
     "description": "The date the user picks in Energy Scaffolding is the day their program begins, and it stays that day. They choose it in the reorder step, the scaffold rows POST with dates laid out from it, and the reload that follows re-derives the universal anchor that Map, Practice, Course and Journal all read for the current stage and week. A habit the user brought along from before the program carries the date they actually started it, which is usually earlier than the date they picked, and it must not become the program's beginning -- otherwise bringing one habit along on day one moves every other screen back to a day the program had not started. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal: driving this journey means opening the scaffolding modal, operating its date picker, and adding a habit from the carryover lap, none of which a lane that cannot render can do. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"program anchor ignores carryover habits\" block, which covers the live load, the offline cache, and the reload that follows onboardingSave) and by the picker's own label in src/features/Habits/components/__tests__/OnboardingModal.step4.test.tsx. Two anchors exist and this journey watches only the client's: the server stamps its own when the progress row is created, so a user who picks a future date has one of each and they disagree until they are reconciled.",
     "crosses": {

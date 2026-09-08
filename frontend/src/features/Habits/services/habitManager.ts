@@ -44,6 +44,7 @@ import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from
 import {
   getGoalTier,
   getGoalTarget,
+  calculateHabitStartDate,
   calculateTodaysProgress,
   carryoverSlot,
   countCarryover,
@@ -237,6 +238,29 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
 });
 
 /**
+ * Where the program's ladder starts, for a row about to be laid on it. The
+ * stored anchor when there is one; otherwise the same lossy inverse
+ * ``syncProgramAnchorFromHabits`` would take at the next load, so an add made
+ * with no anchor stored lands AFTER the rows that already exist rather than
+ * becoming a new, earlier minimum — which is the whole defect. ``null`` only
+ * when neither exists: this row is itself the first rung, and today is what
+ * defines the ladder.
+ */
+const programCadenceBase = (prev: readonly Habit[]): Date | null =>
+  useProgramStore.getState().programStartDate ?? deriveProgramAnchor(prev);
+
+/**
+ * A carryover row's date is the day the user actually began that habit — their
+ * own history, not a slot on the cadence — so it is stamped today and never
+ * laid on the ladder, the same exclusion ``deriveProgramAnchor`` already makes.
+ */
+const startDateForAdd = (prev: readonly Habit[], isCarryover: boolean, slotIndex: number): Date => {
+  if (isCarryover) return new Date();
+  const base = programCadenceBase(prev);
+  return base === null ? new Date() : calculateHabitStartDate(base, slotIndex);
+};
+
+/**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
  * STAGE_ORDER so habits added after the original ten still pick up an
  * aptitude color; the ids are placeholders replaced when the server round-trip
@@ -250,6 +274,17 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
  * takes the next non-carryover index, while a carryover add takes the next
  * carryover index and colors from its negative display slot — so mixed lists
  * never inflate either side's slot with the other's count.
+ *
+ * The date follows that same slot. A program add joins the ladder at its own
+ * rung, so it carries exactly the date ``updateStartDates`` in the reorder
+ * modal would stamp for that slot — the date its stage badge has always
+ * implied — instead of the wall clock, which put the row somewhere no reorder
+ * pass would ever leave it and, worse, let a row stamped today undercut the
+ * minimum a future anchor is re-derived from. A carryover add keeps today,
+ * because its date is the user's own history rather than a slot on the ladder.
+ * Past the tenth rung the date saturates at anchor + 252 days while the stage
+ * keeps wrapping; that is ``calculateHabitStartDate``'s own behaviour, shared
+ * with ``updateStartDates``, and matching it here is the point.
  */
 const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit => {
   const slotIndex = isCarryover ? countCarryover(prev) : prev.filter(isNotCarryoverHabit).length;
@@ -264,7 +299,7 @@ const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boole
     streak: 0,
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
-    start_date: new Date(),
+    start_date: startDateForAdd(prev, isCarryover, slotIndex),
     goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
@@ -328,10 +363,25 @@ const deriveProgramAnchor = (
  * ``deriveProgramAnchor``, so a store holding only those yields no anchor and
  * nothing is written.
  *
- * This is the client's anchor only. The server keeps its own, stamped when the
- * progress row is created, and the two are not reconciled here: a user who
- * picks a future start date will have a client anchor on that date and a server
- * anchor on the day they first arrived. Reconciling them is a separate change.
+ * A fourth function touches the anchor without writing one: ``useHydrateProgramStore``
+ * (``src/store/useProgramStore.ts``) seeds it from AsyncStorage on cold start.
+ * It is a restorer, not a writer, and it is what makes the "no anchor stored"
+ * case here mean "genuinely lost" rather than "not read yet".
+ *
+ * The ROWS the inverse reads from have three writers of their own, and all
+ * three must lay a program row on the cadence for the inverse to be a fixed
+ * point: ``OnboardingModal``'s scaffold layout, ``updateStartDates`` in
+ * ``ReorderHabitsModal``, and ``buildAddedHabit`` above -- which was the one
+ * that did not, stamping the wall clock and so undercutting the minimum
+ * whenever the stored anchor was in the future and had been wiped.
+ *
+ * This is the client's anchor only. The server keeps its own --
+ * ``program_started_at`` on ``backend/src/models/stage_progress.py``, stamped
+ * when the progress row is created and read by ``resolve_program_anchor`` in
+ * ``backend/src/domain/program_calendar.py`` -- and the two are not reconciled
+ * here: a user who picks a future start date will have a client anchor on that
+ * date and a server anchor on the day they first arrived. Reconciling them is a
+ * separate change.
  */
 const syncProgramAnchorFromHabits = (): void => {
   if (useProgramStore.getState().programStartDate !== null) return;
@@ -1192,8 +1242,11 @@ export const habitManager = {
    * then POSTs to ``/habits/`` and re-runs ``loadHabits`` so the temporary
    * negative ids are replaced with the server-assigned ones (otherwise the
    * goal-completion POSTs would 404 on the next log). ``isCarryover`` flags an
-   * add made from a negative lap: the row keeps today's start date but slots
-   * into the carryover partition instead of the program's.
+   * add made from a negative lap: that row keeps today's start date -- the day
+   * the user actually began it -- and slots into the carryover partition
+   * instead of the program's. A program add takes the opposite path: it is
+   * laid on the program cadence at its own slot by ``buildAddedHabit``, so its
+   * date is the rung its stage badge names, not the day it was added.
    */
   addHabit: async (input: AddHabitInput, isCarryover = false): Promise<void> => {
     const prev = getHabits();
