@@ -156,6 +156,41 @@ describe('CorpusInvitationNote', () => {
     expect(queryByTestId(INVITATION)).toBeNull();
   });
 
+  it('a read still in flight cannot resurrect the note after a decline', async () => {
+    // The read for pass N+1 is issued the moment that pass settles, so it is
+    // already on the wire while the note from pass N is still on screen and
+    // both decline controls are pressable. That read is answered by a server
+    // that has not yet seen the dismissal, so it says "offer" -- and landing
+    // late it must not put back the invitation the writer just refused
+    // forever. NORTH-STAR forbids the repeat, and the PR promises the decline
+    // sticks.
+    let answerSecondRead: (value: CorpusInvitation) => void = () => {};
+    mockStatus.mockResolvedValueOnce(OFFERED).mockReturnValueOnce(
+      new Promise<CorpusInvitation>((resolve) => {
+        answerSecondRead = resolve;
+      }),
+    );
+    const view = renderNote(1);
+    await view.findByTestId(INVITATION);
+
+    const Note = CorpusInvitationNote as unknown as React.ComponentType<{
+      completedPasses: number;
+      onOpen: () => void;
+    }>;
+    view.rerender(<Note completedPasses={2} onOpen={view.onOpen} />);
+    expect(view.queryByTestId(INVITATION)).not.toBeNull();
+
+    fireEvent.press(view.getByTestId(`${INVITATION}-never`));
+    expect(mockDismiss).toHaveBeenCalledWith(true);
+    expect(view.queryByTestId(INVITATION)).toBeNull();
+
+    await act(async () => {
+      answerSecondRead(OFFERED);
+    });
+
+    expect(view.queryByTestId(INVITATION)).toBeNull();
+  });
+
   it('a failed decline write still leaves the note hidden and throws nothing', async () => {
     mockDismiss.mockRejectedValue(new Error('offline'));
     const { findByTestId, getByTestId, queryByTestId } = renderNote(1);

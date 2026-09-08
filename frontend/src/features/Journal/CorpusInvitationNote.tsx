@@ -26,7 +26,7 @@
  * write fails still takes the note away, because the person has already
  * answered and the worst case is being asked again later.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import ReflectionDismiss from './ReflectionDismiss';
@@ -83,6 +83,14 @@ async function offeredNow(): Promise<boolean> {
 /** Owns the offer state, the ask-on-increment, and the two ways of declining. */
 function useCorpusInvitation(completedPasses: number) {
   const [offer, setOffer] = useState(false);
+  // An answer given here outranks any read still on the wire. The read for
+  // this pass is issued the moment the pass settles, while the previous
+  // pass's note is still on screen and pressable, and the server answering it
+  // has not yet seen the dismissal -- so without this the note the writer just
+  // declined comes back when that read lands. ``active`` cannot cover it: it
+  // is scoped to one effect run and is cleared only by unmount or the next
+  // increment, and a decline is neither.
+  const declined = useRef(false);
 
   useEffect(() => {
     // Zero passes is not a moment; the server would say so, but asking would
@@ -90,7 +98,7 @@ function useCorpusInvitation(completedPasses: number) {
     if (completedPasses <= 0) return undefined;
     let active = true;
     void offeredNow().then((value) => {
-      if (active) setOffer(value);
+      if (active && !declined.current) setOffer(value);
     });
     return () => {
       active = false;
@@ -98,6 +106,7 @@ function useCorpusInvitation(completedPasses: number) {
   }, [completedPasses]);
 
   const decline = useCallback((doNotAskAgain: boolean) => {
+    declined.current = true;
     setOffer(false);
     void corpusInvitation.dismiss(doNotAskAgain).catch(() => {
       // The answer was given and the note is gone; a lost write costs at most
