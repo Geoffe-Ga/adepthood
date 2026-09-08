@@ -31,6 +31,33 @@ _DEFAULT_MAX_NOTES = 5
 MAX_PRIOR_ENTRIES = 5
 _PRIOR_ENTRY_CHARS = 1000
 
+# Anti-repetition context (issue #2574): at most this many of the letters this
+# app has already written the account ride along with a new pass, each truncated
+# to this many characters. Both are public because the same PRIOR_DRAFT_LIMIT
+# bounds the SQL ``LIMIT`` in ``routers.journal._prior_letters_query`` and the
+# slice in :func:`_prior_letters_block` -- one number, so what is fetched and
+# what is sent cannot drift apart -- and because
+# ``tests/test_legal_documents.py`` pins the privacy policy's stated count to
+# it without importing a router.
+PRIOR_DRAFT_LIMIT = 2
+PRIOR_DRAFT_CHARS = 1000
+_PRIOR_LETTER_SEPARATOR = "\n---\n"
+
+# The whole content-versus-style boundary, in one place. It is a module constant
+# rather than prose inside a template for the same reason MEDICATION_GUARDRAIL
+# is: it is the only mitigation for feeding a model its own prior output, which
+# is how a voice ossifies, so it is pinned by a test that imports it rather than
+# copied into an f-string somebody can quietly water down.
+NO_STYLE_TRANSFER_INSTRUCTION = (
+    "The letters below are ones you have already written to this person. They are "
+    "here for one reason: so that you do not say the same thing to them twice. "
+    "Read them for WHAT has already been observed, and for nothing else. Do not "
+    "imitate their wording, cadence, structure, or imagery; do not quote them; and "
+    "do not treat them as a sample of anyone's voice, neither yours nor the "
+    "writer's. Write this reading exactly as you would have written it having never "
+    "seen them, except that you will not repeat an observation they already make."
+)
+
 
 class _AnchoredSpan(Protocol):
     """Structural type for anything carrying integer ``anchor_start`` / ``anchor_end``.
@@ -184,8 +211,33 @@ class ResonanceLLM(Protocol):
     async def complete(self, prompt: str) -> str: ...
 
 
+def _prior_letters_block(prior_drafts: Sequence[str] | None) -> str:
+    """Render the content-only anti-repetition block, or ``""`` when there is none.
+
+    The letters are the app's own earlier output about this account's entries.
+    They travel for CONTENT -- what has already been said -- and never for
+    STYLE, which is what :data:`NO_STYLE_TRANSFER_INSTRUCTION` is for; it is
+    interpolated exactly once, and only when there is a block for it to govern,
+    since a rule about letters that are not present is instruction the model has
+    to reconcile against nothing.
+
+    A plain ``<prior_letters>`` tag, matching ``<entry>`` and ``<prior>``: the
+    whole assembled prompt is nonce-wrapped once downstream in
+    ``services.marginalia``, and a second per-letter delimiter here would read as
+    an injection defence that does not exist.
+    """
+    if not prior_drafts:
+        return ""
+    capped = [draft[:PRIOR_DRAFT_CHARS] for draft in prior_drafts[:PRIOR_DRAFT_LIMIT]]
+    joined = _PRIOR_LETTER_SEPARATOR.join(capped)
+    return f"\n\n{NO_STYLE_TRANSFER_INSTRUCTION}\n<prior_letters>\n{joined}\n</prior_letters>"
+
+
 def build_prompt(
-    body: str, prior_entries: Sequence[str] | None = None, max_notes: int = _DEFAULT_MAX_NOTES
+    body: str,
+    prior_entries: Sequence[str] | None = None,
+    max_notes: int = _DEFAULT_MAX_NOTES,
+    prior_drafts: Sequence[str] | None = None,
 ) -> str:
     """Build the structured prompt asking for up to ``max_notes`` margin notes.
 
@@ -217,6 +269,7 @@ def build_prompt(
         "Return STRICT JSON only, no prose, of the form:\n"
         '{"notes": [{"kind": "theme", "quote": "...", "note": "..."}]}\n\n'
         f"<entry>\n{body}\n</entry>{prior_block}"
+        f"{_prior_letters_block(prior_drafts)}"
     )
 
 
@@ -380,7 +433,12 @@ _RETRY_CORRECTION = (
 )
 
 
-def _retry_prompt(body: str, prior_entries: Sequence[str] | None, max_notes: int) -> str:
+def _retry_prompt(
+    body: str,
+    prior_entries: Sequence[str] | None,
+    max_notes: int,
+    prior_drafts: Sequence[str] | None = None,
+) -> str:
     """Build the corrective second-attempt prompt: the same ask, plus the fix.
 
     Deliberately the *same* question with a correction appended rather than a
@@ -389,7 +447,7 @@ def _retry_prompt(body: str, prior_entries: Sequence[str] | None, max_notes: int
     did not put. The correction trails the entry so the medication guardrail
     still leads the prompt.
     """
-    return f"{build_prompt(body, prior_entries, max_notes)}\n\n{_RETRY_CORRECTION}"
+    return f"{build_prompt(body, prior_entries, max_notes, prior_drafts)}\n\n{_RETRY_CORRECTION}"
 
 
 async def _one_pass(body: str, llm: ResonanceLLM, prompt: str, max_notes: int) -> MarginaliaOutcome:
@@ -404,6 +462,7 @@ async def generate_marginalia(
     llm: ResonanceLLM,
     prior_entries: Sequence[str] | None = None,
     max_notes: int = _DEFAULT_MAX_NOTES,
+    prior_drafts: Sequence[str] | None = None,
 ) -> MarginaliaOutcome:
     """Ask ``llm`` to read ``body`` and return anchored notes plus what was dropped.
 
@@ -425,10 +484,11 @@ async def generate_marginalia(
     A model that returned a well-formed empty array is *not* retried -- it read
     the page and declined, and a second call buys the same answer twice.
     """
-    first = await _one_pass(body, llm, build_prompt(body, prior_entries, max_notes), max_notes)
+    prompt = build_prompt(body, prior_entries, max_notes, prior_drafts)
+    first = await _one_pass(body, llm, prompt, max_notes)
     if not first.produced_nothing_usable:
         return first
-    retry_prompt = _retry_prompt(body, prior_entries, max_notes)
+    retry_prompt = _retry_prompt(body, prior_entries, max_notes, prior_drafts)
     second = await _one_pass(body, llm, retry_prompt, max_notes)
     return replace(second, attempts=first.attempts + 1)
 
@@ -504,7 +564,13 @@ def explain_no_notes(outcome: MarginaliaOutcome) -> str | None:
     return NO_NOTES_MESSAGES[_no_notes_reason(outcome)]
 
 
-def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> str:
+def _build_essay_prompt(
+    body: str,
+    anchor_text: str,
+    kind: str,
+    note: str,
+    prior_drafts: Sequence[str] | None = None,
+) -> str:
     """Build the prompt expanding one margin note into a short letter-like essay.
 
     Leads with :data:`~domain.care.MEDICATION_GUARDRAIL`; the botmason adapter also
@@ -521,6 +587,7 @@ def _build_essay_prompt(body: str, anchor_text: str, kind: str, note: str) -> st
         f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
         f"The full entry for context:\n<entry>\n{body}\n</entry>\n\n"
         "Write a few warm paragraphs. Plain prose only, no headings or JSON."
+        f"{_prior_letters_block(prior_drafts)}"
     )
 
 
@@ -535,8 +602,26 @@ def _sanitize_essay(text: str) -> str:
 
 
 async def generate_essay(
-    *, llm: ResonanceLLM, body: str, anchor_text: str, kind: str, note: str
+    *,
+    llm: ResonanceLLM,
+    body: str,
+    note: MarginaliaAnchored,
+    prior_drafts: Sequence[str] | None = None,
 ) -> str:
-    """Ask ``llm`` to expand a margin note into a sanitized, length-capped essay."""
-    raw = await llm.complete(_build_essay_prompt(body, anchor_text, kind, note))
-    return _sanitize_essay(raw)
+    """Ask ``llm`` to expand one margin note into a sanitized, length-capped essay.
+
+    ``note`` arrives as the whole :class:`MarginaliaAnchored` rather than as its
+    ``kind`` / ``anchor_text`` / ``note`` fields spread across three keywords.
+    That is not tidying: adding ``prior_drafts`` to the old five-keyword shape
+    would be a sixth argument, which ruff's ``PLR0913`` refuses, and the
+    alternative -- a ``noqa`` or a raised ``max-args`` -- is barred. The
+    dataclass already exists and already carries exactly those fields, so the
+    signature narrows to four with no new type.
+
+    ``prior_drafts`` are the app's own earlier letters, passed for content only;
+    see :data:`NO_STYLE_TRANSFER_INSTRUCTION`. Unlike the resonance half, this
+    path is cloud-only (``routers.journal._cache_essay`` builds its LLM with no
+    vault selection), so what is threaded here reaches every account.
+    """
+    prompt = _build_essay_prompt(body, note.anchor_text, note.kind, note.note, prior_drafts)
+    return _sanitize_essay(await llm.complete(prompt))

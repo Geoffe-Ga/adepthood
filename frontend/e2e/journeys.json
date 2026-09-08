@@ -657,5 +657,20 @@
     },
     "status": "uncovered",
     "issue": 2707
+  },
+  {
+    "id": "journal.higher-self-does-not-repeat-itself",
+    "description": "A writer who has asked for reflections before asks for another one, and the Higher Self does not say a thing it has already said: at most two of the letters it wrote them earlier ride along with the pass as content-only context, under a pinned instruction never to imitate their wording or treat them as a voice sample. A letter about an entry they deleted, or one they later marked Intimate, is never among them, and neither is a letter about the page being read. Uncovered for the same reason as journal.ask-for-resonance and journal.see-related-vault-pages: what changes here is generated prose rather than a screen or a new seam, and the real-wire lane has no deterministic language-model provider, so it cannot make POST /journal/{entry_id}/resonance return notes it could read back and compare across two passes. #2408 tracks that missing provider seam. The exclusions are pinned end-to-end at the endpoint by backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt, and the query that decides them by backend/tests/test_prior_letters_grounding.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["journalentry", "marginalia"]
+    },
+    "status": "uncovered",
+    "issue": 2574
   }
 ]

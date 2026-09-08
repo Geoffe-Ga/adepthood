@@ -35,6 +35,8 @@ from domain.detection import CompletionDetected, DetectionCandidate, detect_comp
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
+    PRIOR_DRAFT_CHARS,
+    PRIOR_DRAFT_LIMIT,
     MarginaliaAnchored,
     MarginaliaOutcome,
     ResonanceLLM,
@@ -575,6 +577,66 @@ def _expanded_drafts_query(user_id: int) -> Select[tuple[Marginalia]]:
     )
 
 
+def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Marginalia]]:
+    """Narrow the Voice-Draft predicate to the letters that may leave for a provider.
+
+    Built by calling :func:`_expanded_drafts_query` and adding to it, never by
+    re-deriving its clauses. Owner scope on *both* the note and its parent entry,
+    ``JournalEntry.deleted_at IS NULL`` (BUG-JOURNAL-007) and
+    ``Marginalia.essay IS NOT NULL`` are therefore **inherited, not restated**:
+    a hand-copied set could lose one silently, and a letter about an entry the
+    account deleted would then be sent back out to a third party.
+    ``tests/test_prior_letters_grounding.py::test_the_egress_query_inherits_every_listing_predicate``
+    asserts that inheritance per clause, so it stays structural rather than
+    coincidental.
+
+    Exactly three predicates are added here, and the first is the reason this
+    function exists at all:
+
+    * ``classification != INTIMATE``. The listing predicate deliberately
+      *includes* Intimate-parent drafts -- see :func:`list_voice_drafts`, which
+      explains that returning a writer their own letter is retrieval, not
+      egress. This is egress, so it needs the opposite answer, and it must be
+      taken **here**: migrating an egress filter onto the shared query, or
+      adding a flag to it, would narrow that listing route to hide a writer's
+      own letter from them. The shape mirrors
+      ``services.higher_self_grounding._recent_entry_bodies``, which added the
+      same predicate for entry bodies when issue #895 closed.
+    * ``JournalEntry.id != exclude_entry_id``. The page being read is not its
+      own prior context. **Documented cost:** the exclusion is uniform on both
+      routes and keyed on the entry, so two letters about *different* spans of
+      the same page are not deduplicated against each other -- arguably the most
+      repetitive case on the essay route. That is a deliberate narrowing (one
+      predicate, no ``| None`` branch, strictly less egress); a follow-up may
+      widen it on purpose.
+    * Newest first, bounded by ``PRIOR_DRAFT_LIMIT`` -- the same constant that
+      bounds the prompt-side slice in ``domain.resonance._prior_letters_block``,
+      so what is fetched and what is sent cannot drift apart.
+    """
+    return (
+        _expanded_drafts_query(user_id)
+        .where(
+            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            col(JournalEntry.id) != exclude_entry_id,
+        )
+        .order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
+        .limit(PRIOR_DRAFT_LIMIT)
+    )
+
+
+async def _prior_letter_essays(
+    session: AsyncSession, *, user_id: int, exclude_entry_id: int
+) -> list[str]:
+    """Return the letters that may ride along as content-only anti-repetition context.
+
+    The thin executor over :func:`_prior_letters_query`, which carries the whole
+    egress predicate and the reasoning for it. Each essay is truncated to
+    ``PRIOR_DRAFT_CHARS`` so the row bound is a token bound too.
+    """
+    rows = (await session.execute(_prior_letters_query(user_id, exclude_entry_id))).scalars().all()
+    return [cast("str", note.essay)[:PRIOR_DRAFT_CHARS] for note in rows]
+
+
 def _voice_draft(note: Marginalia) -> VoiceDraftResponse:
     """Project one expanded margin note onto its Voice Draft shape."""
     return VoiceDraftResponse(
@@ -1026,7 +1088,11 @@ async def _refund_failed_pass(session: AsyncSession, user_id: int, spent: SpendR
 
 
 async def _generate_marginalia_or_error(
-    message: str, llm: ResonanceLLM, prior: list[str], context: _ResonancePassContext
+    message: str,
+    llm: ResonanceLLM,
+    prior: list[str],
+    context: _ResonancePassContext,
+    prior_drafts: list[str],
 ) -> MarginaliaOutcome:
     """Run the literary pass; a provider error refunds the committed charge and fails.
 
@@ -1040,7 +1106,9 @@ async def _generate_marginalia_or_error(
     actually act on rather than a 502 that invites a retry forever.
     """
     try:
-        return await generate_marginalia(message, llm=llm, prior_entries=prior)
+        return await generate_marginalia(
+            message, llm=llm, prior_entries=prior, prior_drafts=prior_drafts
+        )
     except LLMCreditExhaustedError as exc:
         await _refund_failed_pass(context.session, context.user_id, context.spent)
         raise credit_exhausted_error(exc, byok=context.byok) from exc
@@ -1192,7 +1260,11 @@ async def _escalated_care_response(
 
 
 async def _resonance_pass_or_care(
-    message: str, llm: ResonanceLLM, prior: list[str], context: _ResonancePassContext
+    message: str,
+    llm: ResonanceLLM,
+    prior: list[str],
+    context: _ResonancePassContext,
+    prior_drafts: list[str],
 ) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
@@ -1204,7 +1276,7 @@ async def _resonance_pass_or_care(
     preserving today's behavior exactly.
     """
     try:
-        return await _generate_marginalia_or_error(message, llm, prior, context)
+        return await _generate_marginalia_or_error(message, llm, prior, context, prior_drafts)
     except HTTPException:
         if context.care is not None:
             return None
@@ -1512,6 +1584,13 @@ async def run_resonance(
         return await _private_response(session, current_user, care)
     spent = await preflight_deduction(session, current_user)
     grounding = await _grounding_for(session, current_user, entry_id)
+    # Content-only anti-repetition context (issue #2574). Read here, with the
+    # pooled connection still held, for the same reason the grounding above is:
+    # every read the dials depend on must be in hand before the commit below
+    # releases the connection ahead of the first provider round trip.
+    prior_letters = await _prior_letter_essays(
+        session, user_id=current_user, exclude_entry_id=entry_id
+    )
     candidates = await gather_candidates(session, current_user, include_practices=True)
     # Key resolution is pure (no DB, no dial) and can raise 400/402 — it must
     # run while the deduction is still merely staged, so its errors cost nothing.
@@ -1539,6 +1618,7 @@ async def run_resonance(
                 user_id=current_user,
                 spent=spent,
             ),
+            prior_letters,
         )
     except CreekVaultCareEscalationError:
         # The vault's care guard fired: answer with adepthood's own care surface
@@ -1917,7 +1997,16 @@ async def _cache_essay(
     type. Called only for non-intimate entries — the intimate guard in
     :func:`expand_marginalia_essay` returns before this seam, so the cloud is
     never reached for an intimate entry's essay.
+
+    The prior letters are fetched *above* that commit, while the pooled
+    connection is still held: they are a read the dial depends on, and the
+    commit is what releases the connection before it. ``note.user_id`` is the
+    owner ``expand_marginalia_essay`` already authorized this row against, and
+    ``_prior_letters_query`` re-asserts ownership on the parent entry besides.
     """
+    prior_letters = await _prior_letter_essays(
+        session, user_id=note.user_id, exclude_entry_id=note.journal_entry_id
+    )
     await session.commit()
     byok_key = resolve_chat_api_key(api_key)
     llm = BotmasonResonanceLLM(byok_key)
@@ -1925,9 +2014,14 @@ async def _cache_essay(
         essay = await generate_essay(
             llm=llm,
             body=body,
-            anchor_text=note.anchor_text,
-            kind=note.kind,
-            note=note.note,
+            note=MarginaliaAnchored(
+                kind=note.kind,
+                anchor_start=note.anchor_start,
+                anchor_end=note.anchor_end,
+                anchor_text=note.anchor_text,
+                note=note.note,
+            ),
+            prior_drafts=prior_letters,
         )
     except LLMCreditExhaustedError as exc:
         raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
@@ -1943,7 +2037,17 @@ async def _cache_essay(
     )
     await session.commit()
     await session.refresh(note)
-    logger.info("marginalia_essay_generated", extra={"user_id": note.user_id, "id": note.id})
+    logger.info(
+        "marginalia_essay_generated",
+        # A count, never the letters themselves: the same rule ``_grounding_for``
+        # writes, since a log line carrying essay text would put the writing the
+        # ``essay`` column is encrypted to protect straight back into plaintext.
+        extra={
+            "user_id": note.user_id,
+            "id": note.id,
+            "prior_draft_count": len(prior_letters),
+        },
+    )
     return note
 
 

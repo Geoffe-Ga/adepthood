@@ -69,6 +69,7 @@ from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
 from domain.frequencies import Frequency
+from domain.resonance import PRIOR_DRAFT_LIMIT
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
@@ -773,3 +774,41 @@ async def test_granting_consent_sorts_the_writing_that_was_already_there(
     assert [fragment.content for fragment in stored] == [_SENTINEL_BODY], (
         "the grant left the account's existing writing out of its own corpus"
     )
+
+
+def test_the_policy_discloses_the_prior_letters_the_code_actually_sends() -> None:
+    """A reader is told the app sends its own earlier letters back to the provider.
+
+    Issue #2574 gave the reflection prompts a fourth thing to carry: at most
+    :data:`~domain.resonance.PRIOR_DRAFT_LIMIT` of the letters the app has
+    already written this account, so a new note does not repeat an observation
+    already made. Those letters quote and paraphrase the entries they were
+    written about, so sending them is sending the account's own writing --
+    a category the "who else receives your data" section did not enumerate.
+
+    Nothing already in this module fails when that clause is missing: the
+    context-window pin reads ``GROUNDING_LIMIT`` and the source-disclosure pin
+    is keyed by ``GroundingSource``, which prior letters correctly sit outside.
+    So the code half could ship, the build stay green, and "Five parties, and
+    nothing else" quietly become an understatement of what one of the five
+    receives. This is the pin that closes that gap, which is why it is keyed to
+    the constant the SQL ``LIMIT`` and the prompt slice both read.
+
+    The phrasing is deliberately "at most", never "up to":
+    ``test_the_policy_states_the_context_window_the_code_actually_sends``
+    forbids any ``up to <word>`` but the grounding limit's own, so "up to two"
+    here would redden that unrelated-looking guard instead of this one.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    expected = _NUMBER_WORDS[PRIOR_DRAFT_LIMIT]
+
+    assert f"at most {expected}" in policy, (
+        f"the policy must say 'at most {expected}' to match PRIOR_DRAFT_LIMIT = {PRIOR_DRAFT_LIMIT}"
+    )
+    assert "reflections it has already written you" in policy, (
+        "the policy must say what these are -- letters this app wrote about "
+        "this account's own entries -- not merely how many of them go"
+    )
+    wrong = {word for count, word in _NUMBER_WORDS.items() if count != PRIOR_DRAFT_LIMIT}
+    stale = sorted(word for word in wrong if f"at most {word}" in policy)
+    assert not stale, f"the policy also claims 'at most {stale}', contradicting itself"
