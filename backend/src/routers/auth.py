@@ -28,18 +28,16 @@ from database import get_session
 from domain.dates import ensure_aware
 from domain.entitlements import (
     REASON_DUPLICATE_SIGNUP,
-    REASON_EMAIL_MISMATCH,
     REASON_SIGNUP_REDEMPTION,
     GumroadUnavailableError,
     LicenseOutcome,
-    grant_course_access,
     verify_aptitude_license,
 )
+from domain.license_claims import ClaimOutcome, claim_license
 from domain.timezone import normalize_timezone
 from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
 from models.auth_identity import AuthIdentity, AuthProvider
-from models.gumroad_sale import GumroadSale
 from models.login_attempt import LoginAttempt
 from models.password_reset_token import PasswordResetToken
 from models.revoked_token import RevokedToken
@@ -551,17 +549,12 @@ async def _reject_if_license_cap_exhausted(request: Request, license_key: str | 
     )
 
 
-async def _reject_invalid_license(
-    request: Request,
-    email: str,
-    outcome: LicenseOutcome,
-) -> NoReturn:
+async def _reject_invalid_license(request: Request) -> NoReturn:
     """Reject a signup whose license failed verification (anti-enumeration).
 
-    Counts the attempt toward the invalid-license cap, records an
-    email-mismatch marker server-side (fingerprint only — never the raw
-    email or key), spends the dummy bcrypt verify for timing parity, then
-    raises the generic 400 — or 429 once the hourly cap is exceeded.
+    Counts the attempt toward the invalid-license cap, spends the dummy
+    bcrypt verify for timing parity, then raises the generic 400 — or 429
+    once the hourly cap is exceeded.
 
     That 429 is the second layer of the cap, not a duplicate of the front
     gate: two concurrent requests can both pass a non-consuming peek with the
@@ -569,14 +562,6 @@ async def _reject_invalid_license(
     answer 429 rather than fall through to the ordinary 400.
     """
     allowed = record_invalid_license_attempt(client_throttle_key(request))
-    if outcome is LicenseOutcome.EMAIL_MISMATCH:
-        logger.info(
-            "signup_license_rejected",
-            extra={
-                "reason_code": REASON_EMAIL_MISMATCH,
-                "email_fingerprint": _email_log_fingerprint(email),
-            },
-        )
     await _consume_dummy_password_verify()
     if not allowed:
         raise HTTPException(
@@ -604,14 +589,14 @@ async def _verify_signup_license(request: Request, payload: SignupRequest) -> Gu
     """
     await _reject_if_license_cap_exhausted(request, payload.license_key)
     try:
-        check = await verify_aptitude_license(payload.email, payload.license_key)
+        check = await verify_aptitude_license(payload.license_key)
     except GumroadUnavailableError:
         raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
     if check.outcome is LicenseOutcome.LICENSE_REQUIRED:
         await _consume_dummy_password_verify()
         raise bad_request(_DETAIL_LICENSE_REQUIRED)
     if check.outcome is not LicenseOutcome.VERIFIED or check.purchase is None:
-        await _reject_invalid_license(request, payload.email, check.outcome)
+        await _reject_invalid_license(request)
     return check.purchase
 
 
@@ -639,8 +624,53 @@ async def _reject_duplicate_signup_email(session: AsyncSession, email: str) -> N
     raise bad_request(_DETAIL_INVALID_LICENSE)
 
 
-async def _create_signup_user(session: AsyncSession, payload: SignupRequest) -> User | None:
-    """Hash the password and persist the new user; ``None`` when a racer won.
+async def _create_licensed_account(
+    session: AsyncSession,
+    user: User,
+    purchase: GumroadPurchase,
+    *,
+    reason_code: str,
+) -> User | None:
+    """Land the account, its licence binding and its entitlement in one transaction.
+
+    ``None`` means the account was not created and nothing was written, for
+    one of two reasons the caller must not distinguish on the wire: a
+    concurrent request won the email unique-index race after the pre-check
+    (the ``ix_user_lower_email_unique`` IntegrityError at flush), or the sale
+    is already bound to another account (ADR 0008 Decision 2 — the claim
+    rolls the flushed ``User`` row back with it, so a refused claim leaves no
+    orphan account). Both answer with the same generic refusal the pre-check
+    paths return, so a caller cannot tell which check fired.
+
+    The commit is the claim's: :func:`claim_license` commits User, binding and
+    Entitlement together and folds a lost UNIQUE race into
+    ``BOUND_ELSEWHERE`` after rolling back.
+    """
+    session.add(user)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        return None
+    outcome = await claim_license(
+        session,
+        user,
+        sale_id=purchase.sale_id,
+        product_id=purchase.product_id,
+        reason_code=reason_code,
+    )
+    if outcome is ClaimOutcome.BOUND_ELSEWHERE:
+        return None
+    await session.refresh(user)
+    return user
+
+
+async def _create_signup_user(
+    session: AsyncSession,
+    payload: SignupRequest,
+    purchase: GumroadPurchase,
+) -> User | None:
+    """Hash the password and persist the licensed user; ``None`` when refused.
 
     Pydantic enforces ``_MIN_PASSWORD_LENGTH`` / ``_MAX_PASSWORD_LENGTH``
     before we get here (BUG-AUTH-017), so the only failure mode left is a
@@ -648,6 +678,7 @@ async def _create_signup_user(session: AsyncSession, payload: SignupRequest) -> 
     byte-length blows the bcrypt 72-byte limit.  Translate that into a 400
     instead of a 500 so the client gets a uniform validation response and
     we never store a row that bcrypt has silently truncated (BUG-AUTH-004).
+    Everything after the hash is :func:`_create_licensed_account`.
     """
     try:
         password_hash = await _hash_password(payload.password)
@@ -658,44 +689,8 @@ async def _create_signup_user(session: AsyncSession, payload: SignupRequest) -> 
         password_hash=password_hash,
         timezone=payload.timezone,
     )
-    session.add(user)
-    try:
-        await session.commit()
-    except IntegrityError:
-        # The ``ix_user_lower_email_unique`` functional unique index (or
-        # the case-sensitive ``ix_user_email`` for legacy schemas) raised
-        # because a concurrent request won the race after our duplicate
-        # check.  The caller answers with the same generic invalid-license
-        # rejection the pre-check path returns — same status, same body — so
-        # the client cannot tell whether the email was new or already
-        # registered, nor which duplicate-detection path fired.
-        await session.rollback()
-        return None
-    await session.refresh(user)
-    return user
-
-
-async def _grant_signup_entitlement(
-    session: AsyncSession,
-    user: User,
-    purchase: GumroadPurchase,
-) -> None:
-    """Link the fresh account to its verified purchase.
-
-    The matching ``GumroadSale`` row may not exist yet (the signup can beat
-    the webhook), so the grant falls back to the purchase's product id and
-    the sale link converges later when the webhook replays the grant.
-    """
-    result = await session.execute(
-        select(GumroadSale).where(GumroadSale.gumroad_sale_id == purchase.sale_id)
-    )
-    sale = result.scalars().first()
-    await grant_course_access(
-        session,
-        user,
-        sale=sale,
-        product_id=purchase.product_id,
-        reason_code=REASON_SIGNUP_REDEMPTION,
+    return await _create_licensed_account(
+        session, user, purchase, reason_code=REASON_SIGNUP_REDEMPTION
     )
 
 
@@ -708,12 +703,16 @@ async def signup(
 ) -> AuthResponse:
     """Create an account gated on a verified APTITUDE Gumroad license.
 
-    Verify-then-create: no ``User`` or ``Entitlement`` row is written until
-    the license verifies against the product allowlist, its purchase email
-    matches, and the signup email is unclaimed.  Every rejection returns a
-    generic detail with matched timing (anti-enumeration), and a Gumroad
-    outage fails closed with 503.  Only the JWT leaves the backend — never
-    any Gumroad verify-response field.
+    Verify-then-create: no ``User``, ``LicenseBinding`` or ``Entitlement`` row
+    is written until the license verifies against the product allowlist and
+    the signup email is unclaimed. The purchase email is not compared with
+    the signup email — a key may have been bought for someone else (ADR
+    0008) — but one sale binds to exactly one active account, so a key
+    already redeemed by another account is refused with the same generic
+    detail an unknown key gets. Every rejection returns that generic detail
+    with matched timing (anti-enumeration), and a Gumroad outage fails closed
+    with 503. Only the JWT leaves the backend — never any Gumroad
+    verify-response field.
 
     Once the account exists, any token pack bought under the same email
     before signup is swept into the new wallet.
@@ -723,19 +722,21 @@ async def signup(
     # attacker from inferring account existence from which check ran first.
     purchase = await _verify_signup_license(request, payload)
     await _reject_duplicate_signup_email(session, payload.email)
-    user = await _create_signup_user(session, payload)
+    user = await _create_signup_user(session, payload, purchase)
     if user is None:
-        # A concurrent request won the unique-index race after our pre-check
-        # passed.  Answer with the exact rejection the pre-check path returns
-        # so a duplicate email is indistinguishable from an invalid license on
-        # every path.  ``_create_signup_user`` already spent one real bcrypt
-        # hash, matching the dummy verify the pre-check spends — timing holds.
+        # Either a concurrent request won the unique-index race after our
+        # pre-check passed, or the sale is bound to another account. Answer
+        # with the exact rejection the pre-check path returns so neither is
+        # distinguishable from an invalid license, and charge the hourly cap
+        # so a bound key cannot be ground for free (ADR 0008 Decision 6).
+        # ``_create_signup_user`` already spent one real bcrypt hash, matching
+        # the dummy verify the pre-check spends — timing holds.
+        await _count_invalid_license_attempt(request, payload.license_key)
         raise bad_request(_DETAIL_INVALID_LICENSE)
 
     if user.id is None:
         msg = "User ID unexpectedly None after database commit"
         raise RuntimeError(msg)
-    await _grant_signup_entitlement(session, user, purchase)
     await claim_token_pack_sales(session, user)
     token, _ = _create_token(user.id)
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
@@ -2069,11 +2070,15 @@ async def _verify_oauth_license(
 ) -> GumroadPurchase:
     """Verify the APTITUDE license backing a brand-new social account.
 
-    Anything short of VERIFIED lands on the generic 409 -- a missing key, a
-    wrong key, and a key bought under a different address are indistinguishable
-    on the wire.  A Gumroad outage fails closed with 503 before any row is
-    written; ``from None`` severs the chain so the caught error's request body
-    (which carries the license key) is unreachable via ``__cause__``.
+    Anything short of VERIFIED lands on the generic 409 -- a missing key and a
+    wrong key are indistinguishable on the wire, and so, one step later, is a
+    valid key already bound to another account.  The purchase email is not
+    compared with ``email``: a Hide My Email address or a gift recipient's own
+    address is as good as the buyer's (ADR 0008).  ``email`` is used only to
+    fingerprint the refusal log line.  A Gumroad outage fails closed with 503
+    before any row is written; ``from None`` severs the chain so the caught
+    error's request body (which carries the license key) is unreachable via
+    ``__cause__``.
 
     The hourly cap is consulted before the verify, so a client that has spent
     its budget here is refused with 429 without Gumroad being contacted; the
@@ -2081,7 +2086,7 @@ async def _verify_oauth_license(
     """
     await _reject_if_license_cap_exhausted(request, license_key)
     try:
-        check = await verify_aptitude_license(email, license_key)
+        check = await verify_aptitude_license(license_key)
     except GumroadUnavailableError:
         raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
     if check.outcome is LicenseOutcome.VERIFIED and check.purchase is not None:
@@ -2095,8 +2100,9 @@ async def _insert_social_user(
     email: str,
     timezone: str,
     display_name: str | None,
+    purchase: GumroadPurchase,
 ) -> User | None:
-    """Create the account behind a social sign-in; ``None`` when a racer won.
+    """Create the licensed account behind a social sign-in; ``None`` when refused.
 
     The stored hash is a fresh 256-bit random run through the same bcrypt cost
     the password flow uses.  That satisfies the NOT NULL hash contract while
@@ -2105,7 +2111,9 @@ async def _insert_social_user(
 
     ``display_name`` is written here and only here.  Apple hands the name over
     exactly once, on the first authorization, so this insert is the sole
-    opportunity to keep it.
+    opportunity to keep it.  The row, its licence binding and its entitlement
+    land through :func:`_create_licensed_account`, exactly as a password
+    signup's do.
     """
     password_hash = await _hash_password(secrets.token_urlsafe(_SOCIAL_PASSWORD_BYTES))
     user = User(
@@ -2114,14 +2122,9 @@ async def _insert_social_user(
         timezone=timezone,
         display_name=display_name,
     )
-    session.add(user)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        return None
-    await session.refresh(user)
-    return user
+    return await _create_licensed_account(
+        session, user, purchase, reason_code=REASON_SIGNUP_REDEMPTION
+    )
 
 
 async def _reresolve_after_create_race(
@@ -2148,11 +2151,15 @@ async def _create_oauth_account(
     attempt: _OAuthAttempt,
     email: str,
 ) -> AuthResponse:
-    """Create the license-verified account, grant the course, and link the identity.
+    """Create the license-verified account, claim the licence, and link the identity.
 
-    The license is verified before any row is written (verify-then-create), and
+    The license is verified before any row is written (verify-then-create); the
+    account, its binding and its entitlement then land in one transaction, and
     any token pack bought under the same address before this sign-in is swept
-    into the new wallet, exactly as ``/auth/signup`` does.
+    into the new wallet, exactly as ``/auth/signup`` does.  A refused creation
+    -- a lost email race or a sale bound to another account -- charges the
+    invalid-license cap and re-walks the ladder once, whose miss is the same
+    generic 409 every other refusal returns.
 
     The identity link is written last, and the response is built before it, so
     that losing the link race (a concurrent caller resolved the same subject
@@ -2161,10 +2168,12 @@ async def _create_oauth_account(
     greenlet; the racer's row points at the same account anyway.
     """
     purchase = await _verify_oauth_license(request, email, payload.license_key)
-    user = await _insert_social_user(session, email, payload.timezone, attempt.display_name)
+    user = await _insert_social_user(
+        session, email, payload.timezone, attempt.display_name, purchase
+    )
     if user is None:
+        await _count_invalid_license_attempt(request, payload.license_key)
         return await _reresolve_after_create_race(session, attempt)
-    await _grant_signup_entitlement(session, user, purchase)
     await claim_token_pack_sales(session, user)
     response = _auth_response_for(user)
     if not await _insert_identity(
