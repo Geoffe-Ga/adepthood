@@ -1041,6 +1041,24 @@ export type CorpusConsentT = z.infer<typeof corpusConsentSchema>;
 export type CorpusConsentListT = z.infer<typeof corpusConsentListSchema>;
 
 /**
+ * Whether to offer the corpus decision at the Resonance moment, and what the
+ * account last chose about being asked (mirrors the backend
+ * ``CorpusInvitationResponse``, #2407).
+ *
+ * Three fields and deliberately no count: the server computes the cooldown
+ * from how many passes the account has completed and keeps that number to
+ * itself, so nothing here could be rendered as a meter. ``dismissed_at`` is
+ * nullable because "never set aside" is a state, not a missing field.
+ */
+export const corpusInvitationSchema = z.object({
+  offer: z.boolean(),
+  dismissed_at: isoDateTime.nullable(),
+  do_not_ask_again: z.boolean(),
+});
+
+export type CorpusInvitationT = z.infer<typeof corpusInvitationSchema>;
+
+/**
  * Whether this account's reflections are drawn from its own sorted corpus yet.
  *
  * ``state`` is a ``z.enum`` rather than a ``z.string`` because the client

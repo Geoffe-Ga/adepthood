@@ -74,3 +74,34 @@ class CorpusConsentListResponse(BaseModel):
     """
 
     sources: list[CorpusConsentResponse]
+
+
+class CorpusInvitationUpdate(BaseModel):
+    """The account setting the corpus invitation aside, at the Resonance moment.
+
+    ``do_not_ask_again`` is required rather than defaulted, for the reason
+    :class:`CorpusConsentUpdate` gives about ``granted``: a decline whose
+    meaning depends on a default is a decline that can be sent by accident, and
+    the two meanings here -- "not now" and "never" -- are exactly what the
+    request exists to distinguish.
+    """
+
+    do_not_ask_again: bool
+
+
+class CorpusInvitationResponse(BaseModel):
+    """Whether to offer the corpus decision now, and what the account last chose.
+
+    Three fields and no count. The server computes the cooldown from how many
+    Resonance passes the account has completed, and that number stays on the
+    server: a client that could render it would be one edit away from turning a
+    declinable invitation into a meter (NORTH-STAR §5, §6).
+
+    ``dismissed_at`` is ``null`` for an account that has never set the
+    invitation aside; ``do_not_ask_again`` is the standing answer, never
+    softened by a later "not now".
+    """
+
+    offer: bool
+    dismissed_at: datetime | None
+    do_not_ask_again: bool

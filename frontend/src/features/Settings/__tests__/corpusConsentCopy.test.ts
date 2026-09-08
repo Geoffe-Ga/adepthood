@@ -5,6 +5,10 @@ import * as path from 'path';
 
 import {
   CORPUS_CONSENT_COPY_ENTRIES,
+  CORPUS_INVITATION_NEVER_LABEL,
+  CORPUS_INVITATION_NOT_NOW_LABEL,
+  CORPUS_INVITATION_OPEN_LABEL,
+  CORPUS_INVITATION_REACH,
   CORPUS_SOURCE_COPY,
   SOURCES_ADEPTHOOD_SORTS,
   consentStatusLine,
@@ -109,6 +113,28 @@ describe('the corpus-consent copy, as an invitation', () => {
 
     expect(said).toMatch(/sent once/i);
     expect(said).toMatch(/deletes/i);
+  });
+
+  test('sweeps every line the Resonance-moment invitation adds (#2407)', () => {
+    // The invitation reuses the consent lead and the sending consequence, and
+    // adds its own reach sentence and three labels. Each new string is in the
+    // sweep, so the rank/shame and unbuilt-protection rules above read them.
+    for (const line of [
+      CORPUS_INVITATION_REACH,
+      CORPUS_INVITATION_OPEN_LABEL,
+      CORPUS_INVITATION_NOT_NOW_LABEL,
+      CORPUS_INVITATION_NEVER_LABEL,
+    ]) {
+      expect(CORPUS_CONSENT_COPY_ENTRIES).toContain(line);
+    }
+  });
+
+  test('the reach sentence says the grant sweeps what was already written', () => {
+    // routers/corpus.py runs backfill_after_consent on a grant; an invitation
+    // that omitted that would be vague about egress in exactly the way the
+    // issue forbids.
+    expect(CORPUS_INVITATION_REACH).toMatch(/already written/i);
+    expect(CORPUS_INVITATION_REACH).toMatch(/intimate/i);
   });
 });
 

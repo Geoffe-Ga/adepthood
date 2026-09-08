@@ -45,6 +45,7 @@ const EXPECTED_JOURNEYS = [
   'auth.e2e.test.ts',
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',
+  'corpus-invitation.e2e.test.ts',
   'course.e2e.test.ts',
   'data-export.e2e.test.ts',
   'depth.e2e.test.ts',
