@@ -373,6 +373,7 @@ def test_dataset_carries_provenance_pointer() -> None:
     provenance = _provenance()
     _require_nonempty_str(provenance["stage_attributes_source"])
     _require_nonempty_str(provenance["manifestations_source"])
+    _require_nonempty_str(provenance["subtitles_source"])
     _require_nonempty_str(provenance["extracted_from"])
     _require_nonempty_str(provenance["refresh_doc"])
 

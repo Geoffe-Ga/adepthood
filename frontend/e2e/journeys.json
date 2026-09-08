@@ -633,5 +633,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/vault-activation.e2e.test.ts"
+  },
+  {
+    "id": "curriculum.stage-copy-matches-course",
+    "description": "A traveller reads a stage's subtitle -- the two-word label under its name -- on the Map modal, the magnifier caption, the Map's accessibility label, and the Course cover. Every one of those renders stage.subtitle straight from GET /stages via stageService; nothing is hardcoded client-side, which is correct, and which is also why no lane asserts the string a user actually reads. map.advance-stage opens the same screen against the same route but asserts the progress record (current_stage, completed_stages, stage_started_at), never copy, so the seam from the coursestage row through GET /stages to rendered text is unproven end-to-end. Declared uncovered rather than quietly claimed: a covering spec needs its own file (one spec covers one journey), its own account key via freshLicenseKey(), and e2eLaneGuard registration -- to assert two words that a backend golden test already pins at the source. #2577 corrected Teal's subtitle and was proven by that golden test; this entry records the gap that proof leaves rather than hiding it.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages"],
+      "tables": ["coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 2707
   }
 ]
