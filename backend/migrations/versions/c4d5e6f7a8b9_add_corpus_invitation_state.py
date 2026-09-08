@@ -1,7 +1,7 @@
 """Add the per-account corpus-invitation state (#2407).
 
 Revision ID: c4d5e6f7a8b9
-Revises: f2c7a1d9e4b6
+Revises: a9b8c7d6e5f4
 Create Date: 2026-09-07 00:00:00.000000
 
 Purely additive: ``upgrade`` creates ``corpusinvitationstate`` -- one row per
