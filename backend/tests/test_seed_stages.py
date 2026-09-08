@@ -161,7 +161,7 @@ _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
     {
         "stage_number": 8,
         "title": "Nondual",
-        "subtitle": "Transcendent Wisdom",
+        "subtitle": "True Self Wisdom",
         "overview_url": "",
         "category": "Wisdom",
         "aspect": "True Self Connection",
