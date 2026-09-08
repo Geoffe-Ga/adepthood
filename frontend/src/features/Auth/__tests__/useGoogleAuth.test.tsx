@@ -54,7 +54,7 @@ jest.mock('@/utils/dateUtils', () => ({
 import { useGoogleAuth } from '../useGoogleAuth';
 
 import { ApiError, auth } from '@/api';
-import { USER_FACING_ERROR_MESSAGES } from '@/api/errorMessages';
+import { UNREACHABLE_MESSAGE, USER_FACING_ERROR_MESSAGES } from '@/api/errorMessages';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { loadToken, saveToken } from '@/storage/authStorage';
 
@@ -446,7 +446,9 @@ describe('useGoogleAuth — unexpected failures', () => {
 
     await waitFor(() => expect(harness.result.current.google.error).not.toBeNull());
     expect(harness.result.current.google.status).toBe('idle');
-    expect(harness.result.current.google.error).toBe(USER_FACING_ERROR_MESSAGES.network_error);
+    // The exchange never reached a response, and nothing has told the client
+    // the device is offline, so the copy names only that (#2661).
+    expect(harness.result.current.google.error).toBe(UNREACHABLE_MESSAGE);
     expect(harness.result.current.auth.authStatus).toBe('anonymous');
   });
 
