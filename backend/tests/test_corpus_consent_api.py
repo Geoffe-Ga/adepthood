@@ -241,12 +241,15 @@ async def test_a_classifier_outage_does_not_cost_anybody_their_writing(
 async def test_a_spent_balance_does_not_cost_anybody_the_permission_they_just_gave(
     async_client: AsyncClient,
 ) -> None:
-    """The grant and the sweep it authorises share one transaction, so the grant wins.
+    """The sweep can refuse to bill without costing the person the grant they gave.
 
-    The sweep runs inline on this request and commits with it. Letting a
-    provider's refusal to bill escape the route would skip that commit and
-    throw away the decision the person just made -- losing a permission over a
-    backlog that is merely still waiting. The reach is resumable; the decision
+    The sweep runs inline on this request but does not land with it: it ends its
+    transaction before every classification, so the decision that authorised it
+    is durable at the first entry rather than at the route's commit. Letting a
+    provider's refusal to bill escape the route would still answer an error to
+    somebody who had just said yes -- a permission lost over a backlog that is
+    merely still waiting -- which is why the sweep breaks rather than raises
+    (``corpus_backfill._offer_batch``). The reach is resumable; the decision
     would not have been.
     """
     headers, _ = await _signup(async_client, "unbilled")

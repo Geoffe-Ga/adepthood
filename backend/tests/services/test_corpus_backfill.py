@@ -1066,3 +1066,52 @@ async def test_what_the_sweep_reached_survives_the_request_being_abandoned(
 
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND, _THIRD])
     assert None not in [await _offered_at(db_session, i) for i in (first, second, third)]
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_sweep_keeps_its_fragments_and_loses_its_receipt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An abandoned grant keeps what the sweep reached and loses the sweep's receipt.
+
+    This is the asymmetry the promise of one transaction used to hide. Each
+    entry's fragment and stamp are committed where they are produced, because
+    :func:`services.corpus_ingest._classify_and_record` ends the transaction on
+    its way to every provider call -- so they survive the caller's transaction
+    being rolled back. The :class:`models.corpus_sweep.CorpusSweep` row is only
+    appended, last, by :func:`backfill_after_consent`, and dies with that
+    transaction. So an abandoned request leaves the writing ontologized and no
+    receipt saying so, which is the exact inverse of "together or neither".
+
+    Two single-site mutations kill this, and naming them keeps the assertion
+    honest about what it decides:
+
+    * commit the receipt inside :func:`backfill_after_consent`, straight after
+      the ``session.add(CorpusSweep(...))`` -- the receipt assertion fails with
+      ``Left contains one more item: CorpusSweep(...)``, one row surviving the
+      rollback, while the fragment assertion still passes;
+    * delete the per-entry ``await session.commit()`` in :func:`_offer_batch` --
+      the fragment assertion fails with ``Right contains one more item:
+      'This morning it was easier than yesterday.'``, the last-processed entry
+      lost, and ``test_what_the_sweep_reached_survives_the_request_being_abandoned``
+      fails with it.
+
+    That second test is the fragment half only; nothing else in the suite
+    asserts that the receipt does *not* survive, so the receipt half is the new
+    coverage here rather than a duplicate of the test above it.
+
+    ``sorted`` on both sides because the sweep's queue order is not creation
+    order -- the newer entry is classified first.
+    """
+    _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+    change = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
+    )
+
+    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await db_session.rollback()
+
+    assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])
+    assert await _sweeps(db_session) == []

@@ -367,10 +367,11 @@ async def _offer_batch(
     :func:`services.corpus_ingest._classify_and_record` -- so this loop is no
     longer one transaction the caller closes, and an outcome left for the caller
     would be durable only as a side effect of the *next* entry releasing the
-    connection. That is emergent rather than stated, and it is false for the last
-    entry and for the refusal below. Committing the fragment and its stamp
-    together, here, is what makes the resumability this module promises true of
-    a sweep the caller abandons as well as of one that returns.
+    connection. That is emergent rather than stated, and it is false for the
+    last entry, which has no next one to release the connection on its behalf.
+    Committing the fragment and its stamp together, here, is what makes the
+    resumability this module promises true of a sweep the caller abandons as
+    well as of one that returns.
 
     **A provider that refused to bill ends the sweep.** It is the one condition
     the writer raises rather than reports, because it is a fact about the
@@ -554,7 +555,8 @@ async def backfill_after_consent(
     before it left neither. That is the better answer for the person -- the
     reach is resumable through a repeated yes, and a grant that vanished because
     a provider was slow was a permission the account had given and not been
-    granted -- but it is a different one.
+    granted -- but it is a different one. Pinned by
+    ``test_an_abandoned_sweep_keeps_its_fragments_and_loses_its_receipt``.
     """
     consent_event_id = _authorising_event_id(change, user_id)
     if consent_event_id is None:
