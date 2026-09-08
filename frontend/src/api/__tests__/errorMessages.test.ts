@@ -7,6 +7,7 @@ import {
   GENERIC_FALLBACK,
   messageForCode,
   SERVICE_CREDIT_EXHAUSTED_COPY,
+  UNREACHABLE_MESSAGE,
   USER_FACING_ERROR_MESSAGES,
 } from '../errorMessages';
 import { ApiError } from '../index';
@@ -315,8 +316,16 @@ describe('formatApiError', () => {
   // A failed ``fetch`` rejects with a TypeError whose message differs by engine:
   // "Load failed" (iOS Safari/WebKit), "Failed to fetch" (Chrome/Blink),
   // "NetworkError when attempting to fetch resource." (Firefox), "Network
-  // request failed" (React Native). These are cryptic — surface the friendly
-  // offline copy instead of leaking the raw engine string to users.
+  // request failed" (React Native). These are cryptic — surface friendly copy
+  // instead of leaking the raw engine string to users.
+  //
+  // The copy says the server was not reached and stops there (#2661). The same
+  // rejection is what a browser produces for a request it blocked on CORS, so
+  // diagnosing it as the device being offline is a guess, and it was wrong for
+  // the developer whose local build was served from an origin the allow-list
+  // did not name. The offline claim now belongs to the ``network_error`` code,
+  // which the client raises only behind its own connectivity signal — see
+  // corsRejectionIsNotOffline.test.ts for both arms.
   it.each([
     ['Load failed'],
     ['Failed to fetch'],
@@ -324,10 +333,11 @@ describe('formatApiError', () => {
     ['Network request failed'],
     ['The network connection was lost.'],
     ['The Internet connection appears to be offline.'],
-  ])('maps the fetch network TypeError %p to friendly offline copy', (message) => {
+  ])('maps the fetch network TypeError %p to friendly unreachable copy', (message) => {
     const result = formatApiError(new TypeError(message));
     expect(result).not.toBe(message); // never leak the raw engine string
-    expect(result).toMatch(/offline/i);
+    expect(result).toBe(UNREACHABLE_MESSAGE);
+    expect(result).not.toMatch(/offline/i); // never diagnose what we cannot see
   });
 });
 

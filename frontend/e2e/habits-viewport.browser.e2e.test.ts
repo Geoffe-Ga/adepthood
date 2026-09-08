@@ -89,8 +89,20 @@ function backendUrl(): string {
   return state.baseUrl;
 }
 
-/** A locator's layout box, or a loud failure -- never a silently skipped check. */
+/**
+ * A locator's layout box, or a loud failure -- never a silently skipped check.
+ *
+ * Waits for the element itself to be visible before measuring it. `boundingBox`
+ * does not auto-wait, so without this the measurement races the layout: the
+ * caller has usually awaited something NEARBY -- a tile's visibility, or a
+ * count that resolves the moment the right number of nodes exist -- which does
+ * not establish that THIS element has been laid out yet. A viewport change
+ * re-lays the whole page out, which is where the gap is widest. The wait
+ * changes nothing about what is asserted; it only stops the assertion being
+ * taken before the page is ready to answer.
+ */
 async function boxOf(locator: Locator, what: string): Promise<Box> {
+  await locator.waitFor({ state: 'visible' });
   const box = await locator.boundingBox();
   if (box === null) throw new Error(`${what} has no layout box`);
   return box;

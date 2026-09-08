@@ -12,10 +12,16 @@
  * These cases pin the client side of that seam: the sanitised
  * `{error, request_id}` envelope has to become an `ApiError` carrying the
  * server's own error code and request id — the value that turns "it broke" into
- * a log lookup — and only a failure that produced no response at all may still
- * read as "you appear to be offline".
+ * a log lookup — and a failure that produced no response at all reads as the
+ * server not being reached.
+ *
+ * That last arm used to read "you appear to be offline". #2661 retired the
+ * claim: a request the browser blocked and a request that found nothing are the
+ * same `TypeError` to JavaScript, so the device's connectivity is the only
+ * thing the client may speak to, and only when something told it. The offline
+ * arm now lives in corsRejectionIsNotOffline.test.ts alongside its opposite.
  */
-import { formatApiError, USER_FACING_ERROR_MESSAGES } from '../errorMessages';
+import { formatApiError, UNREACHABLE_MESSAGE, USER_FACING_ERROR_MESSAGES } from '../errorMessages';
 import { habits, setNetworkOnlineGetter, setOnUnauthorized, setTokenGetter } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -130,12 +136,15 @@ describe('a 500 that reached the client', () => {
 });
 
 describe('a request that produced no response at all', () => {
-  test('still reports as offline', async () => {
+  test('reports the server as unreachable, not the device as offline', async () => {
     mockFetch.mockRejectedValue(new TypeError('Failed to fetch'));
 
     const err = await failureOf(habits.list());
 
-    expect(formatApiError(err)).toBe(USER_FACING_ERROR_MESSAGES.network_error);
+    // The connectivity signal registered above says this machine is online, so
+    // the offline story is not merely unproven here — it is false (#2661).
+    expect(formatApiError(err)).toBe(UNREACHABLE_MESSAGE);
+    expect(formatApiError(err)).not.toBe(USER_FACING_ERROR_MESSAGES.network_error);
   });
 
   test('carries no request id to quote', async () => {

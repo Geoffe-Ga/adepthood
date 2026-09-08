@@ -84,10 +84,13 @@ To run the web build, pass a port the backend's CORS allowlist accepts:
 npx expo start --web --port 8080
 ```
 
-`DEV_ORIGINS` in `backend/src/main.py` allows `localhost:3000` and
-`localhost:8080` only. Expo's own default is 8081, so a bare `--web` is
-CORS-blocked on every request and the app reports itself offline rather than
-naming the real cause.
+`DEV_ORIGINS` in `backend/src/main.py` allows ports 3000 and 8080 only, each
+under both spellings of the loopback interface — `http://localhost:<port>` and
+`http://127.0.0.1:<port>`, which are the same machine but different origins to
+a browser. Expo's own default is 8081, so a bare `--web` is CORS-blocked on
+every request; the browser gives the app no way to learn that, so it reports
+the server as unreachable rather than naming the real cause. Adding a port
+means adding both spellings — `tests/test_cors.py` fails if only one is listed.
 
 ### Backend
 ```bash
