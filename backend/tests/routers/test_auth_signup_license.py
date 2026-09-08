@@ -90,6 +90,9 @@ DETAIL_THROTTLED = "too_many_license_attempts"
 RETIRED_EMAIL_MISMATCH_MARKER = "email_mismatch"
 ALREADY_BOUND_MARKER = "license_already_bound"
 DUPLICATE_SIGNUP_MARKER = "duplicate_signup"
+# Both pre-checks -- the router's post-verify one and the domain seam's own --
+# read through this function; silencing it is what lets a test reach the
+# UNIQUE constraint, the only defence that holds under a real race.
 FIND_BINDING_SEAM = "domain.license_claims.find_binding"
 CONCURRENT_RACERS = 2
 RACER_STATUSES = sorted([HTTPStatus.OK, HTTPStatus.BAD_REQUEST])
@@ -720,11 +723,11 @@ async def test_losing_the_binding_race_leaves_no_orphan_account(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the UNIQUE constraint, not the pre-check, refuses the claim, nothing survives.
+    """When the UNIQUE constraint, not a pre-check, refuses the claim, nothing survives.
 
-    The pre-check is silenced so the binding insert reaches the constraint —
-    the only defence that holds under a real race — and the User row flushed
-    in the same transaction must roll back with it.
+    Both pre-checks are silenced so the binding insert reaches the constraint
+    — the only defence that holds under a real race — and the User row
+    flushed in the same transaction must roll back with it.
     """
     calls: list[tuple[str, str]] = []
     results = {ALLOWED_PRODUCT_ALPHA: _license_result(email=OTHER_EMAIL)}
@@ -770,40 +773,32 @@ async def test_two_racers_presenting_one_key_yield_one_account(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("allowlisted_products", "disable_rate_limit")
-async def test_a_bound_key_presented_again_charges_the_invalid_license_cap(
+async def test_a_bound_key_is_charged_against_the_invalid_license_cap(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Grinding a stolen-but-bound key counts against the throttle like an unknown one.
 
-    ADR 0008 Decision 6: nine unknown keys plus one bound key spend the whole
-    hourly budget, so the next guess is refused with 429 before Gumroad is
-    contacted. Were the bound key free, that last request would answer 400.
+    ADR 0008 Decision 6: ten bound-key attempts spend the whole hourly budget
+    and the eleventh is refused with 429 before Gumroad is contacted, exactly
+    as ten unknown keys would be. Were the bound key free, every one of them
+    would answer 400 forever.
     """
     monkeypatch.setattr(
         VERIFY_SEAM, _make_keyed_verify_stub({LICENSE_KEY: _license_result(email=OTHER_EMAIL)})
     )
     first = await async_client.post(SIGNUP_PATH, json=_signup_payload())
     assert first.status_code == HTTPStatus.OK
-    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
-        guess = await async_client.post(
+
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
+        bound = await async_client.post(
             SIGNUP_PATH,
-            json=_signup_payload(
-                email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com",
-                license_key=UNKNOWN_LICENSE_KEY,
-            ),
+            json=_signup_payload(email=f"{INVALID_ATTEMPT_EMAIL_PREFIX}{attempt}@example.com"),
         )
-        assert guess.status_code == HTTPStatus.BAD_REQUEST
+        assert bound.status_code == HTTPStatus.BAD_REQUEST
+        assert bound.json()["detail"] == DETAIL_INVALID_LICENSE
+    throttled = await async_client.post(SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL))
 
-    bound = await async_client.post(
-        SIGNUP_PATH, json=_signup_payload(email=OTHER_EMAIL, license_key=LICENSE_KEY)
-    )
-    throttled = await async_client.post(
-        SIGNUP_PATH, json=_signup_payload(email=THIRD_EMAIL, license_key=UNKNOWN_LICENSE_KEY)
-    )
-
-    assert bound.status_code == HTTPStatus.BAD_REQUEST
-    assert bound.json()["detail"] == DETAIL_INVALID_LICENSE
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
 

@@ -44,7 +44,13 @@ if TYPE_CHECKING:
 
     from models.user import User
 
-__all__ = ["ClaimOutcome", "claim_license", "find_binding", "stage_license_claim"]
+__all__ = [
+    "ClaimOutcome",
+    "bound_elsewhere",
+    "claim_license",
+    "find_binding",
+    "stage_license_claim",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +86,46 @@ async def find_binding(session: AsyncSession, sale_id: str) -> LicenseBinding | 
         select(LicenseBinding).where(col(LicenseBinding.gumroad_sale_id) == sale_id)
     )
     return result.scalars().first()
+
+
+def _log_rejected(claimant_id: int | None, binding_id: int | None) -> None:
+    """Emit the anomalous-claim WARNING: a valid key presented by a non-holder.
+
+    Ids only. ``claimant_id`` is ``None`` on an account-creation path, where
+    the would-be holder has no row yet; the caller's own refusal line carries
+    whatever fingerprint that surface logs.
+    """
+    logger.warning(
+        _REJECTED_EVENT,
+        extra={
+            "reason_code": REASON_LICENSE_ALREADY_BOUND,
+            "user_id": claimant_id,
+            "binding_id": binding_id,
+        },
+    )
+
+
+async def bound_elsewhere(
+    session: AsyncSession,
+    sale_id: str,
+    *,
+    claimant_id: int | None = None,
+) -> bool:
+    """Return whether ``sale_id`` is bound to an account other than ``claimant_id``.
+
+    The pre-check behind every generic refusal of a valid-but-claimed key. It
+    runs after the outbound verify and before any hash or row, so a key
+    another account has redeemed costs its presenter exactly what an unknown
+    key costs and nothing is ever staged for it. It is a courtesy, not the
+    invariant: the UNIQUE constraint on the binding still decides a genuine
+    race, and :func:`claim_license` folds the loser into the same answer.
+    Logs the WARNING when it answers ``True``.
+    """
+    binding = await find_binding(session, sale_id)
+    if binding is None or binding.user_id == claimant_id:
+        return False
+    _log_rejected(claimant_id, binding.id)
+    return True
 
 
 async def _stored_sale(session: AsyncSession, sale_id: str) -> GumroadSale | None:
@@ -134,14 +180,7 @@ async def stage_license_claim(
     if binding.user_id == user_id:
         await _stage_grant(session, user_id, sale_id=sale_id, product_id=product_id)
         return ClaimOutcome.ALREADY_OWN
-    logger.warning(
-        _REJECTED_EVENT,
-        extra={
-            "reason_code": REASON_LICENSE_ALREADY_BOUND,
-            "user_id": user_id,
-            "binding_id": binding.id,
-        },
-    )
+    _log_rejected(user_id, binding.id)
     return ClaimOutcome.BOUND_ELSEWHERE
 
 

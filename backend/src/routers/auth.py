@@ -33,7 +33,7 @@ from domain.entitlements import (
     LicenseOutcome,
     verify_aptitude_license,
 )
-from domain.license_claims import ClaimOutcome, claim_license
+from domain.license_claims import ClaimOutcome, bound_elsewhere, claim_license
 from domain.timezone import normalize_timezone
 from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
@@ -586,6 +586,8 @@ async def _verify_signup_license(request: Request, payload: SignupRequest) -> Gu
     failed. A Gumroad outage fails closed with 503 before any row is
     written; ``from None`` severs the chain so the caught error's Request
     body (which carries the license key) is unreachable via ``__cause__``.
+    Whether the verified purchase is already bound to another account is
+    :func:`signup`'s next question, asked after the duplicate-email check.
     """
     await _reject_if_license_cap_exhausted(request, payload.license_key)
     try:
@@ -722,15 +724,22 @@ async def signup(
     # attacker from inferring account existence from which check ran first.
     purchase = await _verify_signup_license(request, payload)
     await _reject_duplicate_signup_email(session, payload.email)
+    if await bound_elsewhere(session, purchase.sale_id):
+        # A valid key another account has already redeemed (ADR 0008
+        # Decision 2). Refused before any hash or row, with the unknown key's
+        # exact charge, dummy verify and bytes, so "valid but claimed" is
+        # never readable off the wire; only the WARNING the pre-check logged
+        # knows. The UNIQUE constraint still decides a genuine race below.
+        await _reject_invalid_license(request)
     user = await _create_signup_user(session, payload, purchase)
     if user is None:
         # Either a concurrent request won the unique-index race after our
-        # pre-check passed, or the sale is bound to another account. Answer
-        # with the exact rejection the pre-check path returns so neither is
-        # distinguishable from an invalid license, and charge the hourly cap
-        # so a bound key cannot be ground for free (ADR 0008 Decision 6).
-        # ``_create_signup_user`` already spent one real bcrypt hash, matching
-        # the dummy verify the pre-check spends — timing holds.
+        # pre-check passed, or a rival bound the sale between the pre-check
+        # and the commit. Answer with the exact rejection the pre-check paths
+        # return so neither is distinguishable from an invalid license, and
+        # charge the hourly cap so no path around the pre-check is free
+        # (Decision 6). ``_create_signup_user`` already spent one real bcrypt
+        # hash, matching the dummy verify the pre-check spends — timing holds.
         await _count_invalid_license_attempt(request, payload.license_key)
         raise bad_request(_DETAIL_INVALID_LICENSE)
 
@@ -2065,20 +2074,21 @@ async def _count_invalid_license_attempt(request: Request, license_key: str | No
 
 async def _verify_oauth_license(
     request: Request,
+    session: AsyncSession,
     email: str,
     license_key: str | None,
 ) -> GumroadPurchase:
     """Verify the APTITUDE license backing a brand-new social account.
 
-    Anything short of VERIFIED lands on the generic 409 -- a missing key and a
-    wrong key are indistinguishable on the wire, and so, one step later, is a
-    valid key already bound to another account.  The purchase email is not
-    compared with ``email``: a Hide My Email address or a gift recipient's own
-    address is as good as the buyer's (ADR 0008).  ``email`` is used only to
-    fingerprint the refusal log line.  A Gumroad outage fails closed with 503
-    before any row is written; ``from None`` severs the chain so the caught
-    error's request body (which carries the license key) is unreachable via
-    ``__cause__``.
+    Anything short of VERIFIED lands on the generic 409 -- a missing key, a
+    wrong key, and a valid key another account has already redeemed are
+    indistinguishable on the wire, and the last two charge the same hourly
+    cap.  The purchase email is not compared with ``email``: a Hide My Email
+    address or a gift recipient's own address is as good as the buyer's (ADR
+    0008).  ``email`` is used only to fingerprint the refusal log line.  A
+    Gumroad outage fails closed with 503 before any row is written; ``from
+    None`` severs the chain so the caught error's request body (which carries
+    the license key) is unreachable via ``__cause__``.
 
     The hourly cap is consulted before the verify, so a client that has spent
     its budget here is refused with 429 without Gumroad being contacted; the
@@ -2089,7 +2099,11 @@ async def _verify_oauth_license(
         check = await verify_aptitude_license(license_key)
     except GumroadUnavailableError:
         raise service_unavailable(_DETAIL_LICENSE_UNAVAILABLE) from None
-    if check.outcome is LicenseOutcome.VERIFIED and check.purchase is not None:
+    if (
+        check.outcome is LicenseOutcome.VERIFIED
+        and check.purchase is not None
+        and not await bound_elsewhere(session, check.purchase.sale_id)
+    ):
         return check.purchase
     await _count_invalid_license_attempt(request, license_key)
     raise await _needs_license_conflict(email)
@@ -2167,7 +2181,7 @@ async def _create_oauth_account(
     an ORM attribute after that rollback would be a lazy load outside the
     greenlet; the racer's row points at the same account anyway.
     """
-    purchase = await _verify_oauth_license(request, email, payload.license_key)
+    purchase = await _verify_oauth_license(request, session, email, payload.license_key)
     user = await _insert_social_user(
         session, email, payload.timezone, attempt.display_name, purchase
     )

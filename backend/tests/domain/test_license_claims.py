@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.entitlements import REASON_LICENSE_ALREADY_BOUND, REASON_SIGNUP_REDEMPTION
-from domain.license_claims import ClaimOutcome, claim_license, find_binding, stage_license_claim
+from domain.license_claims import (
+    ClaimOutcome,
+    bound_elsewhere,
+    claim_license,
+    find_binding,
+    stage_license_claim,
+)
 from models.entitlement import Entitlement
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.license_binding import LicenseBinding
@@ -303,3 +309,33 @@ async def test_claim_logs_ids_only(
     # The record's whole attribute bag, not just the message: an address or a
     # key smuggled in through ``extra`` would never show up in the message.
     assert "@" not in repr(vars(bound[0]))
+
+
+@pytest.mark.asyncio
+async def test_bound_elsewhere_answers_for_a_claimant_with_no_account_yet(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The creation-path pre-check: unbound is free, bound is refused and logged."""
+    caplog.set_level(logging.DEBUG)
+    holder, holder_id = await _persist_user(db_session)
+    assert await bound_elsewhere(db_session, SALE_ID) is False
+    await claim_license(
+        db_session,
+        holder,
+        sale_id=SALE_ID,
+        product_id=PRODUCT_ID,
+        reason_code=REASON_SIGNUP_REDEMPTION,
+    )
+
+    refused = await bound_elsewhere(db_session, SALE_ID)
+    own = await bound_elsewhere(db_session, SALE_ID, claimant_id=holder_id)
+
+    assert refused is True
+    assert own is False
+    rejected = _records_for(caplog, REJECTED_EVENT)
+    assert len(rejected) == 1
+    assert rejected[0].levelno == logging.WARNING
+    assert getattr(rejected[0], "reason_code", None) == REASON_LICENSE_ALREADY_BOUND
+    assert getattr(rejected[0], "user_id", "missing") is None
+    assert "@" not in repr(vars(rejected[0]))
