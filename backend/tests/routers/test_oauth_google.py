@@ -1246,6 +1246,115 @@ async def test_racing_past_the_peek_is_still_refused_by_the_charge(
     assert await _count_rows(db_session, AuthIdentity) == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_a_bound_key_charges_the_oauth_cap_like_an_unknown_one(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """A valid-but-already-redeemed key costs a cap unit exactly as junk does.
+
+    ADR 0008 Decision 6. Ten bound-key attempts spend the whole hourly budget
+    and the eleventh is refused with 429 before Gumroad is contacted, exactly
+    as ten unknown keys would be. Were the bound key free, the 429 boundary
+    would sort keys into "valid but already redeemed" and "junk" -- a licence
+    oracle, and one an attacker can grind without limit.
+    """
+    holder = await _seed_user(db_session)
+    license_verifier.grant(VALID_LICENSE_KEY, GIFT_BUYER_EMAIL)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT_ALPHA,
+        )
+    )
+    await db_session.commit()
+
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR):
+        id_token = _mint_token(
+            sub=f"{THROTTLE_SUBJECT_PREFIX}{attempt}",
+            email=f"{THROTTLE_EMAIL_PREFIX}{attempt}@example.com",
+        )
+        bound = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(id_token, license_key=VALID_LICENSE_KEY),
+        )
+        assert bound.status_code == HTTPStatus.CONFLICT
+        assert bound.json()["detail"] == DETAIL_NEEDS_LICENSE
+
+    final_token = _mint_token(sub=THROTTLE_SUBJECT_FINAL, email=UNCLAIMED_EMAIL)
+    throttled = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(final_token, license_key=VALID_LICENSE_KEY),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+    assert await _count_rows(db_session, User) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_losing_the_licence_race_charges_the_invalid_license_cap(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    license_verifier: _LicenseVerifier,
+) -> None:
+    """The constraint-refused claim spends the tenth unit, so the next guess is 429.
+
+    Only a lost *licence* race is a guess worth charging; the neighbouring
+    lost-email race deliberately is not. Nine unknown keys, then the race
+    loser, then one more unknown key: were the race loser free, that last
+    guess would still answer 409 and the grind would never be throttled.
+    """
+    holder = await _seed_user(db_session)
+    license_verifier.grant(VALID_LICENSE_KEY, GIFT_BUYER_EMAIL)
+    db_session.add(
+        LicenseBinding(
+            user_id=_user_id(holder),
+            gumroad_sale_id=_sale_id_for(VALID_LICENSE_KEY),
+            product_id=ALLOWED_PRODUCT_ALPHA,
+        )
+    )
+    await db_session.commit()
+
+    for attempt in range(INVALID_LICENSE_MAX_PER_HOUR - 1):
+        id_token = _mint_token(
+            sub=f"{THROTTLE_SUBJECT_PREFIX}{attempt}",
+            email=f"{THROTTLE_EMAIL_PREFIX}{attempt}@example.com",
+        )
+        guess = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(id_token, license_key=INVALID_LICENSE_KEY),
+        )
+        assert guess.status_code == HTTPStatus.CONFLICT
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(FIND_BINDING_SEAM, AsyncMock(return_value=None))
+        race = await async_client.post(
+            OAUTH_PATH,
+            json=_oauth_payload(
+                _mint_token(sub=BOUND_KEY_SUBJECT, email=BOUND_KEY_EMAIL),
+                license_key=VALID_LICENSE_KEY,
+            ),
+        )
+
+    assert race.status_code == HTTPStatus.CONFLICT
+    assert race.json()["detail"] == DETAIL_NEEDS_LICENSE
+    assert await _count_rows(db_session, User) == 1
+
+    final_token = _mint_token(sub=THROTTLE_SUBJECT_FINAL, email=UNCLAIMED_EMAIL)
+    throttled = await async_client.post(
+        OAUTH_PATH,
+        json=_oauth_payload(final_token, license_key=INVALID_LICENSE_KEY),
+    )
+
+    assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == DETAIL_THROTTLED
+
+
 # ---------------------------------------------------------------------------
 # E. Step 5 — anti-enumeration and secret hygiene
 # ---------------------------------------------------------------------------
