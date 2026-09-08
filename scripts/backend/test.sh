@@ -33,6 +33,10 @@ readonly USAGE_EXIT_CODE=2
 # Distinct from a test failure on purpose: "your tests failed" and "this result
 # would not have been trustworthy" call for opposite responses.
 readonly REFUSED_EXIT_CODE=3
+# Distinct again, and for the same reason: a missing pytest is a result we
+# failed to obtain. This script used to answer `pytest: command not found` with
+# "✗ Tests failed", which reports a red suite nobody ran.
+readonly MISSING_RUNNER_EXIT_CODE=4
 
 TEST_TYPE="unit"
 COVERAGE=false
@@ -118,6 +122,7 @@ EXIT CODES:
     1               Test failures
     2               Usage error
     3               Refused: another whole-suite run is in flight in this tree
+    4               pytest is not installed, so no result was obtained
 
 EXAMPLES:
     $(basename "$0")                     # Run unit tests
@@ -361,6 +366,16 @@ fi
 # Run tests
 if $VERBOSE; then
     echo "Running pytest with args: ${PYTEST_ARGS[*]}"
+fi
+
+# An absent runner is not a red suite. Without this check the line below
+# answers `pytest: command not found` with "✗ Tests failed", which is a verdict
+# on code that was never executed -- the same defect the pre-commit entry above
+# it had, and the same shape complexity.sh:80-88 guards against.
+if ! command -v pytest &> /dev/null; then
+    echo "Error: pytest is not installed, so the tests cannot be run" >&2
+    echo "Install with: pip install -r backend/requirements-dev.txt" >&2
+    exit "$MISSING_RUNNER_EXIT_CODE"
 fi
 
 pytest "${PYTEST_ARGS[@]}" "${PYTEST_TARGETS[@]}" || {
