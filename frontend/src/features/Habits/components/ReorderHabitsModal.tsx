@@ -7,9 +7,17 @@ import { Button } from '../../../components/Button';
 import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
+import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
-import { calculateHabitStartDate, stageAtIndex } from '../HabitUtils';
+import {
+  calculateHabitStartDate,
+  carryoverSlot,
+  formatStageRange,
+  isCarryoverHabit,
+  stageAtIndex,
+  stageRangeForPage,
+} from '../HabitUtils';
 import { displaySlots } from '../services/habitOrdering';
 
 import ModalHeader from './ModalHeader';
@@ -46,33 +54,159 @@ const updateStartDates = (habits: Habit[], startDate: Date): Habit[] => {
   });
 };
 
+const groupBySignedRange = (habits: Habit[]): Habit[] => [
+  ...habits.filter(isCarryoverHabit),
+  ...habits.filter((habit) => !isCarryoverHabit(habit)),
+];
+
 interface ReorderItemProps {
   item: Habit;
   slot: number;
   drag: () => void;
   isActive: boolean;
+  staticWebRow?: boolean;
 }
 
-const ReorderHabitItem = ({ item, slot, drag, isActive }: ReorderItemProps) => {
+const ReorderHabitItem = ({
+  item,
+  slot,
+  drag,
+  isActive,
+  staticWebRow = false,
+}: ReorderItemProps) => {
   const stage = stageAtIndex(slot);
   const color = STAGE_COLORS[stage] ?? colors.neutral;
-  return (
-    <TouchableOpacity
-      onLongPress={drag}
-      disabled={isActive}
-      style={[
-        styles.reorderItem,
-        isActive && styles.reorderItemActive,
-        { borderLeftColor: color, borderLeftWidth: 4 },
-      ]}
-    >
-      <View style={styles.reorderItemContent}>
+  const displayedPosition = slot < 0 ? slot : slot + 1;
+  const content = (
+    <View style={styles.reorderItemContent}>
+      <View style={styles.reorderItemIdentity}>
+        <Text style={styles.reorderDragHandle} accessibilityElementsHidden>
+          ⠿
+        </Text>
+        <Text style={styles.reorderPosition}>{displayedPosition}</Text>
         <Text style={styles.reorderItemText}>
           {item.icon} {item.name} ({stage})
         </Text>
-        <Text style={styles.reorderItemDate}>{formatDate(new Date(item.start_date))}</Text>
       </View>
+      <Text style={styles.reorderItemDate}>{formatDate(new Date(item.start_date))}</Text>
+    </View>
+  );
+  const itemStyle = [
+    styles.reorderItem,
+    isActive && styles.reorderItemActive,
+    { borderLeftColor: color, borderLeftWidth: 4 },
+  ];
+
+  // The browser wrapper owns pointer, native drag, and keyboard interaction.
+  // Rendering another button inside it would announce a misleading long-press
+  // action and create nested interactive controls for assistive technology.
+  if (staticWebRow) return <View style={itemStyle}>{content}</View>;
+
+  return (
+    <TouchableOpacity
+      onLongPress={drag}
+      delayLongPress={150}
+      disabled={isActive}
+      accessibilityRole="button"
+      accessibilityLabel={`Move ${item.name}, position ${displayedPosition}`}
+      accessibilityHint="Long press and drag to a new position or range"
+      style={itemStyle}
+    >
+      {content}
     </TouchableOpacity>
+  );
+};
+
+interface ReorderPageEntry {
+  kind: 'page';
+  key: string;
+  page: number;
+  isProgramStart: boolean;
+}
+
+interface ReorderHabitEntry {
+  kind: 'habit';
+  key: string;
+  habit: Habit;
+  slot: number;
+}
+
+type ReorderEntry = ReorderPageEntry | ReorderHabitEntry;
+
+const pageEntry = (page: number, isProgramStart = false): ReorderPageEntry => ({
+  kind: 'page',
+  key: `page:${page}`,
+  page,
+  isProgramStart,
+});
+
+const habitEntry = (habit: Habit, slot: number): ReorderHabitEntry => ({
+  kind: 'habit',
+  key: `habit:${habit.id}`,
+  habit,
+  slot,
+});
+
+/**
+ * Materialize the same signed ranges as the Habits screen inside one scrollable
+ * drag surface. Empty invite ranges are intentional drop targets: the first
+ * negative range always exists, and a full positive lap exposes the next one.
+ */
+const buildReorderEntries = (habits: Habit[]): ReorderEntry[] => {
+  const carryover = habits.filter(isCarryoverHabit);
+  const program = habits.filter((habit) => !isCarryoverHabit(habit));
+  const entries: ReorderEntry[] = [pageEntry(-1)];
+
+  carryover.forEach((habit, index) => {
+    if (index > 0 && index % MAX_HABITS === 0) {
+      entries.push(pageEntry(-(index / MAX_HABITS + 1)));
+    }
+    entries.push(habitEntry(habit, carryoverSlot(index)));
+  });
+  if (carryover.length > 0 && carryover.length % MAX_HABITS === 0) {
+    entries.push(pageEntry(-(carryover.length / MAX_HABITS + 1)));
+  }
+
+  entries.push(pageEntry(0, true));
+  program.forEach((habit, index) => {
+    if (index > 0 && index % MAX_HABITS === 0) {
+      entries.push(pageEntry(index / MAX_HABITS));
+    }
+    entries.push(habitEntry(habit, index));
+  });
+  if (program.length > 0 && program.length % MAX_HABITS === 0) {
+    entries.push(pageEntry(program.length / MAX_HABITS));
+  }
+  return entries;
+};
+
+const habitsFromEntries = (entries: ReorderEntry[]): Habit[] => {
+  let isCarryover = true;
+  const habits: Habit[] = [];
+  entries.forEach((entry) => {
+    if (entry.kind === 'page') {
+      if (entry.isProgramStart) isCarryover = false;
+      return;
+    }
+    habits.push({ ...entry.habit, is_carryover: isCarryover });
+  });
+  return habits;
+};
+
+const isReorderEntry = (value: Habit | ReorderEntry): value is ReorderEntry =>
+  'kind' in value && (value.kind === 'page' || value.kind === 'habit');
+
+const ReorderPageMarker = ({ page }: { page: number }) => {
+  const range = stageRangeForPage(page, MAX_HABITS);
+  const rangeText = formatStageRange(range.start, range.end);
+  const title = page < 0 ? 'Before your program' : page === 0 ? 'Your program' : 'Next lap';
+  return (
+    <View style={styles.reorderPageMarker} accessibilityRole="header">
+      <Text style={styles.reorderPageMarkerTitle}>
+        {title} · {rangeText}
+      </Text>
+      <Text style={styles.reorderPageMarkerHint}>Drop a habit below this line.</Text>
+    </View>
   );
 };
 
@@ -132,27 +266,214 @@ const ReorderDateButton = ({ startDate, onOpenPicker, onSelectDate }: ReorderDat
 
 interface ReorderListProps {
   orderedHabits: Habit[];
-  onDragEnd: (_data: { data: Habit[] }) => void;
+  onDragEnd: (_data: { data: Array<Habit | ReorderEntry> }) => void;
 }
 
+interface WebReorderListProps {
+  entries: ReorderEntry[];
+  onDragEnd: ReorderListProps['onDragEnd'];
+}
+
+interface WebReorderEntryProps {
+  entry: ReorderEntry;
+  index: number;
+  isDragged: boolean;
+  onPointerStart: (_entry: ReorderHabitEntry) => void;
+  onDragStart: (_entry: ReorderHabitEntry, _event: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
+  onDrop: (_index: number) => void;
+  onMove: (_entry: ReorderHabitEntry, _index: number, _direction: -1 | 1) => void;
+}
+
+const WEB_AUTOSCROLL_EDGE = 72;
+const WEB_AUTOSCROLL_STEP = 24;
+
+const scrollDuringWebDrag = (event: React.DragEvent<HTMLDivElement>) => {
+  event.preventDefault();
+  const bounds = event.currentTarget.getBoundingClientRect();
+  if (event.clientY < bounds.top + WEB_AUTOSCROLL_EDGE) {
+    event.currentTarget.scrollTop -= WEB_AUTOSCROLL_STEP;
+  } else if (event.clientY > bounds.bottom - WEB_AUTOSCROLL_EDGE) {
+    event.currentTarget.scrollTop += WEB_AUTOSCROLL_STEP;
+  }
+};
+
+const webEntryAriaLabel = (entry: ReorderEntry): string => {
+  if (entry.kind === 'habit') {
+    const position = entry.slot < 0 ? entry.slot : entry.slot + 1;
+    return `Move ${entry.habit.name}, position ${position}. Use Arrow Up or Arrow Down, or drag to a range.`;
+  }
+  const range = stageRangeForPage(entry.page, MAX_HABITS);
+  return `Drop in ${formatStageRange(range.start, range.end)}`;
+};
+
+const WebReorderEntry = ({
+  entry,
+  index,
+  isDragged,
+  onPointerStart,
+  onDragStart,
+  onDragEnd,
+  onDrop,
+  onMove,
+}: WebReorderEntryProps) => (
+  <div
+    draggable={entry.kind === 'habit'}
+    role={entry.kind === 'habit' ? 'listitem' : 'separator'}
+    tabIndex={entry.kind === 'habit' ? 0 : undefined}
+    aria-keyshortcuts={entry.kind === 'habit' ? 'ArrowUp ArrowDown' : undefined}
+    aria-label={webEntryAriaLabel(entry)}
+    data-range-page={entry.kind === 'page' ? entry.page : undefined}
+    onPointerDown={() => entry.kind === 'habit' && onPointerStart(entry)}
+    onPointerUp={() => onDrop(index)}
+    onKeyDown={(event) => {
+      if (entry.kind !== 'habit' || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+      event.preventDefault();
+      onMove(entry, index, event.key === 'ArrowUp' ? -1 : 1);
+    }}
+    onDragStart={(event) => entry.kind === 'habit' && onDragStart(entry, event)}
+    onDragEnd={onDragEnd}
+    onDragOver={(event) => event.preventDefault()}
+    onDrop={(event) => {
+      event.preventDefault();
+      onDrop(index);
+    }}
+    style={{ cursor: entry.kind === 'habit' ? 'grab' : 'default', opacity: isDragged ? 0.55 : 1 }}
+  >
+    {entry.kind === 'page' ? (
+      <ReorderPageMarker page={entry.page} />
+    ) : (
+      <ReorderHabitItem
+        item={entry.habit}
+        slot={entry.slot}
+        drag={() => {}}
+        isActive={false}
+        staticWebRow
+      />
+    )}
+  </div>
+);
+
+const reorderEntry = (
+  entries: ReorderEntry[],
+  key: string,
+  targetIndex: number,
+): ReorderEntry[] | null => {
+  const sourceIndex = entries.findIndex((entry) => entry.key === key);
+  if (sourceIndex < 0 || sourceIndex === targetIndex) return null;
+  const reordered = [...entries];
+  const [moving] = reordered.splice(sourceIndex, 1);
+  if (!moving || moving.kind !== 'habit') return null;
+  reordered.splice(Math.max(0, Math.min(targetIndex, reordered.length)), 0, moving);
+  return reordered;
+};
+
+const useWebReorderDrag = (entries: ReorderEntry[], onDragEnd: ReorderListProps['onDragEnd']) => {
+  const draggedKeyRef = useRef<string | null>(null);
+  const [draggedKey, setDraggedKey] = useState<string | null>(null);
+  const cancelDrag = () => {
+    draggedKeyRef.current = null;
+    setDraggedKey(null);
+  };
+  useEffect(() => {
+    if (typeof window.addEventListener !== 'function') return undefined;
+    const cancel = () => {
+      draggedKeyRef.current = null;
+      setDraggedKey(null);
+    };
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('pointerup', cancel);
+    return () => {
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('pointerup', cancel);
+    };
+  }, []);
+  const moveKeyTo = (key: string, targetIndex: number) => {
+    const reordered = reorderEntry(entries, key, targetIndex);
+    if (!reordered) return;
+    cancelDrag();
+    onDragEnd({ data: reordered });
+  };
+  const startPointer = (habit: ReorderHabitEntry) => {
+    draggedKeyRef.current = habit.key;
+    setDraggedKey(habit.key);
+  };
+  return { draggedKey, draggedKeyRef, cancelDrag, moveKeyTo, startPointer };
+};
+
+/** Browser-native drag events keep web usable even when the gesture-handler
+ * long-press recognizer is unavailable. The surrounding list remains the one
+ * scroll container, so dragging to either edge can reach every signed range. */
+const WebReorderList = ({ entries, onDragEnd }: WebReorderListProps) => {
+  const { draggedKey, draggedKeyRef, cancelDrag, moveKeyTo, startPointer } = useWebReorderDrag(
+    entries,
+    onDragEnd,
+  );
+
+  const dropAt = (targetIndex: number) => {
+    const key = draggedKeyRef.current;
+    if (key) moveKeyTo(key, targetIndex);
+  };
+
+  return (
+    <div
+      data-testid="reorder-list"
+      role="list"
+      onPointerUp={cancelDrag}
+      onPointerCancel={cancelDrag}
+      onDragOver={(event) => draggedKeyRef.current && scrollDuringWebDrag(event)}
+      style={{ height: '100%', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+    >
+      {entries.map((entry, index) => (
+        <WebReorderEntry
+          key={entry.key}
+          entry={entry}
+          index={index}
+          isDragged={draggedKey === entry.key}
+          onPointerStart={startPointer}
+          onDragStart={(habit, event) => {
+            startPointer(habit);
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', habit.key);
+          }}
+          onDragEnd={cancelDrag}
+          onDrop={dropAt}
+          onMove={(habit, sourceIndex, direction) => moveKeyTo(habit.key, sourceIndex + direction)}
+        />
+      ))}
+    </div>
+  );
+};
+
 const ReorderList = ({ orderedHabits, onDragEnd }: ReorderListProps) => {
-  const slots = displaySlots(orderedHabits);
+  const entries = buildReorderEntries(orderedHabits);
   return (
     <View style={styles.reorderList}>
-      <DraggableFlatList
-        style={{ flex: 1 }}
-        data={orderedHabits}
-        keyExtractor={(item) => (item.id ? item.id.toString() : item.name)}
-        renderItem={({ item, drag, isActive, getIndex }) => (
-          <ReorderHabitItem
-            item={item}
-            slot={slots[getIndex() ?? 0] ?? 0}
-            drag={drag}
-            isActive={isActive}
-          />
-        )}
-        onDragEnd={onDragEnd}
-      />
+      {Platform.OS === 'web' ? (
+        <WebReorderList entries={entries} onDragEnd={onDragEnd} />
+      ) : (
+        <DraggableFlatList
+          testID="reorder-list"
+          style={{ flex: 1, minHeight: 0 }}
+          data={entries}
+          keyExtractor={(entry) => entry.key}
+          renderItem={({ item, drag, isActive }) =>
+            item.kind === 'page' ? (
+              <ReorderPageMarker page={item.page} />
+            ) : (
+              <ReorderHabitItem
+                item={item.habit}
+                slot={item.slot}
+                drag={drag}
+                isActive={isActive}
+              />
+            )
+          }
+          autoscrollThreshold={72}
+          autoscrollSpeed={160}
+          onDragEnd={onDragEnd}
+        />
+      )}
     </View>
   );
 };
@@ -162,7 +483,7 @@ interface ReorderState {
   startDate: Date;
   pickerVisible: boolean;
   setPickerVisible: (_v: boolean) => void;
-  handleDragEnd: (_a: { data: Habit[] }) => void;
+  handleDragEnd: ReorderListProps['onDragEnd'];
   handleConfirmDate: (_d: Date) => void;
   handleCancelDate: () => void;
   handleSave: () => void;
@@ -205,7 +526,7 @@ const useReorderState = ({
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
     if (!justOpened || habits.length === 0) return;
-    setOrderedHabits(updateStartDates(habits, startDate));
+    setOrderedHabits(updateStartDates(groupBySignedRange(habits), startDate));
   }, [visible, habits, startDate]);
 
   return {
@@ -213,7 +534,12 @@ const useReorderState = ({
     startDate,
     pickerVisible,
     setPickerVisible,
-    handleDragEnd: ({ data }) => setOrderedHabits(updateStartDates(data, startDate)),
+    handleDragEnd: ({ data }) => {
+      const nextHabits = data.some(isReorderEntry)
+        ? habitsFromEntries(data.filter(isReorderEntry))
+        : (data as Habit[]);
+      setOrderedHabits(updateStartDates(nextHabits, startDate));
+    },
     // Preview only. The restamped rows live here until Save Order, so writing
     // the global anchor now would let a date the user previewed and then
     // abandoned outlive the modal, with no row on disk agreeing with it.
@@ -241,7 +567,7 @@ interface ReorderBodyProps {
   startDate: Date;
   onOpenPicker: () => void;
   onSelectDate: (_d: Date) => void;
-  onDragEnd: (_a: { data: Habit[] }) => void;
+  onDragEnd: ReorderListProps['onDragEnd'];
   onSave: () => void;
 }
 
@@ -262,7 +588,8 @@ const ReorderBody = ({
       onSelectDate={onSelectDate}
     />
     <Text style={styles.reorderInstructions}>
-      Drag habits to reorder. Habits 1-8 start 21 days apart, habits 9-10 start 42 days apart.
+      Drag by the handle to reorder or cross a range line. Habits 1-8 start 21 days apart; habits
+      9-10 start 42 days apart.
     </Text>
     <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
     <Button

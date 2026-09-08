@@ -93,10 +93,29 @@ const HABITS: Habit[] = [
   makeHabit(3, 'Red', 'C'),
 ];
 
-const getOrderedIds = (list: ReturnType<typeof render>): number[] => {
-  const data = list.getByTestId('reorder-list').props.data as Habit[];
-  return data.map((h) => h.id);
-};
+interface TestHabitEntry {
+  kind: 'habit';
+  habit: Habit;
+}
+
+interface TestPageEntry {
+  kind: 'page';
+  page: number;
+}
+
+type TestReorderEntry = Habit | TestHabitEntry | TestPageEntry;
+
+const getReorderEntries = (list: ReturnType<typeof render>): TestReorderEntry[] =>
+  list.getByTestId('reorder-list').props.data as TestReorderEntry[];
+
+const getOrderedHabits = (list: ReturnType<typeof render>): Habit[] =>
+  getReorderEntries(list).flatMap((entry) => {
+    if ('kind' in entry) return entry.kind === 'habit' ? [entry.habit] : [];
+    return [entry];
+  });
+
+const getOrderedIds = (list: ReturnType<typeof render>): number[] =>
+  getOrderedHabits(list).map((habit) => habit.id);
 
 beforeEach(() => {
   lastModalDatePickerProps.current = null;
@@ -116,13 +135,13 @@ describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () =>
     });
     expect(getOrderedIds(result)).toEqual([3, 1, 2]);
 
-    const afterFirst = result.getByTestId('reorder-list').props.data as Habit[];
+    const afterFirst = getOrderedHabits(result);
     act(() => {
       list.props.onDragEnd({ data: [afterFirst[2], afterFirst[0], afterFirst[1]] });
     });
     expect(getOrderedIds(result)).toEqual([2, 3, 1]);
 
-    const afterSecond = result.getByTestId('reorder-list').props.data as Habit[];
+    const afterSecond = getOrderedHabits(result);
     act(() => {
       list.props.onDragEnd({ data: [afterSecond[1], afterSecond[0], afterSecond[2]] });
     });
@@ -144,6 +163,84 @@ describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () =>
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
     expect(getOrderedIds(result)).toEqual([3, 1, 2]);
+  });
+});
+
+describe('ReorderHabitsModal — signed range drop targets', () => {
+  const TEN_PROGRAM_HABITS = Array.from({ length: 10 }, (_, index) =>
+    makeHabit(index + 1, 'Beige', `Program ${index + 1}`),
+  );
+
+  const isPageEntry = (entry: TestReorderEntry, page: number): entry is TestPageEntry =>
+    'kind' in entry && entry.kind === 'page' && entry.page === page;
+
+  const isHabitEntry = (entry: TestReorderEntry, id: number): entry is TestHabitEntry =>
+    'kind' in entry && entry.kind === 'habit' && entry.habit.id === id;
+
+  it('offers the carryover range and a next-lap target when stages 1–10 are full', () => {
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={TEN_PROGRAM_HABITS}
+        onClose={jest.fn()}
+        onSaveOrder={jest.fn()}
+      />,
+    );
+
+    expect(result.getByText(/-10 to -1/)).toBeTruthy();
+    expect(result.getByText(/11–20/)).toBeTruthy();
+  });
+
+  it('turns a program habit into carryover when it crosses the program boundary', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const entries = [...getReorderEntries(result)];
+    const movingIndex = entries.findIndex((entry) => isHabitEntry(entry, 3));
+    const [moving] = entries.splice(movingIndex, 1);
+    const programBoundary = entries.findIndex((entry) => isPageEntry(entry, 0));
+
+    expect(moving).toBeDefined();
+    expect(programBoundary).toBeGreaterThanOrEqual(0);
+    entries.splice(programBoundary, 0, moving!);
+    act(() => result.getByTestId('reorder-list').props.onDragEnd({ data: entries }));
+
+    expect(getOrderedHabits(result).find((habit) => habit.id === 3)?.is_carryover).toBe(true);
+
+    fireEvent.press(result.getByText('Save Order'));
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    expect(saved.find((habit) => habit.id === 3)?.is_carryover).toBe(true);
+  });
+
+  it('turns carryover into stage 11 when it is dropped after ten program habits', () => {
+    const carryover = {
+      ...makeHabit(99, 'Clear Light', 'Brought along'),
+      is_carryover: true,
+      start_date: new Date('2025-01-01T00:00:00Z'),
+    };
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={[carryover, ...TEN_PROGRAM_HABITS]}
+        onClose={jest.fn()}
+        onSaveOrder={jest.fn()}
+      />,
+    );
+    const entries = [...getReorderEntries(result)];
+    const movingIndex = entries.findIndex((entry) => isHabitEntry(entry, 99));
+    const [moving] = entries.splice(movingIndex, 1);
+    const nextLap = entries.findIndex((entry) => isPageEntry(entry, 1));
+
+    expect(moving).toBeDefined();
+    expect(nextLap).toBeGreaterThanOrEqual(0);
+    entries.splice(nextLap + 1, 0, moving!);
+    act(() => result.getByTestId('reorder-list').props.onDragEnd({ data: entries }));
+
+    const ordered = getOrderedHabits(result);
+    expect(ordered.at(-1)?.id).toBe(99);
+    expect(ordered.at(-1)?.is_carryover).toBe(false);
+    expect(result.getByText(/Brought along \(Beige\)/)).toBeTruthy();
   });
 });
 
@@ -215,7 +312,7 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
     expect(new Date(data[1]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-22');
 
@@ -268,7 +365,7 @@ describe('ReorderHabitsModal — program-anchor wiring', () => {
     );
 
     // First habit's start_date must match the anchor (March 15, 2024).
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2024-03-15');
   });
 
@@ -393,6 +490,196 @@ describe('ReorderHabitsModal — date picker on web', () => {
     Platform.OS = originalOS;
   });
 
+  const webRows = (result: ReturnType<typeof render>) =>
+    result.UNSAFE_root.findAll(
+      (node: { props: Record<string, unknown> }) => node.props.draggable === true,
+    );
+
+  const rangeTarget = (result: ReturnType<typeof render>, page: number) =>
+    result.UNSAFE_root.findByProps({ 'data-range-page': page });
+
+  it('uses native draggable rows on web and applies a mouse drop', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const draggableRows = webRows(result);
+    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+
+    expect(draggableRows).toHaveLength(3);
+    act(() => draggableRows[0]!.props.onDragStart({ dataTransfer }));
+    act(() =>
+      draggableRows[2]!.props.onDrop({
+        preventDefault: jest.fn(),
+        dataTransfer,
+      }),
+    );
+
+    fireEvent.press(result.getByText('Save Order'));
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    expect(saved.map((habit) => habit.id)).toEqual([2, 3, 1]);
+  });
+
+  it('falls back to pointer dragging when the browser does not emit HTML drop events', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const draggableRows = webRows(result);
+
+    act(() => draggableRows[0]!.props.onPointerDown());
+    act(() => draggableRows[2]!.props.onPointerUp());
+
+    fireEvent.press(result.getByText('Save Order'));
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    expect(saved.map((habit) => habit.id)).toEqual([2, 3, 1]);
+  });
+
+  it('clears an abandoned pointer drag so a later pointer-up cannot reorder', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const draggableRows = webRows(result);
+
+    act(() => draggableRows[0]!.props.onPointerDown());
+    expect(draggableRows[0]!.props.style.opacity).toBe(0.55);
+    act(() =>
+      result.UNSAFE_root.findByProps({ 'data-testid': 'reorder-list' }).props.onPointerCancel(),
+    );
+
+    const rowsAfterCancel = webRows(result);
+    expect(rowsAfterCancel[0]!.props.style.opacity).toBe(1);
+    act(() => rowsAfterCancel[2]!.props.onPointerUp());
+
+    fireEvent.press(result.getByText('Save Order'));
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    expect(saved.map((habit) => habit.id)).toEqual([1, 2, 3]);
+  });
+
+  it('drops a program habit onto the negative marker and preserves its date as carryover', () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 1)));
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+
+    act(() => webRows(result)[2]!.props.onDragStart({ dataTransfer }));
+    act(() => rangeTarget(result, -1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const moved = (onSaveOrder.mock.calls[0]![0] as Habit[]).find((habit) => habit.id === 3)!;
+    expect(moved.is_carryover).toBe(true);
+    expect(new Date(moved.start_date).toISOString().slice(0, 10)).toBe('2026-02-12');
+  });
+
+  it('drops carryover onto the program marker and recomputes its program date', () => {
+    const carryover = {
+      ...makeHabit(99, 'Clear Light', 'Brought along'),
+      is_carryover: true,
+      start_date: new Date('2025-01-01T00:00:00Z'),
+    };
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 1)));
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={[carryover, ...HABITS]}
+        onClose={jest.fn()}
+        onSaveOrder={onSaveOrder}
+      />,
+    );
+    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+
+    act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
+    act(() => rangeTarget(result, 0).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const moved = (onSaveOrder.mock.calls[0]![0] as Habit[]).find((habit) => habit.id === 99)!;
+    expect(moved.is_carryover).toBe(false);
+    expect(new Date(moved.start_date).toISOString().slice(0, 10)).toBe('2026-01-01');
+  });
+
+  it('drops carryover onto the 11–20 marker after ten program habits', () => {
+    const carryover = {
+      ...makeHabit(99, 'Clear Light', 'Brought along'),
+      is_carryover: true,
+      start_date: new Date('2025-01-01T00:00:00Z'),
+    };
+    const program = Array.from({ length: 10 }, (_, index) =>
+      makeHabit(index + 1, 'Beige', `Program ${index + 1}`),
+    );
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 1)));
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={[carryover, ...program]}
+        onClose={jest.fn()}
+        onSaveOrder={onSaveOrder}
+      />,
+    );
+    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+
+    act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
+    act(() => rangeTarget(result, 1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    const moved = saved.find((habit) => habit.id === 99)!;
+    expect(saved.at(-1)?.id).toBe(99);
+    expect(moved.is_carryover).toBe(false);
+    expect(new Date(moved.start_date).getTime()).toBeGreaterThan(
+      new Date(saved.at(-2)!.start_date).getTime(),
+    );
+  });
+
+  it('supports keyboard moves across a range boundary', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    const preventDefault = jest.fn();
+
+    expect(webRows(result)[0]!.props.tabIndex).toBe(0);
+    expect(webRows(result)[0]!.props.role).toBe('listitem');
+    expect(webRows(result)[0]!.props['aria-keyshortcuts']).toBe('ArrowUp ArrowDown');
+    act(() => webRows(result)[0]!.props.onKeyDown({ key: 'ArrowUp', preventDefault }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const moved = (onSaveOrder.mock.calls[0]![0] as Habit[]).find((habit) => habit.id === 1)!;
+    expect(preventDefault).toHaveBeenCalled();
+    expect(moved.is_carryover).toBe(true);
+  });
+
+  it('scrolls the bounded list while a browser drag approaches either edge', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+    const draggableRows = webRows(result);
+    const scrollSurface = result.UNSAFE_root.findByProps({ 'data-testid': 'reorder-list' });
+    const currentTarget = {
+      scrollTop: 100,
+      getBoundingClientRect: () => ({ top: 0, bottom: 500 }),
+    };
+
+    act(() =>
+      draggableRows[0]!.props.onDragStart({
+        dataTransfer: { effectAllowed: '', setData: jest.fn() },
+      }),
+    );
+    act(() =>
+      scrollSurface.props.onDragOver({
+        clientY: 490,
+        currentTarget,
+        preventDefault: jest.fn(),
+      }),
+    );
+
+    expect(currentTarget.scrollTop).toBeGreaterThan(100);
+  });
+
   it('renders an HTML date input on web that updates the master program anchor on save', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
@@ -467,7 +754,7 @@ describe('ReorderHabitsModal — the program cadence is laid over program habits
   it('leaves a carryover habit on the date the user actually started it', () => {
     const result = openWith(MIXED);
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     const carryover = data.find((h) => h.id === 10)!;
 
     expect(dayOf(carryover)).toBe('2026-01-15');
@@ -476,7 +763,7 @@ describe('ReorderHabitsModal — the program cadence is laid over program habits
   it('starts the first program habit on the picked date even behind a carryover habit', () => {
     const result = openWith(MIXED);
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     const firstProgram = data.find((h) => h.id === 1)!;
     const secondProgram = data.find((h) => h.id === 2)!;
 
@@ -500,7 +787,7 @@ describe('ReorderHabitsModal — the program cadence is laid over program habits
 
     const result = openWith(twoCarryover);
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     const gapDays =
       (new Date(data.find((h) => h.id === 2)!.start_date).getTime() -
         new Date(data.find((h) => h.id === 1)!.start_date).getTime()) /
@@ -519,7 +806,7 @@ describe('ReorderHabitsModal — the program cadence is laid over program habits
         .props.onDragEnd({ data: [MIXED[1], carryoverHabit, MIXED[2]] });
     });
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
 
     expect(dayOf(data.find((h) => h.id === 10)!)).toBe('2026-01-15');
     expect(dayOf(data.find((h) => h.id === 1)!)).toBe('2026-06-01');
@@ -571,7 +858,7 @@ describe('ReorderHabitsModal — the anchor commits when the order commits', () 
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
-    const data = result.getByTestId('reorder-list').props.data as Habit[];
+    const data = getOrderedHabits(result);
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
     expect(storedDay()).toBe('2026-03-10');
   });

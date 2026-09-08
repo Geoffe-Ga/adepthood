@@ -138,6 +138,18 @@
     "issue": 2399
   },
   {
+    "id": "habits.reorder-across-signed-laps",
+    "description": "A user opens Reorder Habits, drags rows within the scroll-bounded modal, and can cross the visible -10 to -1, 1–10, and later-lap range lines. Crossing the program line changes the persisted is_carryover classification; program dates and stage labels are recalculated from the new program-only position while carryover history is preserved. Uncovered at the real-wire level because the current lane cannot mount and operate the drag UI; issue 2399 tracks the rendering lane needed to drive it. The component interaction and save payload are pinned meanwhile by ReorderHabitsModal.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["PUT /habits/{habit_id}"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2399
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
     "crosses": {
