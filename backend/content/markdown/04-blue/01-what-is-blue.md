@@ -16,6 +16,8 @@ Welcome to Blue—the fourth stage of APTITUDE and the second expression of Love
 
 This is where the "I" softens into "We." Where self-expression becomes service. Where the raw fire of Red gets tempered by the water of connection, devotion, and belonging.
 
+In the body's map, we've come up from the Solar Plexus to the Heart. Red's power lives in the gut, and it is a power that pushes. Blue's lives in the chest, and it is a power that holds. Two very different muscles, and you need both.
+
 In Spiral Dynamics, Blue is the stage of conformity and order. It's the vMeme of law and hierarchy, of religious institutions and moral codes, of duty and discipline. It's the stage that gave us the Ten Commandments, the Bhagavad Gita, chivalry, and the idea that there's a right way to live—and it's your responsibility to follow it.
 
 Ken Wilber's Integral Theory calls this the "mythic membership" stage—where identity is defined not by personal power (Red) but by role and relationship. You're a good daughter, a loyal employee, a faithful believer, a dutiful citizen. Your worth comes from how well you fulfill the expectations of the group.
@@ -34,6 +36,10 @@ Blue is also where meditation gets real. We're moving from 5 minutes (Purple) an
 
 So yes, Blue is about community. But not the hollow kind where you perform belonging to gain approval. The kind where you risk being seen, being honest, being imperfect—and you're loved anyway. That's the gift. That's why Blue matters.
 
-You're not here to conform. You're here to connect. Let's begin.
+You're not here to conform. You're here to connect.
+
+And notice: you'll be playing Blue with Red still in your hands. That's the whole trick of this Stage. Belonging that costs you your boundaries isn't belonging, it's absorption—and a boundary held against everyone forever isn't strength, it's a moat around an empty castle. Three weeks from now you'll want both notes at once, in the same conversation, without either one shouting. Start listening for how they sound together.
+
+Let's begin.
 
 ---

@@ -14,9 +14,9 @@ media: []
 
 For the first time in the spiral, we're not talking about an *illusion* of Free Will. We're talking about the *emergence* of it.
 
-At Beige, you were a Biological Machine—pure stimulus-response. At Purple, you were an Archetype Embodier—playing roles. At Red, you were a Dominator—reacting from shame. At Blue, you were a Rule Follower—executing scripts. At Orange, you were a Status Seeker—optimizing for approval. At Green, you were a Shadow Glorifier—stuck in the wound.
+Each earlier note came with its own way of being moved. Beige is moved by the Biological Machine—pure stimulus-response. Purple by the Pleasure Seeker—toward what feels nice, away from what doesn't. Red by the Dominator—reacting from shame. Blue by the Victim—executing the script the role hands you. Orange by the Status Seeker—optimizing for approval. Green by the Shadow Glorifier—organized around the wound.
 
-None of these archetypes are *wrong*. They're developmental. They're necessary. But they're also *conditioned*. You were being moved by forces you couldn't see.
+None of these archetypes are *wrong*, and none of them are people. They're the unintegrated default of a capacity you genuinely need. They're also *conditioned*: while any one of them is running the show unexamined, you're being moved by forces you can't see.
 
 Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible.
 

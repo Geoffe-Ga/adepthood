@@ -6,7 +6,7 @@
 
 [The Journaling Prompts of Purple](#the-journaling-prompts-of-purple)
 
-[The Relationship to Free Will at Purple: Archetype Embodier](#the-relationship-to-free-will-at-purple-archetype-embodier)
+[The Relationship to Free Will at Purple: Pleasure Seeker](#the-relationship-to-free-will-at-purple-pleasure-seeker)
 
 [The Mode of the Wavelength of Purple: Inhabit (Feel)](#the-mode-of-the-wavelength-of-purple-inhabit-feel)
 
@@ -42,7 +42,7 @@ Yes-And-Ness—Receptivity        3
 
 The Journaling Prompts of Purple        4
 
-The Relationship to Free Will at Purple: Archetype Embodier        5
+The Relationship to Free Will at Purple: Pleasure Seeker        5
 
 The Mode of the Wavelength of Purple:
 Inhabit (Feel)        7

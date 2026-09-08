@@ -20,6 +20,8 @@ That Wholeness was never something to achieve. It was always already here. And w
 
 Ultraviolet is the penultimate stage before Clear Light. It's where the scaffolding of practice becomes so refined, so transparent, that you start to glimpse what lies beyond it. And paradoxically, it's also where practice becomes *most* rigorous. Because you're no longer practicing to get somewhere. You're practicing to *stabilize* in the recognition that there's nowhere to go.
 
+If Yellow and Teal were both Third Eye—two altitudes of *seeing*—Ultraviolet is the Crown. The last chakra that still has an address in the body, and the one that spends its whole time pointed at what doesn't.
+
 In Ken Wilber's Integral Theory, this corresponds to the "transpersonal" or "unified" stages—where you've integrated all previous levels and you're beginning to touch non-dual awareness. Not as a peak experience, but as a *stage*. A stable plateau.
 
 APTITUDE calls this **Wholeness**, and specifically the recognition of **Developmental Complexity**—not hierarchy in the sense of "better than," but complexity in the sense of "requires more scaffolding." Some capacities are more complex than others. Some include more notes in the chord. Complexity describes the scaffolding required, not the value of the capacity.

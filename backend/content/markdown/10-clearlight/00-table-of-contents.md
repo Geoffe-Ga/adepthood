@@ -2,7 +2,7 @@
 
 [What is Clear Light?](#what-is-clear-light)
 
-[The Mood of Clear Light: Wholeness—Non-Dual](#the-mood-of-clear-light-wholeness-non-dual)
+[The Mood of Clear Light: Awareness—Emptiness](#the-mood-of-clear-light-awarenessemptiness)
 
 [The Journaling Prompts of Clear Light](#the-journaling-prompts-of-clear-light)
 

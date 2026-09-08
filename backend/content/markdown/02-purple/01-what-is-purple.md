@@ -24,7 +24,9 @@ Because Purple doesn’t just represent naïve animism. It’s the capacity to l
 
 One way to understand this is through the principle of sacral authority, a Human Design concept that dovetails elegantly with the Purple frequency. In this framework, the sacral center (just below the navel) responds with a visceral yes or no to the possibilities life offers. This instinctual knowing doesn’t argue, explain, or rationalize. It responds. When we are attuned to it—when we are receptive—we begin to sense which invitations from life carry real power and alignment.
 
-Receptivity includes openness to pleasure—we’ll get there—but it goes further: openness to meaning. It’s what lets ethics arise in the body instead of only in the mind, and what allows insight to arrive as gnosis rather than as data.
+Receptivity includes openness to pleasure—the Sacral’s whole department—but it goes further: openness to meaning. It’s what lets ethics arise in the body instead of only in the mind, and what allows insight to arrive as gnosis rather than as data.
+
+This is also why Purple’s relationship to Free Will is the **Pleasure Seeker**. An enormous amount of what you do in a day is steered from below the navel—toward the pleasant, away from the unpleasant—and the mind writes up the justification afterward. Denying that doesn’t make it stop; it just makes it invisible. Purple’s work is to get honest about the steering, and then to develop a palate: the ability to tell the yes that widens you from the yes that narrows you. That skill is the difference between an antenna and a leash.
 
 The idea that we must always *do* in order to become whole is the symptom of a culture stuck in Beige. Purple is the counterpoint: sometimes we become whole by receiving what has already been given. The myth we live inside is not only authored by us. It is also offered to us.
 

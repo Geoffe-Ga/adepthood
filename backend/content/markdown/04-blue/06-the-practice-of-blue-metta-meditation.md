@@ -89,6 +89,10 @@ Metta is not about becoming a doormat or bypassing your anger. It's about traini
 
 Over time, this practice doesn't just change how you feel during meditation. It changes how you move through the world. You become more patient. More forgiving. More capable of seeing people's pain beneath their behavior. More willing to stay in relationship even when it's uncomfortable.
 
+Though notice what Metta on its own can't do. It builds the capacity to keep your heart open; it does not tell you when to close the door. Practiced without Red, fifteen minutes of loving-kindness a day can quietly become fifteen minutes of rehearsing your own dissolution—learning to feel warmly toward people you should be walking away from. Practiced without Yellow, it can become a way of loving individuals inside an arrangement that keeps hurting them.
+
+So run it alongside the notes you already have. The under-expression of Blue is isolation dressed up as independence. The overdose is a person so committed to staying in relationship that there's no longer anyone in it. The medicine is somewhere in between, and finding it takes more than one note.
+
 That's the gift of Blue. That's why this practice matters.
 
 ---

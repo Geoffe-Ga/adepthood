@@ -14,6 +14,8 @@ media: []
 
 If Orange is the building phase—achieving, optimizing, expanding your way toward mastery—Green is the integration phase. The exhale. The moment you stop pushing outward and turn inward to ask: *At what cost?*
 
+Green shares the Throat with Orange, which surprises people who expect the shadow work stage to live somewhere darker. But that's the point. Orange puts the world into words; Green puts *you* into them. Same chakra, opposite direction. And anyone who has tried to say the true thing about themselves out loud knows exactly which of the two is harder on the throat.
+
 This is the stage where you turn around and look at all the parts of yourself you disowned or suppressed in the pursuit of achievement. The messy parts. The vulnerable parts. The parts that don't perform well, that can't be optimized, that refuse to fit into neat categories. The parts you've been taught to hide.
 
 In Spiral Dynamics, Green is the "sensitive self" stage—pluralistic, egalitarian, deeply concerned with inclusivity and authenticity. It's the environmentalist, the social justice activist, the therapist. It values feelings over facts, process over outcome, We over I. It seeks to heal the wounds that Orange's relentless individualism left in its wake.
@@ -29,6 +31,8 @@ But Green in its light? It's **Embodied Understanding**. It's the recognition th
 Green teaches you that shadow work is not optional. That the parts of yourself you've disowned don't disappear—they just go underground, where they run the show from the dark. That healing is not about rising above your wounds but about *including* them. Welcoming them home.
 
 This is the stage where Understanding stops being abstract and becomes *lived*. Where you learn that you can't think your way to Wholeness. You have to *feel* your way there. And that means descending into the places you've been avoiding.
+
+Bring the other notes with you, though. A descent made on Green alone is just drowning with good vocabulary. You'll want Beige to keep the body fed and the sleep regular while you're down there. Red, so that meeting an exiled part doesn't mean handing it the keys. Orange, to notice when a month of feeling has produced no change and something in the method needs adjusting. Blue, so there's at least one person who knows where you went.
 
 Welcome to the underworld. Bring a light.
 

@@ -82,8 +82,17 @@ down on the “woke” Greens or the “sheeple” Blues or anyone else
 
 Wholeness isn’t about outgrowing or leaving aspects of
 the human experience behind. It’s about
-expressing them in the maximally effective,
-healthy, authentic way available.
+having the whole range available and
+knowing which part of it a given moment is actually
+asking for.
+
+Which is not the same as expressing all of it at
+once, at full volume. That’s worth saying plainly, because
+“maximally” is a trap. A chord where every note is played as
+loudly as possible isn’t rich; it’s noise. Wholeness needs the
+courage to enter the dimensions of life you’ve been avoiding
+*and* the temperance not to overdose on the ones that come
+easily—and for most of us, the second is the harder ask.
 
 Sign up!
 
@@ -181,8 +190,14 @@ human potentiality.
 Not
 just Nonduality or
 Emptiness. All Ten
-Stages, fully integrated. Fully Whole and
+Stages, fully integrated—ten capacities in
+working order, playing together. Fully Whole and
 holy.
+
+Not because you finally reached the top note.
+Because you learned the whole scale, and the
+moment in front of you can finally get what it
+needs.
 
 Sound desirable?
 

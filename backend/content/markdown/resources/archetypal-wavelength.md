@@ -280,4 +280,30 @@ surfer.
 The Whole Adept is the ocean
 itself.
 
+------------------------------------------------------------------------
+
+One clarification, because these two models sit
+side by side in APTITUDE and it’s easy to smash them into one.
+
+The Wavelength describes **movement**: where you
+are in the turn. The ten Stages describe **capacities**:
+what you can draw on while you’re turning. Different
+questions. *Where am I in the cycle?* and *what does here
+require?*
+
+And don’t sort the ten into a warm half and a cool half
+and decide the warm half wins. Yes, the rising, growthward part of the
+wave tends to recruit agency, power, and execution. That doesn’t make
+those the good notes and the rest the passive ones. Every phase of the
+wave can call for many capacities, and every capacity can be played as
+medicine or as overdose. A Bottoming Out met with force is a disaster.
+Met with receptivity and basic care, it’s a season.
+
+Nor should you identify with the wave. It is a model
+for noticing impermanence, dissatisfaction, and the absence of anything
+solid at the center of any of it—not a new personality to wear.
+
+See [Notes and Chords](./notes-and-chords.md) for
+how the capacities work together.
+
 Sign up!

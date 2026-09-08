@@ -6,7 +6,7 @@ This folder contains the modular sections for the TEAL stage of the APTITUDE cou
 
 - [Table of Contents](./00-table-of-contents.md)
 - [What is Teal?](./01-what-is-teal.md)
-- [The Mood of Teal: Freedom—True Self Connection](./02-the-mood-of-teal-freedomtrue-self-connection.md)
+- [The Mood of Teal: Wisdom—True Self Wisdom](./02-the-mood-of-teal-wisdomtrue-self-wisdom.md)
 - [The Journaling Prompts of Teal](./03-the-journaling-prompts-of-teal.md)
 - [The Relationship to Free Will at Teal: True Self Embodier](./04-the-relationship-to-free-will-at-teal-true-self-embodier.md)
 - [The Mode of the Wavelength of Teal: Integrate (Feel)](./05-the-vibe-wavelength-of-teal-integrate-feel.md)
@@ -35,6 +35,7 @@ This folder contains the modular sections for the TEAL stage of the APTITUDE cou
 - **Previous Stage**: [Stage 7](../07-yellow/)
 - **Next Stage**: [Stage 9](../09-ultraviolet/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

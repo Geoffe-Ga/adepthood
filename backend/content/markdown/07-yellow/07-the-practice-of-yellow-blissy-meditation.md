@@ -74,4 +74,6 @@ This is not hyperbole. This is neuroscience. Sustained meditation rewires the de
 
 But more than that, it changes your *experience* of being alive. You stop being tossed around by every passing thought and emotion. You develop a kind of inner stability that holds through chaos. You become, slowly, an Intentional Actor.
 
-That's why Yellow requires this practice. Because Free Will doesn't come from thinking about it. It comes from *training* it. And 45 minutes a day is the training.
+That's why Yellow requires this practice. Because wisdom doesn't come from thinking about it. It comes from *training* the instrument that does the seeing. And 45 minutes a day is the training.
+
+One structural warning, since Yellow of all Stages should appreciate it. Forty-five minutes is a real load-bearing commitment, and a commitment that large will take the weight from somewhere. Watch which note goes quiet to pay for it. If the sit is happening and the sleep isn't, that's Beige subsidizing Yellow, and the loan comes due. If the sit is happening and you've stopped seeing your people, that's Blue paying for it. A practice that starves the rest of the scale isn't producing wisdom; it's producing a very well-concentrated version of the problem.

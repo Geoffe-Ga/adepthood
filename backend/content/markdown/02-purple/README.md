@@ -8,7 +8,7 @@ This folder contains the modular sections for the PURPLE stage of the APTITUDE c
 - [What is Purple?](./01-what-is-purple.md)
 - [The Mood of Purple: Yes-And-Ness—Receptivity](./02-the-mood-of-purple-yes-and-nessreceptivity.md)
 - [The Journaling Prompts of Purple](./03-the-journaling-prompts-of-purple.md)
-- [The Relationship to Free Will at Purple: Archetype Embodier](./04-the-relationship-to-free-will-at-purple-archetype-embodier.md)
+- [The Relationship to Free Will at Purple: Pleasure Seeker](./04-the-relationship-to-free-will-at-purple-pleasure-seeker.md)
 - [The Mode of the Wavelength of Purple: Inhabit (Feel)](./05-the-vibe-wavelength-of-purple-internalize-feel.md)
 - [The Practice of Purple: A Daily Tarot Draw](./06-the-practice-of-purple-a-daily-tarot-draw.md)
 - [Alternative Purple Practices: Eight Five-Minute Receptivity Meditations](./07-alternative-practice-examples-i-ching-traffic-lights-bibliom.md)
@@ -26,6 +26,7 @@ This folder contains the modular sections for the PURPLE stage of the APTITUDE c
 - **Previous Stage**: [Stage 1](../01-beige/)
 - **Next Stage**: [Stage 3](../03-red/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

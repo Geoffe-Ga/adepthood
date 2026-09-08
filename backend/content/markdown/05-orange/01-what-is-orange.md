@@ -16,6 +16,8 @@ Welcome to Orange—the fifth stage of APTITUDE and the beginning of something e
 
 This is where agency meets intellect. Where doing meets understanding. Where the fire of Red gets focused through the lens of systematic inquiry, and the love of Blue expands to include not just people but *ideas*—big, beautiful, world-changing ideas.
 
+We've arrived at the Throat—the seat of expression, of putting the inside outside where it can be tested. Orange and Green share this chakra, because they're the two halves of a single act: Orange articulates the world, Green articulates the self. A hypothesis and a confession are the same gesture aimed in opposite directions.
+
 In Spiral Dynamics, Orange is the stage of rational achievement. The scientist, the entrepreneur, the optimizer. The culture that gave us the Enlightenment, the Industrial Revolution, capitalism, and Silicon Valley. It's progress-oriented, data-driven, and relentlessly focused on improvement. In Ken Wilber's Integral Theory, Orange represents the "rational" or "achievist" stage—where identity shifts from conformity to individual merit, and success is measured by tangible results.
 
 APTITUDE doesn't reject this. We honor it. But we reframe it.
@@ -30,6 +32,10 @@ This is the stage where you learn to work *with* energy, not against it. Where y
 
 So yes, Orange is about achievement. But not the hollow kind. The kind that builds something real. The kind that makes you better, sharper, more capable—not so you can prove your worth, but because you already *know* it, and now you're ready to *use* it.
 
-You're not here to follow someone else's formula. You're here to experiment, iterate, and discover what works for you. Let's get to work.
+You're not here to follow someone else's formula. You're here to experiment, iterate, and discover what works for you.
+
+One caution before you do. Orange is the loudest note on the scale, and it plays well enough on its own that you may stop noticing the others. Watch for the weeks where the numbers go up and Purple has gone quiet—where you can tell me your metrics but not what you enjoyed. Watch for the mornings you skip the grounding because you've got momentum. Momentum is not the same as a life. Keep the earlier notes sounding underneath this one; they're what will still be there when the streak breaks.
+
+Let's get to work.
 
 ---

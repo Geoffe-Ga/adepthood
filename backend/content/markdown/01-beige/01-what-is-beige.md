@@ -50,6 +50,8 @@ You may not think you need Beige. You might feel like you've moved past this sta
 
 If not… then welcome home. Beige has been waiting within you.
 
+And since this is the first note and you'll be tempted to treat it as the first rung: it isn't. The course walks the ten Stages in order because that's the order they unlock in—you can't examine what you're standing inside of. But nothing you build here gets left behind at the end of three weeks. What you're actually assembling over the next nine months is an instrument. Beige is the string you'll be reaching for most often, decades from now, on the mornings when everything else you've learned is temporarily unavailable and the only honest move left is to drink some water and go outside.
+
 ------------------------------------------------------------------------
 
 

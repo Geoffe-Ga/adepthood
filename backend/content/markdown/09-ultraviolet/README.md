@@ -6,7 +6,7 @@ This folder contains the modular sections for the ULTRAVIOLET stage of the APTIT
 
 - [Table of Contents](./00-table-of-contents.md)
 - [What is Ultraviolet?](./01-what-is-ultraviolet.md)
-- [The Mood of Ultraviolet: Wholeness—Hierarchy](./02-the-mood-of-ultraviolet-wholenesshierarchy.md)
+- [The Mood of Ultraviolet: Being—Unity](./02-the-mood-of-ultraviolet-beingunity.md)
 - [The Journaling Prompts of Ultraviolet](./03-the-journaling-prompts-of-ultraviolet.md)
 - [The Relationship to Free Will at Ultraviolet: Hierarchical Organizer](./04-the-relationship-to-free-will-at-ultraviolet-hierarchical-or.md)
 - [The Mode of the Wavelength of Ultraviolet: Absorb (Do)](./05-the-vibe-wavelength-of-ultraviolet-absorb-do.md)
@@ -32,6 +32,7 @@ This folder contains the modular sections for the ULTRAVIOLET stage of the APTIT
 - **Previous Stage**: [Stage 8](../08-teal/)
 - **Next Stage**: [Stage 10](../10-clearlight/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

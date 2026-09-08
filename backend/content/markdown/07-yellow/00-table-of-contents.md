@@ -2,7 +2,7 @@
 
 [What is Yellow?](#what-is-yellow)
 
-[The Mood of Yellow: Freedom—Free Will](#the-mood-of-yellow-freedom-free-will)
+[The Mood of Yellow: Wisdom—Systems Wisdom](#the-mood-of-yellow-wisdomsystems-wisdom)
 
 [The Journaling Prompts of Yellow](#the-journaling-prompts-of-yellow)
 

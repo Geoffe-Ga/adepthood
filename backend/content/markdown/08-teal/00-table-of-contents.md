@@ -2,7 +2,7 @@
 
 [What is Teal?](#what-is-teal)
 
-[The Mood of Teal: Freedom—Equanimity](#the-mood-of-teal-freedom-equanimity)
+[The Mood of Teal: Wisdom—True Self Wisdom](#the-mood-of-teal-wisdomtrue-self-wisdom)
 
 [The Journaling Prompts of Teal](#the-journaling-prompts-of-teal)
 

@@ -25,6 +25,7 @@ This folder contains the modular sections for the RED stage of the APTITUDE cour
 - **Previous Stage**: [Stage 2](../02-purple/)
 - **Next Stage**: [Stage 4](../04-blue/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

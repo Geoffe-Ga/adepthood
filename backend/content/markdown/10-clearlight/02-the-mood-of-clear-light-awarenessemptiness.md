@@ -3,16 +3,16 @@ id: clearlight-2
 stage: 10
 chapter: 2
 order: 2
-slug: the-mood-of-clear-light-wholenessemptiness
-title: "The Mood of Clear Light: Wholeness—Emptiness"
+slug: the-mood-of-clear-light-awarenessemptiness
+title: "The Mood of Clear Light: Awareness—Emptiness"
 content_type: chapter
 release_day: 1
 media: []
 ---
 
-## The Mood of Clear Light: Wholeness—Emptiness
+## The Mood of Clear Light: Awareness—Emptiness
 
-Clear Light completes the category of **Wholeness**, and it does so through the recognition of **Emptiness** (śūnyatā)—the direct experiential knowing that all phenomena are empty of inherent, independent existence.
+Clear Light opens the last category of APTITUDE: **Awareness**. Not a summit—a floor. The one that was underneath the other nine the whole time. And it opens through the recognition of **Emptiness** (śūnyatā): the direct experiential knowing that all phenomena are empty of inherent, independent existence.
 
 This is not a concept. You can't think your way here. Emptiness is *realized*. It's the moment when you look for the "self" and you can't find it. When you investigate any phenomenon—thoughts, emotions, sensations, perceptions—and you discover they have no solid, permanent core. When you see directly that everything arises dependent on conditions and has no independent existence.
 

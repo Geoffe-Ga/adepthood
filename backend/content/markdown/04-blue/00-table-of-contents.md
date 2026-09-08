@@ -18,7 +18,7 @@
 
 [Blue's Divine Gender: Divine Feminine—We, Self-Sacrificing](#blues-divine-gender-divine-feminine-we-self-sacrificing)
 
-[Yes-And-Ness, Love, Understanding, and Freedom: The Broader "Aspect Categories" of APTITUDE](#yes-and-ness-love-understanding-and-freedom-the-broader-aspect-categories-of-aptitude)
+[Yes-And-Ness, Love, Understanding, Wisdom: The Broader "Aspect Categories" of APTITUDE](#yes-and-ness-love-understanding-wisdom-the-broader-aspect-categories-of-aptitude)
 
 [Blue's Gift: From Conformity to Community](#blues-gift-from-conformity-to-community)
 
