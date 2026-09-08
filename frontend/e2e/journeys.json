@@ -618,6 +618,18 @@
     "issue": 2399
   },
   {
+    "id": "habits.legacy-unnumbered-habits-keep-their-order",
+    "description": "A user whose habits were created before sort_order existed holds NULL in every row. GET /habits/ used to order by sort_order ASC with no NULLS placement and no secondary key, so the order among those rows was undefined and PostgreSQL sorted them last -- the first numbered habit the user added leapfrogged every habit they had onboarded with, and because tile colour is positional (HabitsScreen colorIndices) the whole lap repainted around it. The list query now orders by sort_order ASC NULLS FIRST, then id: the unnumbered rows keep the head position they have always displayed in, a later numbered add lands after them, and the id key makes the order total even for a fully numbered store, where two rows may legitimately share a slot because slots restart at zero inside each is_carryover partition. Uncovered because the e2e lane cannot mint a pre-2026-09-02 store: the production client always stamps a slot on the rows it creates, so reaching the NULL population needs a fixture the lane has no seam for. Pinned meanwhile by backend/tests/test_habits_list_ordering.py, which asserts the ORDER BY the endpoint actually emitted, compiled to the PostgreSQL dialect -- the test lane is SQLite, which sorts NULLs first natively and cannot tell the fix from the defect.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "uncovered",
+    "issue": 2634
+  },
+  {
     "id": "vault.connect-your-own",
     "description": "Someone connects a private vault of their own from Settings: the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
     "crosses": {
