@@ -17,6 +17,7 @@ from domain.frequencies import Frequency
 from domain.resonance import NO_NOTES_MESSAGES, DropReason, NoNotesReason
 from models.completion_suggestion import CompletionSuggestion
 from models.corpus_fragment import CorpusSource
+from models.corpus_invitation_state import CorpusInvitationState
 from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
@@ -1107,3 +1108,141 @@ async def test_server_key_exhaustion_warns_an_operator_with_ids_only(
     assert fields["provider"] == "anthropic"
     assert fields["byok"] is False
     assert _BODY not in str(fields)
+
+
+# ---------------------------------------------------------------------------
+# The corpus-invitation counter (#2407): completed passes, and only those
+# ---------------------------------------------------------------------------
+
+
+async def _completed_passes(db_session: AsyncSession, email: str) -> int | None:
+    """The persisted pass count for ``email``'s account, or ``None`` when it has no row."""
+    user = (await db_session.execute(select(User).where(col(User.email) == email))).scalar_one()
+    passes: int | None = (
+        await db_session.execute(
+            select(col(CorpusInvitationState.completed_passes))
+            .where(col(CorpusInvitationState.user_id) == user.id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    return passes
+
+
+class TestACompletedPassIsCounted:
+    """The moment the owner ruling names is a *completed* pass, so only a 200 counts.
+
+    The count is what the invitation's cooldown runs on. Counting a pass the
+    writer never received -- a refunded failure, a wallet refusal, a reflection
+    withheld for an intimate entry -- would let the invitation arrive on the
+    strength of nothing having happened.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_pass_that_kept_notes_counts_once(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ordinary happy path lands one count with the notes."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "n"})
+        headers = await _signup(async_client, "counted_notes")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.OK
+        assert await _completed_passes(db_session, "counted_notes@example.com") == 1
+
+    @pytest.mark.asyncio
+    async def test_a_refunded_no_notes_pass_still_counts(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Product choice (a): a 200 that kept nothing is still a pass the writer waited through."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "never in the entry", "note": "n"})
+        headers = await _signup(async_client, "counted_empty")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.json()["no_notes_message"] is not None
+        assert await _completed_passes(db_session, "counted_empty@example.com") == 1
+
+    @pytest.mark.asyncio
+    async def test_two_passes_count_twice(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The increment is an increment, not a flag."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "n"})
+        headers = await _signup(async_client, "counted_twice")
+        entry_id = await _create_entry(async_client, headers)
+
+        for _ in range(2):
+            resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+            assert resp.status_code == HTTPStatus.OK
+
+        assert await _completed_passes(db_session, "counted_twice@example.com") == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("zero_monthly_cap")
+    async def test_a_wallet_refusal_is_not_a_pass(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """402: nothing ran, nothing is counted, and no row is provisioned."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": _BODY, "note": "n"})
+        headers = await _signup(async_client, "uncounted_402")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED
+        assert await _completed_passes(db_session, "uncounted_402@example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_a_provider_failure_is_not_a_pass(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """502: the refunded failure leaves no count behind."""
+        _raise_llm(monkeypatch)
+        headers = await _signup(async_client, "uncounted_502")
+        entry_id = await _create_entry(async_client, headers)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.BAD_GATEWAY
+        await db_session.rollback()
+        assert await _completed_passes(db_session, "uncounted_502@example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_a_care_only_answer_is_not_a_pass(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A flagged entry whose reflection failed gets care, not a counted reflection."""
+        _raise_llm(monkeypatch)
+        headers = await _signup(async_client, "uncounted_care")
+        entry_id = await _create_entry(async_client, headers, body=_DISTRESS_BODY)
+
+        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.json()["care"] is not None
+        assert resp.json()["marginalia"] == []
+        assert await _completed_passes(db_session, "uncounted_care@example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_an_intimate_entry_is_not_a_pass(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Product choice (d): the privacy floor returns before anything is counted."""
+        _fake_llm(monkeypatch, {"kind": "theme", "quote": _BODY, "note": "n"})
+        headers = await _signup(async_client, "uncounted_intimate")
+        created = await async_client.post(
+            "/journal/", json={"message": _BODY, "classification": "intimate"}, headers=headers
+        )
+        assert created.status_code == HTTPStatus.CREATED
+
+        resp = await async_client.post(
+            f"/journal/{created.json()['id']}/resonance", headers=headers
+        )
+
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.json()["private"] is True
+        assert await _completed_passes(db_session, "uncounted_intimate@example.com") is None

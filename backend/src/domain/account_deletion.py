@@ -117,6 +117,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "is a record about nobody — and it names the account directly, which "
         "the deletion receipt deliberately does not.",
     ),
+    "corpusinvitationstate": _erase(
+        "user_id",
+        "Whether and when the account set the corpus invitation aside, and how "
+        "many reflections it had asked for. Nothing of the writing.",
+    ),
     "corpusfragment": _erase(
         "user_id",
         "The account's ontologized corpus — its own writing, classified into "

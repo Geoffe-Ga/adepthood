@@ -106,6 +106,7 @@ from services.checkin import CheckInContext, current_check_in, record_goal_compl
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
+from services.corpus_invitation import record_completed_pass
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
@@ -1242,7 +1243,11 @@ class _SettledPass:
 async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -> _SettledPass:
     """Open the post-dial transaction: stage, settle, record usage, commit.
 
-    Every dial is already behind us.  If anything here fails before the commit
+    Every dial is already behind us.  The completed-pass count the corpus
+    invitation runs on is staged in this same transaction (#2407): only a pass
+    that commits here is one the writer actually received, so only it is
+    counted, and a pass that fails here is refunded *and* uncounted.  If
+    anything here fails before the commit
     lands, the ``finally`` settles the committed deduction with a compensating
     refund — a failed pass never charges, even when the failure is ours rather
     than the provider's.  ``spent`` is rebound by the empty-pass settlement
@@ -1268,6 +1273,10 @@ async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -
         spent, no_notes_message = await _settle_empty_pass(
             session, charged.user_id, spent, charged.anchored
         )
+        # A completed pass -- notes or a refunded no-notes 200 alike -- is the
+        # moment the corpus invitation's cooldown counts (#2407). Staged here so
+        # the count lands with this commit and is rolled back with a failure.
+        await record_completed_pass(session, user_id=charged.user_id)
         spent_user = await require_user_fresh(session, charged.user_id)
         await record_llm_usage(
             session,

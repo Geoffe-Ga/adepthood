@@ -195,6 +195,39 @@
     "issue": 2408
   },
   {
+    "id": "journal.offered-the-corpus-after-a-first-reflection",
+    "description": "A writer who has never decided about their corpus asks for resonance on a finished page and, once the reflection has actually landed in the margin, finds beside the page -- never in it -- a quiet note saying reflections can draw on their own earlier writing, what agreeing sends where and how often, and that a yes also sorts what is already written. They can look at the decision, set it aside with Not now, or say Do not ask again; every one of those is one tap, none of them touches the pass, and the answer is kept on the server so it holds across devices and does not return on the next press. On a plain Not now the note returns only after both seven days and three further completed passes; on Do not ask again, or once consent is decided either way, never. The pass count the cooldown runs on never reaches the client. Uncovered as a rendered moment: this journey is about the note appearing beside the page after the pass, and the real-wire lane drives the production client, not the screen. The wire half -- a completed pass opening the offer, and the decline being the server's to remember -- is covered by corpus.decline-the-offer-and-be-left-alone; the rendered half is pinned by the Jest specs beside JournalEntryScreen (placement, one-tap decline, the pass never gated) and by backend/tests/test_resonance_endpoints.py::TestACompletedPassIsCounted for which passes count. #2408 tracks the deterministic-provider seam that would let a lane drive a pass that keeps real notes, which is what journal.ask-for-resonance also waits on.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "corpusInvitation", "corpusConsent"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "GET /corpus/invitation",
+        "PUT /corpus/invitation"
+      ],
+      "tables": ["corpusconsentevent", "corpusinvitationstate", "marginalia"]
+    },
+    "status": "uncovered",
+    "issue": 2408
+  },
+  {
+    "id": "corpus.decline-the-offer-and-be-left-alone",
+    "description": "A writer who has never decided about their corpus completes a first resonance pass and is offered the decision; they set it aside with Not now and are not asked again on the very next pass; later they say Do not ask again, and a softer Not now afterwards does not undo it. A cold login on a fresh session reads the same standing, because the decision is the server's to remember rather than the device's; a request with no session is refused; and a neighbour's account is still un-asked until its own first pass opens its own offer. The pass that opens the offer is real -- the lane's provider is the stub, so it resolves as a refunded no-notes 200, which is still a completed pass by design -- so the seam this spec pins is the whole of it: the settlement counting the pass, the read the note makes, the verb and shape of both declines, and that the count itself never crosses the wire. Both halves are green on their own -- the note's tests mock the client, the router's tests never see it -- and this is the one place they agree.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/CorpusInvitationNote.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "resonance", "corpusInvitation"],
+      "routes": [
+        "POST /journal/",
+        "POST /journal/{entry_id}/resonance",
+        "GET /corpus/invitation",
+        "PUT /corpus/invitation"
+      ],
+      "tables": ["user", "journalentry", "corpusinvitationstate", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-invitation.e2e.test.ts"
+  },
+  {
     "id": "practice.log-session",
     "description": "A practitioner logs a practice session and finds it in the week's record.",
     "crosses": {

@@ -34,6 +34,7 @@ from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from models.corpus_invitation_state import CorpusInvitationState
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.habit import Habit
@@ -1176,3 +1177,38 @@ async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
     assert alice_body["total"] == 1
     assert bob_body["items"] == []
     assert bob_body["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_idor_corpus_invitation_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's "do not ask again" is not Bob's, and Bob's read provisions nothing.
+
+    The routes take no resource id -- both are keyed entirely on the bearer
+    token -- so there is no cross-user branch to spell 403 or 404. The
+    invariant to pin is isolation of the *record*: exactly one row exists after
+    Alice declines, it is hers, and Bob is still told the quiet default with
+    no ``dismissed_at`` and no standing "do not ask again".
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_invitation")
+    bob_headers, _ = await _signup(async_client, "bob_invitation")
+
+    declined = await async_client.put(
+        "/corpus/invitation", json={"do_not_ask_again": True}, headers=alice_headers
+    )
+    assert declined.status_code == HTTPStatus.OK, declined.text
+
+    bob_body = (await async_client.get("/corpus/invitation", headers=bob_headers)).json()
+    assert bob_body == {"offer": False, "dismissed_at": None, "do_not_ask_again": False}
+
+    owners = (
+        (
+            await db_session.execute(
+                select(col(CorpusInvitationState.user_id)).execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert list(owners) == [alice_id]

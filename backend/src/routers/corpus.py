@@ -48,6 +48,18 @@ Nor is it folded onto ``JournalMessageResponse``, which both of those return.
 It is also unrated and uncommitted -- two indexed reads, no provider call, no
 transaction -- so it needs neither :data:`schemas.corpus.CONSENT_RATE_LIMIT`,
 which exists because a grant fans out, nor the import route's.
+
+``GET`` and ``PUT /invitation`` are the fifth and sixth verbs, and they are
+about being *asked* rather than about the corpus. The owner ruling on #2407
+surfaces the consent decision after the first completed Resonance pass, offers
+it again on a plain "not now" only after a cooldown, and never again on "do not
+ask again" or once consent is decided either way. ``GET`` answers whether to
+show that note right now; ``PUT`` records the decline. Neither touches the
+consent log -- :mod:`domain.corpus_invitation` says why a decline about being
+asked is not a third :class:`models.corpus_consent.ConsentDecision` -- and the
+count the cooldown runs on never crosses this boundary. ``GET`` reads two rows
+and commits nothing; ``PUT`` is one upsert and one commit, fans out to nothing,
+and so is unrated like ``GET /voice-readiness``.
 """
 
 from __future__ import annotations
@@ -72,6 +84,8 @@ from schemas.corpus import (
     CorpusConsentListResponse,
     CorpusConsentResponse,
     CorpusConsentUpdate,
+    CorpusInvitationResponse,
+    CorpusInvitationUpdate,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
@@ -84,6 +98,7 @@ from services.corpus_import import (
     VaultImportResult,
     import_document,
 )
+from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_upload import UploadedDocument
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
@@ -204,6 +219,52 @@ async def get_voice_readiness(
     """
     readiness = await load_voice_readiness(session, user_id=user_id)
     return _voice_readiness_response(readiness)
+
+
+def _invitation_response(offer: InvitationOffer) -> CorpusInvitationResponse:
+    """Project one offer onto its response DTO: three fields, nothing counted."""
+    return CorpusInvitationResponse(
+        offer=offer.offer,
+        dismissed_at=offer.dismissed_at,
+        do_not_ask_again=offer.do_not_ask_again,
+    )
+
+
+@router.get("/invitation", response_model=CorpusInvitationResponse)
+async def get_corpus_invitation(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusInvitationResponse:
+    """Report whether to offer this account the corpus decision right now.
+
+    Never a 404 and never a write: an account that has completed no pass has
+    no row, is told ``offer: false``, and gains no row for having asked. The
+    account comes from the token, so no request can ask about anyone else's
+    standing. Two indexed reads, no commit, no provider call.
+    """
+    return _invitation_response(await load_invitation(session, user_id=user_id))
+
+
+@router.put("/invitation", response_model=CorpusInvitationResponse)
+async def put_corpus_invitation(
+    payload: CorpusInvitationUpdate,
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusInvitationResponse:
+    """Record that this account set the invitation aside, and report its standing.
+
+    ``do_not_ask_again: false`` is a "not now" -- the instant and the pass count
+    are stamped so the cooldown in :mod:`domain.corpus_invitation` can be
+    measured from one moment. ``true`` is final and monotonic: a later "not
+    now" from the same account leaves it set. Committed here because a decline
+    left uncommitted would be a person told they will not be asked and then
+    asked. Fans out to nothing, so unrated.
+    """
+    offer = await dismiss_invitation(
+        session, user_id=user_id, do_not_ask_again=payload.do_not_ask_again
+    )
+    await session.commit()
+    return _invitation_response(offer)
 
 
 def _vault_response(result: VaultImportResult) -> DocumentImportResponse:

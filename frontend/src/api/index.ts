@@ -9,6 +9,7 @@ import {
   contentItemSchema,
   corpusConsentListSchema,
   corpusConsentSchema,
+  corpusInvitationSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionSuggestionSchema,
@@ -59,6 +60,7 @@ import {
   type ContractionVariantT,
   type CorpusConsentListT,
   type CorpusConsentT,
+  type CorpusInvitationT,
   type VoiceReadinessT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
@@ -3456,6 +3458,50 @@ export const corpusConsent = {
       body: { granted },
       token,
       schema: corpusConsentResponseSchema,
+      retry: false,
+    });
+  },
+};
+
+// Corpus invitation (whether to offer the consent decision after a reflection)
+
+/** Whether to offer the corpus decision now, and what the account last chose. */
+export type CorpusInvitation = CorpusInvitationT;
+
+const corpusInvitationResponseSchema =
+  corpusInvitationSchema as unknown as z.ZodType<CorpusInvitation>;
+
+export const corpusInvitation = {
+  /**
+   * Whether the invitation may be shown right now.
+   *
+   * Validated at the edge so a drifted ``offer`` raises ``ApiValidationError``
+   * rather than rendering a note nobody decided to show. No trailing slash --
+   * the router mounts ``/corpus/invitation`` directly, so a slash would cost a
+   * 307 on every read.
+   */
+  status(token?: string): Promise<CorpusInvitation> {
+    return request<CorpusInvitation>('/corpus/invitation', {
+      token,
+      schema: corpusInvitationResponseSchema,
+    });
+  },
+  /**
+   * Set the invitation aside: ``false`` is "not now", ``true`` is "do not ask
+   * again".
+   *
+   * Deliberately not retried, like ``corpusConsent.set``. Re-sending a decline
+   * is harmless to the record -- the server keeps the firmer answer -- but a
+   * retry loop hanging off a declinable note is how a quiet surface becomes a
+   * chatty one, and a lost response here costs the person nothing: the note
+   * has already gone from the screen.
+   */
+  dismiss(doNotAskAgain: boolean, token?: string): Promise<CorpusInvitation> {
+    return request<CorpusInvitation>('/corpus/invitation', {
+      method: 'PUT',
+      body: { do_not_ask_again: doNotAskAgain },
+      token,
+      schema: corpusInvitationResponseSchema,
       retry: false,
     });
   },
