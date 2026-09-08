@@ -48,10 +48,23 @@ per-phase manifestation copy are pulled from two different sources:
   (Stage 4 aspect "Community Love"; Stage 8 color "Teal", aspect "True Self
   Connection", free-will archetype "True Self Embodier"). This is the
   canonical APTITUDE ontology, not the *Archetypal Wavelength* spreadsheet.
-- `manifestations_source` — the titles, subtitles, and six-phase `Rx`
-  (integrated) / `OD` (shadow) manifestation copy come from *The Archetypal
-  Wavelength* spreadsheet, "Expanded List" sheet (the same sheet
-  `wavelength-demo` and `WavelengthWatch` quote verbatim).
+- `manifestations_source` — the titles and six-phase `Rx` (integrated) / `OD`
+  (shadow) manifestation copy come from *The Archetypal Wavelength*
+  spreadsheet, "Expanded List" sheet (the same sheet `wavelength-demo` and
+  `WavelengthWatch` quote verbatim). It does **not** source the subtitles.
+- `subtitles_source` — the per-Stage `subtitle` comes from the `aptitude-course`
+  repository's resource copy: the `#### ` stage headings in
+  `markdown/resources/aptitude-stages.md` and the numbered item list in
+  `markdown/resources/about.md`. The subtitles are *not* a mechanical
+  `"<aspect> <category>"` join, and they are not the course's own wording
+  verbatim either — the dataset and that item list agree exactly only for
+  Stages 3, 5, 6 and 7 — so this key records where the editorial decision was
+  sourced, not a rule you can re-derive the field from.
+  **Known divergence:** Stage 8's subtitle is `"True Self Wisdom"`, following
+  upstream commit `3bf0df5` (2026-07-31), which the vendored content pin at
+  `backend/content/CONTENT_VERSION` does not yet carry. Until the re-pin
+  (issue #2706) lands, the app's label deliberately leads the vendored course,
+  whose About page still reads "Transcendent Wisdom".
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
@@ -62,10 +75,14 @@ The `Rx`/`OD` copy in the JSON is quoted from that vendored markdown so the
 three apps stay in sync with the sheet without adepthood needing live access to
 the spreadsheet (privacy posture, #893).
 
-`dataset_version` is `2.0.0`. The `1.x` series shipped with a wrong,
+`dataset_version` is `2.1.0`. The `1.x` series shipped with a wrong,
 non-canonical vocabulary for the seven stage-attribute fields; correcting
 them to the `stage_attributes_source` above is a breaking data change, hence
-the major bump rather than a patch or minor.
+the major bump to `2.0.0` rather than a patch or minor. The `2.0.0` → `2.1.0`
+minor is the Stage 8 subtitle correction: it adds the `subtitles_source`
+provenance key and moves the subtitles out of `manifestations_source`'s remit,
+so a consumer reading provenance gets different *semantics*, not just a
+different character — which is more than a patch, and less than a shape change.
 
 ## What the loader guarantees
 
@@ -102,7 +119,18 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    cd backend && pytest tests/test_curriculum.py tests/test_seed_stages.py
    ```
 
-5. Commit the JSON diff. Because the seeder derives `STAGE_DEFINITIONS` from the
+5. **After any `make sync-content`** (which re-pins the vendored course tree
+   under `backend/content/`), run
+   `backend/tests/test_vendored_course_copy_pins.py`. It pins the course's own
+   curriculum wording — the ten `aptitude-stages.md` stage headings and the ten
+   `about.md` list items — as literals, so a re-pin cannot change curriculum
+   copy silently. **A failure there is a decision, not a typo:** read the
+   upstream diff and decide whether this dataset follows the new wording, or
+   record the divergence deliberately (as `subtitles_source` does for Stage 8
+   today). Never hand-edit `backend/content/**` to make it match — that tree is
+   excluded from every pre-commit hook and its drift gate,
+   `python -m scripts.sync_content --check`, runs only in CI.
+6. Commit the JSON diff. Because the seeder derives `STAGE_DEFINITIONS` from the
    dataset at import time, no seeder code change is needed. Seeding is
    insert-plus-reconcile: on the next startup, `seed_stages()` inserts any
    Stage missing from the table and updates the curriculum-sourced fields of
