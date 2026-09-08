@@ -171,6 +171,7 @@ jest.mock('expo-haptics', () => ({
 
 // eslint-disable-next-line import/order
 const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+const { LOG_WINDOW_REFUSED_COPY } = require('../components/LogPracticeSessionSheet');
 const PracticeScreen = require('../PracticeScreen').default;
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
@@ -1084,6 +1085,7 @@ describe('PracticeScreen header drawer', () => {
     expect(getByTestId('practice-drawer-change')).toBeTruthy();
     expect(getByTestId('practice-drawer-browse')).toBeTruthy();
     expect(getByTestId('practice-drawer-customize')).toBeTruthy();
+    expect(getByTestId('practice-drawer-log')).toBeTruthy();
     expect(getByTestId('practice-drawer-details')).toBeTruthy();
     expect(getByTestId('practice-drawer-create')).toBeTruthy();
     // The inline CatalogButton is retired (#1905): the drawer rows are the
@@ -1135,6 +1137,8 @@ describe('PracticeScreen header drawer', () => {
     // in-place catalog rows are withheld while the ritual holds the screen.
     expect(queryByTestId('practice-drawer-change')).toBeNull();
     expect(queryByTestId('practice-drawer-browse')).toBeNull();
+    // Logging a second sitting while one runs is not a coherent action.
+    expect(queryByTestId('practice-drawer-log')).toBeNull();
     // Safe rows remain: customize opens a modal sheet, create/details push.
     expect(getByTestId('practice-drawer-customize')).toBeTruthy();
     expect(getByTestId('practice-drawer-create')).toBeTruthy();
@@ -1155,6 +1159,8 @@ describe('PracticeScreen header drawer', () => {
     expect(queryByTestId('practice-drawer-change')).toBeNull();
     expect(queryByTestId('practice-drawer-customize')).toBeNull();
     expect(queryByTestId('practice-drawer-details')).toBeNull();
+    // Nothing to log a session against until a practice is set for the stage.
+    expect(queryByTestId('practice-drawer-log')).toBeNull();
     // The in-body empty-state CTA is not replaced by the drawer's rows.
     expect(getByTestId('browse-catalog-button')).toBeTruthy();
   });
@@ -1181,5 +1187,126 @@ describe('PracticeScreen header drawer', () => {
     fireEvent.press(getByTestId('practice-drawer-create'));
 
     expect(mockRootNavigate).toHaveBeenCalledWith('CreatePractice');
+  });
+});
+
+describe('PracticeScreen manual log', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    headerLeftStore.current = undefined;
+    headerLeftStore.listeners.clear();
+    mockFocusCallbacks.length = 0;
+    mockPracticesList.mockResolvedValue([samplePractice()]);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockWeekCount.mockResolvedValue({ count: 2 });
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockPracticeSessionsCreate.mockResolvedValue({
+      id: 101,
+      user_practice_id: 10,
+      duration_minutes: 10,
+      timestamp: '2026-04-12T10:30:00Z',
+      reflection: null,
+      mode: 'meditation_timer',
+      mode_metadata: null,
+      completed: true,
+      insight: null,
+    });
+    mockNavigate.mockClear();
+    mockSetOptions.mockClear();
+    mockRootNavigate.mockClear();
+  });
+
+  const weeklyBuckets = (count: number) => ({
+    weekly_counts: [{ week_start: '2026-05-11', count }],
+    streak_weeks: 0,
+    total_minutes_30d: 0,
+    avg_duration_minutes_30d: null,
+    per_mode_counts: {},
+    last_insight: null,
+  });
+
+  // The queries come off an untyped `require` of the testing library, so
+  // `ReturnType<typeof render>` would resolve to `any` too. Name the shape
+  // this helper actually uses instead: a matcher in, an element out, which is
+  // all `fireEvent` and `expect` need from it.
+  type ElementQuery = (matcher: string) => unknown;
+
+  const openLogSheet = async (getByTestId: ElementQuery, getByLabelText: ElementQuery) => {
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    fireEvent.press(getByLabelText('Open Practice menu'));
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-drawer-log'));
+    });
+    await waitFor(() => expect(getByTestId('log-session-save')).toBeTruthy());
+  };
+
+  it('logs a past sitting from the drawer and reconciles the weekly count', async () => {
+    mockInsights.mockResolvedValueOnce(weeklyBuckets(2)).mockResolvedValueOnce(weeklyBuckets(3));
+    const { getByTestId, getByLabelText, getByText, queryByTestId } = render(
+      <PracticeScreenWithHeader />,
+    );
+    await openLogSheet(getByTestId, getByLabelText);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('log-session-save'));
+    });
+
+    expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    const payload = mockPracticeSessionsCreate.mock.calls[0][0];
+    expect(payload).toEqual(expect.objectContaining({ user_practice_id: 10, completed: true }));
+    expect(payload).not.toHaveProperty('duration_minutes');
+    expect(payload).not.toHaveProperty('mode_metadata');
+    await waitFor(() => expect(mockInsights).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getByText(/3 of \d+/)).toBeTruthy());
+    expect(queryByTestId('log-session-save')).toBeNull();
+  });
+
+  it('rolls back the optimistic increment and names the window on a 422', async () => {
+    mockInsights.mockResolvedValueOnce(weeklyBuckets(2));
+    mockPracticeSessionsCreate.mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status 422'), {
+        name: 'ApiError',
+        status: 422,
+        detail: 'Value error, started_at is too far in the past',
+      }),
+    );
+    const { getByTestId, getByLabelText, getByText } = render(<PracticeScreenWithHeader />);
+    await openLogSheet(getByTestId, getByLabelText);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('log-session-save'));
+    });
+
+    await waitFor(() => expect(getByTestId('log-session-error')).toBeTruthy());
+    expect(getByTestId('log-session-error').props.children).toBe(LOG_WINDOW_REFUSED_COPY);
+    expect(getByText(/2 of \d+/)).toBeTruthy();
+    expect(mockInsights).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the ritual engine untouched across a manual log', async () => {
+    mockInsights.mockResolvedValueOnce(weeklyBuckets(2)).mockResolvedValueOnce(weeklyBuckets(3));
+    const { getByTestId, getByLabelText, queryByTestId } = render(<PracticeScreenWithHeader />);
+    await openLogSheet(getByTestId, getByLabelText);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('log-session-save'));
+    });
+
+    await waitFor(() => expect(queryByTestId('log-session-save')).toBeNull());
+    expect(getByTestId('ritual-start')).toBeTruthy();
+    expect(getByTestId('practice-tab-switcher')).toBeTruthy();
+    expect(queryByTestId('active-practice-save-error')).toBeNull();
+  });
+
+  it('offers no log row, and no sheet, when no practice is set for the stage', async () => {
+    mockUserPracticesList.mockResolvedValue([]);
+    const { getByTestId, getByLabelText, queryByTestId } = render(<PracticeScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Practice menu'));
+
+    expect(queryByTestId('practice-drawer-log')).toBeNull();
+    expect(queryByTestId('log-session-save')).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import {
   dayKeyInTZ,
   dayKeyToInstant,
   detectDeviceTimezone,
+  formatTimeInTZ,
   streakFromCompletions,
   subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
@@ -373,5 +374,28 @@ describe('detectDeviceTimezone', () => {
 describe('DEFAULT_TIMEZONE', () => {
   it('is UTC', () => {
     expect(DEFAULT_TIMEZONE).toBe('UTC');
+  });
+});
+
+describe('formatTimeInTZ', () => {
+  const instant = new Date('2026-09-08T15:00:00Z');
+
+  // `\s?` rather than a literal space: recent ICU renders the en-US
+  // day-period separator as U+202F (narrow no-break space), so an exact
+  // string comparison flakes across Node minors.
+  it('renders the instant as wall-clock time in the given zone', () => {
+    expect(formatTimeInTZ(instant, 'America/New_York')).toMatch(/^11:00\s?AM$/);
+  });
+
+  it('renders UTC when the user has not moved their zone', () => {
+    expect(formatTimeInTZ(instant, 'UTC')).toMatch(/^3:00\s?PM$/);
+  });
+
+  it('falls back to UTC rather than throwing on a malformed zone', () => {
+    expect(formatTimeInTZ(instant, 'Not/AZone')).toMatch(/^3:00\s?PM$/);
+  });
+
+  it('pins the en-US clock so the label and its assertions agree everywhere', () => {
+    expect(formatTimeInTZ(new Date('2026-09-08T00:05:00Z'), 'UTC')).toMatch(/^12:05\s?AM$/);
   });
 });

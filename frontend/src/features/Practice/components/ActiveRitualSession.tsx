@@ -44,8 +44,6 @@ import type {
   SessionMetadata,
   UserPractice,
 } from '@/api';
-import { practiceSessions } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
 import { SPACING, colors } from '@/design/tokens';
 import { InsightCaptureModal } from '@/features/Practice/components/InsightCaptureModal';
 import RitualConfiguratorSheet from '@/features/Practice/configurator/RitualConfiguratorSheet';
@@ -72,6 +70,7 @@ import type {
 } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
+import { useSaveSessionMutation } from '@/features/Practice/hooks/useSaveSessionMutation';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
 import CardMeditationView from '@/features/Practice/views/CardMeditationView';
 import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
@@ -85,7 +84,6 @@ import SenseGroundingView from '@/features/Practice/views/SenseGroundingView';
 import { SessionSurfaceProvider, UMBER_SURFACE } from '@/features/Practice/views/sessionSurface';
 import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView';
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
-import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 
 const KEEP_AWAKE_TAG = 'ritual-engine';
 const SAVE_FALLBACK =
@@ -292,11 +290,12 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     onMindfulAnchorComplete,
     resetMindfulAnchor,
   } = useHarvestedMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick);
-  const saveMutation = useSaveMutation({
+  const saveMutation = useSaveSessionMutation({
     apply: props.onSessionApply,
     rollback: props.onSessionRollback,
     commit: props.onSessionCommitted,
     setSaveError,
+    errorOptions: { fallback: SAVE_FALLBACK },
   });
   const finishAndReset = useCallback(() => {
     window.reset();
@@ -614,31 +613,6 @@ function CardModeView({
     );
   }
   return <CardMeditationView config={config} state={state} controls={controls} picked={cardPick} />;
-}
-
-interface UseSaveMutationParams {
-  apply: () => void;
-  rollback: () => void;
-  commit: () => void;
-  setSaveError: (_msg: string | null) => void;
-}
-
-function useSaveMutation({ apply, rollback, commit, setSaveError }: UseSaveMutationParams) {
-  return useOptimisticMutation<PracticeSessionCreate, PracticeSessionResponse>({
-    apply: () => {
-      setSaveError(null);
-      apply();
-    },
-    commit: async (payload) => {
-      const session = await practiceSessions.create(payload);
-      commit();
-      return session;
-    },
-    rollback: (_input, err) => {
-      rollback();
-      setSaveError(formatApiError(err, { fallback: SAVE_FALLBACK }));
-    },
-  });
 }
 
 const styles = StyleSheet.create({

@@ -1,11 +1,18 @@
 /**
  * The Practice header-drawer body, rendered as ScreenDrawer children. Offers the
- * catalog/customize/details/create actions in the active state and a pared-down
- * browse/create pair when no practice is set for the stage.
+ * catalog/customize/log/details/create actions in the active state and a
+ * pared-down browse/create pair when no practice is set for the stage.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Compass, Info, Plus, RefreshCw, SlidersHorizontal } from 'lucide-react-native';
+import {
+  CalendarClock,
+  Compass,
+  Info,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+} from 'lucide-react-native';
 import React from 'react';
 import { View } from 'react-native';
 
@@ -27,6 +34,12 @@ export interface PracticeDrawerProps {
    * rows unmount that engine, so they are withheld until the session ends.
    */
   sessionActive: boolean;
+  /**
+   * Opens the sheet for logging a sitting done away from the timer. Modal-based,
+   * so it never unmounts the engine — but still withheld mid-session, because
+   * recording a second sitting while one is running is not a coherent action.
+   */
+  onLogSession: () => void;
   onClose: () => void;
 }
 
@@ -37,13 +50,23 @@ interface DrawerRow {
   run: () => void;
 }
 
+/** Assemble one row; keeps `usePracticeRows` a readable list of its rows. */
+const row = (
+  testID: string,
+  label: string,
+  Icon: DrawerRow['Icon'],
+  run: () => void,
+): DrawerRow => ({ testID, label, Icon, run });
+
 /**
  * Builds the ordered rows for the current state. The active state exposes the
- * full set (change/browse/customize/details/create); the empty state offers only
- * browse and create. "Practice details" appears only when a practiceId resolves.
+ * full set (change/browse/customize/log/details/create); the empty state offers
+ * only browse and create — there is nothing to log a session against until a
+ * practice is set. "Practice details" appears only when a practiceId resolves.
  * Catalog rows flip the player's embedded Catalog tab in place; details/create
  * remain pushed routes. While a session is running or paused the in-place
- * catalog rows are withheld — flipping the tab would unmount the live engine.
+ * catalog rows are withheld — flipping the tab would unmount the live engine —
+ * and so is the manual log row.
  */
 function usePracticeRows({
   hasActivePractice,
@@ -51,35 +74,24 @@ function usePracticeRows({
   onCustomize,
   onBrowseCatalog,
   sessionActive,
+  onLogSession,
 }: Omit<PracticeDrawerProps, 'onClose'>): DrawerRow[] {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const browse: DrawerRow = {
-    testID: 'practice-drawer-browse',
-    label: 'Browse all practices',
-    Icon: Compass,
-    run: onBrowseCatalog,
-  };
-  const create: DrawerRow = {
-    testID: 'practice-drawer-create',
-    label: 'Create a practice',
-    Icon: Plus,
-    run: () => navigation.navigate('CreatePractice'),
-  };
+  const browse = row('practice-drawer-browse', 'Browse all practices', Compass, onBrowseCatalog);
+  const create = row('practice-drawer-create', 'Create a practice', Plus, () =>
+    navigation.navigate('CreatePractice'),
+  );
   if (!hasActivePractice) return [browse, create];
-  const change: DrawerRow = {
-    testID: 'practice-drawer-change',
-    label: 'Change practice',
-    Icon: RefreshCw,
-    run: onBrowseCatalog,
-  };
-  const customize: DrawerRow = {
-    testID: 'practice-drawer-customize',
-    label: 'Customize this practice',
-    Icon: SlidersHorizontal,
-    run: onCustomize,
-  };
+  const change = row('practice-drawer-change', 'Change practice', RefreshCw, onBrowseCatalog);
+  const customize = row(
+    'practice-drawer-customize',
+    'Customize this practice',
+    SlidersHorizontal,
+    onCustomize,
+  );
+  const log = row('practice-drawer-log', 'Log a practice', CalendarClock, onLogSession);
   // Withhold the tab-flip rows mid-session; keep the modal/push-based rows.
-  const rows: DrawerRow[] = sessionActive ? [customize] : [change, browse, customize];
+  const rows: DrawerRow[] = sessionActive ? [customize] : [change, browse, customize, log];
   if (practiceId !== undefined) {
     rows.push({
       testID: 'practice-drawer-details',
