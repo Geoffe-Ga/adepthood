@@ -92,7 +92,8 @@ to deep belonging. From insight to
 action.
 
 Through ten carefully curated stages, APTITUDE will
-guide you through the core aspects of self-mastery:
+bring ten human capacities online—one at a time,
+in the order they unlock:
 
 1.  Yes-And-Ness, Agency: Build
     a life intentionally when in a higher energy mode.
@@ -111,8 +112,9 @@ guide you through the core aspects of self-mastery:
     centering repressed edges
 7.  Systems Wisdom: Amalgamate
     insights of previous stages into one unique system
-8.  Transcendent Wisdom: Tap
-    into flow states and higher intuition to unlock free will.
+8.  True Self Wisdom: Tap
+    into deep intuition and the small clear voice beneath the
+    conditioned personality.
 9.  Unity: Yoke yourself to the
     greater currents of Source.
 10. Emptiness: Explore how
@@ -131,6 +133,21 @@ Each stage includes:
 This isn’t a crash course. It’s an extensive
 initiation into lasting transformation.
 
+And here is the thing to understand before you start.
+The Stages organize the course. The
+capacities organize a life. We take them
+one at a time because that’s how they unlock—but life
+never asks for one at a time. A hard conversation wants
+Beige, Purple, Red, Blue, and Yellow all at once, in the
+same four minutes. That’s a chord, not a note.
+
+So Wholeness here doesn’t mean arriving at the
+tenth Stage and staying there. There’s no such address.
+It means having enough of the scale available, in good
+enough repair, that you can play what the moment
+actually calls for—which is the only thing this course is
+finally training you to do.
+
 ------------------------------------------------------------------------
 
 ### What Makes APTITUDE Different?
@@ -145,6 +162,16 @@ initiation into lasting transformation.
   to criticize the shadows of early developmental stages. Here, we
   embrace the full human
   experience.
+- HOUSEHOLDER, NOT MONASTIC: We’re not
+  promising you enlightenment. We’re helping you get your
+  life arranged well enough that awakening
+  becomes possible—needs met, attention protected, practices
+  with a place in the day, values turned into routines. What a
+  monastery does with architecture, you’ll have to do with
+  habits. That’s harder, and it’s the point.
+  It is also emphatically not
+  productivity culture: the goal isn’t more output or a
+  better-adjusted worker for a diseased machine.
 - CYCLICAL, NOT CLIMACTIC: Evidence from
   countless luminaries indicates there is no spiritual retirement. There
   is no enlightenment you can effortlessly rest in forever. There is no

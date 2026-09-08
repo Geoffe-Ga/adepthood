@@ -74,6 +74,8 @@ Pleasure is not a distraction from the path. It is the path. The sacral center,
 
 Sex, in this frame, becomes less about performance and more about presence. It’s not just an act—it’s a ritual, a mirror, a transmission. Opening to pleasure means softening the inner armor, listening to your yes and your no, and trusting that what feels good in your body is part of your guidance system. Sacred Receptivity begins here.
 
+With one caveat, and it’s the whole discipline of the Pleasure Seeker: *part* of your guidance system is not *all* of it. A capacity this powerful is worth a palate. Some pleasures arrive wide—they open the chest, lengthen the hour, leave you more available to the people in your life. Others arrive narrow—hot and hurried, wanting the thing now, leaving you slightly smaller. Both feel good. Only one is guidance. The gift isn’t in trusting every yes; it’s in becoming someone whose yes can be trusted.
+
 ### Radical Acceptance
 
 Radical Acceptance in Purple isn’t resignation—it’s reverence. It’s the capacity to greet your reality with open arms, not because it’s painless, but because it is. You stop waiting for things to change before you allow yourself to be at peace. You stop treating your flaws, feelings, or failures as problems to be solved. You start recognizing them as part of the whole.

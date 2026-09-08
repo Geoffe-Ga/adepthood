@@ -35,6 +35,7 @@ This folder contains the modular sections for the GREEN stage of the APTITUDE co
 - **Previous Stage**: [Stage 5](../05-orange/)
 - **Next Stage**: [Stage 7](../07-yellow/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

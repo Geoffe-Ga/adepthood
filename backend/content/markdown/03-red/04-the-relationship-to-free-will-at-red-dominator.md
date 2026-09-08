@@ -36,7 +36,9 @@ At Red, Free Will is experienced as force. The ability to assert, to defy, to br
 
 
 
-If Beige was the Biological Machine—pure instinct—and Purple was the Archetype Embodier—role-bound and myth-driven—then Red is the Dominator, a structure-stage archetype that emerges when personality begins asserting its own identity but hasn’t yet encountered the checks of empathy, ethics, or complexity. It is a necessary step. It’s the wild growl of a soul remembering it has claws.
+If Beige answers to the Biological Machine—pure instinct—and Purple to the Pleasure Seeker—steered by whatever feels nice—then Red answers to the Dominator, the archetype that shows up when personality begins asserting its own identity but hasn’t yet met the checks of empathy, ethics, or complexity. It is a necessary note. It’s the wild growl of a soul remembering it has claws.
+
+Notice what Red adds to the two before it. The Pleasure Seeker moves toward the pleasant and away from the unpleasant; Red is the first capacity that will walk straight into something unpleasant because it *matters*. That’s not a replacement. That’s the second note in a chord you’ll be playing for the rest of your life.
 
 
 

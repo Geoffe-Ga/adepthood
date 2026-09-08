@@ -58,13 +58,12 @@ per-phase manifestation copy are pulled from two different sources:
   `markdown/resources/about.md`. The subtitles are *not* a mechanical
   `"<aspect> <category>"` join, and they are not the course's own wording
   verbatim either — the dataset and that item list agree exactly only for
-  Stages 3, 5, 6 and 7 — so this key records where the editorial decision was
-  sourced, not a rule you can re-derive the field from.
-  **Known divergence:** Stage 8's subtitle is `"True Self Wisdom"`, following
-  upstream commit `3bf0df5` (2026-07-31), which the vendored content pin at
-  `backend/content/CONTENT_VERSION` does not yet carry. Until the re-pin
-  (issue #2706) lands, the app's label deliberately leads the vendored course,
-  whose About page still reads "Transcendent Wisdom".
+  Stages 3, 5, 6, 7 and 8 — so this key records where the editorial decision
+  was sourced, not a rule you can re-derive the field from. Stage 8's
+  subtitle `"True Self Wisdom"` followed upstream commit `3bf0df5`
+  (2026-07-31) ahead of the content pin; the re-pin to `9d0f896` (issue
+  #2706) closed that gap, so the About page now reads "True Self Wisdom"
+  too.
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the

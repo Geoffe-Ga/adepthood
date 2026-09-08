@@ -2,7 +2,7 @@
 
 [What is Ultraviolet?](#what-is-ultraviolet)
 
-[The Mood of Ultraviolet: Wholeness—Hierarchy](#the-mood-of-ultraviolet-wholeness-hierarchy)
+[The Mood of Ultraviolet: Being—Unity](#the-mood-of-ultraviolet-beingunity)
 
 [The Journaling Prompts of Ultraviolet](#the-journaling-prompts-of-ultraviolet)
 

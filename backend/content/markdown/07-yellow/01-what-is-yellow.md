@@ -18,11 +18,13 @@ And now, at Yellow, you're being asked to do something that might feel impossibl
 
 Yellow is where you see the whole scale. Where you stop treating the stages like steps you leave behind and start seeing them as **notes you can play together**. Where you recognize that each stage isn't something you outgrow—it's a *capacity* that remains available. You learn to play chords, not just single notes.
 
+Anatomically, we've left the Throat behind. Orange and Green were expression—getting the inside outside. Yellow and Teal are the Third Eye: seeing. And what you see first, from up here, is that everything you've been calling a problem is a node in something larger.
+
 In Spiral Dynamics, Yellow is the first "second-tier" stage. It's where the entire spiral becomes visible as a whole. You can see why Beige matters (grounding is foundational). Why Purple matters (symbolism and intuition are real). Why Red matters (agency and power are necessary). Why Blue matters (order and belonging stabilize). Why Orange matters (progress and innovation move us forward). Why Green matters (empathy and shadow work heal the wounds). And you no longer need to reject one to embrace another. You can *access* them all, contextually, as needed.
 
-In Integral Theory, this is the "integral" or "autonomous" stage—the capacity to hold multiple perspectives without collapsing into relativism. You can honor that different people are at different stages, that different situations call for different approaches, and that no single lens captures the whole truth.
+In Integral Theory, this is the "integral" or "autonomous" stage—the capacity to hold multiple perspectives without collapsing into relativism. You can honor that different people have different notes unlocked, that different situations call for different chords, and that no single lens captures the whole truth.
 
-APTITUDE calls this **Freedom**. Specifically, the freedom that comes from **Free Will**—not as a metaphysical claim, but as a *lived reality*. At Yellow, you stop being *subject to* your conditioning and start being able to *observe* it. You become an **Intentional Actor**—someone who can choose their response, not just react from programming.
+APTITUDE calls this **Wisdom**. Orange and Green were Understanding—how the exterior works, how the interior works. Yellow opens the category that asks the next question: given all that, *what should actually be done here?* Specifically, Yellow cultivates **Systems Wisdom**—the ability to see structures rather than only symptoms, and to notice that a systemic intervention is nearly always the only one that moves the needle. Turn that capacity on yourself and you stop being merely *subject to* your conditioning and start being able to *observe* it. You become an **Intentional Actor**—someone who can choose their response, not just execute a program.
 
 This is not the illusion of free will that Orange chased (where you believe you're free but you're just executing better programming). This is the *beginning* of actual agency. You see the cage. You understand how it was built. And you're learning, slowly, how to unlock it.
 

@@ -3,7 +3,7 @@
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
-    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), which the vendored pin at backend/content/CONTENT_VERSION does not yet carry; see issue 2706",
+    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
     "refresh_doc": "docs/curriculum.md"
   },

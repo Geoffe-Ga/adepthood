@@ -246,12 +246,12 @@
       "stage": 2,
       "chapter": 4,
       "order": 4,
-      "slug": "the-relationship-to-free-will-at-purple-archetype-embodier",
-      "title": "The Relationship to Free Will at Purple: Archetype Embodier",
+      "slug": "the-relationship-to-free-will-at-purple-pleasure-seeker",
+      "title": "The Relationship to Free Will at Purple: Pleasure Seeker",
       "content_type": "chapter",
       "release_day": 3,
       "media": [],
-      "path": "markdown/02-purple/04-the-relationship-to-free-will-at-purple-archetype-embodier.md"
+      "path": "markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md"
     },
     {
       "id": "purple-5",
@@ -666,12 +666,12 @@
       "stage": 4,
       "chapter": 10,
       "order": 10,
-      "slug": "yes-and-ness-love-understanding-and-freedom-the-broader-aspe",
-      "title": "Yes-And-Ness, Love, Understanding, and Freedom: The Broader \"Aspect Categories\" of APTITUDE",
+      "slug": "yes-and-ness-love-understanding-and-wisdom-the-broader-aspec",
+      "title": "Yes-And-Ness, Love, Understanding, Wisdom: The Broader \"Aspect Categories\" of APTITUDE",
       "content_type": "chapter",
       "release_day": 9,
       "media": [],
-      "path": "markdown/04-blue/10-yes-and-ness-love-understanding-and-freedom-the-broader-aspe.md"
+      "path": "markdown/04-blue/10-yes-and-ness-love-understanding-and-wisdom-the-broader-aspec.md"
     },
     {
       "id": "blue-11",
@@ -1386,12 +1386,12 @@
       "stage": 7,
       "chapter": 2,
       "order": 2,
-      "slug": "the-mood-of-yellow-freedomfree-will",
-      "title": "The Mood of Yellow: Freedom—Free Will",
+      "slug": "the-mood-of-yellow-wisdomsystems-wisdom",
+      "title": "The Mood of Yellow: Wisdom—Systems Wisdom",
       "content_type": "chapter",
       "release_day": 1,
       "media": [],
-      "path": "markdown/07-yellow/02-the-mood-of-yellow-freedomfree-will.md"
+      "path": "markdown/07-yellow/02-the-mood-of-yellow-wisdomsystems-wisdom.md"
     },
     {
       "id": "yellow-3",
@@ -1698,12 +1698,12 @@
       "stage": 8,
       "chapter": 2,
       "order": 2,
-      "slug": "the-mood-of-teal-freedomtrue-self-connection",
-      "title": "The Mood of Teal: Freedom—True Self Connection",
+      "slug": "the-mood-of-teal-wisdomtrue-self-wisdom",
+      "title": "The Mood of Teal: Wisdom—True Self Wisdom",
       "content_type": "chapter",
       "release_day": 1,
       "media": [],
-      "path": "markdown/08-teal/02-the-mood-of-teal-freedomtrue-self-connection.md"
+      "path": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md"
     },
     {
       "id": "teal-3",
@@ -1986,12 +1986,12 @@
       "stage": 9,
       "chapter": 2,
       "order": 2,
-      "slug": "the-mood-of-ultraviolet-wholenesshierarchy",
-      "title": "The Mood of Ultraviolet: Wholeness—Developmental Complexity",
+      "slug": "the-mood-of-ultraviolet-beingunity",
+      "title": "The Mood of Ultraviolet: Being—Unity",
       "content_type": "chapter",
       "release_day": 1,
       "media": [],
-      "path": "markdown/09-ultraviolet/02-the-mood-of-ultraviolet-wholenesshierarchy.md"
+      "path": "markdown/09-ultraviolet/02-the-mood-of-ultraviolet-beingunity.md"
     },
     {
       "id": "ultraviolet-3",
@@ -2238,12 +2238,12 @@
       "stage": 10,
       "chapter": 2,
       "order": 2,
-      "slug": "the-mood-of-clear-light-wholenessemptiness",
-      "title": "The Mood of Clear Light: Wholeness—Emptiness",
+      "slug": "the-mood-of-clear-light-awarenessemptiness",
+      "title": "The Mood of Clear Light: Awareness—Emptiness",
       "content_type": "chapter",
       "release_day": 1,
       "media": [],
-      "path": "markdown/10-clearlight/02-the-mood-of-clear-light-wholenessemptiness.md"
+      "path": "markdown/10-clearlight/02-the-mood-of-clear-light-awarenessemptiness.md"
     },
     {
       "id": "clearlight-3",
@@ -2538,6 +2538,13 @@
       "description": "From Liminal Creep to Whole Adept: who this course is for.",
       "media": [],
       "path": "markdown/resources/liminal-creep.md"
+    },
+    {
+      "slug": "notes-and-chords",
+      "title": "Notes and Chords",
+      "description": "Why the course teaches one Stage at a time, why life never asks for one at a time, and what Wholeness actually means.",
+      "media": [],
+      "path": "markdown/resources/notes-and-chords.md"
     },
     {
       "slug": "wavelength-explainer",

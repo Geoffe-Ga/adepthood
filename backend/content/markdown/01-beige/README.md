@@ -27,6 +27,7 @@ This folder contains the modular sections for the BEIGE stage of the APTITUDE co
 
 - **Next Stage**: [Stage 2](../02-purple/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

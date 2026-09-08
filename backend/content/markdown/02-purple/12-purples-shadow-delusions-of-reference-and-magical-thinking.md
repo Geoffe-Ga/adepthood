@@ -30,6 +30,18 @@ And if that’s happening, it might be time to ask for help. That doesn’t mean
 
 There is no shame in needing support when your beliefs become too real. There is no virtue in suffering alone.
 
+### The Quieter Shadow: Capture
+
+Delusions of reference are Purple’s loud shadow. There’s a quiet one, and it gets far more of us.
+
+The Pleasure Seeker steers by what feels nice—which means anyone who can manufacture *feels nice* can steer you. That’s not a warning about strangers in vans. It’s a warning about a scroll tuned by people who measure their success in your minutes, about a food supply engineered against your satiety signal, about the friend who has learned that if disagreement is unpleasant enough you will stop disagreeing. Purple hands the wheel to sensation. Sensation can be counterfeited, and there is an industry doing it.
+
+The tell is subtle, because capture doesn’t feel like capture. It feels like preference. It feels like *this is just what I like.* You’ll notice it instead in the aftershape: an evening that vanished, an agreement you didn’t mean, a body that got fed but not nourished, a low hum of having been used that you can’t attach to any particular moment.
+
+The cure is not renunciation—that’s the repressed pole, and it just breaks the antenna. The cure is the palate. Ask the question often enough that it becomes reflex: *did that widen me or narrow me?* Ask it about the app, the drink, the fourth episode, the yes you gave too fast. You’re not looking for a verdict on pleasure. You’re looking for the difference between the fruit and the thing engineered to look like fruit.
+
+And notice which note you need to borrow when the answer comes back *narrow*. Usually it’s Red—the capacity to want something even when wanting it feels bad, and to say a no that costs you.
+
 Purple, when repressed, collapses into numbness and disconnection. But when excessive, it becomes a hall of mirrors. You see signs in everything, feel chosen and cursed in equal measure, and lose the capacity to live in the shared world. And that’s where it gets dangerous—not just for your mental health, but for your relationships, your job, your body.
 
 You were not meant to live inside every belief that lights up. You were meant to witness them. To question them. To hold them like birds—delicate, winged things that might fly off or nest with you awhile. The truth of Purple is spacious. It includes doubt. It honors multiple meanings. It lets go when the grip gets tight.

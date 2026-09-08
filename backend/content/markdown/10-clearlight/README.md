@@ -6,7 +6,7 @@ This folder contains the modular sections for the CLEARLIGHT stage of the APTITU
 
 - [Table of Contents](./00-table-of-contents.md)
 - [What is Clear Light?](./01-what-is-clear-light.md)
-- [The Mood of Clear Light: Wholeness—Emptiness](./02-the-mood-of-clear-light-wholenessemptiness.md)
+- [The Mood of Clear Light: Awareness—Emptiness](./02-the-mood-of-clear-light-awarenessemptiness.md)
 - [The Journaling Prompts of Clear Light](./03-the-journaling-prompts-of-clear-light.md)
 - [The Relationship to Free Will at Clear Light: Adept](./04-the-relationship-to-free-will-at-clear-light-adept.md)
 - [The Mode of the Wavelength of Clear Light: Be (Both/Neither)](./05-the-vibe-wavelength-of-clear-light-be-neitherall.md)
@@ -34,6 +34,7 @@ This folder contains the modular sections for the CLEARLIGHT stage of the APTITU
 
 - **Previous Stage**: [Stage 9](../09-ultraviolet/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

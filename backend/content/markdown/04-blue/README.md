@@ -14,7 +14,7 @@ This folder contains the modular sections for the BLUE stage of the APTITUDE cou
 - [Alternatives for Blue Practice](./07-alternatives-for-blue-practice.md)
 - [The Default Habit of Blue: Looking at Alcohol/Intoxicants](./08-the-default-habit-of-blue-looking-at-alcoholintoxicants.md)
 - [Blue's Divine Gender: Divine Feminine—We, Self-Sacrificing](./09-blues-divine-gender-divine-femininewe-self-sacrificing.md)
-- [Yes-And-Ness, Love, Understanding, and Freedom: The Broader "Aspect Categories" of APTITUDE](./10-yes-and-ness-love-understanding-and-freedom-the-broader-aspe.md)
+- [Yes-And-Ness, Love, Understanding, Wisdom: The Broader "Aspect Categories" of APTITUDE](./10-yes-and-ness-love-understanding-and-wisdom-the-broader-aspec.md)
 - [Blue's Gift: From Conformity to Community](./11-blues-gift-from-conformity-to-community.md)
 - [Blue's Shadow: The Drama Triangle (Victim, Villain, Savior)](./12-blues-shadow-the-drama-triangle-victim-villain-savior.md)
 - ["EXPRESS (Feel)"—Full 6-Phase Wavelength Breakdown](./13-express-feelfull-6-phase-wavelength-breakdown.md)
@@ -26,6 +26,7 @@ This folder contains the modular sections for the BLUE stage of the APTITUDE cou
 - **Previous Stage**: [Stage 3](../03-red/)
 - **Next Stage**: [Stage 5](../05-orange/)
 - **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
 
 ## Source
 

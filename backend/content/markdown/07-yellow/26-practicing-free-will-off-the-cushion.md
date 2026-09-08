@@ -54,4 +54,4 @@ Free Will off the cushion is about *noticing the gap*. The space between what ar
 
 It's not about getting it right. It's about *waking up* in the moment. Again. And again. And again.
 
-That's the practice. That's Freedom.
+That's the practice. That's Systems Wisdom, turned on the one system you can actually reach from here.

@@ -29,7 +29,11 @@ This material can be shockingly sticky. You’ll find it
 organizing your thoughts, philosophies and ideologies. The Stages can
 act like a food pyramid, where you need a practice, a habit, a
 serving of each rung to
-be Whole and actualized.
+be Whole and actualized. Not one serving of the
+best one. A serving of each—which is a
+useful thing to remember every time you catch yourself
+wondering which Stage you *are*. You aren’t any
+of them. They’re all yours.
 
 You’ll keep on cycling back to the start of the spiral.
 Onward. Ever onward.
@@ -108,12 +112,33 @@ Their colors are borrowed—and
 modified to refer specifically to Aspects of
 Free Will—from [Clare Graves’](https://www.clarewgraves.com/home.html) Spiral Dynamics
 and Ken Wilber’s [Growing Up](https://integrallife.com/growing-up-a-guided-tour/) stages. While the
-color codes may seem cryptic, don’t get too tripped up. They don’t
-correspond to chakras, political parties, cultures, or anything else,
-really.
+color codes may seem cryptic, don’t get too tripped up. They aren’t
+political parties, cultures, personality types, or castes, and the color
+itself carries no meaning beyond being a convenient label.
 
 The colors are just a shorthand that makes
 referring to the Stages simpler.
+
+The Stages *do*, however, map onto the traditional
+chakra system—not as a mystical claim, but because both are
+descriptions of the same climb up the same body:
+
+| Stage | Chakra |
+|---|---|
+| Beige | Root |
+| Purple | Sacral |
+| Red | Solar Plexus |
+| Blue | Heart |
+| Orange & Green | Throat (two directions of self-expression) |
+| Yellow & Teal | Third Eye (two altitudes of seeing) |
+| Ultraviolet | Crown |
+| Clear Light | above the head—outside the body’s system entirely |
+
+Two of the pairs share a seat, which is exactly what you’d expect
+from a scale where certain notes belong to the same chord. Orange
+articulates the world and Green articulates the self: same throat,
+opposite directions. Yellow sees the structure of things and Teal
+sees through it: same eye, different focal lengths.
 
 Another note on influences taken of Integral
 Philosophy: Wilber frequently talks of “Lines of
@@ -130,6 +155,13 @@ integration of the Archetypal Wavelength into the course.
 
 Each stage is listed below by its Category and its
 Name, followed by its Color, Theme, and Archetype in parentheses.
+
+Read them as capacities, not identities. The
+Archetype named in each set of parentheses is what that capacity looks
+like when it’s running the show *unexamined*—the default, not the
+person. Every one of these becomes something you can play deliberately,
+and none of them is anybody’s name. For more on how the ten notes
+become chords, see [Notes and Chords](./notes-and-chords.md).
 
 #### Yes-and-Ness: Agency (Beige, Survival, The Biological Machine)
 
@@ -163,19 +195,23 @@ seriously, fostering the stability in the basic
 structures of life that is a necessary foundation for pursuing and
 exercising agency.
 
-#### Yes-and-Ness: Receptivity (Purple, Mythic, The Archetype Embodier)
+#### Yes-and-Ness: Receptivity (Purple, Mythic, The Pleasure Seeker)
 
 I'll make believe you are who you think you are if you
 make believe I am who I think I am.
 
 ~ [Ram Dass](https://beherenownetwork.com/category/ram-dass/)
 
-As we evolve, our personalities take shape through the
-influence of cultural and mythical archetypes. We model ourselves after
-figures in our families, communities, media, and even spiritual
-traditions. Identity begins to form as a composite of these role models,
-and at best, our “will” is experienced as aligning ourself with the
-right influences.
+Here, will is steered from three inches below the navel—
+toward what feels nice, away from what doesn’t. This is the
+Sacral Chakra’s department: appetite, sweetness, taste,
+the visceral yes that arrives before the argument starts. It is
+genuine information, and it is also the easiest thing in a human
+being to counterfeit, which is why so much of the modern economy is
+built on doing exactly that. Free Will here is not renunciation of
+pleasure and not obedience to it. It’s the far smaller, far more
+useful skill of telling one pleasure from another: the yes that
+widens you from the yes that narrows you.
 
 The practice for this stage is
 divination, such as a
@@ -419,7 +455,7 @@ APTITUDE, a focus on the true core practice.
 meditation of at least 45 minutes will be the
 habit for the Stage as well.
 
-#### Wisdom: Transcendent (Teal, Nonduality, The Adept)
+#### Wisdom: True Self (Teal, Nonduality, The Adept)
 
 The Great Way is not difficult
 for those who have no preferences.
