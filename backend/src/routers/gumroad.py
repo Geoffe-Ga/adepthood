@@ -75,6 +75,7 @@ _TRUE_FORM_VALUE = "true"
 # Payload keys this router reads by name more than once.
 _PRODUCT_ID_FIELD = "product_id"
 _EMAIL_FIELD = "email"
+_LICENSE_KEY_FIELD = "license_key"  # pragma: allowlist secret
 _REFUNDED_FIELD = "refunded"
 
 # Structured-log reason codes for the sale-dispatch outcomes an operator
@@ -145,6 +146,20 @@ async def _sale_already_recorded(session: AsyncSession, sale_id: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+def _without_licence_key(payload: dict[str, str]) -> dict[str, str]:
+    """The ping minus ``license_key``, which is never persisted.
+
+    Gumroad sends the key on the sale ping for a licensed product, and ADR
+    0008 made possession of that key the entire claim proof -- so a stored
+    copy would be a standing bearer credential for the account the sale can
+    claim, and would falsify the privacy policy's plain statement that the
+    key itself is never kept. Only this one field is dropped: the rest of the
+    ping is the record of the sale, and the admin summary reads the amount
+    out of it.
+    """
+    return {field: value for field, value in payload.items() if field != _LICENSE_KEY_FIELD}
+
+
 async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
     """Insert the GumroadSale row; a concurrent replay collapses to a no-op."""
     sale = GumroadSale(
@@ -154,7 +169,7 @@ async def _persist_sale(session: AsyncSession, payload: dict[str, str]) -> None:
         resource_name=payload.get("resource_name", ""),
         is_recurring_charge=_coerce_form_flag(payload, "is_recurring_charge"),
         refunded=_coerce_form_flag(payload, _REFUNDED_FIELD),
-        raw_payload=payload,
+        raw_payload=_without_licence_key(payload),
     )
     session.add(sale)
     try:

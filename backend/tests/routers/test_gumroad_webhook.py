@@ -24,6 +24,8 @@ WEBHOOK_PATH = "/webhooks/gumroad/ping"
 WEBHOOK_SECRET = "gumroad-webhook-shared-secret-test-only"  # pragma: allowlist secret
 WEBHOOK_SECRET_ENV = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
 GUESSED_SECRET = "guessed-gumroad-secret"  # pragma: allowlist secret
+# Gumroad puts this on the sale ping for a licensed product.
+LICENCE_KEY_ON_PING = "PING1234-KEY5-6789-TEST"  # pragma: allowlist secret
 
 
 def _sale_payload(**overrides: str) -> dict[str, str]:
@@ -59,7 +61,13 @@ async def test_valid_sale_ping_persists_one_row_with_verbatim_payload(
     db_session: AsyncSession,
     webhook_secret: str,
 ) -> None:
-    """A valid secret + sale payload returns 200 and stores the payload verbatim."""
+    """A valid secret + sale payload returns 200 and stores the payload verbatim.
+
+    "Verbatim" means every field Gumroad sent except ``license_key``, which
+    :func:`routers.gumroad._persist_sale` drops so the privacy policy's
+    promise that the key is never stored holds; the payload here carries no
+    key, so this row is the whole ping.
+    """
     payload = _sale_payload()
     response = await async_client.post(
         WEBHOOK_PATH, params={"secret": webhook_secret}, data=payload
@@ -77,6 +85,36 @@ async def test_valid_sale_ping_persists_one_row_with_verbatim_payload(
     assert row.refunded is False
     assert row.raw_payload == payload
     assert row.created_at is not None
+
+
+@pytest.mark.asyncio
+async def test_a_sale_ping_never_persists_the_licence_key(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    webhook_secret: str,
+) -> None:
+    """A licensed product's ping carries ``license_key``; the row must not keep it.
+
+    ADR 0008 made possession of the key the whole claim proof, and the privacy
+    policy states outright that the key itself is never stored. Gumroad sends
+    it on the sale ping for a licensed product, and the row keeps the posted
+    form, so without redaction that promise is false the moment a real sale
+    lands -- and the stored copy would be a standing bearer credential for the
+    account the sale can claim.
+    """
+    payload = _sale_payload(license_key=LICENCE_KEY_ON_PING)
+
+    response = await async_client.post(
+        WEBHOOK_PATH, params={"secret": webhook_secret}, data=payload
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    row = (await db_session.execute(select(GumroadSale))).scalar_one()
+    assert "license_key" not in row.raw_payload
+    # Nothing else is dropped: the ping is still the record of the sale.
+    assert row.raw_payload == {k: v for k, v in payload.items() if k != "license_key"}
+    assert LICENCE_KEY_ON_PING not in repr(row.raw_payload)
+    assert LICENCE_KEY_ON_PING not in repr(vars(row))
 
 
 @pytest.mark.asyncio
