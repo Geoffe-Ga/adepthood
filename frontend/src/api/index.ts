@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { flattenGoalCompletions } from './flattenGoalCompletions';
+import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
 import {
   apiGoalGroupSchema,
   accountDeletionReceiptSchema,
@@ -271,16 +272,10 @@ export class DocumentUploadError extends Error {
   }
 }
 
-/** Observer called with whether the client believes the network is reachable. */
-let networkOnlineGetter: (() => boolean) | null = null;
-
-export function setNetworkOnlineGetter(getter: (() => boolean) | null) {
-  networkOnlineGetter = getter;
-}
-
-function isKnownOffline(): boolean {
-  return networkOnlineGetter !== null && networkOnlineGetter() === false;
-}
+// The device connectivity signal lives in ``./networkSignal`` so the error-copy
+// layer can read it without importing this client (#2661); re-exported here
+// because ``@/api`` is where the app has always registered it.
+export { isDeviceKnownOffline, setNetworkOnlineGetter };
 
 let tokenGetter: (() => string | null) | null = null;
 
@@ -1048,7 +1043,7 @@ async function request<T>(
   // Fast-fail when the network layer already knows we're offline: retrying
   // would just stall each attempt until the timeout. The caller can catch
   // the ApiError and queue the request to replay on reconnect.
-  if (isKnownOffline() && method.toUpperCase() === 'GET') {
+  if (isDeviceKnownOffline() && method.toUpperCase() === 'GET') {
     throw new ApiError(0, 'network_error');
   }
 
