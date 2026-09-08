@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
+import { freshLicenseKey } from './licenseKey';
+
 import { ApiError, auth, corpusInvitation, journal, resonance, setTokenGetter } from '@/api';
 
 /**
@@ -27,7 +29,11 @@ import { ApiError, auth, corpusInvitation, journal, resonance, setTokenGetter } 
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
-const LICENSE_KEY = 'e2e-license';
+// One sale binds to one active account (ADR 0008, #1987), so the two accounts
+// this journey registers need a key each -- a shared constant would see the
+// second signup refused as an already-redeemed key.
+const LICENSE_KEY = freshLicenseKey();
+const NEIGHBOUR_LICENSE_KEY = freshLicenseKey();
 const ENTRY_BODY = 'I walked by the river and the willow bent without breaking.';
 
 const email = `e2e-invitation-${randomUUID()}${EMAIL_DOMAIN}`;
@@ -149,7 +155,7 @@ describe('corpus-invitation journey against a live server', () => {
       email: neighbourEmail,
       password: PASSWORD,
       timezone: TIMEZONE,
-      license_key: LICENSE_KEY,
+      license_key: NEIGHBOUR_LICENSE_KEY,
     });
     sessionToken = neighbour.token;
 
