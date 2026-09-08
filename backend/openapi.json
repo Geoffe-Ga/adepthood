@@ -883,6 +883,52 @@
         "title": "CorpusImportStatus",
         "type": "string"
       },
+      "CorpusInvitationResponse": {
+        "description": "Whether to offer the corpus decision now, and what the account last chose.\n\nThree fields and no count. The server computes the cooldown from how many\nResonance passes the account has completed, and that number stays on the\nserver: a client that could render it would be one edit away from turning a\ndeclinable invitation into a meter (NORTH-STAR §5, §6).\n\n``dismissed_at`` is ``null`` for an account that has never set the\ninvitation aside; ``do_not_ask_again`` is the standing answer, never\nsoftened by a later \"not now\".",
+        "properties": {
+          "dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dismissed At"
+          },
+          "do_not_ask_again": {
+            "title": "Do Not Ask Again",
+            "type": "boolean"
+          },
+          "offer": {
+            "title": "Offer",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "offer",
+          "dismissed_at",
+          "do_not_ask_again"
+        ],
+        "title": "CorpusInvitationResponse",
+        "type": "object"
+      },
+      "CorpusInvitationUpdate": {
+        "description": "The account setting the corpus invitation aside, at the Resonance moment.\n\n``do_not_ask_again`` is required rather than defaulted, for the reason\n:class:`CorpusConsentUpdate` gives about ``granted``: a decline whose\nmeaning depends on a default is a decline that can be sent by accident, and\nthe two meanings here -- \"not now\" and \"never\" -- are exactly what the\nrequest exists to distinguish.",
+        "properties": {
+          "do_not_ask_again": {
+            "title": "Do Not Ask Again",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "do_not_ask_again"
+        ],
+        "title": "CorpusInvitationUpdate",
+        "type": "object"
+      },
       "CorpusSource": {
         "description": "Where a fragment came from.\n\n``journal`` is writing composed in this app. ``upload`` is a file the user\nhanded over directly, and ``import`` is material pulled from a service they\nwrite on elsewhere — the two the import surface will produce. Recorded\nbecause \"what did I actually give this thing?\" is a question a user is\nentitled to an answer to, and a column is the only place that answer can\ncome from later.",
         "enum": [
@@ -9908,6 +9954,234 @@
           }
         },
         "summary": "Import Corpus Document",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/invitation": {
+      "get": {
+        "description": "Report whether to offer this account the corpus decision right now.\n\nNever a 404 and never a write: an account that has completed no pass has\nno row, is told ``offer: false``, and gains no row for having asked. The\naccount comes from the token, so no request can ask about anyone else's\nstanding. Two indexed reads, no commit, no provider call.",
+        "operationId": "get_corpus_invitation_corpus_invitation_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusInvitationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Corpus Invitation",
+        "tags": [
+          "corpus"
+        ]
+      },
+      "put": {
+        "description": "Record that this account set the invitation aside, and report its standing.\n\n``do_not_ask_again: false`` is a \"not now\" -- the instant and the pass count\nare stamped so the cooldown in :mod:`domain.corpus_invitation` can be\nmeasured from one moment. ``true`` is final and monotonic: a later \"not\nnow\" from the same account leaves it set. Committed here because a decline\nleft uncommitted would be a person told they will not be asked and then\nasked. Fans out to nothing, so unrated.",
+        "operationId": "put_corpus_invitation_corpus_invitation_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorpusInvitationUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusInvitationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Put Corpus Invitation",
         "tags": [
           "corpus"
         ]
