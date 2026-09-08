@@ -5,11 +5,9 @@ import { Text, StyleSheet } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import renderer from 'react-test-renderer';
 
-import { spacing, SPACING, touchTarget, tileDensity } from '../../../design/tokens';
+import { spacing, touchTarget, tileDensity } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { useTileLayout, HabitTile } from '../HabitTile';
-
-const TOTAL_HABITS = 10;
 
 interface Insets {
   top: number;
@@ -54,28 +52,48 @@ const renderTileLayout = (insets: Insets): TileLayoutSnapshot => {
   return { tileMinHeight, gridGutter, scale };
 };
 
-// Mirrors the icon-row/header-row/section-gap chrome the implementation reserves per screen.
-const computeChrome = (scale: number, gridGutter: number): number =>
-  2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
+/**
+ * What `useTileLayout` promises, and what it does not.
+ *
+ * This suite used to close with a `totalHeight <= 844` "fit invariant" built
+ * from a local `computeChrome` that was a verbatim copy of the hook's own
+ * expression, applied to the `tileMinHeight` that same expression had just
+ * produced. It was true by construction and could not have failed, and the
+ * thing it appeared to guard is in fact false: a real browser measures a full
+ * page of ten habits overflowing the grid's box by 147px at 1280x720 and 129px
+ * at 390x844 (`e2e/habits-viewport.browser.e2e.test.ts`). Jest cannot settle
+ * that question at all -- this project runs the `node` environment, so nothing
+ * here is ever laid out -- so the tautology is gone rather than restated, and
+ * what remains are the properties the hook really does hold: the density pins
+ * at each named profile, the touch-target floor, and the direction the reserve
+ * moves as the viewport shortens.
+ */
+const SHORTENING_HEIGHTS = [844, 700, 600, 500];
+const PHONE_INSETS: Insets = { top: 47, bottom: 34, left: 0, right: 0 };
 
-describe('useTileLayout fit invariant', () => {
-  it('keeps the full 10-tile stack within the viewport height budget', () => {
+describe('useTileLayout density budget', () => {
+  it('pins the row height it reserves on the phone profile', () => {
     mockWindowDimensions(390, 844);
-    const insets: Insets = { top: 47, bottom: 34, left: 0, right: 0 };
-    const { tileMinHeight, gridGutter, scale } = renderTileLayout(insets);
+    const { tileMinHeight } = renderTileLayout(PHONE_INSETS);
 
     expect(tileMinHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
-    // Concrete expected density at the target profile: a chrome-model drift or a
-    // token change breaks this independently of the reconstructed budget below.
+    // Concrete expected density at the target profile: a chrome-model drift or
+    // a token change breaks this without any test restating the model.
     const EXPECTED_TILE_MIN_HEIGHT = 62;
     expect(tileMinHeight).toBe(EXPECTED_TILE_MIN_HEIGHT);
+  });
 
-    const chrome = computeChrome(scale, gridGutter);
-    const bottomBarReserve = insets.bottom;
-    const stackHeight = TOTAL_HABITS * (tileMinHeight + gridGutter);
-    const totalHeight = stackHeight + insets.top + bottomBarReserve + chrome;
+  it('gives back height as the viewport shortens, never below the touch floor', () => {
+    const reserved = SHORTENING_HEIGHTS.map((height) => {
+      mockWindowDimensions(390, height);
+      return renderTileLayout(PHONE_INSETS).tileMinHeight;
+    });
 
-    expect(totalHeight).toBeLessThanOrEqual(844);
+    for (const height of reserved) {
+      expect(height).toBeGreaterThanOrEqual(touchTarget.minimum);
+    }
+    expect(reserved).toEqual([...reserved].sort((a, b) => b - a));
+    expect(Math.max(...reserved)).toBeGreaterThan(Math.min(...reserved));
   });
 
   it('clamps tileMinHeight to the touch-target floor on a short viewport', () => {

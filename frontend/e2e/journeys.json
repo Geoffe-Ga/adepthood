@@ -322,6 +322,18 @@
     "coveredBy": "frontend/e2e/course-passage.browser.e2e.test.ts"
   },
   {
+    "id": "habits.full-page-grid-geometry",
+    "description": "A user whose first page of habits is full opens Habits in a desktop browser and, after a viewport flip to a phone profile, in one column. The covering Playwright spec signs up through the UI, seeds ten habits over POST /habits/ with a token from POST /auth/login, and then measures laid-out DOM: the grid's box ends at or above the top of both the pagination bar and the Energy Scaffolding CTA, and every tile lies inside the grid's box -- the first before any scrolling, the last after scrolling the grid to its end. It exists because the Jest lanes cannot answer a layout question at all: this project runs the node environment under the React Native preset, so onLayout never fires and every box is zero, which is why issue #2658's report of a grid \"clipped beneath fixed controls\" survived a green suite. Nothing here asserts that a full page fits without scrolling; the same spec measured 147px of overflow at 1280x720 and 129px at 390x844, and records those numbers on every run instead of claiming a fit the app does not hold.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-viewport.browser.e2e.test.ts"
+  },
+  {
     "id": "map.advance-stage",
     "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
