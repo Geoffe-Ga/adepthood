@@ -13,6 +13,7 @@ import {
 } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 import { DEFAULT_TIMEZONE } from '../../utils/dateUtils';
+import { useDayKey } from '../../utils/dayRollover';
 
 import ConfirmDialog from './components/ConfirmDialog';
 import { MAX_HABITS } from './constants';
@@ -456,6 +457,13 @@ const ProgressBar = ({
 };
 
 const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
+  // Subscribes the tile to the user's day boundary. Every derivation below
+  // buckets completions into "today" at call time, which is correct — but the
+  // tile is memoised and none of its props change at midnight, so without this
+  // it keeps yesterday's answer until a cold restart (#2764). The value itself
+  // is not needed here; the subscription is.
+  useDayKey(tz);
+
   const lowGoal = habit.goals.find((g) => g.tier === 'low');
   const clearGoal = habit.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');

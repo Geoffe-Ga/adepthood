@@ -72,7 +72,10 @@ jest.mock('expo-notifications', () => ({
 const mockAlert = jest.fn();
 jest.mock('react-native', () => ({
   Alert: { alert: (...args: unknown[]) => mockAlert(...args) },
-  Platform: { OS: 'ios' },
+  // ``select`` as well as ``OS``: these suites replace ``react-native``
+  // wholesale, and the navigation context the habit hooks now read goes
+  // through it. A stub missing a real API is a gap in the stub.
+  Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.ios },
   StyleSheet: { create: (s: Record<string, unknown>) => s },
 }));
 
