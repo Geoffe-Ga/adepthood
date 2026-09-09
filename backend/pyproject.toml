@@ -86,6 +86,12 @@ fixable = ["ALL"]
 # reason.
 "tests/scripts/**/*.py" = ["S603"]
 "backend/tests/scripts/**/*.py" = ["S603"]
+# The scratch-lane harness those meta-tests share moved their `git` and
+# `pre-commit` invocations into tests/helpers/. Same literal argv, same reason,
+# so the exemption follows the code rather than the code staying put to keep
+# it. Named file by file, never the whole helpers/ tree.
+"tests/helpers/precommit_lane.py" = ["S603"]
+"backend/tests/helpers/precommit_lane.py" = ["S603"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
 # Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time
