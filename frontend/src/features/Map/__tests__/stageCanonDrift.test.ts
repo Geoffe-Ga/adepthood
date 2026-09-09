@@ -98,6 +98,44 @@ const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, index) => index + 1);
 /** The two stages whose aspect is the title watermark rather than an arrow label. */
 const TITLE_STAGES = [9, 10];
 
+/** The stages whose aspect reaches the screen as an arrow label instead. */
+const ARROW_STAGES = ALL_STAGES.filter((stageNumber) => !TITLE_STAGES.includes(stageNumber));
+
+/**
+ * How many opening words of its aspect each arrow label carries.
+ *
+ * The arrow loop is narrow, so a multi-word aspect is allowed to reach the
+ * screen shortened — 'True Self' for 'True Self Connection'. Which words
+ * survive that shortening is an editorial call with no backend source, so the
+ * budget is stated here and the expected label is then built from the canon
+ * aspect rather than from the label being checked.
+ *
+ * Stating it is the whole point. Reading the width off the value under test
+ * instead lets a label that has lost a word narrow its own expectation to
+ * match, so `'True'` would be compared against the first word of `'True Self
+ * Connection'` and pass. A budget fixed up front cannot move when the label
+ * does, and the diff on a real trim names the words that went missing.
+ */
+const ASPECT_WORDS_ON_ARROW: ReadonlyMap<number, number> = new Map([
+  [1, 1],
+  [2, 1],
+  [3, 1],
+  [4, 1],
+  [5, 1],
+  [6, 1],
+  [7, 1],
+  [8, 2],
+]);
+
+/** A stage's declared arrow budget, failing loudly rather than as `undefined`. */
+const requireArrowWords = (stageNumber: number): number => {
+  const count = ASPECT_WORDS_ON_ARROW.get(stageNumber);
+  if (count === undefined) {
+    throw new Error(`no arrow word budget declared for stage ${stageNumber}`);
+  }
+  return count;
+};
+
 /** Locate a stage in the canon, failing loudly rather than as `undefined`. */
 const requireCanon = (stageNumber: number): CanonStage => {
   const stage = CANON_BY_STAGE.get(stageNumber);
@@ -177,19 +215,20 @@ describe('the Map mirrors of the APTITUDE ten', () => {
     },
   );
 
-  it.each(ALL_STAGES.filter((stageNumber) => !TITLE_STAGES.includes(stageNumber)))(
-    'stage %i arrow label opens the curriculum aspect',
-    (stageNumber) => {
-      const { arrowLabel } = requireDisplay(stageNumber);
-      const { aspect } = requireCanon(stageNumber);
-      // The arrow loop is narrow, so the label is allowed to carry only the
-      // opening words of the aspect ('True Self' for 'True Self Connection').
-      // Comparing against exactly that prefix keeps the failure diff readable
-      // while still rejecting a word the aspect does not begin with.
-      expect(arrowLabel).not.toBe('');
-      expect(arrowLabel).toBe(leadingWords(aspect, arrowLabel.split(' ').length));
-    },
-  );
+  // A budget declared for a stage that carries no arrow label, or missing for
+  // one that does, would leave a label unjoined or a rule guarding nothing.
+  it('budgets arrow words for exactly the stages that carry an arrow label', () => {
+    expect([...ASPECT_WORDS_ON_ARROW.keys()].sort((a, b) => a - b)).toEqual(ARROW_STAGES);
+  });
+
+  it.each(ARROW_STAGES)('stage %i arrow label opens the curriculum aspect', (stageNumber) => {
+    const { arrowLabel } = requireDisplay(stageNumber);
+    const { aspect } = requireCanon(stageNumber);
+    // Stages 1-3 budget their whole single-word aspect, so this is strict
+    // equality against the canon; stages 4-8 budget its opening words.
+    expect(arrowLabel).not.toBe('');
+    expect(arrowLabel).toBe(leadingWords(aspect, requireArrowWords(stageNumber)));
+  });
 
   it.each(TITLE_STAGES)(
     'stage %i spells its aspect as the title watermark and carries no arrow label',
