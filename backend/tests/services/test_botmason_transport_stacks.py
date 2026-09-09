@@ -45,6 +45,7 @@ import pytest
 
 from services import botmason
 from services.botmason import (
+    _MAX_RETRIES,
     _PROVIDER_ERROR_TYPES,
     _TRANSIENT_NETWORK_TYPES,
     LLMProviderError,
@@ -58,6 +59,16 @@ if TYPE_CHECKING:
 #: The stub raises before it can answer, so its status is never read. Named
 #: rather than inlined so nobody reads meaning into the number.
 _UNREACHED_STATUS = 503
+
+#: Every failure driven here is a transport error, which ``_is_retryable``
+#: treats as transient, so the retry loop spends its whole budget rather than
+#: giving up after one call. Asserting that exact count is what distinguishes a
+#: covered transport error from one the catch matched but the retry policy had
+#: stopped recognising -- a bare "at least one request" passes either way. The
+#: budget itself is derived rather than duplicated, and is pinned where it
+#: belongs, in the retry suite; what this file owns is that these two stacks
+#: reach it at all.
+_EXPECTED_ATTEMPTS = _MAX_RETRIES + 1
 
 
 def _transport_stack(default_client: type, sdk_package: str) -> ModuleType:
@@ -146,7 +157,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
         with pytest.raises(LLMProviderError) as excinfo:
             await generate_response("hi", [])
 
-        assert stub.request_count > 0
+        assert stub.request_count == _EXPECTED_ATTEMPTS
         assert isinstance(excinfo.value.__cause__, openai.APIConnectionError)
         assert isinstance(excinfo.value.__cause__, _PROVIDER_ERROR_TYPES)
 
@@ -168,7 +179,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
         with pytest.raises(LLMProviderError) as excinfo:
             await generate_response("hi", [])
 
-        assert stub.request_count > 0
+        assert stub.request_count == _EXPECTED_ATTEMPTS
         assert isinstance(excinfo.value.__cause__, anthropic.APIConnectionError)
         assert isinstance(excinfo.value.__cause__, _PROVIDER_ERROR_TYPES)
 
@@ -196,7 +207,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
         with pytest.raises(LLMProviderError) as excinfo:
             await generate_response("hi", [])
 
-        assert stub.request_count > 0
+        assert stub.request_count == _EXPECTED_ATTEMPTS
         raw = _raw_transport_cause(excinfo.value)
         assert not isinstance(raw, httpx.HTTPError)
         assert not isinstance(raw, OSError)
