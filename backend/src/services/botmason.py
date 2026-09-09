@@ -28,6 +28,7 @@ import openai
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required, service_unavailable
 from security import sanitize_user_text
+from services.stub_completions import canned_completion
 
 if TYPE_CHECKING:
     from anthropic.types import Message, MessageParam
@@ -1109,13 +1110,23 @@ async def generate_response(
 def _stub_response(user_message: str) -> LLMResponse:
     """Return a deterministic response for development and testing.
 
+    A prompt that asks for a structured reply gets one — see
+    :func:`services.stub_completions.canned_completion`, which answers the
+    resonance ask in the JSON shape it demands so that path is walkable without
+    a provider. Everything else gets the canned sentence.
+
     Token counts are zero because no real model is invoked — this keeps the
     usage log's cost total honest when stub traffic is mixed with production
     calls during load tests.
     """
+    canned = canned_completion(user_message)
     text = (
-        f'BotMason hears you. You said: "{user_message}" — '
-        "Let the Archetypal Wavelength guide your reflection."
+        canned
+        if canned is not None
+        else (
+            f'BotMason hears you. You said: "{user_message}" — '
+            "Let the Archetypal Wavelength guide your reflection."
+        )
     )
     return LLMResponse(
         text=text,

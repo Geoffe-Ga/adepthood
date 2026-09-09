@@ -26,6 +26,11 @@ ANCHOR_TEXT_MAX = 280
 NOTE_MAX = 600
 ESSAY_MAX = 10_000
 _DEFAULT_MAX_NOTES = 5
+# The exact JSON shape the prompt demands back. A module constant rather than a
+# literal buried in the template because it is also the marker the stub provider
+# recognises the resonance ask by (``services.stub_completions``): one string, so
+# a reworded prompt cannot quietly stop being recognised.
+MARGINALIA_JSON_SHAPE = '{"notes": [{"kind": "theme", "quote": "...", "note": "..."}]}'
 # Bound the prompt cost: at most this many prior entries, each truncated, so a
 # caller passing a long history can't blow up the context window / token bill.
 MAX_PRIOR_ENTRIES = 5
@@ -267,7 +272,7 @@ def build_prompt(
         'Never refer to yourself or say "as an AI".\n'
         "- Use 'connection' only when linking to an earlier entry.\n\n"
         "Return STRICT JSON only, no prose, of the form:\n"
-        '{"notes": [{"kind": "theme", "quote": "...", "note": "..."}]}\n\n'
+        f"{MARGINALIA_JSON_SHAPE}\n\n"
         f"<entry>\n{body}\n</entry>{prior_block}"
         f"{_prior_letters_block(prior_drafts)}"
     )
