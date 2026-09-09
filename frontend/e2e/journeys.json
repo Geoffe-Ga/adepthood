@@ -721,6 +721,22 @@
     "issue": 2574
   },
   {
+    "id": "journal.failed-check-off-says-so-beside-the-card",
+    "description": "A writer presses OK on a completion-suggestion card in the journal margin and the accept is refused. The refusal is named where the writer is looking -- above the margin's content, beside the very card that produced it -- and announced through a polite live region rather than only drawn, while the card stays pending and pressable so a second press issues a second request. Before this, the margin's error was rendered only by the branch taken when the margin was otherwise empty, and a pending card is itself margin content: the one state that can produce an accept failure was the one state that could not show it, so OK read as a dead button for a 401, a 404, a 409 on an already-dismissed row, a 500, or a request that never reached the server -- on every platform. A success retires the complaint and pushes the check-in into the habit store on the auth-hydrated zone, so the Habits tab and the shelf's Today's habits tile agree with the card they never remounted for. Uncovered because every claim here is a rendering claim -- an error mounted beside a card, a live region, a card that survives its own failure -- and this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the constraint #2324 records; it is not a gap a further spec in this lane could close. Pinned meanwhile at the render level by src/features/Journal/__tests__/JournalEntryScreenSuggestions.test.tsx, which renders the pending card, rejects the accept, and asserts the error is visible with the card still mounted and re-pressable, and at the hook level by src/features/Journal/__tests__/useResonance.test.tsx, which pins the copy against naming a cause the browser cannot observe and pins the habit refresh to the auth-hydrated zone rather than the device's.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "habits"],
+      "routes": [
+        "GET /journal/{entry_id}/suggestions",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /habits/"
+      ],
+      "tables": ["journalentry", "completionsuggestion", "habit", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2324
+  },
+  {
     "id": "practice.paging-a-long-list-shows-every-row-once",
     "description": "Someone whose library has outgrown one page reads it whole. The client pages every list endpoint at fifty rows a page (api/index.ts, listAll -> fetchAllPages), and paginate_query used to apply OFFSET/LIMIT to whatever the router handed it and add no ordering of its own -- so GET /user-practices/ carried no ORDER BY at all, and neighbouring endpoints ordered on keys that tie (a practice-session timestamp, a recipe owner-and-name, a stageprogress user_id). OFFSET/LIMIT is only well-defined over a total order: inside a tie group the database may order each page request differently, so one selection can arrive on two consecutive pages while another arrives on none, and the reader sees a duplicate or a hole with nothing wrong in the store. paginate_query now appends the entity primary key to every page it serves, which is a no-op wherever the caller key was already total. Uncovered because the seam is a page boundary: this lane cannot mint the fifty-one rows that produce a second page without a fixture seam it has no route for, and even with one, an assertion on returned rows cannot tell the fix from the defect -- a planner is free to return the tie group in insertion order either way. Pinned meanwhile by backend/tests/test_pagination_total_order.py, which asserts the ORDER BY each endpoint actually emitted, compiled to the PostgreSQL dialect the test lane is not.",
     "crosses": {
