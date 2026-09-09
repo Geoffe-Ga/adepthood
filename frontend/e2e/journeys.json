@@ -737,6 +737,6 @@
       "tables": ["practice", "userpractice", "practicesession"]
     },
     "status": "uncovered",
-    "issue": 2488
+    "issue": 2734
   }
 ]
