@@ -2,7 +2,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-import { note, resonancePayload, suggestion } from './resonanceTestKit';
+import { TEST_TIMEZONE, note, resonancePayload, suggestion } from './resonanceTestKit';
 
 import type {
   AcceptSuggestionResult,
@@ -11,6 +11,7 @@ import type {
   ResonanceResponse,
 } from '@/api';
 import { ApiError } from '@/api';
+import { UNREACHABLE_MESSAGE } from '@/api/errorMessages';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: Marginalia[] }>
@@ -25,9 +26,17 @@ const mockAccept = jest.fn() as jest.MockedFunction<
 const mockDismiss = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<CompletionSuggestion>
 >;
+const mockLoadHabits = jest.fn() as jest.MockedFunction<(_tz?: string) => Promise<void>>;
 const mockDetect = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: CompletionSuggestion[]; checked: boolean }>
 >;
+
+jest.mock('@/features/Habits/services/habitManager', () => ({
+  habitManager: {
+    loadHabits: (...a: unknown[]) =>
+      (mockLoadHabits as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+}));
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
@@ -58,6 +67,8 @@ beforeEach(() => {
   mockDetect.mockReset();
   mockList.mockResolvedValue({ items: [] });
   mockSugList.mockResolvedValue({ items: [] });
+  mockLoadHabits.mockReset();
+  mockLoadHabits.mockResolvedValue(undefined);
   mockDetect.mockResolvedValue({ items: [], checked: true });
 });
 
@@ -65,7 +76,9 @@ describe('useResonance', () => {
   it('loads existing marginalia on mount when the entry has an id', async () => {
     mockList.mockResolvedValue({ items: [note({ id: 1 }), note({ id: 2, anchor_start: 10 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.marginalia).toHaveLength(2));
     expect(mockList).toHaveBeenCalledWith(7);
   });
@@ -75,7 +88,9 @@ describe('useResonance', () => {
     mockGenerate.mockResolvedValue(
       resonancePayload({ marginalia: [note({ id: 5, journal_entry_id: 42 })] }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -88,7 +103,9 @@ describe('useResonance', () => {
   it('maps a 402 to a friendly error and leaves the page usable', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockRejectedValue(new ApiError(402, 'insufficient_offerings'));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -125,7 +142,9 @@ describe('useResonance', () => {
         resolveGen = resolve;
       }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       void result.current.requestResonance();
@@ -138,7 +157,9 @@ describe('useResonance', () => {
 
   it('reports a gentle message when there is nothing to save', async () => {
     const flush = jest.fn(async () => null);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await act(async () => {
       await result.current.requestResonance();
     });
@@ -166,7 +187,9 @@ describe('useResonance', () => {
       }),
     );
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -192,7 +215,9 @@ describe('useResonance', () => {
       resonancePayload({ marginalia: [note({ id: 9, note: 'generated copy' })] }),
     );
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -210,7 +235,8 @@ describe('useResonance', () => {
     mockSugList.mockResolvedValueOnce({ items: [suggestion({ id: 1 })] });
     const flush = jest.fn(async () => 7);
     const { result, rerender } = renderHook(
-      ({ id }: { id: number }) => useResonance({ routeEntryId: id, flush }),
+      ({ id }: { id: number }) =>
+        useResonance({ routeEntryId: id, flush, userTimezone: TEST_TIMEZONE }),
       { initialProps: { id: 7 } },
     );
     await waitFor(() =>
@@ -236,7 +262,9 @@ describe('useResonance', () => {
     mockGenerate.mockResolvedValueOnce(
       resonancePayload({ private_message: 'Intimate entry - resonance paused.' }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -256,7 +284,9 @@ describe('useResonance — suggestions', () => {
   it('loads existing suggestions on mount when the entry has an id', async () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 }), suggestion({ id: 2 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
     expect(mockSugList).toHaveBeenCalledWith(7);
   });
@@ -271,7 +301,9 @@ describe('useResonance — suggestions', () => {
         ],
       }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await act(async () => {
       await result.current.requestResonance();
     });
@@ -285,7 +317,9 @@ describe('useResonance — suggestions', () => {
       check_in: { streak: 4, milestones: [{ threshold: 3 }], reason_code: 'streak_incremented' },
     });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
 
     await act(async () => {
@@ -294,27 +328,198 @@ describe('useResonance — suggestions', () => {
     expect(mockAccept).toHaveBeenCalledWith(1);
     expect(result.current.suggestions[0]!.status).toBe('accepted');
     expect(result.current.acceptedCheckIns[1]?.streak).toBe(4);
+    // The Habits tab and the shelf tile load on mount and stay mounted behind
+    // this screen, so only this refresh makes them agree with the card.
+    expect(mockLoadHabits).toHaveBeenCalledWith(TEST_TIMEZONE);
+  });
+
+  it('accepting a practice target leaves the habit store alone', async () => {
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ id: 1, target_type: 'practice', goal_id: null, user_practice_id: 5 })],
+    });
+    mockAccept.mockResolvedValue({
+      suggestion: suggestion({
+        id: 1,
+        target_type: 'practice',
+        goal_id: null,
+        user_practice_id: 5,
+        status: 'accepted',
+      }),
+      // A journal-attested session carries no check-in and no streak.
+      check_in: null,
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
+    expect(result.current.suggestions[0]!.status).toBe('accepted');
+    expect(mockLoadHabits).not.toHaveBeenCalled();
   });
 
   it('accept leaves the row pending and surfaces a friendly error on failure', async () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, status: 'pending' })] });
     mockAccept.mockRejectedValue(new ApiError(409, 'already_dismissed'));
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
 
     await act(async () => {
       await result.current.acceptSuggestion(1);
     });
     expect(result.current.suggestions[0]!.status).toBe('pending');
+    // Names the task that failed and says the row survived it, then hands the
+    // cause to formatApiError — which for a 409 is the conflict copy, not a
+    // guess. The card is what the writer presses again, so it must stay named.
+    expect(result.current.error).toContain("check-off didn't go through");
+    expect(result.current.error).toContain('the card is still here');
+    expect(result.current.error).toContain('conflicts with something we already have');
+  });
+
+  it('names the failed check-off without inventing a cause the browser cannot see', async () => {
+    mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, status: 'pending' })] });
+    // What a blocked preflight and an unreachable host both look like.
+    mockAccept.mockRejectedValue(new TypeError('Failed to fetch'));
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
+    expect(result.current.error).toContain("check-off didn't go through");
+    expect(result.current.error).toContain(UNREACHABLE_MESSAGE);
+    // The two are indistinguishable from here, so neither may be claimed.
+    expect(result.current.error).not.toMatch(/offline|CORS|cross-origin|header/i);
+  });
+
+  it("retires the previous attempt's complaint once a later accept succeeds", async () => {
+    mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, status: 'pending' })] });
+    mockAccept.mockRejectedValueOnce(new ApiError(409, 'already_dismissed'));
+    mockAccept.mockResolvedValue({
+      suggestion: suggestion({ id: 1, status: 'accepted' }),
+      check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
     expect(result.current.error).toBeTruthy();
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
+    expect(result.current.error).toBeNull();
+  });
+
+  it("one card's success does not erase another card's live failure", async () => {
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ id: 1, label: 'I ran' }), suggestion({ id: 2, label: 'I sat' })],
+    });
+    // Distinct copy per outcome, so a surviving error is provably card 1's and
+    // not a generic truthy leftover: a 409 is the only source of this sentence.
+    mockAccept.mockImplementation(async (id: number) => {
+      if (id === 1) throw new ApiError(409, 'already_dismissed');
+      return {
+        suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
+        check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+      };
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
+    expect(result.current.error).toContain('conflicts with something we already have');
+
+    await act(async () => {
+      await result.current.acceptSuggestion(2);
+    });
+    // Card 1 is still pending and still needs attention, so its complaint must
+    // outlive a success that had nothing to do with it.
+    const statusOf = (id: number): string =>
+      (result.current.suggestions as CompletionSuggestion[]).find(
+        (row: CompletionSuggestion) => row.id === id,
+      )!.status;
+    expect(statusOf(1)).toBe('pending');
+    expect(statusOf(2)).toBe('accepted');
+    expect(result.current.error).toContain('conflicts with something we already have');
+  });
+
+  it("a failed dismiss survives another card's successful accept", async () => {
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ id: 1, label: 'I ran' }), suggestion({ id: 2, label: 'I sat' })],
+    });
+    mockDismiss.mockRejectedValue(new ApiError(409, 'already_dismissed'));
+    mockAccept.mockResolvedValue({
+      suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
+      check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    expect(result.current.error).toContain('conflicts with something we already have');
+
+    await act(async () => {
+      await result.current.acceptSuggestion(2);
+    });
+    // Dismiss shares the margin's one error slot, so it is erasable the same
+    // way -- and a reverted row is as much still-there as a pending one.
+    expect(result.current.error).toContain('conflicts with something we already have');
+  });
+
+  it('a card that dismisses cleanly on retry retires its own complaint', async () => {
+    mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, label: 'I ran' })] });
+    mockDismiss.mockRejectedValueOnce(new ApiError(409, 'already_dismissed'));
+    mockDismiss.mockResolvedValue(suggestion({ id: 1, status: 'dismissed' }));
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    expect(result.current.error).toBeTruthy();
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    // The row is gone now, so a complaint about it would point at nothing.
+    expect(result.current.error).toBeNull();
   });
 
   it('dismiss optimistically removes the row', async () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 }), suggestion({ id: 2 })] });
     mockDismiss.mockResolvedValue(suggestion({ id: 1, status: 'dismissed' }));
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
 
     await act(async () => {
@@ -327,7 +532,9 @@ describe('useResonance — suggestions', () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 }), suggestion({ id: 2 })] });
     mockDismiss.mockRejectedValue(new ApiError(500, 'boom'));
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
 
     await act(async () => {
@@ -340,7 +547,9 @@ describe('useResonance — suggestions', () => {
   it('a suggestion generated mid-dismiss survives a failed dismiss', async () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
 
     let rejectDismiss: (_e: unknown) => void = () => {};

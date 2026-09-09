@@ -139,7 +139,7 @@
   },
   {
     "id": "habits.reorder-across-signed-laps",
-    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1–10, and later-lap markers plus program-date recalculation and carryover-date preservation.",
+    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1\u201310, and later-lap markers plus program-date recalculation and carryover-date preservation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
@@ -799,6 +799,22 @@
     },
     "status": "uncovered",
     "issue": 2574
+  },
+  {
+    "id": "journal.failed-check-off-says-so-beside-the-card",
+    "description": "A writer presses OK on a completion-suggestion card in the journal margin and the accept is refused. The refusal is named where the writer is looking -- beside the very card that produced it, not in place of it -- and announced through a polite live region rather than only drawn, while the card stays pending and pressable so a second press really does check the habit off. The spec drives that over the real wire in a real browser: only the literary pass is intercepted, to reach a suggestion card without an LLM, while detection, the row, the refused accept, the retry and the persisted acceptance are all the live server. A 500 stands in for the class the margin used to swallow -- a 401, a 404, a 409 on an already-dismissed row, a request that never arrives -- because every one reaches the same catch. What no browser spec can reach is pinned beside it in Jest: src/features/Journal/__tests__/useResonance.test.tsx holds the copy to what the client can actually observe (a blocked preflight and an unreachable host are one bare TypeError), pins the habit-store refresh to the auth-hydrated zone rather than the device's, and pins that a success retires only its own card's complaint -- with two cards on screen, accepting one must not erase the other's still-live failure while that card is still pending.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "habits"],
+      "routes": [
+        "GET /journal/{entry_id}/suggestions",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /habits/"
+      ],
+      "tables": ["journalentry", "completionsuggestion", "habit", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-failed-checkoff.browser.e2e.test.ts"
   },
   {
     "id": "practice.paging-a-long-list-shows-every-row-once",

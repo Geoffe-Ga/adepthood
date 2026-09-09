@@ -4,7 +4,7 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 // Every other JournalEntryScreen test resolves completionSuggestions.list empty; these pin the pending-card render and the dismissed-suggestion filter.
-import type { CompletionSuggestion, JournalMessage } from '@/api';
+import type { AcceptSuggestionResult, CompletionSuggestion, JournalMessage } from '@/api';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -15,10 +15,16 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockCompletionList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: CompletionSuggestion[] }>
 >;
+const mockAccept = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<AcceptSuggestionResult>
+>;
+const mockLoadHabits = jest.fn() as jest.MockedFunction<(_tz?: string) => Promise<void>>;
 const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<never>>;
 const mockDetect = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: CompletionSuggestion[]; checked: boolean }>
 >;
+
+const mockUserTz = 'America/Chicago';
 
 jest.mock('@/api', () => ({
   journal: {
@@ -37,7 +43,7 @@ jest.mock('@/api', () => ({
     list: (...a: unknown[]) =>
       (mockCompletionList as unknown as (...x: unknown[]) => unknown)(...a),
     detect: (...a: unknown[]) => (mockDetect as unknown as (...x: unknown[]) => unknown)(...a),
-    accept: jest.fn(),
+    accept: (...a: unknown[]) => (mockAccept as unknown as (...x: unknown[]) => unknown)(...a),
     dismiss: jest.fn(),
   },
   promotions: {
@@ -51,6 +57,20 @@ jest.mock('@/api', () => ({
 jest.mock('@/navigation/hooks', () => ({
   ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+}));
+
+// Deliberately not ``authContextTestKit``: its zone is UTC, which Jest also pins
+// as the device zone, so an assertion against it could not tell the threaded
+// auth zone apart from a silent device-zone fallback. This one can.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ userTimezone: mockUserTz }),
+}));
+
+jest.mock('@/features/Habits/services/habitManager', () => ({
+  habitManager: {
+    loadHabits: (...a: unknown[]) =>
+      (mockLoadHabits as unknown as (...x: unknown[]) => unknown)(...a),
+  },
 }));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
@@ -107,10 +127,24 @@ beforeEach(() => {
   mockList.mockResolvedValue({ items: [] });
   mockCompletionList.mockReset();
   mockCompletionList.mockResolvedValue({ items: [] });
+  mockAccept.mockReset();
+  mockLoadHabits.mockReset();
+  mockLoadHabits.mockResolvedValue(undefined);
   mockGenerate.mockReset();
   mockDetect.mockReset();
   mockDetect.mockResolvedValue({ items: [], checked: true });
 });
+
+function acceptResult(overrides: Partial<CompletionSuggestion> = {}): AcceptSuggestionResult {
+  return {
+    suggestion: suggestionRow({
+      status: 'accepted',
+      accepted_at: '2026-06-01T00:00:00Z',
+      ...overrides,
+    }),
+    check_in: { streak: 3, milestones: [], reason_code: 'logged' },
+  };
+}
 
 describe('JournalEntryScreen — completion-suggestion margin cards', () => {
   it('renders a pending completion-suggestion card in the margin when there are no notes', async () => {
@@ -133,6 +167,66 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
 
     expect(await findByTestId('suggestion-90')).toBeTruthy();
     expect(queryByTestId('suggestion-91')).toBeNull();
+  });
+
+  it('surfaces a rejected accept in the margin while the pending card is still mounted', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items: [suggestionRow()] });
+    mockAccept.mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
+
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByTestId('suggestion-90-accept'));
+
+    const error = await view.findByTestId('journal-resonance-error');
+    // The whole point: the failure is legible *beside* the card that produced it.
+    expect(view.getByTestId('suggestion-90')).toBeTruthy();
+    expect(view.queryByTestId('suggestion-90-checked')).toBeNull();
+    // Announced, not merely drawn — silence in another medium is the same bug.
+    expect(error.props.accessibilityLiveRegion).toBe('polite');
+  });
+
+  it('leaves the card re-pressable, so a second press issues a second accept', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items: [suggestionRow()] });
+    mockAccept.mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
+
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByTestId('suggestion-90-accept'));
+    await view.findByTestId('journal-resonance-error');
+    fireEvent.press(view.getByTestId('suggestion-90-accept'));
+
+    await waitFor(() => expect(mockAccept).toHaveBeenCalledTimes(2));
+  });
+
+  it('settles a successful accept to the checked card, with no error and a habit refresh', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items: [suggestionRow()] });
+    mockAccept.mockResolvedValue(acceptResult());
+
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByTestId('suggestion-90-accept'));
+
+    expect(await view.findByTestId('suggestion-90-checked')).toBeTruthy();
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
+    // The Habits tab and the shelf tile stay mounted behind this screen, so the
+    // store only agrees with the card if the accept refreshes it — on the
+    // auth-hydrated zone, or "today" is wrong near midnight.
+    await waitFor(() => expect(mockLoadHabits).toHaveBeenCalledWith(mockUserTz));
+  });
+
+  it('clears a stale accept error once a later accept succeeds', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items: [suggestionRow()] });
+    mockAccept.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }));
+    mockAccept.mockResolvedValue(acceptResult());
+
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByTestId('suggestion-90-accept'));
+    await view.findByTestId('journal-resonance-error');
+    fireEvent.press(view.getByTestId('suggestion-90-accept'));
+
+    expect(await view.findByTestId('suggestion-90-checked')).toBeTruthy();
+    await waitFor(() => expect(view.queryByTestId('journal-resonance-error')).toBeNull());
   });
 
   it('keeps the reflection error visible beside an independently detected habit offer', async () => {

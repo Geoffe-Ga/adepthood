@@ -13,6 +13,13 @@ import type {
   ResonanceResponse,
 } from '@/api';
 
+/**
+ * The auth-hydrated zone the hook specs render under. Deliberately not UTC:
+ * Jest pins the device zone to UTC, so a UTC value here could not tell a
+ * threaded zone apart from a silent device-zone fallback.
+ */
+export const TEST_TIMEZONE = 'America/Chicago';
+
 /** A single active theme note anchored at the head of the body. */
 export function note(overrides: Partial<Marginalia> = {}): Marginalia {
   return {
