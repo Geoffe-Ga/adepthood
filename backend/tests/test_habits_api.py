@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import NamedTuple
 
 import pytest
 from httpx import AsyncClient
@@ -769,7 +770,7 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     query layer the relation is never touched in Python and this commit
     is a harmless no-op.
     """
-    headers = await _signup(async_client, "tenantguard")
+    headers, owner_id = await _signup_with_user_id(async_client, "tenantguard")
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
     goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
@@ -792,6 +793,10 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     assert persisted is not None, "cross-tenant completion row was lost by a post-GET commit"
     assert persisted.goal_id == goal_id
     assert persisted.user_id == mallory_id
+    # Binds the survivor to a tenant that is not the caller: without this the
+    # assertion above would still hold if ``mallory_id`` were the owner's own
+    # id, and the test would have stopped being about cross-tenant rows.
+    assert persisted.user_id != owner_id
 
 
 # ── Locked-by-default / manual unlock persistence ───────────────────────
@@ -1560,15 +1565,65 @@ async def _count_rows(db_session: AsyncSession, statement: Select[tuple[int]]) -
     return int((await db_session.execute(statement)).scalar_one())
 
 
+class _HabitHistory(NamedTuple):
+    """One habit and the primary key of every row that hangs off it."""
+
+    headers: dict[str, str]
+    habit_id: int
+    goal_ids: list[int]
+    completion_id: int
+    suggestion_id: int
+    release_id: int
+
+
+async def _surviving_dependents(db_session: AsyncSession, history: _HabitHistory) -> dict[str, int]:
+    """Count what is still on disk of ``history``, one entry per table.
+
+    Every count is taken over primary keys, never over the foreign key that
+    points back at the habit. That distinction is the whole reliability of the
+    assertion: a row whose FK was set to NULL rather than deleted is still
+    there, corrupting exactly the streak history this endpoint must not
+    orphan, and a ``WHERE goal_id IN (...)`` count would report it as gone.
+    """
+    db_session.expire_all()
+    return {
+        "habit": await _count_rows(
+            db_session,
+            select(func.count()).select_from(Habit).where(col(Habit.id) == history.habit_id),
+        ),
+        "goal": await _count_rows(
+            db_session,
+            select(func.count()).select_from(Goal).where(col(Goal.id).in_(history.goal_ids)),
+        ),
+        "goalcompletion": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(GoalCompletion)
+            .where(col(GoalCompletion.id) == history.completion_id),
+        ),
+        "completionsuggestion": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(CompletionSuggestion)
+            .where(col(CompletionSuggestion.id) == history.suggestion_id),
+        ),
+        "mettareturnhabitrelease": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(MettaReturnHabitRelease)
+            .where(col(MettaReturnHabitRelease.id) == history.release_id),
+        ),
+    }
+
+
 async def _seed_habit_with_full_history(
     async_client: AsyncClient, db_session: AsyncSession, username: str
-) -> tuple[dict[str, str], int, list[int]]:
+) -> _HabitHistory:
     """Create a habit carrying one row in every table that references it.
 
-    Returns the caller's auth headers, the habit id, and its goal ids. The
-    habit ends up with goals, a goal completion, a completion suggestion and a
-    Return release — the shape of a long-lived habit, as opposed to the bare
-    row the original delete test covered.
+    Goals, a goal completion, a completion suggestion and a Return release --
+    the shape of a habit somebody has actually lived with, as opposed to the
+    bare row the original delete test covered.
     """
     headers, user_id = await _signup_with_user_id(async_client, username)
     created = await async_client.post("/habits/", json=sample_payload(), headers=headers)
@@ -1578,16 +1633,28 @@ async def _seed_habit_with_full_history(
     assert goal_ids, "the create endpoint seeds default goals"
     clear_goal_id = next(g["id"] for g in created.json()["goals"] if g["tier"] == "clear")
 
-    await _seed_completion(db_session, goal_id=clear_goal_id, user_id=user_id, days_back=0)
+    completion = await _seed_completion(
+        db_session, goal_id=clear_goal_id, user_id=user_id, days_back=0
+    )
     entry = await async_client.post(
         "/journal/", json={"message": "drank a glass of water!! good day"}, headers=headers
     )
     assert entry.status_code == HTTPStatus.CREATED
-    await _seed_habit_suggestion(
+    suggestion = await _seed_habit_suggestion(
         db_session, entry_id=int(entry.json()["id"]), user_id=user_id, goal_id=clear_goal_id
     )
-    await _seed_return_release(db_session, user_id=user_id, habit_id=habit_id)
-    return headers, habit_id, goal_ids
+    release = await _seed_return_release(db_session, user_id=user_id, habit_id=habit_id)
+    assert completion.id is not None
+    assert suggestion.id is not None
+    assert release.id is not None
+    return _HabitHistory(
+        headers=headers,
+        habit_id=habit_id,
+        goal_ids=goal_ids,
+        completion_id=completion.id,
+        suggestion_id=suggestion.id,
+        release_id=release.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -1596,56 +1663,34 @@ async def test_delete_habit_with_history_removes_every_dependent_row(
 ) -> None:
     """A habit with goals, completions, suggestions and a Return release deletes.
 
-    The reported bug (#2763): the tile vanished and came back because this
-    DELETE failed server-side for any habit that had accumulated history,
-    while a brand-new habit deleted cleanly. Every dependent table is asserted
-    empty individually — "the habit row is gone" would pass while orphaned
-    completions corrupted streak history.
-    """
-    headers, habit_id, goal_ids = await _seed_habit_with_full_history(
-        async_client, db_session, "delete_history"
-    )
+    The reported bug (#2763): the tile vanished and came back, because this
+    DELETE failed server-side for any habit that had accumulated history while
+    a brand-new one deleted cleanly. Deleting a goal de-associated its
+    completions instead of removing them, and ``goalcompletion.goal_id`` is
+    NOT NULL, so the transaction aborted.
 
-    resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
+    Each dependent table is counted separately, and counted before the delete
+    as well as after. An absence assertion that never watched the row arrive
+    is green for two reasons that look identical, and "the habit row is gone"
+    would be green while orphaned completions corrupted streak history.
+    """
+    history = await _seed_habit_with_full_history(async_client, db_session, "delete_history")
+
+    assert await _surviving_dependents(db_session, history) == {
+        "habit": 1,
+        "goal": len(history.goal_ids),
+        "goalcompletion": 1,
+        "completionsuggestion": 1,
+        "mettareturnhabitrelease": 1,
+    }
+
+    resp = await async_client.delete(f"/habits/{history.habit_id}", headers=history.headers)
 
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    assert (
-        await _count_rows(
-            db_session, select(func.count()).select_from(Habit).where(col(Habit.id) == habit_id)
-        )
-        == 0
-    )
-    assert (
-        await _count_rows(
-            db_session,
-            select(func.count()).select_from(Goal).where(col(Goal.habit_id) == habit_id),
-        )
-        == 0
-    )
-    assert (
-        await _count_rows(
-            db_session,
-            select(func.count())
-            .select_from(GoalCompletion)
-            .where(col(GoalCompletion.goal_id).in_(goal_ids)),
-        )
-        == 0
-    )
-    assert (
-        await _count_rows(
-            db_session,
-            select(func.count())
-            .select_from(CompletionSuggestion)
-            .where(col(CompletionSuggestion.goal_id).in_(goal_ids)),
-        )
-        == 0
-    )
-    assert (
-        await _count_rows(
-            db_session,
-            select(func.count())
-            .select_from(MettaReturnHabitRelease)
-            .where(col(MettaReturnHabitRelease.habit_id) == habit_id),
-        )
-        == 0
-    )
+    assert await _surviving_dependents(db_session, history) == {
+        "habit": 0,
+        "goal": 0,
+        "goalcompletion": 0,
+        "completionsuggestion": 0,
+        "mettareturnhabitrelease": 0,
+    }

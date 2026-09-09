@@ -342,7 +342,16 @@ async def delete_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Delete a habit and cascade its goals + completions via the FK cascade."""
+    """Delete a habit; the database removes everything that referenced it.
+
+    One ``DELETE FROM habit`` goes to the server and four ``ON DELETE CASCADE``
+    constraints do the rest -- goals, their completions, their completion
+    suggestions, and any Return releases. The ORM deliberately fetches none of
+    them: ``Habit.goals`` is mapped ``passive_deletes``, without which
+    SQLAlchemy loaded each goal's completions and de-associated them, writing
+    NULL into a NOT NULL column and failing the whole request for any habit
+    that had ever been checked in (#2763).
+    """
     habit_id = habit.id
     await session.delete(habit)
     await session.commit()
