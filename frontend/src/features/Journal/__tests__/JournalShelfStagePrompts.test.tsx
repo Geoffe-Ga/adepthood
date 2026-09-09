@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render, within } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type {
@@ -10,6 +10,7 @@ import type {
   StagePromptDetail,
   StagePromptsResponse,
 } from '@/api';
+import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockList = jest.fn() as jest.MockedFunction<() => Promise<JournalListResponse>>;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
@@ -17,6 +18,12 @@ const mockPromptStage = jest.fn() as jest.MockedFunction<
   (_stage: number) => Promise<StagePromptsResponse>
 >;
 const mockPromptHistory = jest.fn() as jest.MockedFunction<() => Promise<PromptListResponse>>;
+const mockPromptSetAside = jest.fn() as jest.MockedFunction<
+  (_stage: number, _ordinal: number) => Promise<StagePromptsResponse>
+>;
+const mockPromptBringBack = jest.fn() as jest.MockedFunction<
+  (_stage: number, _ordinal: number) => Promise<StagePromptsResponse>
+>;
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -30,6 +37,10 @@ jest.mock('@/api', () => ({
     stage: (...a: unknown[]) => (mockPromptStage as unknown as (...x: unknown[]) => unknown)(...a),
     history: (...a: unknown[]) =>
       (mockPromptHistory as unknown as (...x: unknown[]) => unknown)(...a),
+    setAside: (...a: unknown[]) =>
+      (mockPromptSetAside as unknown as (...x: unknown[]) => unknown)(...a),
+    bringBack: (...a: unknown[]) =>
+      (mockPromptBringBack as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -148,6 +159,8 @@ beforeEach(() => {
   mockPromptCurrent.mockReset();
   mockPromptStage.mockReset();
   mockPromptHistory.mockReset();
+  mockPromptSetAside.mockReset();
+  mockPromptBringBack.mockReset();
   mockList.mockResolvedValue({ items: [], total: 0, has_more: false });
   // Week 14 sits in stage 5 (five 21-day stages, three weeks each).
   mockPromptCurrent.mockResolvedValue({
@@ -160,7 +173,16 @@ beforeEach(() => {
   });
   mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', ORANGE_PROMPTS));
   mockPromptHistory.mockResolvedValue(history([]));
+  mockPromptSetAside.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+  mockPromptBringBack.mockResolvedValue(stageResponse(5, 'Orange', ORANGE_PROMPTS));
 });
+
+/** Orange's prompts with ``ordinal`` reported set aside, as the server answers. */
+function withSetAside(ordinal: number): StagePromptDetail[] {
+  return ORANGE_PROMPTS.map((prompt) =>
+    prompt.ordinal === ordinal ? { ...prompt, dismissed: true } : prompt,
+  );
+}
 
 describe('the Journal shelf shows a whole stage of prompts, each with its cadence', () => {
   it('renders every prompt of the stage in curriculum order, not one undifferentiated question', async () => {
@@ -325,5 +347,181 @@ describe('the Journal shelf shows a whole stage of prompts, each with its cadenc
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
     expect(await findByTestId('journal-shelf')).toBeTruthy();
     expect(queryByTestId('journal-stage-prompts')).toBeNull();
+  });
+});
+
+describe('a writer can set a stage prompt aside, and bring it back', () => {
+  it('offers every prompt a way to be declined, named as setting aside rather than skipping', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const control = await findByTestId('journal-stage-prompt-set-aside-2');
+
+    expect(control.props.accessibilityLabel).toBe(
+      'Set this prompt aside; you can bring it back later.',
+    );
+    expect(within(control).getByText('Set aside')).toBeTruthy();
+  });
+
+  it('tells the server which prompt was set aside, and stops offering that one', async () => {
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    // The stage and the ordinal, not the index: the server names prompts by
+    // curriculum position and the card is the only thing that knows it.
+    await waitFor(() => expect(mockPromptSetAside).toHaveBeenCalledWith(5, 2));
+    await waitFor(() => expect(queryByTestId('journal-stage-prompt-2')).toBeNull());
+    // The rest of the band is untouched -- this declines one prompt, not the set.
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(3);
+  });
+
+  it('says how many prompts are set aside and offers them back, without a screen of their own', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    expect(within(footer).getByText('1 prompt set aside — show it')).toBeTruthy();
+    expect(footer.props.accessibilityLabel).toBe('Show the prompts you have set aside');
+  });
+
+  it('counts more than one set-aside prompt in the plural', async () => {
+    mockPromptStage.mockResolvedValue(
+      stageResponse(5, 'Orange', [
+        { ...ORANGE_PROMPTS[0], dismissed: true } as StagePromptDetail,
+        { ...ORANGE_PROMPTS[1], dismissed: true } as StagePromptDetail,
+        ORANGE_PROMPTS[2] as StagePromptDetail,
+        ORANGE_PROMPTS[3] as StagePromptDetail,
+      ]),
+    );
+    const { findByTestId } = render(<JournalShelfScreen />);
+
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    expect(within(footer).getByText('2 prompts set aside — show them')).toBeTruthy();
+  });
+
+  it('re-renders the hidden cards in place when the footer is tapped', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(queryByTestId('journal-stage-prompt-2')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompts-set-aside-footer'));
+
+    // Back in the band, in curriculum order, with the way back on the card.
+    expect(await findByTestId('journal-stage-prompt-2')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('brings a set-aside prompt back onto the band', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompts-set-aside-footer'));
+
+    const back = await findByTestId('journal-stage-prompt-bring-back-2');
+    expect(back.props.accessibilityLabel).toBe(
+      'Bring this prompt back; it will appear with the others again.',
+    );
+    fireEvent.press(back);
+
+    await waitFor(() => expect(mockPromptBringBack).toHaveBeenCalledWith(5, 2));
+    await waitFor(() => expect(queryByTestId('journal-stage-prompt-bring-back-2')).toBeNull());
+    expect(await findByTestId('journal-stage-prompt-set-aside-2')).toBeTruthy();
+  });
+
+  it('says nothing about setting prompts aside when none are', async () => {
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('leaves the band exactly as it was when the server refuses the set-aside', async () => {
+    mockPromptSetAside.mockRejectedValue(new Error('offline'));
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    await waitFor(() => expect(mockPromptSetAside).toHaveBeenCalled());
+    // No optimistic hide: a card that vanished on a request that failed would
+    // report a preference the server never recorded.
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(4);
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('never marks a set-aside prompt answered, and keeps the others writable', async () => {
+    // The invariant the whole affordance turns on, asserted where a reader
+    // would see it break: declining is not completing.
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    expect(queryByTestId('journal-stage-prompt-answered-2')).toBeNull();
+    expect(queryByTestId('journal-stage-prompts-week-written')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-3'));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({ weekNumber: 14, promptOrdinal: 3 }),
+    );
+  });
+});
+
+/** Words that would frame declining a prompt as failing to do it. */
+const FAILURE_WORDS = [
+  /\bskip/i,
+  /\bdismiss/i,
+  /\bmiss(ed|ing)?\b/i,
+  /\bavoid/i,
+  /\bincomplete\b/i,
+  /\bnot doing\b/i,
+  /\bgive up\b/i,
+];
+
+describe('the copy for declining a prompt', () => {
+  /** Every string a reader can read on the set-aside affordances, label and hint alike. */
+  async function visibleCopy(): Promise<string[]> {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    const footerCopy = [
+      footer.props.accessibilityLabel as string,
+      within(footer).getByText(/./).props.children as string,
+    ];
+    fireEvent.press(footer);
+    const controls = [
+      await findByTestId('journal-stage-prompt-set-aside-1'),
+      await findByTestId('journal-stage-prompt-bring-back-2'),
+    ];
+    return [
+      ...footerCopy,
+      ...controls.map((node) => node.props.accessibilityLabel as string),
+      ...controls.map((node) => within(node).getByText(/./).props.children as string),
+    ];
+  }
+
+  it("ranks or shames nobody, by the repository's own intent rule", async () => {
+    const copy = await visibleCopy();
+
+    expect(copy).toHaveLength(6);
+    for (const line of copy) {
+      expect(line).toBeTruthy();
+      expect({ line, ranked: ranksOrShames(line) }).toEqual({ line, ranked: false });
+    }
+  });
+
+  it('is asserted against a rule that can actually fire', () => {
+    // Without this the test above would pass just as well on a predicate that
+    // returned false for everything.
+    expect(ranksOrShames('Keep your streak alive')).toBe(true);
+  });
+
+  it('never names declining a prompt as skipping or failing it', async () => {
+    // The intent rule covers ranking and shaming; this covers the register the
+    // affordance itself could slip into -- a depth that may be declined must
+    // not be offered back as something the reader failed to do.
+    const copy = await visibleCopy();
+
+    for (const line of copy) {
+      for (const word of FAILURE_WORDS) {
+        expect({ line, fails: word.test(line) }).toEqual({ line, fails: false });
+      }
+    }
   });
 });

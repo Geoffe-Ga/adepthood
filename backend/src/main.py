@@ -153,9 +153,21 @@ ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 # strips it).  It is also exposed via ``EXPOSED_HEADERS`` below so the
 # response copy survives the cross-origin filter and the AuthContext /
 # logging adapter can correlate client-side telemetry with server logs.
+# Both idempotency spellings are listed because both are read: ``POST
+# /practice-sessions/`` declares ``Idempotency-Key`` (the IETF draft name the
+# API client attaches) and ``POST /v1/energy/plan`` declares
+# ``X-Idempotency-Key``.  A header a route reads but the preflight refuses is
+# worse than one nobody reads: the browser blocks the request before it
+# exists, so the write fails with nothing in the server log to diagnose from,
+# and the client -- which treats an idempotency header as its signal that a
+# POST is safe to retry -- retries the blocked request first.
+# ``test_declared_request_headers_are_all_allowed_by_cors`` guards that this
+# list stays a superset of the headers the routers declare.
 ALLOWED_HEADERS = [
     "Authorization",
     "Content-Type",
+    "Idempotency-Key",
+    "X-Idempotency-Key",
     "X-LLM-API-Key",
     "X-Request-ID",
 ]

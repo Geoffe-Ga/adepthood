@@ -18,6 +18,15 @@ import {
   RETURN_RECOMMIT_BODY,
   RETURN_RECOMMIT_ACTION,
   buildReturnRecommitA11y,
+  RETURN_CONFIRM_BODY,
+  RETURN_CONFIRM_CANCEL,
+  RETURN_CONFIRM_CANCEL_A11Y,
+  RETURN_CONFIRM_GUARANTEE,
+  RETURN_CONFIRM_HEADING,
+  RETURN_CONFIRM_SCRIM_A11Y,
+  RETURN_DISMISS_ERROR,
+  RETURN_START_ERROR,
+  buildReturnConfirmWeekLine,
 } from '../returnCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
@@ -95,5 +104,57 @@ describe('returnCopy — let-go and re-commit additions', () => {
     expect(label).toContain('Morning pages');
     expect(label).toMatch(/take it up again/i);
     expect(ranksOrShames(label)).toBe(false);
+  });
+});
+
+describe('returnCopy — the Return confirmation informs without pressing', () => {
+  const confirmEntries: readonly string[] = [
+    RETURN_CONFIRM_HEADING,
+    RETURN_CONFIRM_BODY,
+    RETURN_CONFIRM_GUARANTEE,
+    RETURN_CONFIRM_CANCEL,
+    RETURN_CONFIRM_CANCEL_A11Y,
+    RETURN_CONFIRM_SCRIM_A11Y,
+    RETURN_START_ERROR,
+    RETURN_DISMISS_ERROR,
+  ];
+
+  it('every confirmation string is appended to RETURN_COPY_ENTRIES', () => {
+    for (const entry of confirmEntries) {
+      expect(RETURN_COPY_ENTRIES).toContain(entry);
+    }
+  });
+
+  it('no confirmation string presses with urgency, scarcity, or streaks', () => {
+    for (const entry of confirmEntries) {
+      expect(ranksOrShames(entry)).toBe(false);
+      expect(entry).not.toMatch(/streak|hurry|last chance|expires|only .* left/i);
+    }
+  });
+
+  it('the guarantee names the ways out: pause, set down, and nothing undone', () => {
+    expect(RETURN_CONFIRM_GUARANTEE).toMatch(/pause/i);
+    expect(RETURN_CONFIRM_GUARANTEE).toMatch(/set it down/i);
+    expect(RETURN_CONFIRM_GUARANTEE).toMatch(/undone/i);
+    expect(RETURN_CONFIRM_GUARANTEE).toMatch(/never required/i);
+  });
+
+  it('the body says the material shape of the arc: five weeks, one focus each', () => {
+    expect(RETURN_CONFIRM_BODY).toMatch(/five weeks/i);
+    expect(RETURN_CONFIRM_BODY).toMatch(/each week/i);
+  });
+
+  it("a week line carries the server's own ordinal and title, inventing neither", () => {
+    expect(buildReturnConfirmWeekLine(3, 'A face you barely know')).toBe(
+      '3. A face you barely know',
+    );
+  });
+
+  it('the two failure lines are distinct and neither blames the person', () => {
+    expect(RETURN_START_ERROR).not.toBe(RETURN_DISMISS_ERROR);
+    expect(RETURN_START_ERROR).toMatch(/nothing has changed/i);
+    expect(RETURN_DISMISS_ERROR).toMatch(/set aside/i);
+    expect(ranksOrShames(RETURN_START_ERROR)).toBe(false);
+    expect(ranksOrShames(RETURN_DISMISS_ERROR)).toBe(false);
   });
 });

@@ -196,7 +196,7 @@ describe('Habits integration flows', () => {
     expect(stretch!.target).toBeGreaterThanOrEqual(clear!.target);
   });
 
-  it('save habit order → habits reordered correctly', () => {
+  it('save habit order → habits reordered correctly', async () => {
     const habitA = makeHabit({ id: 1, name: 'Alpha' });
     const habitB = makeHabit({ id: 2, name: 'Bravo' });
     const habitC = makeHabit({ id: 3, name: 'Charlie' });
@@ -205,8 +205,11 @@ describe('Habits integration flows', () => {
     act(() => result.current.setHabitsForTesting([habitA, habitB, habitC]));
     expect(result.current.habits.map((h) => h.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
 
-    // Reorder: Charlie first, then Alpha, then Bravo
-    act(() => result.current.actions.saveHabitOrder([habitC, habitA, habitB]));
+    // Reorder: Charlie first, then Alpha, then Bravo. Awaited because the
+    // action now resolves when the reorder has settled (#2755).
+    await act(async () => {
+      await result.current.actions.saveHabitOrder([habitC, habitA, habitB]);
+    });
 
     expect(result.current.habits.map((h) => h.name)).toEqual(['Charlie', 'Alpha', 'Bravo']);
   });

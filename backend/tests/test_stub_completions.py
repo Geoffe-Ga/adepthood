@@ -21,6 +21,7 @@ import json
 
 import pytest
 
+from domain.detection import DetectionCandidate, build_detection_prompt, detect_completions
 from domain.resonance import (
     ANCHOR_TEXT_MAX,
     MARGINALIA_JSON_SHAPE,
@@ -59,6 +60,45 @@ def test_a_prompt_naming_the_shape_but_carrying_no_entry_gets_prose() -> None:
     notes array would be a reading of a page that was never sent.
     """
     assert canned_completion(f"what does {MARGINALIA_JSON_SHAPE} mean?") is None
+
+
+def test_canned_completion_detects_an_explicitly_completed_candidate() -> None:
+    """The default provider makes the habit-offer journey runnable without a network."""
+    prompt = build_detection_prompt(
+        "I completed Morning walk before breakfast.",
+        [DetectionCandidate(index=0, target_type="habit", target_id=7, name="Morning walk")],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion) == {"hits": [{"index": 0, "quote": "completed Morning walk"}]}
+
+
+@pytest.mark.asyncio
+async def test_detection_over_the_stub_resolves_the_candidate_and_quote() -> None:
+    body = "I completed Morning walk before breakfast."
+    candidates = [
+        DetectionCandidate(index=0, target_type="habit", target_id=7, name="Morning walk")
+    ]
+
+    hits = await detect_completions(body, candidates=candidates, llm=BotmasonResonanceLLM(None))
+
+    assert len(hits) == 1
+    assert hits[0].target_id == 7
+    assert hits[0].anchor_text == "completed Morning walk"
+
+
+def test_canned_detection_does_not_treat_an_intention_as_a_completion() -> None:
+    prompt = build_detection_prompt(
+        "I plan to complete Morning walk tomorrow.",
+        [DetectionCandidate(index=0, target_type="habit", target_id=7, name="Morning walk")],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion) == {"hits": []}
 
 
 def test_canned_completion_quotes_the_entry_verbatim() -> None:

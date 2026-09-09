@@ -40,12 +40,24 @@ const E2E_SCRIPT = 'test:e2e';
 const BROWSER_E2E_SCRIPT = 'test:e2e:web';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
+const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
 /**
  * Sorted, because `e2eFiles` is a bare `readdirSync` filter and directory order
  * is not guaranteed: an unsorted two-element comparison is an order-dependent
  * flake waiting for the first checkout that reads them the other way round.
  */
-const EXPECTED_BROWSER_JOURNEYS = [BROWSER_JOURNEY, HABITS_VIEWPORT_JOURNEY].sort();
+const EXPECTED_BROWSER_JOURNEYS = [
+  BROWSER_JOURNEY,
+  HABITS_VIEWPORT_JOURNEY,
+  'course-reflect-return.browser.e2e.test.ts',
+  'habit-reorder.browser.e2e.test.ts',
+  'journal-failed-checkoff.browser.e2e.test.ts',
+  'journal-promote-quote.browser.e2e.test.ts',
+  'journal-promoted-quote-reflection.browser.e2e.test.ts',
+  'journal-short-habit-offer.browser.e2e.test.ts',
+  'practice-weekly-count.browser.e2e.test.ts',
+  'resonance-explainer.browser.e2e.test.ts',
+].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
@@ -64,11 +76,13 @@ const EXPECTED_JOURNEYS = [
   'journal-practice-offer.e2e.test.ts',
   'journal.e2e.test.ts',
   'map.e2e.test.ts',
+  'password-recovery.e2e.test.ts',
   'practice-catalog.e2e.test.ts',
   'practice-log-past.e2e.test.ts',
   'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
   'prompt-history.e2e.test.ts',
+  'prompt-set-aside.e2e.test.ts',
   'resonance.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
@@ -309,9 +323,15 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(config).toContain("testMatch: '**/*.browser.e2e.test.ts'");
     for (const name of EXPECTED_BROWSER_JOURNEYS) {
       const spec = read(join(E2E_DIR, name), `The browser journey spec ${name} is missing.`);
+      const signupDriver = spec.includes(`'./journalHabitsBrowserSupport'`)
+        ? `${spec}\n${read(
+            join(E2E_DIR, SHARED_BROWSER_SUPPORT),
+            'The shared browser signup driver is missing.',
+          )}`
+        : spec;
 
       expect(spec).toContain("from '@playwright/test'");
-      expect(spec).toContain("getByRole('button', { name: 'Create account' })");
+      expect(signupDriver).toContain("getByRole('button', { name: 'Create account' })");
     }
   });
 

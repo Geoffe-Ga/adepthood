@@ -404,8 +404,23 @@ describe('ReorderHabitsModal — empty habit list', () => {
 });
 
 describe('ReorderHabitsModal — save flow', () => {
-  it('calls onSaveOrder with the current order and closes', () => {
-    const onSave = jest.fn();
+  /** A save whose completion the test controls, standing in for writes on the wire. */
+  const heldSave = (): {
+    onSave: jest.Mock<(_habits: Habit[]) => Promise<void>>;
+    release: () => void;
+  } => {
+    let release = (): void => {};
+    const onSave = jest.fn(
+      (_habits: Habit[]) =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    return { onSave, release: () => release() };
+  };
+
+  it('calls onSaveOrder with the current order and closes once it has landed', async () => {
+    const onSave = jest.fn((_habits: Habit[]) => Promise.resolve());
     const onClose = jest.fn();
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
@@ -416,12 +431,87 @@ describe('ReorderHabitsModal — save flow', () => {
       list.props.onDragEnd({ data: [HABITS[1], HABITS[2], HABITS[0]] });
     });
 
-    fireEvent.press(result.getByText('Save Order'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
 
     expect(onSave).toHaveBeenCalledTimes(1);
     const saved = onSave.mock.calls[0]![0] as Habit[];
     expect(saved.map((h) => h.id)).toEqual([2, 3, 1]);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds the modal open and the control busy until the save has settled', async () => {
+    // The defect this pins: Save Order used to dismiss the modal the instant
+    // the writes were dispatched, so the person was told the reorder was made
+    // while every PUT was still in flight -- and backgrounding the app there
+    // lost it server-side with local state still claiming it saved.
+    const { onSave, release } = heldSave();
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-save-order').props.accessibilityState).toMatchObject({
+      busy: true,
+      disabled: true,
+    });
+    expect(result.getByText('Saving…')).toBeTruthy();
+
+    await act(async () => {
+      release();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a second Save Order while the first is still on the wire', async () => {
+    // One whole-list commit at a time. A second press cannot mean anything new
+    // -- it would re-PUT the identical rows -- and it would take its rollback
+    // snapshot from a store already holding the optimistic order.
+    const { onSave, release } = heldSave();
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByTestId('reorder-save-order'));
+    });
+    await act(async () => {
+      fireEvent.press(result.getByTestId('reorder-save-order'));
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles the control and closes even when the save is refused', async () => {
+    // A refusal is surfaced and rolled back by the caller; the modal's job is
+    // only never to strand the person on a permanent "Saving…".
+    const onSave = jest.fn((_habits: Habit[]) => Promise.reject(new Error('offline')));
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(result.getByText('Save Order')).toBeTruthy();
   });
 });
 
@@ -504,7 +594,14 @@ describe('ReorderHabitsModal — date picker on web', () => {
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
     const draggableRows = webRows(result);
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    let transferredKey = '';
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn((_type: string, value: string) => {
+        transferredKey = value;
+      }),
+      getData: jest.fn(() => transferredKey),
+    };
 
     expect(draggableRows).toHaveLength(3);
     act(() => draggableRows[0]!.props.onDragStart({ dataTransfer }));
@@ -518,6 +615,32 @@ describe('ReorderHabitsModal — date picker on web', () => {
     fireEvent.press(result.getByText('Save Order'));
     const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
     expect(saved.map((habit) => habit.id)).toEqual([2, 3, 1]);
+  });
+
+  it('uses the drag payload when pointer-up clears transient state before drop', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    let transferredKey = '';
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn((_type: string, value: string) => {
+        transferredKey = value;
+      }),
+      getData: jest.fn(() => transferredKey),
+    };
+
+    act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
+    act(() =>
+      result.UNSAFE_root.findByProps({ 'data-testid': 'reorder-list' }).props.onPointerUp(),
+    );
+    act(() => rangeTarget(result, -1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const moved = (onSaveOrder.mock.calls[0]![0] as Habit[]).find((habit) => habit.id === 1)!;
+    expect(dataTransfer.getData).toHaveBeenCalledWith('text/plain');
+    expect(moved.is_carryover).toBe(true);
   });
 
   it('falls back to pointer dragging when the browser does not emit HTML drop events', () => {
@@ -563,7 +686,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:3'),
+    };
 
     act(() => webRows(result)[2]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, -1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
@@ -590,7 +717,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
         onSaveOrder={onSaveOrder}
       />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:99'),
+    };
 
     act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, 0).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
@@ -620,7 +751,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
         onSaveOrder={onSaveOrder}
       />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:99'),
+    };
 
     act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, 1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));

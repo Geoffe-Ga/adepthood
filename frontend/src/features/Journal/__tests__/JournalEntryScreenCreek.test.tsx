@@ -9,6 +9,13 @@ const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<Journa
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
 const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<ResonanceResponse>>;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+// These specs are about what a pass produces, not about the note in front of it:
+// render as a reader who has already read the cost note and set it aside.
+jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExplainerTestKit'));
+
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...args: unknown[]) => (mockGet as unknown as (...values: unknown[]) => unknown)(...args),

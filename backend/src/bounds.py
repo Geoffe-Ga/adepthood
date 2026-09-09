@@ -61,6 +61,13 @@ MAX_PAGE_OFFSET = 1_000_000
 MIN_STAGE_NUMBER = 1
 MIN_WEEK_NUMBER = 1
 
+# Prompts inside a stage are numbered from one, in curriculum order.  How many
+# a stage carries is a content fact (three to five), so the ceiling stays with
+# the curriculum -- an ordinal past a stage's own list is a 404 from the router
+# rather than a routing constant that would have to be edited when a chapter
+# gains a prompt.  The path refuses only what can never name a prompt at all.
+MIN_PROMPT_ORDINAL = 1
+
 RowIdPath = Annotated[int, Path(ge=MIN_ROW_ID, le=INT32_MAX)]
 RowIdQuery = Annotated[int, Query(ge=MIN_ROW_ID, le=INT32_MAX)]
 RowIdField = Annotated[int, Field(ge=MIN_ROW_ID, le=INT32_MAX)]
@@ -70,5 +77,7 @@ CountField = Annotated[int, Field(ge=MIN_COUNT, le=INT32_MAX)]
 StageNumberPath = Annotated[int, Path(ge=MIN_STAGE_NUMBER, le=TOTAL_STAGES)]
 StageNumberQuery = Annotated[int, Query(ge=MIN_STAGE_NUMBER, le=TOTAL_STAGES)]
 StageNumberField = Annotated[int, Field(ge=MIN_STAGE_NUMBER, le=TOTAL_STAGES)]
+
+PromptOrdinalPath = Annotated[int, Path(ge=MIN_PROMPT_ORDINAL, le=INT32_MAX)]
 
 WeekNumberPath = Annotated[int, Path(ge=MIN_WEEK_NUMBER, le=TOTAL_PROGRAM_WEEKS)]

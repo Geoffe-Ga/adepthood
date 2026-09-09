@@ -83,7 +83,12 @@ const HABITS: Habit[] = [makeHabit(1, 'Beige', 'A'), makeHabit(2, 'Purple', 'B')
 
 const renderReorderModal = () =>
   render(
-    <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    <ReorderHabitsModal
+      visible
+      habits={HABITS}
+      onClose={jest.fn()}
+      onSaveOrder={() => Promise.resolve()}
+    />,
   );
 
 // Shared flatten helper (same pattern as CreatePracticeWizardTokens.test.tsx).

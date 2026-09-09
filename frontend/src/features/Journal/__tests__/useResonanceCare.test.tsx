@@ -3,7 +3,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 /** Specs for the ``care`` field threading through ``useResonance``. */
-import { carePayload, note, resonancePayload } from './resonanceTestKit';
+import { TEST_TIMEZONE, carePayload, note, resonancePayload } from './resonanceTestKit';
 
 import type { CompletionSuggestion, Marginalia, ResonanceResponse } from '@/api';
 
@@ -50,7 +50,9 @@ describe('useResonance — care field threading', () => {
   it('exposes care on the hook result when the generate pass returns a care payload', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ care: carePayload() }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -68,7 +70,9 @@ describe('useResonance — care field threading', () => {
   it('leaves care null when the generate pass returns care: null', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ care: null }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -83,7 +87,9 @@ describe('useResonance — care field threading', () => {
     const payloadWithoutCare = { ...resonancePayload() };
     delete (payloadWithoutCare as { care?: unknown }).care;
     mockGenerate.mockResolvedValue(payloadWithoutCare as ResonanceResponse);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -97,7 +103,9 @@ describe('useResonance — care field threading', () => {
 
     // First pass: returns care.
     mockGenerate.mockResolvedValueOnce(resonancePayload({ care: carePayload() }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -120,7 +128,9 @@ describe('useResonance — care field threading', () => {
     // the marginalia list returns.
     mockList.mockResolvedValue({ items: [note({ id: 1 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await waitFor(() => expect(result.current.marginalia).toHaveLength(1));
 
@@ -136,7 +146,9 @@ describe('useResonance — care field threading', () => {
         care: carePayload(),
       }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();

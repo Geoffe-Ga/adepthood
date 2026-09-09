@@ -29,6 +29,13 @@ const mockDismiss = jest.fn() as jest.MockedFunction<
   (_never: boolean) => Promise<CorpusInvitation>
 >;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+// These specs are about what a pass produces, not about the note in front of it:
+// render as a reader who has already read the cost note and set it aside.
+jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExplainerTestKit'));
+
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),

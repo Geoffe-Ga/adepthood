@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from http import HTTPStatus
+from typing import cast
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain import weekly_prompts
 from domain.journal_prompt_parser import JournalPrompt
+from models.prompt_dismissal import PromptDismissal
+from models.prompt_response import PromptResponse
 
 # Beige is the floor of the curriculum with three prompts. Blue is a
 # four-prompt stage whose cadences are not all the same, which is what makes
@@ -954,3 +959,268 @@ async def test_history_falls_back_to_its_snapshot_for_a_retired_week(
     item = resp.json()["items"][0]
     assert item["question"].startswith("List the systemic, social, and cultural influences")
     assert item["default_title"] is None
+
+
+# ── Setting a prompt aside ──────────────────────────────────────────────
+
+_BEIGE_STAGE_NUMBER = 1
+_LOCKED_STAGE_NUMBER = 10
+_SET_ASIDE_ORDINAL = 2
+
+
+def _dismissed_ordinals(body: dict[str, object]) -> set[int]:
+    """The ordinals a stage-prompts payload reports as set aside."""
+    prompts = cast("list[dict[str, object]]", body["prompts"])
+    return {int(cast("int", p["ordinal"])) for p in prompts if p["dismissed"]}
+
+
+def _set_aside_path(stage: int, ordinal: int) -> str:
+    """The dismissal path for one of a stage's prompts."""
+    return f"/prompts/stage/{stage}/{ordinal}/dismiss"
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_set_aside_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.post(_set_aside_path(_BEIGE_STAGE_NUMBER, 1))
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_bring_back_returns_401(async_client: AsyncClient) -> None:
+    resp = await async_client.delete(_set_aside_path(_BEIGE_STAGE_NUMBER, 1))
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_stage_reports_nothing_set_aside(async_client: AsyncClient) -> None:
+    """Nothing is set aside until the reader says so; the band starts whole."""
+    headers = await _signup(async_client, "aside_fresh")
+    resp = await async_client.get(f"/prompts/stage/{_BEIGE_STAGE_NUMBER}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _dismissed_ordinals(resp.json()) == set()
+
+
+@pytest.mark.asyncio
+async def test_setting_a_prompt_aside_marks_only_that_prompt(async_client: AsyncClient) -> None:
+    """The mutation answers with the whole band, so the client never has to guess."""
+    headers = await _signup(async_client, "aside_one")
+
+    resp = await async_client.post(
+        _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL), headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["stage"] == _BEIGE_STAGE_NUMBER
+    # The whole set still comes back: setting one aside is a preference about
+    # what to show, not a deletion of the curriculum.
+    assert len(body["prompts"]) == _BEIGE_PROMPT_COUNT
+    assert _dismissed_ordinals(body) == {_SET_ASIDE_ORDINAL}
+
+
+@pytest.mark.asyncio
+async def test_a_set_aside_prompt_survives_a_later_read(async_client: AsyncClient) -> None:
+    """The choice is the server's to remember, not the device's."""
+    headers = await _signup(async_client, "aside_persists")
+    await async_client.post(
+        _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL), headers=headers
+    )
+
+    resp = await async_client.get(f"/prompts/stage/{_BEIGE_STAGE_NUMBER}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _dismissed_ordinals(resp.json()) == {_SET_ASIDE_ORDINAL}
+
+
+@pytest.mark.asyncio
+async def test_setting_the_same_prompt_aside_twice_is_idempotent(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A double tap (or a retry) leaves one preference, not two rows."""
+    headers = await _signup(async_client, "aside_twice")
+    path = _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL)
+
+    first = await async_client.post(path, headers=headers)
+    second = await async_client.post(path, headers=headers)
+
+    assert first.status_code == HTTPStatus.OK
+    assert second.status_code == HTTPStatus.OK
+    assert _dismissed_ordinals(second.json()) == {_SET_ASIDE_ORDINAL}
+    rows = (await db_session.execute(select(PromptDismissal))).scalars().all()
+    assert len(list(rows)) == 1
+
+
+@pytest.mark.asyncio
+async def test_bringing_a_prompt_back_restores_it(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Reversible by construction: the row goes away and the band is whole again."""
+    headers = await _signup(async_client, "aside_reverse")
+    path = _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL)
+    await async_client.post(path, headers=headers)
+
+    resp = await async_client.delete(path, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _dismissed_ordinals(resp.json()) == set()
+    rows = (await db_session.execute(select(PromptDismissal))).scalars().all()
+    assert list(rows) == []
+
+
+@pytest.mark.asyncio
+async def test_bringing_back_a_prompt_never_set_aside_is_a_no_op(
+    async_client: AsyncClient,
+) -> None:
+    """Undo of nothing is success, not an error the client has to special-case."""
+    headers = await _signup(async_client, "aside_undo_none")
+
+    resp = await async_client.delete(
+        _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL), headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _dismissed_ordinals(resp.json()) == set()
+
+
+@pytest.mark.asyncio
+async def test_setting_a_prompt_aside_writes_no_response_and_answers_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A dismissal is a preference, never a completion.
+
+    This is the invariant the whole feature turns on. Setting a prompt aside
+    must not create a ``PromptResponse``, must not mark the prompt answered,
+    must not advance the reader's week, and must not close the week to the
+    prompts still standing. A dismissal that quietly counted as an answer would
+    turn declining into completing -- the exact inversion of "you choose your
+    depth".
+    """
+    headers = await _signup(async_client, "aside_no_response")
+
+    await async_client.post(
+        _set_aside_path(_BEIGE_STAGE_NUMBER, _SET_ASIDE_ORDINAL), headers=headers
+    )
+
+    responses = (await db_session.execute(select(PromptResponse))).scalars().all()
+    assert list(responses) == []
+
+    history = await async_client.get("/prompts/history", headers=headers)
+    assert history.json()["items"] == []
+    assert history.json()["total"] == 0
+
+    current = await async_client.get("/prompts/current", headers=headers)
+    # The week has not moved and nothing was answered on the reader's behalf.
+    assert current.json()["week_number"] == 1
+    assert current.json()["has_responded"] is False
+
+    # The others are untouched: still offered, still writable this week.
+    stage = await async_client.get(f"/prompts/stage/{_BEIGE_STAGE_NUMBER}", headers=headers)
+    assert [p["ordinal"] for p in stage.json()["prompts"]] == [1, 2, _BEIGE_PROMPT_COUNT]
+    still_writable = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "A different prompt, freely chosen."},
+        headers=headers,
+    )
+    assert still_writable.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_the_weekly_prompt_reports_its_own_set_aside_state(
+    async_client: AsyncClient,
+) -> None:
+    """The weekly prompt draws from the same curriculum, so it carries the same answer.
+
+    Week 1 serves Beige's first prompt; setting *that* one aside has to show up
+    on ``/prompts/current`` too, or the one surface that offers a prompt without
+    the band would keep offering the very prompt the reader declined.
+    """
+    headers = await _signup(async_client, "aside_weekly")
+    before = await async_client.get("/prompts/current", headers=headers)
+    assert before.json()["prompt_ordinal"] == 1
+    assert before.json()["dismissed"] is False
+
+    await async_client.post(_set_aside_path(_BEIGE_STAGE_NUMBER, 1), headers=headers)
+
+    after = await async_client.get("/prompts/current", headers=headers)
+    assert after.json()["dismissed"] is True
+    # Another of the stage's prompts is unaffected; this is per-prompt, not per-week.
+    by_week = await async_client.get("/prompts/1", headers=headers)
+    assert by_week.json()["dismissed"] is True
+
+
+@pytest.mark.asyncio
+async def test_setting_aside_a_locked_stage_is_refused_and_persists_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A stage the reader has not reached refuses the write the same way the read does.
+
+    Reusing the stage read's own gate keeps the two from drifting and stops the
+    dismissal route becoming a second, laxer oracle for which stages exist.
+    """
+    headers = await _signup(async_client, "aside_locked")
+
+    resp = await async_client.post(_set_aside_path(_LOCKED_STAGE_NUMBER, 1), headers=headers)
+
+    read = await async_client.get(f"/prompts/stage/{_LOCKED_STAGE_NUMBER}", headers=headers)
+    assert resp.status_code == read.status_code
+    assert resp.json()["detail"] == read.json()["detail"]
+    rows = (await db_session.execute(select(PromptDismissal))).scalars().all()
+    assert list(rows) == []
+
+
+@pytest.mark.asyncio
+async def test_bringing_back_on_a_locked_stage_is_refused(async_client: AsyncClient) -> None:
+    """The undo is gated exactly as the dismissal is; neither leaks a locked stage."""
+    headers = await _signup(async_client, "aside_locked_undo")
+
+    resp = await async_client.delete(_set_aside_path(_LOCKED_STAGE_NUMBER, 1), headers=headers)
+
+    read = await async_client.get(f"/prompts/stage/{_LOCKED_STAGE_NUMBER}", headers=headers)
+    assert resp.status_code == read.status_code
+
+
+@pytest.mark.asyncio
+async def test_setting_aside_an_ordinal_the_stage_does_not_carry_is_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Beige ships three prompts, so its fourth cannot be set aside.
+
+    404 rather than a silent wrap-around onto a different prompt -- the same
+    shape ``POST /prompts/{week}/respond`` already gives an out-of-range ordinal.
+    """
+    headers = await _signup(async_client, "aside_bad_ordinal")
+
+    resp = await async_client.post(
+        _set_aside_path(_BEIGE_STAGE_NUMBER, _BEIGE_PROMPT_COUNT + 1), headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "prompt_not_found"
+    rows = (await db_session.execute(select(PromptDismissal))).scalars().all()
+    assert list(rows) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_number", [0, 11])
+async def test_setting_aside_an_out_of_range_stage_is_rejected(
+    async_client: AsyncClient, stage_number: int
+) -> None:
+    """The declared stage bound refuses an eleventh stage before any lookup runs."""
+    headers = await _signup(async_client, f"aside_range_{stage_number}")
+
+    resp = await async_client.post(_set_aside_path(stage_number, 1), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["path", "stage_number"]
+
+
+@pytest.mark.asyncio
+async def test_setting_aside_a_zero_ordinal_is_rejected(async_client: AsyncClient) -> None:
+    """Ordinals are 1-based; a zero is malformed rather than merely absent."""
+    headers = await _signup(async_client, "aside_zero_ordinal")
+
+    resp = await async_client.post(_set_aside_path(_BEIGE_STAGE_NUMBER, 0), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"][0]["loc"] == ["path", "prompt_ordinal"]

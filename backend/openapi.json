@@ -565,6 +565,28 @@
         "title": "CheckInResult",
         "type": "object"
       },
+      "CompletionDetectionResponse": {
+        "description": "New offers from an entry-only completion check.\n\n``checked`` distinguishes a successful check with no matches from a\nbest-effort provider failure. This lets the journal explain honestly what\nstill happened when literary resonance itself could not be generated.",
+        "properties": {
+          "checked": {
+            "title": "Checked",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CompletionSuggestionResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "checked"
+        ],
+        "title": "CompletionDetectionResponse",
+        "type": "object"
+      },
       "CompletionSuggestionListResponse": {
         "description": "All completion suggestions for an entry (any status).",
         "properties": {
@@ -4663,6 +4685,11 @@
             ],
             "title": "Default Title"
           },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
           "has_responded": {
             "title": "Has Responded",
             "type": "boolean"
@@ -6076,6 +6103,11 @@
               }
             ],
             "title": "Cadence"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
           },
           "ordinal": {
             "title": "Ordinal",
@@ -16094,6 +16126,164 @@
         ]
       }
     },
+    "/journal/{entry_id}/suggestions/detect": {
+      "post": {
+        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".",
+        "operationId": "detect_entry_suggestions_journal__entry_id__suggestions_detect_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Entry Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-LLM-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Llm-Api-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletionDetectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The account has no credit left for this operation."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Detect Entry Suggestions",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
     "/metta-return": {
       "get": {
         "description": "Return the caller's eligibility, week sequence, active arc, and offer state.\n\nRead-only: stage progress is fetched (never provisioned), so a brand-new\nuser's row is not created as a side effect. ``arc`` is the caller's active\narc projected to its current week, or ``None`` when there is none, and\n``offer_dismissed`` reflects any dismissal of the current offer episode.",
@@ -18091,7 +18281,7 @@
     },
     "/practice-sessions/insights": {
       "get": {
-        "description": "Return the mode-aware analytics rollup for the authenticated user.\n\nSingle query fetches the last :data:`_INSIGHTS_LOOKBACK_DAYS` of the\nuser's sessions; :func:`domain.practice_insights.build_insights` does\nthe bucketing in memory (cheap — a heavy user accrues hundreds of\nrows in this window, not millions).\n\nThe response carries a private one-minute ``Cache-Control`` so the\nfrontend can poll the screen without thrashing the DB.",
+        "description": "Return the mode-aware analytics rollup for the authenticated user.\n\nSingle query fetches the last :data:`_INSIGHTS_LOOKBACK_DAYS` of the\nuser's sessions; :func:`domain.practice_insights.build_insights` does\nthe bucketing in memory (cheap — a heavy user accrues hundreds of\nrows in this window, not millions).\n\nThe response is marked ``private, no-store``: the weekly bar reads this\nendpoint immediately after logging a session, so a cached copy would show\nthe practitioner a count their own save has already falsified.",
         "operationId": "get_insights_practice_sessions_insights_get",
         "parameters": [
           {
@@ -20524,6 +20714,268 @@
           }
         },
         "summary": "Get Stage Prompts",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/prompts/stage/{stage_number}/{prompt_ordinal}/dismiss": {
+      "delete": {
+        "description": "Bring a set-aside prompt back onto the caller's band; a no-op if it never left.\n\nReversal is a delete rather than a flag: a prompt brought back leaves no\nrecord of having been declined, because a tally of what someone chose not to\nwrite is not something this application keeps. Undoing a set-aside that was\nnever made is success rather than an error the client has to special-case.\n\nThe ``WHERE`` names the caller's own id, so this can only ever remove the\ncaller's own preference -- another account's row is not addressable from\nhere at all.",
+        "operationId": "bring_stage_prompt_back_prompts_stage__stage_number___prompt_ordinal__dismiss_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stage_number",
+            "required": true,
+            "schema": {
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Stage Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "prompt_ordinal",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Prompt Ordinal",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagePromptsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Bring Stage Prompt Back",
+        "tags": [
+          "prompts"
+        ]
+      },
+      "post": {
+        "description": "Set one of a stage's prompts aside for the caller; idempotent, reversible.\n\nA preference, never a completion: no ``PromptResponse`` is read or written,\nnothing is marked answered, and the week gating over the prompts still\nstanding is untouched. The band the reader keeps is theirs to choose, which\nis the whole point -- an offer that cannot be declined is not an offer.\n\nThe caller is the JWT subject and nothing else; there is no ``user_id`` on\nthe path or in a body to disagree with it. Answers with the whole stage, so\na client never has to guess at the state its own request just produced.",
+        "operationId": "set_stage_prompt_aside_prompts_stage__stage_number___prompt_ordinal__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stage_number",
+            "required": true,
+            "schema": {
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Stage Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "prompt_ordinal",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Prompt Ordinal",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagePromptsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Set Stage Prompt Aside",
         "tags": [
           "prompts"
         ]

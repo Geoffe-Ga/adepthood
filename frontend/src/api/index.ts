@@ -13,6 +13,7 @@ import {
   corpusInvitationSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
+  completionDetectionResponseSchema,
   completionSuggestionSchema,
   depthPreferencesSchema,
   frequencyResponseSchema,
@@ -122,7 +123,43 @@ const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 /** Methods safe to retry without a caller-supplied idempotency key. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'DELETE']);
 
-const IDEMPOTENCY_HEADERS = new Set(['idempotency-key', 'x-idempotency-key']);
+/**
+ * Every request header this client puts on the wire, stated once.
+ *
+ * A cross-origin browser may only send a header the server named in its CORS
+ * `allow_headers`; one it did not name is refused at the preflight, before the
+ * request exists — no status, no server log, and a bare `TypeError` here. So
+ * this list and the backend's `ALLOWED_HEADERS` are two halves of one
+ * agreement, and `requestHeaderVocabularyDrift` reads the Python to hold them
+ * together: a header added here alone fails that guard instead of failing in
+ * someone's browser.
+ *
+ * Everything below derives its header name from this object rather than
+ * repeating a string, so an entry cannot be dropped without breaking the code
+ * that uses it.
+ */
+export const REQUEST_HEADER_VOCABULARY = {
+  /** Bearer JWT, on every authenticated call. */
+  authorization: 'Authorization',
+  /** Set whenever a request carries a JSON body. */
+  contentType: 'Content-Type',
+  /** Bring-your-own-key for the LLM endpoints. */
+  llmApiKey: 'X-LLM-API-Key', // pragma: allowlist secret
+  /** Idempotency key, IETF draft spelling — what every call site here sends. */
+  idempotencyKey: 'Idempotency-Key',
+  /** The same key under the spelling the energy plan endpoint declares. */
+  energyIdempotencyKey: 'X-Idempotency-Key',
+} as const;
+
+/**
+ * The header names that make a mutation retry-eligible, lower-cased for the
+ * case-insensitive comparison a caller's arbitrary spelling requires.
+ */
+const IDEMPOTENCY_HEADERS = new Set(
+  [REQUEST_HEADER_VOCABULARY.idempotencyKey, REQUEST_HEADER_VOCABULARY.energyIdempotencyKey].map(
+    (header) => header.toLowerCase(),
+  ),
+);
 
 export class ApiError extends Error {
   status: number;
@@ -319,7 +356,7 @@ let llmApiKeyGetter: (() => string | null) | null = null;
 let llmApiKeyReset: (() => void) | null = null;
 
 /** Header used to forward a user-provided LLM API key (BYOK, issue #185). */
-export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
+export const LLM_API_KEY_HEADER = REQUEST_HEADER_VOCABULARY.llmApiKey;
 
 /**
  * Canonical header name for client-supplied idempotency keys (BUG-API-008),
@@ -331,7 +368,7 @@ export const LLM_API_KEY_HEADER = 'X-LLM-API-Key'; // pragma: allowlist secret
  * server-side. Client-side its effect is universal — ``hasIdempotencyHeader``
  * reads it to make a mutation retry-eligible.
  */
-export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+export const IDEMPOTENCY_KEY_HEADER = REQUEST_HEADER_VOCABULARY.idempotencyKey;
 
 /**
  * Build a deterministic idempotency key for a mutation (BUG-API-008).
@@ -440,11 +477,13 @@ function buildHeaders(
   extraHeaders?: Record<string, string>,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    ...(resolvedToken ? { Authorization: `Bearer ${resolvedToken}` } : {}),
+    ...(resolvedToken
+      ? { [REQUEST_HEADER_VOCABULARY.authorization]: `Bearer ${resolvedToken}` }
+      : {}),
     ...extraHeaders,
   };
   if (body !== undefined) {
-    headers['Content-Type'] = 'application/json';
+    headers[REQUEST_HEADER_VOCABULARY.contentType] = 'application/json';
   }
   return headers;
 }
@@ -1994,6 +2033,10 @@ export interface CompletionSuggestionListResponse {
   items: CompletionSuggestion[];
 }
 
+export interface CompletionDetectionResponse extends CompletionSuggestionListResponse {
+  checked: boolean;
+}
+
 /**
  * Suggestions surfaced by the resonance pass (#817/#818). URLs are the canonical
  * non-slash sub-resource forms the backend serves directly (no 307). ``accept``
@@ -2006,6 +2049,15 @@ export const completionSuggestions = {
       token,
       schema:
         completionSuggestionListResponseSchema as unknown as z.ZodType<CompletionSuggestionListResponse>,
+    });
+  },
+  detect(entryId: number, token?: string, apiKey?: string): Promise<CompletionDetectionResponse> {
+    return request<CompletionDetectionResponse>(`/journal/${entryId}/suggestions/detect`, {
+      method: 'POST',
+      token,
+      headers: byokHeaders(apiKey),
+      schema:
+        completionDetectionResponseSchema as unknown as z.ZodType<CompletionDetectionResponse>,
     });
   },
   accept(id: number, token?: string): Promise<AcceptSuggestionResult> {
@@ -2142,6 +2194,11 @@ export interface PromptDetail {
   default_title?: string | null;
   /** Its position within the week's prompt sequence, when the week has several. */
   prompt_ordinal?: number | null;
+  /** Whether the reader set this prompt aside. The weekly prompt is drawn from
+   *  the same curriculum as the stage band, so a prompt declined there is
+   *  declined here too. Optional: a server that predates the affordance sends
+   *  nothing, which reads as "not set aside". */
+  dismissed?: boolean;
 }
 
 export interface PromptListResponse {
@@ -2194,6 +2251,34 @@ export const prompts = {
       token,
       schema: stagePromptsResponseSchema,
     });
+  },
+  /** Set one of a stage's prompts aside, so the band stops offering it.
+   *
+   * A preference and not a completion: nothing is answered, nothing is
+   * written to, and the prompts still standing keep their own week gating.
+   * Answers with the whole stage, so the caller never has to guess at the
+   * state its own request just produced. Idempotent.
+   */
+  setAside(
+    stageNumber: number,
+    promptOrdinal: number,
+    token?: string,
+  ): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(
+      `/prompts/stage/${stageNumber}/${promptOrdinal}/dismiss`,
+      { method: 'POST', token, schema: stagePromptsResponseSchema },
+    );
+  },
+  /** Bring a set-aside prompt back onto the band; a no-op if it never left. */
+  bringBack(
+    stageNumber: number,
+    promptOrdinal: number,
+    token?: string,
+  ): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(
+      `/prompts/stage/${stageNumber}/${promptOrdinal}/dismiss`,
+      { method: 'DELETE', token, schema: stagePromptsResponseSchema },
+    );
   },
   history(
     params: { limit?: number; offset?: number } = {},
