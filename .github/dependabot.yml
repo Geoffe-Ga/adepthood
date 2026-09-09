@@ -167,6 +167,22 @@ updates:
       # SDK expects.
       - dependency-name: "react-native-svg"
         versions: [">=15.15.5"]
+      # @react-native-community/slider is pinned by Expo SDK 57's compatibility
+      # table, not chosen here. The "Dependencies match the pinned Expo SDK"
+      # step in .github/workflows/frontend-ci.yml runs `expo install --check`,
+      # which is the only gate that reads that table; on the 5.2.1 bump it
+      # reported "@react-native-community/slider@5.2.1 - expected version:
+      # 5.2.0" and exited 1 before lint, tsc or Jest ran -- so a grouped patch
+      # PR carrying this bump takes every unrelated package batched with it
+      # down unexamined, which is a loss of signal rather than a red build.
+      #
+      # The table names an EXACT version, so like react-native-worklets and
+      # react-native-svg above the floor sits one patch above the expected
+      # version: a floor at the next minor would let a grouped patch bump
+      # ratchet the pin past the compatibility table with nothing objecting.
+      # Unpin -- raise the floor -- when Expo's table names a newer slider.
+      - dependency-name: "@react-native-community/slider"
+        versions: [">=5.2.1"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
