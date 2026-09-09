@@ -60,6 +60,7 @@ __all__ = [
     "get_prompt_for_week",
     "prompt_title_for_week",
     "resolve_week_prompt",
+    "stage_of_week",
     "stage_prompts",
 ]
 
@@ -118,8 +119,8 @@ def stage_prompts(stage_number: int) -> StagePrompts | None:
     )
 
 
-def _band_of_week(week_number: int) -> tuple[str, int]:
-    """The band an in-range week falls in, and its 1-based place inside it.
+def _place_of_week(week_number: int) -> tuple[int, int]:
+    """The 0-based band an in-range week falls in, and its 1-based place inside it.
 
     The walk always lands on a band, since the spans sum to ``TOTAL_WEEKS``.
     """
@@ -128,7 +129,27 @@ def _band_of_week(week_number: int) -> tuple[str, int]:
     while week_in_band > WEEKS_PER_STAGE[band_index]:
         week_in_band -= WEEKS_PER_STAGE[band_index]
         band_index += 1
+    return band_index, week_in_band
+
+
+def _band_of_week(week_number: int) -> tuple[str, int]:
+    """The band an in-range week falls in, and its 1-based place inside it."""
+    band_index, week_in_band = _place_of_week(week_number)
     return PROMPT_BANDS[band_index], week_in_band
+
+
+def stage_of_week(week_number: int) -> int | None:
+    """The 1-based stage a week belongs to, or ``None`` outside ``1..TOTAL_WEEKS``.
+
+    The inverse of :attr:`StagePrompts.first_week`, and the join a caller needs
+    to ask a stage-keyed question about a week-keyed row -- whether the prompt a
+    week serves is one the reader set aside, say. Derived from the same
+    :data:`WEEKS_PER_STAGE` walk as :func:`resolve_week_prompt` rather than from
+    a second table, since eight stages run three weeks and two run six.
+    """
+    if not 1 <= week_number <= TOTAL_WEEKS:
+        return None
+    return _place_of_week(week_number)[0] + 1
 
 
 def _select_prompt(

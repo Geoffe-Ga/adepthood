@@ -13,7 +13,7 @@
   },
   {
     "id": "auth.password-recovery-request-to-reset",
-    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, opens the link in the email that arrives, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. Uncovered because the seam runs through an email: the plaintext token exists nowhere but the rendered body, and this lane talks to the server over HTTP, so it cannot reach the process-local RecordingEmailSender the backend suites override the dependency with, while the console adapter deliberately redacts the token to its first eight characters before it reaches any log the lane could read. Exposing the body to the lane is a design decision rather than a spec, which is why it is filed. This is the gap the outage came through: reset mail went to a production log for one reason and carried an adepthood:// link no browser could follow for another, and the endpoint answered 202 through both while every backend suite stayed green.",
+    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, reads the email that arrives, follows the https link a browser can actually open, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. This is the journey the outage came through: reset mail went to a production log for one reason and carried nothing but an adepthood:// deep link for another, and the endpoint answered 202 through both while every backend suite stayed green. The spec reads the plaintext token out of the rendered body and out of nowhere else, anchored on the https origin APP_BASE_URL configured, so a body that offered only the deep link fails it. The lane reaches that body by booting the server with EMAIL_BACKEND=capture, an adapter that appends every rendered message verbatim to a file and refuses to be built at all when ENV names production.",
     "crosses": {
       "screen": "frontend/src/features/Auth/ForgotPasswordScreen.tsx",
       "client": ["auth"],
@@ -24,8 +24,8 @@
       ],
       "tables": ["user", "passwordresettoken"]
     },
-    "status": "uncovered",
-    "issue": 2536
+    "status": "covered",
+    "coveredBy": "frontend/e2e/password-recovery.e2e.test.ts"
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
@@ -139,15 +139,15 @@
   },
   {
     "id": "habits.reorder-across-signed-laps",
-    "description": "A user opens Reorder Habits, drags rows within the scroll-bounded modal, and can cross the visible -10 to -1, 1\u201310, and later-lap range lines. Crossing the program line changes the persisted is_carryover classification; program dates and stage labels are recalculated from the new program-only position while carryover history is preserved. Uncovered at the real-wire level because the current lane cannot mount and operate the drag UI; issue 2399 tracks the rendering lane needed to drive it. The component interaction and save payload are pinned meanwhile by ReorderHabitsModal.test.tsx.",
+    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1\u201310, and later-lap markers plus program-date recalculation and carryover-date preservation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
       "routes": ["PUT /habits/{habit_id}"],
       "tables": ["habit"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reorder.browser.e2e.test.ts"
   },
   {
     "id": "journal.write-list-read-back",
@@ -160,6 +160,41 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
+  },
+  {
+    "id": "journal.promote-reopen-and-remove-quote",
+    "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["promotions"],
+      "routes": [
+        "POST /journal/{entry_id}/promote",
+        "GET /journal/{entry_id}/promotions",
+        "DELETE /promotions/{promotion_id}"
+      ],
+      "tables": ["promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-quote.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.fold-promoted-quote-into-reopened-reflection",
+    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen; selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "promotions", "reflections"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /reflections/due",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}"
+      ],
+      "tables": ["journalentry", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
     "id": "journal.delete-entry",
@@ -210,6 +245,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
+  },
+  {
+    "id": "journal.short-entry-still-offers-habit-checkoff",
+    "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /journal/{entry_id}/suggestions"
+      ],
+      "tables": ["completionsuggestion", "goalcompletion", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-short-habit-offer.browser.e2e.test.ts"
   },
   {
     "id": "journal.see-related-vault-pages",
@@ -283,6 +335,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-log-past.e2e.test.ts"
+  },
+  {
+    "id": "practice.weekly-count-moves-after-saving-a-session",
+    "description": "A practitioner runs the stage-1 grounding ritual to its end, saves it with a one-line insight, and watches the weekly bar move from 0 of 4 to 1 of 4 in the page they are already looking at. The bar was wired correctly on both sides and still showed the pre-save number: the client incremented optimistically and then refetched, the server counted the new row, and in between GET /practice-sessions/insights advertised max-age=60, so the browser answered the post-save refetch out of its own HTTP cache and put the bar back to zero. No node-lane spec can see that -- node's fetch keeps no HTTP cache, so the request the browser answers for itself is the one the node lane always puts on the wire. This journey runs in the Playwright lane against a real server for exactly that reason, and asserts the server's own week-count alongside the rendered number so a failure separates a lost save from a display that lies about one.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": [
+        "POST /practice-sessions/",
+        "GET /practice-sessions/insights",
+        "GET /practice-sessions/week-count"
+      ],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-weekly-count.browser.e2e.test.ts"
   },
   {
     "id": "practice.adopt-custom-practice",
@@ -561,6 +629,18 @@
     "issue": 2614
   },
   {
+    "id": "return.begin-a-return-from-the-journal-entry",
+    "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens exactly one arc even on a double-tap, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. Uncovered because the offer surfaces only when the server reports eligibility AND a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts), a state this lane cannot reach without driving a real contraction-producing pass -- the same end-to-end stitch recorded on return.recover-a-habit-set-down. Pinned meanwhile by src/features/Journal/__tests__/ContractionReflectionNote.test.tsx (the offer gate, the confirmation's contents, one start per double-tapped confirm, a cancel that starts nothing, and both failure lines) and by the backend's own metta-return tests -- neither of which proves the two halves meet.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["mettaReturn"],
+      "routes": ["GET /metta-return", "POST /metta-return/arc", "POST /metta-return/offer/dismiss"],
+      "tables": ["mettareturnarc", "mettareturnofferdismissal"]
+    },
+    "status": "uncovered",
+    "issue": 2751
+  },
+  {
     "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
     "description": "A person whose reflections are still drawn from the last few days of writing is told so, in the sentence that is true for their own account: the consent decision if they have not made it, the import surface if they have. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
     "crosses": {
@@ -721,6 +801,22 @@
     "issue": 2574
   },
   {
+    "id": "journal.failed-check-off-says-so-beside-the-card",
+    "description": "A writer presses OK on a completion-suggestion card in the journal margin and the accept is refused. The refusal is named where the writer is looking -- beside the very card that produced it, not in place of it -- and announced through a polite live region rather than only drawn, while the card stays pending and pressable so a second press really does check the habit off. The spec drives that over the real wire in a real browser: only the literary pass is intercepted, to reach a suggestion card without an LLM, while detection, the row, the refused accept, the retry and the persisted acceptance are all the live server. A 500 stands in for the class the margin used to swallow -- a 401, a 404, a 409 on an already-dismissed row, a request that never arrives -- because every one reaches the same catch. What no browser spec can reach is pinned beside it in Jest: src/features/Journal/__tests__/useResonance.test.tsx holds the copy to what the client can actually observe (a blocked preflight and an unreachable host are one bare TypeError), pins the habit-store refresh to the auth-hydrated zone rather than the device's, and pins that a success retires only its own card's complaint -- with two cards on screen, accepting one must not erase the other's still-live failure while that card is still pending.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "habits"],
+      "routes": [
+        "GET /journal/{entry_id}/suggestions",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /habits/"
+      ],
+      "tables": ["journalentry", "completionsuggestion", "habit", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-failed-checkoff.browser.e2e.test.ts"
+  },
+  {
     "id": "practice.paging-a-long-list-shows-every-row-once",
     "description": "Someone whose library has outgrown one page reads it whole. The client pages every list endpoint at fifty rows a page (api/index.ts, listAll -> fetchAllPages), and paginate_query used to apply OFFSET/LIMIT to whatever the router handed it and add no ordering of its own -- so GET /user-practices/ carried no ORDER BY at all, and neighbouring endpoints ordered on keys that tie (a practice-session timestamp, a recipe owner-and-name, a stageprogress user_id). OFFSET/LIMIT is only well-defined over a total order: inside a tie group the database may order each page request differently, so one selection can arrive on two consecutive pages while another arrives on none, and the reader sees a duplicate or a hole with nothing wrong in the store. paginate_query now appends the entity primary key to every page it serves, which is a no-op wherever the caller key was already total. Uncovered because the seam is a page boundary: this lane cannot mint the fifty-one rows that produce a second page without a fixture seam it has no route for, and even with one, an assertion on returned rows cannot tell the fix from the defect -- a planner is free to return the tie group in insertion order either way. Pinned meanwhile by backend/tests/test_pagination_total_order.py, which asserts the ORDER BY each endpoint actually emitted, compiled to the PostgreSQL dialect the test lane is not.",
     "crosses": {
@@ -743,5 +839,24 @@
     },
     "status": "uncovered",
     "issue": 2734
+  },
+  {
+    "id": "journal.set-a-stage-prompt-aside-and-bring-it-back",
+    "description": "A writer on the Journal shelf sets a stage prompt aside, finds it gone from the band and still gone after a cold start on a new session, brings it back, and is never told they skipped or failed anything. The invariant this crosses the wire for is the one a mocked test cannot see: a dismissal is a preference and never a completion, so the spec sets a prompt aside and then still writes a response to another prompt in the same week, proving the set-aside wrote no PromptResponse, marked nothing answered, did not move the reader's week and did not close the week to the prompts still standing. It also pins that the weekly prompt drawn from the same curriculum carries the same answer, that a repeated set-aside collapses onto the unique index rather than adding a second row, that undoing one that was never made is success, that an ordinal the stage does not carry and a stage the reader has not reached are refused exactly as the stage read refuses them, and -- the half a mis-scoped WHERE would make indistinguishable -- that one account's un-set-aside never removes another's, the prompt being named by curriculum position which is identical for everyone.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "prompts", "setTokenGetter"],
+      "routes": [
+        "GET /prompts/stage/{stage_number}",
+        "POST /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "DELETE /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "GET /prompts/current",
+        "GET /prompts/history",
+        "POST /prompts/{week_number}/respond"
+      ],
+      "tables": ["promptdismissal", "promptresponse"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/prompt-set-aside.e2e.test.ts"
   }
 ]

@@ -3,7 +3,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 /** Specs for the ``contraction`` field threading through ``useResonance``. */
-import { contractionPayload, note, resonancePayload } from './resonanceTestKit';
+import { TEST_TIMEZONE, contractionPayload, note, resonancePayload } from './resonanceTestKit';
 
 import type { CompletionSuggestion, Marginalia, ResonanceResponse } from '@/api';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
@@ -51,7 +51,9 @@ beforeEach(() => {
 describe('useResonance — contraction field threading', () => {
   it('is null before any generate pass', () => {
     const flush = jest.fn(async () => 42);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     expect(result.current.contraction).toBeNull();
   });
@@ -59,7 +61,9 @@ describe('useResonance — contraction field threading', () => {
   it('never populates contraction from the load-on-open effect (marginalia list carries none)', async () => {
     mockList.mockResolvedValue({ items: [note({ id: 1 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await waitFor(() => expect(result.current.marginalia).toHaveLength(1));
 
@@ -69,7 +73,9 @@ describe('useResonance — contraction field threading', () => {
   it('exposes contraction on the hook result when a generate pass returns one', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ contraction: contractionPayload() }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -87,7 +93,9 @@ describe('useResonance — contraction field threading', () => {
     const payloadWithoutContraction = { ...resonancePayload() };
     delete (payloadWithoutContraction as { contraction?: unknown }).contraction;
     mockGenerate.mockResolvedValue(payloadWithoutContraction as ResonanceResponse);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -102,7 +110,9 @@ describe('useResonance — contraction field threading', () => {
     mockGenerate.mockResolvedValueOnce(
       resonancePayload({ contraction: contractionPayload({ variant: 'return_offer' }) }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -125,7 +135,9 @@ describe('useResonance — contraction field threading', () => {
         contraction: contractionPayload(),
       }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -142,7 +154,9 @@ describe('useResonance — wiring the contraction signal store', () => {
     mockGenerate.mockResolvedValue(
       resonancePayload({ contraction: contractionPayload({ variant: 'return_offer' }) }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -156,7 +170,9 @@ describe('useResonance — wiring the contraction signal store', () => {
     mockGenerate.mockResolvedValue(
       resonancePayload({ contraction: contractionPayload({ variant: 'simple_ease_off' }) }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -173,7 +189,9 @@ describe('useResonance — wiring the contraction signal store', () => {
 
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ contraction: null }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -190,7 +208,9 @@ describe('useResonance — wiring the contraction signal store', () => {
 
     const flush = jest.fn(async () => 42);
     mockGenerate.mockRejectedValue(new Error('network error'));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();

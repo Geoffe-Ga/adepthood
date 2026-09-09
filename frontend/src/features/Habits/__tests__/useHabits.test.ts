@@ -220,14 +220,17 @@ describe('useHabits', () => {
     expect(result.current.habits).toHaveLength(0);
   });
 
-  it('saveHabitOrder reorders habits', () => {
+  it('saveHabitOrder reorders habits', async () => {
     const h1 = makeHabit({ id: 1, name: 'First' });
     const h2 = makeHabit({ id: 2, name: 'Second' });
     const { result } = renderHook(() => useHabits());
 
     act(() => result.current.setHabitsForTesting([h1, h2]));
 
-    act(() => result.current.actions.saveHabitOrder([h2, h1]));
+    // Awaited: the action resolves when the reorder has settled (#2755).
+    await act(async () => {
+      await result.current.actions.saveHabitOrder([h2, h1]);
+    });
     expect(result.current.habits[0]!.name).toBe('Second');
     expect(result.current.habits[1]!.name).toBe('First');
   });

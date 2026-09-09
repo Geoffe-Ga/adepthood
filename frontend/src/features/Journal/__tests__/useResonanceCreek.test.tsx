@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 
-import { resonancePayload } from './resonanceTestKit';
+import { TEST_TIMEZONE, resonancePayload } from './resonanceTestKit';
 
 import type {
   CompletionSuggestion,
@@ -69,7 +69,7 @@ describe('useResonance — related Creek pages', () => {
       resonancePayload({ related_praxis: [PRAXIS], related_eddies: [EDDY] }),
     );
     const { result } = renderHook(() =>
-      useResonance({ routeEntryId: null, flush: async () => 42 }),
+      useResonance({ routeEntryId: null, flush: async () => 42, userTimezone: TEST_TIMEZONE }),
     );
 
     await act(async () => result.current.requestResonance());
@@ -86,7 +86,7 @@ describe('useResonance — related Creek pages', () => {
       .mockResolvedValueOnce(legacy)
       .mockResolvedValueOnce(resonancePayload({ related_praxis: [], related_eddies: [] }));
     const { result } = renderHook(() =>
-      useResonance({ routeEntryId: null, flush: async () => 42 }),
+      useResonance({ routeEntryId: null, flush: async () => 42, userTimezone: TEST_TIMEZONE }),
     );
 
     await act(async () => result.current.requestResonance());
@@ -103,7 +103,7 @@ describe('useResonance — related Creek pages', () => {
       .mockResolvedValueOnce(resonancePayload({ related_praxis: [PRAXIS], related_eddies: [EDDY] }))
       .mockRejectedValueOnce(new ApiError(500, 'boom'));
     const { result } = renderHook(() =>
-      useResonance({ routeEntryId: null, flush: async () => 42 }),
+      useResonance({ routeEntryId: null, flush: async () => 42, userTimezone: TEST_TIMEZONE }),
     );
 
     await act(async () => result.current.requestResonance());

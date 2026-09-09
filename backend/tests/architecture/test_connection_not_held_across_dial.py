@@ -113,6 +113,7 @@ _CLASSES_IMPLEMENTING = {
     ),
     "services.email.EmailSender": frozenset(
         {
+            "services.email.CaptureEmailSender",
             "services.email.ConsoleEmailSender",
             "services.email.EmailSender",
             "services.email.RecordingEmailSender",

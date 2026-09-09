@@ -84,6 +84,25 @@ external allocator is represented by the fake. The fake rejects a ceremony body
 containing passphrase or recovery-key fields, returns `attested_confidential:
 false`, and is killed with its generated credential directory at teardown.
 
+One thing is configured rather than faked, and it is worth stating plainly
+because it looks like a fake and is not. The password-recovery journey has to
+read a plaintext reset token, and that token exists nowhere but the rendered
+body of an email: the row holds a bcrypt digest, the response is a fixed
+anti-enumeration sentence, and the console adapter masks the token to its first
+eight characters before it reaches any log. So the lane boots the server with
+`EMAIL_BACKEND=capture`, a `services.email` adapter that appends every rendered
+message verbatim to the file `EMAIL_CAPTURE_FILE` names. Nothing is stubbed,
+patched or rebound to reach it — the adapter is selected the way `console` and
+`smtp` are, and the routers, the renderer and the token minting are the
+production ones. It writes a live credential to disk, which is why
+`services.email` refuses to build it when `ENV` names production, and why
+`main.validate_email_config` refuses the boot as well; both refusals have tests,
+and the second is driven through the app's own `lifespan`. The lane also sets
+`APP_BASE_URL` to an `https://` origin under the reserved `.invalid` TLD, so the
+journey can assert on the browser-followable link the mail carries without
+anything ever resolving it. The captured mail is deleted at teardown with the
+directory it lives in.
+
 `frontend/__tests__/e2eLaneGuard.test.ts` enforces both of those boundaries
 mechanically. It runs in the ordinary frontend suite and fails if a journey ever
 mocks the API module or `fetch`, if the launcher stubs anything besides the

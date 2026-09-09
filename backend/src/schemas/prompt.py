@@ -36,6 +36,14 @@ class PromptDetail(BaseModel):
     # response answered. ``None`` on rows written before prompts became
     # individually addressable.
     prompt_ordinal: int | None = None
+    # Whether the reader set this prompt aside. The weekly prompt is drawn from
+    # the same curriculum as the stage band, so a prompt declined there is
+    # declined here too -- served rather than left to the client to work out,
+    # which would mean every client keeping its own copy of the week-to-stage
+    # schedule. ``False`` for a row whose prompt cannot be located in the
+    # curriculum at all, since a prompt nobody can name cannot have been set
+    # aside.
+    dismissed: bool = False
 
 
 class StagePromptDetail(BaseModel):
@@ -52,6 +60,10 @@ class StagePromptDetail(BaseModel):
     title: str
     body: str
     cadence: str | None = None
+    # Whether the reader has set this prompt aside -- a preference about what
+    # the band offers, never a completion. It says nothing about whether the
+    # prompt was answered, and it does not gate writing to it.
+    dismissed: bool = False
 
 
 class StagePromptsResponse(BaseModel):

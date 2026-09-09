@@ -117,6 +117,12 @@ HTTPS_BACKEND_VALUES = ["resend", "RESEND", " Resend "]
 # implements. It must be named back to them rather than absorbed as "not smtp".
 UNRECOGNIZED_BACKEND = "sendgrid"
 
+# Spellings of the end-to-end lane's own backend. It delivers nothing and writes
+# the plaintext reset token to a file, so it belongs with console on the refused
+# side of this check -- and it has to be refused through the same normalization,
+# or a stored " Capture " would boot and then write credentials to disk.
+CAPTURE_BACKEND_VALUES = ["capture", "CAPTURE", " Capture "]
+
 # The origin the browser-followable reset links are built from. It is
 # deployment configuration for the same reason the backend switch is: nothing in
 # a running app can derive where its own web front end lives, and the one thing
@@ -785,3 +791,63 @@ def test_the_configured_origin_is_read_without_its_trailing_slashes(
     monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, f"{WEB_BASE_URL}//")
 
     assert app_links.configured_web_base_url() == WEB_BASE_URL
+
+
+@pytest.mark.parametrize("backend", CAPTURE_BACKEND_VALUES)
+def test_production_with_the_capture_backend_refuses_to_boot(
+    backend: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The lane's own backend is refused here like any other that does not deliver.
+
+    ``capture`` writes every rendered message -- reset link and plaintext token
+    included -- to a file, so in production it is the console outage with a
+    second failure stacked on it: nothing is delivered, and a live credential
+    lands on disk. It is not in the map of production senders, and this asserts
+    that a production deploy which names it stops at the boot rather than at the
+    first locked-out user. The casing variants matter for the reason they do on
+    console: the factory strips and lowercases before it compares.
+    """
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, backend)
+    monkeypatch.setenv(email.EMAIL_CAPTURE_FILE_ENV_VAR, str(tmp_path / "outbound.jsonl"))
+
+    with pytest.raises(RuntimeError, match=email.EMAIL_BACKEND_ENV_VAR) as excinfo:
+        validate_email_config()
+
+    assert email.BACKEND_CAPTURE in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("production_journal_key")
+async def test_boot_refuses_under_a_production_configuration_with_the_capture_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Driven through the real ``lifespan``: the lane's seam cannot exist on a deploy.
+
+    This is the acceptance the end-to-end journey owes. Reading a rendered reset
+    email is only affordable because the adapter that exposes it is unreachable
+    on the path a deployment actually takes, and "unreachable" is a claim about
+    startup, not about a function called in isolation. The capture file is
+    asserted absent afterwards: a refusal that had already opened the file would
+    have leaked exactly what it refused.
+
+    The Gumroad pair is left unset on purpose -- that state only warns, so the
+    refusal here can only have come from email.
+    """
+    capture_file = tmp_path / "outbound.jsonl"
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    monkeypatch.setenv(email.EMAIL_BACKEND_ENV_VAR, email.BACKEND_CAPTURE)
+    monkeypatch.setenv(email.EMAIL_CAPTURE_FILE_ENV_VAR, str(capture_file))
+    monkeypatch.setenv(WEB_BASE_URL_ENV_VAR, WEB_BASE_URL)
+    monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
+    monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+
+    with pytest.raises(RuntimeError, match=email.EMAIL_BACKEND_ENV_VAR):
+        async with _isolated_factory_patch(), lifespan(app):
+            pytest.fail("startup completed with reset mail captured to a file")
+
+    assert not capture_file.exists(), "the refused boot still created a capture file"
