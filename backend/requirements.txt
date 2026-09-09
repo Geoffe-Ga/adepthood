@@ -42,9 +42,13 @@ httpx==0.28.1
 # default; these activate via BOTMASON_PROVIDER + LLM_API_KEY or a BYOK key.
 #
 # openai 3.x moved its HTTP layer to httpx2, a separate distribution rather
-# than an httpx upgrade, so the lock carries both stacks: httpx for anthropic,
-# Starlette and the test suite, httpx2 (plus httpcore2 and truststore) for
-# openai alone. The two are unrelated at the type level — httpx2.Request is
+# than an httpx upgrade, so the lock carries both stacks. Which SDK sits on
+# which is a fact about the pins below, not a durable division: at these pins
+# httpx serves anthropic, Starlette and the test suite, while httpx2 (plus
+# httpcore2 and truststore) serves openai alone. An anthropic major that
+# follows openai onto httpx2 redraws that line, and
+# backend/tests/services/test_botmason_transport_stacks.py goes red until it is
+# redrawn here too. The two are unrelated at the type level — httpx2.Request is
 # not httpx.Request — which is why the mypy hook pins both. httpx2 also trusts
 # the OS certificate store rather than certifi.
 openai==3.7.0
