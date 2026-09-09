@@ -11,7 +11,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import event
+from sqlalchemy import Select, event, func
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ClauseElement
@@ -20,6 +20,7 @@ from sqlmodel import col, select
 from conftest import test_engine
 from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import today_in_tz
+from models.completion_suggestion import CompletionSuggestion, CompletionTargetType
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -1492,3 +1493,142 @@ async def test_list_orders_within_each_carryover_partition(async_client: AsyncCl
     carryover = [h["name"] for h in habits if h["is_carryover"] is True]
     assert program == ["Program A", "Program B"]
     assert carryover == ["Carryover X", "Carryover Y"]
+
+
+# ── Delete cascades over a habit's whole history ────────────────────────
+
+
+async def _seed_return_release(
+    db_session: AsyncSession, *, user_id: int, habit_id: int
+) -> MettaReturnHabitRelease:
+    """Release ``habit_id`` inside a fresh Return arc; return the release row."""
+    now = datetime.now(UTC)
+    arc = MettaReturnArc(user_id=user_id, started_at=now)
+    db_session.add(arc)
+    await db_session.flush()
+    assert arc.id is not None
+    release = MettaReturnHabitRelease(
+        user_id=user_id,
+        arc_id=arc.id,
+        habit_id=habit_id,
+        released_at=now,
+    )
+    db_session.add(release)
+    await db_session.commit()
+    return release
+
+
+async def _seed_habit_suggestion(
+    db_session: AsyncSession, *, entry_id: int, user_id: int, goal_id: int
+) -> CompletionSuggestion:
+    """Seed a pending habit-target completion suggestion against ``goal_id``."""
+    suggestion = CompletionSuggestion(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        target_type=CompletionTargetType.HABIT,
+        goal_id=goal_id,
+        user_practice_id=None,
+        label="drank a glass of water",
+        anchor_start=0,
+        anchor_end=24,
+        anchor_text="drank a glass of water!!",
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    return suggestion
+
+
+async def _count_rows(db_session: AsyncSession, statement: Select[tuple[int]]) -> int:
+    """Run a COUNT statement, bypassing the session's identity map."""
+    return int((await db_session.execute(statement)).scalar_one())
+
+
+async def _seed_habit_with_full_history(
+    async_client: AsyncClient, db_session: AsyncSession, username: str
+) -> tuple[dict[str, str], int, list[int]]:
+    """Create a habit carrying one row in every table that references it.
+
+    Returns the caller's auth headers, the habit id, and its goal ids. The
+    habit ends up with goals, a goal completion, a completion suggestion and a
+    Return release — the shape of a long-lived habit, as opposed to the bare
+    row the original delete test covered.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, username)
+    created = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = int(created.json()["id"])
+    goal_ids = await _goal_ids_for_habit(db_session, habit_id)
+    assert goal_ids, "the create endpoint seeds default goals"
+    clear_goal_id = next(g["id"] for g in created.json()["goals"] if g["tier"] == "clear")
+
+    await _seed_completion(db_session, goal_id=clear_goal_id, user_id=user_id, days_back=0)
+    entry = await async_client.post(
+        "/journal/", json={"message": "drank a glass of water!! good day"}, headers=headers
+    )
+    assert entry.status_code == HTTPStatus.CREATED
+    await _seed_habit_suggestion(
+        db_session, entry_id=int(entry.json()["id"]), user_id=user_id, goal_id=clear_goal_id
+    )
+    await _seed_return_release(db_session, user_id=user_id, habit_id=habit_id)
+    return headers, habit_id, goal_ids
+
+
+@pytest.mark.asyncio
+async def test_delete_habit_with_history_removes_every_dependent_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit with goals, completions, suggestions and a Return release deletes.
+
+    The reported bug (#2763): the tile vanished and came back because this
+    DELETE failed server-side for any habit that had accumulated history,
+    while a brand-new habit deleted cleanly. Every dependent table is asserted
+    empty individually — "the habit row is gone" would pass while orphaned
+    completions corrupted streak history.
+    """
+    headers, habit_id, goal_ids = await _seed_habit_with_full_history(
+        async_client, db_session, "delete_history"
+    )
+
+    resp = await async_client.delete(f"/habits/{habit_id}", headers=headers)
+
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    assert (
+        await _count_rows(
+            db_session, select(func.count()).select_from(Habit).where(col(Habit.id) == habit_id)
+        )
+        == 0
+    )
+    assert (
+        await _count_rows(
+            db_session,
+            select(func.count()).select_from(Goal).where(col(Goal.habit_id) == habit_id),
+        )
+        == 0
+    )
+    assert (
+        await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(GoalCompletion)
+            .where(col(GoalCompletion.goal_id).in_(goal_ids)),
+        )
+        == 0
+    )
+    assert (
+        await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(CompletionSuggestion)
+            .where(col(CompletionSuggestion.goal_id).in_(goal_ids)),
+        )
+        == 0
+    )
+    assert (
+        await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(MettaReturnHabitRelease)
+            .where(col(MettaReturnHabitRelease.habit_id) == habit_id),
+        )
+        == 0
+    )
