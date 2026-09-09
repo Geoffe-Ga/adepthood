@@ -13,7 +13,7 @@
   },
   {
     "id": "auth.password-recovery-request-to-reset",
-    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, opens the link in the email that arrives, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. Uncovered because the seam runs through an email: the plaintext token exists nowhere but the rendered body, and this lane talks to the server over HTTP, so it cannot reach the process-local RecordingEmailSender the backend suites override the dependency with, while the console adapter deliberately redacts the token to its first eight characters before it reaches any log the lane could read. Exposing the body to the lane is a design decision rather than a spec, which is why it is filed. This is the gap the outage came through: reset mail went to a production log for one reason and carried an adepthood:// link no browser could follow for another, and the endpoint answered 202 through both while every backend suite stayed green.",
+    "description": "A user who cannot log in asks for a reset from ForgotPasswordScreen, reads the email that arrives, follows the https link a browser can actually open, sets a new password on ResetPasswordScreen, and logs in with it; the \"this wasn't me\" arm cancels the token instead. This is the journey the outage came through: reset mail went to a production log for one reason and carried nothing but an adepthood:// deep link for another, and the endpoint answered 202 through both while every backend suite stayed green. The spec reads the plaintext token out of the rendered body and out of nowhere else, anchored on the https origin APP_BASE_URL configured, so a body that offered only the deep link fails it. The lane reaches that body by booting the server with EMAIL_BACKEND=capture, an adapter that appends every rendered message verbatim to a file and refuses to be built at all when ENV names production.",
     "crosses": {
       "screen": "frontend/src/features/Auth/ForgotPasswordScreen.tsx",
       "client": ["auth"],
@@ -24,8 +24,8 @@
       ],
       "tables": ["user", "passwordresettoken"]
     },
-    "status": "uncovered",
-    "issue": 2536
+    "status": "covered",
+    "coveredBy": "frontend/e2e/password-recovery.e2e.test.ts"
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
