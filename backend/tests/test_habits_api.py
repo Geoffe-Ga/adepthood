@@ -389,6 +389,20 @@ _SUBTRACTIVE_TIERS_FOR_API: tuple[tuple[str, float], ...] = (
 )
 
 
+async def _foreign_user_id(client: AsyncClient, username: str) -> int:
+    """Register a second, real account and return its id.
+
+    The cross-tenant tests need a completion row that belongs to somebody other
+    than the caller. They used to write a made-up ``user_id`` of 999999, which
+    only worked because the test database was not enforcing foreign keys; a row
+    like that cannot exist in Postgres, so the guard was being proved against a
+    tenant who could never appear. A registered second account is both the thing
+    the filter actually has to exclude and a row the database will accept.
+    """
+    _, user_id = await _signup_with_user_id(client, username)
+    return user_id
+
+
 async def _signup_with_user_id(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
     """Variant of ``_signup`` that also returns the user id for DB-direct seeding."""
     resp = await client.post(
@@ -478,7 +492,8 @@ async def test_get_habit_completions_filtered_to_caller(
 
     # Foreign sentinel (Alice's seeded clear goal writes 2.0); 42.0 is unmistakable.
     stray_units = 42.0
-    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=stray_units)
+    mallory_id = await _foreign_user_id(async_client, "mallory_persist")
+    stray = GoalCompletion(goal_id=goal_id, user_id=mallory_id, completed_units=stray_units)
     db_session.add(stray)
     await db_session.commit()
 
@@ -759,7 +774,8 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     habit_id = create_resp.json()["id"]
     goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
 
-    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=42.0)
+    mallory_id = await _foreign_user_id(async_client, "tenantguard_other")
+    stray = GoalCompletion(goal_id=goal_id, user_id=mallory_id, completed_units=42.0)
     db_session.add(stray)
     await db_session.commit()
     stray_id = stray.id
@@ -775,7 +791,7 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     persisted = await db_session.get(GoalCompletion, stray_id)
     assert persisted is not None, "cross-tenant completion row was lost by a post-GET commit"
     assert persisted.goal_id == goal_id
-    assert persisted.user_id == 999_999
+    assert persisted.user_id == mallory_id
 
 
 # ── Locked-by-default / manual unlock persistence ───────────────────────
@@ -1334,12 +1350,12 @@ async def test_clear_completions_filters_by_user_id_defense_in_depth(
     habit_row = await db_session.get(Habit, habit_id)
     assert habit_row is not None
 
-    owned = await _seed_completion(
-        db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=0
-    )
+    owner_id = habit_row.user_id  # read before ``expire_all`` below detaches it
+    owned = await _seed_completion(db_session, goal_id=goal_id, user_id=owner_id, days_back=0)
+    mallory_id = await _foreign_user_id(async_client, "clear_defense_other")
     stray = GoalCompletion(
         goal_id=goal_id,
-        user_id=999_999,
+        user_id=mallory_id,
         completed_units=1.0,
         local_day=today_in_tz("UTC") - timedelta(days=1),
     )
@@ -1355,7 +1371,8 @@ async def test_clear_completions_filters_by_user_id_defense_in_depth(
     assert await db_session.get(GoalCompletion, owned_id) is None
     survivor = await db_session.get(GoalCompletion, stray_id)
     assert survivor is not None
-    assert survivor.user_id == 999_999
+    assert survivor.user_id == mallory_id
+    assert survivor.user_id != owner_id
 
 
 @pytest.mark.asyncio

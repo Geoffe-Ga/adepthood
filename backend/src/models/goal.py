@@ -99,4 +99,19 @@ class Goal(SQLModel, table=True):
     goal_group: Optional["GoalGroup"] = Relationship(back_populates="goals")
     is_additive: bool = True
     habit: "Habit" = Relationship(back_populates="goals")
-    completions: list["GoalCompletion"] = Relationship(back_populates="goal")
+    # Without a delete cascade here, SQLAlchemy's default for a one-to-many is
+    # to *de-associate* the children when their parent goes: deleting a goal
+    # emitted ``UPDATE goalcompletion SET goal_id=NULL``.  ``goal_id`` is NOT
+    # NULL, so that update aborted the transaction and DELETE /habits/{id}
+    # returned 500 -- but only for a habit that had ever been checked in, since
+    # a goal with no completions has nothing to nullify (#2763).  The FK's own
+    # ON DELETE CASCADE never got a chance; the ORM's UPDATE ran first.
+    # ``passive_deletes`` stops the ORM touching these rows at all and lets the
+    # constraint do what it was always declared to do.
+    completions: list["GoalCompletion"] = Relationship(
+        back_populates="goal",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
+    )
