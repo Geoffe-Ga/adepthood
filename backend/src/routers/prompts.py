@@ -334,9 +334,9 @@ async def _reachable_stage_prompt(
     precedes the ordinal check, so the dismissal routes never become a laxer
     oracle than :func:`get_stage_prompts` already is: a locked stage answers
     "locked" whatever ordinal is asked for, rather than leaking how many prompts
-    it carries. An ordinal the stage does carry no place for is a 404 --
-    the same shape :func:`submit_prompt_response` gives one -- rather than a
-    silent wrap-around onto a different prompt.
+    it carries. An ordinal the stage has no place for is a 404 -- the same
+    shape :func:`submit_prompt_response` gives one -- rather than a silent
+    wrap-around onto a different prompt.
     """
     stage = stage_prompts(stage_number)
     if stage is None:

@@ -807,5 +807,24 @@
     },
     "status": "uncovered",
     "issue": 2734
+  },
+  {
+    "id": "journal.set-a-stage-prompt-aside-and-bring-it-back",
+    "description": "A writer on the Journal shelf sets a stage prompt aside, finds it gone from the band and still gone after a cold start on a new session, brings it back, and is never told they skipped or failed anything. The invariant this crosses the wire for is the one a mocked test cannot see: a dismissal is a preference and never a completion, so the spec sets a prompt aside and then still writes a response to another prompt in the same week, proving the set-aside wrote no PromptResponse, marked nothing answered, did not move the reader's week and did not close the week to the prompts still standing. It also pins that the weekly prompt drawn from the same curriculum carries the same answer, that a repeated set-aside collapses onto the unique index rather than adding a second row, that undoing one that was never made is success, that an ordinal the stage does not carry and a stage the reader has not reached are refused exactly as the stage read refuses them, and -- the half a mis-scoped WHERE would make indistinguishable -- that one account's un-set-aside never removes another's, the prompt being named by curriculum position which is identical for everyone.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "prompts", "setTokenGetter"],
+      "routes": [
+        "GET /prompts/stage/{stage_number}",
+        "POST /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "DELETE /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "GET /prompts/current",
+        "GET /prompts/history",
+        "POST /prompts/{week_number}/respond"
+      ],
+      "tables": ["promptdismissal", "promptresponse"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/prompt-set-aside.e2e.test.ts"
   }
 ]
