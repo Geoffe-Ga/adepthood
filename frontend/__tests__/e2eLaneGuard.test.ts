@@ -69,6 +69,8 @@ const EXPECTED_JOURNEYS = [
   'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
   'prompt-history.e2e.test.ts',
+  'resonance.e2e.test.ts',
+  'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
   'vault-connection.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
