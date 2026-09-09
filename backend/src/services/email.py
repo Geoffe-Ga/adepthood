@@ -1,7 +1,7 @@
 """Email-sending port + adapters used by the password-recovery flow.
 
 This module defines the smallest possible port -- a single ``send``
-coroutine -- and two adapters:
+coroutine -- and the adapters behind it:
 
 * :class:`ConsoleEmailSender` (default, used in dev and tests) writes
   the rendered email to the application logger so a developer can copy
@@ -25,6 +25,16 @@ coroutine -- and two adapters:
   correctly configured relay and a delivered email look identical from
   outside.  443 is a port the platform routes.
 
+* :class:`CaptureEmailSender` (gated by ``EMAIL_BACKEND=capture``, and
+  refused outright when ``ENV=production``) appends every rendered
+  message verbatim to the file ``EMAIL_CAPTURE_FILE`` names, and
+  delivers nothing.  It exists for the frontend end-to-end lane, which
+  drives a real server over a real socket and so cannot reach the
+  in-process recording fake below, while the plaintext reset token
+  exists nowhere but the rendered body.  It is the only adapter that
+  writes a live credential where something other than the recipient can
+  read it, which is why it is gated in the adapter and again at boot.
+
 The :func:`get_email_sender` factory is the FastAPI dependency.  Tests
 substitute :class:`RecordingEmailSender` so they can assert on every
 outbound message without snooping the logger.
@@ -33,6 +43,7 @@ outbound message without snooping the logger.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import smtplib
@@ -40,6 +51,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -61,6 +73,28 @@ EMAIL_BACKEND_ENV_VAR = "EMAIL_BACKEND"
 BACKEND_CONSOLE = "console"
 BACKEND_SMTP = "smtp"
 BACKEND_RESEND = "resend"
+BACKEND_CAPTURE = "capture"
+
+# Where :class:`CaptureEmailSender` appends the messages it is handed.  Public
+# for the same reason the backend switch is: the refusal that names the backend
+# has to name the file it needs, and a refusal that spells the variable
+# differently from the string this module reads sends the reader to set
+# something nothing consults.
+EMAIL_CAPTURE_FILE_ENV_VAR = "EMAIL_CAPTURE_FILE"
+
+# The deployment-environment selector, and the one value of it that forbids the
+# capture backend.  Named here rather than compared inline because the refusal
+# below quotes the variable back, and because "production" appearing twice in
+# one comparison is the shape that eventually disagrees with itself.
+DEPLOYMENT_ENV_VAR = "ENV"
+DEVELOPMENT_ENV = "development"
+PRODUCTION_ENV = "production"
+
+# Permission bits the capture file is created with.  It holds live reset tokens
+# for as long as they live, so owner-only is the only defensible mode -- and it
+# has to be set at creation rather than afterwards, or the window between the
+# two is a world-readable credential.
+_CAPTURE_FILE_MODE = 0o600
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +215,132 @@ class RecordingEmailSender:
         # body, and the keyword exists only for Protocol conformance.
         del redact_for_log
         self.sent.append(message)
+
+
+def _refuse_capture_backend_in_production() -> None:
+    """Raise if this process is a production boot, so no capture sender can exist there.
+
+    The capture adapter writes a live bearer credential to a file and delivers
+    nothing.  Both halves are disqualifying in production, and either one alone
+    reproduces the outage this whole flow was rebuilt around: mail that is not
+    delivered while ``POST /auth/password-reset/request`` answers 202 regardless.
+
+    ``main.validate_email_config`` already refuses a production boot on any
+    backend that does not deliver, and it is the refusal an operator will
+    actually read.  This one exists because that refusal works by *not finding*
+    the backend name in a map of production senders, and adding a name to a map
+    is a single plausible edit.  After that edit this raise is the only thing
+    between a reset token and a production disk, so it is written where the
+    adapter is rather than where the boot check is.
+
+    Read per call rather than cached, matching every other environment read in
+    this module: a test must be able to move the variable without a process
+    restart, and the sender is built at most once per process anyway.  The value
+    is stripped and lowercased before comparison, which is stricter than the
+    plain ``os.getenv("ENV", ...) != "production"`` the startup checks use -- a
+    platform that stored ``Production`` is a production deployment, and this is
+    the one comparison where erring towards refusal costs nothing.
+
+    Raises:
+        RuntimeError: ``ENV`` names production.
+    """
+    if os.getenv(DEPLOYMENT_ENV_VAR, DEVELOPMENT_ENV).strip().lower() != PRODUCTION_ENV:
+        return
+    selector = f"{EMAIL_BACKEND_ENV_VAR}={BACKEND_CAPTURE}"
+    msg = (
+        f"{selector} writes every rendered email -- reset links and their plaintext "
+        f"tokens included -- to the file {EMAIL_CAPTURE_FILE_ENV_VAR} names, and delivers "
+        f"nothing.  It exists for the end-to-end lane, which drives password recovery "
+        f"over HTTP and has to read a token that lives nowhere but the rendered body.  In "
+        f"production it would be a live credential on disk in place of an email nobody "
+        f"receives, so {DEPLOYMENT_ENV_VAR}={PRODUCTION_ENV} refuses it.  Set "
+        f"{EMAIL_BACKEND_ENV_VAR}={BACKEND_RESEND} or {EMAIL_BACKEND_ENV_VAR}="
+        f"{BACKEND_SMTP} instead.  backend/.env.example and DEPLOYMENT.md document them."
+    )
+    raise RuntimeError(msg)
+
+
+@dataclass(slots=True)
+class CaptureEmailSender:
+    """Lane adapter that appends every rendered message to a file, verbatim.
+
+    One caller: the frontend end-to-end lane.  It drives a real server over a
+    real socket, so it cannot reach the process-local
+    :class:`RecordingEmailSender` the backend suites override the dependency
+    with, and the plaintext reset token exists nowhere but the rendered body.
+    Without a body the lane can read, password recovery is a journey no spec can
+    press end to end -- which is how a reset email that carried a link no
+    browser could follow reached a real locked-out user.
+
+    Deliberately does *not* honour ``redact_for_log``.  The console adapter
+    masks the token to its first eight characters so a screen-share cannot leak
+    a working credential; a capture file that did the same would hand the lane a
+    token every confirm rejects, and a lane asserting on a token it cannot use
+    is a green lane proving nothing.  That difference is exactly why this
+    adapter is barred from production rather than merely discouraged there.
+
+    One JSON object per line, appended: a journey asserts on the second message
+    as well as the first, and a whole-file rewrite would lose the notification
+    that follows a confirm.
+    """
+
+    path: Path
+
+    @classmethod
+    def from_env(cls) -> CaptureEmailSender:
+        """Build an instance from :data:`EMAIL_CAPTURE_FILE_ENV_VAR`, refusing production.
+
+        The environment gate runs before the file lookup so a production
+        deployment that set both variables reads the refusal it needs rather
+        than a complaint about a path.
+        """
+        _refuse_capture_backend_in_production()
+        return cls(path=Path(_required_env(EMAIL_CAPTURE_FILE_ENV_VAR, BACKEND_CAPTURE)))
+
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,
+    ) -> None:
+        """Append ``message`` to the capture file as one JSON line, unredacted."""
+        # Discard the redaction hint -- the lane needs the token the recipient
+        # would have received, and the keyword exists only for Protocol
+        # conformance.
+        del redact_for_log
+        record = json.dumps(
+            {
+                "to": message.to,
+                "subject": message.subject,
+                "body": message.body,
+                "html": message.html,
+            }
+        )
+        # Off the event loop for the reason the SMTP adapter is: the reset
+        # handler awaits this inline, and a blocking write freezes every other
+        # in-flight request for its duration.
+        await asyncio.to_thread(self._append, f"{record}\n")
+
+    def _append(self, line: str) -> None:
+        """Synchronous body of :meth:`send` -- called via ``asyncio.to_thread``.
+
+        The descriptor is opened with the mode rather than chmod-ed afterwards:
+        between a default-mode create and a later chmod the file is a
+        world-readable reset token.  ``O_CREAT`` carries that mode only when the
+        open actually creates the file, so the descriptor is narrowed again
+        before anything is written -- a file left by an earlier run, or planted
+        by another process, would otherwise keep its own mode while live tokens
+        were appended to it.  Narrowing the descriptor rather than the path
+        leaves no window a symlink swap could redirect.
+        """
+        descriptor = os.open(
+            self.path,
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+            _CAPTURE_FILE_MODE,
+        )
+        os.fchmod(descriptor, _CAPTURE_FILE_MODE)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            handle.write(line)
 
 
 def _required_env(name: str, backend: str) -> str:
@@ -566,14 +726,18 @@ def _build_default_sender() -> EmailSender:
     ``console`` is the safe default for dev / test; ``smtp`` and ``resend`` flip
     to a delivering adapter and force every variable that adapter needs to be
     present (raising on first use is much more debuggable than silently dropping
-    the email).  Every other value -- including a typo -- lands on console, which
-    is why production refuses to boot on anything but a delivering backend.
+    the email).  ``capture`` is the end-to-end lane's, and refuses to build at
+    all in production.  Every other value -- including a typo -- lands on
+    console, which is why production refuses to boot on anything but a
+    delivering backend.
     """
     backend = configured_backend()
     if backend == BACKEND_SMTP:
         return SmtpEmailSender.from_env()
     if backend == BACKEND_RESEND:
         return ResendEmailSender.from_env()
+    if backend == BACKEND_CAPTURE:
+        return CaptureEmailSender.from_env()
     return ConsoleEmailSender()
 
 

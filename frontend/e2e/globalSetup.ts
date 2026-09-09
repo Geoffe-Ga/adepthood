@@ -29,6 +29,32 @@ const SECRET_KEY_BYTES = 32;
 const DATABASE_SUFFIX_BYTES = 6;
 const CREDENTIAL_BYTES = 32;
 
+/**
+ * The email backend the lane boots the server with, and the file it writes to.
+ *
+ * The password-recovery journey has to read a plaintext reset token, and that
+ * token exists nowhere but the rendered body of the email: the row stores a
+ * bcrypt digest, the response is a fixed anti-enumeration sentence, and the
+ * console adapter masks the token to its first eight characters before it
+ * reaches any log. `EMAIL_BACKEND=capture` is the backend that writes the body
+ * out verbatim, and `services.email` refuses to build it when `ENV` names
+ * production -- it is a live credential on disk, so it is barred from the only
+ * environment where that matters rather than merely discouraged there.
+ */
+const EMAIL_BACKEND = 'capture';
+const MAIL_FILE_NAME = 'outbound.jsonl';
+
+/**
+ * The origin the server builds the browser-followable half of its links from.
+ *
+ * `.invalid` is reserved by RFC 2606 and resolves nowhere, which is what makes
+ * it safe here: the journey asserts on the string the email carries and never
+ * opens it. It must be `https://` because that is the assertion -- a reset mail
+ * offering only the `adepthood://` deep link is delivery no browser can follow,
+ * and the web build is the only client that ships.
+ */
+const WEB_BASE_URL = 'https://reset.adepthood.invalid';
+
 const POSTGRES_HELP =
   `${POSTGRES_URL_ENV} is unset, so there is no database to build the schema in. ` +
   'Start one with: docker run -d --name adepthood-e2e-pg -e POSTGRES_USER=aptitude ' +
@@ -69,6 +95,13 @@ interface Launch {
   port: number;
 }
 
+/** Where the server's captured outbound mail lands, and the origin its links use. */
+interface MailFixture {
+  mailDir: string;
+  captureFile: string;
+  webBaseUrl: string;
+}
+
 interface CreekFixture {
   pid: number;
   port: number;
@@ -76,6 +109,12 @@ interface CreekFixture {
   requesterFile: string;
   handoffFile: string;
   callbackFile: string;
+}
+
+/** Create the per-run directory the capture backend appends its mail to. */
+function createMailFixture(): MailFixture {
+  const mailDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-mail-'));
+  return { mailDir, captureFile: join(mailDir, MAIL_FILE_NAME), webBaseUrl: WEB_BASE_URL };
 }
 
 function testCredential(): string {
@@ -129,22 +168,48 @@ function launchFakeCreek(): Promise<CreekFixture> {
   });
 }
 
+/**
+ * Everything the server reads from its environment, and nothing it does not.
+ *
+ * Split out from `launchServer` because the two are separate questions: what
+ * this run configures, and how the launch is awaited. The settings are declared
+ * last-wins over the ambient environment on purpose -- a developer with
+ * `EMAIL_BACKEND=smtp` exported in their shell must not have the lane's mail
+ * leave the machine.
+ */
+function serverEnvironment(
+  databaseUrl: string,
+  adminUrl: string,
+  creek: CreekFixture,
+  mail: MailFixture,
+): typeof process.env {
+  return {
+    ...process.env,
+    PYTHONPATH: 'src',
+    DATABASE_URL: databaseUrl,
+    E2E_ADMIN_DATABASE_URL: adminUrl,
+    SECRET_KEY: randomBytes(SECRET_KEY_BYTES).toString('base64url'),
+    CREEK_PROVISIONING_URL: `http://127.0.0.1:${creek.port}`,
+    CREEK_PROVISIONING_AUTH_FILE: creek.requesterFile,
+    CREEK_PROVISIONING_HANDOFF_AUTH_FILE: creek.handoffFile,
+    EMAIL_BACKEND,
+    EMAIL_CAPTURE_FILE: mail.captureFile,
+    APP_BASE_URL: mail.webBaseUrl,
+  };
+}
+
 /** Spawn the server and resolve once it announces the port it bound. */
-function launchServer(databaseUrl: string, adminUrl: string, creek: CreekFixture): Promise<Launch> {
+function launchServer(
+  databaseUrl: string,
+  adminUrl: string,
+  creek: CreekFixture,
+  mail: MailFixture,
+): Promise<Launch> {
   const child = spawn(pythonExecutable(), ['-m', 'tests.e2e.server'], {
     cwd: BACKEND_DIR,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      PYTHONPATH: 'src',
-      DATABASE_URL: databaseUrl,
-      E2E_ADMIN_DATABASE_URL: adminUrl,
-      SECRET_KEY: randomBytes(SECRET_KEY_BYTES).toString('base64url'),
-      CREEK_PROVISIONING_URL: `http://127.0.0.1:${creek.port}`,
-      CREEK_PROVISIONING_AUTH_FILE: creek.requesterFile,
-      CREEK_PROVISIONING_HANDOFF_AUTH_FILE: creek.handoffFile,
-    },
+    env: serverEnvironment(databaseUrl, adminUrl, creek, mail),
   });
 
   return new Promise<Launch>((resolvePort, reject) => {
@@ -189,6 +254,7 @@ export default async function globalSetup(): Promise<void> {
     `adepthood_e2e_${randomBytes(DATABASE_SUFFIX_BYTES).toString('hex')}`,
   );
 
+  const mail = createMailFixture();
   const creek = await launchFakeCreek();
   writeLaneState({
     pid: 0,
@@ -197,10 +263,13 @@ export default async function globalSetup(): Promise<void> {
     databaseUrl,
     adminUrl,
     credentialDir: creek.credentialDir,
+    mailDir: mail.mailDir,
+    emailCaptureFile: mail.captureFile,
+    webBaseUrl: mail.webBaseUrl,
   });
 
   try {
-    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek);
+    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek, mail);
     const baseUrl = `http://127.0.0.1:${port}`;
     writeFileSync(creek.callbackFile, baseUrl, { encoding: 'utf8', mode: 0o600 });
     const state: LaneState = {
@@ -210,6 +279,9 @@ export default async function globalSetup(): Promise<void> {
       databaseUrl,
       adminUrl,
       credentialDir: creek.credentialDir,
+      mailDir: mail.mailDir,
+      emailCaptureFile: mail.captureFile,
+      webBaseUrl: mail.webBaseUrl,
     };
     writeLaneState(state);
     await assertHealthy(baseUrl);

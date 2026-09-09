@@ -3,7 +3,10 @@
  * primitive for Journal lists. Guards a double in-flight tap per id, drops the
  * row up front, and re-inserts it (via the caller's ``reinsert``) if the remote
  * delete rejects. The optional ``beforeStart`` hook lets a caller clear a hint
- * before mutating; it runs exactly once, before the optimistic removal.
+ * before mutating; it runs exactly once, before the optimistic removal. The
+ * optional ``onSuccess`` hook is its mirror at the other end, for a caller that
+ * has to retire something once the row is really gone -- a complaint about a
+ * removal that has since succeeded points at nothing.
  */
 import type { Dispatch, SetStateAction } from 'react';
 
@@ -17,6 +20,7 @@ export interface OptimisticRemoveDeps<T extends { id: number }> {
   reinsert: (_prev: T[], _item: T) => T[];
   onError: (_message: string) => void;
   beforeStart?: () => void;
+  onSuccess?: () => void;
 }
 
 export async function optimisticRemove<T extends { id: number }>(
@@ -30,6 +34,7 @@ export async function optimisticRemove<T extends { id: number }>(
   deps.setItems((prev) => prev.filter((row) => row.id !== id)); // optimistic remove
   try {
     await deps.removeRemote(id);
+    deps.onSuccess?.();
   } catch (err) {
     if (removed) deps.setItems((prev) => deps.reinsert(prev, removed)); // revert
     deps.onError(formatApiError(err));

@@ -432,10 +432,16 @@ def credit_exhausted_error(exc: LLMCreditExhaustedError, *, byok: bool) -> HTTPE
 
 
 # Genuine provider/transport failures normalized to LLMProviderError. The two
-# SDK base classes give an SDK-agnostic catch and subsume each SDK's own wrapped
-# transport failures; both raw transport stacks are listed too, because a client
-# constructed with an injected ``http_client`` can raise one before the SDK gets
-# a chance to wrap it, and ``httpx2`` shares no base class with ``httpx``.
+# SDK base classes carry the load in practice: each SDK wraps a transport
+# failure in its own ``APIConnectionError`` before this layer ever sees it. The
+# two raw transport stacks are defence-in-depth for anything that escapes that
+# wrapping, and both are needed because ``httpx2`` is a separate distribution
+# sharing no base class with ``httpx`` -- and neither derives from ``OSError``,
+# whose own entry covers ConnectionError/TimeoutError and mirrors what
+# ``_is_retryable`` treats as transient. Membership is pinned by
+# tests/services/test_botmason_transport_stacks.py, which drives each SDK's own
+# transport until it raises its own typed error; drop an entry there and the
+# suite goes red instead of this catch narrowing silently.
 _PROVIDER_ERROR_TYPES: tuple[type[Exception], ...] = (
     anthropic.AnthropicError,
     httpx.HTTPError,
@@ -1104,10 +1110,10 @@ async def generate_response(
 def _stub_response(user_message: str) -> LLMResponse:
     """Return a deterministic response for development and testing.
 
-    A prompt that asks for a structured reply gets one — see
-    :func:`services.stub_completions.canned_completion`, which answers the
-    resonance ask in the JSON shape it demands so that path is walkable without
-    a provider. Everything else gets the canned sentence.
+    A supported prompt that asks for a structured reply gets one — see
+    :func:`services.stub_completions.canned_completion`, which answers resonance
+    and completion detection in the JSON shapes they demand so those paths are
+    walkable without a provider. Everything else gets the canned sentence.
 
     Token counts are zero because no real model is invoked — this keeps the
     usage log's cost total honest when stub traffic is mixed with production

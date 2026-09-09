@@ -44,6 +44,9 @@ const mockPromotionsCreate = jest.fn() as jest.MockedFunction<
   (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
 >;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
@@ -101,6 +104,21 @@ const mockStubSourceItem: ReflectionSourceItem = {
 // Fixed span the stub asks to promote from `mockStubSourceItem`.
 const mockStubPromoteSpan = { anchor_start: 2, anchor_end: 19 };
 
+// A second pending quote on the same source, so a test can start one fold-in
+// and then another before the first has settled.
+const mockSecondQuote: PromotedQuoteSummary = {
+  id: 91,
+  anchor_start: 23,
+  anchor_end: 36,
+  anchor_text: 'to the river',
+  pending: true,
+};
+
+const mockTwoQuoteSource: ReflectionSourceItem = {
+  ...mockStubSourceItem,
+  promoted_quotes: [mockStubQuote, mockSecondQuote],
+};
+
 jest.mock('../ReflectionSourcesPanel', () => {
   const { Text, TouchableOpacity } = require('react-native');
   const Stub = ({
@@ -130,6 +148,19 @@ jest.mock('../ReflectionSourcesPanel', () => {
         >
           <Text>Insert stub quote</Text>
         </TouchableOpacity>
+        {items.flatMap((source) =>
+          source.promoted_quotes
+            .filter((quote) => quote.pending)
+            .map((quote) => (
+              <TouchableOpacity
+                key={quote.id}
+                testID={`stub-insert-quote-${quote.id}`}
+                onPress={() => onInsertQuote(quote, source)}
+              >
+                <Text>{`Insert ${quote.id}`}</Text>
+              </TouchableOpacity>
+            )),
+        )}
         {onPromoteSpan == null ? null : (
           <TouchableOpacity
             testID="stub-promote-span"
@@ -227,6 +258,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'A reflection on the week.',
+          tag: 'hierarchical_reflection',
           reflection_level: 'stage',
           reflection_scope_key: 'c1:s1',
         }),
@@ -243,6 +275,15 @@ describe('JournalEntryScreen -- reflection mode', () => {
     await act(async () => {
       await Promise.resolve();
     });
+    expect(mockReflectionsSources.mock.calls[0]?.slice(0, 2)).toEqual(['stage', 'c1:s1']);
+  });
+
+  it('restores reflection mode from a saved entry opened from the journal shelf', async () => {
+    mockGet.mockResolvedValue(entry({ reflection_level: 'stage', reflection_scope_key: 'c1:s1' }));
+
+    const screen = renderScreen({ entryId: 42 });
+
+    expect(await screen.findByTestId('reflection-sources-toggle')).toBeTruthy();
     expect(mockReflectionsSources.mock.calls[0]?.slice(0, 2)).toEqual(['stage', 'c1:s1']);
   });
 
@@ -270,6 +311,135 @@ describe('JournalEntryScreen -- reflection mode', () => {
       });
 
       expect(mockSetIncluded).toHaveBeenCalledWith(90, 42);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // A fold-in is ONE writer-facing act made of two writes: the entry body, then
+  // the mark that retires the quote from the pending set. The hint used to settle
+  // to "Saved" the moment the first landed, so the page announced a finished save
+  // while the second was still on the wire -- and a reader (or a test) that acted
+  // on that word saw the quote still pending.
+  it('holds the hint at Saving until the folded quote has been marked included', async () => {
+    let releaseSetIncluded: () => void = () => undefined;
+    mockSetIncluded.mockReturnValue(
+      new Promise<unknown>((resolve) => {
+        releaseSetIncluded = () => resolve(mockStubQuote);
+      }),
+    );
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      const insertButton = await findByTestId('stub-insert-quote');
+
+      await act(async () => {
+        fireEvent.press(insertButton);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      // The entry itself is written and the mark is in flight: not saved yet.
+      expect(mockSetIncluded).toHaveBeenCalledWith(90, 42);
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saving…');
+
+      await act(async () => {
+        releaseSetIncluded();
+        await jest.advanceTimersByTimeAsync(0);
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // Nothing in the panel stops a second tap while the first fold-in is still in
+  // flight: the "already folded in" guard is per ROW, so quote B is tappable
+  // while quote A's mark is on the wire. A flag that only records THAT an act is
+  // running (rather than how many are) is lowered by whichever finishes first,
+  // and the page says "Saved" with B still pending -- the very defect this fix
+  // exists to remove, moved behind a second tap.
+  it('keeps the hint at Saving until every overlapping fold-in has settled', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    const release = new Map<number, () => void>();
+    mockSetIncluded.mockImplementation(
+      (id: number) =>
+        new Promise<unknown>((resolve) => {
+          release.set(id, () => resolve(mockStubQuote));
+        }),
+    );
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+
+      // Start A, let its draft save land, then start B on top of it.
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-quote-90'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-quote-91'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(mockSetIncluded).toHaveBeenCalledWith(90, 42);
+      expect(mockSetIncluded).toHaveBeenCalledWith(91, 42);
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saving…');
+
+      // A settles alone. B's quote is still pending, so nothing is saved yet.
+      await act(async () => {
+        release.get(90)?.();
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saving…');
+
+      await act(async () => {
+        release.get(91)?.();
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The complement: a mark that never lands must not strand the hint on
+  // "Saving…" forever -- it settles, and the warm hint says what did not happen.
+  it('settles the hint and warns when the inclusion mark fails', async () => {
+    mockSetIncluded.mockRejectedValue({ status: 500, detail: 'boom' });
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-quote'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(getByTestId('quote-inclusion-hint')).toBeTruthy();
     } finally {
       jest.useRealTimers();
     }

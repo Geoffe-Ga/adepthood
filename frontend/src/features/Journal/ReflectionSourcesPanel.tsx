@@ -492,6 +492,11 @@ function ReflectionSourcesPanel(props: ReflectionSourcesPanelProps): React.JSX.E
 
 const styles = StyleSheet.create({
   pane: {
+    // The editor's timer and resonance controls are intentionally absolute.
+    // Keep the open source surface in a higher stacking context so those
+    // background controls cannot absorb taps meant for quotes in the panel.
+    position: 'relative',
+    zIndex: 1,
     width: '100%',
     maxHeight: '100%',
     backgroundColor: surface.raised,

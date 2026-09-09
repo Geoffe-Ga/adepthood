@@ -1,6 +1,11 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { ApiError, IDEMPOTENCY_KEY_HEADER, completionSuggestions } from '../index';
+import {
+  ApiError,
+  ApiValidationError,
+  IDEMPOTENCY_KEY_HEADER,
+  completionSuggestions,
+} from '../index';
 import type { CompletionSuggestion } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -57,6 +62,37 @@ describe('completionSuggestions.list', () => {
     const err = await completionSuggestions.list(7, 'tok').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(404);
+  });
+});
+
+describe('completionSuggestions.detect', () => {
+  test('POSTs the independent detection URL, forwards BYOK, and parses checked state', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [suggestion()], checked: true }));
+
+    const result = await completionSuggestions.detect(7, 'tok', 'writer-key');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/suggestions/detect');
+    expect(init.method).toBe('POST');
+    expect(init.headers['X-LLM-API-Key']).toBe('writer-key');
+    expect(result).toEqual({ items: [suggestion()], checked: true });
+  });
+
+  test('rejects a response that omits whether the entry was checked', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [] }));
+
+    try {
+      await expect(completionSuggestions.detect(7, 'tok')).rejects.toBeInstanceOf(
+        ApiValidationError,
+      );
+      expect(warn).toHaveBeenCalledWith(
+        '[api] response validation failed',
+        expect.objectContaining({ path: '/journal/7/suggestions/detect' }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
