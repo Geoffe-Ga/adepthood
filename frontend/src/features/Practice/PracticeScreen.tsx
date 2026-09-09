@@ -23,6 +23,17 @@
  *   - `PracticeIdentityHeader` pins the player identity (title, tappable
  *     stage chip, effective ritual name, customize pencil) to the top region
  *     and collapses to the title alone while a session runs.
+ *   - `QuickLaunchWriting` sits under the identity header when — and only
+ *     when — the active practice is `Journaling`, and takes the writer straight
+ *     to a journal page with the practice's own length already running. It is
+ *     an affordance, not a prompt: absent for everyone else, and silent about
+ *     how often it is used. It stays tappable while the player's own session is
+ *     running, which is deliberate rather than an oversight: nothing in this
+ *     screen or in `useRitualEngine` persists a running ritual -- no storage, no
+ *     `beforeRemove` guard, no resume path -- so an in-player session is already
+ *     lost to a tab switch or a back gesture. Hiding the button here would
+ *     single out one exit from a screen every other exit abandons, and imply a
+ *     durability the engine does not have.
  *   - `LogPracticeSessionSheet`, opened from the drawer, records a sitting done
  *     away from the app. It is hosted here rather than inside the session
  *     because it needs the `user_practice_id` only `useActivePractice`
@@ -33,7 +44,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -67,6 +78,8 @@ import {
   surface,
   touchTarget,
 } from '@/design/tokens';
+import type { WritingQuickLaunch } from '@/features/Journal/quickLaunchWriting';
+import { planQuickLaunch } from '@/features/Journal/quickLaunchWriting';
 import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession, {
   type ActiveRitualSessionHandle,
@@ -77,6 +90,7 @@ import PracticeCatalogSwitcher, {
 } from '@/features/Practice/components/PracticeCatalogSwitcher';
 import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
 import PracticeIdentityHeader from '@/features/Practice/components/PracticeIdentityHeader';
+import QuickLaunchWriting from '@/features/Practice/components/QuickLaunchWriting';
 import type { RitualState } from '@/features/Practice/engine/types';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
@@ -147,6 +161,41 @@ function usePracticeTabs(refresh: ActivePracticeHook['refresh']): PracticeTabsSt
   return { tab, setTab, openCatalogTab, onCatalogActivated };
 }
 
+interface QuickLaunchState {
+  /** What a timed page would open as, or ``null`` when there is none to offer. */
+  plan: WritingQuickLaunch | null;
+  /** Opens that page. */
+  begin: () => void;
+}
+
+/**
+ * The route from a saved ``Journaling`` practice into a timed writing page.
+ *
+ * Two stages are in play and they are not the same number. The stage ON VIEW is
+ * whatever the identity header's chip is showing, and it is where the selection
+ * being launched lives. The stage OPENED is how far the writer's own calendar
+ * has actually got, and it is what decides whether a session logged there would
+ * be refused — so it is read from the programme rather than from the chip, which
+ * the writer can move without moving their programme.
+ */
+function useQuickLaunch(active: ActivePracticeHook): QuickLaunchState {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const storeCurrentStage = useStageStore(selectCurrentStage);
+  const openedStage = useDerivedCurrentStage(storeCurrentStage);
+  const { practice, activeUserPractice, effectiveConfig } = active;
+  const plan = useMemo(
+    () => planQuickLaunch({ practice, activeUserPractice, effectiveConfig, openedStage }),
+    [practice, activeUserPractice, effectiveConfig, openedStage],
+  );
+  const begin = useCallback(() => {
+    if (plan === null) return;
+    navigation.navigate('JournalEntry', {
+      writingSession: { minutes: plan.minutes, userPracticeId: plan.userPracticeId },
+    });
+  }, [plan, navigation]);
+  return { plan, begin };
+}
+
 interface PracticeScreenModel extends PracticeTabsState {
   active: ActivePracticeHook;
   userTimezone: string;
@@ -165,6 +214,7 @@ interface PracticeScreenModel extends PracticeTabsState {
   logSheetOpen: boolean;
   openLogSheet: () => void;
   closeLogSheet: () => void;
+  quickLaunch: QuickLaunchState;
 }
 
 interface LogSheetState {
@@ -199,6 +249,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   const insets = useSafeAreaInsets();
   const tabs = usePracticeTabs(active.refresh);
   const logSheet = useLogSheet();
+  const quickLaunch = useQuickLaunch(active);
   // Mirror of the engine status, lifted to screen level so the tab switcher
   // can hide while a session holds the screen (running or paused).
   const [status, setStatus] = useState<RitualStatus>('idle');
@@ -225,6 +276,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
     status,
     setStatus,
     showSwitcher: status !== 'running' && status !== 'paused',
+    quickLaunch,
   };
 }
 
@@ -256,6 +308,7 @@ const PracticeScreen = (): React.JSX.Element => {
             status={s.status}
             onStatusChange={s.setStatus}
             onBrowseCatalog={s.openCatalogTab}
+            quickLaunch={s.quickLaunch}
           />
         )}
         {/* top: -s.topInset extends the fade up over the safe-area strip the
@@ -303,6 +356,7 @@ interface PracticeBodyProps {
   status: RitualStatus;
   onStatusChange: (_next: RitualStatus) => void;
   onBrowseCatalog: () => void;
+  quickLaunch: QuickLaunchState;
 }
 
 // Selects the screen body for the current load state: a loading/error
@@ -332,6 +386,7 @@ const PracticeBody = (props: PracticeBodyProps): React.JSX.Element => {
         onCustomize={props.onCustomize}
         status={props.status}
         onStatusChange={props.onStatusChange}
+        quickLaunch={props.quickLaunch}
       />
     );
   }
@@ -443,6 +498,7 @@ interface ActiveSessionViewProps {
   onCustomize: () => void;
   status: RitualStatus;
   onStatusChange: (_next: RitualStatus) => void;
+  quickLaunch: QuickLaunchState;
 }
 
 // The player layout: the identity header sits in the top region, the session
@@ -479,6 +535,7 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
               onCustomize={props.onCustomize}
               onStageChange={props.onStageChange}
             />
+            <QuickLaunchWriting plan={props.quickLaunch.plan} onBegin={props.quickLaunch.begin} />
             <View style={styles.sessionRegion} testID="practice-session-region">
               <ActiveRitualSession
                 key={`practice-${props.userPractice.id}`}

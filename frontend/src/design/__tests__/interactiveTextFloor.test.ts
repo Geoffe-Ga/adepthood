@@ -155,6 +155,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Practice/components/LogPracticeSessionSheet.tsx::subtitle',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
+  // Audited: the line under the quick-launch button explaining that a page
+  // written before the stage opens is not counted on the practice yet. Plain
+  // Text, no press handler — the button above it is the tappable thing.
+  'features/Practice/components/QuickLaunchWriting.tsx::waiting',
   'features/Practice/configurator/RitualConfiguratorSheet.tsx::aspectText',
   'features/Practice/configurator/RitualConfiguratorSheet.tsx::headerSubtitle',
   'features/Practice/configurator/forms/CardMeditationForm.tsx::photoError',

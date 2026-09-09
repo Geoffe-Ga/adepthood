@@ -42,6 +42,7 @@ import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import { usePromotions } from './usePromotions';
+import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
 import { countWords, wordCountLabel } from './wordCount';
@@ -2459,11 +2460,33 @@ const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
   <WritingSessionOffer result={result} />
 );
 
-function EntryWritingSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element | null {
+/** The launch this page was opened with, when it was opened to run a practice. */
+type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writingSession'];
+
+/**
+ * A page opened by the quick launch runs the practice's session instead of
+ * offering to make one: the timer opens at the practice's length and already
+ * running, the finished session is recorded against the selection, and the
+ * "keep this as a practice?" offer is withheld — the writer answered that
+ * question already, which is how the practice exists to be launched from.
+ */
+function EntryWritingSurfaces({
+  ctl,
+  launch,
+}: {
+  ctl: Controller;
+  launch: WritingLaunchParam;
+}): React.JSX.Element | null {
+  const session = useQuickLaunchedSession(launch);
   if (!ctl.editGate.editMode) return null;
   return (
     <>
-      <WritingSessionSurface renderOffer={renderSessionOffer} />
+      <WritingSessionSurface
+        initialMinutes={session.initialMinutes}
+        autoStart={session.autoStart}
+        onSession={session.onSession}
+        renderOffer={session.launched ? undefined : renderSessionOffer}
+      />
       <ResonanceControls
         visible={ctl.visible}
         disabled={ctl.resonanceDisabled}
@@ -2546,7 +2569,7 @@ function JournalEntryScreen({
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
-      <EntryWritingSurfaces ctl={ctl} />
+      <EntryWritingSurfaces ctl={ctl} launch={route.params?.writingSession} />
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}

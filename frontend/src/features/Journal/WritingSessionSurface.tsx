@@ -34,7 +34,7 @@
  * What this buys the banner's ``children`` slot is written out in
  * {@link WritingSessionBanner}.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
@@ -45,6 +45,24 @@ import type { EngineDeps } from '@/features/Practice/engine/types';
 export interface WritingSessionSurfaceProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /**
+   * Begin the session on mount, because the page was opened in order to run it.
+   *
+   * Passed straight through to {@link WritingTimer}, whose prop carries the
+   * reason it exists and the reason it is never a default.
+   */
+  autoStart?: boolean;
+  /**
+   * Every finished session, INCLUDING one the writer stopped early.
+   *
+   * Distinct from the note above, which speaks only for a session that ran its
+   * whole length. That guard is about what the page SAYS; a session stopped at
+   * twelve minutes of twenty is still twelve minutes of writing, and a consumer
+   * recording it against a practice needs to hear about it. Reported before the
+   * note is decided, so the two can never disagree about whether a session
+   * happened.
+   */
+  onSession?: (_result: WritingSessionResult) => void;
   /**
    * What to hang in the note's ``children`` slot for a session that finished.
    *
@@ -75,12 +93,21 @@ interface StandingNote {
 
 function WritingSessionSurface({
   initialMinutes,
+  autoStart,
   renderOffer,
+  onSession,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const [note, setNote] = useState<StandingNote | null>(null);
   const dismiss = useCallback(() => setNote(null), []);
+  // Held through a ref so ``record`` keeps one identity for the life of the
+  // mount: it is the ticking timer's ``onComplete``, and a consumer that
+  // re-created its callback each render would otherwise churn that prop ten
+  // times a second.
+  const onSessionRef = useRef(onSession);
+  onSessionRef.current = onSession;
   const record = useCallback((result: WritingSessionResult) => {
+    onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
     setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
   }, []);
@@ -93,7 +120,12 @@ function WritingSessionSurface({
           )}
         </WritingSessionBanner>
       )}
-      <WritingTimer initialMinutes={initialMinutes} onComplete={record} deps={deps} />
+      <WritingTimer
+        initialMinutes={initialMinutes}
+        autoStart={autoStart}
+        onComplete={record}
+        deps={deps}
+      />
     </>
   );
 }

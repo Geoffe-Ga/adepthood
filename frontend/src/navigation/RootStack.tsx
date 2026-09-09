@@ -76,6 +76,18 @@ export type RootStackParamList = {
         reflectionScopeKey?: string;
         /** A passage folded in from the reader; seeds the body as a blockquote. */
         prefillQuote?: { text: string; sourceTitle: string };
+        /**
+         * A timed writing session this page was OPENED in order to run — the
+         * quick launch from a saved ``Journaling`` practice. The timer opens at
+         * ``minutes`` and is already running, and the finished session is
+         * recorded against ``userPracticeId``. That id is ``null`` when the
+         * practice's stage is still ahead on the writer's calendar, where the
+         * server would refuse the session (403 ``stage_locked``) — the page is
+         * opened either way and nothing is sent. Distinct from the
+         * ``userPracticeId`` above, which links a REFLECTION to a practice
+         * rather than asking for a session to be recorded.
+         */
+        writingSession?: { minutes: number; userPracticeId: number | null };
         /** Where "Back to reading" returns the writer, restoring their scroll. */
         returnTo?: {
           screen: 'Course';
