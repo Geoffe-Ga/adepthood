@@ -22,6 +22,9 @@ import { displaySlots } from '../services/habitOrdering';
 
 import ModalHeader from './ModalHeader';
 
+const SAVE_ORDER_LABEL = 'Save Order';
+const SAVING_LABEL = 'Saving\u2026';
+
 // Lazy require so jest (which doesn't transform this ES-module package) can load this file.
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
@@ -498,15 +501,61 @@ interface ReorderState {
   handleDragEnd: ReorderListProps['onDragEnd'];
   handleConfirmDate: (_d: Date) => void;
   handleCancelDate: () => void;
-  handleSave: () => void;
+  /** True while the commit is on the wire; drives the busy control. */
+  saving: boolean;
+  handleSave: () => Promise<void>;
 }
 
 interface ReorderHookInput {
   habits: Habit[];
   visible: boolean;
   onClose: () => void;
-  onSaveOrder: (_habits: Habit[]) => void;
+  onSaveOrder: (_habits: Habit[]) => Promise<void>;
 }
+
+/**
+ * The commit half of the modal: run the save, hold the affordance for its
+ * whole length, and dismiss only once it has settled.
+ *
+ * ONE COMMIT AT A TIME, and the control says so, rather than the outstanding-act
+ * tally the journal fold-in took (#2753). There the concurrency was legitimate:
+ * a writer folding several distinct quotes in succession means each one, so a
+ * shared boolean would have been lowered by whichever finished first. Save Order
+ * is not that shape. It commits the WHOLE list in one act, so a second press
+ * during the first cannot mean anything new -- it would re-PUT identical rows --
+ * and it would be actively wrong: the rollback snapshot is taken from the store
+ * as it stands, which by then already holds the optimistic order, so a later
+ * refusal would "restore" the very arrangement that failed.
+ *
+ * The ref is the guard and the flag is its visible half: ``busy`` already makes
+ * the control inert, but two presses inside one tick would both pass a state
+ * check before the re-render, which the ref settles synchronously. Mirrors
+ * ``CopyToStageDialog``, whose confirm is inert while busy for the same reason.
+ */
+const useOrderCommit = (
+  onSaveOrder: (_habits: Habit[]) => Promise<void>,
+  onClose: () => void,
+): { saving: boolean; commit: (_ordered: Habit[]) => Promise<void> } => {
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const commit = async (ordered: Habit[]): Promise<void> => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      await onSaveOrder(ordered);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+      // Close either way. ``onSaveOrder`` settles rather than failing: a refusal
+      // has already alerted and rolled the store back, and the order this modal
+      // is still holding is the one that did not take -- staying open would show
+      // the person an arrangement the app no longer has.
+      onClose();
+    }
+  };
+  return { saving, commit };
+};
 
 const useReorderState = ({
   habits,
@@ -517,6 +566,7 @@ const useReorderState = ({
   const programStartDate = useProgramStore((s) => s.programStartDate);
   const setProgramStartDate = useProgramStore((s) => s.setProgramStartDate);
 
+  const { saving, commit } = useOrderCommit(onSaveOrder, onClose);
   const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
   const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -561,14 +611,14 @@ const useReorderState = ({
       setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
     },
     handleCancelDate: () => setPickerVisible(false),
+    saving,
     handleSave: () => {
       // The anchor commits with the order it describes: one explicit,
       // authoritative act, outranking anything the load-time self-heal would
       // derive from the rows. Splitting the two is what let an abandoned pick
       // strand every other screen on a date no habit agreed with.
       setProgramStartDate(startDate);
-      onSaveOrder(orderedHabits);
-      onClose();
+      return commit(orderedHabits);
     },
   };
 };
@@ -580,6 +630,7 @@ interface ReorderBodyProps {
   onOpenPicker: () => void;
   onSelectDate: (_d: Date) => void;
   onDragEnd: ReorderListProps['onDragEnd'];
+  saving: boolean;
   onSave: () => void;
 }
 
@@ -590,6 +641,7 @@ const ReorderBody = ({
   onOpenPicker,
   onSelectDate,
   onDragEnd,
+  saving,
   onSave,
 }: ReorderBodyProps) => (
   <View testID="reorder-modal-card" style={styles.reorderModalContent}>
@@ -605,8 +657,12 @@ const ReorderBody = ({
     </Text>
     <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
     <Button
-      label="Save Order"
+      // Label AND accessible name (``Button`` derives one from the other), so
+      // the outstanding write is announced rather than only styled; ``busy``
+      // carries the state and makes the control inert for its length.
+      label={saving ? SAVING_LABEL : SAVE_ORDER_LABEL}
       variant="primary"
+      busy={saving}
       onPress={onSave}
       testID="reorder-save-order"
       style={{ marginTop: SPACING.lg, alignSelf: 'stretch' }}
@@ -633,7 +689,14 @@ export const ReorderHabitsModal = ({
             onOpenPicker={() => state.setPickerVisible(true)}
             onSelectDate={state.handleConfirmDate}
             onDragEnd={state.handleDragEnd}
-            onSave={state.handleSave}
+            saving={state.saving}
+            onSave={() => {
+              // ``handleSave`` settles in a ``finally``, so a rejecting
+              // ``onSaveOrder`` still lowers the busy state and closes; this
+              // guard only keeps that rejection from surfacing as an unhandled
+              // promise, since the caller owns reporting it.
+              void state.handleSave().catch(() => undefined);
+            }}
           />
         </View>
       </Modal>
