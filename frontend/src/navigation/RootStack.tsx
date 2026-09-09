@@ -88,10 +88,15 @@ export type RootStackParamList = {
          * rather than asking for a session to be recorded.
          */
         writingSession?: { minutes: number; userPracticeId: number | null };
-        /** Where "Back to reading" returns the writer, restoring their scroll. */
+        /**
+         * Where "Back to reading" returns the writer. ``scrollOffset`` is
+         * optional because only the passage-note hand-off knows one: a reflection
+         * closes the reader before it leaves, so it returns to the content item
+         * and the Course screen opens it at the top (an absent offset reads as 0).
+         */
         returnTo?: {
           screen: 'Course';
-          params: { stageNumber?: number; contentId: number; scrollOffset: number };
+          params: { stageNumber?: number; contentId: number; scrollOffset?: number };
         };
       }
     | undefined;

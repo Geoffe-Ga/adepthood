@@ -72,6 +72,7 @@ from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
     AcceptSuggestionResponse,
+    CompletionDetectionResponse,
     CompletionSuggestionListResponse,
     CompletionSuggestionResponse,
 )
@@ -982,14 +983,20 @@ def _suggestion_from_hit(
     )
 
 
-async def _detect_hits(
+@dataclass(frozen=True, slots=True)
+class _DetectionAttempt:
+    hits: list[CompletionDetected]
+    checked: bool
+
+
+async def _detect_hits_with_status(
     message: str,
     *,
     candidates: Sequence[DetectionCandidate],
     llm: BotmasonResonanceLLM,
     user_id: int,
     entry_id: int,
-) -> list[CompletionDetected]:
+) -> _DetectionAttempt:
     """Best-effort completion detection against the pre-read candidates.
 
     Runs with no transaction open — the candidates were read and committed
@@ -1002,18 +1009,35 @@ async def _detect_hits(
     only thing an operator can act on.
     """
     if not candidates:
-        return []
+        return _DetectionAttempt(hits=[], checked=True)
     try:
-        return await detect_completions(message, candidates=candidates, llm=llm)
+        return _DetectionAttempt(
+            hits=await detect_completions(message, candidates=candidates, llm=llm), checked=True
+        )
     except LLMCreditExhaustedError as exc:
         logger.warning(
             "journal_detection_failed",
             extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
         )
-        return []
+        return _DetectionAttempt(hits=[], checked=False)
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
-        return []
+        return _DetectionAttempt(hits=[], checked=False)
+
+
+async def _detect_hits(
+    message: str,
+    *,
+    candidates: Sequence[DetectionCandidate],
+    llm: BotmasonResonanceLLM,
+    user_id: int,
+    entry_id: int,
+) -> list[CompletionDetected]:
+    """Compatibility wrapper for the combined resonance pass."""
+    attempt = await _detect_hits_with_status(
+        message, candidates=candidates, llm=llm, user_id=user_id, entry_id=entry_id
+    )
+    return attempt.hits
 
 
 def _stage_suggestions(
@@ -1338,10 +1362,20 @@ async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -
     committed = False
     spent = charged.spent
     try:
+        # Independent detection and the charged resonance path can race after
+        # reading the same candidates. They share this row lock and post-dial
+        # recheck so exactly one response stages each entry/target offer while
+        # the charged pass still settles its usage and wallet normally.
+        fresh_hits = await _lock_and_filter_suggestion_hits(
+            session,
+            entry_id=charged.entry_id,
+            user_id=charged.user_id,
+            hits=charged.hits,
+        )
         rows = _persist_marginalia(
             session, charged.entry_id, charged.user_id, charged.anchored.notes
         )
-        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, charged.hits)
+        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, fresh_hits)
         spent, no_notes_message = await _settle_empty_pass(
             session, charged.user_id, spent, charged.anchored
         )
@@ -1591,7 +1625,7 @@ async def run_resonance(
     prior_letters = await _prior_letter_essays(
         session, user_id=current_user, exclude_entry_id=entry_id
     )
-    candidates = await gather_candidates(session, current_user, include_practices=True)
+    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
     # Key resolution is pure (no DB, no dial) and can raise 400/402 — it must
     # run while the deduction is still merely staged, so its errors cost nothing.
     byok_key = resolve_chat_api_key(clients.api_key)
@@ -1715,6 +1749,164 @@ async def list_suggestions(
     rows = result.scalars().all()
     return CompletionSuggestionListResponse(
         items=[CompletionSuggestionResponse.model_validate(r, from_attributes=True) for r in rows]
+    )
+
+
+async def _existing_suggestion_targets(
+    session: AsyncSession, entry_id: int, user_id: int
+) -> set[tuple[str, int]]:
+    """Targets this entry has already offered, including decided suggestions."""
+    result = await session.execute(
+        select(CompletionSuggestion).where(
+            CompletionSuggestion.journal_entry_id == entry_id,
+            CompletionSuggestion.user_id == user_id,
+        )
+    )
+    targets: set[tuple[str, int]] = set()
+    for row in result.scalars().all():
+        target_id = (
+            row.goal_id if row.target_type == CompletionTargetType.HABIT else row.user_practice_id
+        )
+        if target_id is not None:
+            targets.add((row.target_type, target_id))
+    return targets
+
+
+async def _lock_detection_entry(session: AsyncSession, entry_id: int, user_id: int) -> None:
+    """Serialize post-provider suggestion writes for one owned journal entry."""
+    await session.execute(
+        select(col(JournalEntry.id))
+        .where(JournalEntry.id == entry_id, JournalEntry.user_id == user_id)
+        .with_for_update()
+    )
+
+
+async def _lock_and_filter_suggestion_hits(
+    session: AsyncSession,
+    *,
+    entry_id: int,
+    user_id: int,
+    hits: Sequence[CompletionDetected],
+) -> list[CompletionDetected]:
+    """Serialize offer writes and discard targets another request already staged."""
+    await _lock_detection_entry(session, entry_id, user_id)
+    existing = await _existing_suggestion_targets(session, entry_id, user_id)
+    return [hit for hit in hits if (hit.target_type, hit.target_id) not in existing]
+
+
+async def _persist_detected_suggestions(
+    session: AsyncSession,
+    *,
+    entry_id: int,
+    user_id: int,
+    hits: Sequence[CompletionDetected],
+    llm: BotmasonResonanceLLM,
+) -> CompletionDetectionResponse:
+    """Persist only offers this entry has not already made."""
+    # Provider calls run without a transaction. Once they return, lock the
+    # entry before rechecking: concurrent tabs then take turns and the follower
+    # sees the first request's committed targets instead of inserting twins.
+    fresh_hits = await _lock_and_filter_suggestion_hits(
+        session, entry_id=entry_id, user_id=user_id, hits=hits
+    )
+    rows = _stage_suggestions(session, entry_id, user_id, fresh_hits)
+    await record_llm_usage(
+        session,
+        user_id=user_id,
+        journal_entry_id=entry_id,
+        responses=llm.usage,
+    )
+    await session.commit()
+    await _refresh_persisted(session, [], rows)
+    return CompletionDetectionResponse(
+        items=[
+            CompletionSuggestionResponse.model_validate(row, from_attributes=True) for row in rows
+        ],
+        checked=True,
+    )
+
+
+async def _unoffered_candidates(
+    session: AsyncSession, *, entry_id: int, user_id: int
+) -> list[DetectionCandidate]:
+    """Return only tracked targets this entry has never offered before."""
+    candidates = await gather_candidates(session, user_id, include_practices=True)
+    existing = await _existing_suggestion_targets(session, entry_id, user_id)
+    return [
+        candidate
+        for candidate in candidates
+        if (candidate.target_type, candidate.target_id) not in existing
+    ]
+
+
+async def _detect_fresh_suggestions(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    user_id: int,
+    candidates: Sequence[DetectionCandidate],
+    api_key_header: str | None,
+) -> CompletionDetectionResponse:
+    """Dial without a transaction, then persist a concurrency-safe fresh subset."""
+    api_key = resolve_chat_api_key(api_key_header)
+    llm = BotmasonResonanceLLM(api_key)
+    await session.commit()
+    attempt = await _detect_hits_with_status(
+        entry.message,
+        candidates=candidates,
+        llm=llm,
+        user_id=user_id,
+        entry_id=cast("int", entry.id),
+    )
+    if not attempt.checked:
+        return CompletionDetectionResponse(items=[], checked=False)
+    return await _persist_detected_suggestions(
+        session,
+        entry_id=cast("int", entry.id),
+        user_id=user_id,
+        hits=attempt.hits,
+        llm=llm,
+    )
+
+
+@router.post("/{entry_id}/suggestions/detect", response_model=CompletionDetectionResponse)
+@limiter.limit("10/minute")
+async def detect_entry_suggestions(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    entry_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> CompletionDetectionResponse:
+    """Check an entry for completed habits independently of literary resonance.
+
+    This route is intentionally uncharged and never calls Creek: a short body or
+    a literary-reflection refusal must not prevent the writer from receiving a
+    habit/practice offer. Intimate entries keep their privacy floor and never
+    leave the process. Provider failures remain best-effort, with ``checked``
+    telling the client whether an empty result really means "no match".
+    """
+    entry = await _load_user_entry(session, entry_id, current_user)
+    if entry is None:
+        raise not_found("journal_entry")
+    if entry.classification == JournalClassification.INTIMATE:
+        return CompletionDetectionResponse(items=[], checked=False)
+
+    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
+    if not candidates:
+        # There is nothing new to send and therefore no reason to require a key,
+        # expose the journal body, or pay for a known-no-op provider call. An
+        # empty candidate set is a completed check, not a provider failure.
+        await session.commit()
+        return CompletionDetectionResponse(items=[], checked=True)
+    return await _detect_fresh_suggestions(
+        session,
+        entry=entry,
+        user_id=current_user,
+        candidates=candidates,
+        api_key_header=x_llm_api_key,
     )
 
 

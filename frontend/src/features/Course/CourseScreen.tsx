@@ -380,8 +380,11 @@ const ContentArea = ({
 
 // --- Hook: viewer actions ---
 
-/** The two journal hand-offs from an open chapter: the title-only reflect, and
- *  the passage-note flow that keeps the reader mounted for a warm return. */
+/** The two journal hand-offs from an open chapter: the stage reflection, which
+ *  closes the reader behind it, and the passage-note flow that keeps the reader
+ *  mounted for a warm return. Both carry a ``returnTo`` so the writing surface
+ *  can offer "Back to reading"; only the note flow has a scroll position to
+ *  restore. */
 function useJournalHandoff(
   selectedStage: number,
   viewingItem: ContentItem | null,
@@ -389,10 +392,26 @@ function useJournalHandoff(
 ) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
+  // Carry the reader's location across so "Back to reading" has somewhere to go;
+  // without it the only exit from the reflection was the Journal shelf, and the
+  // writer had to find the Course tab again by hand.
+  //
+  // Deliberately no `scrollOffset`, unlike the passage-note flow below. Nothing
+  // on this path has one to give: `onReflect` takes no argument, so where the
+  // reader stood was never captured, and `clearViewingItem()` closes the reader
+  // a line later -- there is no warm reader left to return to. The button that
+  // fires this only appears once the chapter is read, so the honest landing is
+  // the chapter reopened at its top, which is what an absent offset asks for
+  // (`useReaderRestore` reads it as 0). Sending `scrollOffset: 0` instead would
+  // dress up "no position known" as a position.
   const handleReflect = useCallback(() => {
     if (!viewingItem) return;
     navigation.navigate('JournalEntry', {
       prefillTitle: `Stage ${selectedStage} reflection — ${viewingItem.title}`,
+      returnTo: {
+        screen: 'Course',
+        params: { stageNumber: selectedStage, contentId: viewingItem.id },
+      },
     });
     clearViewingItem();
   }, [viewingItem, selectedStage, navigation, clearViewingItem]);

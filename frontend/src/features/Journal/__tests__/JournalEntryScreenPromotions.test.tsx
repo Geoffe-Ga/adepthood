@@ -43,6 +43,9 @@ const mockPromotionsList = jest.fn() as jest.MockedFunction<
   (_entryId: number) => Promise<PromotedQuote[]>
 >;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
@@ -203,6 +206,25 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
       fireEvent.press(getByTestId('quote-select-confirm'));
     });
     expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 2, anchor_end: 19 });
+  });
+
+  it('promotes against the created id after finishing a new entry without reopening', async () => {
+    mockPromote.mockResolvedValue(promotedQuote({ id: 90, source_entry_id: 42 }));
+    const { getByTestId, findByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), BODY);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-finish-button'));
+    });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const input = getByTestId('quote-select-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BODY }));
+    expect(mockPromote).toHaveBeenCalledWith(42, { anchor_start: 2, anchor_end: 19 });
   });
 
   it('on a 201 the promoted span appears back in the read-mode body', async () => {

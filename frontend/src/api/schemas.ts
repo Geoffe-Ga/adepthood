@@ -262,6 +262,12 @@ export const promptDetailSchema = z.object({
   // could tell that the server had been sending them at all.
   default_title: z.string().nullish(),
   prompt_ordinal: z.number().int().nullish(),
+  // Whether the reader set this prompt aside. Declared for the same reason as
+  // the two above: an undeclared key is deleted from every validated response,
+  // so a schema that omitted this would hide the server's answer rather than
+  // merely fail to type it. Optional so an older server reads as "not set
+  // aside" instead of as a broken payload.
+  dismissed: z.boolean().optional(),
 });
 
 /** One of a stage's prompts (mirrors backend ``StagePromptDetail``).
@@ -276,6 +282,11 @@ export const stagePromptDetailSchema = z.object({
   title: z.string(),
   body: z.string(),
   cadence: z.string().nullish(),
+  /** Whether the reader set this prompt aside -- a preference about what the
+   *  band offers, never a completion. Absent from a server that predates the
+   *  affordance, which reads as "not set aside" rather than as a broken
+   *  payload, so the shelf keeps rendering against an older backend. */
+  dismissed: z.boolean().optional(),
 });
 
 /** Every prompt of one stage, in curriculum order (mirrors ``StagePromptsResponse``). */
@@ -677,6 +688,10 @@ export const completionSuggestionSchema = z.object({
 
 export const completionSuggestionListResponseSchema = z.object({
   items: z.array(completionSuggestionSchema),
+});
+
+export const completionDetectionResponseSchema = completionSuggestionListResponseSchema.extend({
+  checked: z.boolean(),
 });
 
 export const acceptSuggestionResultSchema = z.object({

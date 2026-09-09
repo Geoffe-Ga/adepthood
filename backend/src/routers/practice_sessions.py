@@ -43,11 +43,17 @@ from services.practice_session_idempotency import record_session, recorded_sessi
 # the right week after timezone normalization.
 _INSIGHTS_LOOKBACK_DAYS = 60
 
-# ``Cache-Control`` for the insights endpoint: each client may cache for one
-# minute so a chatty frontend doesn't hammer the DB while a user idles on
-# the screen.  ``private`` keeps shared proxies from cross-pollinating
-# per-user rollups.
-_INSIGHTS_CACHE_CONTROL = "private, max-age=60"
+# ``Cache-Control`` for the insights endpoint.  ``no-store``, not a freshness
+# lifetime: the only client that reads this rollup is also the client that
+# writes the rows it counts, and it re-reads the endpoint the instant a
+# ``POST /practice-sessions/`` is confirmed.  The former ``max-age=60`` made a
+# browser answer that read out of its own HTTP cache with the pre-save numbers
+# (#2654), which is a promise this endpoint cannot keep -- any
+# positive lifetime is wrong without a validator the client can revalidate
+# against, and a rollup this cheap to recompute does not earn one.  ``private``
+# is kept alongside so a shared proxy still cannot cross-pollinate per-user
+# rollups even if it ignores ``no-store``.
+_INSIGHTS_CACHE_CONTROL = "private, no-store"
 
 logger = logging.getLogger(__name__)
 
@@ -371,8 +377,9 @@ async def get_insights(
     the bucketing in memory (cheap — a heavy user accrues hundreds of
     rows in this window, not millions).
 
-    The response carries a private one-minute ``Cache-Control`` so the
-    frontend can poll the screen without thrashing the DB.
+    The response is marked ``private, no-store``: the weekly bar reads this
+    endpoint immediately after logging a session, so a cached copy would show
+    the practitioner a count their own save has already falsified.
     """
     response.headers["Cache-Control"] = _INSIGHTS_CACHE_CONTROL
     # Defense-in-depth: a misconfigured upstream that ignores ``private``

@@ -93,6 +93,11 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
   'features/Journal/CompletionSuggestionNote.tsx::streak',
+  // Audited: the contraction reflection's notice line reports a call that did
+  // not carry (a start or a decline). It is read, never pressed -- the card's
+  // tap targets are the accept (editorialType.action) and the ReflectionDismiss
+  // control (editorialType.note) beside it.
+  'features/Journal/ContractionReflectionNote.tsx::notice',
   // Audited: the corpus invitation's eyebrow is a section label above the body;
   // its tap targets are the open CTA (editorialType.action) and two
   // ReflectionDismiss controls (editorialType.note).

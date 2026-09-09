@@ -12,7 +12,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
  * routes to zero notes was taken, so any explanation the client invented would
  * be a guess at a cause it cannot see.
  */
-import { note, resonancePayload } from './resonanceTestKit';
+import { TEST_TIMEZONE, note, resonancePayload } from './resonanceTestKit';
 
 import type { CompletionSuggestion, Marginalia, ResonanceResponse } from '@/api';
 
@@ -56,7 +56,9 @@ beforeEach(() => {
 describe('useResonance — no-notes message threading', () => {
   it('is null before any generate pass', () => {
     const flush = jest.fn(async () => 42);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     expect(result.current.noNotesMessage).toBeNull();
   });
@@ -64,7 +66,9 @@ describe('useResonance — no-notes message threading', () => {
   it('carries the server sentence verbatim after a zero-note pass', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ no_notes_message: NO_NOTES }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -76,7 +80,9 @@ describe('useResonance — no-notes message threading', () => {
   it('stays null on a pass that produced notes', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ marginalia: [note({ id: 5 })] }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -90,7 +96,9 @@ describe('useResonance — no-notes message threading', () => {
     const withoutField = { ...resonancePayload() };
     delete (withoutField as { no_notes_message?: unknown }).no_notes_message;
     mockGenerate.mockResolvedValue(withoutField as ResonanceResponse);
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {
       await result.current.requestResonance();
@@ -102,7 +110,9 @@ describe('useResonance — no-notes message threading', () => {
   it('clears the stale sentence when a later pass does find something', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValueOnce(resonancePayload({ no_notes_message: NO_NOTES }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await act(async () => {
       await result.current.requestResonance();
     });
@@ -119,7 +129,9 @@ describe('useResonance — no-notes message threading', () => {
   it('is not left behind by a failed pass, which has its own error copy', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValueOnce(resonancePayload({ no_notes_message: NO_NOTES }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
+    );
     await act(async () => {
       await result.current.requestResonance();
     });
@@ -136,7 +148,9 @@ describe('useResonance — no-notes message threading', () => {
   it('never comes from the load-on-open path, which runs no pass at all', async () => {
     mockList.mockResolvedValue({ items: [note({ id: 1 })] });
     const flush = jest.fn(async () => 7);
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await waitFor(() => expect(result.current.marginalia).toHaveLength(1));
 

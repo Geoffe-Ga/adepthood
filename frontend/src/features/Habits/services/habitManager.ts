@@ -1370,8 +1370,18 @@ export const habitManager = {
    * Demo tiles and pre-sync added habits keep their positions and are stamped
    * locally like any other row, but are never PUT: their ids are fabricated
    * on-device, so there is no server row for the write to land on.
+   *
+   * RESOLVES WHEN THE ACT HAS SETTLED -- every PUT landed, or the whole fan-out
+   * was refused and rolled back -- and never rejects, because the refusal is
+   * already surfaced by ``revertOnFailure``'s alert. Until #2755 this returned
+   * ``void`` and left the ``Promise.all`` unawaited, so it handed control back
+   * the instant the writes were DISPATCHED: ``ReorderHabitsModal`` closed over
+   * writes still on the wire, and a person who backgrounded the app there lost
+   * the reorder server-side while the store and the on-disk snapshot both went
+   * on claiming it saved. Completion has to be observable for the modal (and
+   * the browser journey) to have anything truthful to wait on.
    */
-  saveHabitOrder: (ordered: Habit[]): void => {
+  saveHabitOrder: async (ordered: Habit[]): Promise<void> => {
     const prev = getHabits();
     const stamped = stampPositionalOrder(ordered);
     setHabits(stamped);
@@ -1382,7 +1392,7 @@ export const habitManager = {
       updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
     }
     if (updates.length === 0) return;
-    Promise.all(updates).catch(
+    await Promise.all(updates).catch(
       revertOnFailure(
         prev,
         "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.",

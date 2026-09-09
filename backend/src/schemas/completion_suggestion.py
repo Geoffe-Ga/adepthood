@@ -39,6 +39,17 @@ class CompletionSuggestionListResponse(BaseModel):
     items: list[CompletionSuggestionResponse]
 
 
+class CompletionDetectionResponse(CompletionSuggestionListResponse):
+    """New offers from an entry-only completion check.
+
+    ``checked`` distinguishes a successful check with no matches from a
+    best-effort provider failure. This lets the journal explain honestly what
+    still happened when literary resonance itself could not be generated.
+    """
+
+    checked: bool
+
+
 class AcceptSuggestionResponse(BaseModel):
     """The accepted suggestion plus the check-in it logged (streak + milestones).
 

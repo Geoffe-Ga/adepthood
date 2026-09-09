@@ -50,7 +50,11 @@ describe('the BYOK disclosure is constrained by the implementation', () => {
     const api = fs.readFileSync(FRONTEND_API, 'utf-8');
 
     expect(config).toContain("!isDev && !url.startsWith('https://')");
-    expect(api).toContain("LLM_API_KEY_HEADER = 'X-LLM-API-Key'"); // pragma: allowlist secret
+    // The header name is stated once, in the client's request-header
+    // vocabulary, and the exported constant derives from it; both halves are
+    // pinned so neither can drift out from under this disclosure.
+    expect(api).toContain("llmApiKey: 'X-LLM-API-Key'"); // pragma: allowlist secret
+    expect(api).toContain('LLM_API_KEY_HEADER = REQUEST_HEADER_VOCABULARY.llmApiKey');
     expect(api.match(/headers: byokHeaders\(apiKey\)/g)?.length).toBeGreaterThan(0);
   });
 

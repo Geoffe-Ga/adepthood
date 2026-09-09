@@ -17,6 +17,7 @@ from sqlmodel import col
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.goal import Goal
 from models.habit import Habit
+from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
@@ -90,6 +91,7 @@ def _fake(
     hits: list[dict[str, Any]],
     detection_calls: list[str] | None = None,
     detection_error: LLMProviderError | None = None,
+    provider: str = "stub",
 ) -> None:
     """Patch the shared LLM seam: marginalia JSON for the literary prompt, hits for detection."""
     notes_payload = json.dumps({"notes": [_NOTE]})
@@ -98,10 +100,10 @@ def _fake(
     def _stub(text: str) -> LLMResponse:
         return LLMResponse(
             text=text,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
+            provider=provider,
+            model=STUB_MODEL_NAME if provider == "stub" else "gpt-4o-mini",
+            prompt_tokens=0 if provider == "stub" else 12,
+            completion_tokens=0 if provider == "stub" else 4,
         )
 
     async def _complete(
@@ -148,6 +150,160 @@ async def test_one_press_returns_marginalia_and_suggestions_on_one_charge(
         await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
     ).scalar_one()
     assert persisted == 1
+
+
+@pytest.mark.asyncio
+async def test_short_entry_can_check_completions_without_a_resonance_pass(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Habit offers are not gated by whether literary resonance accepts the body."""
+    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    headers = await _signup(async_client, "short-detect")
+    await _seed_habit(db_session, await _user_id(db_session, "short-detect"))
+    entry_id = await _create_entry(async_client, headers, body="I meditated")
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["checked"] is True
+    assert [item["anchor_text"] for item in body["items"]] == ["I meditated"]
+    user = await db_session.get(User, await _user_id(db_session, "short-detect"))
+    assert user is not None
+    assert user.monthly_messages_used == 0
+
+
+@pytest.mark.asyncio
+async def test_independent_completion_check_does_not_duplicate_an_existing_offer(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _fake(
+        monkeypatch,
+        hits=[{"index": 0, "quote": "I meditated"}],
+        detection_calls=calls,
+        provider="openai",
+    )
+    headers = await _signup(async_client, "dedupe-detect")
+    await _seed_habit(db_session, await _user_id(db_session, "dedupe-detect"))
+    entry_id = await _create_entry(async_client, headers, body="I meditated")
+
+    first = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+    second = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert len(first.json()["items"]) == 1
+    assert second.json()["items"] == []
+    persisted = (
+        await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
+    ).scalar_one()
+    usage = (await db_session.execute(select(func.count()).select_from(LLMUsageLog))).scalar_one()
+    assert persisted == 1
+    assert len(calls) == 1
+    assert usage == 1
+
+
+@pytest.mark.asyncio
+async def test_resonance_does_not_duplicate_an_independently_detected_offer(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later full reflection reuses the offer already made by the fallback check."""
+    calls: list[str] = []
+    _fake(
+        monkeypatch,
+        hits=[{"index": 0, "quote": "I meditated"}],
+        detection_calls=calls,
+        provider="openai",
+    )
+    headers = await _signup(async_client, "detect-then-resonate")
+    await _seed_habit(db_session, await _user_id(db_session, "detect-then-resonate"))
+    entry_id = await _create_entry(async_client, headers)
+
+    detected = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+    reflected = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert len(detected.json()["items"]) == 1
+    assert reflected.status_code == HTTPStatus.OK
+    assert len(reflected.json()["marginalia"]) == 1
+    assert reflected.json()["suggestions"] == []
+    assert reflected.json()["remaining_messages"] == 49
+    persisted = (
+        await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
+    ).scalar_one()
+    usage = (await db_session.execute(select(func.count()).select_from(LLMUsageLog))).scalar_one()
+    assert persisted == 1
+    assert len(calls) == 1  # the known offered target is not sent to detection again
+    assert usage == 2  # one independent detection plus the later literary reflection
+
+
+@pytest.mark.asyncio
+async def test_independent_completion_check_reports_provider_failure_honestly(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake(monkeypatch, hits=[], detection_error=LLMProviderError("detector down"))
+    headers = await _signup(async_client, "independent-fail")
+    await _seed_habit(db_session, await _user_id(db_session, "independent-fail"))
+    entry_id = await _create_entry(async_client, headers, body="I meditated")
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == {"items": [], "checked": False}
+
+
+@pytest.mark.asyncio
+async def test_independent_completion_check_keeps_intimate_entries_off_the_provider(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _fake(
+        monkeypatch,
+        hits=[{"index": 0, "quote": "I meditated"}],
+        detection_calls=calls,
+    )
+    headers = await _signup(async_client, "independent-private")
+    await _seed_habit(db_session, await _user_id(db_session, "independent-private"))
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "I meditated", "classification": "intimate"},
+        headers=headers,
+    )
+
+    resp = await async_client.post(
+        f"/journal/{created.json()['id']}/suggestions/detect", headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == {"items": [], "checked": False}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_independent_completion_check_masks_a_foreign_entry(
+    async_client: AsyncClient,
+) -> None:
+    alice = await _signup(async_client, "detect-owner")
+    entry_id = await _create_entry(async_client, alice, body="I meditated")
+    bob = await _signup(async_client, "detect-stranger")
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=bob)
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_independent_completion_check_with_no_candidates_needs_no_provider(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _fake(monkeypatch, hits=[], detection_calls=calls)
+    headers = await _signup(async_client, "independent-nohab")
+    entry_id = await _create_entry(async_client, headers, body="I walked")
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == {"items": [], "checked": True}
+    assert calls == []
 
 
 @pytest.mark.asyncio
