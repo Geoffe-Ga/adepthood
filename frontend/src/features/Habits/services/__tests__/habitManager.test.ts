@@ -1782,6 +1782,66 @@ describe('habitManager', () => {
       expect(habitsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ sort_order: 1 }));
     });
 
+    it('resolves only once every reorder PUT has settled', async () => {
+      // The defect: the fan-out was fire-and-forget, so the call handed control
+      // back the instant the PUTs were dispatched. Anything the caller does on
+      // completion -- closing the modal, telling the person it saved -- was
+      // therefore done over writes still on the wire.
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      useHabitStore.setState({ habits: [h1, h2] });
+      let releaseSlowPut = (): void => {};
+      (habitsApi.update as jest.Mock)
+        .mockImplementationOnce(() => Promise.resolve({}) as never)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseSlowPut = (): void => resolve({});
+            }) as never,
+        );
+
+      let settled = false;
+      const saving = habitManager.saveHabitOrder([h2, h1]).then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // One PUT has landed and the other has not: the act is not done.
+      expect(settled).toBe(false);
+
+      releaseSlowPut();
+      await saving;
+
+      expect(settled).toBe(true);
+      expect(habitsApi.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('resolves rather than rejecting once a refused reorder has been rolled back', async () => {
+      // The promise reports SETTLEMENT, not success: the refusal is already
+      // surfaced by the rollback's alert, so a caller awaiting the act to
+      // dismiss its own surface must not have to guard the await to do it.
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      useHabitStore.setState({ habits: [h1, h2] });
+      (habitsApi.update as jest.Mock)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never);
+
+      await expect(habitManager.saveHabitOrder([h2, h1])).resolves.toBeUndefined();
+
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['First', 'Second']);
+    });
+
+    it('resolves without a round trip when no row is server-backed', async () => {
+      const d1 = makeHabit({ id: 1, name: 'First', isDemoSeed: true });
+      const d2 = makeHabit({ id: 2, name: 'Second', isDemoSeed: true });
+      useHabitStore.setState({ habits: [d1, d2] });
+
+      await expect(habitManager.saveHabitOrder([d2, d1])).resolves.toBeUndefined();
+
+      expect(habitsApi.update).not.toHaveBeenCalled();
+    });
+
     it('rolls back exactly once when any single PUT fails (consolidated Promise.all rollback)', async () => {
       // Invariant: a partial-failure reorder must restore the pre-write
       // snapshot once and only once. Per-row ``.catch`` chains would
