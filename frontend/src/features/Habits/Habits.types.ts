@@ -237,7 +237,12 @@ export interface ReorderHabitsModalProps {
   visible: boolean;
   habits: Habit[];
   onClose: () => void;
-  onSaveOrder: (_habits: Habit[]) => void;
+  /**
+   * Commits the order. Resolves when the reorder has SETTLED -- persisted, or
+   * refused and rolled back by the caller, which surfaces its own refusal --
+   * so the modal has something truthful to close on (#2755).
+   */
+  onSaveOrder: (_habits: Habit[]) => Promise<void>;
 }
 
 export interface AddHabitInput {
@@ -260,7 +265,8 @@ export interface HabitsActions {
   deleteHabit: (_habitId: number) => void;
   /** ``isCarryover`` slots the new habit onto the negative laps; defaults to a program add. */
   addHabit: (_input: AddHabitInput, _isCarryover?: boolean) => Promise<void>;
-  saveHabitOrder: (_orderedHabits: Habit[]) => void;
+  /** Resolves once the reorder is durably persisted, or rolled back (#2755). */
+  saveHabitOrder: (_orderedHabits: Habit[]) => Promise<void>;
   backfillMissedDays: (_habitId: number, _days: Date[]) => void;
   setNewStartDate: (_habitId: number, _newDate: Date) => void;
   /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
