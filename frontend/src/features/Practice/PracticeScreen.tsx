@@ -27,7 +27,13 @@
  *     when — the active practice is `Journaling`, and takes the writer straight
  *     to a journal page with the practice's own length already running. It is
  *     an affordance, not a prompt: absent for everyone else, and silent about
- *     how often it is used.
+ *     how often it is used. It stays tappable while the player's own session is
+ *     running, which is deliberate rather than an oversight: nothing in this
+ *     screen or in `useRitualEngine` persists a running ritual -- no storage, no
+ *     `beforeRemove` guard, no resume path -- so an in-player session is already
+ *     lost to a tab switch or a back gesture. Hiding the button here would
+ *     single out one exit from a screen every other exit abandons, and imply a
+ *     durability the engine does not have.
  *   - `LogPracticeSessionSheet`, opened from the drawer, records a sitting done
  *     away from the app. It is hosted here rather than inside the session
  *     because it needs the `user_practice_id` only `useActivePractice`
