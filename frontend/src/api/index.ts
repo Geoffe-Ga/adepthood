@@ -2194,6 +2194,11 @@ export interface PromptDetail {
   default_title?: string | null;
   /** Its position within the week's prompt sequence, when the week has several. */
   prompt_ordinal?: number | null;
+  /** Whether the reader set this prompt aside. The weekly prompt is drawn from
+   *  the same curriculum as the stage band, so a prompt declined there is
+   *  declined here too. Optional: a server that predates the affordance sends
+   *  nothing, which reads as "not set aside". */
+  dismissed?: boolean;
 }
 
 export interface PromptListResponse {
@@ -2246,6 +2251,34 @@ export const prompts = {
       token,
       schema: stagePromptsResponseSchema,
     });
+  },
+  /** Set one of a stage's prompts aside, so the band stops offering it.
+   *
+   * A preference and not a completion: nothing is answered, nothing is
+   * written to, and the prompts still standing keep their own week gating.
+   * Answers with the whole stage, so the caller never has to guess at the
+   * state its own request just produced. Idempotent.
+   */
+  setAside(
+    stageNumber: number,
+    promptOrdinal: number,
+    token?: string,
+  ): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(
+      `/prompts/stage/${stageNumber}/${promptOrdinal}/dismiss`,
+      { method: 'POST', token, schema: stagePromptsResponseSchema },
+    );
+  },
+  /** Bring a set-aside prompt back onto the band; a no-op if it never left. */
+  bringBack(
+    stageNumber: number,
+    promptOrdinal: number,
+    token?: string,
+  ): Promise<StagePromptsResponseT> {
+    return request<StagePromptsResponseT>(
+      `/prompts/stage/${stageNumber}/${promptOrdinal}/dismiss`,
+      { method: 'DELETE', token, schema: stagePromptsResponseSchema },
+    );
   },
   history(
     params: { limit?: number; offset?: number } = {},

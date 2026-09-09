@@ -55,6 +55,18 @@ category = "not_object_scoped"
 reason   = "stage_number is a curriculum position; the prompt set is the same for everyone"
 
 [[route]]
+method   = "POST"
+path     = "/prompts/stage/{stage_number}/{prompt_ordinal}/dismiss"
+category = "not_object_scoped"
+reason   = "both path parameters are curriculum positions, identical for everyone; the set-aside is stored against the caller and tests/security/test_idor.py asserts the isolation a probe here could not"
+
+[[route]]
+method   = "DELETE"
+path     = "/prompts/stage/{stage_number}/{prompt_ordinal}/dismiss"
+category = "not_object_scoped"
+reason   = "the undo of the above, gated identically; the DELETE names the caller's own user_id in its WHERE, which tests/security/test_idor.py pins against the table"
+
+[[route]]
 method   = "GET"
 path     = "/prompts/{week_number}"
 category = "not_object_scoped"

@@ -44,6 +44,7 @@ from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.prompt_dismissal import PromptDismissal
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
@@ -92,6 +93,28 @@ async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], i
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     return {"Authorization": f"Bearer {body['token']}"}, body["user_id"]
+
+
+async def _dismissal_owners(session: AsyncSession) -> list[int]:
+    """Every ``promptdismissal`` row's owner, ascending — the whole table, per test.
+
+    ``populate_existing=True`` so a row the request wrote through its own
+    session is read from the database rather than from this session's identity
+    map, which is what makes "no row was persisted" an assertion about storage
+    instead of about caching.
+    """
+    owners = (
+        (
+            await session.execute(
+                select(col(PromptDismissal.user_id))
+                .order_by(col(PromptDismissal.user_id))
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(owners)
 
 
 async def _promote(session: AsyncSession, username: str) -> None:
@@ -1212,3 +1235,81 @@ async def test_idor_corpus_invitation_is_scoped_to_the_caller(
         .all()
     )
     assert list(owners) == [alice_id]
+
+
+@pytest.mark.asyncio
+async def test_idor_prompt_set_aside_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's set-aside prompt is not Bob's, and Bob cannot undo it for her.
+
+    The routes take no resource id and no ``user_id`` at all -- the prompt is
+    named by ``(stage, ordinal)``, which is curriculum, identical for everyone,
+    and the owner is the JWT subject -- so there is no cross-user branch to
+    spell 403 or 404.  The invariant to pin is therefore isolation of the
+    *record*, in both directions:
+
+    * Bob setting the same prompt aside writes his own row rather than adopting
+      hers, and Alice's band is unchanged by it.
+    * Bob's un-set-aside deletes nothing of Alice's, which is the destructive
+      half and the one a mis-scoped ``WHERE`` would quietly break.
+
+    Persistence is asserted against the table rather than inferred from a status
+    code, because a route that answered 200 while writing or deleting the wrong
+    owner's row would look identical from the response alone.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_set_aside")
+    bob_headers, bob_id = await _signup(async_client, "bob_set_aside")
+    path = "/prompts/stage/1/2/dismiss"
+
+    alice_set_aside = await async_client.post(path, headers=alice_headers)
+    assert alice_set_aside.status_code == HTTPStatus.OK, alice_set_aside.text
+
+    # Bob's band is his own: he is told nothing is set aside, because nothing
+    # of his is, and no row was provisioned for him by reading.
+    bob_band = await async_client.get("/prompts/stage/1", headers=bob_headers)
+    assert [p["dismissed"] for p in bob_band.json()["prompts"]] == [False, False, False]
+    assert await _dismissal_owners(db_session) == [alice_id]
+
+    # The destructive direction: Bob undoing "the same" prompt removes his own
+    # nonexistent preference, never hers.
+    bob_undo = await async_client.delete(path, headers=bob_headers)
+    assert bob_undo.status_code == HTTPStatus.OK, bob_undo.text
+    assert await _dismissal_owners(db_session) == [alice_id]
+
+    alice_band = await async_client.get("/prompts/stage/1", headers=alice_headers)
+    assert [p["dismissed"] for p in alice_band.json()["prompts"]] == [False, True, False]
+
+    # And the additive direction: Bob's own set-aside is a second row under his
+    # own id, not an edit of Alice's.
+    bob_set_aside = await async_client.post(path, headers=bob_headers)
+    assert bob_set_aside.status_code == HTTPStatus.OK, bob_set_aside.text
+    assert await _dismissal_owners(db_session) == [alice_id, bob_id]
+
+    # Alice keeps her own answer through all of it.
+    still_hers = await async_client.get("/prompts/stage/1", headers=alice_headers)
+    assert [p["dismissed"] for p in still_hers.json()["prompts"]] == [False, True, False]
+
+
+@pytest.mark.asyncio
+async def test_idor_prompt_set_aside_ignores_a_user_id_the_request_supplies(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ``user_id`` smuggled into the request never becomes the owner.
+
+    The route declares no such parameter, so a body or query string naming
+    Alice is inert rather than authoritative.  Asserted at the table: the row
+    the request produced belongs to the caller, and Alice has none.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_aside_spoof")
+    bob_headers, bob_id = await _signup(async_client, "bob_aside_spoof")
+    assert alice_headers  # Alice exists only as an id for Bob to try to name.
+
+    spoofed = await async_client.post(
+        f"/prompts/stage/1/2/dismiss?user_id={alice_id}",
+        json={"user_id": alice_id},
+        headers=bob_headers,
+    )
+
+    assert spoofed.status_code == HTTPStatus.OK, spoofed.text
+    assert await _dismissal_owners(db_session) == [bob_id]

@@ -53,6 +53,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
+  'practice-weekly-count.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
@@ -78,6 +79,7 @@ const EXPECTED_JOURNEYS = [
   'practice-tags.e2e.test.ts',
   'practice.e2e.test.ts',
   'prompt-history.e2e.test.ts',
+  'prompt-set-aside.e2e.test.ts',
   'resonance.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',

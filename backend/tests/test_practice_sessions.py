@@ -1032,10 +1032,50 @@ async def test_insights_empty_user_returns_empty_rollup(async_client: AsyncClien
     assert body["avg_duration_minutes_30d"] is None
     assert body["per_mode_counts"] == {}
     assert body["last_insight"] is None
-    # Cache-Control is set so a chatty UI doesn't hammer the DB.
-    assert resp.headers["cache-control"] == "private, max-age=60"
+    # Cache-Control forbids a stored copy: the rollup changes the moment its
+    # own owner logs a session (see the read-after-write test below).
+    assert resp.headers["cache-control"] == "private, no-store"
     # Vary: Authorization is defense-in-depth against a proxy that ignores ``private``.
     assert resp.headers["vary"] == "Authorization"
+
+
+@pytest.mark.asyncio
+async def test_insights_never_licenses_a_client_to_reuse_a_stale_rollup(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The rollup must never be served from a client cache after a write.
+
+    Issue #2654: the endpoint advertised ``max-age=60``, and the one
+    client that reads it is also the client that *writes* the rows it counts.
+    A browser honours that freshness lifetime literally -- the authoritative
+    refetch the app fires straight after ``POST /practice-sessions/`` is
+    answered out of the HTTP cache, so the weekly bar snaps back to the
+    pre-save number and stays there until the lifetime expires.  A ``max-age``
+    on a resource whose own reader can invalidate it is a promise the server
+    cannot keep, and there is no revalidator (no ``ETag``) that would let the
+    client find out cheaply.
+
+    The assertion is on the directive, not merely the string: any positive
+    freshness lifetime re-opens the bug.
+    """
+    headers, _ = await _signup(async_client)
+    up_id, _ = await _create_typed_user_practice(async_client, db_session, headers)
+
+    before = await async_client.get("/practice-sessions/insights", headers=headers)
+    assert before.status_code == HTTPStatus.OK
+    assert before.json()["weekly_counts"][-1]["count"] == 0
+
+    created = await async_client.post(
+        "/practice-sessions/", json=_session_payload(up_id), headers=headers
+    )
+    assert created.status_code == HTTPStatus.CREATED
+
+    after = await async_client.get("/practice-sessions/insights", headers=headers)
+    assert after.json()["weekly_counts"][-1]["count"] == 1
+
+    directives = {d.strip().lower() for d in after.headers["cache-control"].split(",")}
+    assert "no-store" in directives
+    assert not any(d.startswith(("max-age", "s-maxage")) for d in directives)
 
 
 @pytest.mark.asyncio

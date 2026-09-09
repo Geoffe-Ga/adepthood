@@ -154,6 +154,13 @@ const styles = StyleSheet.create({
   promptCardAnswered: {
     opacity: ANSWERED_OPACITY,
   },
+  // A prompt the reader set aside, shown only while they have asked to see the
+  // ones they declined. It recedes the same way an answered one does: still
+  // legible, still theirs to bring back, just not competing with the band they
+  // chose to keep.
+  promptCardSetAside: {
+    opacity: ANSWERED_OPACITY,
+  },
   promptLabel: {
     ...editorialType.caption,
     color: ink.muted,

@@ -337,6 +337,22 @@
     "coveredBy": "frontend/e2e/practice-log-past.e2e.test.ts"
   },
   {
+    "id": "practice.weekly-count-moves-after-saving-a-session",
+    "description": "A practitioner runs the stage-1 grounding ritual to its end, saves it with a one-line insight, and watches the weekly bar move from 0 of 4 to 1 of 4 in the page they are already looking at. The bar was wired correctly on both sides and still showed the pre-save number: the client incremented optimistically and then refetched, the server counted the new row, and in between GET /practice-sessions/insights advertised max-age=60, so the browser answered the post-save refetch out of its own HTTP cache and put the bar back to zero. No node-lane spec can see that -- node's fetch keeps no HTTP cache, so the request the browser answers for itself is the one the node lane always puts on the wire. This journey runs in the Playwright lane against a real server for exactly that reason, and asserts the server's own week-count alongside the rendered number so a failure separates a lost save from a display that lies about one.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": [
+        "POST /practice-sessions/",
+        "GET /practice-sessions/insights",
+        "GET /practice-sessions/week-count"
+      ],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-weekly-count.browser.e2e.test.ts"
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {
@@ -807,5 +823,24 @@
     },
     "status": "uncovered",
     "issue": 2734
+  },
+  {
+    "id": "journal.set-a-stage-prompt-aside-and-bring-it-back",
+    "description": "A writer on the Journal shelf sets a stage prompt aside, finds it gone from the band and still gone after a cold start on a new session, brings it back, and is never told they skipped or failed anything. The invariant this crosses the wire for is the one a mocked test cannot see: a dismissal is a preference and never a completion, so the spec sets a prompt aside and then still writes a response to another prompt in the same week, proving the set-aside wrote no PromptResponse, marked nothing answered, did not move the reader's week and did not close the week to the prompts still standing. It also pins that the weekly prompt drawn from the same curriculum carries the same answer, that a repeated set-aside collapses onto the unique index rather than adding a second row, that undoing one that was never made is success, that an ordinal the stage does not carry and a stage the reader has not reached are refused exactly as the stage read refuses them, and -- the half a mis-scoped WHERE would make indistinguishable -- that one account's un-set-aside never removes another's, the prompt being named by curriculum position which is identical for everyone.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "prompts", "setTokenGetter"],
+      "routes": [
+        "GET /prompts/stage/{stage_number}",
+        "POST /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "DELETE /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "GET /prompts/current",
+        "GET /prompts/history",
+        "POST /prompts/{week_number}/respond"
+      ],
+      "tables": ["promptdismissal", "promptresponse"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/prompt-set-aside.e2e.test.ts"
   }
 ]
