@@ -4,7 +4,11 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 const mockNavigate = jest.fn();
+// Spread the real module rather than replacing it: the tile's summary hook
+// reads ``NavigationContext`` to re-read habits when the shelf is returned to,
+// and a mock that omits it hands ``useContext`` an undefined context.
 jest.mock('@react-navigation/native', () => ({
+  ...(jest.requireActual('@react-navigation/native') as object),
   useNavigation: () => ({ navigate: mockNavigate }),
 }));
 
