@@ -690,15 +690,15 @@
   },
   {
     "id": "curriculum.stage-copy-matches-course",
-    "description": "A traveller reads a stage's subtitle -- the two-word label under its name -- on the Map modal, the magnifier caption, the Map's accessibility label, and the Course cover. Every one of those renders stage.subtitle straight from GET /stages via stageService; nothing is hardcoded client-side, which is correct, and which is also why no lane asserts the string a user actually reads. map.advance-stage opens the same screen against the same route but asserts the progress record (current_stage, completed_stages, stage_started_at), never copy, so the seam from the coursestage row through GET /stages to rendered text is unproven end-to-end. Declared uncovered rather than quietly claimed: a covering spec needs its own file (one spec covers one journey), its own account key via freshLicenseKey(), and e2eLaneGuard registration -- to assert two words that a backend golden test already pins at the source. #2577 corrected Teal's subtitle and was proven by that golden test; this entry records the gap that proof leaves rather than hiding it.",
+    "description": "A traveller reads a stage's subtitle -- the two-word label under its name -- on the Map modal, the Map's centre-cell accessibility label, the magnifier caption, and the Course cover. Every one of those renders stage.subtitle verbatim from GET /stages via stageService, and nothing is hardcoded client-side, which is exactly why the covering spec names no subtitle of its own: it reads the coursestage rows out of band, requires the served listing to match them stage for stage, then rewrites one row to a string the curriculum has never held and requires the client to follow it there -- an assertion that a route answering with its own copy of the seeded words cannot pass. What the server served is then fed through stageCenterCellLabel, the function MapScreen hands its centre cell, so the sentence a screen reader speaks is bound to the row too; the row is put back before the file ends. map.advance-stage opens the same screen against the same route but asserts the progress record (current_stage, completed_stages, stage_started_at) and never copy, so this journey keeps its own spec rather than widening that claim. #2577 corrected Teal's subtitle and was proven by a backend golden test, which pins the string at the source and says nothing about whether the client renders it.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages"],
       "routes": ["GET /stages"],
       "tables": ["coursestage"]
     },
-    "status": "uncovered",
-    "issue": 2707
+    "status": "covered",
+    "coveredBy": "frontend/e2e/stage-copy.e2e.test.ts"
   },
   {
     "id": "journal.higher-self-does-not-repeat-itself",
