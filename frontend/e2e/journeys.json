@@ -895,5 +895,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/prompt-set-aside.e2e.test.ts"
+  },
+  {
+    "id": "practice.unconfirmed-stage-says-so",
+    "description": "A practitioner opens Practice on a session whose one automatic GET /stages did not come back, and is told so instead of being shown stage 1 as though it were theirs. Practice takes a single stage-load attempt per session (#2002), and when it fails the store still holds its initial currentStage of 1 -- so the screen used to render that number silently, with the only in-app recovery being a trip to Map's retry. The spec fails the real listing at the wire, crosses to Practice through the drawer, and pins the three claims together: the number is named as a placeholder, the adopted practice underneath it is still on screen and still startable (this is a notice, not an error wall -- a person who only wants to sit is never gated), and lifting the failure and tapping Try again adds exactly ONE more request to the route and takes the notice away in the same page load. That last count is the half no mocked suite can make: it is the guard from #2002 -- automatic attempts stay at one, the retry is the deliberate second -- measured against a real server rather than against a stub that agrees with itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["stages", "practices", "userPractices"],
+      "routes": ["GET /stages", "GET /practices/", "POST /user-practices/"],
+      "tables": ["coursestage", "userpractice"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-unconfirmed-stage.browser.e2e.test.ts"
   }
 ]
