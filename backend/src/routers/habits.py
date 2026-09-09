@@ -267,9 +267,11 @@ async def list_habits(
     them -- PostgreSQL's default ``ASC`` would put them last. Then ascending
     slot, ties broken by ``id``. That ``id`` key is not decoration: slots are
     partition-scoped by ``is_carryover``, so two rows may legitimately hold
-    the same slot, and ``paginate_query`` adds no ordering of its own -- an
-    untiebroken key would leave LIMIT/OFFSET paging free to repeat or drop
-    rows inside a tie group.
+    the same slot, and an untiebroken key would leave LIMIT/OFFSET paging free
+    to repeat or drop rows inside a tie group. It is supplied by
+    ``paginate_query``, which appends the entity's primary key to every page it
+    serves (issue #2718); stating it here as well would emit the same sort key
+    twice.
     """
     # This runs before pagination so eligible rows outside the requested page
     # do not remain stale merely because the client has not fetched them yet.
@@ -282,7 +284,7 @@ async def list_habits(
         # See _get_habit_with_completions: keep the windowed view authoritative
         # even when an unwindowed loader ran earlier on this session.
         .execution_options(populate_existing=True)
-        .order_by(col(Habit.sort_order).asc().nulls_first(), col(Habit.id).asc())
+        .order_by(col(Habit.sort_order).asc().nulls_first())
     )
     items, total = await paginate_query(session, query, pagination)
     await _populate_streaks_for(session, items, current_user, user_tz)

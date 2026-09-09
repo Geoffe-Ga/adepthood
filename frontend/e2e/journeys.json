@@ -714,5 +714,17 @@
     },
     "status": "uncovered",
     "issue": 2574
+  },
+  {
+    "id": "practice.paging-a-long-list-shows-every-row-once",
+    "description": "Someone whose library has outgrown one page reads it whole. The client pages every list endpoint at fifty rows a page (api/index.ts, listAll -> fetchAllPages), and paginate_query used to apply OFFSET/LIMIT to whatever the router handed it and add no ordering of its own -- so GET /user-practices/ carried no ORDER BY at all, and neighbouring endpoints ordered on keys that tie (a practice-session timestamp, a recipe owner-and-name, a stageprogress user_id). OFFSET/LIMIT is only well-defined over a total order: inside a tie group the database may order each page request differently, so one selection can arrive on two consecutive pages while another arrives on none, and the reader sees a duplicate or a hole with nothing wrong in the store. paginate_query now appends the entity primary key to every page it serves, which is a no-op wherever the caller key was already total. Uncovered because the seam is a page boundary: this lane cannot mint the fifty-one rows that produce a second page without a fixture seam it has no route for, and even with one, an assertion on returned rows cannot tell the fix from the defect -- a planner is free to return the tie group in insertion order either way. Pinned meanwhile by backend/tests/test_pagination_total_order.py, which asserts the ORDER BY each endpoint actually emitted, compiled to the PostgreSQL dialect the test lane is not.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["userPractices"],
+      "routes": ["GET /user-practices/"],
+      "tables": ["userpractice"]
+    },
+    "status": "uncovered",
+    "issue": 2718
   }
 ]
