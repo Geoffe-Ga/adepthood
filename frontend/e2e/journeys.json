@@ -937,5 +937,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-unconfirmed-stage.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.day-turns-over-on-a-mounted-screen",
+    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened. Uncovered because neither half is reachable from this lane: the rollover is clock-driven and crosses no wire at all -- that is the point of it, since only what is re-derived changes -- and the node environment cannot mount a screen to advance a clock against, the same constraint recorded on welcome.first-run-walkthrough-to-journal. The focus half does cross the wire but needs a real navigator the user can leave and return to. Jest pins both halves in process today, against a real NavigationContainer and against fake timers advanced past local midnight; covering this needs the browser lane, which can install a fake clock on the mounted app. See #2771.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2771
   }
 ]
