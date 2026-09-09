@@ -49,7 +49,16 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
   await expect(page.getByTestId(`quote-highlight-${quote?.id}`)).toHaveText(selectedText);
   await page.getByTestId(`quote-highlight-${quote?.id}`).click();
-  await page.getByTestId(`promotion-remove-${quote?.id}`).click();
+  const removeResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      new URL(response.url()).pathname === `/promotions/${quote?.id}`,
+  );
+  const [removed] = await Promise.all([
+    removeResponse,
+    page.getByTestId(`promotion-remove-${quote?.id}`).click(),
+  ]);
+  expect(removed.ok()).toBe(true);
   await expect(page.getByTestId(`quote-highlight-${quote?.id}`)).toHaveCount(0);
 
   const afterRemove = await page.request.get(`${backendUrl()}/journal/${entryId}/promotions`, {
