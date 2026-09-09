@@ -33,6 +33,7 @@ inherited that would hand the lane a token no confirm accepts.
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -170,6 +171,44 @@ async def test_capture_file_is_readable_only_by_its_owner(capture_file: Path) ->
     """The file holds live reset tokens, so no group or other bit may be set."""
     sender = CaptureEmailSender.from_env()
 
+    await sender.send(
+        EmailMessagePayload(to="a@b.test", subject="Reset", body=_body(TOKEN)),
+        redact_for_log=TOKEN,
+    )
+
+    assert _permission_bits(capture_file) & GROUP_AND_OTHER_BITS == 0
+
+
+def _plant_group_readable_file(path: Path) -> None:
+    """Create ``path`` group- and world-readable, whatever the ambient umask.
+
+    ``os`` rather than ``Path`` because the caller is a coroutine, and the mode
+    is forced after the open because ``O_CREAT`` masks its mode with the umask.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        os.fchmod(descriptor, 0o644)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.asyncio
+async def test_capture_file_permissions_are_tightened_when_the_file_already_exists(
+    capture_file: Path,
+) -> None:
+    """A file already on disk is narrowed too, not left at whatever mode it had.
+
+    ``O_CREAT`` carries its mode only when the open actually creates the file,
+    so a capture file left behind by an earlier run -- or planted by another
+    process -- would keep a group- or world-readable mode while this adapter
+    appended live reset tokens to it. The descriptor is narrowed after opening,
+    which closes that gap without a path-based ``chmod`` a symlink swap could
+    redirect between the check and the change.
+    """
+    _plant_group_readable_file(capture_file)
+    assert _permission_bits(capture_file) & GROUP_AND_OTHER_BITS != 0
+
+    sender = CaptureEmailSender.from_env()
     await sender.send(
         EmailMessagePayload(to="a@b.test", subject="Reset", body=_body(TOKEN)),
         redact_for_log=TOKEN,

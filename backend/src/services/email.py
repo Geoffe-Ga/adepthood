@@ -326,13 +326,19 @@ class CaptureEmailSender:
 
         The descriptor is opened with the mode rather than chmod-ed afterwards:
         between a default-mode create and a later chmod the file is a
-        world-readable reset token.
+        world-readable reset token.  ``O_CREAT`` carries that mode only when the
+        open actually creates the file, so the descriptor is narrowed again
+        before anything is written -- a file left by an earlier run, or planted
+        by another process, would otherwise keep its own mode while live tokens
+        were appended to it.  Narrowing the descriptor rather than the path
+        leaves no window a symlink swap could redirect.
         """
         descriptor = os.open(
             self.path,
             os.O_WRONLY | os.O_CREAT | os.O_APPEND,
             _CAPTURE_FILE_MODE,
         )
+        os.fchmod(descriptor, _CAPTURE_FILE_MODE)
         with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
             handle.write(line)
 
