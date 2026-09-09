@@ -15,6 +15,45 @@ exclude: ^backend/content/
 # locally. Naming the set here means a future install cannot silently drop one.
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 
+# Which stages a hook runs at when it names none itself. pre-commit's own
+# default is EVERY stage, and that default cost five separate investigations
+# (#2567 and two follow-up reports on it).
+#
+# The symptom: with six frontend files staged, `git commit` printed
+#
+#     frontend eslint......................................(no files to check)Skipped
+#
+# and three reporters in turn concluded the local lint gate had gone vacuous --
+# once widening the claim to "every lane in the fleet is committing unlinted".
+#
+# It never was. That line came from a SECOND hook block. Every hook below that
+# omitted `stages:` ran again at the commit-msg stage, where the only file in
+# play is .git/COMMIT_EDITMSG. It matches no `files:` pattern here, so every
+# file-scoped hook printed "(no files to check) Skipped" some twenty-five lines
+# BELOW its own earlier "Passed" -- and grepping a transcript for a hook name
+# returns the last match, which is the misleading one. The hooks that carry no
+# `files:` filter printed "Passed" in that block instead, which is why the
+# second report read as "every hook that takes a file list saw zero files,
+# while whole-repo hooks ran normally".
+#
+# This line is a legibility fix and NOT a coverage change. The two stages named
+# here are exactly the two .github/workflows/backend-ci.yml invokes by name
+# (`pre-commit run --hook-stage pre-commit` and `--hook-stage pre-push`), and
+# `pre-commit run --all-files` defaults to the first of them, so every hook that
+# ran before still runs, at the same stages, on the same files. What stops is
+# asking a lint, type, format, or dependency hook about a commit message -- a
+# question none of them has an answer to, and which two of them (fix byte order
+# marker, mixed line ending) answered by rewriting the message file in place.
+#
+# detect-private-key and detect-secrets opt back into commit-msg explicitly
+# below: scanning the message is the one thing in that block that was real
+# coverage, since a key pasted into a commit message lands in history.
+#
+# backend/tests/scripts/test_precommit_stage_selection.py holds this line down
+# and proves the gate is non-vacuous, by building a scratch repository whose
+# config mirrors this file's default_stages and observing real commits.
+default_stages: [pre-commit, pre-push]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -29,6 +68,10 @@ repos:
       - id: check-docstring-first
       - id: debug-statements
       - id: detect-private-key
+        # See default_stages above: a private key pasted into a commit message
+        # lands in history just as surely as one in a file, so this hook keeps
+        # the commit-msg stage the rest of the set gives up.
+        stages: [pre-commit, commit-msg, pre-push]
       - id: end-of-file-fixer
       - id: fix-byte-order-marker
       - id: mixed-line-ending
@@ -211,6 +254,10 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
+        # Same reasoning as detect-private-key above: the commit message is
+        # scanned content too, and it is the one thing the commit-msg block was
+        # ever really checking.
+        stages: [pre-commit, commit-msg, pre-push]
         # backend/content/ is vendored course content (managed only by
         # sync_content.py and pinned by digest in CONTENT_VERSION); scanning
         # published Markdown for secrets is pure noise, like node_modules.
