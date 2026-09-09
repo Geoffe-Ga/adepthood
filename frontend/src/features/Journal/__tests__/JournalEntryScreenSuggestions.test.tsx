@@ -62,6 +62,10 @@ jest.mock('@/navigation/hooks', () => ({
 // Deliberately not ``authContextTestKit``: its zone is UTC, which Jest also pins
 // as the device zone, so an assertion against it could not tell the threaded
 // auth zone apart from a silent device-zone fallback. This one can.
+// These specs are about what a pass produces, not about the note in front of it:
+// render as a reader who has already read the cost note and set it aside.
+jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExplainerTestKit'));
+
 jest.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ userTimezone: mockUserTz }),
 }));

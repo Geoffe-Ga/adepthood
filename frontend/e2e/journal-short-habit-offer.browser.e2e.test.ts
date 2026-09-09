@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test';
 
-import { backendUrl, seedHabit, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  askForResonance,
+  backendUrl,
+  seedHabit,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 test('a failed short-entry reflection still offers and checks off a completed habit', async ({
   page,
@@ -33,7 +39,7 @@ test('a failed short-entry reflection still offers and checks off a completed ha
   });
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
-  await page.getByRole('button', { name: 'Get resonance' }).click();
+  await askForResonance(page);
 
   await expect(page.getByTestId('journal-resonance-error')).toContainText(
     "We couldn't create a reflection for this entry.",

@@ -41,10 +41,12 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
+import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
+import { useResonanceExplainer } from './useResonanceExplainer';
 import { countWords, wordCountLabel } from './wordCount';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -2161,6 +2163,40 @@ function useEntryResonance(routeEntryId: number | null, flush: () => Promise<num
   return useResonance({ routeEntryId, flush, userTimezone });
 }
 
+/** Everything the entry screen needs at the resonance seam, in one place. */
+interface ResonanceSeamInput {
+  routeEntryId: number | null;
+  autosave: AutosaveApi;
+  ctx: SaveContext;
+  isIdle: boolean;
+  justSaved: boolean;
+}
+
+/**
+ * The resonance seam: the one charged pass, the spend disclosure in front of it,
+ * and the rules for when the affordance is offered at all.
+ *
+ * Grouped rather than left inline because the three are one decision. The pass
+ * costs a BotMason message, so the button must press the gate and never the
+ * pass — and a later reader wiring a third resonance affordance should find the
+ * gate here rather than have to notice it among the controller's other seams.
+ */
+function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
+  const resonance = useEntryResonance(routeEntryId, autosave.flush);
+  const explainer = useResonanceExplainer(resonance.requestResonance);
+  const gate = deriveResonanceGate({
+    // A photograph-capture handoff (justSaved) offers resonance immediately,
+    // without waiting for the usual post-typing idle pause.
+    isIdle: isIdle || justSaved,
+    isLoading: resonance.loading,
+    body: autosave.body,
+    classification: autosave.classification,
+    isPromptCompose: ctx.weekNumber != null,
+    privateMessage: resonance.privateMessage,
+  });
+  return { resonance, explainer, gate };
+}
+
 function useJournalEntryController(
   routeEntryId: number | null,
   autosaveDelayMs: number,
@@ -2182,27 +2218,24 @@ function useJournalEntryController(
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
-  const resonance = useEntryResonance(routeEntryId, autosave.flush);
+  const { resonance, explainer, gate } = useResonanceSeam({
+    routeEntryId,
+    autosave,
+    ctx,
+    isIdle,
+    justSaved,
+  });
   const quote = useQuotePromotion(autosave.entryId);
   refreshRef.current = resonance.refresh;
   const reflection = useReflectionComposer(autosave);
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
-  const gate = deriveResonanceGate({
-    // A photograph-capture handoff (justSaved) offers resonance immediately,
-    // without waiting for the usual post-typing idle pause.
-    isIdle: isIdle || justSaved,
-    isLoading: resonance.loading,
-    body: autosave.body,
-    classification: autosave.classification,
-    isPromptCompose: ctx.weekNumber != null,
-    privateMessage: resonance.privateMessage,
-  });
 
   return {
     autosave,
     resonance,
+    explainer,
     quote,
     reflection,
     ...gate,
@@ -2230,7 +2263,7 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
     disabled: ctl.resonanceDisabled,
     loading: ctl.resonance.loading,
     reason: ctl.resonanceReason,
-    onPress: ctl.resonance.requestResonance,
+    onPress: ctl.explainer.onPress,
   };
 }
 
@@ -2570,16 +2603,25 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
 function EntryOverlays({
   modal,
   editGate,
+  explainer,
   entryDrawer,
   currentEntryId,
 }: {
   modal: Controller['modal'];
   editGate: Controller['editGate'];
+  explainer: Controller['explainer'];
   entryDrawer: EntryScreenDrawer;
   currentEntryId: number | null;
 }): React.JSX.Element {
   return (
     <>
+      <ResonanceExplainerDialog
+        visible={explainer.visible}
+        dontShowAgain={explainer.dontShowAgain}
+        onToggleDontShowAgain={explainer.onToggleDontShowAgain}
+        onContinue={explainer.onContinue}
+        onCancel={explainer.onCancel}
+      />
       <ResonanceEssayModal
         note={modal.openNote}
         onClose={modal.onCloseNote}
@@ -2686,7 +2728,7 @@ function EntryWritingSurfaces({
         disabled={ctl.resonanceDisabled}
         loading={ctl.resonance.loading}
         reason={ctl.resonanceReason}
-        onPress={ctl.resonance.requestResonance}
+        onPress={ctl.explainer.onPress}
       />
     </>
   );
@@ -2767,6 +2809,7 @@ function JournalEntryScreen({
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}
+        explainer={ctl.explainer}
         entryDrawer={entryDrawer}
         currentEntryId={currentEntryId}
       />

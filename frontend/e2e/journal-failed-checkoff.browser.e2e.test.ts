@@ -1,6 +1,12 @@
 import { expect, test } from '@playwright/test';
 
-import { backendUrl, seedHabit, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  askForResonance,
+  backendUrl,
+  seedHabit,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 const ACCEPT_ROUTE = '**/journal/suggestions/*/accept';
 
@@ -42,7 +48,7 @@ test('a refused check-off says so beside the card, which stays pressable', async
   });
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
-  await page.getByRole('button', { name: 'Get resonance' }).click();
+  await askForResonance(page);
 
   const checkOff = page.getByRole('button', {
     name: 'Check off completed Evening swim',
