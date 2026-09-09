@@ -5,9 +5,13 @@
  * rereadable sources feed on mount, tracks the body caret so a folded-in quote
  * lands where the writer left off, and folds a chosen quote into the body: splice
  * a Markdown blockquote at the caret, let the normal draft path create/save the
- * entry, then mark the quote included on that entry. A failed inclusion leaves
- * the quote pending and raises a warm, declinable hint — never a crash, never a
- * nag. It also re-promotes a freshly selected span from a source and folds the
+ * entry, then mark the quote included on that entry. Both writes are one act, so
+ * ``foldingIn`` stays raised across the pair -- and across every act still
+ * outstanding, since a writer may fold a second quote in before the first has
+ * landed -- and the screen's save hint waits for the marks rather than settling
+ * on a draft save alone. A failed inclusion
+ * leaves the quote pending and raises a warm, declinable hint — never a crash,
+ * never a nag. It also re-promotes a freshly selected span from a source and folds the
  * created quote into the feed's pending set.
  */
 import {
@@ -52,6 +56,16 @@ export interface UseReflectionModeResult {
   sources: ReflectionSourceItem[];
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
+  /**
+   * True while ANY fold-in is outstanding: from the tap on a pending quote until
+   * the whole act has settled -- the entry write AND the mark that retires the
+   * quote from the pending set. Fold-ins overlap freely (a writer gathering
+   * several quotes taps them in succession, and each is a round trip), so this
+   * reads a count of outstanding acts rather than a single shared flag. The
+   * screen holds its save hint at "Saving…" for the span, so the page never says
+   * "Saved" while a write belonging to one of those acts is still on the wire.
+   */
+  foldingIn: boolean;
   /** Track the body caret so an inserted quote lands where the writer is. */
   onBodySelectionChange: (_e: SelectionEvent) => void;
   /** Fold a chosen pending quote in; resolves true when it was marked included. */
@@ -129,6 +143,50 @@ function useSourcesFeed(
   return [sources, setSources];
 }
 
+/**
+ * Mark ``quoteId`` folded into ``entryId``, reporting whether it took. A refusal
+ * is not an error here: the quote simply stays pending and the writer can fold
+ * it again later, so the caller raises a warm hint rather than crashing.
+ */
+async function markIncluded(quoteId: number, entryId: number): Promise<boolean> {
+  try {
+    await promotions.setIncluded(quoteId, entryId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A tally of the acts currently outstanding, and the wrapper that keeps it
+ * honest.
+ *
+ * A count rather than a flag, because fold-ins overlap: the panel's "already
+ * folded in" guard is per row, so nothing stops a writer folding a second quote
+ * in while the first is still on the wire, and a shared boolean would be lowered
+ * by whichever act finished first — announcing a save the other had not made.
+ *
+ * A count is only sound if every raise is matched by exactly one lower on every
+ * path, which is what the ``finally`` gives: a rejected act settles the tally
+ * rather than stranding it. Both updates are functional, so two taps in one tick
+ * cannot read the same stale count and collapse into one.
+ */
+function useInFlightTally(): {
+  anyInFlight: boolean;
+  track: <T>(_act: () => Promise<T>) => Promise<T>;
+} {
+  const [count, setCount] = useState(0);
+  const track = useCallback(async <T>(act: () => Promise<T>): Promise<T> => {
+    setCount((outstanding) => outstanding + 1);
+    try {
+      return await act();
+    } finally {
+      setCount((outstanding) => outstanding - 1);
+    }
+  }, []);
+  return { anyInFlight: count > 0, track };
+}
+
 /** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
 function useFoldIn(
   bodyRef: MutableRefObject<string>,
@@ -136,6 +194,7 @@ function useFoldIn(
   flush: () => Promise<number | null>,
 ): {
   inclusionHint: boolean;
+  foldingIn: boolean;
   onBodySelectionChange: (_e: SelectionEvent) => void;
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
@@ -143,13 +202,14 @@ function useFoldIn(
   ) => Promise<boolean>;
 } {
   const [inclusionHint, setInclusionHint] = useState(false);
+  const { anyInFlight, track } = useInFlightTally();
   const caretRef = useRef<number | null>(null);
 
   const onBodySelectionChange = useCallback((event: SelectionEvent) => {
     caretRef.current = event.nativeEvent.selection.start;
   }, []);
 
-  const onInsertQuote = useCallback(
+  const foldQuoteIn = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
       const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
       const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
@@ -157,21 +217,26 @@ function useFoldIn(
       caretRef.current = nextCaret;
       const entryId = await flush();
       if (entryId == null) return false;
-      try {
-        await promotions.setIncluded(quote.id, entryId);
-        // A retried fold-in should not leave a stale warning from an earlier try.
-        setInclusionHint(false);
-        return true;
-      } catch {
-        // Leave the quote pending and invite a calm retry — no crash, no nag.
-        setInclusionHint(true);
-        return false;
-      }
+      // Set both ways round: a retried fold-in clears the warning an earlier try
+      // left, and a refused one raises it — no crash, no nag either way.
+      const included = await markIncluded(quote.id, entryId);
+      setInclusionHint(!included);
+      return included;
     },
     [bodyRef, onChangeBody, flush],
   );
 
-  return { inclusionHint, onBodySelectionChange, onInsertQuote };
+  // Tracked over the WHOLE act, not just the entry write: the draft save
+  // resolves first and settles the screen's own hint to "Saved" while the quote
+  // is still pending, so the tally is what holds the hint open until the mark
+  // lands — for this act and for any other still outstanding.
+  const onInsertQuote = useCallback(
+    (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> =>
+      track(() => foldQuoteIn(quote, sourceItem)),
+    [track, foldQuoteIn],
+  );
+
+  return { inclusionHint, foldingIn: anyInFlight, onBodySelectionChange, onInsertQuote };
 }
 
 /** The in-panel re-promote flow: lift a fresh span into its source's pending set. */
@@ -208,12 +273,20 @@ export function useReflectionMode({
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
   const [sources, setSources] = useSourcesFeed(reflectionLevel, reflectionScopeKey);
-  const { inclusionHint, onBodySelectionChange, onInsertQuote } = useFoldIn(
+  const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
     bodyRef,
     onChangeBody,
     flush,
   );
   const onPromoteSpan = usePromoteSpan(setSources);
 
-  return { active, sources, inclusionHint, onBodySelectionChange, onInsertQuote, onPromoteSpan };
+  return {
+    active,
+    sources,
+    inclusionHint,
+    foldingIn,
+    onBodySelectionChange,
+    onInsertQuote,
+    onPromoteSpan,
+  };
 }
