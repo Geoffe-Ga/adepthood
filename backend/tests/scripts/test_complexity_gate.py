@@ -152,7 +152,13 @@ def add(left: int, right: int) -> int:
 '''
 
 _RADON_CONFIG_HEADER = "[tool.radon]"
-_TOML_SECTION_SEPARATOR = "\n["
+# A TOML table header owns its whole line. Matching it as a bare substring also
+# matches prose: a comment anywhere in backend/pyproject.toml that names
+# ``[tool.radon]`` would be read as the table, and the staged checkout would be
+# handed a fragment of a sentence as its entire pyproject -- which radon then
+# fails to parse, three tests deep, with a TOMLDecodeError that names neither
+# the comment nor this module. Both ends of the section are line-anchored.
+_TOML_SECTION_SEPARATOR = "["
 
 # Threshold keys radon accepts from its ambient config. None may appear in
 # the repository's own block: the gate passes its floors on the argv, so a
@@ -197,11 +203,19 @@ def _radon_config_section() -> str:
     Returns:
         The section header plus its keys, ending before the next TOML table.
     """
-    text = _BACKEND_PYPROJECT.read_text()
-    if _RADON_CONFIG_HEADER not in text:
-        pytest.fail(f"{_BACKEND_PYPROJECT} no longer defines {_RADON_CONFIG_HEADER}")
-    body = text.split(_RADON_CONFIG_HEADER, 1)[1].split(_TOML_SECTION_SEPARATOR, 1)[0]
-    return f"{_RADON_CONFIG_HEADER}{body}"
+    lines = _BACKEND_PYPROJECT.read_text().splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith(_RADON_CONFIG_HEADER)]
+    if len(starts) != 1:
+        pytest.fail(
+            f"{_BACKEND_PYPROJECT} defines {_RADON_CONFIG_HEADER} {len(starts)} times; "
+            f"expected exactly one table"
+        )
+    body: list[str] = []
+    for line in lines[starts[0] + 1 :]:
+        if line.startswith(_TOML_SECTION_SEPARATOR):
+            break
+        body.append(line)
+    return "\n".join([_RADON_CONFIG_HEADER, *body, ""])
 
 
 def _mi_violator_source() -> str:

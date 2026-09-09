@@ -8,6 +8,31 @@ requires = ["setuptools", "wheel"]
 src = ["backend/src", "src"]
 line-length = 100
 target-version = "py312"
+# ``migrations`` is Alembic-generated, and skipping it is a repository-wide
+# policy rather than this one analyser's opinion. Every other tool config says
+# the same thing: the mypy hook in .pre-commit-config.yaml carries
+# ``exclude: ^backend/migrations/``, backend/.bandit lists ``backend/migrations``
+# under ``exclude_dirs``, and ``[tool.coverage.run]``, ``[tool.radon]``,
+# ``[tool.interrogate]`` and ``[tool.vulture]`` below each exclude it too.
+#
+# A standalone isort hook used to be the one checker that still reached the
+# tree, because it matched ``^backend/`` and skipped nothing. When that hook
+# was removed as a redundant second import-sorter, import-order enforcement
+# there lapsed with it. The lapse is deliberate, and it is recorded here --
+# next to the line that causes it -- rather than only in the removal's own note
+# or in the pull request that made it.
+#
+# The alternative -- narrowing this list, or adding a migrations-scoped ruff
+# invocation limited to ``I`` -- was considered and declined. Import order in
+# these files is a property of Alembic's template, not of anything a human
+# writes; restoring only ``I`` would make it the single rule family enforced on
+# a tree that yields seven findings across five other rule families in env.py
+# alone; and it would add one more boundary for "generated code" to be kept in
+# step with all the ones named above.
+#
+# The cost of the lapse is cosmetic. Claiming coverage this line withdraws is
+# not, so backend/tests/scripts/test_migrations_lint_exclusion.py pins the
+# claim to the measured behaviour.
 extend-exclude = ["migrations", ".venv", "venv", "build", "dist"]
 
 [tool.ruff.lint]
