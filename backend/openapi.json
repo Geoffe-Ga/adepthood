@@ -12778,7 +12778,7 @@
     },
     "/habits/{habit_id}": {
       "delete": {
-        "description": "Delete a habit and cascade its goals + completions via the FK cascade.",
+        "description": "Delete a habit, and with it every goal, completion and release it owns.",
         "operationId": "delete_habit_habits__habit_id__delete",
         "parameters": [
           {
