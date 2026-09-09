@@ -32,16 +32,38 @@ import type {
   ResonanceResponse,
 } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { habitManager } from '@/features/Habits/services/habitManager';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
 
-type SetError = (_e: string) => void;
+/**
+ * What a failed check-off says, ahead of whatever the failure itself explains.
+ *
+ * Two parts and no third: the task that did not happen, and the reassurance
+ * that the row survived it — the card is still pending server-side, so pressing
+ * OK again is a real remedy rather than a hopeful one. The cause is left to
+ * ``formatApiError``, which says only what the client can establish. A browser
+ * refuses a cross-origin response and a browser that cannot reach the host both
+ * reject ``fetch`` identically, so any cause named here would be a
+ * guess wearing a diagnosis.
+ */
+const ACCEPT_FAILED_PREFIX =
+  "That check-off didn't go through — the card is still here, so nothing is lost.";
+
+/** Set or clear the margin's error. ``null`` retires a previous complaint. */
+type SetError = (_e: string | null) => void;
 
 export interface UseResonanceArgs {
   routeEntryId: number | null;
   /** Persist the latest text and resolve to the entry id (from the writing surface). */
   flush: () => Promise<number | null>;
+  /**
+   * The auth-hydrated IANA zone, threaded as every ``loadHabits`` caller
+   * threads it: an accepted habit's refresh buckets "today" by this, and the
+   * device zone would put a late-night check-in on the wrong day.
+   */
+  userTimezone: string;
 }
 
 export interface UseResonanceResult {
@@ -112,7 +134,11 @@ interface SuggestionsApi {
 }
 
 /** Owns suggestion state: load-on-open, merge, and accept/dismiss with guards. */
-function useSuggestions(routeEntryId: number | null, setError: SetError): SuggestionsApi {
+function useSuggestions(
+  routeEntryId: number | null,
+  setError: SetError,
+  userTimezone: string,
+): SuggestionsApi {
   const [suggestions, setSuggestions] = useState<CompletionSuggestion[]>([]);
   const [acceptedCheckIns, setAcceptedCheckIns] = useState<Record<number, CheckInResult | null>>(
     {},
@@ -132,8 +158,9 @@ function useSuggestions(routeEntryId: number | null, setError: SetError): Sugges
         setSuggestions,
         setAcceptedCheckIns,
         setError,
+        userTimezone,
       }),
-    [setError],
+    [setError, userTimezone],
   );
 
   const dismissSuggestion = useCallback(
@@ -163,6 +190,25 @@ interface AcceptDeps {
   setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
   setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult | null>>>;
   setError: SetError;
+  userTimezone: string;
+}
+
+/**
+ * Push an accepted habit's check-in through to the habit store.
+ *
+ * The check-in itself is kept in screen-local state for the card's streak line,
+ * which on its own leaves the Habits tab and the shelf's "Today's habits" tile
+ * disagreeing with the card the writer just watched settle: both load their
+ * habits on mount and both stay mounted underneath this screen, so returning to
+ * either re-runs nothing. A practice target has no habit row to refresh — the
+ * journal-attested session it logs carries no check-in and no streak.
+ */
+function refreshHabitsAfterAccept(
+  target: CompletionSuggestion['target_type'],
+  userTimezone: string,
+): void {
+  if (target !== 'habit') return;
+  void habitManager.loadHabits(userTimezone);
 }
 
 /** Accept a suggestion: per-id guarded; logs the completion, flips to accepted. */
@@ -173,8 +219,14 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
     const result = await completionSuggestions.accept(id);
     deps.setSuggestions((prev) => mergeByIdSorted(prev, [result.suggestion]));
     deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
+    // A success retires the previous attempt's complaint; leaving it pinned
+    // beside a card that now reads "✓ Checked off" contradicts the card.
+    deps.setError(null);
+    refreshHabitsAfterAccept(result.suggestion.target_type, deps.userTimezone);
   } catch (err) {
-    deps.setError(formatApiError(err)); // row stays pending; user can retry
+    // The row stays pending, so the card is still on screen to press again —
+    // which only helps if the writer is told, hence the named failure.
+    deps.setError(`${ACCEPT_FAILED_PREFIX} ${formatApiError(err)}`);
   } finally {
     deps.pendingIdsRef.current.delete(id);
   }
@@ -288,13 +340,17 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   return { loading, requestResonance };
 }
 
-export function useResonance({ routeEntryId, flush }: UseResonanceArgs): UseResonanceResult {
+export function useResonance({
+  routeEntryId,
+  flush,
+  userTimezone,
+}: UseResonanceArgs): UseResonanceResult {
   const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
   const latestPass = useLatestPassState();
   const [error, setError] = useState<string | null>(null);
 
   useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
-  const sug = useSuggestions(routeEntryId, setError);
+  const sug = useSuggestions(routeEntryId, setError, userTimezone);
   const { loading, requestResonance } = useGeneratePass({
     flush,
     setMarginalia,

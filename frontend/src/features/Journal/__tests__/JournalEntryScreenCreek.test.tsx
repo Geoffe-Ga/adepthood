@@ -9,6 +9,9 @@ const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<Journa
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
 const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<ResonanceResponse>>;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...args: unknown[]) => (mockGet as unknown as (...values: unknown[]) => unknown)(...args),

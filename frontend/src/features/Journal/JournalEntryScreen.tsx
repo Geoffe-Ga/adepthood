@@ -64,6 +64,7 @@ import type {
 } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import { useAuth } from '@/context/AuthContext';
 import { accent, colors, writingField, writingFieldFocus } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
@@ -1331,10 +1332,25 @@ function WritingColumn({
   );
 }
 
-/** Margin content for the no-notes case: surfaces a resonance error, if any. */
+/**
+ * The margin's account of a resonance failure — a rejected pass, or a check-off
+ * that did not go through.
+ *
+ * Rendered above whatever the margin already holds rather than only in place of
+ * it. Sitting in the empty-margin branch made it unreachable in exactly the
+ * state that produces an accept failure, because a pending suggestion card is
+ * itself margin content: pressing OK and getting no visible change was that
+ * branch, not a dead button. ``accessibilityLiveRegion`` announces the failure
+ * so the silence is not merely relocated to another medium.
+ */
 function ResonanceMargin({ error }: { error: string | null }) {
   return error ? (
-    <Text style={styles.marginError} testID="journal-resonance-error">
+    <Text
+      style={styles.marginError}
+      accessibilityRole="text"
+      accessibilityLiveRegion="polite"
+      testID="journal-resonance-error"
+    >
       {error}
     </Text>
   ) : null;
@@ -1953,6 +1969,19 @@ function useEntryEditGate(
   });
 }
 
+/**
+ * ``useResonance``, bound to the signed-in person's own day boundary.
+ *
+ * The zone comes from auth rather than the device because accepting a
+ * completion suggestion refreshes the habit store, which buckets "today" by
+ * it -- a late-night check-off would otherwise land on the wrong day. Given its
+ * own hook so the controller reads one line here, as it does at every other seam.
+ */
+function useEntryResonance(routeEntryId: number | null, flush: () => Promise<number | null>) {
+  const { userTimezone } = useAuth();
+  return useResonance({ routeEntryId, flush, userTimezone });
+}
+
 function useJournalEntryController(
   routeEntryId: number | null,
   autosaveDelayMs: number,
@@ -1974,7 +2003,7 @@ function useJournalEntryController(
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
-  const resonance = useResonance({ routeEntryId, flush: autosave.flush });
+  const resonance = useEntryResonance(routeEntryId, autosave.flush);
   const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
   const reflection = useReflectionComposer(ctx, autosave);
@@ -2087,15 +2116,14 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
         onAccept={ctl.resonance.acceptSuggestion}
         onDismiss={ctl.resonance.dismissSuggestion}
       />
-    ) : (
-      <ResonanceMargin error={ctl.resonance.error} />
-    );
+    ) : null;
   return (
     <View
       style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
       testID="journal-margin-column"
     >
       <NoNotesNotice message={ctl.resonance.noNotesMessage} />
+      <ResonanceMargin error={ctl.resonance.error} />
       {content}
     </View>
   );

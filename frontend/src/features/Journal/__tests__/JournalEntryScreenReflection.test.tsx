@@ -44,6 +44,9 @@ const mockPromotionsCreate = jest.fn() as jest.MockedFunction<
   (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
 >;
 
+// ``useAuth`` throws outside a provider; the screen reads only the zone.
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('@/api', () => ({
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),

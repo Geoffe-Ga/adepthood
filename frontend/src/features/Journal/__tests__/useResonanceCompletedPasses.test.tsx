@@ -2,7 +2,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 
-import { note, resonancePayload } from './resonanceTestKit';
+import { TEST_TIMEZONE, note, resonancePayload } from './resonanceTestKit';
 
 import type { Marginalia, ResonanceResponse } from '@/api';
 import { ApiError } from '@/api';
@@ -63,7 +63,9 @@ beforeEach(() => {
 describe('useResonance.completedPasses', () => {
   it('starts at zero and does not move on the load-on-open read', async () => {
     mockList.mockResolvedValue({ items: [note()] });
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await act(async () => {});
 
@@ -74,7 +76,9 @@ describe('useResonance.completedPasses', () => {
     mockGenerate
       .mockResolvedValueOnce(resonancePayload({ marginalia: [note()] }))
       .mockResolvedValueOnce(resonancePayload({ no_notes_message: 'Nothing this time.' }));
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await pass(result);
     expect(passes(result)).toBe(1);
@@ -84,7 +88,9 @@ describe('useResonance.completedPasses', () => {
 
   it('does not count a pass that rejected', async () => {
     mockGenerate.mockRejectedValue(new ApiError(502, 'llm_provider_error'));
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await pass(result);
 
@@ -95,7 +101,9 @@ describe('useResonance.completedPasses', () => {
     mockGenerate.mockResolvedValue(
       resonancePayload({ private: true, private_message: 'This entry stays on the device.' }),
     );
-    const { result } = renderHook(() => useResonance({ routeEntryId: 7, flush }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
 
     await pass(result);
 
