@@ -17,6 +17,7 @@ from sqlmodel import col
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.goal import Goal
 from models.habit import Habit
+from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
 from services import marginalia as marginalia_service
@@ -90,6 +91,7 @@ def _fake(
     hits: list[dict[str, Any]],
     detection_calls: list[str] | None = None,
     detection_error: LLMProviderError | None = None,
+    provider: str = "stub",
 ) -> None:
     """Patch the shared LLM seam: marginalia JSON for the literary prompt, hits for detection."""
     notes_payload = json.dumps({"notes": [_NOTE]})
@@ -98,10 +100,10 @@ def _fake(
     def _stub(text: str) -> LLMResponse:
         return LLMResponse(
             text=text,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
+            provider=provider,
+            model=STUB_MODEL_NAME if provider == "stub" else "gpt-4o-mini",
+            prompt_tokens=0 if provider == "stub" else 12,
+            completion_tokens=0 if provider == "stub" else 4,
         )
 
     async def _complete(
@@ -175,7 +177,13 @@ async def test_short_entry_can_check_completions_without_a_resonance_pass(
 async def test_independent_completion_check_does_not_duplicate_an_existing_offer(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    calls: list[str] = []
+    _fake(
+        monkeypatch,
+        hits=[{"index": 0, "quote": "I meditated"}],
+        detection_calls=calls,
+        provider="openai",
+    )
     headers = await _signup(async_client, "dedupe-detect")
     await _seed_habit(db_session, await _user_id(db_session, "dedupe-detect"))
     entry_id = await _create_entry(async_client, headers, body="I meditated")
@@ -188,7 +196,10 @@ async def test_independent_completion_check_does_not_duplicate_an_existing_offer
     persisted = (
         await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
     ).scalar_one()
+    usage = (await db_session.execute(select(func.count()).select_from(LLMUsageLog))).scalar_one()
     assert persisted == 1
+    assert len(calls) == 1
+    assert usage == 1
 
 
 @pytest.mark.asyncio

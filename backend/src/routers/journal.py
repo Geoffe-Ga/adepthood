@@ -1762,6 +1762,15 @@ async def _existing_suggestion_targets(
     return targets
 
 
+async def _lock_detection_entry(session: AsyncSession, entry_id: int, user_id: int) -> None:
+    """Serialize post-provider suggestion writes for one owned journal entry."""
+    await session.execute(
+        select(col(JournalEntry.id))
+        .where(JournalEntry.id == entry_id, JournalEntry.user_id == user_id)
+        .with_for_update()
+    )
+
+
 async def _persist_detected_suggestions(
     session: AsyncSession,
     *,
@@ -1771,6 +1780,10 @@ async def _persist_detected_suggestions(
     llm: BotmasonResonanceLLM,
 ) -> CompletionDetectionResponse:
     """Persist only offers this entry has not already made."""
+    # Provider calls run without a transaction. Once they return, lock the
+    # entry before rechecking: concurrent tabs then take turns and the follower
+    # sees the first request's committed targets instead of inserting twins.
+    await _lock_detection_entry(session, entry_id, user_id)
     existing = await _existing_suggestion_targets(session, entry_id, user_id)
     fresh_hits = [hit for hit in hits if (hit.target_type, hit.target_id) not in existing]
     rows = _stage_suggestions(session, entry_id, user_id, fresh_hits)
@@ -1787,6 +1800,49 @@ async def _persist_detected_suggestions(
             CompletionSuggestionResponse.model_validate(row, from_attributes=True) for row in rows
         ],
         checked=True,
+    )
+
+
+async def _unoffered_candidates(
+    session: AsyncSession, *, entry_id: int, user_id: int
+) -> list[DetectionCandidate]:
+    """Return only tracked targets this entry has never offered before."""
+    candidates = await gather_candidates(session, user_id, include_practices=True)
+    existing = await _existing_suggestion_targets(session, entry_id, user_id)
+    return [
+        candidate
+        for candidate in candidates
+        if (candidate.target_type, candidate.target_id) not in existing
+    ]
+
+
+async def _detect_fresh_suggestions(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    user_id: int,
+    candidates: Sequence[DetectionCandidate],
+    api_key_header: str | None,
+) -> CompletionDetectionResponse:
+    """Dial without a transaction, then persist a concurrency-safe fresh subset."""
+    api_key = resolve_chat_api_key(api_key_header)
+    llm = BotmasonResonanceLLM(api_key)
+    await session.commit()
+    attempt = await _detect_hits_with_status(
+        entry.message,
+        candidates=candidates,
+        llm=llm,
+        user_id=user_id,
+        entry_id=cast("int", entry.id),
+    )
+    if not attempt.checked:
+        return CompletionDetectionResponse(items=[], checked=False)
+    return await _persist_detected_suggestions(
+        session,
+        entry_id=cast("int", entry.id),
+        user_id=user_id,
+        hits=attempt.hits,
+        llm=llm,
     )
 
 
@@ -1815,32 +1871,19 @@ async def detect_entry_suggestions(
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
-    candidates = await gather_candidates(session, current_user, include_practices=True)
+    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
     if not candidates:
-        # There is nothing to send and therefore no reason to require or expose
-        # a provider key. An empty candidate set is a completed check, not a
-        # provider failure.
+        # There is nothing new to send and therefore no reason to require a key,
+        # expose the journal body, or pay for a known-no-op provider call. An
+        # empty candidate set is a completed check, not a provider failure.
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=True)
-    api_key = resolve_chat_api_key(x_llm_api_key)
-    llm = BotmasonResonanceLLM(api_key)
-    # Release every read before the provider round trip.
-    await session.commit()
-    attempt = await _detect_hits_with_status(
-        entry.message,
-        candidates=candidates,
-        llm=llm,
-        user_id=current_user,
-        entry_id=entry_id,
-    )
-    if not attempt.checked:
-        return CompletionDetectionResponse(items=[], checked=False)
-    return await _persist_detected_suggestions(
+    return await _detect_fresh_suggestions(
         session,
-        entry_id=entry_id,
+        entry=entry,
         user_id=current_user,
-        hits=attempt.hits,
-        llm=llm,
+        candidates=candidates,
+        api_key_header=x_llm_api_key,
     )
 
 

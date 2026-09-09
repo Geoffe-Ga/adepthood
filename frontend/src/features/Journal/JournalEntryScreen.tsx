@@ -266,6 +266,8 @@ async function finishWrite(
 }
 
 interface AutosaveApi {
+  /** The persisted entry id, including one created without a route transition. */
+  entryId: number | null;
   title: string;
   body: string;
   status: EntryStatus;
@@ -762,6 +764,7 @@ function useDebouncedSave(
   onConflict?: () => void,
 ) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [entryId, setEntryId] = useState<number | null>(routeEntryId);
   const refs = useDraftRefs(routeEntryId, { onSaved, onConflict, ctx, entryUnsettled });
   const persist = usePersistControls(refs.entryIdRef, setSaveState, refs.entryUnsettledRef);
   useTimerCleanup(refs.timerRef);
@@ -771,12 +774,29 @@ function useDebouncedSave(
     delayMs,
     setSaveState,
   );
+  const flushAndTrack = useCallback(
+    async (...args: Parameters<typeof flush>) => {
+      const id = await flush(...args);
+      if (id != null) setEntryId(id);
+      return id;
+    },
+    [flush],
+  );
+  const finishAndTrack = useCallback(
+    async (...args: Parameters<typeof finish>) => {
+      const id = await finish(...args);
+      setEntryId(id);
+      return id;
+    },
+    [finish],
+  );
 
   return {
+    entryId,
     saveState,
     save,
-    flush,
-    finish,
+    flush: flushAndTrack,
+    finish: finishAndTrack,
     changeClassification: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
@@ -1067,6 +1087,7 @@ function useSeedPersistOnNew(
 }
 
 interface AutosaveBindings extends ChoiceHandlers {
+  entryId: number | null;
   saveState: SaveState;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
@@ -1097,6 +1118,36 @@ function buildAutosaveApi(
   };
 }
 
+/** Bind the draft writer to the entry's live fields and local choice state. */
+function useAutosaveBindings(
+  entry: EntryState,
+  saving: ReturnType<typeof useDebouncedSave>,
+): AutosaveBindings {
+  const { onChangeTitle, onChangeBody } = useFieldHandlers(
+    entry.titleRef,
+    entry.bodyRef,
+    saving.save,
+    entry.setTitle,
+    entry.setBody,
+  );
+  const { flushNow, finishNow } = useBoundWriters(
+    saving.flush,
+    saving.finish,
+    entry.titleRef,
+    entry.bodyRef,
+  );
+  const choices = useChoiceHandlers(entry, saving.changeClassification, saving.changeChord);
+  return {
+    entryId: saving.entryId,
+    saveState: saving.saveState,
+    onChangeTitle,
+    onChangeBody,
+    flush: flushNow,
+    finish: finishNow,
+    ...choices,
+  };
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
@@ -1114,44 +1165,16 @@ function useJournalAutosave(
     ctx.reflectionLevel,
     ctx.reflectionScopeKey,
   );
-  const { titleRef, bodyRef } = entry;
   // An existing entry is "unsettled" until its load settles: entry.loaded flips
   // true only in the success apply, so it stays false through both the in-flight
   // and failed-load windows (and is irrelevant for a new entry — routeEntryId is
   // null). Gate the writer + controls on this so neither touches an unseen entry.
   const entryUnsettled = routeEntryId != null && !entry.loaded;
-  const { saveState, save, flush, finish, changeClassification, changeChord, seedPersist } =
-    useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
-  useSeedPersistOnLoad(entry, seedPersist);
-  useSeedPersistOnNew(routeEntryId, initialClassification, seedPersist);
-
-  const { onChangeTitle, onChangeBody } = useFieldHandlers(
-    titleRef,
-    bodyRef,
-    save,
-    entry.setTitle,
-    entry.setBody,
-  );
-  const { flushNow, finishNow } = useBoundWriters(flush, finish, titleRef, bodyRef);
-  const { onChangeClassification, onChangeChord } = useChoiceHandlers(
-    entry,
-    changeClassification,
-    changeChord,
-  );
-  return buildAutosaveApi(
-    entry,
-    {
-      saveState,
-      onChangeTitle,
-      onChangeBody,
-      onChangeClassification,
-      onChangeChord,
-      flush: flushNow,
-      finish: finishNow,
-    },
-    entryUnsettled,
-    routeEntryId != null && entry.loaded,
-  );
+  const saving = useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
+  useSeedPersistOnLoad(entry, saving.seedPersist);
+  useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
+  const bindings = useAutosaveBindings(entry, saving);
+  return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
 }
 
 interface WritingColumnProps {
@@ -2112,7 +2135,7 @@ function useJournalEntryController(
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
-  const quote = useQuotePromotion(routeEntryId);
+  const quote = useQuotePromotion(autosave.entryId);
   refreshRef.current = resonance.refresh;
   const reflection = useReflectionComposer(autosave);
   const modal = useEssayModal(resonance.updateNote);
