@@ -258,6 +258,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "Tags the account defined. System tags carry no owner and are untouched.",
     ),
     "promotedquote": _erase("user_id", "Passages the account promoted out of its own entries."),
+    "promptdismissal": _erase(
+        "user_id",
+        "Prompts the account set aside — a standing preference about what it "
+        "wanted offered, meaningless once there is nobody to offer them to.",
+    ),
     "promptresponse": _erase("user_id", "Answers to the weekly prompts."),
     "revokedtoken": _retain(
         "Opaque JWT ids with an expiry and nothing else — no account column "

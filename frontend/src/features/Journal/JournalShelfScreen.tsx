@@ -11,7 +11,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -25,6 +25,7 @@ import MorningPagesTip from './MorningPagesTip';
 import { usePressScale } from './motion';
 import PromptHistoryModal from './PromptHistoryModal';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
+import ReflectionDismiss from './ReflectionDismiss';
 import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
@@ -68,6 +69,21 @@ const ANSWERED_NOTE = 'Answered';
 // per week, so this names the rhythm rather than reporting a refusal — the whole
 // set stays readable, just not writable until the week turns over.
 const WEEK_WRITTEN_NOTE = "This week's prompt is written — the next one opens next week.";
+
+// Declining a prompt, said as a choice rather than as a failure to do it. Not
+// "skip", not "dismiss", and never a count of what went unwritten: the depths
+// are declinable invitations, so the way out of one is offered in the same
+// register the invitation was.
+const SET_ASIDE_LABEL = 'Set aside';
+const SET_ASIDE_HINT = 'Set this prompt aside; you can bring it back later.';
+const BRING_BACK_LABEL = 'Bring it back';
+const BRING_BACK_HINT = 'Bring this prompt back; it will appear with the others again.';
+const SHOW_SET_ASIDE_HINT = 'Show the prompts you have set aside';
+
+/** "1 prompt set aside — show it" / "N prompts set aside — show them". */
+function setAsideFooterLabel(count: number): string {
+  return count === 1 ? '1 prompt set aside — show it' : `${count} prompts set aside — show them`;
+}
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -335,6 +351,14 @@ interface StagePromptsState {
   writable: boolean;
 }
 
+/** The stage's prompts plus the two ways a reader changes what is offered. */
+interface StagePromptsBand extends StagePromptsState {
+  /** Stop offering this prompt, reversibly. */
+  setAside: (_ordinal: number) => void;
+  /** Offer it again. */
+  bringBack: (_ordinal: number) => void;
+}
+
 const NO_STAGE_PROMPTS: StagePromptsState = {
   stage: null,
   answered: new Set<number>(),
@@ -366,7 +390,7 @@ function answeredOrdinals(items: readonly PromptDetail[], stage: number): Readon
  * still appear, merely unmarked and still writable, rather than vanishing
  * because one of two reads failed.
  */
-function useStagePrompts(stage: number | null, week: number | null): StagePromptsState {
+function useStagePrompts(stage: number | null, week: number | null): StagePromptsBand {
   const [state, setState] = useState<StagePromptsState>(NO_STAGE_PROMPTS);
   useFocusEffect(
     useCallback(() => {
@@ -398,7 +422,49 @@ function useStagePrompts(stage: number | null, week: number | null): StagePrompt
       };
     }, [stage, week]),
   );
-  return state;
+
+  // The server answers each mutation with the whole band, so the reply *is*
+  // the new state and there is nothing to reconcile.
+  const applyStage = useCallback((fresh: StagePromptsResponse) => {
+    setState((prev) => ({ ...prev, stage: fresh }));
+  }, []);
+  return { ...state, ...useStagePromptChoice(stage, applyStage) };
+}
+
+/** One of the two stage-scoped mutations, as the band's handler for it. */
+type StagePromptMutation = (
+  _stageNumber: number,
+  _promptOrdinal: number,
+) => Promise<StagePromptsResponse>;
+
+/** Setting a prompt aside and bringing it back, bound to one stage.
+ *
+ * Both are the same shape and differ only in which route they call, so they
+ * are built from one factory rather than written twice. Nothing is hidden
+ * optimistically: a card that vanished on a request that failed would report a
+ * preference the server never recorded, and the reader would find it back on
+ * the next focus with no idea why. A refusal therefore leaves the band exactly
+ * as it was, which is already the truth.
+ */
+function useStagePromptChoice(
+  stage: number | null,
+  applyStage: (_fresh: StagePromptsResponse) => void,
+): Pick<StagePromptsBand, 'setAside' | 'bringBack'> {
+  const handlerFor = useCallback(
+    (mutate: StagePromptMutation) => (ordinal: number) => {
+      if (stage === null) return;
+      void mutate(stage, ordinal)
+        .then(applyStage)
+        .catch(() => {
+          // Refused: the band already shows what the server still holds.
+        });
+    },
+    [stage, applyStage],
+  );
+  return {
+    setAside: useMemo(() => handlerFor(prompts.setAside), [handlerFor]),
+    bringBack: useMemo(() => handlerFor(prompts.bringBack), [handlerFor]),
+  };
 }
 
 /** What a prompt card says: the prompt, its cadence, and whether it is answered. */
@@ -427,13 +493,13 @@ function StagePromptFace({
   );
 }
 
-/** One of the stage's prompts: what it asks, and how often it asks it.
+/** The prompt itself, as either a reading surface or a way into the page.
  *
  * Pressable only while the week can still take a response. Once it holds one,
  * the card is a plain reading surface rather than a button that leads to a page
  * the server refuses to save — the section says why just above it.
  */
-function StagePromptCard({
+function StagePromptBody({
   prompt,
   answered,
   writable,
@@ -445,18 +511,16 @@ function StagePromptCard({
   onOpen: (_prompt: StagePromptDetail) => void;
 }): React.JSX.Element {
   const { ordinal, title } = prompt;
-  const cardStyle = [styles.promptCard, answered ? styles.promptCardAnswered : null];
   const testID = `journal-stage-prompt-${ordinal}`;
   if (!writable) {
     return (
-      <View style={cardStyle} accessibilityLabel={`The prompt: ${title}`} testID={testID}>
+      <View accessibilityLabel={`The prompt: ${title}`} testID={testID}>
         <StagePromptFace prompt={prompt} answered={answered} />
       </View>
     );
   }
   return (
     <TouchableOpacity
-      style={cardStyle}
       onPress={() => onOpen(prompt)}
       accessibilityRole="button"
       accessibilityLabel={`${answered ? 'Write again to' : 'Write to'} the prompt: ${title}`}
@@ -467,19 +531,101 @@ function StagePromptCard({
   );
 }
 
+/** The declinable half of a prompt: set it aside, or bring it back.
+ *
+ * Sits below the prompt rather than inside its press target, so declining a
+ * prompt can never be mistaken for opening it. Setting one aside is a
+ * preference and not a completion — it neither marks the prompt answered nor
+ * changes whether any other prompt can still be written to this week.
+ */
+function StagePromptChoice({
+  ordinal,
+  setAside,
+  onSetAside,
+  onBringBack,
+}: {
+  ordinal: number;
+  setAside: boolean;
+  onSetAside: (_ordinal: number) => void;
+  onBringBack: (_ordinal: number) => void;
+}): React.JSX.Element {
+  return setAside ? (
+    <ReflectionDismiss
+      variant="reopen"
+      label={BRING_BACK_LABEL}
+      accessibilityLabel={BRING_BACK_HINT}
+      testID={`journal-stage-prompt-bring-back-${ordinal}`}
+      onPress={() => onBringBack(ordinal)}
+    />
+  ) : (
+    <ReflectionDismiss
+      label={SET_ASIDE_LABEL}
+      accessibilityLabel={SET_ASIDE_HINT}
+      testID={`journal-stage-prompt-set-aside-${ordinal}`}
+      onPress={() => onSetAside(ordinal)}
+    />
+  );
+}
+
+/** One of the stage's prompts, with the choice of whether to keep being offered it. */
+function StagePromptCard({
+  prompt,
+  answered,
+  writable,
+  onOpen,
+  onSetAside,
+  onBringBack,
+}: {
+  prompt: StagePromptDetail;
+  answered: boolean;
+  writable: boolean;
+  onOpen: (_prompt: StagePromptDetail) => void;
+  onSetAside: (_ordinal: number) => void;
+  onBringBack: (_ordinal: number) => void;
+}): React.JSX.Element {
+  const setAside = prompt.dismissed === true;
+  return (
+    <View
+      style={[
+        styles.promptCard,
+        answered ? styles.promptCardAnswered : null,
+        setAside ? styles.promptCardSetAside : null,
+      ]}
+      testID={`journal-stage-prompt-card-${prompt.ordinal}`}
+    >
+      <StagePromptBody prompt={prompt} answered={answered} writable={writable} onOpen={onOpen} />
+      <StagePromptChoice
+        ordinal={prompt.ordinal}
+        setAside={setAside}
+        onSetAside={onSetAside}
+        onBringBack={onBringBack}
+      />
+    </View>
+  );
+}
+
 /** The stage's prompts as one band, in curriculum order — the order matters,
  *  since some stages' prompts are a sequence where each feeds the next. Renders
  *  nothing at all until a stage has loaded, so the shelf never shows a
  *  placeholder standing in for a prompt the server has not named yet. */
 function StagePromptSection({
-  state,
+  band,
   onOpen,
 }: {
-  state: StagePromptsState;
+  band: StagePromptsBand;
   onOpen: (_prompt: StagePromptDetail) => void;
 }): React.JSX.Element | null {
-  const { stage, answered, writable } = state;
+  const { stage, answered, writable, setAside, bringBack } = band;
+  // Whether the set-aside prompts are on screen is a per-visit choice, not a
+  // preference: the reader asked to see them now, and next time they arrive
+  // the band is again the one they curated.
+  const [revealed, setRevealed] = useState(false);
+  const reveal = useCallback(() => setRevealed(true), []);
   if (stage === null || stage.prompts.length === 0) return null;
+  const setAsideCount = stage.prompts.filter((prompt) => prompt.dismissed === true).length;
+  const shown = revealed
+    ? stage.prompts
+    : stage.prompts.filter((prompt) => prompt.dismissed !== true);
   return (
     <View style={styles.promptSection} testID="journal-stage-prompts">
       <Text style={styles.promptSectionLabel}>{`${stage.stage_name} prompts`}</Text>
@@ -488,21 +634,32 @@ function StagePromptSection({
           {WEEK_WRITTEN_NOTE}
         </Text>
       )}
-      {stage.prompts.map((prompt) => (
+      {shown.map((prompt) => (
         <StagePromptCard
           key={prompt.ordinal}
           prompt={prompt}
           answered={answered.has(prompt.ordinal)}
           writable={writable}
           onOpen={onOpen}
+          onSetAside={setAside}
+          onBringBack={bringBack}
         />
       ))}
+      {setAsideCount === 0 || revealed ? null : (
+        <ReflectionDismiss
+          variant="reopen"
+          label={setAsideFooterLabel(setAsideCount)}
+          accessibilityLabel={SHOW_SET_ASIDE_HINT}
+          testID="journal-stage-prompts-set-aside-footer"
+          onPress={reveal}
+        />
+      )}
     </View>
   );
 }
 
 interface TopMatterProps {
-  stagePrompts: StagePromptsState;
+  stagePrompts: StagePromptsBand;
   onPrompt: (_prompt: StagePromptDetail) => void;
   onPastPrompts: () => void;
   onNew: () => void;
@@ -542,7 +699,7 @@ function ShelfTopMatter({
         />
         <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
       </View>
-      <StagePromptSection state={stagePrompts} onOpen={onPrompt} />
+      <StagePromptSection band={stagePrompts} onOpen={onPrompt} />
       <ReflectionInvitationBand />
       <VoiceReadinessBand />
       <MorningPagesTip onBegin={onNew} />
@@ -645,7 +802,7 @@ function makeRenderItem(
 interface ShelfBodyProps {
   shelf: ShelfState;
   nav: ShelfNav;
-  stagePrompts: StagePromptsState;
+  stagePrompts: StagePromptsBand;
   now: number;
   onPastPrompts: () => void;
 }
