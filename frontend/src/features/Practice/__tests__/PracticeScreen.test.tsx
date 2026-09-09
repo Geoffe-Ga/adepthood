@@ -562,7 +562,19 @@ describe('PracticeScreen', () => {
 
     const scroll = getByTestId('practice-player-scroll');
     expect(scroll.type).toBe('RCTScrollView');
-    expect(within(scroll).getByTestId('practice-stage-chip')).toBeTruthy();
+    // The chip is gated on the stage identity resolving -- `useFrequency`'s
+    // fetch, or the stage store as its offline fallback -- which is a promise
+    // chain independent of the one that puts `ritual-start` on screen. Awaiting
+    // `ritual-start` says nothing about it, so asserting the chip synchronously
+    // here was passing on whichever chain happened to settle first. Awaited the
+    // same way the sibling chip assertions below already are; the scroller is
+    // re-queried inside so the scoping still proves the chip rides in the
+    // scroller rather than being pinned outside it.
+    await waitFor(() =>
+      expect(
+        within(getByTestId('practice-player-scroll')).getByTestId('practice-stage-chip'),
+      ).toBeTruthy(),
+    );
     expect(within(scroll).getByTestId('ritual-start')).toBeTruthy();
     expect(within(scroll).getByTestId('weekly-progress')).toBeTruthy();
 

@@ -3,6 +3,7 @@ import { View, Text, useWindowDimensions, TouchableOpacity, Modal, ScrollView } 
 import { Calendar } from 'react-native-calendars';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 
+import { StatList, StatRow } from '../../../components/StatRow';
 import { CHART_AXIS_LABEL_COLOR, CHART_STYLE, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
@@ -83,18 +84,6 @@ const buildMarkedDates = (
   return marked;
 };
 
-interface StatRowProps {
-  label: string;
-  value: string;
-}
-
-const StatRow = ({ label, value }: StatRowProps) => (
-  <View style={styles.statsRow}>
-    <Text style={styles.statLabel}>{label}</Text>
-    <Text style={styles.statValue}>{value}</Text>
-  </View>
-);
-
 const TAB_NAMES = ['calendar', 'progress', 'byDay'] as const;
 const TAB_LABELS: Record<string, string> = {
   calendar: 'Calendar',
@@ -147,12 +136,12 @@ const CalendarTab = ({ habit, stats }: CalendarTabProps) => (
         arrowColor: STAGE_COLORS[habit.stage],
       }}
     />
-    <View style={styles.statsInfoContainer}>
+    <StatList>
       <StatRow label="Longest Streak:" value={`${stats.longestStreak} days`} />
       <StatRow label="Current Streak:" value={`${stats.currentStreak} days`} />
       <StatRow label="Completion Rate:" value={`${Math.round(stats.completionRate * 100)}%`} />
       <StatRow label="Total Completions:" value={`${stats.totalCompletions}`} />
-    </View>
+    </StatList>
   </View>
 );
 
@@ -195,9 +184,9 @@ const StatsContent = (props: StatsContentProps) => {
       <TabBar selectedTab={selectedTab} onSelect={onSelectTab} />
       <ScrollView style={styles.statsContainer}>
         {loading && (
-          <View style={styles.statsInfoContainer}>
-            <Text style={styles.statLabel}>Loading stats...</Text>
-          </View>
+          <StatList>
+            <Text style={styles.statsLoading}>Loading stats...</Text>
+          </StatList>
         )}
         {selectedTab === 'calendar' && <CalendarTab habit={habit} stats={stats} />}
         {selectedTab === 'progress' && (

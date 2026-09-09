@@ -425,27 +425,13 @@ export const styles = StyleSheet.create({
   calendarContainer: {
     marginVertical: SPACING.md,
   },
-  statsInfoContainer: {
-    marginTop: SPACING.lg,
-    backgroundColor: surface.canvas,
-    borderRadius: BORDER_RADIUS.md,
-    padding: SPACING.md,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: JUSTIFY_SPACE_BETWEEN,
-    paddingVertical: SPACING.sm,
-    borderBottomWidth: 1,
-    borderColor: '#eee',
-  },
-  statLabel: {
+  // The stats block's own rules live with the shared `StatRow` primitive
+  // (`src/components/StatRow.tsx`) now that the Practice detail screen renders
+  // the same shape. Only the modal's own loading line stays here.
+  statsLoading: {
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.text.primary,
-  },
-  statValue: {
-    fontSize: 15,
-    color: COLORS.text.secondary,
   },
   chartContainer: {
     marginVertical: SPACING.lg,

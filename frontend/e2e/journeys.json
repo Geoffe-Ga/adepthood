@@ -370,6 +370,24 @@
     "coveredBy": "frontend/e2e/practice-weekly-count.browser.e2e.test.ts"
   },
   {
+    "id": "practice.per-practice-totals-on-the-detail-screen",
+    "description": "A practitioner who has sat one practice several times walks from the player to that practice's own detail screen -- Practice, its drawer, \"Practice details\" -- and reads how much they have put into it: total sittings and total time, rendered as hours plus the minutes past 60. The totals are a backend aggregate keyed on an adoption the caller owns, never a client-side sum over a paged session list, and the aggregate widens server-side to every adoption of the same catalog practice that caller owns, so a practice carried from one stage into the next reports one lifetime figure rather than a per-stage slice. The spec logs a zero-length abort alongside two real sittings and asserts it moves neither number, which is the counting rule this endpoint had to settle: the insights rollup skips zero-duration rows, the legacy week-count route does not, and a total cannot honour both. It runs in the Playwright lane because the node lane cannot mount a screen at all (#2324), and because the rollup is read one tap from the player that writes the rows it counts -- the #2654 hazard, which only a browser holding an HTTP cache can see, so the last leg leaves the screen and comes back to force a real re-read.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeDetailScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": [
+        "GET /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/",
+        "POST /practice-sessions/",
+        "GET /practice-sessions/stats"
+      ],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-stats.browser.e2e.test.ts"
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {
@@ -631,6 +649,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-tags.e2e.test.ts"
+  },
+  {
+    "id": "journal.photograph-a-page-into-the-open-entry",
+    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps \"Photograph a page\", photographs their handwritten response, and the transcription is appended into the entry they already had open rather than being filed as a second one. The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/transcribe-page", "POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2768
   },
   {
     "id": "journal.read-past-prompts",

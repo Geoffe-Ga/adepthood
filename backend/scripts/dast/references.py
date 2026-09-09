@@ -300,6 +300,29 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ),
             ),
         ),
+        # The all-time totals answer with no id at all -- two numbers -- so the
+        # scan has nothing to match and a witness stands in for it. The seed is
+        # a user-practice that already carries one logged session, so
+        # ``total_sessions >= 1`` is a fact only that object's history produces:
+        # an intruder answered with the owner's aggregate would show it, and one
+        # answered with their own untouched practice would not.
+        ("GET", "/practice-sessions/stats"): ReferenceProbe(
+            method="GET",
+            path="/practice-sessions/stats",
+            body={},
+            references=(
+                ObjectReference(
+                    field="user_practice_id",
+                    location=ReferenceLocation.QUERY,
+                    seed_key="logged_user_practice_id",
+                    evidence=EvidenceStrategy.ECHO,
+                    witness=EvidenceWitness(
+                        pointer=("total_sessions",),
+                        condition=WitnessCondition.AT_LEAST_ONE,
+                    ),
+                ),
+            ),
+        ),
         ("POST", "/practice-sessions/"): ReferenceProbe(
             method="POST",
             path="/practice-sessions/",
