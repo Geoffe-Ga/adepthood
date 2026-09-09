@@ -71,6 +71,21 @@ const notify = (): void => {
   }
 };
 
+/**
+ * Stop the pending boundary from holding a host runtime open.
+ *
+ * Under Node a referenced timer keeps the event loop alive, and this one is up
+ * to a day long: a Jest worker that renders any habit surface would sit there
+ * until midnight rather than exiting, which the runner reports as a leak long
+ * after the tests that armed it have passed. React Native has no such concept
+ * and no `unref` on the handle, so this is a capability check rather than a
+ * behaviour change — the timer still fires at the boundary wherever the app is
+ * actually running, because something else is keeping that process alive.
+ */
+const releaseFromEventLoop = (handle: ReturnType<typeof setTimeout>): void => {
+  (handle as unknown as { unref?: () => void }).unref?.();
+};
+
 const arm = (): void => {
   disarm();
   if (listeners.size === 0) return;
@@ -79,6 +94,7 @@ const arm = (): void => {
     notify();
     arm();
   }, nextDelayMs());
+  releaseFromEventLoop(timer);
 };
 
 /**

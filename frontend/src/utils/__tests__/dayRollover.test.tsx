@@ -225,6 +225,36 @@ describe('useDayKey', () => {
     });
   });
 
+  describe('holding the process open', () => {
+    it('does not keep a host runtime alive waiting for midnight', () => {
+      // Real timers: the boundary is up to ~24h away, and under Node a
+      // referenced timer of that length keeps the event loop — and so a Jest
+      // worker — alive long after the tests that armed it have passed. The
+      // subscription is what schedules it, so this is the module's own
+      // problem, not the harness's.
+      jest.useRealTimers();
+      const armed: Array<ReturnType<typeof setTimeout>> = [];
+      const realSetTimeout = globalThis.setTimeout;
+      jest.spyOn(globalThis, 'setTimeout').mockImplementation(((
+        handler: () => void,
+        delay?: number,
+      ) => {
+        const handle = realSetTimeout(handler, delay);
+        armed.push(handle);
+        return handle;
+      }) as typeof globalThis.setTimeout);
+
+      const { unmount } = renderHook(() => useDayKey('UTC'));
+      const referenced = armed.filter(
+        (handle) => (handle as unknown as { hasRef?: () => boolean }).hasRef?.() === true,
+      );
+      unmount();
+
+      expect(armed.length).toBeGreaterThan(0);
+      expect(referenced).toEqual([]);
+    });
+  });
+
   describe('returning from the background', () => {
     it('re-reads the day when the app foregrounds past a boundary its timer slept through', () => {
       const { result } = renderHook(() => useDayKey('UTC'));
