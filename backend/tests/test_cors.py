@@ -1,14 +1,18 @@
 import logging
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from starlette.routing import BaseRoute
 
 from main import (
+    ALLOWED_HEADERS,
     ALLOWED_METHODS,
     DEV_ORIGINS,
     _assert_credentials_safe,
@@ -29,6 +33,24 @@ LOOPBACK_HOST_FORMS = frozenset({"localhost", "127.0.0.1"})
 # The origin the issue reproduces from: Expo's web build on the port README
 # tells developers to use, opened by IP rather than by name.
 LOOPBACK_IP_WEB_ORIGIN = "http://127.0.0.1:8080"
+# Both spellings of the idempotency key a route reads: the IETF draft name the
+# API client attaches, and the ``X-`` form the energy router declares.
+IDEMPOTENCY_KEY_SPELLINGS = frozenset({"idempotency-key", "x-idempotency-key"})
+# A route that really reads an idempotency key, so the preflight under test is
+# the one a browser sends rather than a hypothetical one.
+IDEMPOTENT_ROUTE = "/practice-sessions/"
+
+
+def _echoed_allow_headers(headers: Mapping[str, str]) -> set[str]:
+    """The ``Access-Control-Allow-Headers`` names, lower-cased and split.
+
+    A browser compares the echo case-insensitively and per name, so the test
+    does too rather than matching the raw comma-joined string.  Takes the
+    response's headers rather than the response so it is not tied to whichever
+    HTTP client the test transport happens to be built on.
+    """
+    raw = headers.get("access-control-allow-headers", "")
+    return {name.strip().lower() for name in raw.split(",") if name.strip()}
 
 
 # --- get_cors_origins unit tests ---
@@ -336,6 +358,49 @@ def test_preflight_disallowed_method() -> None:
     assert response.status_code == HTTPStatus.BAD_REQUEST
 
 
+def _api_routes() -> list[APIRoute]:
+    """Every route the app serves, including the ones inside included routers.
+
+    ``app.routes`` is not flat.  ``include_router`` leaves a wrapper in it that
+    keeps the included router's own routes behind ``original_router``, so a
+    single-level sweep sees only the four documentation endpoints and nothing
+    any feature router serves -- a sweep meant to cover the API would quietly
+    cover almost none of it.  Every sweep below recurses through this helper,
+    and each one asserts it found something, so a future framework change that
+    breaks the traversal fails here instead of turning a gate blind.
+    """
+    found: list[APIRoute] = []
+
+    def walk(routes: Iterable[BaseRoute]) -> None:
+        for route in routes:
+            if isinstance(route, APIRoute):
+                found.append(route)
+            included = getattr(route, "original_router", None)
+            if included is not None:
+                walk(included.routes)
+
+    walk(app.routes)
+    return found
+
+
+def _declared_request_headers() -> dict[str, set[str]]:
+    """Every request header the routes declare as an input, by route path.
+
+    Read off the resolved dependency tree rather than from a list someone
+    maintains: a route that starts reading a header is discovered the moment it
+    does, including when it reads it through a shared dependency.
+    """
+    declared: defaultdict[str, set[str]] = defaultdict(set)
+    for route in _api_routes():
+        pending = [route.dependant]
+        while pending:
+            dependant = pending.pop()
+            for param in dependant.header_params:
+                declared[param.alias.lower()].add(route.path)
+            pending.extend(dependant.dependencies)
+    return declared
+
+
 def test_allowed_methods_cover_all_routes() -> None:
     """Every HTTP verb the routers serve must be in the CORS allow-list (#788).
 
@@ -343,12 +408,77 @@ def test_allowed_methods_cover_all_routes() -> None:
     preflight. HEAD/OPTIONS are auto-handled by Starlette (not served by the
     routers), so they are excluded from the comparison.
     """
+    routes = _api_routes()
+    assert routes, "route introspection found no routes; the traversal is blind"
     served: set[str] = set()
-    for route in app.routes:
-        served |= getattr(route, "methods", None) or set()
+    for route in routes:
+        served |= route.methods or set()
     served -= {"HEAD", "OPTIONS"}
     missing = served - set(ALLOWED_METHODS)
     assert not missing, f"router methods missing from CORS allow-list: {missing}"
+
+
+def test_declared_request_headers_are_all_allowed_by_cors() -> None:
+    """A header a route reads must be one a browser is allowed to send.
+
+    The two idempotency spellings are the case in point: ``POST
+    /practice-sessions/`` reads ``Idempotency-Key`` and ``POST /v1/energy/plan``
+    reads ``X-Idempotency-Key``, and while neither was in the allow-list every
+    cross-origin browser request carrying one was refused at the preflight --
+    the request never reached the route that asked for it, and the server never
+    saw enough to log why.
+
+    Derived from the app's own dependency tree rather than from a second copy
+    of the allow-list, so the next route to read a new header fails here rather
+    than in someone's browser.  Only headers a route actually declares are
+    demanded: this is an allow-list, and every entry in it is attack surface.
+    """
+    declared = _declared_request_headers()
+    assert declared, "route introspection found no header parameters; it is blind"
+    allowed = {header.lower() for header in ALLOWED_HEADERS}
+    missing = {header: sorted(paths) for header, paths in declared.items() if header not in allowed}
+    assert not missing, f"headers routes read but CORS refuses: {missing}"
+
+
+def test_preflight_echoes_every_header_in_the_allow_list() -> None:
+    """The constant is what the middleware actually answers with.
+
+    Asserting membership in ``ALLOWED_HEADERS`` alone would still pass if the
+    middleware were wired to some other list, so the whole constant is offered
+    to a real preflight and the echo has to cover it.
+    """
+    response = client.options(
+        IDEMPOTENT_ROUTE,
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": ", ".join(ALLOWED_HEADERS),
+        },
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert _echoed_allow_headers(response.headers) >= {h.lower() for h in ALLOWED_HEADERS}
+
+
+@pytest.mark.parametrize("requested", sorted(IDEMPOTENCY_KEY_SPELLINGS))
+def test_preflight_allows_an_idempotency_key(requested: str) -> None:
+    """The exact reproduction: a preflight advertising the key header.
+
+    Chromium sends the name lower-cased in ``Access-Control-Request-Headers``.
+    While the allow-list omitted it, Starlette answered 400 and the browser
+    never issued the POST; worse, the client treats the presence of this header
+    as the signal that a POST is retry-safe, so it retried the blocked request
+    before giving up.
+    """
+    response = client.options(
+        IDEMPOTENT_ROUTE,
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": requested,
+        },
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert requested in _echoed_allow_headers(response.headers)
 
 
 # ── BUG-APP-003: PROD_DOMAIN URL-validation hardening ─────────────────────
