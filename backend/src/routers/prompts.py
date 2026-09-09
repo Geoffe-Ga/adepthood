@@ -196,10 +196,17 @@ async def list_prompt_history(
     materialised -- so cursor pagination stays accurate for mid-
     curriculum users without paying for ``COUNT(*)``.
     """
+    # ``week_number`` alone is a partial order -- a user answers many prompts
+    # in a week -- and OFFSET/LIMIT over a partial order may repeat or drop
+    # rows inside a tie group (issue #2718).  ``id DESC`` makes it total and
+    # puts the most recent answer first within a week, matching
+    # ``list_journal_entries``.  This endpoint pages by hand rather than
+    # through ``paginate_query`` (the peek path fetches ``limit + 1``), so it
+    # does not inherit that helper's tiebreak.
     query = (
         select(PromptResponse)
         .where(PromptResponse.user_id == current_user)
-        .order_by(col(PromptResponse.week_number).desc())
+        .order_by(col(PromptResponse.week_number).desc(), col(PromptResponse.id).desc())
     )
     total = await _maybe_total(session, query, include_total=filters.include_total)
     if total is not None:

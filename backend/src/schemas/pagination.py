@@ -16,9 +16,11 @@ from typing import Any, Generic, TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapper
 from sqlalchemy.sql import Select
+from sqlalchemy.sql.elements import UnaryExpression
 
 from bounds import MAX_PAGE_OFFSET
 
@@ -104,6 +106,46 @@ async def count_query_total(session: AsyncSession, query: Select[Any]) -> int:
     return int((await session.execute(count_query)).scalar() or 0)
 
 
+def primary_key_order_by(query: Select[Any]) -> list[UnaryExpression[Any]]:
+    """Return the ascending primary-key sort keys for ``query``'s entity.
+
+    ``OFFSET`` / ``LIMIT`` is only well-defined over a *total* order: where the
+    sort key ties, the database may order the tie group differently for each
+    page request, so one row surfaces on two pages while another surfaces on
+    none (issue #2718).  A primary key is unique by definition, so appending it
+    makes any order total -- and it is a no-op wherever the caller's own key
+    already was, because a sort key that follows a total order is never
+    consulted.
+
+    The keys are read off the mapper rather than off the model class so a
+    column whose attribute name differs from its column name still resolves,
+    and they are fetched with ``getattr`` on the entity from
+    ``column_descriptions`` so an aliased entity yields *its* columns rather
+    than the base table's.
+
+    Raises:
+        ValueError: when the query selects no mapped entity, so no primary key
+            exists to break ties with.  Failing here is the point: silently
+            skipping the tiebreak would hand back the very defect this guards
+            against, and every caller of :func:`paginate_query` reads rows via
+            ``.scalars()`` and therefore does select an entity.
+
+    """
+    descriptions = query.column_descriptions
+    entity = descriptions[0].get("entity") if descriptions else None
+    if entity is None:
+        raise ValueError(
+            "paginate_query requires a query selecting a single mapped entity so that "
+            "OFFSET/LIMIT pages over a total order; this query exposes no primary key "
+            "to break ties with."
+        )
+    mapper: Mapper[Any] = inspect(entity).mapper
+    return [
+        getattr(entity, mapper.get_property_by_column(column).key).asc()
+        for column in mapper.primary_key
+    ]
+
+
 async def paginate_query(
     session: AsyncSession,
     query: Select[Any],
@@ -119,8 +161,15 @@ async def paginate_query(
     ignores it. Eager-loaded relationships declared via ``selectinload``
     continue to work — they issue separate ``IN`` queries unaffected by the
     outer ``OFFSET`` / ``LIMIT``.
+
+    The paged ``SELECT`` is ordered by the caller's key *then* by the entity's
+    primary key (:func:`primary_key_order_by`), because ``OFFSET`` / ``LIMIT``
+    over a partial order is free to repeat or drop rows inside a tie group.
+    The count query keeps the caller's query untouched — it strips ``ORDER BY``
+    anyway, so the tiebreak would only be a sort it never reads.
     """
-    paged_query = query.offset(params.offset).limit(params.limit)
+    ordered_query = query.order_by(*primary_key_order_by(query))
+    paged_query = ordered_query.offset(params.offset).limit(params.limit)
     result = await session.execute(paged_query)
     items = list(result.scalars().all())
 

@@ -147,7 +147,12 @@ async def _fetch_per_user(
             cost_sum,
         )
         .group_by(col(LLMUsageLog.user_id))
-        .order_by(cost_sum.desc())
+        # Two users can spend the same amount, and OFFSET/LIMIT over a tie is
+        # free to repeat or drop rows between pages (issue #2718).  GROUP BY
+        # makes ``user_id`` unique per output row, so it is the total key.
+        # This query is grouped and multi-column, so it cannot go through
+        # ``paginate_query`` and does not inherit its tiebreak.
+        .order_by(cost_sum.desc(), col(LLMUsageLog.user_id))
     )
     total: int | None = None
     has_more: bool | None = None
