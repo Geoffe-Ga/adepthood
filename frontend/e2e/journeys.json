@@ -247,6 +247,23 @@
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
   },
   {
+    "id": "journal.told-what-resonance-costs-before-it-charges",
+    "description": "A writer opens a finished page and presses Get Resonance for the first time. A resonance pass is charged -- the route deducts one BotMason message from the wallet before it dials the model -- and until this gate existed the first anyone heard of that price was the 402 that arrives once the allowance is spent. So the press opens a disclosure instead: what a pass does, that the entry's text is sent to an AI model, and what it costs. The load-bearing assertions are counted requests and server state rather than visible text. While the disclosure is up, and again after the back-out arm, no POST /journal/{entry_id}/resonance has left the browser and the server is holding no marginalia; Continue then sends exactly one pass and the notes really are persisted, so the gate neither charges early nor swallows the request. A spec that only asserted the dialog was on screen would pass just as happily against a build that showed it and charged behind it. The dismissal is then taken and the next press goes straight through. This has to be the browser lane: the node lane runs with node_modules untransformed and cannot mount JournalEntryScreen at all (#2324), and the whole claim is about what a rendered press does. What is pinned in Jest beside it rather than here is the per-account namespacing of the dismissal flag (frontend/src/storage/__tests__/resonanceExplainerStorage.test.ts): one account's \"don't show this again\" must not answer for the next account on the same device, because the charge would land on the incoming reader's own allowance.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia"
+      ],
+      "tables": ["journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/resonance-explainer.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.short-entry-still-offers-habit-checkoff",
     "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
     "crosses": {

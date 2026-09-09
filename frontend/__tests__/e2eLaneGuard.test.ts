@@ -57,6 +57,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-short-habit-offer.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
+  'resonance-explainer.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
