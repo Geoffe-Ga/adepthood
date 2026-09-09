@@ -2138,6 +2138,11 @@ async def expand_marginalia_essay(
     Idempotent: once ``essay`` is set the cached value is returned without another
     LLM call. Ownership is enforced via the marginalia's own ``user_id`` (404
     otherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).
+
+    A note with no ``essay`` on the response is the no-letter state, not an
+    error: the entry is intimate, or the provider's completion was not a letter
+    (:func:`domain.resonance.generate_essay`). Either way nothing is cached and
+    the writer can ask again.
     """
     note = await _load_user_marginalia(session, marginalia_id, current_user)
     if note is None:
@@ -2152,7 +2157,32 @@ async def expand_marginalia_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     if entry.classification == JournalClassification.INTIMATE:
         return note
+    return await _cache_and_mirror_essay(
+        session, note=note, entry=entry, clients=clients, current_user=current_user
+    )
+
+
+async def _cache_and_mirror_essay(
+    session: AsyncSession,
+    *,
+    note: Marginalia,
+    entry: JournalEntry,
+    clients: _EssayClients,
+    current_user: int,
+) -> Marginalia:
+    """Generate and cache the essay, then mirror it once if there is one.
+
+    Split out of :func:`expand_marginalia_essay` so that route keeps only the
+    authorization and privacy decisions; the mirror's ordering rationale is long
+    enough on its own that interleaving the two made neither readable.
+    """
     cached = await _cache_essay(session, note, entry.message, clients.api_key)
+    # The provider answered with something that was not a letter, so there is no
+    # letter: the note comes back with ``essay`` unset -- the same no-letter
+    # state the privacy floor returns -- and nothing is mirrored, because
+    # mirroring a refusal would put it in the vault the cache refused it from.
+    if cached.essay is None:
+        return cached
     # Generation may outlive a concurrent privacy PATCH. Serialize the final
     # tier read and mirror against transitions to INTIMATE: if the PATCH won it
     # commits first and this skips; if this won, the PATCH waits and retracts
@@ -2166,7 +2196,7 @@ async def expand_marginalia_essay(
             clients.vault_client,
             owner_user_id=current_user,
             marginalia_id=cast("int", cached.id),
-            essay=cast("str", cached.essay),
+            essay=cached.essay,
             classification=entry.classification,
         )
     return cached
@@ -2176,6 +2206,12 @@ async def _cache_essay(
     session: AsyncSession, note: Marginalia, body: str, api_key: str | None
 ) -> Marginalia:
     """Generate the essay via the cloud LLM, cache it on the note, and persist.
+
+    Returns the note unchanged when the domain refuses the completion as not a
+    letter: the row keeps ``essay IS NULL``, which is what lets the writer ask
+    again and what keeps a refusal out of the prior-letters context and the
+    voice-draft mirror. Caching the refusal instead is the #2435 / #1504 shape
+    this must not regress.
 
     The caller has already loaded and authorized both the note and its parent
     entry, then applied the persisted INTIMATE privacy floor. Neither object has
@@ -2219,14 +2255,27 @@ async def _cache_essay(
         raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
     except LLMProviderError as exc:
         raise bad_gateway("llm_provider_error") from exc
-    note.essay = essay
-    note.essay_generated_at = datetime.now(UTC)
+    # Metered either way: the call happened and its tokens were spent, so a
+    # refused completion still owes the ledger a row. Stub responses are skipped
+    # inside ``record_llm_usage`` (zero real tokens), as they always were.
     await record_llm_usage(
         session,
         user_id=note.user_id,
         journal_entry_id=note.journal_entry_id,
         responses=llm.usage,
     )
+    if essay is None:
+        await session.commit()
+        # Counted, never quoted: the refused text is the prompt (or something
+        # else unpublishable), and logging it would leak exactly what the
+        # refusal exists to withhold.
+        logger.warning(
+            "marginalia_essay_refused",
+            extra={"user_id": note.user_id, "id": note.id},
+        )
+        return note
+    note.essay = essay
+    note.essay_generated_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(note)
     logger.info(

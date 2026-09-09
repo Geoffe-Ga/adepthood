@@ -14271,7 +14271,7 @@
     },
     "/journal/marginalia/{marginalia_id}/essay": {
       "post": {
-        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call. Ownership is enforced via the marginalia's own ``user_id`` (404\notherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).",
+        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call. Ownership is enforced via the marginalia's own ``user_id`` (404\notherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again.",
         "operationId": "expand_marginalia_essay_journal_marginalia__marginalia_id__essay_post",
         "parameters": [
           {

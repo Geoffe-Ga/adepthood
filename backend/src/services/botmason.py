@@ -81,6 +81,13 @@ STUB_MODEL_NAME = "stub"
 # metering pipeline branches on it to skip stub traffic (zero real tokens).
 STUB_PROVIDER_NAME = "stub"
 
+# How the stub opens its canned answer to a prompt it has nothing structured to
+# say about.  A named constant, like the two above, because it is also what a
+# test asserts is absent from anything the writer is shown: this sentence quotes
+# its entire input, so its presence in a rendered surface means a prompt reached
+# a reader (#2762), and a hand-copied literal in that assertion could drift.
+STUB_PROSE_PREFIX = "BotMason hears you. You said:"
+
 # The two real providers, named once. They key :data:`PROVIDER_REGISTRY`, label
 # a usage row, and identify whose balance is spent in an operator's log line —
 # three places that must agree, so none of them spells the name by hand.
@@ -1124,7 +1131,7 @@ def _stub_response(user_message: str) -> LLMResponse:
         canned
         if canned is not None
         else (
-            f'BotMason hears you. You said: "{user_message}" — '
+            f'{STUB_PROSE_PREFIX} "{user_message}" — '
             "Let the Archetypal Wavelength guide your reflection."
         )
     )
