@@ -4,29 +4,32 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Query, status
-from sqlalchemy import Select, func
+from sqlalchemy import Select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from bounds import StageNumberPath, WeekNumberPath
+from bounds import PromptOrdinalPath, StageNumberPath, WeekNumberPath
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.program_calendar import calendar_week, resolve_program_anchor
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
     TOTAL_WEEKS,
+    StagePrompts,
     WeekPrompt,
     resolve_week_prompt,
+    stage_of_week,
     stage_prompts,
 )
 from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
 from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH, JournalEntry, JournalTag
+from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from routers.auth import get_current_user
 from schemas.pagination import page_has_more
@@ -107,7 +110,39 @@ async def _find_response(
     return result.scalars().first()
 
 
-def _unanswered_detail(resolved: WeekPrompt) -> PromptDetail:
+#: A reader's set-aside prompts, as ``(stage_number, prompt_ordinal)`` pairs.
+DismissedPrompts = frozenset[tuple[int, int]]
+
+
+async def _dismissed_prompts(session: AsyncSession, user_id: int) -> DismissedPrompts:
+    """Every prompt this reader has set aside, keyed by ``(stage, ordinal)``.
+
+    Read whole rather than probed one prompt at a time: a reader can set aside
+    at most one prompt per curriculum position, so the set is bounded by the
+    course itself and a single scan answers every question a response needs to
+    answer. Scoped to the caller's own id, which is the JWT subject and never
+    anything a request carried.
+    """
+    result = await session.execute(
+        select(PromptDismissal).where(col(PromptDismissal.user_id) == user_id)
+    )
+    return frozenset((row.stage_number, row.prompt_ordinal) for row in result.scalars().all())
+
+
+def _week_is_dismissed(dismissed: DismissedPrompts, week_number: int, ordinal: int | None) -> bool:
+    """Whether the prompt a week's row names is one the reader set aside.
+
+    A row with no ordinal predates individually addressable prompts, and a week
+    the curriculum has since retired resolves to no stage at all; neither names
+    a prompt that could have been declined, so both read as not set aside.
+    """
+    stage = stage_of_week(week_number)
+    if stage is None or ordinal is None:
+        return False
+    return (stage, ordinal) in dismissed
+
+
+def _unanswered_detail(resolved: WeekPrompt, dismissed: DismissedPrompts) -> PromptDetail:
     """Serialize a week the user has not written to yet."""
     return PromptDetail(
         week_number=resolved.week_number,
@@ -115,10 +150,11 @@ def _unanswered_detail(resolved: WeekPrompt) -> PromptDetail:
         default_title=resolved.default_title,
         prompt_ordinal=resolved.prompt.ordinal,
         has_responded=False,
+        dismissed=_week_is_dismissed(dismissed, resolved.week_number, resolved.prompt.ordinal),
     )
 
 
-def _answered_detail(pr: PromptResponse) -> PromptDetail:
+def _answered_detail(pr: PromptResponse, dismissed: DismissedPrompts) -> PromptDetail:
     """Serialize a stored response; live content wins, the snapshot is the fallback.
 
     The row's ``prompt_ordinal`` picks which of its stage's prompts it
@@ -139,6 +175,7 @@ def _answered_detail(pr: PromptResponse) -> PromptDetail:
         has_responded=True,
         response=pr.response,
         timestamp=pr.timestamp,
+        dismissed=_week_is_dismissed(dismissed, pr.week_number, pr.prompt_ordinal),
     )
 
 
@@ -155,7 +192,12 @@ async def get_current_prompt(
         raise not_found("prompt")
 
     existing = await _find_response(session, current_user, week)
-    return _answered_detail(existing) if existing else _unanswered_detail(resolved)
+    dismissed = await _dismissed_prompts(session, current_user)
+    return (
+        _answered_detail(existing, dismissed)
+        if existing
+        else _unanswered_detail(resolved, dismissed)
+    )
 
 
 @dataclass
@@ -218,10 +260,36 @@ async def list_prompt_history(
         rows = list((await session.execute(peek_query)).scalars().all())
         items = rows[: filters.limit]
         has_more = len(rows) > filters.limit
+    dismissed = await _dismissed_prompts(session, current_user)
     return PromptListResponse(
-        items=[_answered_detail(pr) for pr in items],
+        items=[_answered_detail(pr, dismissed) for pr in items],
         total=total,
         has_more=has_more,
+    )
+
+
+def _stage_response(stage: StagePrompts, dismissed: DismissedPrompts) -> StagePromptsResponse:
+    """Serialize a whole stage, each prompt carrying whether the reader set it aside.
+
+    The set-aside prompts stay in the payload rather than being filtered out of
+    it: which prompts a stage carries is the curriculum's answer and the same
+    for everyone, while which of them to show is the reader's, and a client that
+    is told both can offer the way back. A band that simply lost a prompt could
+    not.
+    """
+    return StagePromptsResponse(
+        stage=stage.stage,
+        stage_name=stage.band,
+        prompts=[
+            StagePromptDetail(
+                ordinal=prompt.ordinal,
+                title=prompt.title,
+                body=prompt.body,
+                cadence=prompt.cadence,
+                dismissed=(stage.stage, prompt.ordinal) in dismissed,
+            )
+            for prompt in stage.prompts
+        ],
     )
 
 
@@ -250,19 +318,139 @@ async def get_stage_prompts(
         raise not_found("stage")
     await _check_week_unlocked(session, current_user, stage.first_week, user_tz)
 
-    return StagePromptsResponse(
-        stage=stage.stage,
-        stage_name=stage.band,
-        prompts=[
-            StagePromptDetail(
-                ordinal=prompt.ordinal,
-                title=prompt.title,
-                body=prompt.body,
-                cadence=prompt.cadence,
-            )
-            for prompt in stage.prompts
-        ],
+    return _stage_response(stage, await _dismissed_prompts(session, current_user))
+
+
+async def _reachable_stage_prompt(
+    session: AsyncSession,
+    user_id: int,
+    stage_number: int,
+    prompt_ordinal: int,
+    user_tz: str,
+) -> StagePrompts:
+    """The stage a caller may act on, refused exactly as the stage read refuses it.
+
+    404 for an unknown stage precedes the lock check, and the lock check
+    precedes the ordinal check, so the dismissal routes never become a laxer
+    oracle than :func:`get_stage_prompts` already is: a locked stage answers
+    "locked" whatever ordinal is asked for, rather than leaking how many prompts
+    it carries. An ordinal the stage does carry no place for is a 404 --
+    the same shape :func:`submit_prompt_response` gives one -- rather than a
+    silent wrap-around onto a different prompt.
+    """
+    stage = stage_prompts(stage_number)
+    if stage is None:
+        raise not_found("stage")
+    await _check_week_unlocked(session, user_id, stage.first_week, user_tz)
+    if not any(prompt.ordinal == prompt_ordinal for prompt in stage.prompts):
+        raise not_found("prompt")
+    return stage
+
+
+async def _record_prompt_dismissal(
+    session: AsyncSession, user_id: int, stage_number: int, prompt_ordinal: int
+) -> None:
+    """Idempotently persist one reader's set-aside, tolerating a concurrent repeat.
+
+    A pre-check skips a redundant insert when the prompt is already set aside.
+    Two truly concurrent taps both clear that pre-check, so the unique index is
+    the real guard: the loser's ``IntegrityError`` is caught and treated as
+    success, since the preference now stands either way.
+    """
+    existing = await session.execute(
+        select(PromptDismissal).where(
+            col(PromptDismissal.user_id) == user_id,
+            col(PromptDismissal.stage_number) == stage_number,
+            col(PromptDismissal.prompt_ordinal) == prompt_ordinal,
+        )
     )
+    if existing.scalars().first() is not None:
+        return
+    session.add(
+        PromptDismissal(
+            user_id=user_id,
+            stage_number=stage_number,
+            prompt_ordinal=prompt_ordinal,
+            dismissed_at=datetime.now(UTC),
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+
+
+@router.post(
+    "/stage/{stage_number}/{prompt_ordinal}/dismiss",
+    response_model=StagePromptsResponse,
+)
+async def set_stage_prompt_aside(
+    stage_number: StageNumberPath,
+    prompt_ordinal: PromptOrdinalPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> StagePromptsResponse:
+    """Set one of a stage's prompts aside for the caller; idempotent, reversible.
+
+    A preference, never a completion: no ``PromptResponse`` is read or written,
+    nothing is marked answered, and the week gating over the prompts still
+    standing is untouched. The band the reader keeps is theirs to choose, which
+    is the whole point -- an offer that cannot be declined is not an offer.
+
+    The caller is the JWT subject and nothing else; there is no ``user_id`` on
+    the path or in a body to disagree with it. Answers with the whole stage, so
+    a client never has to guess at the state its own request just produced.
+    """
+    stage = await _reachable_stage_prompt(
+        session, current_user, stage_number, prompt_ordinal, user_tz
+    )
+    await _record_prompt_dismissal(session, current_user, stage_number, prompt_ordinal)
+    logger.info(
+        "stage_prompt_set_aside",
+        extra={
+            "user_id": current_user,
+            "stage_number": stage_number,
+            "prompt_ordinal": prompt_ordinal,
+        },
+    )
+    return _stage_response(stage, await _dismissed_prompts(session, current_user))
+
+
+@router.delete(
+    "/stage/{stage_number}/{prompt_ordinal}/dismiss",
+    response_model=StagePromptsResponse,
+)
+async def bring_stage_prompt_back(
+    stage_number: StageNumberPath,
+    prompt_ordinal: PromptOrdinalPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> StagePromptsResponse:
+    """Bring a set-aside prompt back onto the caller's band; a no-op if it never left.
+
+    Reversal is a delete rather than a flag: a prompt brought back leaves no
+    record of having been declined, because a tally of what someone chose not to
+    write is not something this application keeps. Undoing a set-aside that was
+    never made is success rather than an error the client has to special-case.
+
+    The ``WHERE`` names the caller's own id, so this can only ever remove the
+    caller's own preference -- another account's row is not addressable from
+    here at all.
+    """
+    stage = await _reachable_stage_prompt(
+        session, current_user, stage_number, prompt_ordinal, user_tz
+    )
+    await session.execute(
+        delete(PromptDismissal).where(
+            col(PromptDismissal.user_id) == current_user,
+            col(PromptDismissal.stage_number) == stage_number,
+            col(PromptDismissal.prompt_ordinal) == prompt_ordinal,
+        )
+    )
+    await session.commit()
+    return _stage_response(stage, await _dismissed_prompts(session, current_user))
 
 
 @router.get("/{week_number}", response_model=PromptDetail)
@@ -285,7 +473,12 @@ async def get_prompt_by_week(
     await _check_week_unlocked(session, current_user, week_number, user_tz)
 
     existing = await _find_response(session, current_user, week_number)
-    return _answered_detail(existing) if existing else _unanswered_detail(resolved)
+    dismissed = await _dismissed_prompts(session, current_user)
+    return (
+        _answered_detail(existing, dismissed)
+        if existing
+        else _unanswered_detail(resolved, dismissed)
+    )
 
 
 def _resolve_entry_title(payload_title: str | None, resolved: WeekPrompt) -> str:
@@ -405,4 +598,4 @@ async def submit_prompt_response(
         },
     )
 
-    return _answered_detail(prompt_response)
+    return _answered_detail(prompt_response, await _dismissed_prompts(session, current_user))

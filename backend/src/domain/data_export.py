@@ -60,6 +60,7 @@ from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.practice_tag import PracticeTag
 from models.promoted_quote import PromotedQuote
+from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from models.stage_progress import StageProgress
 from models.user import User
@@ -357,6 +358,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         "promoted_passages",
         PromotedQuote,
         "Passages the account lifted out of one entry to carry into another.",
+    ),
+    "promptdismissal": _include(
+        "prompts_set_aside",
+        PromptDismissal,
+        "Prompts the account chose to set aside — a preference it stated "
+        "about what to be offered, not a measurement taken of what it wrote.",
     ),
     "promptresponse": _include(
         "prompt_responses",
