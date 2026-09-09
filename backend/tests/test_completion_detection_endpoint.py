@@ -203,6 +203,39 @@ async def test_independent_completion_check_does_not_duplicate_an_existing_offer
 
 
 @pytest.mark.asyncio
+async def test_resonance_does_not_duplicate_an_independently_detected_offer(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later full reflection reuses the offer already made by the fallback check."""
+    calls: list[str] = []
+    _fake(
+        monkeypatch,
+        hits=[{"index": 0, "quote": "I meditated"}],
+        detection_calls=calls,
+        provider="openai",
+    )
+    headers = await _signup(async_client, "detect-then-resonate")
+    await _seed_habit(db_session, await _user_id(db_session, "detect-then-resonate"))
+    entry_id = await _create_entry(async_client, headers)
+
+    detected = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+    reflected = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert len(detected.json()["items"]) == 1
+    assert reflected.status_code == HTTPStatus.OK
+    assert len(reflected.json()["marginalia"]) == 1
+    assert reflected.json()["suggestions"] == []
+    assert reflected.json()["remaining_messages"] == 49
+    persisted = (
+        await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
+    ).scalar_one()
+    usage = (await db_session.execute(select(func.count()).select_from(LLMUsageLog))).scalar_one()
+    assert persisted == 1
+    assert len(calls) == 1  # the known offered target is not sent to detection again
+    assert usage == 2  # one independent detection plus the later literary reflection
+
+
+@pytest.mark.asyncio
 async def test_independent_completion_check_reports_provider_failure_honestly(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

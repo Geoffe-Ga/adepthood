@@ -1362,10 +1362,20 @@ async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -
     committed = False
     spent = charged.spent
     try:
+        # Independent detection and the charged resonance path can race after
+        # reading the same candidates. They share this row lock and post-dial
+        # recheck so exactly one response stages each entry/target offer while
+        # the charged pass still settles its usage and wallet normally.
+        fresh_hits = await _lock_and_filter_suggestion_hits(
+            session,
+            entry_id=charged.entry_id,
+            user_id=charged.user_id,
+            hits=charged.hits,
+        )
         rows = _persist_marginalia(
             session, charged.entry_id, charged.user_id, charged.anchored.notes
         )
-        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, charged.hits)
+        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, fresh_hits)
         spent, no_notes_message = await _settle_empty_pass(
             session, charged.user_id, spent, charged.anchored
         )
@@ -1615,7 +1625,7 @@ async def run_resonance(
     prior_letters = await _prior_letter_essays(
         session, user_id=current_user, exclude_entry_id=entry_id
     )
-    candidates = await gather_candidates(session, current_user, include_practices=True)
+    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
     # Key resolution is pure (no DB, no dial) and can raise 400/402 — it must
     # run while the deduction is still merely staged, so its errors cost nothing.
     byok_key = resolve_chat_api_key(clients.api_key)
@@ -1771,6 +1781,19 @@ async def _lock_detection_entry(session: AsyncSession, entry_id: int, user_id: i
     )
 
 
+async def _lock_and_filter_suggestion_hits(
+    session: AsyncSession,
+    *,
+    entry_id: int,
+    user_id: int,
+    hits: Sequence[CompletionDetected],
+) -> list[CompletionDetected]:
+    """Serialize offer writes and discard targets another request already staged."""
+    await _lock_detection_entry(session, entry_id, user_id)
+    existing = await _existing_suggestion_targets(session, entry_id, user_id)
+    return [hit for hit in hits if (hit.target_type, hit.target_id) not in existing]
+
+
 async def _persist_detected_suggestions(
     session: AsyncSession,
     *,
@@ -1783,9 +1806,9 @@ async def _persist_detected_suggestions(
     # Provider calls run without a transaction. Once they return, lock the
     # entry before rechecking: concurrent tabs then take turns and the follower
     # sees the first request's committed targets instead of inserting twins.
-    await _lock_detection_entry(session, entry_id, user_id)
-    existing = await _existing_suggestion_targets(session, entry_id, user_id)
-    fresh_hits = [hit for hit in hits if (hit.target_type, hit.target_id) not in existing]
+    fresh_hits = await _lock_and_filter_suggestion_hits(
+        session, entry_id=entry_id, user_id=user_id, hits=hits
+    )
     rows = _stage_suggestions(session, entry_id, user_id, fresh_hits)
     await record_llm_usage(
         session,
