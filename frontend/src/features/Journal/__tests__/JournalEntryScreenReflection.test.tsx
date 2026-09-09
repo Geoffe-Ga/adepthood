@@ -227,6 +227,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'A reflection on the week.',
+          tag: 'hierarchical_reflection',
           reflection_level: 'stage',
           reflection_scope_key: 'c1:s1',
         }),
@@ -243,6 +244,15 @@ describe('JournalEntryScreen -- reflection mode', () => {
     await act(async () => {
       await Promise.resolve();
     });
+    expect(mockReflectionsSources.mock.calls[0]?.slice(0, 2)).toEqual(['stage', 'c1:s1']);
+  });
+
+  it('restores reflection mode from a saved entry opened from the journal shelf', async () => {
+    mockGet.mockResolvedValue(entry({ reflection_level: 'stage', reflection_scope_key: 'c1:s1' }));
+
+    const screen = renderScreen({ entryId: 42 });
+
+    expect(await screen.findByTestId('reflection-sources-toggle')).toBeTruthy();
     expect(mockReflectionsSources.mock.calls[0]?.slice(0, 2)).toEqual(['stage', 'c1:s1']);
   });
 

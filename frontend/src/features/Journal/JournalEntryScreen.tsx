@@ -199,6 +199,7 @@ async function createEntry(
     secondary_aspect: chordRef.current.secondary,
     ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
     ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+    ...(ctx.reflectionLevel != null && { tag: 'hierarchical_reflection' as const }),
     ...(ctx.reflectionLevel != null && { reflection_level: ctx.reflectionLevel }),
     ...(ctx.reflectionScopeKey != null && { reflection_scope_key: ctx.reflectionScopeKey }),
   });
@@ -302,6 +303,9 @@ interface AutosaveApi {
    * writing that already existed" from "this page is still blank".
    */
   loadedFromServer: boolean;
+  /** Saved reflection identity, hydrated when an entry is reopened from the shelf. */
+  reflectionLevel?: ReflectionLevel;
+  reflectionScopeKey?: string;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -849,6 +853,22 @@ interface EntryState {
   loadError: string | null;
   /** Flips true once an existing entry's values have been applied to state. */
   loaded: boolean;
+  reflectionLevel?: ReflectionLevel;
+  reflectionScopeKey?: string;
+}
+
+const REFLECTION_LEVELS = new Set<ReflectionLevel>([
+  'week',
+  'stage',
+  'component',
+  'tier',
+  'program',
+]);
+
+function reflectionLevelFromWire(value: string | null | undefined): ReflectionLevel | undefined {
+  return value != null && REFLECTION_LEVELS.has(value as ReflectionLevel)
+    ? (value as ReflectionLevel)
+    : undefined;
 }
 
 /** The entry's editable state (title/body/status/tier) + one-time load-on-open.
@@ -858,6 +878,8 @@ function useEntryState(
   routeEntryId: number | null,
   initialText: InitialText,
   initialClassification: JournalClassification,
+  initialReflectionLevel?: ReflectionLevel,
+  initialReflectionScopeKey?: string,
 ): EntryState {
   const [title, setTitle] = useState(initialText.title);
   const [body, setBody] = useState(initialText.body);
@@ -867,6 +889,12 @@ function useEntryState(
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [reflectionLevel, setReflectionLevel] = useState<ReflectionLevel | undefined>(
+    initialReflectionLevel,
+  );
+  const [reflectionScopeKey, setReflectionScopeKey] = useState<string | undefined>(
+    initialReflectionScopeKey,
+  );
   // Refs mirror the latest text so the change handlers stay referentially stable.
   const titleRef = useRef(initialText.title);
   const bodyRef = useRef(initialText.body);
@@ -886,6 +914,8 @@ function useEntryState(
         primary: entry.primary_aspect ?? null,
         secondary: entry.secondary_aspect ?? null,
       });
+      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
+      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
       // Signal the load so the persist refs can be seeded from these values.
       setLoaded(true);
     }, []),
@@ -907,6 +937,8 @@ function useEntryState(
     bodyRef,
     loadError,
     loaded,
+    reflectionLevel,
+    reflectionScopeKey,
   };
 }
 
@@ -993,7 +1025,13 @@ function useJournalAutosave(
   onSaved?: () => void,
   onConflict?: () => void,
 ): AutosaveApi {
-  const entry = useEntryState(routeEntryId, initialText, initialClassification);
+  const entry = useEntryState(
+    routeEntryId,
+    initialText,
+    initialClassification,
+    ctx.reflectionLevel,
+    ctx.reflectionScopeKey,
+  );
   const { titleRef, bodyRef } = entry;
   // An existing entry is "unsettled" until its load settles: entry.loaded flips
   // true only in the success apply, so it stays false through both the in-flight
@@ -1036,6 +1074,8 @@ function useJournalAutosave(
     loadError: entry.loadError,
     controlsLocked: entryUnsettled,
     loadedFromServer: routeEntryId != null && entry.loaded,
+    reflectionLevel: entry.reflectionLevel,
+    reflectionScopeKey: entry.reflectionScopeKey,
   };
 }
 
@@ -1063,6 +1103,8 @@ interface WritingColumnProps {
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
   onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  /** Opens the rereadable source feed while composing a reflection. */
+  onOpenSources?: () => void;
 }
 
 /** Quiet control to mark a draft finished, with a warm retry notice on failure. */
@@ -1303,6 +1345,7 @@ function WritingColumn({
   bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
+  onOpenSources,
 }: WritingColumnProps) {
   return (
     <View style={styles.writingColumn}>
@@ -1325,6 +1368,17 @@ function WritingColumn({
         <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
         {onFinish ? (
           <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
+        ) : null}
+        {onOpenSources ? (
+          <TouchableOpacity
+            style={styles.quoteActionButton}
+            onPress={onOpenSources}
+            accessibilityRole="button"
+            accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
+            testID="reflection-sources-toggle"
+          >
+            <Text style={styles.controlLink}>Sources</Text>
+          </TouchableOpacity>
         ) : null}
       </View>
     </View>
@@ -1925,16 +1979,20 @@ function useCreateConflictHandler(ctx: SaveContext, navigation: ScreenNavigation
  * quote can be spliced at the caret without threading the autosave's draft ref
  * out, and hand the sources/insert flow the body writer + flush.
  */
-function useReflectionComposer(ctx: SaveContext, autosave: AutosaveApi) {
+function useReflectionComposer(autosave: AutosaveApi) {
   const reflectionBodyRef = useRef(autosave.body);
   reflectionBodyRef.current = autosave.body;
-  return useReflectionMode({
-    reflectionLevel: ctx.reflectionLevel,
-    reflectionScopeKey: ctx.reflectionScopeKey,
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const openSources = useCallback(() => setSourcesOpen(true), []);
+  const closeSources = useCallback(() => setSourcesOpen(false), []);
+  const mode = useReflectionMode({
+    reflectionLevel: autosave.reflectionLevel,
+    reflectionScopeKey: autosave.reflectionScopeKey,
     bodyRef: reflectionBodyRef,
     onChangeBody: autosave.onChangeBody,
     flush: autosave.flush,
   });
+  return { ...mode, sourcesOpen, openSources, closeSources };
 }
 
 /** The finished-entry edit gate wired from the autosave's status + finish write. */
@@ -1977,7 +2035,7 @@ function useJournalEntryController(
   const resonance = useResonance({ routeEntryId, flush: autosave.flush });
   const quote = useQuotePromotion(routeEntryId);
   refreshRef.current = resonance.refresh;
-  const reflection = useReflectionComposer(ctx, autosave);
+  const reflection = useReflectionComposer(autosave);
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
@@ -2057,6 +2115,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onBodySelectionChange={
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
+      onOpenSources={ctl.reflection.active ? ctl.reflection.openSources : undefined}
     />
   ) : (
     <ReadColumn
@@ -2312,27 +2371,15 @@ function ReflectionComposer({
 }: {
   reflection: Controller['reflection'];
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
-  const openSources = useCallback(() => setOpen(true), []);
-  const closeSources = useCallback(() => setOpen(false), []);
   if (!reflection.active) return null;
   return (
     <>
-      <TouchableOpacity
-        style={styles.quoteActionButton}
-        onPress={openSources}
-        accessibilityRole="button"
-        accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
-        testID="reflection-sources-toggle"
-      >
-        <Text style={styles.controlLink}>Sources</Text>
-      </TouchableOpacity>
-      {open ? (
+      {reflection.sourcesOpen ? (
         <ReflectionSourcesPanel
           items={reflection.sources}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}
-          onClose={closeSources}
+          onClose={reflection.closeSources}
         />
       ) : null}
       {reflection.inclusionHint ? (

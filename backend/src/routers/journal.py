@@ -72,6 +72,7 @@ from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
     AcceptSuggestionResponse,
+    CompletionDetectionResponse,
     CompletionSuggestionListResponse,
     CompletionSuggestionResponse,
 )
@@ -982,14 +983,20 @@ def _suggestion_from_hit(
     )
 
 
-async def _detect_hits(
+@dataclass(frozen=True, slots=True)
+class _DetectionAttempt:
+    hits: list[CompletionDetected]
+    checked: bool
+
+
+async def _detect_hits_with_status(
     message: str,
     *,
     candidates: Sequence[DetectionCandidate],
     llm: BotmasonResonanceLLM,
     user_id: int,
     entry_id: int,
-) -> list[CompletionDetected]:
+) -> _DetectionAttempt:
     """Best-effort completion detection against the pre-read candidates.
 
     Runs with no transaction open — the candidates were read and committed
@@ -1002,18 +1009,35 @@ async def _detect_hits(
     only thing an operator can act on.
     """
     if not candidates:
-        return []
+        return _DetectionAttempt(hits=[], checked=True)
     try:
-        return await detect_completions(message, candidates=candidates, llm=llm)
+        return _DetectionAttempt(
+            hits=await detect_completions(message, candidates=candidates, llm=llm), checked=True
+        )
     except LLMCreditExhaustedError as exc:
         logger.warning(
             "journal_detection_failed",
             extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
         )
-        return []
+        return _DetectionAttempt(hits=[], checked=False)
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
-        return []
+        return _DetectionAttempt(hits=[], checked=False)
+
+
+async def _detect_hits(
+    message: str,
+    *,
+    candidates: Sequence[DetectionCandidate],
+    llm: BotmasonResonanceLLM,
+    user_id: int,
+    entry_id: int,
+) -> list[CompletionDetected]:
+    """Compatibility wrapper for the combined resonance pass."""
+    attempt = await _detect_hits_with_status(
+        message, candidates=candidates, llm=llm, user_id=user_id, entry_id=entry_id
+    )
+    return attempt.hits
 
 
 def _stage_suggestions(
@@ -1715,6 +1739,91 @@ async def list_suggestions(
     rows = result.scalars().all()
     return CompletionSuggestionListResponse(
         items=[CompletionSuggestionResponse.model_validate(r, from_attributes=True) for r in rows]
+    )
+
+
+async def _existing_suggestion_targets(
+    session: AsyncSession, entry_id: int, user_id: int
+) -> set[tuple[str, int]]:
+    """Targets this entry has already offered, including decided suggestions."""
+    result = await session.execute(
+        select(CompletionSuggestion).where(
+            CompletionSuggestion.journal_entry_id == entry_id,
+            CompletionSuggestion.user_id == user_id,
+        )
+    )
+    targets: set[tuple[str, int]] = set()
+    for row in result.scalars().all():
+        target_id = (
+            row.goal_id if row.target_type == CompletionTargetType.HABIT else row.user_practice_id
+        )
+        if target_id is not None:
+            targets.add((row.target_type, target_id))
+    return targets
+
+
+@router.post("/{entry_id}/suggestions/detect", response_model=CompletionDetectionResponse)
+@limiter.limit("10/minute")
+async def detect_entry_suggestions(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    entry_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> CompletionDetectionResponse:
+    """Check an entry for completed habits independently of literary resonance.
+
+    This route is intentionally uncharged and never calls Creek: a short body or
+    a literary-reflection refusal must not prevent the writer from receiving a
+    habit/practice offer. Intimate entries keep their privacy floor and never
+    leave the process. Provider failures remain best-effort, with ``checked``
+    telling the client whether an empty result really means "no match".
+    """
+    entry = await _load_user_entry(session, entry_id, current_user)
+    if entry is None:
+        raise not_found("journal_entry")
+    if entry.classification == JournalClassification.INTIMATE:
+        return CompletionDetectionResponse(items=[], checked=False)
+
+    candidates = await gather_candidates(session, current_user, include_practices=True)
+    if not candidates:
+        # There is nothing to send and therefore no reason to require or expose
+        # a provider key. An empty candidate set is a completed check, not a
+        # provider failure.
+        await session.commit()
+        return CompletionDetectionResponse(items=[], checked=True)
+    api_key = resolve_chat_api_key(x_llm_api_key)
+    llm = BotmasonResonanceLLM(api_key)
+    # Release every read before the provider round trip.
+    await session.commit()
+    attempt = await _detect_hits_with_status(
+        entry.message,
+        candidates=candidates,
+        llm=llm,
+        user_id=current_user,
+        entry_id=entry_id,
+    )
+    if not attempt.checked:
+        return CompletionDetectionResponse(items=[], checked=False)
+
+    existing = await _existing_suggestion_targets(session, entry_id, current_user)
+    fresh_hits = [hit for hit in attempt.hits if (hit.target_type, hit.target_id) not in existing]
+    rows = _stage_suggestions(session, entry_id, current_user, fresh_hits)
+    await record_llm_usage(
+        session,
+        user_id=current_user,
+        journal_entry_id=entry_id,
+        responses=llm.usage,
+    )
+    await session.commit()
+    await _refresh_persisted(session, [], rows)
+    return CompletionDetectionResponse(
+        items=[
+            CompletionSuggestionResponse.model_validate(row, from_attributes=True) for row in rows
+        ],
+        checked=True,
     )
 
 

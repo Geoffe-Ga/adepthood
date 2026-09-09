@@ -504,7 +504,14 @@ describe('ReorderHabitsModal — date picker on web', () => {
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
     const draggableRows = webRows(result);
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    let transferredKey = '';
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn((_type: string, value: string) => {
+        transferredKey = value;
+      }),
+      getData: jest.fn(() => transferredKey),
+    };
 
     expect(draggableRows).toHaveLength(3);
     act(() => draggableRows[0]!.props.onDragStart({ dataTransfer }));
@@ -518,6 +525,32 @@ describe('ReorderHabitsModal — date picker on web', () => {
     fireEvent.press(result.getByText('Save Order'));
     const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
     expect(saved.map((habit) => habit.id)).toEqual([2, 3, 1]);
+  });
+
+  it('uses the drag payload when pointer-up clears transient state before drop', () => {
+    const onSaveOrder = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    let transferredKey = '';
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn((_type: string, value: string) => {
+        transferredKey = value;
+      }),
+      getData: jest.fn(() => transferredKey),
+    };
+
+    act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
+    act(() =>
+      result.UNSAFE_root.findByProps({ 'data-testid': 'reorder-list' }).props.onPointerUp(),
+    );
+    act(() => rangeTarget(result, -1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
+    fireEvent.press(result.getByText('Save Order'));
+
+    const moved = (onSaveOrder.mock.calls[0]![0] as Habit[]).find((habit) => habit.id === 1)!;
+    expect(dataTransfer.getData).toHaveBeenCalledWith('text/plain');
+    expect(moved.is_carryover).toBe(true);
   });
 
   it('falls back to pointer dragging when the browser does not emit HTML drop events', () => {
@@ -563,7 +596,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:3'),
+    };
 
     act(() => webRows(result)[2]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, -1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
@@ -590,7 +627,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
         onSaveOrder={onSaveOrder}
       />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:99'),
+    };
 
     act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, 0).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));
@@ -620,7 +661,11 @@ describe('ReorderHabitsModal — date picker on web', () => {
         onSaveOrder={onSaveOrder}
       />,
     );
-    const dataTransfer = { effectAllowed: '', setData: jest.fn() };
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: jest.fn(),
+      getData: jest.fn(() => 'habit:99'),
+    };
 
     act(() => webRows(result)[0]!.props.onDragStart({ dataTransfer }));
     act(() => rangeTarget(result, 1).props.onDrop({ preventDefault: jest.fn(), dataTransfer }));

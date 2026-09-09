@@ -35,6 +35,10 @@ import { formatApiError } from '@/api/errorMessages';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
+const completionsCheckedAfterResonanceError = (reason: string): string =>
+  `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits; you can try resonance again whenever you like.`;
+const completionsUncheckedAfterResonanceError = (reason: string): string =>
+  `We couldn't create a reflection or check this entry for completed habits. ${reason}`;
 
 type SetError = (_e: string) => void;
 
@@ -267,8 +271,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     // Latest-pass surfaces never survive into a new request. If it errors, stale
     // care, privacy, no-notes, or Creek context must not describe this attempt.
     clearLatestPass();
+    let entryId: number | null = null;
     try {
-      const entryId = await flush();
+      entryId = await flush();
       if (entryId == null) {
         setError(EMPTY_BODY_MESSAGE);
         return;
@@ -278,7 +283,24 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       mergeFromGenerate(result.suggestions);
       receiveLatestPass(result);
     } catch (err) {
-      setError(formatApiError(err));
+      const reason = formatApiError(err);
+      if (entryId == null) {
+        setError(reason);
+        return;
+      }
+      try {
+        const detection = await completionSuggestions.detect(entryId);
+        mergeFromGenerate(detection.items);
+        setError(
+          detection.checked
+            ? completionsCheckedAfterResonanceError(reason)
+            : completionsUncheckedAfterResonanceError(reason),
+        );
+      } catch {
+        // Keep this contextual instead of repeating the provider's generic
+        // BotMason copy: the writer needs to know both actions were attempted.
+        setError(completionsUncheckedAfterResonanceError(reason));
+      }
     } finally {
       inFlightRef.current = false;
       setLoading(false);

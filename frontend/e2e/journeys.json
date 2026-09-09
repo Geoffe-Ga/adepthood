@@ -139,15 +139,15 @@
   },
   {
     "id": "habits.reorder-across-signed-laps",
-    "description": "A user opens Reorder Habits, drags rows within the scroll-bounded modal, and can cross the visible -10 to -1, 1\u201310, and later-lap range lines. Crossing the program line changes the persisted is_carryover classification; program dates and stage labels are recalculated from the new program-only position while carryover history is preserved. Uncovered at the real-wire level because the current lane cannot mount and operate the drag UI; issue 2399 tracks the rendering lane needed to drive it. The component interaction and save payload are pinned meanwhile by ReorderHabitsModal.test.tsx.",
+    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1–10, and later-lap markers plus program-date recalculation and carryover-date preservation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
       "routes": ["PUT /habits/{habit_id}"],
       "tables": ["habit"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reorder.browser.e2e.test.ts"
   },
   {
     "id": "journal.write-list-read-back",
@@ -160,6 +160,41 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
+  },
+  {
+    "id": "journal.promote-reopen-and-remove-quote",
+    "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["promotions"],
+      "routes": [
+        "POST /journal/{entry_id}/promote",
+        "GET /journal/{entry_id}/promotions",
+        "DELETE /promotions/{promotion_id}"
+      ],
+      "tables": ["promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-quote.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.fold-promoted-quote-into-reopened-reflection",
+    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen; selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "promotions", "reflections"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /reflections/due",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}"
+      ],
+      "tables": ["journalentry", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
     "id": "journal.delete-entry",
