@@ -63,6 +63,43 @@ NO_STYLE_TRANSFER_INSTRUCTION = (
     "seen them, except that you will not repeat an observation they already make."
 )
 
+# The closing line of the essay prompt, naming the task. A module constant for
+# the same reason MARGINALIA_JSON_SHAPE is: it is also the marker the stub
+# provider recognises the essay ask by (``services.stub_completions``), so a
+# reworded prompt cannot quietly stop being recognised.
+ESSAY_TASK_INSTRUCTION = "Write a few warm paragraphs. Plain prose only, no headings or JSON."
+
+# Text that can only have come from the prompt. A letter is prose written *to*
+# the writer; none of these belongs in one, and each of them lands in a
+# completion for exactly one reason -- the provider echoed its input back
+# instead of answering it (issue #2762). That is not hypothetical: the default
+# ``stub`` provider used to quote its whole input verbatim, so every letter it
+# served was the app's own prompt -- medication guardrail, instructions, and
+# the writer's entry inside its delimiters -- rendered as their reflection.
+#
+# Membership is deliberately conservative in the *rejecting* direction. A false
+# positive costs one letter the writer can ask for again; a false negative
+# discloses the safety guardrail an attacker would craft around, and hands
+# somebody their own journal wrapped in machine scaffolding. Those are not
+# symmetric, so a completion carrying any of these is refused rather than
+# published. What is *not* here matters too: quoting the writer's own words
+# back to them is what a good letter does, so nothing in this tuple is drawn
+# from the entry or from anything the writer wrote.
+#
+# ``tests/test_resonance_service.py`` asserts every member really occurs in the
+# prompt this guards, so a marker cannot rot into one that guards nothing.
+PROMPT_ECHO_MARKERS: tuple[str, ...] = (
+    MEDICATION_GUARDRAIL,
+    ESSAY_TASK_INSTRUCTION,
+    NO_STYLE_TRANSFER_INSTRUCTION,
+    "<entry>",
+    "</entry>",
+    "<passage>",
+    "</passage>",
+    "<prior_letters>",
+    "</prior_letters>",
+)
+
 
 class _AnchoredSpan(Protocol):
     """Structural type for anything carrying integer ``anchor_start`` / ``anchor_end``.
@@ -591,9 +628,28 @@ def _build_essay_prompt(
         f"Your margin note: {note}\n"
         f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
         f"The full entry for context:\n<entry>\n{body}\n</entry>\n\n"
-        "Write a few warm paragraphs. Plain prose only, no headings or JSON."
+        f"{ESSAY_TASK_INSTRUCTION}"
         f"{_prior_letters_block(prior_drafts)}"
     )
+
+
+def _echoes_prompt(completion: str) -> bool:
+    """Return True when ``completion`` carries text only the prompt could supply.
+
+    The plausibility check the essay half was missing, and the reason a stub
+    provider could hand a writer the app's own prompt as their letter (#2762).
+    It mirrors :func:`_parse_completion`, which refuses a completion that is not
+    the JSON the notes prompt asked for; the asymmetry between the two halves --
+    one validating, one publishing whatever came back -- was the defect.
+
+    Matching is exact and case-sensitive against :data:`PROMPT_ECHO_MARKERS`,
+    over the raw completion *before* :func:`_sanitize_essay` truncates it: an
+    echo is verbatim by nature, so nothing looser is needed, and checking the
+    untruncated text means a marker past ``ESSAY_MAX`` still counts. Nothing
+    here is derived from the entry, so a letter quoting the writer's own words
+    -- which is what this feature exists to do -- passes untouched.
+    """
+    return any(marker in completion for marker in PROMPT_ECHO_MARKERS)
 
 
 def _sanitize_essay(text: str) -> str:
@@ -612,8 +668,15 @@ async def generate_essay(
     body: str,
     note: MarginaliaAnchored,
     prior_drafts: Sequence[str] | None = None,
-) -> str:
+) -> str | None:
     """Ask ``llm`` to expand one margin note into a sanitized, length-capped essay.
+
+    Returns ``None`` when the completion is not a letter -- it echoes the prompt
+    (:func:`_echoes_prompt`), or it sanitizes away to nothing. ``None`` is not an
+    error and carries no blame: the caller leaves the note's ``essay`` unset, so
+    the writer sees the same no-letter state an intimate entry gets and can ask
+    again later. Caching a refused completion is what #2435 / #1504 were about,
+    and returning the text would republish the very thing this refuses.
 
     ``note`` arrives as the whole :class:`MarginaliaAnchored` rather than as its
     ``kind`` / ``anchor_text`` / ``note`` fields spread across three keywords.
@@ -629,4 +692,10 @@ async def generate_essay(
     vault selection), so what is threaded here reaches every account.
     """
     prompt = _build_essay_prompt(body, note.anchor_text, note.kind, note.note, prior_drafts)
-    return _sanitize_essay(await llm.complete(prompt))
+    completion = await llm.complete(prompt)
+    if _echoes_prompt(completion):
+        return None
+    # ``sanitize_user_text`` already strips, so an empty result means the
+    # completion was whitespace: not a letter either, and caching one strands
+    # the note behind an idempotent endpoint that would never call again.
+    return _sanitize_essay(completion) or None
