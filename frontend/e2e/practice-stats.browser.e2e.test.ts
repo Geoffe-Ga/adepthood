@@ -32,6 +32,12 @@ const SHORT_SIT_MINUTES = 20;
 const EXPECTED_TOTAL_TIME = '1h 5m';
 const EXPECTED_TOTAL_SESSIONS = '2';
 
+/** Logged between the two reads, so the second one has something to disagree about. */
+const THIRD_SIT_MINUTES = 30;
+/** 45 + 20 + 30 = 95 minutes. */
+const REREAD_TOTAL_TIME = '1h 35m';
+const REREAD_TOTAL_SESSIONS = '3';
+
 const MS_PER_MINUTE = 60_000;
 
 interface CatalogPractice {
@@ -100,20 +106,48 @@ async function logSitting(
   if (!logged.ok()) throw new Error(`logging a ${minutes}-minute sitting failed`);
 }
 
-/** Cross to another primary destination through the screen drawer. */
-async function navigateTo(page: Page, screen: 'Journal' | 'Practice'): Promise<void> {
+/**
+ * Cross to another primary destination through the screen drawer.
+ *
+ * Only screens inside the tab shell carry a drawer; a screen pushed above it on
+ * the root stack does not, which is why this is never how the detail screen is
+ * left (see `leavePracticeDetails`).
+ */
+async function navigateTo(page: Page, screen: 'Practice'): Promise<void> {
   await page.getByRole('button', { name: /^Open \w+ menu$/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: screen, exact: true }).click();
   await expect(page.getByRole('button', { name: `Open ${screen} menu` })).toBeVisible();
 }
 
-/** Walk from the player to the practice's own detail screen, as a user would. */
-async function openPracticeDetails(page: Page): Promise<void> {
+/** Reach the Practice player from wherever the app opened. */
+async function openPracticeTab(page: Page): Promise<void> {
   await navigateTo(page, 'Practice');
   await expect(page.getByTestId('active-ritual-session')).toBeVisible();
+}
+
+/** From the player, open this practice's own detail screen, as a user would. */
+async function openPracticeDetails(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Open Practice menu' }).click();
   await page.getByTestId('practice-drawer-details').click();
   await expect(page.getByTestId('practice-detail-name')).toBeVisible();
+}
+
+/**
+ * Leave the detail screen by the affordance it actually offers: the header back
+ * control.
+ *
+ * `PracticeDetail` is pushed on the root stack *above* the tab shell, so it
+ * carries no screen drawer and no tab bar -- the header is the only way out,
+ * and reaching for a drawer here waits forever. On web that control renders as
+ * an `<a href="/practice">`, so its role is `link` rather than `button`, and its
+ * accessible name is "Tabs, back": the root-stack route name leaking into the
+ * label. Anchoring on the stable half of that name keeps this spec honest if the
+ * leak is ever tidied up, without loosening it into matching anything else --
+ * the detail screen offers exactly one link.
+ */
+async function leavePracticeDetails(page: Page): Promise<void> {
+  await page.getByRole('link', { name: /back$/i }).click();
+  await expect(page.getByTestId('active-ritual-session')).toBeVisible();
 }
 
 test('a practitioner sees their own total sittings and total time for one practice', async ({
@@ -132,6 +166,7 @@ test('a practitioner sees their own total sittings and total time for one practi
   await logSitting(page.request, token, userPracticeId, 0, 30);
 
   await page.reload();
+  await openPracticeTab(page);
   await openPracticeDetails(page);
 
   const sessions = page.getByTestId('practice-detail-total-sessions');
@@ -155,13 +190,19 @@ test('a practitioner sees their own total sittings and total time for one practi
   );
   expect((await logged.json()) as unknown[]).toHaveLength(3);
 
-  // And the numbers survive the screen's own re-read. Leaving and returning is
-  // the cheapest way to force one; a rollup carrying a freshness lifetime would
-  // be answered here out of the browser's cache instead of by the server.
-  await navigateTo(page, 'Journal');
+  // Now the cache leg. A third real sitting is logged behind the screen's back, and
+  // the totals have to MOVE when the screen is re-entered. Asserting the same
+  // numbers twice would prove nothing here -- a stale cached rollup satisfies
+  // that too. Leaving and returning forces the re-read without a page reload,
+  // which is the shape #2654 was caught in: the browser answering a re-read out
+  // of its own HTTP cache while the server already knows better.
+  await logSitting(page.request, token, userPracticeId, THIRD_SIT_MINUTES, 15);
+
+  await leavePracticeDetails(page);
   await openPracticeDetails(page);
+
   await expect(page.getByTestId('practice-detail-total-sessions')).toHaveText(
-    EXPECTED_TOTAL_SESSIONS,
+    REREAD_TOTAL_SESSIONS,
   );
-  await expect(page.getByTestId('practice-detail-total-time')).toHaveText(EXPECTED_TOTAL_TIME);
+  await expect(page.getByTestId('practice-detail-total-time')).toHaveText(REREAD_TOTAL_TIME);
 });
