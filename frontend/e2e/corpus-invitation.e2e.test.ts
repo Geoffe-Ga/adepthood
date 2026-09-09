@@ -18,11 +18,12 @@ import { ApiError, auth, corpusInvitation, journal, resonance, setTokenGetter } 
  * asked", and the fact that the decline is the server's to remember rather
  * than the device's.
  *
- * The pass that opens the offer is real: the lane's provider is the stub, so a
- * pass resolves as a 200 that kept no notes and was refunded -- which is, by
- * design, still a completed pass. What the lane cannot drive is the note
- * appearing beside the page; that moment is pinned by the Jest specs beside
- * JournalEntryScreen and tracked as its own journey.
+ * The pass that opens the offer is real: the lane's provider is the stub, which
+ * reads the page it is handed and quotes it back, so the pass resolves as a 200
+ * that kept a note -- and a pass that keeps nothing is, by design, just as
+ * completed. Either way it counts, which is the point here. What the lane
+ * cannot drive is the note appearing beside the page; that moment is pinned by
+ * the Jest specs beside JournalEntryScreen and tracked as its own journey.
  */
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
