@@ -81,6 +81,15 @@ const TIMER_DOCK_MIN_VIEWPORT_WIDTH = TIMER_DOCK_TRACK_MAX_WIDTH + 2 * SPACING.s
 export interface WritingTimerProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /**
+   * Begin the session on mount instead of waiting for a tap.
+   *
+   * Set only when the page was OPENED in order to run this session — the
+   * quick-launch from a saved practice — never as a default. A timer that
+   * starts itself on a page the writer merely opened would be the page
+   * deciding what they came to do.
+   */
+  autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
@@ -290,6 +299,46 @@ function useSessionReport({
 }
 
 /**
+ * The pill's collapsed state, and the two moves that change it.
+ *
+ * Extracted so the component below reads as a description of what it renders.
+ * ``expand`` is deliberately conditional: the pill only re-opens while the
+ * timer is at rest, because the presets it re-opens onto cannot be changed
+ * mid-session anyway.
+ */
+function useCompactPill(status: EngineStatus): {
+  compact: boolean;
+  collapse: () => void;
+  expand: () => void;
+} {
+  const [compact, setCompact] = useState(false);
+  const collapse = useCallback(() => setCompact(true), []);
+  const expand = useCallback(() => {
+    if (status === 'idle') setCompact(false);
+  }, [status]);
+  return { compact, collapse, expand };
+}
+
+/**
+ * Start the session once, on mount, when the page was opened to run one.
+ *
+ * Latched on a ref rather than on the engine's status: the status leaves
+ * ``idle`` the moment the session starts and returns to it after the session is
+ * reported and cancelled, so a status-based guard would start a second session
+ * the instant the first one ended.
+ */
+function useAutoStart(autoStart: boolean, begin: () => void): void {
+  const beginRef = useRef(begin);
+  beginRef.current = begin;
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart || startedRef.current) return;
+    startedRef.current = true;
+    beginRef.current();
+  }, [autoStart]);
+}
+
+/**
  * The engine config for a writing session of the given length.
  *
  * Every bell is explicitly off. ``cuesForMeditation`` defaults ``start_bell``
@@ -456,13 +505,14 @@ function TimerMount({
 
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
+  autoStart = false,
   onComplete,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
   const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
-  const [compact, setCompact] = useState(false);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
+  const { compact, collapse, expand } = useCompactPill(state.status);
   const docked = compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
@@ -482,12 +532,10 @@ function WritingTimer({
     setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
   }, []);
   const start = useCallback(() => {
-    setCompact(true);
+    collapse();
     controls.start();
-  }, [controls]);
-  const expand = useCallback(() => {
-    if (state.status === 'idle') setCompact(false);
-  }, [state.status]);
+  }, [collapse, controls]);
+  useAutoStart(autoStart, start);
   return (
     <TimerMount compact={compact} docked={docked} idle={state.status === 'idle'} onExpand={expand}>
       <TimerPill
@@ -498,7 +546,7 @@ function WritingTimer({
         view={view}
         controls={controls}
         onStart={start}
-        onMinimize={() => setCompact(true)}
+        onMinimize={collapse}
         onChooseMinutes={chooseMinutes}
       />
     </TimerMount>
