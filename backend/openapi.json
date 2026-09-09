@@ -12464,7 +12464,7 @@
     },
     "/habits/": {
       "get": {
-        "description": "Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.\n\nUnnumbered legacy rows come first: they predate slots, so they are the\nhabits the user onboarded with, and a later numbered add belongs after\nthem -- PostgreSQL's default ``ASC`` would put them last. Then ascending\nslot, ties broken by ``id``. That ``id`` key is not decoration: slots are\npartition-scoped by ``is_carryover``, so two rows may legitimately hold\nthe same slot, and ``paginate_query`` adds no ordering of its own -- an\nuntiebroken key would leave LIMIT/OFFSET paging free to repeat or drop\nrows inside a tie group.",
+        "description": "Return habits sorted by ``sort_order``; paginated when ``?paginate=true``.\n\nUnnumbered legacy rows come first: they predate slots, so they are the\nhabits the user onboarded with, and a later numbered add belongs after\nthem -- PostgreSQL's default ``ASC`` would put them last. Then ascending\nslot, ties broken by ``id``. That ``id`` key is not decoration: slots are\npartition-scoped by ``is_carryover``, so two rows may legitimately hold\nthe same slot, and an untiebroken key would leave LIMIT/OFFSET paging free\nto repeat or drop rows inside a tie group. It is supplied by\n``paginate_query``, which appends the entity's primary key to every page it\nserves (issue #2718); stating it here as well would emit the same sort key\ntwice.",
         "operationId": "list_habits_habits__get",
         "parameters": [
           {
