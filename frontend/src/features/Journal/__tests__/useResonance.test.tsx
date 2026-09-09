@@ -27,6 +27,9 @@ const mockDismiss = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<CompletionSuggestion>
 >;
 const mockLoadHabits = jest.fn() as jest.MockedFunction<(_tz?: string) => Promise<void>>;
+const mockDetect = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<{ items: CompletionSuggestion[]; checked: boolean }>
+>;
 
 jest.mock('@/features/Habits/services/habitManager', () => ({
   habitManager: {
@@ -46,6 +49,7 @@ jest.mock('@/api', () => {
     },
     completionSuggestions: {
       list: (...a: unknown[]) => (mockSugList as unknown as (...x: unknown[]) => unknown)(...a),
+      detect: (...a: unknown[]) => (mockDetect as unknown as (...x: unknown[]) => unknown)(...a),
       accept: (...a: unknown[]) => (mockAccept as unknown as (...x: unknown[]) => unknown)(...a),
       dismiss: (...a: unknown[]) => (mockDismiss as unknown as (...x: unknown[]) => unknown)(...a),
     },
@@ -60,10 +64,12 @@ beforeEach(() => {
   mockSugList.mockReset();
   mockAccept.mockReset();
   mockDismiss.mockReset();
+  mockDetect.mockReset();
   mockList.mockResolvedValue({ items: [] });
   mockSugList.mockResolvedValue({ items: [] });
   mockLoadHabits.mockReset();
   mockLoadHabits.mockResolvedValue(undefined);
+  mockDetect.mockResolvedValue({ items: [], checked: true });
 });
 
 describe('useResonance', () => {
@@ -107,6 +113,25 @@ describe('useResonance', () => {
     expect(result.current.error).toBeTruthy();
     expect(result.current.error).not.toContain('insufficient_offerings'); // friendly, not raw
     expect(result.current.loading).toBe(false);
+  });
+
+  it('still offers detected habits when literary resonance rejects the entry', async () => {
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockRejectedValue(new ApiError(502, 'llm_provider_error'));
+    mockDetect.mockResolvedValue({
+      checked: true,
+      items: [suggestion({ id: 8, journal_entry_id: 42, anchor_text: 'I meditated' })],
+    });
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+
+    expect(mockDetect).toHaveBeenCalledWith(42);
+    expect(result.current.suggestions.map((item: CompletionSuggestion) => item.id)).toEqual([8]);
+    expect(result.current.error).toContain("couldn't create a reflection");
+    expect(result.current.error).toContain('still checked it for completed habits');
   });
 
   it('guards against concurrent generates (no double-charge on rapid taps)', async () => {

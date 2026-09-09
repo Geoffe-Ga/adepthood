@@ -139,15 +139,15 @@
   },
   {
     "id": "habits.reorder-across-signed-laps",
-    "description": "A user opens Reorder Habits, drags rows within the scroll-bounded modal, and can cross the visible -10 to -1, 1\u201310, and later-lap range lines. Crossing the program line changes the persisted is_carryover classification; program dates and stage labels are recalculated from the new program-only position while carryover history is preserved. Uncovered at the real-wire level because the current lane cannot mount and operate the drag UI; issue 2399 tracks the rendering lane needed to drive it. The component interaction and save payload are pinned meanwhile by ReorderHabitsModal.test.tsx.",
+    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1\u201310, and later-lap markers plus program-date recalculation and carryover-date preservation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
       "routes": ["PUT /habits/{habit_id}"],
       "tables": ["habit"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reorder.browser.e2e.test.ts"
   },
   {
     "id": "journal.write-list-read-back",
@@ -160,6 +160,41 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
+  },
+  {
+    "id": "journal.promote-reopen-and-remove-quote",
+    "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["promotions"],
+      "routes": [
+        "POST /journal/{entry_id}/promote",
+        "GET /journal/{entry_id}/promotions",
+        "DELETE /promotions/{promotion_id}"
+      ],
+      "tables": ["promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-quote.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.fold-promoted-quote-into-reopened-reflection",
+    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen; selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "promotions", "reflections"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /reflections/due",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}"
+      ],
+      "tables": ["journalentry", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
     "id": "journal.delete-entry",
@@ -210,6 +245,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
+  },
+  {
+    "id": "journal.short-entry-still-offers-habit-checkoff",
+    "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /journal/{entry_id}/suggestions"
+      ],
+      "tables": ["completionsuggestion", "goalcompletion", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-short-habit-offer.browser.e2e.test.ts"
   },
   {
     "id": "journal.see-related-vault-pages",
@@ -561,6 +613,18 @@
     "issue": 2614
   },
   {
+    "id": "return.begin-a-return-from-the-journal-entry",
+    "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens exactly one arc even on a double-tap, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. Uncovered because the offer surfaces only when the server reports eligibility AND a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts), a state this lane cannot reach without driving a real contraction-producing pass -- the same end-to-end stitch recorded on return.recover-a-habit-set-down. Pinned meanwhile by src/features/Journal/__tests__/ContractionReflectionNote.test.tsx (the offer gate, the confirmation's contents, one start per double-tapped confirm, a cancel that starts nothing, and both failure lines) and by the backend's own metta-return tests -- neither of which proves the two halves meet.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["mettaReturn"],
+      "routes": ["GET /metta-return", "POST /metta-return/arc", "POST /metta-return/offer/dismiss"],
+      "tables": ["mettareturnarc", "mettareturnofferdismissal"]
+    },
+    "status": "uncovered",
+    "issue": 2751
+  },
+  {
     "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
     "description": "A person whose reflections are still drawn from the last few days of writing is told so, in the sentence that is true for their own account: the consent decision if they have not made it, the import surface if they have. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
     "crosses": {
@@ -722,7 +786,7 @@
   },
   {
     "id": "journal.failed-check-off-says-so-beside-the-card",
-    "description": "A writer presses OK on a completion-suggestion card in the journal margin and the accept is refused. The refusal is named where the writer is looking -- above the margin's content, beside the very card that produced it -- and announced through a polite live region rather than only drawn, while the card stays pending and pressable so a second press issues a second request. Before this, the margin's error was rendered only by the branch taken when the margin was otherwise empty, and a pending card is itself margin content: the one state that can produce an accept failure was the one state that could not show it, so OK read as a dead button for a 401, a 404, a 409 on an already-dismissed row, a 500, or a request that never reached the server -- on every platform. A success retires only its own card's complaint -- another card's failure is still live, and that card is still pending -- and pushes the check-in into the habit store on the auth-hydrated zone, so the Habits tab and the shelf's Today's habits tile agree with the card they never remounted for. Uncovered because every claim here is a rendering claim -- an error mounted beside a card, a live region, a card that survives its own failure -- and this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the constraint #2324 records; it is not a gap a further spec in this lane could close. Pinned meanwhile at the render level by src/features/Journal/__tests__/JournalEntryScreenSuggestions.test.tsx, which renders the pending card, rejects the accept, and asserts the error is visible with the card still mounted and re-pressable, and at the hook level by src/features/Journal/__tests__/useResonance.test.tsx, which pins the copy against naming a cause the browser cannot observe and pins the habit refresh to the auth-hydrated zone rather than the device's.",
+    "description": "A writer presses OK on a completion-suggestion card in the journal margin and the accept is refused. The refusal is named where the writer is looking -- beside the very card that produced it, not in place of it -- and announced through a polite live region rather than only drawn, while the card stays pending and pressable so a second press really does check the habit off. The spec drives that over the real wire in a real browser: only the literary pass is intercepted, to reach a suggestion card without an LLM, while detection, the row, the refused accept, the retry and the persisted acceptance are all the live server. A 500 stands in for the class the margin used to swallow -- a 401, a 404, a 409 on an already-dismissed row, a request that never arrives -- because every one reaches the same catch. What no browser spec can reach is pinned beside it in Jest: src/features/Journal/__tests__/useResonance.test.tsx holds the copy to what the client can actually observe (a blocked preflight and an unreachable host are one bare TypeError), pins the habit-store refresh to the auth-hydrated zone rather than the device's, and pins that a success retires only its own card's complaint -- with two cards on screen, accepting one must not erase the other's still-live failure while that card is still pending.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["completionSuggestions", "habits"],
@@ -733,8 +797,8 @@
       ],
       "tables": ["journalentry", "completionsuggestion", "habit", "goalcompletion"]
     },
-    "status": "uncovered",
-    "issue": 2324
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-failed-checkoff.browser.e2e.test.ts"
   },
   {
     "id": "practice.paging-a-long-list-shows-every-row-once",

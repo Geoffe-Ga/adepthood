@@ -200,6 +200,7 @@ async function createEntry(
     secondary_aspect: chordRef.current.secondary,
     ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
     ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+    ...(ctx.reflectionLevel != null && { tag: 'hierarchical_reflection' as const }),
     ...(ctx.reflectionLevel != null && { reflection_level: ctx.reflectionLevel }),
     ...(ctx.reflectionScopeKey != null && { reflection_scope_key: ctx.reflectionScopeKey }),
   });
@@ -266,6 +267,8 @@ async function finishWrite(
 }
 
 interface AutosaveApi {
+  /** The persisted entry id, including one created without a route transition. */
+  entryId: number | null;
   title: string;
   body: string;
   status: EntryStatus;
@@ -303,6 +306,9 @@ interface AutosaveApi {
    * writing that already existed" from "this page is still blank".
    */
   loadedFromServer: boolean;
+  /** Saved reflection identity, hydrated when an entry is reopened from the shelf. */
+  reflectionLevel?: ReflectionLevel;
+  reflectionScopeKey?: string;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -759,6 +765,7 @@ function useDebouncedSave(
   onConflict?: () => void,
 ) {
   const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [entryId, setEntryId] = useState<number | null>(routeEntryId);
   const refs = useDraftRefs(routeEntryId, { onSaved, onConflict, ctx, entryUnsettled });
   const persist = usePersistControls(refs.entryIdRef, setSaveState, refs.entryUnsettledRef);
   useTimerCleanup(refs.timerRef);
@@ -768,12 +775,29 @@ function useDebouncedSave(
     delayMs,
     setSaveState,
   );
+  const flushAndTrack = useCallback(
+    async (...args: Parameters<typeof flush>) => {
+      const id = await flush(...args);
+      if (id != null) setEntryId(id);
+      return id;
+    },
+    [flush],
+  );
+  const finishAndTrack = useCallback(
+    async (...args: Parameters<typeof finish>) => {
+      const id = await finish(...args);
+      setEntryId(id);
+      return id;
+    },
+    [finish],
+  );
 
   return {
+    entryId,
     saveState,
     save,
-    flush,
-    finish,
+    flush: flushAndTrack,
+    finish: finishAndTrack,
     changeClassification: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
@@ -850,16 +874,38 @@ interface EntryState {
   loadError: string | null;
   /** Flips true once an existing entry's values have been applied to state. */
   loaded: boolean;
+  reflectionLevel?: ReflectionLevel;
+  reflectionScopeKey?: string;
 }
 
-/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
- *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
- *  capture flow's intimate offramp); an existing entry's load overrides it. */
-function useEntryState(
-  routeEntryId: number | null,
+interface MutableEntryState extends EntryState {
+  setLoadError: (_message: string) => void;
+  setLoaded: (_loaded: boolean) => void;
+  setReflectionLevel: (_level: ReflectionLevel | undefined) => void;
+  setReflectionScopeKey: (_scopeKey: string | undefined) => void;
+}
+
+const REFLECTION_LEVELS = new Set<ReflectionLevel>([
+  'week',
+  'stage',
+  'component',
+  'tier',
+  'program',
+]);
+
+function reflectionLevelFromWire(value: string | null | undefined): ReflectionLevel | undefined {
+  return value != null && REFLECTION_LEVELS.has(value as ReflectionLevel)
+    ? (value as ReflectionLevel)
+    : undefined;
+}
+
+/** Local fields and setters; server hydration stays in the smaller hook below. */
+function useLocalEntryState(
   initialText: InitialText,
   initialClassification: JournalClassification,
-): EntryState {
+  initialReflectionLevel?: ReflectionLevel,
+  initialReflectionScopeKey?: string,
+): MutableEntryState {
   const [title, setTitle] = useState(initialText.title);
   const [body, setBody] = useState(initialText.body);
   const [status, setStatus] = useState<EntryStatus>('draft');
@@ -868,31 +914,10 @@ function useEntryState(
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  // Refs mirror the latest text so the change handlers stay referentially stable.
+  const [reflectionLevel, setReflectionLevel] = useState(initialReflectionLevel);
+  const [reflectionScopeKey, setReflectionScopeKey] = useState(initialReflectionScopeKey);
   const titleRef = useRef(initialText.title);
   const bodyRef = useRef(initialText.body);
-
-  useEntryLoadEffect(
-    routeEntryId,
-    useCallback((entry: JournalMessage) => {
-      titleRef.current = entry.title ?? '';
-      bodyRef.current = entry.message;
-      setTitle(titleRef.current);
-      setBody(bodyRef.current);
-      setStatus(entry.status ?? 'draft');
-      // Pre-select the server's tier so an intimate entry loads intimate.
-      setClassification(entry.classification ?? DEFAULT_TIER);
-      // Pre-select the server's chord so a tagged entry loads its Aspects.
-      setChord({
-        primary: entry.primary_aspect ?? null,
-        secondary: entry.secondary_aspect ?? null,
-      });
-      // Signal the load so the persist refs can be seeded from these values.
-      setLoaded(true);
-    }, []),
-    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), []),
-  );
-
   return {
     title,
     body,
@@ -908,7 +933,85 @@ function useEntryState(
     bodyRef,
     loadError,
     loaded,
+    reflectionLevel,
+    reflectionScopeKey,
+    setLoadError,
+    setLoaded,
+    setReflectionLevel,
+    setReflectionScopeKey,
   };
+}
+
+/** Stable load applicator, separated so the state owner remains reviewably small. */
+function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
+  const {
+    titleRef,
+    bodyRef,
+    setTitle,
+    setBody,
+    setStatus,
+    setClassification,
+    setChord,
+    setReflectionLevel,
+    setReflectionScopeKey,
+    setLoaded,
+  } = state;
+  return useCallback(
+    (entry: JournalMessage) => {
+      titleRef.current = entry.title ?? '';
+      bodyRef.current = entry.message;
+      setTitle(titleRef.current);
+      setBody(bodyRef.current);
+      setStatus(entry.status ?? 'draft');
+      setClassification(entry.classification ?? DEFAULT_TIER);
+      setChord({
+        primary: entry.primary_aspect ?? null,
+        secondary: entry.secondary_aspect ?? null,
+      });
+      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
+      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
+      setLoaded(true);
+    },
+    [
+      bodyRef,
+      setBody,
+      setChord,
+      setClassification,
+      setLoaded,
+      setReflectionLevel,
+      setReflectionScopeKey,
+      setStatus,
+      setTitle,
+      titleRef,
+    ],
+  );
+}
+
+/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
+ *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
+ *  capture flow's intimate offramp); an existing entry's load overrides it. */
+function useEntryState(
+  routeEntryId: number | null,
+  initialText: InitialText,
+  initialClassification: JournalClassification,
+  initialReflectionLevel?: ReflectionLevel,
+  initialReflectionScopeKey?: string,
+): EntryState {
+  const state = useLocalEntryState(
+    initialText,
+    initialClassification,
+    initialReflectionLevel,
+    initialReflectionScopeKey,
+  );
+  const applyLoadedEntry = useApplyLoadedEntry(state);
+  const { setLoadError } = state;
+
+  useEntryLoadEffect(
+    routeEntryId,
+    applyLoadedEntry,
+    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]),
+  );
+  return state;
 }
 
 interface ChoiceHandlers {
@@ -984,6 +1087,68 @@ function useSeedPersistOnNew(
   }, [routeEntryId, initialClassification, seedPersist]);
 }
 
+interface AutosaveBindings extends ChoiceHandlers {
+  entryId: number | null;
+  saveState: SaveState;
+  onChangeTitle: (_next: string) => void;
+  onChangeBody: (_next: string) => void;
+  flush: () => Promise<number | null>;
+  finish: () => Promise<number>;
+}
+
+/** Project internal entry/persistence state onto the screen's autosave contract. */
+function buildAutosaveApi(
+  entry: EntryState,
+  bindings: AutosaveBindings,
+  controlsLocked: boolean,
+  loadedFromServer: boolean,
+): AutosaveApi {
+  return {
+    title: entry.title,
+    body: entry.body,
+    status: entry.status,
+    setStatus: entry.setStatus,
+    classification: entry.classification,
+    chord: entry.chord,
+    loadError: entry.loadError,
+    reflectionLevel: entry.reflectionLevel,
+    reflectionScopeKey: entry.reflectionScopeKey,
+    controlsLocked,
+    loadedFromServer,
+    ...bindings,
+  };
+}
+
+/** Bind the draft writer to the entry's live fields and local choice state. */
+function useAutosaveBindings(
+  entry: EntryState,
+  saving: ReturnType<typeof useDebouncedSave>,
+): AutosaveBindings {
+  const { onChangeTitle, onChangeBody } = useFieldHandlers(
+    entry.titleRef,
+    entry.bodyRef,
+    saving.save,
+    entry.setTitle,
+    entry.setBody,
+  );
+  const { flushNow, finishNow } = useBoundWriters(
+    saving.flush,
+    saving.finish,
+    entry.titleRef,
+    entry.bodyRef,
+  );
+  const choices = useChoiceHandlers(entry, saving.changeClassification, saving.changeChord);
+  return {
+    entryId: saving.entryId,
+    saveState: saving.saveState,
+    onChangeTitle,
+    onChangeBody,
+    flush: flushNow,
+    finish: finishNow,
+    ...choices,
+  };
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
@@ -994,50 +1159,23 @@ function useJournalAutosave(
   onSaved?: () => void,
   onConflict?: () => void,
 ): AutosaveApi {
-  const entry = useEntryState(routeEntryId, initialText, initialClassification);
-  const { titleRef, bodyRef } = entry;
+  const entry = useEntryState(
+    routeEntryId,
+    initialText,
+    initialClassification,
+    ctx.reflectionLevel,
+    ctx.reflectionScopeKey,
+  );
   // An existing entry is "unsettled" until its load settles: entry.loaded flips
   // true only in the success apply, so it stays false through both the in-flight
   // and failed-load windows (and is irrelevant for a new entry — routeEntryId is
   // null). Gate the writer + controls on this so neither touches an unseen entry.
   const entryUnsettled = routeEntryId != null && !entry.loaded;
-  const { saveState, save, flush, finish, changeClassification, changeChord, seedPersist } =
-    useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
-  useSeedPersistOnLoad(entry, seedPersist);
-  useSeedPersistOnNew(routeEntryId, initialClassification, seedPersist);
-
-  const { onChangeTitle, onChangeBody } = useFieldHandlers(
-    titleRef,
-    bodyRef,
-    save,
-    entry.setTitle,
-    entry.setBody,
-  );
-  const { flushNow, finishNow } = useBoundWriters(flush, finish, titleRef, bodyRef);
-  const { onChangeClassification, onChangeChord } = useChoiceHandlers(
-    entry,
-    changeClassification,
-    changeChord,
-  );
-
-  return {
-    title: entry.title,
-    body: entry.body,
-    status: entry.status,
-    setStatus: entry.setStatus,
-    saveState,
-    classification: entry.classification,
-    chord: entry.chord,
-    onChangeTitle,
-    onChangeBody,
-    onChangeClassification,
-    onChangeChord,
-    flush: flushNow,
-    finish: finishNow,
-    loadError: entry.loadError,
-    controlsLocked: entryUnsettled,
-    loadedFromServer: routeEntryId != null && entry.loaded,
-  };
+  const saving = useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
+  useSeedPersistOnLoad(entry, saving.seedPersist);
+  useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
+  const bindings = useAutosaveBindings(entry, saving);
+  return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
 }
 
 interface WritingColumnProps {
@@ -1064,6 +1202,8 @@ interface WritingColumnProps {
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
   onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  /** Opens the rereadable source feed while composing a reflection. */
+  onOpenSources?: () => void;
 }
 
 /** Quiet control to mark a draft finished, with a warm retry notice on failure. */
@@ -1286,6 +1426,20 @@ function WritingFooter({
   );
 }
 
+function ReflectionSourcesButton({ onOpen }: { onOpen?: () => void }): React.JSX.Element | null {
+  return onOpen ? (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
+      testID="reflection-sources-toggle"
+    >
+      <Text style={styles.controlLink}>Sources</Text>
+    </TouchableOpacity>
+  ) : null;
+}
+
 /** The scrollable writing column (title + growing body + save hint). */
 function WritingColumn({
   title,
@@ -1304,6 +1458,7 @@ function WritingColumn({
   bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
+  onOpenSources,
 }: WritingColumnProps) {
   return (
     <View style={styles.writingColumn}>
@@ -1327,6 +1482,7 @@ function WritingColumn({
         {onFinish ? (
           <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
         ) : null}
+        <ReflectionSourcesButton onOpen={onOpenSources} />
       </View>
     </View>
   );
@@ -1337,11 +1493,10 @@ function WritingColumn({
  * that did not go through.
  *
  * Rendered above whatever the margin already holds rather than only in place of
- * it. Sitting in the empty-margin branch made it unreachable in exactly the
- * state that produces an accept failure, because a pending suggestion card is
- * itself margin content: pressing OK and getting no visible change was that
- * branch, not a dead button. ``accessibilityLiveRegion`` announces the failure
- * so the silence is not merely relocated to another medium.
+ * it, because a pending suggestion card is itself margin content: an error that
+ * only had the empty-margin branch could not appear in the one state that
+ * produces a failed check-off. ``accessibilityLiveRegion`` announces it, so the
+ * silence that fix removed is not merely relocated to another medium.
  */
 function ResonanceMargin({ error }: { error: string | null }) {
   return error ? (
@@ -1941,16 +2096,20 @@ function useCreateConflictHandler(ctx: SaveContext, navigation: ScreenNavigation
  * quote can be spliced at the caret without threading the autosave's draft ref
  * out, and hand the sources/insert flow the body writer + flush.
  */
-function useReflectionComposer(ctx: SaveContext, autosave: AutosaveApi) {
+function useReflectionComposer(autosave: AutosaveApi) {
   const reflectionBodyRef = useRef(autosave.body);
   reflectionBodyRef.current = autosave.body;
-  return useReflectionMode({
-    reflectionLevel: ctx.reflectionLevel,
-    reflectionScopeKey: ctx.reflectionScopeKey,
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const openSources = useCallback(() => setSourcesOpen(true), []);
+  const closeSources = useCallback(() => setSourcesOpen(false), []);
+  const mode = useReflectionMode({
+    reflectionLevel: autosave.reflectionLevel,
+    reflectionScopeKey: autosave.reflectionScopeKey,
     bodyRef: reflectionBodyRef,
     onChangeBody: autosave.onChangeBody,
     flush: autosave.flush,
   });
+  return { ...mode, sourcesOpen, openSources, closeSources };
 }
 
 /** The finished-entry edit gate wired from the autosave's status + finish write. */
@@ -2004,9 +2163,9 @@ function useJournalEntryController(
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
   const resonance = useEntryResonance(routeEntryId, autosave.flush);
-  const quote = useQuotePromotion(routeEntryId);
+  const quote = useQuotePromotion(autosave.entryId);
   refreshRef.current = resonance.refresh;
-  const reflection = useReflectionComposer(ctx, autosave);
+  const reflection = useReflectionComposer(autosave);
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
@@ -2086,6 +2245,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onBodySelectionChange={
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
+      onOpenSources={ctl.reflection.active ? ctl.reflection.openSources : undefined}
     />
   ) : (
     <ReadColumn
@@ -2106,17 +2266,6 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
   const notes = ctl.resonance.marginalia;
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
-  const content =
-    notes.length > 0 || hasVisibleSuggestions ? (
-      <MarginStream
-        notes={notes}
-        suggestions={suggestions}
-        acceptedCheckIns={ctl.resonance.acceptedCheckIns}
-        onOpen={ctl.modal.onOpenNote}
-        onAccept={ctl.resonance.acceptSuggestion}
-        onDismiss={ctl.resonance.dismissSuggestion}
-      />
-    ) : null;
   return (
     <View
       style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
@@ -2124,7 +2273,16 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
     >
       <NoNotesNotice message={ctl.resonance.noNotesMessage} />
       <ResonanceMargin error={ctl.resonance.error} />
-      {content}
+      {notes.length > 0 || hasVisibleSuggestions ? (
+        <MarginStream
+          notes={notes}
+          suggestions={suggestions}
+          acceptedCheckIns={ctl.resonance.acceptedCheckIns}
+          onOpen={ctl.modal.onOpenNote}
+          onAccept={ctl.resonance.acceptSuggestion}
+          onDismiss={ctl.resonance.dismissSuggestion}
+        />
+      ) : null}
     </View>
   );
 }
@@ -2340,27 +2498,15 @@ function ReflectionComposer({
 }: {
   reflection: Controller['reflection'];
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
-  const openSources = useCallback(() => setOpen(true), []);
-  const closeSources = useCallback(() => setOpen(false), []);
   if (!reflection.active) return null;
   return (
     <>
-      <TouchableOpacity
-        style={styles.quoteActionButton}
-        onPress={openSources}
-        accessibilityRole="button"
-        accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
-        testID="reflection-sources-toggle"
-      >
-        <Text style={styles.controlLink}>Sources</Text>
-      </TouchableOpacity>
-      {open ? (
+      {reflection.sourcesOpen ? (
         <ReflectionSourcesPanel
           items={reflection.sources}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}
-          onClose={closeSources}
+          onClose={reflection.closeSources}
         />
       ) : null}
       {reflection.inclusionHint ? (

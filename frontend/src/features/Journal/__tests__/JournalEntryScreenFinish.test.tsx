@@ -36,6 +36,12 @@ jest.mock('@/api', () => ({
     accept: jest.fn(),
     dismiss: jest.fn(),
   },
+  promotions: {
+    list: jest.fn(() => Promise.resolve([])),
+    create: jest.fn(),
+    remove: jest.fn(),
+    setIncluded: jest.fn(),
+  },
 }));
 
 jest.mock('@/navigation/hooks', () => ({

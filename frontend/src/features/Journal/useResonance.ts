@@ -37,6 +37,10 @@ import { habitManager } from '@/features/Habits/services/habitManager';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
+const completionsCheckedAfterResonanceError = (reason: string): string =>
+  `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits; you can try resonance again whenever you like.`;
+const completionsUncheckedAfterResonanceError = (reason: string): string =>
+  `We couldn't create a reflection or check this entry for completed habits. ${reason}`;
 
 /**
  * What a failed check-off says, ahead of whatever the failure itself explains.
@@ -366,6 +370,43 @@ interface GeneratePassDeps {
   clearError: () => void;
 }
 
+interface PassFailureDeps {
+  mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
+  reportPassError: (_message: string) => void;
+}
+
+/**
+ * What a refused literary pass still owes the writer.
+ *
+ * The completion check is independent of the reflection, so a failed pass runs
+ * it anyway rather than leaving the entry both unreflected and unchecked, and
+ * the message says which of the two actually happened. Every branch here is the
+ * pass's own complaint, so each is signed as the pass rather than as any card.
+ */
+async function reportPassFailure(
+  entryId: number | null,
+  reason: string,
+  deps: PassFailureDeps,
+): Promise<void> {
+  if (entryId == null) {
+    deps.reportPassError(reason);
+    return;
+  }
+  try {
+    const detection = await completionSuggestions.detect(entryId);
+    deps.mergeFromGenerate(detection.items);
+    deps.reportPassError(
+      detection.checked
+        ? completionsCheckedAfterResonanceError(reason)
+        : completionsUncheckedAfterResonanceError(reason),
+    );
+  } catch {
+    // Keep this contextual instead of repeating the provider's generic
+    // BotMason copy: the writer needs to know both actions were attempted.
+    deps.reportPassError(completionsUncheckedAfterResonanceError(reason));
+  }
+}
+
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const { flush, setMarginalia, mergeFromGenerate, latestPass, reportPassError, clearError } = deps;
@@ -383,8 +424,9 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     // Latest-pass surfaces never survive into a new request. If it errors, stale
     // care, privacy, no-notes, or Creek context must not describe this attempt.
     clearLatestPass();
+    let entryId: number | null = null;
     try {
-      const entryId = await flush();
+      entryId = await flush();
       if (entryId == null) {
         reportPassError(EMPTY_BODY_MESSAGE);
         return;
@@ -394,7 +436,10 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       mergeFromGenerate(result.suggestions);
       receiveLatestPass(result);
     } catch (err) {
-      reportPassError(formatApiError(err));
+      await reportPassFailure(entryId, formatApiError(err), {
+        mergeFromGenerate,
+        reportPassError,
+      });
     } finally {
       inFlightRef.current = false;
       setLoading(false);

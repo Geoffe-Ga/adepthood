@@ -281,7 +281,8 @@ interface WebReorderEntryProps {
   onPointerStart: (_entry: ReorderHabitEntry) => void;
   onDragStart: (_entry: ReorderHabitEntry, _event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
-  onDrop: (_index: number) => void;
+  onPointerDrop: (_index: number) => void;
+  onNativeDrop: (_index: number, _event: React.DragEvent<HTMLDivElement>) => void;
   onMove: (_entry: ReorderHabitEntry, _index: number, _direction: -1 | 1) => void;
 }
 
@@ -314,7 +315,8 @@ const WebReorderEntry = ({
   onPointerStart,
   onDragStart,
   onDragEnd,
-  onDrop,
+  onPointerDrop,
+  onNativeDrop,
   onMove,
 }: WebReorderEntryProps) => (
   <div
@@ -325,7 +327,7 @@ const WebReorderEntry = ({
     aria-label={webEntryAriaLabel(entry)}
     data-range-page={entry.kind === 'page' ? entry.page : undefined}
     onPointerDown={() => entry.kind === 'habit' && onPointerStart(entry)}
-    onPointerUp={() => onDrop(index)}
+    onPointerUp={() => onPointerDrop(index)}
     onKeyDown={(event) => {
       if (entry.kind !== 'habit' || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
       event.preventDefault();
@@ -336,7 +338,7 @@ const WebReorderEntry = ({
     onDragOver={(event) => event.preventDefault()}
     onDrop={(event) => {
       event.preventDefault();
-      onDrop(index);
+      onNativeDrop(index, event);
     }}
     style={{ cursor: entry.kind === 'habit' ? 'grab' : 'default', opacity: isDragged ? 0.55 : 1 }}
   >
@@ -410,8 +412,17 @@ const WebReorderList = ({ entries, onDragEnd }: WebReorderListProps) => {
     onDragEnd,
   );
 
-  const dropAt = (targetIndex: number) => {
+  const pointerDropAt = (targetIndex: number) => {
     const key = draggedKeyRef.current;
+    if (key) moveKeyTo(key, targetIndex);
+  };
+
+  const nativeDropAt = (targetIndex: number, event: React.DragEvent<HTMLDivElement>) => {
+    // Chromium emits pointerup before drop. The global pointer cleanup has
+    // therefore already cleared the transient ref by the time a real HTML DnD
+    // drop arrives. The transfer payload is the browser-owned source of truth
+    // for native drag events and survives that lifecycle boundary.
+    const key = event.dataTransfer.getData('text/plain') || draggedKeyRef.current;
     if (key) moveKeyTo(key, targetIndex);
   };
 
@@ -437,7 +448,8 @@ const WebReorderList = ({ entries, onDragEnd }: WebReorderListProps) => {
             event.dataTransfer.setData('text/plain', habit.key);
           }}
           onDragEnd={cancelDrag}
-          onDrop={dropAt}
+          onPointerDrop={pointerDropAt}
+          onNativeDrop={nativeDropAt}
           onMove={(habit, sourceIndex, direction) => moveKeyTo(habit.key, sourceIndex + direction)}
         />
       ))}
