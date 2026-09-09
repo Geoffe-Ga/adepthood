@@ -12,7 +12,7 @@ import type { ApiHabitWithGoals } from '@/api';
  *
  * The offer's own rules — one-tap decline, a decline that is never re-asked,
  * the preview of which stage each habit lands on — are pinned by the Jest
- * specs beside `SaveAsHabitOffer`, and those specs agree with themselves about
+ * specs beside `WritingSessionOffer`, and those specs agree with themselves about
  * a server that is not there. Three things this feature rests on are the
  * server's to answer, and only this lane can ask:
  *

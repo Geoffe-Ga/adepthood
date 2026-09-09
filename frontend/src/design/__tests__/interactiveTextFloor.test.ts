@@ -137,7 +137,7 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // Audited: the one line explaining what the prioritise step does. Static
   // text beside the rows, never pressed — every affordance in that step is an
   // OfferAction, which takes editorialType.action.
-  'features/Journal/SaveAsHabitOffer.tsx::help',
+  'features/Journal/WritingSessionOffer.tsx::help',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
   // Audited: the eyebrow naming what the band is about, read and never

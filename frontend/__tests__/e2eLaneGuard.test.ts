@@ -61,6 +61,7 @@ const EXPECTED_JOURNEYS = [
   'habits.e2e.test.ts',
   'journal-delete.e2e.test.ts',
   'journal-habit-offer.e2e.test.ts',
+  'journal-practice-offer.e2e.test.ts',
   'journal.e2e.test.ts',
   'map.e2e.test.ts',
   'practice-catalog.e2e.test.ts',

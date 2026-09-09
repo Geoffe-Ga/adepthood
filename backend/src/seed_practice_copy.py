@@ -999,6 +999,23 @@ _PAIN_BODY_MEDITATION = (
     ),
 )
 
+#: Stage 6 alternative — Journaling (count_up mode). Named and timed to match
+#: the journal's own writing timer, so a writer who keeps a finished session as
+#: a practice finds it described as the thing they just did.
+_JOURNALING = (
+    (
+        "Open-ended writing with no subject set in advance — whatever is "
+        "present goes on the page for as long as the writing asks for."
+    ),
+    (
+        "Sit with a notebook or the app's journal and write without "
+        "steering. There is no subject to reach and no length to hit; the "
+        "timer counts up so the session is as long as it turns out to be. "
+        "If the writing stalls, describe the stall until something else "
+        "arrives. Stop when you are finished rather than when the page is."
+    ),
+)
+
 #: Stage 6 alternative — Letter to the Repressed Self (count_up mode).
 _LETTER_TO_REPRESSED_SELF = (
     (
@@ -1265,6 +1282,7 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Wilber 3-2-1": _WILBER_321,
     "Emotion Transmutation": _EMOTION_TRANSMUTATION,
     "Pain Body Meditation": _PAIN_BODY_MEDITATION,
+    "Journaling": _JOURNALING,
     "Letter to the Repressed Self": _LETTER_TO_REPRESSED_SELF,
     "Shadow Drawing": _SHADOW_DRAWING,
     "REACH Inward": _REACH_INWARD,
