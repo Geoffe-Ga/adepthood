@@ -8,6 +8,7 @@ from typing import ClassVar
 import pytest
 
 from domain import resonance
+from domain.care import MEDICATION_GUARDRAIL
 from domain.resonance import (
     NO_NOTES_MESSAGES,
     DropReason,
@@ -513,3 +514,136 @@ class TestNoNotesExplanation:
             # Every message tells the writer the pass cost them nothing — the
             # wallet is refunded, and a silent refund is still silence.
             assert "wasn't charged" in lowered
+
+
+class TestEssayIsRefusedWhenItIsNotALetter:
+    """The essay half validates its completion, the way the marginalia half does.
+
+    ``_parse_completion`` refuses a completion that is not the JSON the notes
+    prompt asked for, and a refused pass degrades to a ``NO_NOTES_MESSAGES``
+    line. The essay path published whatever came back (#2762), so a provider
+    that echoed its input handed the writer the app's own prompt — safety
+    guardrail, instructions and all — as their letter. These pin the missing
+    half of that symmetry.
+    """
+
+    @staticmethod
+    def _note() -> resonance.MarginaliaAnchored:
+        """One anchored note over ``_BODY``, the input the essay expands."""
+        quote = "the willow bending without breaking"
+        start = _BODY.index(quote)
+        return resonance.MarginaliaAnchored(
+            kind="symbol",
+            anchor_start=start,
+            anchor_end=start + len(quote),
+            anchor_text=quote,
+            note="Something in you knows how to bend.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_every_echo_marker_really_occurs_in_the_essay_prompt(self) -> None:
+        """A marker absent from the prompt guards nothing, so drift fails here.
+
+        Built through the real prompt builder (with prior letters, the one
+        optional block) rather than a hand-copied string, so rewording the
+        prompt out from under the guard is caught by this test instead of
+        silently reopening the disclosure.
+        """
+        llm = FakeLLM("A warm letter.")
+
+        await resonance.generate_essay(
+            llm=llm, body=_BODY, note=self._note(), prior_drafts=["An earlier letter."]
+        )
+
+        assert llm.prompt is not None
+        for marker in resonance.PROMPT_ECHO_MARKERS:
+            assert marker in llm.prompt
+
+    @pytest.mark.asyncio
+    async def test_a_completion_echoing_the_prompt_is_refused(self) -> None:
+        """The reported bug: the provider hands back its input, verbatim."""
+
+        class EchoLLM:
+            """Returns the prompt it was given, the way the stub provider did."""
+
+            def __init__(self) -> None:
+                self.prompt: str | None = None
+
+            async def complete(self, prompt: str) -> str:
+                self.prompt = prompt
+                return f'BotMason hears you. You said: "{prompt}"'
+
+        assert await resonance.generate_essay(llm=EchoLLM(), body=_BODY, note=self._note()) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("marker", list(resonance.PROMPT_ECHO_MARKERS))
+    async def test_any_single_marker_is_enough_to_refuse(self, marker: str) -> None:
+        """A partial echo is still the prompt reaching the writer."""
+        completion = f"Dear you,\n\n{marker}\n\nWith warmth."
+
+        result = await resonance.generate_essay(
+            llm=FakeLLM(completion), body=_BODY, note=self._note()
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "marker",
+        [MEDICATION_GUARDRAIL, "<entry>", "</entry>", "<passage>"],
+        ids=["guardrail", "entry_open", "entry_close", "passage_open"],
+    )
+    async def test_the_markers_the_report_named_are_refused_by_name(self, marker: str) -> None:
+        """Named literally, not read off the tuple under test.
+
+        The parametrized case above derives its inputs from
+        ``PROMPT_ECHO_MARKERS``, so deleting an entry from that tuple deletes the
+        case that would have caught the deletion. These are the markers the
+        writer was actually shown, so they are spelled out here by hand and a
+        shortened tuple fails.
+        """
+        result = await resonance.generate_essay(
+            llm=FakeLLM(f"Dear you,\n\n{marker}\n\nWith warmth."),
+            body=_BODY,
+            note=self._note(),
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_a_letter_quoting_the_writer_is_published(self) -> None:
+        """The predicate must not refuse the thing a good letter actually does.
+
+        Quoting the writer back to themselves is the whole point of this
+        feature, so a letter carrying their own words verbatim -- including the
+        passage the note anchors to -- has to survive the guard untouched.
+        """
+        letter = (
+            "You wrote, \u201cthe willow bending without breaking,\u201d and then moved "
+            "straight past it. It is worth standing still there for a moment: you were "
+            "describing yourself, and you did not stop to notice."
+        )
+
+        result = await resonance.generate_essay(llm=FakeLLM(letter), body=_BODY, note=self._note())
+
+        assert result == letter
+
+    @pytest.mark.asyncio
+    async def test_a_completion_that_sanitizes_to_nothing_is_not_a_letter(self) -> None:
+        """A blank essay must not be cached as one -- there is nothing to read."""
+        result = await resonance.generate_essay(
+            llm=FakeLLM("   \n\t  "), body=_BODY, note=self._note()
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_an_accepted_letter_is_still_sanitized_and_capped(self) -> None:
+        """Validation is added alongside the cap, never in place of it."""
+        result = await resonance.generate_essay(
+            llm=FakeLLM("clean\u200bword " + "x" * 20_000), body=_BODY, note=self._note()
+        )
+
+        assert result is not None
+        assert len(result) <= resonance.ESSAY_MAX
+        assert "\u200b" not in result

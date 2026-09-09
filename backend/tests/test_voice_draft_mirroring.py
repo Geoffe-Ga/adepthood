@@ -26,7 +26,7 @@ from main import app
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from services import marginalia as marginalia_service
-from services.botmason import STUB_MODEL_NAME, LLMResponse
+from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
 
@@ -279,6 +279,54 @@ async def test_intimate_essay_never_attempts_a_mirror(
     assert response.json()["essay"] is None
     assert llm.calls == 0
     assert vault.upserts == []
+
+
+class _EchoingLLM:
+    """Answer every prompt with that prompt, the way the stub provider used to."""
+
+    async def __call__(
+        self, prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del history, system_prompt, api_key
+        return LLMResponse(
+            text=f'{STUB_PROSE_PREFIX} "{prompt}"',
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_essay_never_reaches_the_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completion refused as a prompt echo is not a draft, so it is not mirrored.
+
+    The local row keeps ``essay IS NULL``, and the mirror is the second place
+    that text would have come to rest -- in the writer's own vault, attributed
+    to the app, feeding the corpus that later speaks in their voice (#2762).
+    """
+    headers, user_id = await _signup(async_client, "draft_refused")
+    _entry_id, note_id = await _seed_note(db_session, user_id)
+    monkeypatch.setattr(marginalia_service, "generate_response", _EchoingLLM())
+    vault = _RecordingDraftVault(db_session)
+    _wire_vault(vault)
+
+    response = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay",
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert response.json()["essay"] is None
+    assert vault.upserts == []
+    persisted = await db_session.get(Marginalia, note_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.essay is None
 
 
 @pytest.mark.asyncio
