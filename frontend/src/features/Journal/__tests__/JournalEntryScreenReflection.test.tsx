@@ -285,6 +285,76 @@ describe('JournalEntryScreen -- reflection mode', () => {
     }
   });
 
+  // A fold-in is ONE writer-facing act made of two writes: the entry body, then
+  // the mark that retires the quote from the pending set. The hint used to settle
+  // to "Saved" the moment the first landed, so the page announced a finished save
+  // while the second was still on the wire -- and a reader (or a test) that acted
+  // on that word saw the quote still pending.
+  it('holds the hint at Saving until the folded quote has been marked included', async () => {
+    let releaseSetIncluded: () => void = () => undefined;
+    mockSetIncluded.mockReturnValue(
+      new Promise<unknown>((resolve) => {
+        releaseSetIncluded = () => resolve(mockStubQuote);
+      }),
+    );
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      const insertButton = await findByTestId('stub-insert-quote');
+
+      await act(async () => {
+        fireEvent.press(insertButton);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      // The entry itself is written and the mark is in flight: not saved yet.
+      expect(mockSetIncluded).toHaveBeenCalledWith(90, 42);
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saving…');
+
+      await act(async () => {
+        releaseSetIncluded();
+        await jest.advanceTimersByTimeAsync(0);
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The complement: a mark that never lands must not strand the hint on
+  // "Saving…" forever -- it settles, and the warm hint says what did not happen.
+  it('settles the hint and warns when the inclusion mark fails', async () => {
+    mockSetIncluded.mockRejectedValue({ status: 500, detail: 'boom' });
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-quote'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(getByTestId('quote-inclusion-hint')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('leaves the quote pending and surfaces a warm hint when setIncluded rejects, without crashing', async () => {
     mockSetIncluded.mockRejectedValue({ status: 500, detail: 'boom' });
     jest.useFakeTimers();

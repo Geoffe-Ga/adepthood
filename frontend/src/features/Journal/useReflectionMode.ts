@@ -5,9 +5,11 @@
  * rereadable sources feed on mount, tracks the body caret so a folded-in quote
  * lands where the writer left off, and folds a chosen quote into the body: splice
  * a Markdown blockquote at the caret, let the normal draft path create/save the
- * entry, then mark the quote included on that entry. A failed inclusion leaves
- * the quote pending and raises a warm, declinable hint — never a crash, never a
- * nag. It also re-promotes a freshly selected span from a source and folds the
+ * entry, then mark the quote included on that entry. Both writes are one act, so
+ * ``foldingIn`` stays raised across the pair and the screen's save hint waits for
+ * the mark rather than settling on the draft save alone. A failed inclusion
+ * leaves the quote pending and raises a warm, declinable hint — never a crash,
+ * never a nag. It also re-promotes a freshly selected span from a source and folds the
  * created quote into the feed's pending set.
  */
 import {
@@ -52,6 +54,13 @@ export interface UseReflectionModeResult {
   sources: ReflectionSourceItem[];
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
+  /**
+   * True from the tap on a pending quote until the whole fold-in has settled --
+   * the entry write AND the mark that retires the quote from the pending set.
+   * The screen holds its save hint at "Saving…" for the span, so the page never
+   * says "Saved" while a write belonging to the same act is still on the wire.
+   */
+  foldingIn: boolean;
   /** Track the body caret so an inserted quote lands where the writer is. */
   onBodySelectionChange: (_e: SelectionEvent) => void;
   /** Fold a chosen pending quote in; resolves true when it was marked included. */
@@ -129,6 +138,20 @@ function useSourcesFeed(
   return [sources, setSources];
 }
 
+/**
+ * Mark ``quoteId`` folded into ``entryId``, reporting whether it took. A refusal
+ * is not an error here: the quote simply stays pending and the writer can fold
+ * it again later, so the caller raises a warm hint rather than crashing.
+ */
+async function markIncluded(quoteId: number, entryId: number): Promise<boolean> {
+  try {
+    await promotions.setIncluded(quoteId, entryId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
 function useFoldIn(
   bodyRef: MutableRefObject<string>,
@@ -136,6 +159,7 @@ function useFoldIn(
   flush: () => Promise<number | null>,
 ): {
   inclusionHint: boolean;
+  foldingIn: boolean;
   onBodySelectionChange: (_e: SelectionEvent) => void;
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
@@ -143,13 +167,14 @@ function useFoldIn(
   ) => Promise<boolean>;
 } {
   const [inclusionHint, setInclusionHint] = useState(false);
+  const [foldingIn, setFoldingIn] = useState(false);
   const caretRef = useRef<number | null>(null);
 
   const onBodySelectionChange = useCallback((event: SelectionEvent) => {
     caretRef.current = event.nativeEvent.selection.start;
   }, []);
 
-  const onInsertQuote = useCallback(
+  const foldQuoteIn = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
       const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
       const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
@@ -157,21 +182,33 @@ function useFoldIn(
       caretRef.current = nextCaret;
       const entryId = await flush();
       if (entryId == null) return false;
-      try {
-        await promotions.setIncluded(quote.id, entryId);
-        // A retried fold-in should not leave a stale warning from an earlier try.
-        setInclusionHint(false);
-        return true;
-      } catch {
-        // Leave the quote pending and invite a calm retry — no crash, no nag.
-        setInclusionHint(true);
-        return false;
-      }
+      // Set both ways round: a retried fold-in clears the warning an earlier try
+      // left, and a refused one raises it — no crash, no nag either way.
+      const included = await markIncluded(quote.id, entryId);
+      setInclusionHint(!included);
+      return included;
     },
     [bodyRef, onChangeBody, flush],
   );
 
-  return { inclusionHint, onBodySelectionChange, onInsertQuote };
+  // Raise the in-flight flag for the WHOLE act, not just the entry write. The
+  // draft save resolves first and settles the screen's own hint to "Saved"; the
+  // quote is still pending until the mark lands, so the flag is what keeps the
+  // page from claiming a finished save it has not finished. It comes down in a
+  // ``finally`` so a rejected write settles the hint rather than stranding it.
+  const onInsertQuote = useCallback(
+    async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
+      setFoldingIn(true);
+      try {
+        return await foldQuoteIn(quote, sourceItem);
+      } finally {
+        setFoldingIn(false);
+      }
+    },
+    [foldQuoteIn],
+  );
+
+  return { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote };
 }
 
 /** The in-panel re-promote flow: lift a fresh span into its source's pending set. */
@@ -208,12 +245,20 @@ export function useReflectionMode({
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
   const [sources, setSources] = useSourcesFeed(reflectionLevel, reflectionScopeKey);
-  const { inclusionHint, onBodySelectionChange, onInsertQuote } = useFoldIn(
+  const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
     bodyRef,
     onChangeBody,
     flush,
   );
   const onPromoteSpan = usePromoteSpan(setSources);
 
-  return { active, sources, inclusionHint, onBodySelectionChange, onInsertQuote, onPromoteSpan };
+  return {
+    active,
+    sources,
+    inclusionHint,
+    foldingIn,
+    onBodySelectionChange,
+    onInsertQuote,
+    onPromoteSpan,
+  };
 }

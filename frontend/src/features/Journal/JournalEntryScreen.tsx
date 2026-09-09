@@ -119,6 +119,20 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 
+/**
+ * The state the save hint should show while a quote is being folded in.
+ *
+ * A fold-in is one act made of two writes — the entry body, then the mark that
+ * retires the quote from the pending set — and only the first drives
+ * ``saveState``. Reporting its "saved" while the second is still on the wire
+ * would announce a finished save that has not finished, and would be followed
+ * (on a failure) by a hint contradicting the word already shown. So the whole
+ * act reads as saving, and the hint settles once for the pair.
+ */
+function hintStateWhileFolding(state: SaveState, foldingIn: boolean): SaveState {
+  return foldingIn ? 'saving' : state;
+}
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
@@ -2201,7 +2215,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
     <WritingColumn
       title={title}
       body={body}
-      saveState={saveState}
+      saveState={hintStateWhileFolding(saveState, ctl.reflection.foldingIn)}
       classification={classification}
       chord={chord}
       onChangeTitle={ctl.handleTitle}
