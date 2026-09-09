@@ -1,6 +1,12 @@
 /**
- * ``SaveAsHabitOffer`` — the invitation, inside the finished-session note, to
- * keep what was just written as a habit.
+ * ``WritingSessionOffer`` — the invitation, inside the finished-session note,
+ * to keep what was just written: as a habit, or as a practice.
+ *
+ * ONE invitation with three actions, not two invitations stacked. Two would
+ * mean two declines, and the whole claim this note makes is that saying no
+ * costs a single tap — a writer who has to decline twice has been asked twice.
+ * So both ways of keeping it sit under one "No thanks", and one stored flag
+ * answers all three.
  *
  * Lives in the ``children`` slot ``WritingSessionBanner`` reserves for exactly
  * this, and takes that slot's contract seriously: the offer commits on the tap
@@ -16,12 +22,18 @@
  *    before anything renders, so a writer who has said no is never asked again
  *    — not on the next session, not after a relaunch.
  * 3. **No pressure.** There is no count of sessions, no cadence, no praise for
- *    finishing and no consequence named for declining; ``saveAsHabitCopy``
- *    holds every string and is swept for it.
+ *    finishing and no consequence named for declining; ``saveAsHabitCopy`` and
+ *    ``saveAsPracticeCopy`` hold every string and both are swept for it.
  *
- * The writer's habits are read only when the offer is TAKEN UP. Someone who
- * ignores it, or has declined it, causes no request at all — the offer costs
- * nothing until it is wanted.
+ * The writer's habits are read only when the HABIT branch is taken up, and
+ * their practices only when the PRACTICE one is. Someone who ignores the offer,
+ * or has declined it, causes no request at all — and taking one branch never
+ * spends a request on the other.
+ *
+ * The practice branch lives in ``SaveAsPracticeStep`` rather than here, because
+ * it has to ask the server what keeping it would DO before it can describe the
+ * choice honestly, and that lookup has states of its own. What stays here is
+ * the switch and the gate: which branch is open, and whether the offer is.
  *
  * Placing the habit is a list, not a drag. ``ReorderHabitsModal`` is where
  * dragging belongs — a management surface, on a screen, with room. This is one
@@ -33,8 +45,10 @@
  * stamps from, so what is shown and what is saved cannot drift apart.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import type { FinishedWriting } from './keepAsPractice';
+import OfferAction from './OfferAction';
 import {
   JOURNALING_HABIT_ICON,
   JOURNALING_HABIT_NAME,
@@ -57,57 +71,24 @@ import {
   savedHabitConfirmation,
   stagePreviewLabel,
 } from './saveAsHabitCopy';
+import { SAVE_AS_PRACTICE_ACCEPT, SAVE_AS_PRACTICE_ACCEPT_A11Y } from './saveAsPracticeCopy';
+import SaveAsPracticeStep from './SaveAsPracticeStep';
+import type { WritingSessionResult } from './writingSession';
 
-import { BORDER_RADIUS, SPACING, colors, editorialType, touchTarget } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
-import {
-  loadWritingHabitOfferAnswered,
-  saveWritingHabitOfferAnswered,
-} from '@/storage/writingHabitOfferStorage';
+import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 
 /** Where the offer has got to. ``unknown`` is "the decline has not been read yet". */
-type Phase = 'unknown' | 'offered' | 'placing' | 'saving' | 'saved' | 'declined';
+type Phase = 'unknown' | 'offered' | 'placing' | 'saving' | 'saved' | 'keeping' | 'declined';
 
 /** One row of the prospective order: what it is called, and whose lap it counts on. */
 interface PreviewRow {
   key: string;
   name: string;
   is_carryover?: boolean;
-}
-
-/** A pair of buttons in the note's own hand. */
-function OfferAction({
-  label,
-  a11yLabel,
-  onPress,
-  testID,
-  emphasis = false,
-  disabled = false,
-}: {
-  label: string;
-  a11yLabel: string;
-  onPress: () => void;
-  testID: string;
-  emphasis?: boolean;
-  disabled?: boolean;
-}): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={[styles.action, emphasis ? styles.actionEmphasis : null]}
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={a11yLabel}
-      accessibilityState={{ disabled }}
-      testID={testID}
-    >
-      <Text style={[styles.actionLabel, emphasis ? styles.actionLabelEmphasis : null]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
 }
 
 /** The prospective order, one row per habit, each naming the stage it would take. */
@@ -169,7 +150,7 @@ function useOfferGate(): { answered: boolean | null; settle: () => void } {
   const [answered, setAnswered] = useState<boolean | null>(null);
   useEffect(() => {
     let mounted = true;
-    void loadWritingHabitOfferAnswered().then((stored) => {
+    void loadWritingOfferAnswered().then((stored) => {
       if (mounted) setAnswered(stored);
     });
     return () => {
@@ -177,7 +158,7 @@ function useOfferGate(): { answered: boolean | null; settle: () => void } {
     };
   }, []);
   const settle = useCallback(() => {
-    void saveWritingHabitOfferAnswered(true);
+    void saveWritingOfferAnswered(true);
   }, []);
   return { answered, settle };
 }
@@ -210,12 +191,20 @@ function toPreviewRows(
 /** The row standing in for the habit that does not exist yet. */
 const NEW_ROW: PreviewRow = { key: 'new', name: JOURNALING_HABIT_NAME };
 
-/** The offer as first made: take it, or decline it once and for good. */
+/**
+ * The offer as first made: two ways to keep it, and one way to decline.
+ *
+ * The decline is a sibling of both, at the same size and in the same row —
+ * not a smaller thing beneath them — because a note offering two depths and
+ * one shallow exit must not make the exit the hardest of the three to find.
+ */
 function Invitation({
-  onAccept,
+  onKeepAsHabit,
+  onKeepAsPractice,
   onDecline,
 }: {
-  onAccept: () => void;
+  onKeepAsHabit: () => void;
+  onKeepAsPractice: () => void;
   onDecline: () => void;
 }): React.JSX.Element {
   return (
@@ -225,9 +214,16 @@ function Invitation({
         <OfferAction
           label={SAVE_AS_HABIT_ACCEPT}
           a11yLabel={SAVE_AS_HABIT_ACCEPT_A11Y}
-          onPress={onAccept}
+          onPress={onKeepAsHabit}
           emphasis
           testID="save-as-habit-accept"
+        />
+        <OfferAction
+          label={SAVE_AS_PRACTICE_ACCEPT}
+          a11yLabel={SAVE_AS_PRACTICE_ACCEPT_A11Y}
+          onPress={onKeepAsPractice}
+          emphasis
+          testID="save-as-practice-accept"
         />
         <OfferAction
           label={SAVE_AS_HABIT_DECLINE}
@@ -281,18 +277,49 @@ function PlacingStep({
   );
 }
 
-function SaveAsHabitOffer(): React.JSX.Element | null {
-  const habits = useHabitStore((state) => state.habits);
-  const { answered, settle } = useOfferGate();
+/**
+ * The clock, as a module-level constant so its identity never changes.
+ *
+ * An inline default would be a new function on every render, which is exactly
+ * what would let the end instant below be re-read — the thing the ``useState``
+ * initialiser exists to prevent.
+ */
+const systemClock = (): Date => new Date();
+
+export interface WritingSessionOfferProps {
+  /** The session this offer is about — what it would record if taken up. */
+  result: WritingSessionResult;
+  /** The clock the end instant is read from; tests inject it, production does not. */
+  now?: () => Date;
+}
+
+/** Everything the writer can do from the note, and the phase each move lands in. */
+interface OfferMoves {
+  phase: Phase;
+  decline: () => void;
+  keepAsHabit: () => void;
+  keepAsPractice: () => void;
+  practiceKept: () => void;
+  confirmHabit: () => void;
+  backToOffer: () => void;
+}
+
+/**
+ * The moves, in one place, so the component below only chooses what to render.
+ *
+ * ``settle`` is called from all three endings — declining, keeping the habit,
+ * keeping the practice — and from none of the ways back, because an offer the
+ * writer stepped out of is one they have not answered.
+ */
+function useOfferMoves(settle: () => void, placement: ReturnType<typeof usePlacement>): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
-  const placement = usePlacement(habits.length);
 
   const decline = useCallback(() => {
     settle();
     setPhase('declined');
   }, [settle]);
 
-  const accept = useCallback(() => {
+  const keepAsHabit = useCallback(() => {
     // Read the writer's habits only now: an offer nobody takes up costs no
     // request, and the list is what the next step is about.
     void habitManager.loadHabits();
@@ -300,7 +327,7 @@ function SaveAsHabitOffer(): React.JSX.Element | null {
     setPhase('placing');
   }, [placement]);
 
-  const confirm = useCallback(() => {
+  const confirmHabit = useCallback(() => {
     setPhase('saving');
     void habitManager
       .insertHabitAt(
@@ -315,7 +342,36 @@ function SaveAsHabitOffer(): React.JSX.Element | null {
       });
   }, [placement.position, settle]);
 
-  const backToOffer = useCallback(() => setPhase('offered'), []);
+  return {
+    phase,
+    decline,
+    keepAsHabit,
+    keepAsPractice: useCallback(() => setPhase('keeping'), []),
+    practiceKept: useCallback(() => settle(), [settle]),
+    confirmHabit,
+    backToOffer: useCallback(() => setPhase('offered'), []),
+  };
+}
+
+function WritingSessionOffer({
+  result,
+  now = systemClock,
+}: WritingSessionOfferProps): React.JSX.Element | null {
+  const habits = useHabitStore((state) => state.habits);
+  const { answered, settle } = useOfferGate();
+  const placement = usePlacement(habits.length);
+  const { phase, decline, keepAsHabit, keepAsPractice, practiceKept, confirmHabit, backToOffer } =
+    useOfferMoves(settle, placement);
+  // Stamped ONCE, at mount, and never re-read. The note appears when the session
+  // ends and is keyed to it, so mount time is the session's own end instant;
+  // reading the clock again at the tap would post-date the writing to whenever
+  // the writer got round to answering — minutes later, on a page they are still
+  // typing on. A ``useState`` initialiser rather than a memo, because a memo is
+  // a cache React is allowed to drop and this is a fact about one session.
+  const [writing] = useState<FinishedWriting>(() => ({
+    endedAt: now(),
+    elapsedMs: result.elapsedMs,
+  }));
 
   if (answered !== false || phase === 'declined') return null;
 
@@ -327,6 +383,10 @@ function SaveAsHabitOffer(): React.JSX.Element | null {
     );
   }
 
+  if (phase === 'keeping') {
+    return <SaveAsPracticeStep writing={writing} onKept={practiceKept} onCancel={backToOffer} />;
+  }
+
   if (phase === 'placing' || phase === 'saving') {
     return (
       <PlacingStep
@@ -334,13 +394,15 @@ function SaveAsHabitOffer(): React.JSX.Element | null {
         saving={phase === 'saving'}
         onEarlier={placement.earlier}
         onLater={placement.later}
-        onConfirm={confirm}
+        onConfirm={confirmHabit}
         onCancel={backToOffer}
       />
     );
   }
 
-  return <Invitation onAccept={accept} onDecline={decline} />;
+  return (
+    <Invitation onKeepAsHabit={keepAsHabit} onKeepAsPractice={keepAsPractice} onDecline={decline} />
+  );
 }
 
 const styles = StyleSheet.create({
@@ -387,24 +449,6 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
     flexWrap: 'wrap',
   },
-  action: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.xs,
-  },
-  actionEmphasis: {
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.paper.inkSoft,
-  },
-  actionLabel: {
-    ...editorialType.action,
-    color: colors.paper.inkSoft,
-  },
-  actionLabelEmphasis: {
-    color: colors.paper.ink,
-  },
 });
 
-export default SaveAsHabitOffer;
+export default WritingSessionOffer;

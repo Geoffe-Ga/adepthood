@@ -168,7 +168,7 @@ describe('JournalEntryScreen — the timer does not interrupt the writing', () =
 
 /**
  * Reachability, not behaviour: the offer's own rules are pinned beside it in
- * `SaveAsHabitOffer.test.tsx`. What no test there can show is that a writer on
+ * `WritingSessionOffer.test.tsx`. What no test there can show is that a writer on
  * the real page ever meets it — six shipped features in this repo turned out to
  * be reachable by nobody while testing green the whole way. So this drives the
  * page itself, runs a session out, and looks for the offer in the note.

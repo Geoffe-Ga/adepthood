@@ -520,7 +520,15 @@ _GREEN_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
 _GREEN_COUNT_UP_NAMES: tuple[str, ...] = (
     "Letter to the Repressed Self",
     "Shadow Drawing",
+    "Journaling",
 )
+
+#: What the journal's writing timer opens at
+#: (``frontend/src/features/Journal/writingSession.ts::DEFAULT_WRITING_MINUTES``).
+#: The Journaling preset carries the same number so a writer who keeps a
+#: default session as a practice does not find it described as some other
+#: length.
+_WRITING_TIMER_DEFAULT_MINUTES = 20
 
 #: All GREEN alternative names — used by the idempotency sweep below.
 _GREEN_ALTERNATIVE_NAMES: tuple[str, ...] = (
@@ -564,6 +572,27 @@ async def test_green_count_up_preset_seeds(db_session: AsyncSession, name: str) 
     assert row.description
     assert row.instructions
     assert row.mode_config["soft_cap_minutes"] is None
+
+
+@pytest.mark.asyncio
+async def test_journaling_preset_is_the_writing_timer_at_green(db_session: AsyncSession) -> None:
+    """``Journaling`` is a shared catalog row at Green, timed like the writer's page.
+
+    Pinned separately from the sweep above because three of its fields are
+    load-bearing for the journal's "keep this as a practice" offer rather than
+    for the catalog: it must sit at stage 6 so the offer's Green default has
+    something to select, it must be a **catalog** row (no submitter) so every
+    writer selects the same one, and its nominal length must be the length the
+    writing timer opens at. Nothing here adds a mode — ``count_up`` already
+    describes a session whose elapsed time is the quantity that matters.
+    """
+    row = await _seed_and_fetch(db_session, "Journaling")
+
+    assert row.stage_number == 6
+    assert row.mode == "count_up"
+    assert row.submitted_by_user_id is None
+    assert row.approved is True
+    assert row.default_duration_minutes == _WRITING_TIMER_DEFAULT_MINUTES
 
 
 #: ``(name, duration_minutes, halfway_bell)`` rows for each meditation_timer
@@ -762,7 +791,7 @@ def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
 
 #: Full catalog size, hardcoded independent of source so an ADDED preset
 #: (not just a dropped or mutated one) trips this test.
-_TOTAL_PRESET_COUNT = 74
+_TOTAL_PRESET_COUNT = 75
 #: One canonical preset per course stage.
 _CANONICAL_PRESET_COUNT = 10
 

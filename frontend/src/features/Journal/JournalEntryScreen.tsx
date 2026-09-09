@@ -41,11 +41,12 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
-import SaveAsHabitOffer from './SaveAsHabitOffer';
 import { usePromotions } from './usePromotions';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
 import { countWords, wordCountLabel } from './wordCount';
+import type { WritingSessionResult } from './writingSession';
+import WritingSessionOffer from './WritingSessionOffer';
 import WritingSessionSurface from './WritingSessionSurface';
 
 import { journal, prompts, reflections } from '@/api';
@@ -2450,9 +2451,13 @@ function ResonanceControls({
 /**
  * What a finished writing session is offered as. A module-level constant, not a
  * closure: it has nothing to capture, and a new function each render would
- * remount the offer under a writer's thumb every time the page repainted.
+ * remount the offer under a writer's thumb every time the page repainted. The
+ * session it is handed is the one the note is about — the offer records it if
+ * the writer keeps the session as a practice.
  */
-const renderSessionOffer = (): React.ReactNode => <SaveAsHabitOffer />;
+const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
+  <WritingSessionOffer result={result} />
+);
 
 function EntryWritingSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element | null {
   if (!ctl.editGate.editMode) return null;

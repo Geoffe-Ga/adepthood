@@ -269,6 +269,10 @@ _TIMER_ALTERNATIVE_SPECS: tuple[tuple[int, str, float, bool], ...] = (
 #: Flat spec rows for count_up alternative presets: ``(stage_number, name)``.
 #: All share the count_up mode_config and the nominal fallback duration.
 _COUNT_UP_ALTERNATIVE_SPECS: tuple[tuple[int, str], ...] = (
+    # Green's writing practices. ``Journaling`` is the row the journal's
+    # "keep this as a practice" offer selects, which is why it carries the
+    # writing timer's own default length rather than a duration of its own.
+    (6, "Journaling"),
     (6, "Letter to the Repressed Self"),
     (6, "Shadow Drawing"),
     (8, "Channeling Writing"),
