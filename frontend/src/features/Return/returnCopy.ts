@@ -105,6 +105,39 @@ export const RETURN_RESTING_HEADING = 'Still resting from a Return';
 export const RETURN_RESTING_BODY =
   'You set these down during a Return and have not taken them up again. Every goal and every day you logged is still there, waiting. Take up any that feel ready, whenever that is.';
 
+/** The confirmation heading — a question, never a nudge. */
+export const RETURN_CONFIRM_HEADING = 'Begin the Return?';
+
+/** What accepting materially is: five weeks, one focus of loving-kindness each. */
+export const RETURN_CONFIRM_BODY =
+  'The Return is five weeks of Metta — loving-kindness — with one focus each week:';
+
+/** The guarantee that makes the invitation declinable: pause, set down, ignore; nothing is undone. */
+export const RETURN_CONFIRM_GUARANTEE =
+  'While you circle back you will be invited, never required, to let some habits rest. You can pause the Return, set it down, or simply leave it — nothing you have already grown is undone.';
+
+/** The confirmation's cancel label — a door back out, not a refusal. */
+export const RETURN_CONFIRM_CANCEL = 'Not yet';
+
+/** The accessibility label for closing the confirmation without beginning. */
+export const RETURN_CONFIRM_CANCEL_A11Y = 'Close this without beginning the Return';
+
+/** The accessibility label for the confirmation's scrim, which also closes it. */
+export const RETURN_CONFIRM_SCRIM_A11Y = 'Close the Return details without beginning';
+
+/** Build one week's line for the confirmation, naming its ordinal and its focus. */
+export function buildReturnConfirmWeekLine(weekNumber: number, title: string): string {
+  return `${String(weekNumber)}. ${title}`;
+}
+
+/** A start that did not go through — nothing changed, and the door is still open. */
+export const RETURN_START_ERROR =
+  'The Return could not begin just now. Nothing has changed, and you can begin whenever you like.';
+
+/** A decline that did not reach the server — set aside here, possibly still offered elsewhere. */
+export const RETURN_DISMISS_ERROR =
+  'Set aside here. That choice did not reach the server, so the Return may still be offered on your Journal shelf.';
+
 /** Every user-facing Return string, gathered for the balance-not-altitude sweep. */
 export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_HEADING,
@@ -113,6 +146,14 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_ACCEPT_A11Y,
   RETURN_OFFER_DISMISS,
   RETURN_OFFER_DISMISS_A11Y,
+  RETURN_CONFIRM_HEADING,
+  RETURN_CONFIRM_BODY,
+  RETURN_CONFIRM_GUARANTEE,
+  RETURN_CONFIRM_CANCEL,
+  RETURN_CONFIRM_CANCEL_A11Y,
+  RETURN_CONFIRM_SCRIM_A11Y,
+  RETURN_START_ERROR,
+  RETURN_DISMISS_ERROR,
   RETURN_ARC_PAUSE,
   RETURN_ARC_PAUSE_A11Y,
   RETURN_ARC_RESUME,
