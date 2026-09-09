@@ -400,6 +400,94 @@ describe('useResonance — suggestions', () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("one card's success does not erase another card's live failure", async () => {
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ id: 1, label: 'I ran' }), suggestion({ id: 2, label: 'I sat' })],
+    });
+    // Distinct copy per outcome, so a surviving error is provably card 1's and
+    // not a generic truthy leftover: a 409 is the only source of this sentence.
+    mockAccept.mockImplementation(async (id: number) => {
+      if (id === 1) throw new ApiError(409, 'already_dismissed');
+      return {
+        suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
+        check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+      };
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.acceptSuggestion(1);
+    });
+    expect(result.current.error).toContain('conflicts with something we already have');
+
+    await act(async () => {
+      await result.current.acceptSuggestion(2);
+    });
+    // Card 1 is still pending and still needs attention, so its complaint must
+    // outlive a success that had nothing to do with it.
+    const statusOf = (id: number): string =>
+      (result.current.suggestions as CompletionSuggestion[]).find(
+        (row: CompletionSuggestion) => row.id === id,
+      )!.status;
+    expect(statusOf(1)).toBe('pending');
+    expect(statusOf(2)).toBe('accepted');
+    expect(result.current.error).toContain('conflicts with something we already have');
+  });
+
+  it("a failed dismiss survives another card's successful accept", async () => {
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ id: 1, label: 'I ran' }), suggestion({ id: 2, label: 'I sat' })],
+    });
+    mockDismiss.mockRejectedValue(new ApiError(409, 'already_dismissed'));
+    mockAccept.mockResolvedValue({
+      suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
+      check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+    });
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    expect(result.current.error).toContain('conflicts with something we already have');
+
+    await act(async () => {
+      await result.current.acceptSuggestion(2);
+    });
+    // Dismiss shares the margin's one error slot, so it is erasable the same
+    // way -- and a reverted row is as much still-there as a pending one.
+    expect(result.current.error).toContain('conflicts with something we already have');
+  });
+
+  it('a card that dismisses cleanly on retry retires its own complaint', async () => {
+    mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, label: 'I ran' })] });
+    mockDismiss.mockRejectedValueOnce(new ApiError(409, 'already_dismissed'));
+    mockDismiss.mockResolvedValue(suggestion({ id: 1, status: 'dismissed' }));
+    const flush = jest.fn(async () => 7);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    expect(result.current.error).toBeTruthy();
+
+    await act(async () => {
+      await result.current.dismissSuggestion(1);
+    });
+    // The row is gone now, so a complaint about it would point at nothing.
+    expect(result.current.error).toBeNull();
+  });
+
   it('dismiss optimistically removes the row', async () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1 }), suggestion({ id: 2 })] });
     mockDismiss.mockResolvedValue(suggestion({ id: 1, status: 'dismissed' }));

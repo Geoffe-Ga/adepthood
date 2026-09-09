@@ -10,6 +10,7 @@
  */
 import {
   useCallback,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -51,8 +52,29 @@ const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
 const ACCEPT_FAILED_PREFIX =
   "That check-off didn't go through — the card is still here, so nothing is lost.";
 
-/** Set or clear the margin's error. ``null`` retires a previous complaint. */
-type SetError = (_e: string | null) => void;
+/**
+ * The pass, as the author of a complaint. Suggestions sign theirs with their id.
+ */
+const PASS_SOURCE = 'pass';
+
+/** Who a margin complaint belongs to, so only its author may retire it. */
+type ErrorSource = number | typeof PASS_SOURCE;
+
+/** The margin's one complaint, and whose it is. */
+interface MarginError {
+  message: string;
+  source: ErrorSource;
+}
+
+/** Report a complaint, or retire one, on behalf of a named author. */
+interface MarginErrorApi {
+  message: string | null;
+  report: (_source: ErrorSource, _message: string) => void;
+  /** The pass's own complaint, so ``PASS_SOURCE`` stays the model's business. */
+  reportPass: (_message: string) => void;
+  retire: (_source: ErrorSource) => void;
+  clear: () => void;
+}
 
 export interface UseResonanceArgs {
   routeEntryId: number | null;
@@ -133,10 +155,39 @@ interface SuggestionsApi {
   dismissSuggestion: (_id: number) => Promise<void>;
 }
 
+/**
+ * The margin's one complaint slot, and the rule for who may retire it.
+ *
+ * A single error line sits above the margin's content, so a second failure
+ * necessarily replaces the first. What must not happen is a *success* retiring
+ * a complaint it never made: with two cards on screen, accepting one used to
+ * wipe the other's still-live failure while that card stayed pending and still
+ * needed the reader. Every complaint is therefore signed by its author, and
+ * only that author can retire it -- or a whole fresh pass, which re-derives the
+ * margin and so speaks for everything standing in it.
+ */
+function useMarginError(): MarginErrorApi {
+  const [error, setError] = useState<MarginError | null>(null);
+
+  const report = useCallback((source: ErrorSource, message: string) => {
+    setError({ message, source });
+  }, []);
+  const retire = useCallback((source: ErrorSource) => {
+    setError((prev) => (prev?.source === source ? null : prev));
+  }, []);
+  const clear = useCallback(() => setError(null), []);
+  const reportPass = useCallback((message: string) => report(PASS_SOURCE, message), [report]);
+
+  return useMemo(
+    () => ({ message: error?.message ?? null, report, reportPass, retire, clear }),
+    [error, report, reportPass, retire, clear],
+  );
+}
+
 /** Owns suggestion state: load-on-open, merge, and accept/dismiss with guards. */
 function useSuggestions(
   routeEntryId: number | null,
-  setError: SetError,
+  marginError: MarginErrorApi,
   userTimezone: string,
 ): SuggestionsApi {
   const [suggestions, setSuggestions] = useState<CompletionSuggestion[]>([]);
@@ -151,16 +202,19 @@ function useSuggestions(
     setSuggestions((prev) => mergeByIdSorted(prev, incoming));
   }, []);
 
+  const { report, retire } = marginError;
+
   const acceptSuggestion = useCallback(
     (id: number) =>
       runAccept(id, {
         pendingIdsRef,
         setSuggestions,
         setAcceptedCheckIns,
-        setError,
+        report,
+        retire,
         userTimezone,
       }),
-    [setError, userTimezone],
+    [report, retire, userTimezone],
   );
 
   const dismissSuggestion = useCallback(
@@ -171,9 +225,13 @@ function useSuggestions(
         setItems: setSuggestions,
         removeRemote: completionSuggestions.dismiss,
         reinsert: (prev, item) => mergeByIdSorted([item], prev),
-        onError: setError,
+        // Signed with the row's id like an accept's: a dismiss shares the one
+        // error slot, so an unsigned complaint here would be erasable by any
+        // other card's success -- and retired by its own row actually leaving.
+        onError: (message) => report(id, message),
+        onSuccess: () => retire(id),
       }),
-    [suggestions, setError],
+    [suggestions, report, retire],
   );
 
   return {
@@ -189,7 +247,8 @@ interface AcceptDeps {
   pendingIdsRef: MutableRefObject<Set<number>>;
   setSuggestions: Dispatch<SetStateAction<CompletionSuggestion[]>>;
   setAcceptedCheckIns: Dispatch<SetStateAction<Record<number, CheckInResult | null>>>;
-  setError: SetError;
+  report: MarginErrorApi['report'];
+  retire: MarginErrorApi['retire'];
   userTimezone: string;
 }
 
@@ -219,14 +278,16 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
     const result = await completionSuggestions.accept(id);
     deps.setSuggestions((prev) => mergeByIdSorted(prev, [result.suggestion]));
     deps.setAcceptedCheckIns((prev) => ({ ...prev, [id]: result.check_in }));
-    // A success retires the previous attempt's complaint; leaving it pinned
-    // beside a card that now reads "✓ Checked off" contradicts the card.
-    deps.setError(null);
+    // A success retires this card's own previous complaint; leaving it pinned
+    // beside a card that now reads "✓ Checked off" contradicts the card. Only
+    // its own: another card's failure is still live, and that card is still
+    // pending and still needs the reader's attention.
+    deps.retire(id);
     refreshHabitsAfterAccept(result.suggestion.target_type, deps.userTimezone);
   } catch (err) {
     // The row stays pending, so the card is still on screen to press again —
     // which only helps if the writer is told, hence the named failure.
-    deps.setError(`${ACCEPT_FAILED_PREFIX} ${formatApiError(err)}`);
+    deps.report(id, `${ACCEPT_FAILED_PREFIX} ${formatApiError(err)}`);
   } finally {
     deps.pendingIdsRef.current.delete(id);
   }
@@ -301,12 +362,13 @@ interface GeneratePassDeps {
   setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   latestPass: Pick<LatestPassState, 'clear' | 'receive'>;
-  setError: Dispatch<SetStateAction<string | null>>;
+  reportPassError: (_message: string) => void;
+  clearError: () => void;
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
-  const { flush, setMarginalia, mergeFromGenerate, latestPass, setError } = deps;
+  const { flush, setMarginalia, mergeFromGenerate, latestPass, reportPassError, clearError } = deps;
   const { clear: clearLatestPass, receive: receiveLatestPass } = latestPass;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
@@ -315,14 +377,16 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
     if (inFlightRef.current) return; // one pass at a time — no double-charge
     inFlightRef.current = true;
     setLoading(true);
-    setError(null);
+    // A fresh pass re-derives the whole margin, so it retires every complaint
+    // standing in it -- its own and any card's -- rather than only its own.
+    clearError();
     // Latest-pass surfaces never survive into a new request. If it errors, stale
     // care, privacy, no-notes, or Creek context must not describe this attempt.
     clearLatestPass();
     try {
       const entryId = await flush();
       if (entryId == null) {
-        setError(EMPTY_BODY_MESSAGE);
+        reportPassError(EMPTY_BODY_MESSAGE);
         return;
       }
       const result = await resonance.generate(entryId);
@@ -330,12 +394,20 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       mergeFromGenerate(result.suggestions);
       receiveLatestPass(result);
     } catch (err) {
-      setError(formatApiError(err));
+      reportPassError(formatApiError(err));
     } finally {
       inFlightRef.current = false;
       setLoading(false);
     }
-  }, [flush, setMarginalia, mergeFromGenerate, clearLatestPass, receiveLatestPass, setError]);
+  }, [
+    flush,
+    setMarginalia,
+    mergeFromGenerate,
+    clearLatestPass,
+    receiveLatestPass,
+    reportPassError,
+    clearError,
+  ]);
 
   return { loading, requestResonance };
 }
@@ -347,16 +419,17 @@ export function useResonance({
 }: UseResonanceArgs): UseResonanceResult {
   const [marginalia, setMarginalia] = useState<Marginalia[]>([]);
   const latestPass = useLatestPassState();
-  const [error, setError] = useState<string | null>(null);
+  const marginError = useMarginError();
 
   useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
-  const sug = useSuggestions(routeEntryId, setError, userTimezone);
+  const sug = useSuggestions(routeEntryId, marginError, userTimezone);
   const { loading, requestResonance } = useGeneratePass({
     flush,
     setMarginalia,
     mergeFromGenerate: sug.mergeFromGenerate,
     latestPass,
-    setError,
+    reportPassError: marginError.reportPass,
+    clearError: marginError.clear,
   });
 
   const updateNote = useCallback((updated: Marginalia) => {
@@ -385,7 +458,7 @@ export function useResonance({
     relatedEddies: latestPass.relatedEddies,
     completedPasses: latestPass.completedPasses,
     loading,
-    error,
+    error: marginError.message,
     requestResonance,
     updateNote,
     refresh,
