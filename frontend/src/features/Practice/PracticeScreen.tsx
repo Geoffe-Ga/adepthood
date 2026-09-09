@@ -41,6 +41,12 @@
  *
  * When no practice is set for the stage the screen shows a minimal dark
  * empty state whose only action flips to the embedded Catalog tab.
+ *
+ * One automatic stage load is taken per session and no more. When it comes
+ * back with nothing the screen used to fall through to the store's default
+ * stage of 1 and present it as the user's own; it now says so instead, in a
+ * strip above the player that carries the deliberate retry --
+ * `UnconfirmedStageNotice`, and the reasoning for its shape, are below.
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -99,6 +105,7 @@ import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
+import { selectProgramStartDate, useProgramStore } from '@/store/useProgramStore';
 import {
   selectCurrentStage,
   selectStages,
@@ -202,6 +209,9 @@ interface PracticeScreenModel extends PracticeTabsState {
   weekly: WeeklyProgressHook;
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   stageNumber: number;
+  /** Whether `stageNumber` is a placeholder the screen must not present as fact. */
+  stageUnconfirmed: boolean;
+  onRetryStageLoad: () => void;
   sessionRef: React.Ref<ActiveRitualSessionHandle>;
   onStageChange: (_stage: number) => void;
   openConfigurator: () => void;
@@ -233,12 +243,12 @@ function useLogSheet(): LogSheetState {
 
 /** Wires every hook the player composes; the component below only renders. */
 function usePracticeScreenModel(): PracticeScreenModel {
-  const resolvedStage = useResolvedStageNumber();
+  const stage = useStageResolution();
   // A stage picked from the identity header's chip overrides the derived
   // stage locally; route params and the stage store stay untouched so other
   // screens keep their own resolution.
   const [stageOverride, setStageOverride] = useState<number | null>(null);
-  const stageNumber = stageOverride ?? resolvedStage;
+  const stageNumber = stageOverride ?? stage.stageNumber;
   const { userTimezone } = useAuth();
   const active = useActivePractice(stageNumber);
   const weekly = useWeeklyProgress();
@@ -267,6 +277,10 @@ function usePracticeScreenModel(): PracticeScreenModel {
     weekly,
     onWriteReflection,
     stageNumber,
+    // A stage the user picked by hand is theirs, whatever the server managed
+    // to say — so an override retires the notice along with the guess.
+    stageUnconfirmed: stageOverride === null && stage.isUnconfirmed,
+    onRetryStageLoad: stage.retry,
     sessionRef,
     onStageChange: setStageOverride,
     openConfigurator,
@@ -304,6 +318,8 @@ const PracticeScreen = (): React.JSX.Element => {
             stageNumber={s.stageNumber}
             sessionRef={s.sessionRef}
             onStageChange={s.onStageChange}
+            stageUnconfirmed={s.stageUnconfirmed}
+            onRetryStageLoad={s.onRetryStageLoad}
             onCustomize={s.openConfigurator}
             status={s.status}
             onStatusChange={s.setStatus}
@@ -350,6 +366,8 @@ interface PracticeBodyProps {
   weekly: WeeklyProgressHook;
   onWriteReflection: (_args: { session: PracticeSessionResponse; insight: string | null }) => void;
   stageNumber: number;
+  stageUnconfirmed: boolean;
+  onRetryStageLoad: () => void;
   sessionRef: React.Ref<ActiveRitualSessionHandle>;
   onStageChange: (_stage: number) => void;
   onCustomize: () => void;
@@ -359,11 +377,33 @@ interface PracticeBodyProps {
   quickLaunch: QuickLaunchState;
 }
 
+/**
+ * The player region: an unconfirmed-stage notice, when there is one, above
+ * whichever body state the practice fetch has settled on.
+ *
+ * The notice is a strip and not a screen, and that is the whole judgement in
+ * this file. `ErrorView` below is the nearest existing surface and it is the
+ * right one for its own case — when `useActivePractice` fails there is no
+ * practice to put on the screen, so replacing the screen costs nothing. It is
+ * the wrong one here: a stage number the app cannot confirm does not make the
+ * practice underneath it unusable, and the floor of this product is that
+ * someone who only wants to sit is never gated. So the failure is named where
+ * it happened, with the way forward beside it, and the player keeps the screen.
+ */
+const PracticeBody = (props: PracticeBodyProps): React.JSX.Element => (
+  <View style={styles.leaf}>
+    {props.stageUnconfirmed && (
+      <UnconfirmedStageNotice stageNumber={props.stageNumber} onRetry={props.onRetryStageLoad} />
+    )}
+    <PracticeBodyState {...props} />
+  </View>
+);
+
 // Selects the screen body for the current load state: a loading/error
 // placeholder, the active player, or the empty state when no practice is set.
 // The screen shell owns the umber ground and the top inset; each leaf keeps
 // only the bottom inset.
-const PracticeBody = (props: PracticeBodyProps): React.JSX.Element => {
+const PracticeBodyState = (props: PracticeBodyProps): React.JSX.Element => {
   const { active } = props;
   if (active.isLoading) return <LoadingView />;
   if (active.error && !active.activeUserPractice) {
@@ -560,6 +600,44 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
   );
 };
 
+/**
+ * `UnconfirmedStageNotice` — what the screen says when the stage load has been
+ * spent and left it with nothing.
+ *
+ * The old behaviour was to say nothing and render stage 1, which is a claim
+ * about the person that the app has no basis for. This names the number as a
+ * placeholder instead, and offers the deliberate retry that the one-attempt
+ * guard otherwise leaves the user without. It sits above the player rather
+ * than in place of it — see `PracticeBody`.
+ */
+const UnconfirmedStageNotice = ({
+  stageNumber,
+  onRetry,
+}: {
+  stageNumber: number;
+  onRetry: () => void;
+}): React.JSX.Element => (
+  <View
+    style={styles.stageNotice}
+    testID="practice-stage-unconfirmed"
+    accessibilityRole="alert"
+    accessibilityLiveRegion="polite"
+  >
+    <Text style={styles.stageNoticeText} testID="practice-stage-unconfirmed-body">
+      {`We couldn't reach your stages, so this is stage ${stageNumber} as a placeholder — not necessarily where you are. You can still sit with what's here.`}
+    </Text>
+    <TouchableOpacity
+      onPress={onRetry}
+      style={styles.stageNoticeRetry}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      testID="practice-stage-retry"
+    >
+      <Text style={styles.stageNoticeRetryText}>Try again</Text>
+    </TouchableOpacity>
+  </View>
+);
+
 interface EmptyStateViewProps {
   onBrowseCatalog: () => void;
 }
@@ -600,13 +678,34 @@ const EmptyStateView = ({ onBrowseCatalog }: EmptyStateViewProps): React.JSX.Ele
   );
 };
 
-function useResolvedStageNumber(): number {
+interface StageResolution {
+  /** The stage the player is showing. */
+  stageNumber: number;
+  /**
+   * Whether that number is a placeholder rather than an answer.
+   *
+   * The store's ``currentStage`` is the one source that answers even when it
+   * has been told nothing — it begins at 1 — so once the single automatic load
+   * is spent and the store still holds no stages, a number that came from
+   * nowhere else is a default the screen would otherwise present as this
+   * person's own stage. A route param and the device's program anchor each
+   * name a stage without needing the server, so neither is a guess; a failed
+   * load and a load that came back empty leave the screen equally uninformed,
+   * which is why this turns on the absence of stages rather than on ``error``.
+   */
+  isUnconfirmed: boolean;
+  /** The deliberate second attempt. The automatic one stays at one per session. */
+  retry: () => void;
+}
+
+function useStageResolution(): StageResolution {
   const route = useAppRoute<'Practice'>();
   const storeCurrentStage = useStageStore(selectCurrentStage);
   const storeStages = useStageStore(selectStages);
   const loading = useStageStore(selectStagesLoading);
   const error = useStageStore(selectStagesError);
   const hasAttempted = useStageStore(selectStagesAttempted);
+  const programAnchor = useProgramStore(selectProgramStartDate);
   // Master-date wiring: when the user has set a program start date, derive
   // the active stage from ``today - programStartDate`` so the screen tracks
   // real elapsed time rather than the server's count-based current stage.
@@ -621,7 +720,23 @@ function useResolvedStageNumber(): number {
       void stageService.loadStages();
     }
   }, [storeStages.length, loading, error, hasAttempted]);
-  return route.params?.stageNumber ?? derivedCurrentStage;
+  // ``loadStages`` cannot re-arm the automatic path: ``markAttempted`` only
+  // ever sets the flag, and nothing but the logout ``reset`` clears it.
+  const retry = useCallback(() => void stageService.loadStages(), []);
+  const askedFor = route.params?.stageNumber;
+  return {
+    stageNumber: askedFor ?? derivedCurrentStage,
+    // ``!loading`` keeps the notice off the cold start: the attempt is recorded
+    // at request time, so without it the first paint would announce a failure
+    // that has not happened yet.
+    isUnconfirmed:
+      askedFor === undefined &&
+      programAnchor === null &&
+      hasAttempted &&
+      !loading &&
+      storeStages.length === 0,
+    retry,
+  };
 }
 
 function useWriteReflection(
@@ -704,6 +819,25 @@ const styles = StyleSheet.create({
   // The flexible middle: the session settles centered between the identity
   // header's top region and the weekly footer.
   sessionRegion: { flexGrow: 1, justifyContent: 'center' },
+  // The unconfirmed-stage strip: outlined rather than filled, so it reads as a
+  // note on the umber ground instead of an alarm competing with the player.
+  stageNotice: {
+    borderColor: onShowcase.muted,
+    borderRadius: BORDER_RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.md,
+    padding: SPACING.md,
+  },
+  stageNoticeText: { ...editorialType.note, color: onShowcase.soft },
+  stageNoticeRetry: {
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    marginTop: SPACING.sm,
+    minHeight: touchTarget.minimum,
+    paddingHorizontal: SPACING.sm,
+  },
+  stageNoticeRetryText: { ...editorialType.action, color: accentDark.primary },
   centered: {
     flex: 1,
     justifyContent: 'center',
