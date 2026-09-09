@@ -166,6 +166,22 @@ async def _create_user_practice(
     """
     overrides: dict[str, object] = {} if practice_name is None else {"name": practice_name}
     practice = await _seed_practice(db_session, **overrides)
+    return await _adopt_seeded_practice(client, db_session, headers, user_id, practice)
+
+
+async def _adopt_seeded_practice(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    headers: dict[str, str],
+    user_id: int,
+    practice: Practice,
+) -> int:
+    """Adopt an already-seeded catalog ``practice`` and return the UserPractice id.
+
+    Split out of :func:`_create_user_practice` so two users can adopt the *same*
+    catalog row -- the ordinary case for a preset, and the one a per-practice
+    aggregate has to keep apart.
+    """
     # Make sure the user is unlocked for stage 1 -- a fresh signup is.
     db_session.add(
         StageProgress(
@@ -627,6 +643,82 @@ async def test_idor_practice_session_create_returns_403(
     assert getattr(denials[0], "user_id", None) == bob_id
 
 
+@pytest.mark.asyncio
+async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot read the all-time totals for Alice's practice.
+
+    ``GET /practice-sessions/stats`` takes ``user_practice_id`` from the query
+    string, so the path-parameter ownership dependencies never see it.  An
+    unguarded read is a quiet one: it persists nothing and raises nothing, it
+    would simply hand a stranger a count of how often a victim practises and how
+    many minutes she has spent doing it.  So this asserts on the body as well as
+    the status: a refusal that still carried an aggregate would pass a
+    status-only check.
+
+    Two barriers have to hold, and they are asserted separately because either
+    alone would make the other's failure invisible.  The dependency is the
+    first: it is what makes the refusal a uniform 403 with a
+    ``resource_access_denied`` audit line rather than an empty-looking 200 that
+    doubles as an existence oracle.  The caller-scoped fan-out is the second:
+    the aggregate widens from the named adoption to every adoption of the same
+    catalog practice, and two people adopting the same preset is the ordinary
+    case, so the baseline below pins that Bob's own stats call sees only Bob's
+    minutes even though he and Alice sat the very same practice.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_ps_stats")
+    bob_headers, bob_id = await _signup(async_client, "bob_ps_stats")
+
+    shared = await _seed_practice(db_session, name="Shared Preset Stats")
+    alice_practice_id = await _adopt_seeded_practice(
+        async_client, db_session, alice_headers, alice_id, shared
+    )
+    bob_practice_id = await _adopt_seeded_practice(
+        async_client, db_session, bob_headers, bob_id, shared
+    )
+    await _create_practice_session(async_client, alice_headers, alice_practice_id)
+    await _create_practice_session(async_client, alice_headers, alice_practice_id)
+
+    before = await _sessions_where(db_session, col(PracticeSession.user_id) == alice_id)
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.get(
+            "/practice-sessions/stats",
+            params={"user_practice_id": alice_practice_id},
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json() == {"detail": "forbidden"}
+    # Not merely "not 200": the refusal body must carry no aggregate at all.
+    assert "total_sessions" not in attack.text
+    assert "total_minutes" not in attack.text
+
+    # The same call against Bob's own adoption is accepted, so the 403 can only
+    # be about ownership -- and it reports his empty history, not Alice's two
+    # sits on the very same catalog practice.
+    baseline = await async_client.get(
+        "/practice-sessions/stats",
+        params={"user_practice_id": bob_practice_id},
+        headers=bob_headers,
+    )
+    assert baseline.status_code == HTTPStatus.OK
+    assert baseline.json() == {"total_sessions": 0, "total_minutes": 0.0}
+
+    # A read must not write, and must not have disturbed what it refused to show.
+    after = await _sessions_where(db_session, col(PracticeSession.user_id) == alice_id)
+    assert [s.id for s in after] == [s.id for s in before]
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "user_practice"
+    assert getattr(denials[0], "resource_id", None) == alice_practice_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
 async def _probe_missing_user_practice(
     async_client: AsyncClient, spelling: str, headers: dict[str, str]
 ) -> Response:
@@ -637,14 +729,15 @@ async def _probe_missing_user_practice(
             json=_session_window_payload(_DEFINITELY_MISSING_ID),
             headers=headers,
         )
+    path = "/practice-sessions/stats" if spelling == "stats_query" else "/practice-sessions/"
     return await async_client.get(
-        "/practice-sessions/",
+        path,
         params={"user_practice_id": _DEFINITELY_MISSING_ID},
         headers=headers,
     )
 
 
-@pytest.mark.parametrize("spelling", ["body", "query"])
+@pytest.mark.parametrize("spelling", ["body", "query", "stats_query"])
 @pytest.mark.asyncio
 async def test_practice_session_missing_user_practice_is_404_and_unaudited(
     async_client: AsyncClient,
