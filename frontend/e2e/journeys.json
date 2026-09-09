@@ -407,6 +407,26 @@
     "coveredBy": "frontend/e2e/course-passage.browser.e2e.test.ts"
   },
   {
+    "id": "course.reflect-and-return-to-the-reading",
+    "description": "A reader finishes a chapter, marks it read, and taps Reflect in Journal. The writing surface opens already titled for the stage and the chapter, the reflection saves, and the way out is the way in: Back to reading returns them to that same chapter instead of leaving them on the Journal shelf to find the Course tab by hand. Sibling to course.write-note-on-passage, which drives the reader's other hand-off; this one is the reflection, which closes the reader behind it and so returns to the chapter rather than to a scroll position. It runs in the browser lane because the whole journey is screen-to-screen navigation -- the returnTo that makes the exit exist never crosses the wire, so no amount of API driving could see whether it is there. Verified to be a live gate rather than a passing formality: with the returnTo removed from handleReflect the spec fails on the absent Back to reading control.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "stages", "course", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /stages",
+        "GET /stages/program-calendar",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "POST /journal/"
+      ],
+      "tables": ["user", "stagecontent", "contentcompletion", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-reflect-return.browser.e2e.test.ts"
+  },
+  {
     "id": "habits.full-page-grid-geometry",
     "description": "A user whose first page of habits is full opens Habits in a desktop browser and, after a viewport flip to a phone profile, in one column. The covering Playwright spec signs up through the UI, seeds ten habits over POST /habits/ with a token from POST /auth/login, and then measures laid-out DOM: the grid's box ends at or above the top of both the pagination bar and the Energy Scaffolding CTA, and every tile lies inside the grid's box -- the first before any scrolling, the last after scrolling the grid to its end. It exists because the Jest lanes cannot answer a layout question at all: this project runs the node environment under the React Native preset, so onLayout never fires and every box is zero, which is why issue #2658's report of a grid \"clipped beneath fixed controls\" survived a green suite. Nothing here asserts that a full page fits without scrolling; the same spec measured 147px of overflow at 1280x720 and 129px at 390x844, and records those numbers on every run instead of claiming a fit the app does not hold.",
     "crosses": {

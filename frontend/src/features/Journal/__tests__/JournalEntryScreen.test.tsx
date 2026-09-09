@@ -76,7 +76,8 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 
 interface ReturnToCourse {
   screen: 'Course';
-  params: { stageNumber?: number; contentId: number; scrollOffset: number };
+  // Optional, as on the route: only the passage-note hand-off carries an offset.
+  params: { stageNumber?: number; contentId: number; scrollOffset?: number };
 }
 
 function renderScreen(
@@ -852,6 +853,30 @@ describe('JournalEntryScreen', () => {
           params: { stageNumber: 2, contentId: 17, scrollOffset: 480 },
         }),
       );
+    });
+
+    /*
+     * The reflect-in-journal hand-off sends the same returnTo with no
+     * scrollOffset: it closes the reader before it leaves, so it has no reading
+     * position to hand over. The link must still be offered, and the offset must
+     * not be invented on the way back.
+     */
+    it('offers the return and carries no offset when the reflection sent none', () => {
+      const offsetFree: ReturnToCourse = {
+        screen: 'Course',
+        params: { stageNumber: 2, contentId: 17 },
+      };
+
+      const { getByTestId, navigation } = renderScreen({
+        prefillTitle: 'Stage 2 reflection — The Mood of Blue',
+        returnTo: offsetFree,
+      });
+      fireEvent.press(getByTestId('journal-return-to-reading'));
+
+      expect(navigation.navigate).toHaveBeenCalledWith('Tabs', {
+        screen: 'Course',
+        params: { stageNumber: 2, contentId: 17 },
+      });
     });
 
     it('hides the return affordance when returnTo is absent', () => {

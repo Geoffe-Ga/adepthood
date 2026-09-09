@@ -683,7 +683,7 @@ describe('CourseScreen', () => {
     });
   });
 
-  it('navigates to Journal with reflection params when Reflect is pressed', async () => {
+  it('navigates to Journal with reflection params, and a way back to the course, when Reflect is pressed', async () => {
     // Use content that is already read so the reflect button appears
     mockStageContent.mockResolvedValue([
       {
@@ -697,7 +697,7 @@ describe('CourseScreen', () => {
       },
     ]);
 
-    const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
+    const { getByText, getByTestId, queryByTestId, findByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
       expect(getByText('Welcome Essay')).toBeTruthy();
@@ -719,10 +719,17 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('reflect-button'));
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith(
-      'JournalEntry',
-      expect.objectContaining({ prefillTitle: 'Stage 2 reflection — Welcome Essay' }),
-    );
+    // Asserted whole rather than through objectContaining: the missing half of
+    // this payload was the defect, and a partial match cannot see an absence.
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', {
+      prefillTitle: 'Stage 2 reflection — Welcome Essay',
+      returnTo: { screen: 'Course', params: { stageNumber: 2, contentId: 1 } },
+    });
+    // No scrollOffset rides along: this path closes the reader, so there is no
+    // reading position left to restore.
+    await waitFor(() => {
+      expect(queryByTestId('chapter-reader')).toBeNull();
+    });
   });
 
   it('renders the stage intro card and opens it in the reader when an intro exists', async () => {
