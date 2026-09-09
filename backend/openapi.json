@@ -18271,7 +18271,7 @@
     },
     "/practice-sessions/insights": {
       "get": {
-        "description": "Return the mode-aware analytics rollup for the authenticated user.\n\nSingle query fetches the last :data:`_INSIGHTS_LOOKBACK_DAYS` of the\nuser's sessions; :func:`domain.practice_insights.build_insights` does\nthe bucketing in memory (cheap — a heavy user accrues hundreds of\nrows in this window, not millions).\n\nThe response carries a private one-minute ``Cache-Control`` so the\nfrontend can poll the screen without thrashing the DB.",
+        "description": "Return the mode-aware analytics rollup for the authenticated user.\n\nSingle query fetches the last :data:`_INSIGHTS_LOOKBACK_DAYS` of the\nuser's sessions; :func:`domain.practice_insights.build_insights` does\nthe bucketing in memory (cheap — a heavy user accrues hundreds of\nrows in this window, not millions).\n\nThe response is marked ``private, no-store``: the weekly bar reads this\nendpoint immediately after logging a session, so a cached copy would show\nthe practitioner a count their own save has already falsified.",
         "operationId": "get_insights_practice_sessions_insights_get",
         "parameters": [
           {

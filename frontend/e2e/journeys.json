@@ -337,6 +337,22 @@
     "coveredBy": "frontend/e2e/practice-log-past.e2e.test.ts"
   },
   {
+    "id": "practice.weekly-count-moves-after-saving-a-session",
+    "description": "A practitioner runs the stage-1 grounding ritual to its end, saves it with a one-line insight, and watches the weekly bar move from 0 of 4 to 1 of 4 in the page they are already looking at. The bar was wired correctly on both sides and still showed the pre-save number: the client incremented optimistically and then refetched, the server counted the new row, and in between GET /practice-sessions/insights advertised max-age=60, so the browser answered the post-save refetch out of its own HTTP cache and put the bar back to zero. No node-lane spec can see that -- node's fetch keeps no HTTP cache, so the request the browser answers for itself is the one the node lane always puts on the wire. This journey runs in the Playwright lane against a real server for exactly that reason, and asserts the server's own week-count alongside the rendered number so a failure separates a lost save from a display that lies about one.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": [
+        "POST /practice-sessions/",
+        "GET /practice-sessions/insights",
+        "GET /practice-sessions/week-count"
+      ],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-weekly-count.browser.e2e.test.ts"
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {
