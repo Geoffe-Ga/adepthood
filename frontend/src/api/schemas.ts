@@ -679,6 +679,10 @@ export const completionSuggestionListResponseSchema = z.object({
   items: z.array(completionSuggestionSchema),
 });
 
+export const completionDetectionResponseSchema = completionSuggestionListResponseSchema.extend({
+  checked: z.boolean(),
+});
+
 export const acceptSuggestionResultSchema = z.object({
   suggestion: completionSuggestionSchema,
   // null for practice targets — a journal-attested PracticeSession has no streak (#821).

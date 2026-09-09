@@ -13,6 +13,7 @@ import {
   corpusInvitationSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
+  completionDetectionResponseSchema,
   completionSuggestionSchema,
   depthPreferencesSchema,
   frequencyResponseSchema,
@@ -2032,6 +2033,10 @@ export interface CompletionSuggestionListResponse {
   items: CompletionSuggestion[];
 }
 
+export interface CompletionDetectionResponse extends CompletionSuggestionListResponse {
+  checked: boolean;
+}
+
 /**
  * Suggestions surfaced by the resonance pass (#817/#818). URLs are the canonical
  * non-slash sub-resource forms the backend serves directly (no 307). ``accept``
@@ -2044,6 +2049,15 @@ export const completionSuggestions = {
       token,
       schema:
         completionSuggestionListResponseSchema as unknown as z.ZodType<CompletionSuggestionListResponse>,
+    });
+  },
+  detect(entryId: number, token?: string, apiKey?: string): Promise<CompletionDetectionResponse> {
+    return request<CompletionDetectionResponse>(`/journal/${entryId}/suggestions/detect`, {
+      method: 'POST',
+      token,
+      headers: byokHeaders(apiKey),
+      schema:
+        completionDetectionResponseSchema as unknown as z.ZodType<CompletionDetectionResponse>,
     });
   },
   accept(id: number, token?: string): Promise<AcceptSuggestionResult> {

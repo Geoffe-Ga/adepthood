@@ -205,6 +205,25 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 2, anchor_end: 19 });
   });
 
+  it('promotes against the created id after finishing a new entry without reopening', async () => {
+    mockPromote.mockResolvedValue(promotedQuote({ id: 90, source_entry_id: 42 }));
+    const { getByTestId, findByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), BODY);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-finish-button'));
+    });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const input = getByTestId('quote-select-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BODY }));
+    expect(mockPromote).toHaveBeenCalledWith(42, { anchor_start: 2, anchor_end: 19 });
+  });
+
   it('on a 201 the promoted span appears back in the read-mode body', async () => {
     mockPromote.mockResolvedValue(promotedQuote({ id: 90 }));
     const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });

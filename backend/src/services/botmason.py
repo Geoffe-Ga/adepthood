@@ -1110,10 +1110,10 @@ async def generate_response(
 def _stub_response(user_message: str) -> LLMResponse:
     """Return a deterministic response for development and testing.
 
-    A prompt that asks for a structured reply gets one — see
-    :func:`services.stub_completions.canned_completion`, which answers the
-    resonance ask in the JSON shape it demands so that path is walkable without
-    a provider. Everything else gets the canned sentence.
+    A supported prompt that asks for a structured reply gets one — see
+    :func:`services.stub_completions.canned_completion`, which answers resonance
+    and completion detection in the JSON shapes they demand so those paths are
+    walkable without a provider. Everything else gets the canned sentence.
 
     Token counts are zero because no real model is invoked — this keeps the
     usage log's cost total honest when stub traffic is mixed with production
