@@ -56,6 +56,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
+  'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
 ].sort();
