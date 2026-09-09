@@ -222,7 +222,11 @@ describe('JournalShelfScreen', () => {
   it('floats each stage-prompt band with matching depth while keeping its accent bar', async () => {
     mockList.mockResolvedValue(page([entry(1)]));
     const { findByTestId } = render(<JournalShelfScreen />);
-    const card = StyleSheet.flatten((await findByTestId('journal-stage-prompt-1')).props.style);
+    // The card is the sheet the prompt and its "Set aside" choice share;
+    // ``journal-stage-prompt-1`` is the prompt's own press target inside it.
+    const card = StyleSheet.flatten(
+      (await findByTestId('journal-stage-prompt-card-1')).props.style,
+    );
     // Lifted onto a raised sheet…
     expect(card.backgroundColor).toBe(surface.raised);
     expect(card.shadowRadius).toBeGreaterThan(0);
