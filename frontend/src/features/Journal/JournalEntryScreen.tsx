@@ -857,6 +857,13 @@ interface EntryState {
   reflectionScopeKey?: string;
 }
 
+interface MutableEntryState extends EntryState {
+  setLoadError: (_message: string) => void;
+  setLoaded: (_loaded: boolean) => void;
+  setReflectionLevel: (_level: ReflectionLevel | undefined) => void;
+  setReflectionScopeKey: (_scopeKey: string | undefined) => void;
+}
+
 const REFLECTION_LEVELS = new Set<ReflectionLevel>([
   'week',
   'stage',
@@ -871,16 +878,13 @@ function reflectionLevelFromWire(value: string | null | undefined): ReflectionLe
     : undefined;
 }
 
-/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
- *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
- *  capture flow's intimate offramp); an existing entry's load overrides it. */
-function useEntryState(
-  routeEntryId: number | null,
+/** Local fields and setters; server hydration stays in the smaller hook below. */
+function useLocalEntryState(
   initialText: InitialText,
   initialClassification: JournalClassification,
   initialReflectionLevel?: ReflectionLevel,
   initialReflectionScopeKey?: string,
-): EntryState {
+): MutableEntryState {
   const [title, setTitle] = useState(initialText.title);
   const [body, setBody] = useState(initialText.body);
   const [status, setStatus] = useState<EntryStatus>('draft');
@@ -889,39 +893,10 @@ function useEntryState(
   const [chord, setChord] = useState<AspectChordValue>(EMPTY_CHORD);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [reflectionLevel, setReflectionLevel] = useState<ReflectionLevel | undefined>(
-    initialReflectionLevel,
-  );
-  const [reflectionScopeKey, setReflectionScopeKey] = useState<string | undefined>(
-    initialReflectionScopeKey,
-  );
-  // Refs mirror the latest text so the change handlers stay referentially stable.
+  const [reflectionLevel, setReflectionLevel] = useState(initialReflectionLevel);
+  const [reflectionScopeKey, setReflectionScopeKey] = useState(initialReflectionScopeKey);
   const titleRef = useRef(initialText.title);
   const bodyRef = useRef(initialText.body);
-
-  useEntryLoadEffect(
-    routeEntryId,
-    useCallback((entry: JournalMessage) => {
-      titleRef.current = entry.title ?? '';
-      bodyRef.current = entry.message;
-      setTitle(titleRef.current);
-      setBody(bodyRef.current);
-      setStatus(entry.status ?? 'draft');
-      // Pre-select the server's tier so an intimate entry loads intimate.
-      setClassification(entry.classification ?? DEFAULT_TIER);
-      // Pre-select the server's chord so a tagged entry loads its Aspects.
-      setChord({
-        primary: entry.primary_aspect ?? null,
-        secondary: entry.secondary_aspect ?? null,
-      });
-      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
-      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
-      // Signal the load so the persist refs can be seeded from these values.
-      setLoaded(true);
-    }, []),
-    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), []),
-  );
-
   return {
     title,
     body,
@@ -939,7 +914,83 @@ function useEntryState(
     loaded,
     reflectionLevel,
     reflectionScopeKey,
+    setLoadError,
+    setLoaded,
+    setReflectionLevel,
+    setReflectionScopeKey,
   };
+}
+
+/** Stable load applicator, separated so the state owner remains reviewably small. */
+function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
+  const {
+    titleRef,
+    bodyRef,
+    setTitle,
+    setBody,
+    setStatus,
+    setClassification,
+    setChord,
+    setReflectionLevel,
+    setReflectionScopeKey,
+    setLoaded,
+  } = state;
+  return useCallback(
+    (entry: JournalMessage) => {
+      titleRef.current = entry.title ?? '';
+      bodyRef.current = entry.message;
+      setTitle(titleRef.current);
+      setBody(bodyRef.current);
+      setStatus(entry.status ?? 'draft');
+      setClassification(entry.classification ?? DEFAULT_TIER);
+      setChord({
+        primary: entry.primary_aspect ?? null,
+        secondary: entry.secondary_aspect ?? null,
+      });
+      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
+      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
+      setLoaded(true);
+    },
+    [
+      bodyRef,
+      setBody,
+      setChord,
+      setClassification,
+      setLoaded,
+      setReflectionLevel,
+      setReflectionScopeKey,
+      setStatus,
+      setTitle,
+      titleRef,
+    ],
+  );
+}
+
+/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
+ *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
+ *  capture flow's intimate offramp); an existing entry's load overrides it. */
+function useEntryState(
+  routeEntryId: number | null,
+  initialText: InitialText,
+  initialClassification: JournalClassification,
+  initialReflectionLevel?: ReflectionLevel,
+  initialReflectionScopeKey?: string,
+): EntryState {
+  const state = useLocalEntryState(
+    initialText,
+    initialClassification,
+    initialReflectionLevel,
+    initialReflectionScopeKey,
+  );
+  const applyLoadedEntry = useApplyLoadedEntry(state);
+  const { setLoadError } = state;
+
+  useEntryLoadEffect(
+    routeEntryId,
+    applyLoadedEntry,
+    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]),
+  );
+  return state;
 }
 
 interface ChoiceHandlers {
@@ -1015,6 +1066,37 @@ function useSeedPersistOnNew(
   }, [routeEntryId, initialClassification, seedPersist]);
 }
 
+interface AutosaveBindings extends ChoiceHandlers {
+  saveState: SaveState;
+  onChangeTitle: (_next: string) => void;
+  onChangeBody: (_next: string) => void;
+  flush: () => Promise<number | null>;
+  finish: () => Promise<number>;
+}
+
+/** Project internal entry/persistence state onto the screen's autosave contract. */
+function buildAutosaveApi(
+  entry: EntryState,
+  bindings: AutosaveBindings,
+  controlsLocked: boolean,
+  loadedFromServer: boolean,
+): AutosaveApi {
+  return {
+    title: entry.title,
+    body: entry.body,
+    status: entry.status,
+    setStatus: entry.setStatus,
+    classification: entry.classification,
+    chord: entry.chord,
+    loadError: entry.loadError,
+    reflectionLevel: entry.reflectionLevel,
+    reflectionScopeKey: entry.reflectionScopeKey,
+    controlsLocked,
+    loadedFromServer,
+    ...bindings,
+  };
+}
+
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
 function useJournalAutosave(
   routeEntryId: number | null,
@@ -1056,27 +1138,20 @@ function useJournalAutosave(
     changeClassification,
     changeChord,
   );
-
-  return {
-    title: entry.title,
-    body: entry.body,
-    status: entry.status,
-    setStatus: entry.setStatus,
-    saveState,
-    classification: entry.classification,
-    chord: entry.chord,
-    onChangeTitle,
-    onChangeBody,
-    onChangeClassification,
-    onChangeChord,
-    flush: flushNow,
-    finish: finishNow,
-    loadError: entry.loadError,
-    controlsLocked: entryUnsettled,
-    loadedFromServer: routeEntryId != null && entry.loaded,
-    reflectionLevel: entry.reflectionLevel,
-    reflectionScopeKey: entry.reflectionScopeKey,
-  };
+  return buildAutosaveApi(
+    entry,
+    {
+      saveState,
+      onChangeTitle,
+      onChangeBody,
+      onChangeClassification,
+      onChangeChord,
+      flush: flushNow,
+      finish: finishNow,
+    },
+    entryUnsettled,
+    routeEntryId != null && entry.loaded,
+  );
 }
 
 interface WritingColumnProps {
@@ -1327,6 +1402,20 @@ function WritingFooter({
   );
 }
 
+function ReflectionSourcesButton({ onOpen }: { onOpen?: () => void }): React.JSX.Element | null {
+  return onOpen ? (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
+      testID="reflection-sources-toggle"
+    >
+      <Text style={styles.controlLink}>Sources</Text>
+    </TouchableOpacity>
+  ) : null;
+}
+
 /** The scrollable writing column (title + growing body + save hint). */
 function WritingColumn({
   title,
@@ -1369,17 +1458,7 @@ function WritingColumn({
         {onFinish ? (
           <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
         ) : null}
-        {onOpenSources ? (
-          <TouchableOpacity
-            style={styles.quoteActionButton}
-            onPress={onOpenSources}
-            accessibilityRole="button"
-            accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
-            testID="reflection-sources-toggle"
-          >
-            <Text style={styles.controlLink}>Sources</Text>
-          </TouchableOpacity>
-        ) : null}
+        <ReflectionSourcesButton onOpen={onOpenSources} />
       </View>
     </View>
   );
@@ -2136,26 +2215,23 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
   const notes = ctl.resonance.marginalia;
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
-  const content =
-    notes.length > 0 || hasVisibleSuggestions ? (
-      <MarginStream
-        notes={notes}
-        suggestions={suggestions}
-        acceptedCheckIns={ctl.resonance.acceptedCheckIns}
-        onOpen={ctl.modal.onOpenNote}
-        onAccept={ctl.resonance.acceptSuggestion}
-        onDismiss={ctl.resonance.dismissSuggestion}
-      />
-    ) : (
-      <ResonanceMargin error={ctl.resonance.error} />
-    );
   return (
     <View
       style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
       testID="journal-margin-column"
     >
       <NoNotesNotice message={ctl.resonance.noNotesMessage} />
-      {content}
+      <ResonanceMargin error={ctl.resonance.error} />
+      {notes.length > 0 || hasVisibleSuggestions ? (
+        <MarginStream
+          notes={notes}
+          suggestions={suggestions}
+          acceptedCheckIns={ctl.resonance.acceptedCheckIns}
+          onOpen={ctl.modal.onOpenNote}
+          onAccept={ctl.resonance.acceptSuggestion}
+          onDismiss={ctl.resonance.dismissSuggestion}
+        />
+      ) : null}
     </View>
   );
 }

@@ -247,6 +247,23 @@
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
   },
   {
+    "id": "journal.short-entry-still-offers-habit-checkoff",
+    "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["completionSuggestions", "resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/suggestions/{suggestion_id}/accept",
+        "GET /journal/{entry_id}/suggestions"
+      ],
+      "tables": ["completionsuggestion", "goalcompletion", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-short-habit-offer.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.see-related-vault-pages",
     "description": "A writer asks for resonance and, when their connected Creek vault recognises a compiled praxis or a recurring eddy in the entry, finds those related pages offered in a collapsed, display-only band beside the journal page. Expanding it shows the page titles, quiet lifecycle or fragment context, and excerpts without turning a pattern into a task. Empty and pre-vault responses leave no band behind. The reflection provider is no longer what blocks this: the lane's default provider now answers a resonance ask with an anchored reading, which is what journal.ask-for-resonance drives. What is still missing is the other half of the response -- a Creek vault fake, connected to the account and seeded with compiled praxis and eddy pages, that answers the reflection with related collections. The activation journey's fake Creek control plane allocates a vault; it does not serve a corpus. The component, hook, and rendered-screen contracts are pinned by the Jest specs beside JournalEntryScreen, and #2408 stays open for this seeded-vault seam.",
     "crosses": {

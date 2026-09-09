@@ -1762,6 +1762,34 @@ async def _existing_suggestion_targets(
     return targets
 
 
+async def _persist_detected_suggestions(
+    session: AsyncSession,
+    *,
+    entry_id: int,
+    user_id: int,
+    hits: Sequence[CompletionDetected],
+    llm: BotmasonResonanceLLM,
+) -> CompletionDetectionResponse:
+    """Persist only offers this entry has not already made."""
+    existing = await _existing_suggestion_targets(session, entry_id, user_id)
+    fresh_hits = [hit for hit in hits if (hit.target_type, hit.target_id) not in existing]
+    rows = _stage_suggestions(session, entry_id, user_id, fresh_hits)
+    await record_llm_usage(
+        session,
+        user_id=user_id,
+        journal_entry_id=entry_id,
+        responses=llm.usage,
+    )
+    await session.commit()
+    await _refresh_persisted(session, [], rows)
+    return CompletionDetectionResponse(
+        items=[
+            CompletionSuggestionResponse.model_validate(row, from_attributes=True) for row in rows
+        ],
+        checked=True,
+    )
+
+
 @router.post("/{entry_id}/suggestions/detect", response_model=CompletionDetectionResponse)
 @limiter.limit("10/minute")
 async def detect_entry_suggestions(
@@ -1807,23 +1835,12 @@ async def detect_entry_suggestions(
     )
     if not attempt.checked:
         return CompletionDetectionResponse(items=[], checked=False)
-
-    existing = await _existing_suggestion_targets(session, entry_id, current_user)
-    fresh_hits = [hit for hit in attempt.hits if (hit.target_type, hit.target_id) not in existing]
-    rows = _stage_suggestions(session, entry_id, current_user, fresh_hits)
-    await record_llm_usage(
+    return await _persist_detected_suggestions(
         session,
+        entry_id=entry_id,
         user_id=current_user,
-        journal_entry_id=entry_id,
-        responses=llm.usage,
-    )
-    await session.commit()
-    await _refresh_persisted(session, [], rows)
-    return CompletionDetectionResponse(
-        items=[
-            CompletionSuggestionResponse.model_validate(row, from_attributes=True) for row in rows
-        ],
-        checked=True,
+        hits=attempt.hits,
+        llm=llm,
     )
 
 

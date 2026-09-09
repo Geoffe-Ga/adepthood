@@ -9,16 +9,11 @@ and prose answers that question with garbage: the completion does not parse, the
 pass keeps nothing, and the anchored half of the feature has no path any test
 without a network can walk.
 
-So the stub answers the question it was actually asked. When the prompt is the
-one :func:`domain.resonance.build_prompt` builds, this returns a reading whose
-quote is lifted verbatim out of the entry that prompt carries, and the domain
-anchors it exactly as it would a real model's — resolving the offsets itself,
-trusting nothing the completion says about position. When the entry offers no
-sentence to copy, the reading is a well-formed empty array: the stub will not
-paraphrase, and a page it cannot quote is a page it has nothing to say about.
-That is the same shape a real model's decline takes, which is what makes both
-halves of the journey — a note in the margin, and an honest sentence saying why
-there is none — reachable without a provider.
+So the stub answers the question it was actually asked. A resonance prompt gets
+a reading whose quote is lifted verbatim out of the entry. A completion prompt
+gets conservative hits only for explicit "did/completed/finished/practiced"
+phrasing followed by a supplied candidate name. Both paths return model-shaped
+JSON, while the domain still resolves every candidate and anchor itself.
 
 Nothing here weakens a boundary. The stub is selected by configuration, never
 by a test import; an intimate entry still returns from the privacy floor before
@@ -37,6 +32,18 @@ from domain.resonance import ANCHOR_TEXT_MAX, MARGINALIA_JSON_SHAPE
 # the quote it returns is a substring of the body the domain will anchor
 # against and not of the instructions surrounding it.
 _ENTRY_BLOCK = re.compile(r"<entry>\n(?P<body>.*?)\n</entry>", re.DOTALL)
+
+# Completion detection has its own plainly delimited candidate/entry blocks.
+# Keep these tied to ``domain.detection.build_detection_prompt`` through tests;
+# returning ``None`` on drift is safer than pretending an ordinary chat is a
+# structured answer.
+_DETECTION_BLOCK = re.compile(
+    r"Candidates:\n(?P<candidates>.*?)\n\nEntry:\n(?P<body>.*?)\n\nReturn JSON: \{\"hits\":",
+    re.DOTALL,
+)
+_CANDIDATE_LINE = re.compile(r"^(?P<index>\d+)\. (?P<name>.+) \((?:habit|practice)\)$")
+_COMPLETION_VERBS = ("did", "completed", "finished", "practiced")
+_MAX_DETECTION_HITS = 5
 
 #: One complete sentence: any run of text up to and including a terminator.
 _SENTENCE = re.compile(r"[^.!?]*[.!?]")
@@ -85,13 +92,37 @@ def _marginalia_completion(body: str) -> str:
     return json.dumps({"notes": notes})
 
 
+def _detection_completion(candidates_block: str, body: str) -> str:
+    """Return conservative, verbatim hits for explicitly completed candidates."""
+    hits: list[dict[str, int | str]] = []
+    for line in candidates_block.splitlines():
+        candidate = _CANDIDATE_LINE.fullmatch(line)
+        if candidate is None:
+            continue
+        name = candidate.group("name")
+        verbs = "|".join(_COMPLETION_VERBS)
+        attestation = re.compile(
+            rf"\b(?:{verbs})\s+(?:my\s+|the\s+)?{re.escape(name)}\b", re.IGNORECASE
+        )
+        match = attestation.search(body)
+        if match is None:
+            continue
+        hits.append({"index": int(candidate.group("index")), "quote": match.group(0)})
+        if len(hits) == _MAX_DETECTION_HITS:
+            break
+    return json.dumps({"hits": hits})
+
+
 def canned_completion(user_message: str) -> str | None:
     """Return the stub's structured answer to ``user_message``, else ``None``.
 
-    ``None`` means "this prompt asked for prose", which is every prompt but the
-    resonance one — chat turns, completion detection, essay expansion. Those
-    keep the canned sentence they have always had.
+    ``None`` means "this prompt asked for prose" — chat turns, essay expansion,
+    or any unknown structured shape keep the canned sentence they have always
+    had.
     """
+    detection = _DETECTION_BLOCK.search(user_message)
+    if detection is not None:
+        return _detection_completion(detection.group("candidates"), detection.group("body"))
     if MARGINALIA_JSON_SHAPE not in user_message:
         return None
     match = _ENTRY_BLOCK.search(user_message)

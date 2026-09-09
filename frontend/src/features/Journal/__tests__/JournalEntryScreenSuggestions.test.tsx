@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 // Every other JournalEntryScreen test resolves completionSuggestions.list empty; these pin the pending-card render and the dismissed-suggestion filter.
@@ -15,6 +15,10 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockCompletionList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: CompletionSuggestion[] }>
 >;
+const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<never>>;
+const mockDetect = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<{ items: CompletionSuggestion[]; checked: boolean }>
+>;
 
 jest.mock('@/api', () => ({
   journal: {
@@ -27,11 +31,12 @@ jest.mock('@/api', () => ({
   },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
-    generate: jest.fn(),
+    generate: (...a: unknown[]) => (mockGenerate as unknown as (...x: unknown[]) => unknown)(...a),
   },
   completionSuggestions: {
     list: (...a: unknown[]) =>
       (mockCompletionList as unknown as (...x: unknown[]) => unknown)(...a),
+    detect: (...a: unknown[]) => (mockDetect as unknown as (...x: unknown[]) => unknown)(...a),
     accept: jest.fn(),
     dismiss: jest.fn(),
   },
@@ -102,6 +107,9 @@ beforeEach(() => {
   mockList.mockResolvedValue({ items: [] });
   mockCompletionList.mockReset();
   mockCompletionList.mockResolvedValue({ items: [] });
+  mockGenerate.mockReset();
+  mockDetect.mockReset();
+  mockDetect.mockResolvedValue({ items: [], checked: true });
 });
 
 describe('JournalEntryScreen — completion-suggestion margin cards', () => {
@@ -125,5 +133,21 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
 
     expect(await findByTestId('suggestion-90')).toBeTruthy();
     expect(queryByTestId('suggestion-91')).toBeNull();
+  });
+
+  it('keeps the reflection error visible beside an independently detected habit offer', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, status: 'finished' }));
+    mockGenerate.mockRejectedValue({ status: 502, detail: 'llm_provider_error' });
+    mockDetect.mockResolvedValue({ items: [suggestionRow()], checked: true });
+
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByRole('button', { name: 'Get resonance' }));
+
+    expect(await view.findByTestId('suggestion-90')).toBeTruthy();
+    await waitFor(() => {
+      expect(view.getByTestId('journal-resonance-error').props.children).toContain(
+        'We still checked it for completed habits',
+      );
+    });
   });
 });
