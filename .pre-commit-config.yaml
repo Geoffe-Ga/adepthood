@@ -138,12 +138,34 @@ repos:
   # 8.0.1 pin installed a tool no gate ran, and the hook's 6.0.1 was the only
   # isort that executed anywhere.
   #
-  # Meanwhile ruff's `I` family is already live under `select = ["ALL"]` and
-  # already gated by both the ruff hook above and check-all.sh -- verified by
-  # planting an out-of-order import block and watching I001 fail. The
-  # [tool.ruff.lint.isort] section below exists precisely to stop the two
-  # sorters fighting over the same files; with one sorter left there is nothing
-  # to reconcile.
+  # Ruff's `I` family took over that job, but not across the whole tree the
+  # hook reached, and the note that first stood here claimed otherwise. The
+  # hook carried `files: ^backend/` and its `[tool.isort]` block declared no
+  # skips, so it sorted backend/migrations too. Ruff will not: `[tool.ruff]
+  # extend-exclude` lists `migrations`, and the `--force-exclude` on the hook
+  # above makes ruff honour that even for paths pre-commit hands it by name.
+  # Measured -- `ruff check --force-exclude --config=backend/pyproject.toml
+  # backend/migrations/env.py` answers `warning: No Python files found under
+  # the given path(s)` / `All checks passed!` and exits 0.
+  #
+  # So the true statement is narrower than "ruff already does this":
+  #
+  #   - backend/src and backend/tests -- `I` is live under `select = ["ALL"]`
+  #     and gated by both the ruff hook above and check-all.sh, verified by
+  #     planting an out-of-order import block and watching I001 fail.
+  #
+  #   - backend/migrations -- nothing sorts imports there any more, and that is
+  #     deliberate rather than overlooked. The tree is Alembic-generated and
+  #     already sits outside ruff, outside mypy (`exclude: ^backend/migrations/`
+  #     above) and outside bandit (backend/.bandit's `exclude_dirs`). The
+  #     reasoning is recorded where the exclusion itself lives, beside
+  #     `extend-exclude` in backend/pyproject.toml, and
+  #     backend/tests/scripts/test_migrations_lint_exclusion.py holds this note
+  #     and that exclusion to each other so neither can drift into claiming
+  #     coverage the other denies.
+  #
+  # The [tool.ruff.lint.isort] section in backend/pyproject.toml configures the
+  # one remaining sorter; it is no longer refereeing between two of them.
 
   # bandit, like ruff and mypy, runs from the installed environment. It was a
   # cloned PyCQA/bandit at rev 1.8.6 while requirements-dev.txt pinned 1.9.4.
