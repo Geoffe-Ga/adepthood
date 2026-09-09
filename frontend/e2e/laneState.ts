@@ -19,6 +19,12 @@ export interface LaneState {
   adminUrl: string;
   /** Per-run directory containing only generated control-plane test credentials. */
   credentialDir: string;
+  /** Per-run directory holding the captured outbound mail, removed at teardown. */
+  mailDir: string;
+  /** File the server's capture email backend appends every rendered message to. */
+  emailCaptureFile: string;
+  /** The `https://` origin the server builds the links in outbound mail from. */
+  webBaseUrl: string;
 }
 
 /** Repository root, three levels up from `frontend/e2e`. */

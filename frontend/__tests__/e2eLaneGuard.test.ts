@@ -64,6 +64,7 @@ const EXPECTED_JOURNEYS = [
   'journal-practice-offer.e2e.test.ts',
   'journal.e2e.test.ts',
   'map.e2e.test.ts',
+  'password-recovery.e2e.test.ts',
   'practice-catalog.e2e.test.ts',
   'practice-log-past.e2e.test.ts',
   'practice-tags.e2e.test.ts',

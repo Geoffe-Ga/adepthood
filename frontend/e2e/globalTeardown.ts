@@ -87,6 +87,10 @@ export default async function globalTeardown(): Promise<void> {
     dropDatabase(state);
   } finally {
     rmSync(state.credentialDir, { recursive: true, force: true });
+    // The captured mail is plaintext reset links, so it does not outlive the
+    // run that needed it -- and it never outlives the tokens, which the dropped
+    // database took with it a line above.
+    rmSync(state.mailDir, { recursive: true, force: true });
     clearLaneState();
   }
 }
