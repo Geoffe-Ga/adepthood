@@ -25,6 +25,13 @@
  * downscaled prepare outputs — are deleted in lockstep: when a page is removed,
  * when a page is retaken (the superseded photo), once it is transcribed, when the
  * session is released, and on unmount.
+ *
+ * APPEND MODE: opened from a journal entry already being written (the route
+ * carries that page's hand-off token in ``appendTo``), the same flow ends by
+ * handing the merged transcript BACK to that page rather than saving a new
+ * entry — see {@link useHandOffTranscript}. Everything before the confirm is
+ * identical, including the intimate gate, so there is one capture path, one OCR
+ * path, and one charge per page however the writer arrived.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -52,6 +59,7 @@ import DatePicker, { toISODate } from '@/components/DatePicker';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 
 // --- Copy (warm, declinable — NORTH-STAR) ---------------------------------
 
@@ -70,6 +78,11 @@ const TAKE_ANOTHER_COPY = "That page is in. Take another whenever you're ready."
 const TAKE_ANOTHER_LABEL = 'Take another';
 const DONE_CAPTURING_LABEL = 'Done';
 const SAVE_LABEL = 'Save this entry';
+/** Append mode's confirm: the transcript joins the page the writer already has open. */
+const APPEND_LABEL = 'Add to this entry';
+/** Confirm-button testIDs, one per mode, so a test cannot mistake one for the other. */
+const SAVE_TEST_ID = 'photograph-save';
+const APPEND_TEST_ID = 'photograph-append';
 const RETRY_SAVE_LABEL = 'Try saving again';
 const ENTRY_DATE_LABEL = 'Entry date';
 const TYPED_ENTRY_LABEL = 'Type this entry instead';
@@ -101,6 +114,8 @@ interface CaptureModel {
   entryDate: string;
   /** The chosen privacy tier; ``intimate`` gates transcription off entirely. */
   classification: PrivacyTier;
+  /** True when the transcript is destined for a page already open, not a new entry. */
+  appendMode: boolean;
   saving: boolean;
   saveFailed: boolean;
   onChangeEntryDate: (_date: string) => void;
@@ -377,6 +392,77 @@ function useSaveEntry(
   return { save, saving, saveFailed };
 }
 
+/**
+ * Append mode's confirm: hand the merged transcript back to the journal entry
+ * that sent the writer here, then return to it.
+ *
+ * Nothing is written to the server on this path. The open page is often not on
+ * the server yet — a Course reflection photographed before a word is typed has
+ * no id — and even when it is, patching it from here would leave the still-
+ * mounted editor holding a stale body that its next keystroke would write back
+ * over the transcript. Routing the prose through that editor instead means the
+ * entry's own create-then-update writer persists it, carrying the title and
+ * save context the writer arrived with: one entry, one write path.
+ *
+ * The page images are released exactly as the save path releases them, so a
+ * hand-off leaves no more behind than a save does.
+ */
+function useHandOffTranscript(
+  navigation: PhotographNavigation,
+  appendTo: string | undefined,
+  mergedText: string,
+  releaseSession: () => void,
+): () => void {
+  const deliver = useCapturedTranscriptStore((store) => store.deliver);
+  return useCallback(() => {
+    if (appendTo == null) return;
+    deliver(appendTo, mergedText);
+    releaseSession();
+    navigation.goBack();
+  }, [navigation, appendTo, mergedText, deliver, releaseSession]);
+}
+
+/** What the confirm gesture needs, in whichever mode the route opened. */
+interface ConfirmGestureArgs {
+  navigation: PhotographNavigation;
+  /** Set in append mode: the hand-off token of the entry awaiting the transcript. */
+  appendTo: string | undefined;
+  mergedText: string;
+  entryDate: string;
+  classification: PrivacyTier;
+  releaseSession: () => void;
+  createdIdRef: React.MutableRefObject<number | null>;
+}
+
+/** The single confirm gesture, routed to the mode the screen was opened in: save
+ *  the transcript as a new entry, or hand it to the page already being written.
+ *  Both are wired either way — the mode decides which one the press calls, never
+ *  which one exists — so the phase machine above is identical in both. */
+function useConfirmGesture(args: ConfirmGestureArgs): {
+  save: () => void;
+  saving: boolean;
+  saveFailed: boolean;
+} {
+  const { navigation, appendTo, mergedText, entryDate, classification } = args;
+  const { releaseSession, createdIdRef } = args;
+  const persist = useSaveEntry(
+    navigation,
+    mergedText,
+    entryDate,
+    classification,
+    releaseSession,
+    createdIdRef,
+  );
+  const handOff = useHandOffTranscript(navigation, appendTo, mergedText, releaseSession);
+  const appendMode = appendTo != null;
+  const saveNewEntry = persist.save;
+  const save = useCallback(() => {
+    if (appendMode) handOff();
+    else void saveNewEntry();
+  }, [appendMode, handOff, saveNewEntry]);
+  return { save, saving: persist.saving, saveFailed: persist.saveFailed };
+}
+
 /** The proceed gesture: arm the run and enter review, but only with a page to read.
  *  `started` stays true through a mid-run trim back to one page so a partial removal
  *  never re-arms — but `disarm` returns it to the pre-transcribe state when the whole
@@ -407,6 +493,7 @@ function useTranscribeGate(
 function useNavigationOfframps(
   navigation: PhotographNavigation,
   releaseSession: () => void,
+  appendMode: boolean,
 ): {
   openSettings: () => void;
   cancel: () => void;
@@ -418,16 +505,21 @@ function useNavigationOfframps(
     releaseSession(); // Release every page image when backing out of the flow.
     navigation.goBack();
   }, [navigation, releaseSession]);
+  // In append mode the writer already has a page open one screen below, so both
+  // typed-entry offramps return them to it. Opening a second entry on top of the
+  // one they were writing would strand the page they came to add to.
   const goTypedEntry = useCallback(() => {
     releaseSession(); // Release every page image when stepping off to a typed entry.
-    navigation.navigate('JournalEntry');
-  }, [navigation, releaseSession]);
+    if (appendMode) navigation.goBack();
+    else navigation.navigate('JournalEntry');
+  }, [navigation, releaseSession, appendMode]);
   // The intimate offramp: release the session, then open a fresh entry pre-set to
   // intimate. Only the tier scalar rides the nav params — never any page image.
   const typeInstead = useCallback(() => {
     releaseSession();
-    navigation.navigate('JournalEntry', { classification: 'intimate' });
-  }, [navigation, releaseSession]);
+    if (appendMode) navigation.goBack();
+    else navigation.navigate('JournalEntry', { classification: 'intimate' });
+  }, [navigation, releaseSession, appendMode]);
   return { openSettings, cancel, goTypedEntry, typeInstead };
 }
 
@@ -568,6 +660,8 @@ interface CaptureEngineArgs {
   entryDate: string;
   classification: PrivacyTier;
   classificationRef: React.MutableRefObject<PrivacyTier>;
+  /** Set in append mode: the hand-off token of the entry awaiting the transcript. */
+  appendTo: string | undefined;
 }
 
 /** The engine surface the model exposes: the session edits, the transcription run,
@@ -579,7 +673,8 @@ interface CaptureEngine {
   reorderPages: (_pages: CapturePage[]) => void;
   transcribe: () => void;
   run: TranscriptionRunModel;
-  save: () => Promise<void>;
+  /** The confirm gesture: save a new entry, or hand the transcript to the open one. */
+  save: () => void;
   saving: boolean;
   saveFailed: boolean;
   openSettings: () => void;
@@ -596,7 +691,8 @@ interface CaptureEngine {
  */
 function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
   const { navigation, phase, setPhase, pages, dispatch } = args;
-  const { entryDate, classification, classificationRef } = args;
+  const { entryDate, classification, classificationRef, appendTo } = args;
+  const appendMode = appendTo != null;
   const createdIdRef = useRef<number | null>(null);
   const counterRef = useRef(0);
   const pagesRef = useRef<CapturePage[]>(pages);
@@ -610,17 +706,19 @@ function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
   const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase, classificationRef);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
   const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
-  const { save, saving, saveFailed } = useSaveEntry(
+  const { save, saving, saveFailed } = useConfirmGesture({
     navigation,
-    run.mergedText,
+    appendTo,
+    mergedText: run.mergedText,
     entryDate,
     classification,
     releaseSession,
     createdIdRef,
-  );
+  });
   const { openSettings, cancel, goTypedEntry, typeInstead } = useNavigationOfframps(
     navigation,
     releaseSession,
+    appendMode,
   );
 
   return {
@@ -645,7 +743,10 @@ function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
  * review + save. Render state (phase, pages, entry date, tier) lives here; the
  * session/run wiring lives in {@link useCaptureEngine}. Pages never enter nav params.
  */
-function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
+function usePhotographCapture(
+  navigation: PhotographNavigation,
+  appendTo: string | undefined,
+): CaptureModel {
   const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
   const [pages, dispatch] = useReducer(captureSessionReducer, []);
   const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
@@ -660,6 +761,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     entryDate,
     classification,
     classificationRef,
+    appendTo,
   });
   useAutoLaunchPick(engine.runPick);
 
@@ -669,6 +771,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     canAdd: canAddPages(pages),
     entryDate,
     classification,
+    appendMode: appendTo != null,
     saving: engine.saving,
     saveFailed: engine.saveFailed,
     onChangeEntryDate: setEntryDate,
@@ -679,7 +782,7 @@ function usePhotographCapture(navigation: PhotographNavigation): CaptureModel {
     removePage: engine.removePage,
     reorderPages: engine.reorderPages,
     transcribe: engine.transcribe,
-    save: () => void engine.save(),
+    save: engine.save,
     openSettings: engine.openSettings,
     cancel: engine.cancel,
     goTypedEntry: engine.goTypedEntry,
@@ -802,24 +905,29 @@ function EntryDateRow({
   );
 }
 
-/** Save, gated on the whole run settling, plus a Retry-save surfaced after a failure. */
+/** The confirm, gated on the whole run settling, plus a Retry-save surfaced after a
+ *  failure. Append mode names the same gesture for what it does there — the
+ *  transcript joins the open page — and cannot fail, since it writes nothing. */
 function ReviewActions({
   onSave,
   saving,
   saveFailed,
   canSave,
+  appendMode,
 }: {
   onSave: () => void;
   saving: boolean;
   saveFailed: boolean;
   canSave: boolean;
+  appendMode: boolean;
 }): React.JSX.Element {
+  const label = appendMode ? APPEND_LABEL : SAVE_LABEL;
   return (
     <View style={styles.actions}>
       <Button
-        testID="photograph-save"
-        label={SAVE_LABEL}
-        accessibilityLabel={SAVE_LABEL}
+        testID={appendMode ? APPEND_TEST_ID : SAVE_TEST_ID}
+        label={label}
+        accessibilityLabel={label}
         disabled={!canSave}
         busy={saving}
         onPress={onSave}
@@ -835,6 +943,14 @@ function ReviewActions({
         />
       ) : null}
     </View>
+  );
+}
+
+/** The entry-date row, withheld in append mode: the page the transcript is joining
+ *  already has a date of its own, and a second one here would only contradict it. */
+function CaptureEntryDate({ model }: { model: CaptureModel }): React.JSX.Element | null {
+  return model.appendMode ? null : (
+    <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
   );
 }
 
@@ -859,7 +975,7 @@ function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
         onTranscribe={model.transcribe}
         transcribeDisabled={model.classification === 'intimate'}
       />
-      <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
+      <CaptureEntryDate model={model} />
     </View>
   );
 }
@@ -885,12 +1001,13 @@ function ReviewView({ model }: { model: CaptureModel }): React.JSX.Element {
       <Text testID="photograph-run-progress" style={styles.progress}>
         {run.progress}
       </Text>
-      <EntryDateRow entryDate={model.entryDate} onChangeEntryDate={model.onChangeEntryDate} />
+      <CaptureEntryDate model={model} />
       <ReviewActions
         onSave={model.save}
         saving={model.saving}
         saveFailed={model.saveFailed}
         canSave={run.isComplete}
+        appendMode={model.appendMode}
       />
       {run.hasTerminalError ? (
         <Button
@@ -992,8 +1109,9 @@ function CaptureBody({ model }: { model: CaptureModel }): React.JSX.Element {
 /** The photograph-capture route: pick pages, transcribe them, then save the merge. */
 export default function JournalPhotographScreen({
   navigation,
+  route,
 }: NativeStackScreenProps<RootStackParamList, 'JournalPhotograph'>): React.JSX.Element {
-  const model = usePhotographCapture(navigation);
+  const model = usePhotographCapture(navigation, route.params?.appendTo);
   return (
     <ScreenScaffold testID="journal-photograph">
       <CaptureBody model={model} />

@@ -51,7 +51,18 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
-  JournalPhotograph: undefined;
+  JournalPhotograph:
+    | {
+        /**
+         * Append mode: the capture was opened from a journal entry already being
+         * written, and this is the hand-off token that entry minted (see
+         * ``useCapturedTranscriptStore``). The transcript is handed back to that
+         * page instead of being saved as a new entry. Only the token rides here
+         * — never the transcribed prose, and never any page image.
+         */
+        appendTo?: string;
+      }
+    | undefined;
   JournalEntry:
     | {
         entryId?: number;
