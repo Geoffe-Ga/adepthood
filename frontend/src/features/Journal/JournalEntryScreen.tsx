@@ -128,6 +128,12 @@ const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new pag
  * would announce a finished save that has not finished, and would be followed
  * (on a failure) by a hint contradicting the word already shown. So the whole
  * act reads as saving, and the hint settles once for the pair.
+ *
+ * Overriding a real ``error`` or ``typing`` that overlaps the window is
+ * deliberate, not an oversight: a write IS in flight, so "Saving…" is the true
+ * statement, and an error from the draft save is about to be re-decided by the
+ * fold-in's own outcome anyway. Threading the underlying state through would
+ * surface a retry affordance for a write that is still running.
  */
 function hintStateWhileFolding(state: SaveState, foldingIn: boolean): SaveState {
   return foldingIn ? 'saving' : state;
