@@ -50,10 +50,11 @@ const EXPECTED_BROWSER_JOURNEYS = [
   BROWSER_JOURNEY,
   HABITS_VIEWPORT_JOURNEY,
   'habit-reorder.browser.e2e.test.ts',
+  'journal-failed-checkoff.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
-  'journal-failed-checkoff.browser.e2e.test.ts',
+  'practice-weekly-count.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
