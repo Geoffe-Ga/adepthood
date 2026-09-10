@@ -680,20 +680,26 @@
   },
   {
     "id": "return.recover-a-habit-set-down",
-    "description": "A person lets a habit rest during a Metta Return arc, then leaves the arc, and takes the habit up again from the Return surface without long-pressing a locked tile or opening the 3-dot menu. Uncovered because the lane would have to drive a five-week arc's release-then-leave sequence and then assert on a card that only renders when a release is outstanding; the release seam itself is covered by backend integration tests and the Jest specs named below, so the gap is the end-to-end stitch rather than either half.",
+    "description": "A person lets a habit rest during a Metta Return arc, then leaves the arc, and takes the habit up again from the Return surface -- no long-press on a locked tile, no 3-dot menu. The press is asserted on the server rather than on the card: the release row reads re-committed and the habit itself is unlocked again in the account's own habit list, which is the collection read that reconciles auto-reveals, so the pause is shown outranking the program's schedule while it holds and releasing it afterwards. That the row and not merely the habit recorded the re-commit is probed by locking the habit by hand from Habit Settings, which is the only thing that can tell the two halves of the reported flag apart. It runs in the browser lane because the journey is the card: the recovery affordance renders only on a shelf whose arc has ended while a release is outstanding, and the API lane cannot mount a React Native screen at all, so a spec there could only POST the route by hand. Deliberately under-claimed: only the recovery is pressed. Beginning the Return is its own journey (return.begin-a-return-from-the-journal-entry), and the let-go card that releases habits renders only in the session that started the arc, so release-then-leave is arranged over the same live wire -- every step read back, and Orange-stage eligibility asserted false before and true after the tests.e2e.program_anchor rewind, so an arrange that did nothing fails where it happened instead of leaving the press to test an empty shelf. The cross-tenant arm presses the same route from a second account holding an arc of its own: somebody else's habit id reads exactly like a nonexistent one, and the owner's own press afterwards proves that refusal is a refusal rather than a route that moves nothing. Verified to be a live gate: with recommit resolving the active arc again, as it did before the arc-spanning fix, the press 404s and the spec fails.",
     "crosses": {
       "screen": "frontend/src/features/Return/ReturnRestingCard.tsx",
-      "client": ["mettaReturn"],
+      "client": ["auth", "habits", "stages", "mettaReturn"],
       "routes": [
+        "POST /auth/signup",
+        "POST /habits/",
+        "GET /habits/",
+        "PUT /habits/{habit_id}",
+        "GET /stages",
         "GET /metta-return",
+        "POST /metta-return/arc",
         "POST /metta-return/arc/release",
         "POST /metta-return/arc/leave",
         "POST /metta-return/arc/recommit"
       ],
-      "tables": ["mettareturnarc", "mettareturnhabitrelease", "habit"]
+      "tables": ["user", "stageprogress", "mettareturnarc", "mettareturnhabitrelease", "habit"]
     },
-    "status": "uncovered",
-    "issue": 2614
+    "status": "covered",
+    "coveredBy": "frontend/e2e/return-recover-habit.browser.e2e.test.ts"
   },
   {
     "id": "return.begin-a-return-from-the-journal-entry",
