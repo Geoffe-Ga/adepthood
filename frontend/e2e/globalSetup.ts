@@ -12,6 +12,7 @@ import {
   writeLaneState,
   type LaneState,
 } from './laneState';
+import { freshLicenseKey } from './licenseKey';
 
 /**
  * Bring up the server the journeys drive: an ephemeral Postgres database built
@@ -111,7 +112,7 @@ async function assertHealthy(baseUrl: string): Promise<void> {
   const response = await fetch(`${baseUrl}/health`);
   const body: unknown = await response.json();
   const { status, database } = body as { status?: unknown; database?: unknown };
-  if (response.status !== 200 || status !== 'healthy' || database !== 'connected') {
+  if (response.status !== HTTP_OK || status !== 'healthy' || database !== 'connected') {
     throw new Error(
       `the e2e server answered GET /health with ${response.status} ${JSON.stringify(body)}; ` +
         'the lane needs a server that is up and connected to its database',
@@ -546,7 +547,7 @@ async function provisionVaultOwner(baseUrl: string): Promise<VaultOwner> {
       email: vaultOwnerEmail,
       password: VAULT_OWNER_PASSWORD,
       timezone: VAULT_OWNER_TIMEZONE,
-      license_key: `e2e-license-${randomUUID()}`,
+      license_key: freshLicenseKey(),
     }),
   });
   const body: unknown = await response.json();
