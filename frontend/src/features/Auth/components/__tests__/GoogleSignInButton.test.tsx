@@ -14,6 +14,7 @@ import {
 } from '../googleBranding';
 import { GOOGLE_LOGO_TEST_ID, GoogleSignInButton } from '../GoogleSignInButton';
 
+import { busyIndicatorTestID } from '@/components/Button';
 import { ThemeProvider, type ThemeMode } from '@/design/ThemeContext';
 
 const BUTTON_ID = 'social-auth-google';
@@ -170,6 +171,32 @@ describe('GoogleSignInButton — behaviour', () => {
     expect(getByText(GOOGLE_BUTTON_LABEL)).toBeTruthy();
     expect(getByTestId(GOOGLE_LOGO_TEST_ID, HIDDEN)).toBeTruthy();
     expect(queryByText('Connecting...')).toBeNull();
+  });
+
+  // Dimming alone left a sighted user watching a button that looked ignored
+  // (#2441). The house mark is additive: it is drawn ahead of Google's pair
+  // rather than in place of either half of it, and it takes Google's own text
+  // colour so it stays legible on both approved themes.
+  it('adds the house progress mark without altering the mandated pair', () => {
+    const { getByTestId } = renderButton({ submitting: true });
+
+    const mark = getByTestId(busyIndicatorTestID(BUTTON_ID));
+    const logo = getByTestId(GOOGLE_LOGO_TEST_ID, HIDDEN);
+
+    expect(mark.props.color).toBe(GOOGLE_BUTTON_THEMES.light.text);
+    // The one measurement Google fixes between its two halves, unchanged.
+    expect(StyleSheet.flatten(logo.props.style).marginRight).toBe(PADDING.afterLogo);
+    expect(getByTestId(BUTTON_ID).props.accessibilityState).toEqual({
+      disabled: true,
+      busy: true,
+    });
+  });
+
+  it('draws no progress mark when nothing is in flight', () => {
+    const { getByTestId, queryByTestId } = renderButton();
+
+    expect(getByTestId(BUTTON_ID)).toBeTruthy();
+    expect(queryByTestId(busyIndicatorTestID(BUTTON_ID))).toBeNull();
   });
 
   it('announces the in-flight state instead, and swallows the press', () => {
