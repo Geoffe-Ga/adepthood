@@ -474,6 +474,18 @@
     "coveredBy": "frontend/e2e/habits-viewport.browser.e2e.test.ts"
   },
   {
+    "id": "journal.writing-timer-keeps-its-own-corner",
+    "description": "A writer opens a journal entry on a desktop browser, starts a timed writing session, and keeps writing while it runs. The covering Playwright spec signs up through the UI, opens an entry with real text in it, and then measures laid-out DOM at the 1280x720 viewport issue #2656 reports against. It proves the session is genuinely live before trusting any geometry -- the idle controls are gone, the countdown has strictly fallen between two samples, and the pill has collapsed onto the 44dp rail -- because every layout claim about \"the active writing state\" is vacuous if the arrange left an idle timer on screen. It then asserts that the running pill's box shares no area with the title or body textarea and sits entirely right of the sheet; that the idle pill stays inside the sheet's span and does not grow when the viewport widens to 1600, which is the reported defect (a pill sized to the window rather than to its contents) stated as geometry; and that the body and the Finish control are hit-testable via elementFromPoint rather than merely visible, with a character typed past the floating pill and read back over GET /journal/ to prove the press reached the wire. It exists because the Jest lanes cannot answer a layout question at all: this project runs the node environment under the React Native preset, so onLayout never fires and every box is zero, which is why writingTimerLayout.test.tsx can only assert on style objects. Deliberately not asserted: that the IDLE pill clears the body textarea (measured, it does not -- WRITING_TIMER_CLEARANCE reserves its 220dp at the end of the scrollable page, not out from under a pill at a fixed viewport offset), and the right-rail asymmetry, which is a product decision rather than an engineering invariant.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /journal/", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-writing-timer.browser.e2e.test.ts"
+  },
+  {
     "id": "map.advance-stage",
     "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
