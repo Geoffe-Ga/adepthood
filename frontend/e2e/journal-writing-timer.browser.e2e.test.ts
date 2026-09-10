@@ -235,6 +235,53 @@ async function report(page: Page, label: string): Promise<void> {
 }
 
 /**
+ * Drive the journal page to the very bottom of its scroll range.
+ *
+ * This is what makes `WRITING_TIMER_CLEARANCE` load-bearing for this spec
+ * rather than incidental to it. That constant reserves 220dp at the END of the
+ * scrollable page precisely so the last of the writer's content -- and the
+ * Finish control below it -- comes to rest ABOVE the floating pill's band
+ * instead of underneath it. `scrollIntoViewIfNeeded` alone scrolls the minimum
+ * distance, which parks the element at the bottom edge of the scroller and
+ * happens to clear the pill whatever the reserve is; only scrolling to the end
+ * asks the question the constant exists to answer.
+ *
+ * Assigning `scrollTop` is deliberate: `scrollTo` honours the element's
+ * scroll-behavior and can still be animating when the box is read, which
+ * reports a half-scrolled page as an unreachable control.
+ */
+/**
+ * Return the journal page to the top of its scroll range.
+ *
+ * Called before the running pill is measured against the editor, and not
+ * cosmetic. The idle reserve check just above scrolls to the foot of the page,
+ * which carries the body textarea up out of the pill's band entirely -- at the
+ * end of the scroll the body's box sits at y -88 while the pill occupies
+ * y 510-644. A non-overlap assertion taken in that state is vacuous: it would
+ * hold for a pill parked anywhere at all, including squarely over the writing
+ * column. Scrolled back to the top the body spans y 350-782, straddling the
+ * pill's band, so the only thing that can keep them apart is the pill being on
+ * the rail -- which is the claim.
+ */
+async function scrollPageToTop(page: Page): Promise<void> {
+  await page.getByTestId('journal-page-scroll').evaluate((el) => {
+    el.scrollTop = 0;
+  });
+}
+
+async function scrollPageToEnd(page: Page): Promise<void> {
+  const scrolled = await page.getByTestId('journal-page-scroll').evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return { scrollTop: el.scrollTop, maxScroll: el.scrollHeight - el.clientHeight };
+  });
+  expect(
+    scrolled.scrollTop,
+    'the journal page did not scroll to its end, so the reserve below the ' +
+      'last line was never actually tested',
+  ).toBeCloseTo(scrolled.maxScroll, 0);
+}
+
+/**
  * Is this element the thing the browser would actually hand a click at its own
  * centre -- or is something else painted on top of it?
  *
@@ -250,6 +297,7 @@ async function report(page: Page, label: string): Promise<void> {
  * can get to it and press it, not that it fits on the first screenful.
  */
 async function expectHitTestable(page: Page, locator: Locator, what: string): Promise<void> {
+  await scrollPageToEnd(page);
   await locator.scrollIntoViewIfNeeded();
   const box = await boxOf(locator, what);
   const covering = await locator.evaluate((element, centre) => {
@@ -302,8 +350,35 @@ test('the writing timer keeps its own corner of the desk while a session runs', 
   await page.setViewportSize(REPORTED_VIEWPORT);
   await expect(pill(page)).toBeVisible();
 
+  // The completion control clears the IDLE pill at the foot of the page. This
+  // is the one check the docked rail cannot make: the running pill sits beside
+  // the sheet and so can never share the Finish control's x range, whereas the
+  // idle pill spans x 502-778 directly above it. It is what makes
+  // WRITING_TIMER_CLEARANCE load-bearing here -- shrink that reserve and the
+  // scrolled-to-end Finish control comes to rest under the pill.
+  await expectHitTestable(page, finish(page), 'the Finish control, with the timer idle');
+
+  // ...and clears it by its whole box, not merely by its centre point. The
+  // centre test alone is too weak to hold the reserve: shrinking
+  // WRITING_TIMER_CLEARANCE by the pill's own height moves the scrolled-to-end
+  // Finish control down into the pill's band by a few pixels, which buries its
+  // lower edge while leaving the midpoint uncovered. Partial occlusion of a
+  // completion control is the defect, so the box is what is asserted.
+  const idlePill = await boxOf(pill(page), 'the idle timer pill');
+  const restingFinish = await boxOf(finish(page), 'the Finish control at the foot of the page');
+  console.log(
+    `[2656/reserve] pill=${JSON.stringify(idlePill)} finish=${JSON.stringify(restingFinish)}`,
+  );
+  expect(
+    intersects(idlePill, restingFinish),
+    'the idle writing timer overlaps the Finish control once the page is ' +
+      'scrolled to its end: the reserve below the last line is too small ' +
+      `(pill ${JSON.stringify(idlePill)} vs Finish ${JSON.stringify(restingFinish)})`,
+  ).toBe(false);
+
   // --- Nothing below this line is trusted until the session is proven live. ---
   await startSessionAndProveItRuns(page);
+  await scrollPageToTop(page);
   await report(page, 'running');
 
   // --- Question 3: the running pill shares no area with either editable field.
@@ -331,7 +406,7 @@ test('the writing timer keeps its own corner of the desk while a session runs', 
 
   // --- Question 4: reachable, not merely present. ---
   await expectHitTestable(page, body(page), 'the entry body');
-  await expectHitTestable(page, finish(page), 'the Finish control');
+  await expectHitTestable(page, finish(page), 'the Finish control, with the session running');
 
   // The strongest form of the same claim: a character typed into the body has
   // to arrive. An opaque pill over the textarea absorbs the click that focuses
