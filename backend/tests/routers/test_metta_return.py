@@ -1020,3 +1020,166 @@ async def test_leave_complete_arc_then_restart_lands_on_week_one_incomplete(
     assert restart_resp.status_code == HTTPStatus.CREATED
     assert restart_resp.json()["week"] == 1
     assert restart_resp.json()["complete"] is False
+
+
+# ---------------------------------------------------------------------------
+# 10. Where a Return taken from Clear Light leaves the practitioner (#1331)
+# ---------------------------------------------------------------------------
+#
+# These two tests encode a product DECISION, not an accident of the current
+# implementation. Read the docstrings before changing either of them.
+
+# Clear Light is the tenth and final ring of the ten-frequency ladder (Beige is
+# the first). Written out here rather than imported from ``TOTAL_STAGES`` on
+# purpose: a test that borrows the constant the production code counts with
+# cannot notice the production code miscounting.
+_CLEAR_LIGHT_STAGE = 10
+# The nine rings walked to reach Clear Light, and the first pass through them.
+_STAGES_BEFORE_CLEAR_LIGHT = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+_FIRST_CYCLE = 1
+# Comfortably past the arc's thirty-five day close, so the arc reads complete.
+_FINISHED_ARC_DAYS = 40
+_PROGRAM_CALENDAR_URL = "/stages/program-calendar"
+
+
+@pytest.mark.asyncio
+async def test_return_started_from_clear_light_moves_no_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A Return started from Clear Light leaves the practitioner exactly where they stood.
+
+    **The Return never moves anyone.** It is a declinable five-week Metta rest,
+    not a demotion and not a shortcut: no lifecycle action on it writes
+    ``StageProgress``, from any stage, and Clear Light -- the tenth and final
+    ring -- is no exception. The one affordance that does move a practitioner
+    after Clear Light is ``POST /stages/begin-again``, which is a separate,
+    explicit, user-pressed choice.
+
+    That distinction is the whole point of this test, because the two are easy
+    to conflate on the end-of-cycle Map, and issue #1331 reported them conflated:
+    "when Return is taken after Clear Light it only kicks you back to Stage 11
+    (ie stage 1 the second time)". Four independent investigations found no such
+    behaviour. What the report describes is Begin Again working correctly --
+    cycle 2, stage 1 -- and cycle 2's stage 1 IS "stage 11" counted straight
+    through, which is the landing the product specifies:
+
+    * The owner's decision on #1331 (2026-07-04): "each time you pass stage
+      10*n your new low point is stage 10*n+1." Cycle N's stage 1 is absolute
+      stage ``10*(N-1)+1``, so the checkpoint is 11, then 21, then 31 -- never
+      pinned at 11. ``test_begin_again_second_loop_increments_to_cycle_3``
+      (``tests/test_stages_api.py``) holds that advance.
+    * ``NORTH-STAR.md`` line 54: "Finish Stage 10, keep as much as you can
+      carry, and begin again at Stage 1 -- a forever rhythm."
+
+    So this test pins the half of that rule the Return owns: **nothing**. It
+    asserts the arc genuinely started -- the caller was eligible, the POST
+    created a row, the arc reports week one -- so it cannot pass merely because
+    the Return silently did nothing at all, which is the failure mode that would
+    make "the stage did not change" true for the wrong reason.
+    """
+    headers = await _signup(async_client, "mr_clearlight_start23")
+    user = await _get_user(db_session, "mr_clearlight_start23@example.com")
+    assert user.id is not None
+    user_id = user.id
+    await _seed_progress(
+        db_session,
+        user_id,
+        current_stage=_CLEAR_LIGHT_STAGE,
+        completed_stages=list(_STAGES_BEFORE_CLEAR_LIGHT),
+        highest_stage_reached=_CLEAR_LIGHT_STAGE,
+    )
+
+    state_resp = await async_client.get(_BASE_URL, headers=headers)
+    assert state_resp.status_code == HTTPStatus.OK
+    assert state_resp.json()["eligible"] is True
+
+    start_resp = await async_client.post(_START_URL, headers=headers)
+    assert start_resp.status_code == HTTPStatus.CREATED
+    assert start_resp.json()["week"] == 1
+
+    db_session.expire_all()
+    arcs = await db_session.execute(
+        select(MettaReturnArc).where(
+            col(MettaReturnArc.user_id) == user_id,
+            col(MettaReturnArc.left_at).is_(None),
+        )
+    )
+    assert len(list(arcs.scalars().all())) == 1
+
+    calendar_resp = await async_client.get(_PROGRAM_CALENDAR_URL, headers=headers)
+    assert calendar_resp.status_code == HTTPStatus.OK
+    calendar = calendar_resp.json()
+    assert calendar["current_stage"] == _CLEAR_LIGHT_STAGE
+    assert calendar["cycle_number"] == _FIRST_CYCLE
+
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    refreshed = result.scalars().one()
+    assert refreshed.current_stage == _CLEAR_LIGHT_STAGE
+    assert refreshed.cycle_number == _FIRST_CYCLE
+    assert list(refreshed.completed_stages) == _STAGES_BEFORE_CLEAR_LIGHT
+    assert refreshed.highest_stage_reached == _CLEAR_LIGHT_STAGE
+
+
+@pytest.mark.asyncio
+async def test_return_lived_out_and_left_from_clear_light_moves_no_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Living the full Return out from Clear Light and setting it down moves no stage either.
+
+    The companion to
+    :func:`test_return_started_from_clear_light_moves_no_stage`, covering the
+    far end of the arc: starting one is not the only moment a demotion could
+    plausibly be wired in. Completing the five weeks, or leaving the arc, are
+    the other two, and neither moves the practitioner.
+
+    The arc here is back-dated past its thirty-five day close so it reports
+    ``complete``, then left -- both asserted, so the test cannot pass on an arc
+    that never ran or a leave that never landed. The stage is read back through
+    the same surface the Map reads, ``GET /stages/program-calendar``, and from
+    the row itself: someone who finishes a Return at Clear Light is still at
+    Clear Light, on their first pass. A Return is a rest, and a rest costs
+    nothing. See the sibling test's docstring for the specification this
+    encodes (the owner's 2026-07-04 decision on #1331 and ``NORTH-STAR.md``
+    line 54) and for why Begin Again, not the Return, is what carries someone
+    from Clear Light to the next lap's first ring.
+    """
+    headers = await _signup(async_client, "mr_clearlight_done24")
+    user = await _get_user(db_session, "mr_clearlight_done24@example.com")
+    assert user.id is not None
+    user_id = user.id
+    await _seed_progress(
+        db_session,
+        user_id,
+        current_stage=_CLEAR_LIGHT_STAGE,
+        completed_stages=list(_STAGES_BEFORE_CLEAR_LIGHT),
+        highest_stage_reached=_CLEAR_LIGHT_STAGE,
+    )
+    started_at = datetime.now(UTC) - timedelta(days=_FINISHED_ARC_DAYS)
+    await _seed_active_arc(db_session, user_id, started_at=started_at)
+
+    state_resp = await async_client.get(_BASE_URL, headers=headers)
+    assert state_resp.status_code == HTTPStatus.OK
+    assert state_resp.json()["arc"]["complete"] is True
+
+    leave_resp = await async_client.post(_LEAVE_URL, headers=headers)
+    assert leave_resp.status_code == HTTPStatus.OK
+
+    calendar_resp = await async_client.get(_PROGRAM_CALENDAR_URL, headers=headers)
+    assert calendar_resp.status_code == HTTPStatus.OK
+    calendar = calendar_resp.json()
+    assert calendar["current_stage"] == _CLEAR_LIGHT_STAGE
+    assert calendar["cycle_number"] == _FIRST_CYCLE
+
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    refreshed = result.scalars().one()
+    assert refreshed.current_stage == _CLEAR_LIGHT_STAGE
+    assert refreshed.cycle_number == _FIRST_CYCLE
+    assert list(refreshed.completed_stages) == _STAGES_BEFORE_CLEAR_LIGHT
