@@ -569,7 +569,6 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
           >
             <PracticeIdentityHeader
               stageNumber={props.stageNumber}
-              practiceName={props.practiceName}
               ritualName={props.effectiveName ?? props.practiceName}
               collapsed={props.status === 'running' || props.status === 'paused'}
               onCustomize={props.onCustomize}

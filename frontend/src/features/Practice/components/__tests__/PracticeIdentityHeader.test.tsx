@@ -2,8 +2,11 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
+import type { TextStyle, ViewStyle } from 'react-native';
 
 import type { FrequencyResponse } from '@/api';
+import { touchTarget } from '@/design/tokens';
 import type { StageData } from '@/features/Map/stageData';
 
 // The shape the header consumes from the restored useFrequency hook.
@@ -68,9 +71,11 @@ const stageFixture = (
   manifestations: [],
 });
 
+/** Minimal shape of a rendered node, for tree walks over `findAll`. */
+type TestNode = { props: Record<string, unknown> };
+
 interface HeaderProps {
   stageNumber: number;
-  practiceName: string;
   ritualName: string;
   collapsed: boolean;
   onCustomize: () => void;
@@ -84,7 +89,6 @@ const renderHeader = (overrides: Partial<HeaderProps> = {}) =>
   render(
     <PracticeIdentityHeader
       stageNumber={1}
-      practiceName="Breath Awareness"
       ritualName="Morning Sit"
       collapsed={false}
       onCustomize={onCustomize}
@@ -104,11 +108,19 @@ describe('PracticeIdentityHeader', () => {
     });
   });
 
-  it('renders the title, ritual name, and stage chip from the frequency payload', () => {
-    const { getByTestId, getByText } = renderHeader();
+  it('titles the header with the effective ritual name, rendered once', () => {
+    const { getAllByText, getByTestId, queryByTestId } = renderHeader({ ritualName: 'Metta - 30' });
     expect(getByTestId('practice-identity-header')).toBeTruthy();
-    expect(getByTestId('practice-identity-title')).toHaveTextContent('Breath Awareness');
-    expect(getByTestId('practice-identity-ritual-name')).toHaveTextContent('Morning Sit');
+    // The headline is the user's own name for the ritual, exactly: not the
+    // catalog base name, and not that name with anything appended to it.
+    expect(getByTestId('practice-identity-title')).toHaveTextContent(/^Metta - 30$/);
+    // Once, not twice — the small subline row that used to repeat it is gone.
+    expect(getAllByText('Metta - 30')).toHaveLength(1);
+    expect(queryByTestId('practice-identity-ritual-name')).toBeNull();
+  });
+
+  it('renders the stage chip and pencil with their accessible names', () => {
+    const { getByTestId, getByText } = renderHeader();
     expect(getByText('BEIGE · Body')).toBeTruthy();
     const chip = getByTestId('practice-stage-chip');
     expect(chip.props.accessibilityRole).toBe('button');
@@ -116,6 +128,40 @@ describe('PracticeIdentityHeader', () => {
     const pencil = getByTestId('practice-customize-pencil');
     expect(pencil.props.accessibilityRole).toBe('button');
     expect(pencil.props.accessibilityLabel).toBe('Customize this ritual');
+  });
+
+  it('sits the pencil on the title row itself, trailing the name', () => {
+    const { getByTestId } = renderHeader({ ritualName: 'Metta - 30' });
+    const row = getByTestId('practice-identity-title-row');
+    const rowStyle = StyleSheet.flatten(row.props.style) as ViewStyle;
+    // One row, vertically centred: the pencil is beside the headline, never
+    // stacked under it on a line of its own.
+    expect(rowStyle.flexDirection).toBe('row');
+    expect(rowStyle.alignItems).toBe('center');
+
+    // Both live inside that row, and the title comes first, so the pencil is
+    // the trailing element rather than a leading one.
+    const ids = row
+      .findAll((node: TestNode) => typeof node.props.testID === 'string')
+      .map((node: TestNode) => node.props.testID as string);
+    const titleAt = ids.indexOf('practice-identity-title');
+    const pencilAt = ids.indexOf('practice-customize-pencil');
+    expect(titleAt).toBeGreaterThanOrEqual(0);
+    expect(pencilAt).toBeGreaterThan(titleAt);
+
+    // The title claims the row's free space, so the pencil is pinned to the
+    // trailing edge instead of butting against the last glyph of the name.
+    const titleStyle = StyleSheet.flatten(
+      getByTestId('practice-identity-title').props.style,
+    ) as TextStyle;
+    expect(titleStyle.flex).toBe(1);
+
+    // Moving the pencil up a row must not shrink its target.
+    const pencilStyle = StyleSheet.flatten(
+      getByTestId('practice-customize-pencil').props.style,
+    ) as ViewStyle;
+    expect(pencilStyle.minWidth).toBe(touchTarget.minimum);
+    expect(pencilStyle.minHeight).toBe(touchTarget.minimum);
   });
 
   it('falls back to the stage store for the chip label when the frequency fetch fails', () => {
@@ -141,7 +187,7 @@ describe('PracticeIdentityHeader', () => {
       refetch: jest.fn(),
     });
     const { getByTestId, queryByTestId } = renderHeader();
-    expect(getByTestId('practice-identity-title')).toHaveTextContent('Breath Awareness');
+    expect(getByTestId('practice-identity-title')).toHaveTextContent(/^Morning Sit$/);
     expect(queryByTestId('practice-stage-chip')).toBeNull();
   });
 
@@ -222,9 +268,12 @@ describe('PracticeIdentityHeader', () => {
     expect(onStageChange).not.toHaveBeenCalled();
   });
 
-  it('collapsed hides the chip, ritual name, and pencil but keeps the title', () => {
-    const { getByTestId, queryByTestId } = renderHeader({ collapsed: true });
-    expect(getByTestId('practice-identity-title')).toHaveTextContent('Breath Awareness');
+  it('collapsed keeps the ritual-name title alone, without chip or pencil', () => {
+    const { getByTestId, queryByTestId } = renderHeader({
+      collapsed: true,
+      ritualName: 'Metta - 30',
+    });
+    expect(getByTestId('practice-identity-title')).toHaveTextContent(/^Metta - 30$/);
     expect(queryByTestId('practice-stage-chip')).toBeNull();
     expect(queryByTestId('practice-customize-pencil')).toBeNull();
     expect(queryByTestId('practice-identity-ritual-name')).toBeNull();
