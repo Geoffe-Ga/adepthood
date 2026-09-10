@@ -162,6 +162,18 @@
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
   },
   {
+    "id": "journal.write-markdown-read-reload",
+    "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "GET /journal/", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-markdown.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.promote-reopen-and-remove-quote",
     "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
     "crosses": {
