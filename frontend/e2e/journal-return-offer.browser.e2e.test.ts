@@ -3,7 +3,10 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import {
   askForResonance,
   backendUrl,
-  setProgramAnchorDaysAgo,
+  bearer,
+  isoDaysAgo,
+  readReturnState,
+  reachReturnEligibility,
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
@@ -43,19 +46,6 @@ import {
 const RETURN_OFFER_TITLE = 'The Return is open to you';
 
 /**
- * How far back the program anchor goes so the calendar has carried the account
- * into the stage that opens the Return.
- *
- * The Return is offered from `domain.metta_return.RETURN_MINIMUM_STAGE` (5,
- * Orange) onward, and `constants/program.STAGE_DURATIONS_DAYS` gives the four
- * windows before it as 21 days each. Landing exactly on a window boundary is
- * what keeps this off the midnight edge: the rewind runs strictly before the
- * read, so a UTC midnight crossing between the two can only make the server
- * count one day more than asked for, never fewer.
- */
-const DAYS_TO_RETURN_STAGE = 84;
-
-/**
  * How long the seeded habit's foundation has been quiet.
  *
  * `domain.contraction.FOUNDATION_UNCHECKED_CONSECUTIVE_DAYS` is 14, so a habit
@@ -76,73 +66,6 @@ const ONE_START = 1;
 
 const OK = 200;
 const CREATED = 201;
-
-const MS_PER_DAY = 86_400_000;
-/** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
-const ISO_DATE_LENGTH = 10;
-
-/** One week of the arc, as `GET /metta-return` projects it. */
-interface ReturnWeek {
-  week_number: number;
-  focus: string;
-  title: string;
-  framing: string;
-}
-
-/** The caller's active arc, as `GET /metta-return` projects it. */
-interface ReturnArc {
-  started_at: string;
-  paused: boolean;
-  week: number;
-  focus: string;
-  complete: boolean;
-}
-
-/** The Return surface the server reports for the caller. */
-interface ReturnState {
-  eligible: boolean;
-  weeks: ReturnWeek[];
-  arc: ReturnArc | null;
-  offer_dismissed: boolean;
-}
-
-function bearer(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}` };
-}
-
-/** The calendar date `days` days before now, as the habit schema spells one. */
-function isoDaysAgo(days: number): string {
-  return new Date(Date.now() - days * MS_PER_DAY).toISOString().slice(0, ISO_DATE_LENGTH);
-}
-
-/** Read the Return surface out of band, so the browser's own state is never the witness. */
-async function readReturnState(request: APIRequestContext, token: string): Promise<ReturnState> {
-  const response = await request.get(`${backendUrl()}/metta-return`, { headers: bearer(token) });
-  expect(response.status()).toBe(OK);
-  return (await response.json()) as ReturnState;
-}
-
-/**
- * Carry the account into the stage that opens the Return, and prove the arrange
- * took.
- *
- * Eligibility is read before and after: an arrange that quietly did nothing
- * would otherwise leave every assertion below describing a `simple_ease_off`
- * account that was never offered a Return at all.
- */
-async function reachReturnEligibility(
-  request: APIRequestContext,
-  token: string,
-  email: string,
-): Promise<void> {
-  expect((await readReturnState(request, token)).eligible).toBe(false);
-  setProgramAnchorDaysAgo(email, DAYS_TO_RETURN_STAGE);
-  // Reading the Map is what records entry into the window the calendar opened;
-  // the rewind alone moves the calendar and deliberately not the record.
-  const visit = await request.get(`${backendUrl()}/stages`, { headers: bearer(token) });
-  expect(visit.status()).toBe(OK);
-  expect((await readReturnState(request, token)).eligible).toBe(true);
-}
 
 /** Seed a habit whose foundation has been quiet long enough to name a contraction. */
 async function seedQuietHabit(request: APIRequestContext, token: string): Promise<void> {
