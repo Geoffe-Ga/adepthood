@@ -68,7 +68,14 @@ import type {
 import { Button } from '@/components/Button';
 import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
 import { useAuth } from '@/context/AuthContext';
-import { accent, colors, writingField, writingFieldFocus } from '@/design/tokens';
+import {
+  accent,
+  colors,
+  editorialType,
+  spacing,
+  writingField,
+  writingFieldFocus,
+} from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -88,6 +95,14 @@ const PHOTOGRAPH_PAGE_HINT =
 
 /** Body-field placeholder for a free-write with no prompt to echo. */
 const DEFAULT_BODY_PLACEHOLDER = 'Begin writing…';
+
+/** One visual title line, including the field's vertical paper padding. */
+const TITLE_MIN_HEIGHT = editorialType.title.lineHeight + spacing(2);
+
+/** Keep title state single-line regardless of whether text arrived by paste, route, or API. */
+function singleLineTitle(title: string): string {
+  return title.replace(/[\r\n]+/g, ' ');
+}
 
 /** Fallback reason shown when resonance is gated off for an intimate entry. */
 const INTIMATE_RESONANCE_REASON = 'Intimate entries are kept private — resonance is paused.';
@@ -1042,7 +1057,8 @@ function useLocalEntryState(
   initialReflectionLevel?: ReflectionLevel,
   initialReflectionScopeKey?: string,
 ): MutableEntryState {
-  const [title, setTitle] = useState(initialText.title);
+  const initialTitle = singleLineTitle(initialText.title);
+  const [title, setTitle] = useState(initialTitle);
   const [body, setBody] = useState(initialText.body);
   const [status, setStatus] = useState<EntryStatus>('draft');
   const [classification, setClassification] =
@@ -1052,7 +1068,7 @@ function useLocalEntryState(
   const [loaded, setLoaded] = useState(false);
   const [reflectionLevel, setReflectionLevel] = useState(initialReflectionLevel);
   const [reflectionScopeKey, setReflectionScopeKey] = useState(initialReflectionScopeKey);
-  const titleRef = useRef(initialText.title);
+  const titleRef = useRef(initialTitle);
   const bodyRef = useRef(initialText.body);
   const loadedTextRef = useRef<DraftText | null>(null);
   return {
@@ -1097,7 +1113,7 @@ function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage)
   } = state;
   return useCallback(
     (entry: JournalMessage) => {
-      titleRef.current = entry.title ?? '';
+      titleRef.current = singleLineTitle(entry.title ?? '');
       bodyRef.current = entry.message;
       loadedTextRef.current = { title: titleRef.current, body: bodyRef.current };
       setTitle(titleRef.current);
@@ -1438,14 +1454,16 @@ function useGrowingFieldHeight(minHeight = 0) {
 function GrowingTitle({
   title,
   onChangeTitle,
-}: Pick<WritingColumnProps, 'title' | 'onChangeTitle'>) {
-  const growth = useGrowingFieldHeight();
+  onSubmit,
+}: Pick<WritingColumnProps, 'title' | 'onChangeTitle'> & { onSubmit: () => void }) {
+  const growth = useGrowingFieldHeight(TITLE_MIN_HEIGHT);
   return (
     <TextInput
       style={[styles.titleInput, writingFieldFocus, growth.style]}
       value={title}
-      onChangeText={onChangeTitle}
+      onChangeText={(next) => onChangeTitle(singleLineTitle(next))}
       onContentSizeChange={growth.onContentSizeChange}
+      onSubmitEditing={onSubmit}
       placeholder="Title"
       placeholderTextColor={colors.paper.inkSoft}
       selectionColor={writingField.caret}
@@ -1453,6 +1471,9 @@ function GrowingTitle({
       accessibilityLabel="Entry title"
       testID="journal-title-input"
       multiline
+      numberOfLines={1}
+      blurOnSubmit
+      returnKeyType="next"
       scrollEnabled={false}
     />
   );
@@ -1492,8 +1513,10 @@ function GrowingBody({
   onChangeBody,
   onBodySelectionChange,
   bodyPlaceholder,
+  inputRef,
 }: Pick<WritingColumnProps, 'body' | 'onChangeBody' | 'onBodySelectionChange'> & {
   bodyPlaceholder: string;
+  inputRef: React.RefObject<TextInput | null>;
 }) {
   const viewportHeight = useWindowDimensions().height;
   const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
@@ -1501,6 +1524,7 @@ function GrowingBody({
   const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange);
   return (
     <TextInput
+      ref={inputRef}
       style={[styles.bodyInput, writingFieldFocus, growth.style]}
       value={body}
       onChangeText={markdown.changeBody}
@@ -1526,15 +1550,21 @@ function WritingFields(
     'title' | 'body' | 'onChangeTitle' | 'onChangeBody' | 'onBodySelectionChange'
   > & { bodyPlaceholder: string },
 ) {
+  const bodyInputRef = useRef<TextInput>(null);
   return (
     <>
-      <GrowingTitle title={props.title} onChangeTitle={props.onChangeTitle} />
+      <GrowingTitle
+        title={props.title}
+        onChangeTitle={props.onChangeTitle}
+        onSubmit={() => bodyInputRef.current?.focus()}
+      />
       <View style={styles.hairline} />
       <GrowingBody
         body={props.body}
         onChangeBody={props.onChangeBody}
         onBodySelectionChange={props.onBodySelectionChange}
         bodyPlaceholder={props.bodyPlaceholder}
+        inputRef={bodyInputRef}
       />
     </>
   );

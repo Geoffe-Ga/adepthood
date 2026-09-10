@@ -186,6 +186,18 @@
     "coveredBy": "frontend/e2e/journal-close-save.browser.e2e.test.ts"
   },
   {
+    "id": "journal.write-a-single-line-title",
+    "description": "A writer opens a fresh Journal page whose title occupies one line before they type. A long title can still wrap visually, pasted line breaks collapse to spaces, and Return moves the caret into the body without becoming stored title data. Closing crosses the production client and create route, and the returned durable row carries the exact single-line title; schema tests separately pin the server-side defence for non-UI create and update callers.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-title-single-line.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.promote-reopen-and-remove-quote",
     "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
     "crosses": {

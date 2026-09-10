@@ -348,6 +348,25 @@ async def test_submit_with_title_override_is_persisted(async_client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_submit_collapses_title_line_breaks_before_persisting(
+    async_client: AsyncClient,
+) -> None:
+    headers = await _signup(async_client, "title_line_breaks")
+    response = await async_client.post(
+        "/prompts/1/respond",
+        json={
+            "response": "Safety means having a stable home.",
+            "title": "First line\r\nSecond line\n\nThird line",
+        },
+        headers=headers,
+    )
+    assert response.status_code == HTTPStatus.CREATED
+
+    journal_resp = await async_client.get("/journal/", headers=headers)
+    assert journal_resp.json()["items"][0]["title"] == "First line Second line Third line"
+
+
+@pytest.mark.asyncio
 async def test_submit_with_whitespace_only_title_falls_back_to_default(
     async_client: AsyncClient,
 ) -> None:

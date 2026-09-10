@@ -8,7 +8,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 
 import type { JournalMessage } from '@/api';
-import { colors, writingField, writingFieldFocus } from '@/design/tokens';
+import { colors, editorialType, spacing, writingField, writingFieldFocus } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -344,13 +344,43 @@ describe('JournalEntryScreen', () => {
     const { getByTestId } = renderScreen();
     const title = getByTestId('journal-title-input');
     expect(title.props.multiline).toBe(true);
+    expect(title.props.numberOfLines).toBe(1);
     expect(title.props.scrollEnabled).toBe(false);
+    expect(StyleSheet.flatten(title.props.style).height).toBe(
+      editorialType.title.lineHeight + spacing(2),
+    );
 
     fireEvent(title, 'contentSizeChange', {
       nativeEvent: { contentSize: { width: 600, height: 118 } },
     });
 
     expect(StyleSheet.flatten(getByTestId('journal-title-input').props.style).height).toBe(118);
+  });
+
+  it('collapses pasted title line breaks and exposes Return as a next-field action', () => {
+    const { getByTestId } = renderScreen();
+    const title = getByTestId('journal-title-input');
+
+    fireEvent.changeText(title, 'First line\r\nSecond line\n\nThird line');
+    expect(getByTestId('journal-title-input').props.value).toBe(
+      'First line Second line Third line',
+    );
+
+    expect(title.props.returnKeyType).toBe('next');
+    expect(title.props.blurOnSubmit).toBe(true);
+    expect(title.props.onSubmitEditing).toEqual(expect.any(Function));
+  });
+
+  it('normalises line breaks from route-prefilled and loaded titles', async () => {
+    const prefilled = renderScreen({ prefillTitle: 'Course\nReflection' });
+    expect(prefilled.getByTestId('journal-title-input').props.value).toBe('Course Reflection');
+    prefilled.unmount();
+
+    mockGet.mockResolvedValueOnce(entry({ title: 'Older\r\nImported\nTitle' }));
+    const loaded = renderScreen({ entryId: 7 });
+    await waitFor(() =>
+      expect(loaded.getByTestId('journal-title-input').props.value).toBe('Older Imported Title'),
+    );
   });
 
   it('moves metadata, writing, and marginalia through one shared scroll surface', () => {
