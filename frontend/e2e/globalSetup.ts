@@ -28,6 +28,14 @@ const BOOT_TIMEOUT_MS = 180_000;
 const SECRET_KEY_BYTES = 32;
 const DATABASE_SUFFIX_BYTES = 6;
 const CREDENTIAL_BYTES = 32;
+const PROVIDER_KEY_BYTES = 24;
+const PROBE_TOKEN_BYTES = 24;
+// The prefixes each provider's key format requires, and which
+// `botmason.provider_for_api_key` routes on: a BYOK key selects its own
+// provider, so these are what send the caller's-key branch to OpenAI and leave
+// the server's own key on Anthropic.
+const OPENAI_KEY_PREFIX = 'sk-e2e-'; // pragma: allowlist secret
+const ANTHROPIC_KEY_PREFIX = 'sk-ant-e2e-'; // pragma: allowlist secret
 
 /**
  * The email backend the lane boots the server with, and the file it writes to.
@@ -111,6 +119,134 @@ interface CreekFixture {
   callbackFile: string;
 }
 
+/**
+ * The loopback provider fake, the keys it recognises, and the token that routes
+ * one marked prompt to it.
+ *
+ * The lane's server runs the stub provider, which cannot refuse for billing --
+ * it has no account at all -- so the spent-balance journey had no way to
+ * happen. These are what make it happen without weakening anything: the SDKs'
+ * own base-URL variables point at this process, the keys decide which refusal
+ * it answers with (an exhausted balance is a property of an account, not of a
+ * request), and the probe token is the only way a request paid for by the
+ * *server's* key can reach a provider on a stub-configured deployment.
+ */
+interface ProviderFixture {
+  pid: number;
+  port: number;
+  keyDir: string;
+  spentOpenaiKey: string;
+  throttledOpenaiKey: string;
+  spentAnthropicKey: string;
+  probeToken: string;
+  keyFiles: { spentOpenai: string; throttledOpenai: string; spentAnthropic: string };
+}
+
+/** A per-run credential of the shape the named provider's keys carry. */
+function providerKey(prefix: string): string {
+  return `${prefix}${randomBytes(PROVIDER_KEY_BYTES).toString('hex')}`;
+}
+
+/**
+ * Mint the fake's keys and write them where only it can read them.
+ *
+ * Files rather than arguments, for the reason the Creek fixture uses files: an
+ * argument vector is world-readable through `/proc`, and these are handed to a
+ * second process.
+ */
+function createProviderKeys(): Omit<ProviderFixture, 'pid' | 'port'> {
+  const keyDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-llm-'));
+  const values = {
+    spentOpenai: providerKey(OPENAI_KEY_PREFIX),
+    throttledOpenai: providerKey(OPENAI_KEY_PREFIX),
+    spentAnthropic: providerKey(ANTHROPIC_KEY_PREFIX),
+  };
+  const keyFiles = {
+    spentOpenai: join(keyDir, 'spent-openai'),
+    throttledOpenai: join(keyDir, 'throttled-openai'),
+    spentAnthropic: join(keyDir, 'spent-anthropic'),
+  };
+  for (const [role, path] of Object.entries(keyFiles)) {
+    writeFileSync(path, values[role as keyof typeof values], { encoding: 'utf8', mode: 0o600 });
+  }
+  return {
+    keyDir,
+    keyFiles,
+    spentOpenaiKey: values.spentOpenai,
+    throttledOpenaiKey: values.throttledOpenai,
+    spentAnthropicKey: values.spentAnthropic,
+    probeToken: randomBytes(PROBE_TOKEN_BYTES).toString('base64url'),
+  };
+}
+
+function launchFakeProvider(): Promise<ProviderFixture> {
+  const fixture = createProviderKeys();
+  const child = spawn(process.execPath, [join(__dirname, 'fakeLlmProvider.mjs')], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      FAKE_LLM_SPENT_OPENAI_KEY_FILE: fixture.keyFiles.spentOpenai,
+      FAKE_LLM_THROTTLED_OPENAI_KEY_FILE: fixture.keyFiles.throttledOpenai,
+      FAKE_LLM_SPENT_ANTHROPIC_KEY_FILE: fixture.keyFiles.spentAnthropic,
+    },
+  });
+  return new Promise<ProviderFixture>((resolvePort, reject) => {
+    let log = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), BOOT_TIMEOUT_MS);
+    const fail = (reason: string): void => {
+      clearTimeout(timer);
+      rmSync(fixture.keyDir, { recursive: true, force: true });
+      reject(new Error(`${reason}\n--- fake LLM provider output ---\n${log}`));
+    };
+    const onChunk = (chunk: Buffer): void => {
+      log += chunk.toString();
+      const match = /FAKE_LLM_READY port=(\d+)/u.exec(log);
+      if (!match?.[1]) return;
+      clearTimeout(timer);
+      resolvePort({ ...fixture, pid: child.pid ?? 0, port: Number(match[1]) });
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('exit', (code, signal) =>
+      fail(`the fake LLM provider exited (${String(code)}, ${String(signal)}) before ready`),
+    );
+    child.on('error', (error: Error) =>
+      fail(`could not start the fake LLM provider: ${error.message}`),
+    );
+  });
+}
+
+/** The half of the run's state the provider fake contributes, for both writes. */
+type ProviderLaneState = Pick<
+  LaneState,
+  | 'providerPid'
+  | 'providerUrl'
+  | 'providerKeyDir'
+  | 'spentOpenaiKey'
+  | 'throttledOpenaiKey'
+  | 'providerProbeToken'
+>;
+
+/**
+ * Project the launched fake onto the fields a journey and teardown read.
+ *
+ * Written once and spread into both `writeLaneState` calls: the pre-boot write
+ * exists so a server that never comes up still has its fake reaped, and two
+ * hand-copied literals would be one edit away from disagreeing about which
+ * process to kill.
+ */
+function providerLaneState(provider: ProviderFixture): ProviderLaneState {
+  return {
+    providerPid: provider.pid,
+    providerUrl: `http://127.0.0.1:${provider.port}`,
+    providerKeyDir: provider.keyDir,
+    spentOpenaiKey: provider.spentOpenaiKey,
+    throttledOpenaiKey: provider.throttledOpenaiKey,
+    providerProbeToken: provider.probeToken,
+  };
+}
+
 /** Create the per-run directory the capture backend appends its mail to. */
 function createMailFixture(): MailFixture {
   const mailDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-mail-'));
@@ -182,6 +318,7 @@ function serverEnvironment(
   adminUrl: string,
   creek: CreekFixture,
   mail: MailFixture,
+  provider: ProviderFixture,
 ): typeof process.env {
   return {
     ...process.env,
@@ -195,6 +332,24 @@ function serverEnvironment(
     EMAIL_BACKEND,
     EMAIL_CAPTURE_FILE: mail.captureFile,
     APP_BASE_URL: mail.webBaseUrl,
+    // `BOTMASON_PROVIDER` stays unset, so every journey keeps the stub: no key,
+    // no network, no third party. The four settings below matter only to a
+    // request that reaches a provider at all, which on this server means one
+    // carrying a BYOK key or the probe token -- one journey, deliberately.
+    //
+    // The base URLs are the SDKs' own variables, so nothing here is patched:
+    // the OpenAI and Anthropic clients the production code builds address this
+    // loopback fake the way they would address the real thing, and the errors
+    // they raise are ones they constructed from its response bodies. That is
+    // the whole point -- injecting the typed error would prove the routing and
+    // assume the classification.
+    OPENAI_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${provider.port}`,
+    // Whose key the server itself spends, pointed at the account the fake
+    // treats as having no credit -- which is what the 503 half of the split
+    // ("ours to restore, not yours") is about.
+    LLM_API_KEY: provider.spentAnthropicKey,
+    BOTMASON_PROVIDER_PROBE_TOKEN: provider.probeToken,
   };
 }
 
@@ -204,12 +359,13 @@ function launchServer(
   adminUrl: string,
   creek: CreekFixture,
   mail: MailFixture,
+  provider: ProviderFixture,
 ): Promise<Launch> {
   const child = spawn(pythonExecutable(), ['-m', 'tests.e2e.server'], {
     cwd: BACKEND_DIR,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: serverEnvironment(databaseUrl, adminUrl, creek, mail),
+    env: serverEnvironment(databaseUrl, adminUrl, creek, mail, provider),
   });
 
   return new Promise<Launch>((resolvePort, reject) => {
@@ -256,6 +412,8 @@ export default async function globalSetup(): Promise<void> {
 
   const mail = createMailFixture();
   const creek = await launchFakeCreek();
+  const provider = await launchFakeProvider();
+  const providerState = providerLaneState(provider);
   writeLaneState({
     pid: 0,
     creekPid: creek.pid,
@@ -266,10 +424,11 @@ export default async function globalSetup(): Promise<void> {
     mailDir: mail.mailDir,
     emailCaptureFile: mail.captureFile,
     webBaseUrl: mail.webBaseUrl,
+    ...providerState,
   });
 
   try {
-    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek, mail);
+    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek, mail, provider);
     const baseUrl = `http://127.0.0.1:${port}`;
     writeFileSync(creek.callbackFile, baseUrl, { encoding: 'utf8', mode: 0o600 });
     const state: LaneState = {
@@ -282,6 +441,7 @@ export default async function globalSetup(): Promise<void> {
       mailDir: mail.mailDir,
       emailCaptureFile: mail.captureFile,
       webBaseUrl: mail.webBaseUrl,
+      ...providerState,
     };
     writeLaneState(state);
     await assertHealthy(baseUrl);
