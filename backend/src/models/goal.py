@@ -99,4 +99,15 @@ class Goal(SQLModel, table=True):
     goal_group: Optional["GoalGroup"] = Relationship(back_populates="goals")
     is_additive: bool = True
     habit: "Habit" = Relationship(back_populates="goals")
+    # Deliberately no delete cascade, and it must stay that way knowingly: the
+    # SQLAlchemy default for a one-to-many is to *de-associate* the children
+    # when their parent goes, so deleting a goal through the ORM would emit
+    # ``UPDATE goalcompletion SET goal_id=NULL`` against a NOT NULL column.
+    # That is precisely how #2763 broke habit deletion, and the reason it is
+    # not a live defect here is that nothing deletes a goal through the ORM --
+    # ``DELETE /habits/{id}`` hands the whole cascade to the database (see
+    # :attr:`~models.habit.Habit.goals`) and there is no goal-delete route.
+    # A future one has to remove these rows itself or add ``passive_deletes``
+    # alongside a delete cascade; adding either now would be config no test
+    # can reach.
     completions: list["GoalCompletion"] = Relationship(back_populates="goal")

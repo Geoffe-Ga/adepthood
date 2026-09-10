@@ -9,6 +9,7 @@ import type { CaptureResult, MultiPickResult, PickedAsset } from '../pickJournal
 import { TranscriptionError } from '@/api';
 import type { JournalMessage, MediaType, TranscribePageT, TranscriptionErrorKind } from '@/api';
 import { toISODate } from '@/components/DatePicker';
+import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 
 // Real-clock-relative dates stay deterministic without fake timers (which leak into RNTL waitFor).
 const isoOffsetFromToday = (days: number): string => {
@@ -167,8 +168,13 @@ function makeEntry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
-function renderScreen() {
-  const route = { key: 'k', name: 'JournalPhotograph' as const, params: undefined };
+/** The route params the append-mode entry point arrives with. */
+interface PhotographParams {
+  appendTo?: string;
+}
+
+function renderScreen(params?: PhotographParams) {
+  const route = { key: 'k', name: 'JournalPhotograph' as const, params };
   const navigation = {
     navigate: jest.fn(),
     goBack: jest.fn(),
@@ -177,6 +183,14 @@ function renderScreen() {
   };
   const Screen = JournalPhotographScreen as unknown as React.ComponentType<Record<string, unknown>>;
   return { ...render(<Screen navigation={navigation} route={route} />), navigation };
+}
+
+/** The hand-off token the open journal entry addressed this capture to. */
+const APPEND_TOKEN = 'capture-1';
+
+/** Render the screen the way the open journal entry opens it: in append mode. */
+function renderAppendScreen() {
+  return renderScreen({ appendTo: APPEND_TOKEN });
 }
 
 /** One deferred transcription call: resolve/reject it whenever the test wants. */
@@ -216,6 +230,9 @@ beforeEach(() => {
   mockReleaseAllPageFiles.mockResolvedValue(undefined);
   mockReleaseUris.mockReset();
   mockReleaseUris.mockResolvedValue(undefined);
+  act(() => {
+    useCapturedTranscriptStore.getState().clear();
+  });
 });
 
 describe('JournalPhotographScreen — auto-launch', () => {
@@ -1727,5 +1744,163 @@ describe('JournalPhotographScreen — classification threaded into save', () => 
     expect(mockCreate.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({ classification: 'public' }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Append mode: the same capture, handed back to the page already being written
+// ---------------------------------------------------------------------------
+
+describe('JournalPhotographScreen — append into the open entry', () => {
+  /** Drive one page through the shared capture flow to the review stage. */
+  async function transcribeThenPress(
+    screen: ReturnType<typeof renderAppendScreen>,
+    confirmTestId: string,
+  ): Promise<void> {
+    fireEvent.press(await screen.findByTestId('capture-transcribe'));
+    await screen.findByTestId('photograph-block-1-input');
+    fireEvent.press(await screen.findByTestId(confirmTestId));
+  }
+
+  it('offers Add-to-entry instead of Save-this-entry', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+
+    const screen = renderAppendScreen();
+    fireEvent.press(await screen.findByTestId('capture-transcribe'));
+    await screen.findByTestId('photograph-block-1-input');
+
+    expect(await screen.findByTestId('photograph-append')).toBeTruthy();
+    expect(screen.queryByTestId('photograph-save')).toBeNull();
+  });
+
+  it('hands the merged transcript back under the token it was opened with', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    mockTranscribe.mockResolvedValueOnce({ text: 'Page one.' });
+    mockTranscribe.mockResolvedValueOnce({ text: 'Page two.' });
+
+    const screen = renderAppendScreen();
+    await transcribeThenPress(screen, 'photograph-append');
+
+    await waitFor(() =>
+      expect(useCapturedTranscriptStore.getState().pending).toEqual({
+        token: APPEND_TOKEN,
+        text: 'Page one.\n\nPage two.',
+      }),
+    );
+  });
+
+  it('creates no second entry — the open page owns the write', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+
+    const screen = renderAppendScreen();
+    await transcribeThenPress(screen, 'photograph-append');
+
+    await waitFor(() => expect(screen.navigation.goBack).toHaveBeenCalledTimes(1));
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(screen.navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it('releases every page image once the transcript is handed back', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+
+    const screen = renderAppendScreen();
+    await transcribeThenPress(screen, 'photograph-append');
+
+    await waitFor(() => expect(mockReleaseAllPageFiles).toHaveBeenCalled());
+  });
+
+  it('hands back the hand-edited transcript, not the raw transcription', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Misread scrawl.' });
+
+    const screen = renderAppendScreen();
+    fireEvent.press(await screen.findByTestId('capture-transcribe'));
+    fireEvent.changeText(
+      await screen.findByTestId('photograph-block-1-input'),
+      'What it actually said.',
+    );
+    fireEvent.press(await screen.findByTestId('photograph-append'));
+
+    await waitFor(() =>
+      expect(useCapturedTranscriptStore.getState().pending?.text).toBe('What it actually said.'),
+    );
+  });
+
+  it('withholds the entry-date row: the open page already has its own date', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+
+    const screen = renderAppendScreen();
+    await screen.findByTestId('capture-pages-list');
+
+    expect(screen.queryByTestId('capture-entry-date')).toBeNull();
+  });
+
+  it('still refuses to transcribe an intimate page', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+
+    const screen = renderAppendScreen();
+    await screen.findByTestId('capture-pages-list');
+    fireEvent.press(screen.getByTestId('privacy-tier-intimate'));
+    expect(screen.getByTestId('capture-transcribe').props.accessibilityState.disabled).toBe(true);
+    // Reach past the rendered button to the handler it was given, rather than
+    // pressing it: a disabled press is swallowed before it arrives, so it can
+    // only ever prove the disabled state. The claim under test is the SECOND
+    // defence — that the gate itself refuses even when the first is bypassed.
+    const control = screen.UNSAFE_getByProps({ testID: 'capture-transcribe' });
+    await act(async () => {
+      (control.props as { onPress: () => void }).onPress();
+      await Promise.resolve();
+    });
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(useCapturedTranscriptStore.getState().pending).toBeNull();
+    expect(screen.queryByTestId('photograph-append')).toBeNull();
+  });
+
+  it('returns the writer to the page they were on from the intimate offramp', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+
+    const screen = renderAppendScreen();
+    await screen.findByTestId('capture-pages-list');
+    fireEvent.press(screen.getByTestId('privacy-tier-intimate'));
+    fireEvent.press(await screen.findByTestId('capture-type-instead'));
+
+    await waitFor(() => expect(screen.navigation.goBack).toHaveBeenCalledTimes(1));
+    expect(screen.navigation.navigate).not.toHaveBeenCalled();
+    expect(mockReleaseAllPageFiles).toHaveBeenCalled();
+  });
+
+  it('returns the writer to the page they were on when transcription cannot work at all', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+
+    const screen = renderAppendScreen();
+    fireEvent.press(await screen.findByTestId('capture-transcribe'));
+    fireEvent.press(await screen.findByTestId('photograph-typed-entry'));
+
+    await waitFor(() => expect(screen.navigation.goBack).toHaveBeenCalledTimes(1));
+    expect(screen.navigation.navigate).not.toHaveBeenCalled();
+  });
+
+  it('leaves the ordinary shelf capture saving a new entry, exactly as before', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 77 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 77, status: 'finished' }));
+
+    const screen = renderScreen();
+    await transcribeThenPress(screen, 'photograph-save');
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    expect(useCapturedTranscriptStore.getState().pending).toBeNull();
+    expect(screen.navigation.replace).toHaveBeenCalledWith('JournalEntry', {
+      entryId: 77,
+      justSaved: true,
+    });
   });
 });

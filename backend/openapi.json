@@ -4422,6 +4422,26 @@
         "title": "PracticeSessionWeeklyCount",
         "type": "object"
       },
+      "PracticeStatsResponse": {
+        "additionalProperties": false,
+        "description": "All-time totals returned by ``GET /practice-sessions/stats``.\n\nMirrors :class:`domain.practice_stats.PracticeStats` field for field so the\nrouter re-shapes with one ``model_validate``.  ``extra=\"forbid\"`` for the\nsame reason ``WeekCountResponse`` sets it: the wire shape stays exactly\nthese two keys.",
+        "properties": {
+          "total_minutes": {
+            "title": "Total Minutes",
+            "type": "number"
+          },
+          "total_sessions": {
+            "title": "Total Sessions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_sessions",
+          "total_minutes"
+        ],
+        "title": "PracticeStatsResponse",
+        "type": "object"
+      },
       "PracticeTagCreate": {
         "description": "Body accepted by ``POST /practice-tags``.\n\nThe router always sets ``owner_user_id`` from the JWT subject, so\nthe body never carries it.  Clients cannot create a system tag.",
         "properties": {
@@ -12758,7 +12778,7 @@
     },
     "/habits/{habit_id}": {
       "delete": {
-        "description": "Delete a habit and cascade its goals + completions via the FK cascade.",
+        "description": "Delete a habit, and with it every goal, completion and release it owns.",
         "operationId": "delete_habit_habits__habit_id__delete",
         "parameters": [
           {
@@ -14271,7 +14291,7 @@
     },
     "/journal/marginalia/{marginalia_id}/essay": {
       "post": {
-        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call. Ownership is enforced via the marginalia's own ``user_id`` (404\notherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).",
+        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call. Ownership is enforced via the marginalia's own ``user_id`` (404\notherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again.",
         "operationId": "expand_marginalia_essay_journal_marginalia__marginalia_id__essay_post",
         "parameters": [
           {
@@ -18384,6 +18404,127 @@
           }
         },
         "summary": "Get Insights",
+        "tags": [
+          "practice-sessions"
+        ]
+      }
+    },
+    "/practice-sessions/stats": {
+      "get": {
+        "description": "Return all-time totals — sessions and minutes — for one practice.\n\nOwnership of the query-carried ``user_practice_id`` runs through\n:func:`dependencies.ownership.require_owned_user_practice_from_query`, the\nsame dependency ``GET /practice-sessions/`` uses, so a missing row is 404\nand another user's row is 403 with a ``resource_access_denied`` audit line —\nnever an empty-looking 200 that doubles as an existence oracle.\n\nWhich sessions count is settled in :mod:`domain.practice_stats`: rows with a\npositive duration, agreeing with the insights rollup a practitioner already\nreads and diverging from the unfiltered legacy ``week-count`` route.  That\nmodule's docstring carries the reasoning.\n\nThe response is ``private, no-store`` for the reason #2654 established: this\ntotal is read from a screen one tap away from the player that writes the\nrows it counts, so a freshness lifetime would let the browser answer the\npost-save re-read with the pre-save number out of its own cache.",
+        "operationId": "get_practice_stats_practice_sessions_stats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_practice_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "User Practice Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Practice Stats",
         "tags": [
           "practice-sessions"
         ]

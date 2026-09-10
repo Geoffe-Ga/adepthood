@@ -376,3 +376,18 @@ class PracticeInsightsResponse(BaseModel):
     avg_duration_minutes_30d: float | None = None
     per_mode_counts: dict[str, int]
     last_insight: str | None = None
+
+
+class PracticeStatsResponse(BaseModel):
+    """All-time totals returned by ``GET /practice-sessions/stats``.
+
+    Mirrors :class:`domain.practice_stats.PracticeStats` field for field so the
+    router re-shapes with one ``model_validate``.  ``extra="forbid"`` for the
+    same reason ``WeekCountResponse`` sets it: the wire shape stays exactly
+    these two keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_sessions: int
+    total_minutes: float

@@ -24,9 +24,13 @@ import pytest
 from domain.detection import DetectionCandidate, build_detection_prompt, detect_completions
 from domain.resonance import (
     ANCHOR_TEXT_MAX,
+    ESSAY_TASK_INSTRUCTION,
     MARGINALIA_JSON_SHAPE,
+    PROMPT_ECHO_MARKERS,
+    MarginaliaAnchored,
     build_prompt,
     explain_no_notes,
+    generate_essay,
     generate_marginalia,
 )
 from services.botmason import STUB_MODEL_NAME, STUB_PROVIDER_NAME, generate_response
@@ -178,3 +182,90 @@ async def test_a_pass_the_stub_declines_leaves_the_writer_a_sentence() -> None:
     message = explain_no_notes(outcome)
     assert message is not None
     assert message.strip() != ""
+
+
+# --- The essay ask (#2762) -------------------------------------------------
+
+_ANCHORED = MarginaliaAnchored(
+    kind="theme",
+    anchor_start=ENTRY.index(CLOSING_SENTENCE),
+    anchor_end=ENTRY.index(CLOSING_SENTENCE) + len(CLOSING_SENTENCE),
+    anchor_text=CLOSING_SENTENCE,
+    note="You set this down plainly, and then moved past it.",
+)
+
+
+class _PromptRecorder:
+    """A ``ResonanceLLM`` that serves the real stub and keeps the prompt it sent."""
+
+    def __init__(self) -> None:
+        self.prompt: str | None = None
+        self._inner = BotmasonResonanceLLM(None)
+
+    async def complete(self, prompt: str) -> str:
+        self.prompt = prompt
+        return await self._inner.complete(prompt)
+
+
+async def _stub_essay_prompt() -> str:
+    """Return the essay prompt exactly as ``generate_essay`` builds it."""
+    recorder = _PromptRecorder()
+    await generate_essay(llm=recorder, body=ENTRY, note=_ANCHORED)
+    assert recorder.prompt is not None
+    return recorder.prompt
+
+
+@pytest.mark.asyncio
+async def test_the_essay_ask_gets_a_letter_not_the_prompt_back() -> None:
+    """The default provider answers the essay prompt with something readable.
+
+    Before #2762 this prompt fell through to the canned chat sentence, which
+    quotes its whole input -- so a stub-served letter was the app's own prompt,
+    medication guardrail included, handed to the writer.
+    """
+    completion = canned_completion(await _stub_essay_prompt())
+
+    assert completion is not None
+    assert completion.strip() != ""
+    for marker in PROMPT_ECHO_MARKERS:
+        assert marker not in completion
+
+
+@pytest.mark.asyncio
+async def test_the_canned_letter_quotes_the_passage_it_expands() -> None:
+    """It is a letter about *this* note, not a fortune cookie.
+
+    Quoting the writer verbatim also exercises the guard's one real risk: a
+    letter that repeats the writer's words must survive it.
+    """
+    completion = canned_completion(await _stub_essay_prompt())
+
+    assert completion is not None
+    assert CLOSING_SENTENCE in completion
+
+
+@pytest.mark.asyncio
+async def test_an_essay_that_survives_the_guard_comes_back_from_the_domain() -> None:
+    """End of the seam: the stub's letter is published rather than refused."""
+    essay = await generate_essay(llm=BotmasonResonanceLLM(None), body=ENTRY, note=_ANCHORED)
+
+    assert essay is not None
+    assert CLOSING_SENTENCE in essay
+
+
+def test_an_essay_ask_with_no_passage_block_is_not_answered() -> None:
+    """Both halves of the marker are required, as on the marginalia side.
+
+    A prompt naming the task but carrying no passage is a shape this module does
+    not recognise, and inventing a letter about nothing would be worse than
+    declining.
+    """
+    assert canned_completion(f"Some other ask. {ESSAY_TASK_INSTRUCTION}") is None
+
+
+def test_the_marginalia_ask_still_gets_json_not_a_letter() -> None:
+    """The half that already worked keeps working: essay recognition is additive."""
+    completion = canned_completion(build_prompt(ENTRY))
+
+    assert completion is not None
+    assert _notes(completion)[0]["quote"] == CLOSING_SENTENCE

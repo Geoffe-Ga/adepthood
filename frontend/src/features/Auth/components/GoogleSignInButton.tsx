@@ -97,9 +97,14 @@ interface GoogleSignInButtonProps {
  * mode Google's dark one, so the button stays legible on either canvas.
  *
  * Only three label strings are permitted, so the in-flight state cannot swap the
- * text for progress copy the way a house button would. The cue is carried by the
- * disabled dimming and ``accessibilityState.busy`` instead, and the mark stays
- * put throughout.
+ * text for progress copy the way a house button would. What it does instead is
+ * what the shared primitive now does for every caller (#2441): the approved
+ * phrase and the unmodified mark both stay exactly as they are, with the house
+ * progress indicator drawn ahead of them, alongside the disabled dimming and
+ * ``accessibilityState.busy``. Nothing Google specifies is altered by that --
+ * not the fill, stroke, text colour, mark, or the exact mark-to-label gap; the
+ * pair is only re-centred in the row while the exchange is in flight, which is
+ * the same re-centring any change of window width would cause.
  *
  * Layout notes: the button stretches to the column width, so Google's
  * outer padding acts as the floor either side of the centred content rather than

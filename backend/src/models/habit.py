@@ -17,7 +17,9 @@ class Habit(SQLModel, table=True):
     ``revealed`` is the single source of truth for whether a habit is unlocked
     ("unlocked" == ``revealed is True`` in product terms). New and seeded
     habits default to locked. The list read reveals a regular program habit
-    once its stage or start date is open and stamps ``auto_revealed_at``. A
+    once the program's invitation reaches it -- its stage entering the user's
+    open range when ``stage`` names one of the ten rings, otherwise its start
+    date arriving -- and stamps ``auto_revealed_at``. A
     manual lock-state transition also consumes that invitation, including one
     made before eligibility arrives. The durable one-shot marker lets a later
     manual re-lock remain a real choice: subsequent reads never auto-reveal the
@@ -66,5 +68,16 @@ class Habit(SQLModel, table=True):
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(
         back_populates="habit",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+        # ``passive_deletes`` hands the cascade to the database, which is the
+        # only participant that can do it in one statement and the only one
+        # that is right about rows this session never loaded.  Deleting a habit
+        # emits exactly ``DELETE FROM habit``; Postgres then removes the goals
+        # (``goal_habit_id_fkey ON DELETE CASCADE``), their completions and
+        # suggestions, and the Return releases, none of which the ORM has to
+        # fetch first.  See :class:`~models.goal.Goal.completions` for the
+        # failure this replaces.
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
     )

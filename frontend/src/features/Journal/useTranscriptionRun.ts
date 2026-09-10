@@ -33,7 +33,7 @@ import type { TranscriptionBlock, TranscriptionRunState } from './transcriptionR
 import { TranscriptionError, journal } from '@/api';
 
 /** An empty run — the reducer's initial state before any page is seeded. */
-const EMPTY_RUN: TranscriptionRunState = { order: [], blocks: {} };
+const EMPTY_RUN: TranscriptionRunState = { order: [], blocks: {}, orphans: [] };
 
 /** A stable empty set so the initial redo-confirm state never re-triggers renders. */
 const NO_REDO_CONFIRM: ReadonlySet<string> = new Set();
@@ -207,6 +207,9 @@ export function useTranscriptionRun({
   const [runState, dispatch] = useReducer(transcriptionRunReducer, EMPTY_RUN);
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
+  // The launch ledger only ever grows, and deliberately so: it is bounded by the
+  // session's page count times the retries the writer asks for by hand, and every
+  // entry is one charge that must never be repeated. It dies with the screen.
   const launchedRef = useRef<Set<string>>(new Set());
   // Read the latest cleanup callback from a ref so `transcribeOne` stays stable
   // (its identity gates the run loop) regardless of the caller's memoization.

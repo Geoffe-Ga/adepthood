@@ -105,6 +105,7 @@ from services.creek_vault_pipeline import (
     close_vault_pipeline_tasks,
     resume_vault_pipeline_runs,
 )
+from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +596,46 @@ def validate_app_base_url_config() -> None:
     raise RuntimeError(_unusable_web_origin_message(origin))
 
 
+def validate_provider_probe_config() -> None:
+    """Refuse a production boot while the provider probe is armed.
+
+    :mod:`services.provider_probe` sends one prompt carrying
+    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`'s token past the stub to a
+    real provider, so the wiring a stub-configured deployment never exercises --
+    key resolution, the SDK, the transport, the retry budget, the classification
+    of whatever comes back -- can be driven end to end. That is what lets the
+    real-wire lane reach a billing refusal on a server with no provider account.
+
+    In front of real users the same seam is a dial selected by the contents of a
+    journal entry, and "do not set this in production" is a runbook line rather
+    than a control. So this is the shape of :func:`validate_email_config` and
+    not of the warn-only trio below it: a state that is fine on a laptop and
+    indefensible on a server refuses the boot rather than logging about it.
+
+    Gated on the *armed* token rather than on the variable's presence, so it
+    agrees with :func:`~services.provider_probe.armed_probe_token`: a value too
+    short to arm anything is not a live seam, and taking a deploy down over one
+    would be a false alarm. Nothing renders the value -- unlike the email
+    backend name, which is a mode selector, this is a secret whose whole
+    security property is that nobody else knows it.
+    """
+    if os.getenv("ENV", "development") != "production":
+        return
+    if armed_probe_token() is None:
+        return
+    msg = (
+        f"{PROVIDER_PROBE_ENV_VAR} is set to a value that arms the BotMason provider "
+        "probe, which sends any prompt carrying that token to a real LLM "
+        "provider instead of to the configured stub. That is a request path "
+        "chosen by the text of a user's journal entry, and it exists for the "
+        "end-to-end lane rather than for a deployment. Unset "
+        f"{PROVIDER_PROBE_ENV_VAR} to boot, and configure BOTMASON_PROVIDER and "
+        "LLM_API_KEY if this deployment is meant to reach a provider at all "
+        "(see backend/.env.example)."
+    )
+    raise RuntimeError(msg)
+
+
 def validate_trusted_proxy_config() -> None:
     """Announce a production boot that trusts no reverse proxy.
 
@@ -913,6 +954,12 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # terms -- after the backend check, because a deploy missing both has an
     # email problem before it has a link problem.
     validate_app_base_url_config()
+
+    # Last refusal of the boot, and the narrowest: the provider probe is a live
+    # seam to a real LLM chosen by the text of a request, built for the
+    # end-to-end lane. It is fine on a laptop and indefensible in front of real
+    # users, so an armed production deploy never goes live.
+    validate_provider_probe_config()
 
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --
