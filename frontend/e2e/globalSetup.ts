@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +62,27 @@ const MAIL_FILE_NAME = 'outbound.jsonl';
  * and the web build is the only client that ships.
  */
 const WEB_BASE_URL = 'https://reset.adepthood.invalid';
+
+/**
+ * The account the lane's deployment-wide Creek Vault belongs to.
+ *
+ * `dependencies.creek_vault` serves the configured vault to exactly one user --
+ * the one `CREEK_VAULT_OWNER_USER_ID` names -- and reads that variable from the
+ * server process's environment, which is fixed before the server has a database,
+ * let alone an account in it. The circle is closed by naming the id the sequence
+ * is about to hand out and then proving it: this is the *first* request the lane
+ * makes, against a database `alembic upgrade head` built moments earlier, so the
+ * account it creates takes the first id in `user`'s identity sequence.
+ *
+ * Nothing rests on that being true, because `provisionVaultOwner` asserts the id
+ * it got back and throws the lane down if it differs. A guess that stopped
+ * holding fails at setup, loudly, naming what changed -- rather than leaving one
+ * spec asserting `vault_unavailable` and calling it coverage.
+ */
+const VAULT_OWNER_USER_ID = 1;
+const VAULT_OWNER_PASSWORD = 'a candle carried between rooms'; // pragma: allowlist secret
+const VAULT_OWNER_TIMEZONE = 'UTC';
+const HTTP_OK = 200;
 
 const POSTGRES_HELP =
   `${POSTGRES_URL_ENV} is unset, so there is no database to build the schema in. ` +
@@ -247,6 +268,31 @@ function providerLaneState(provider: ProviderFixture): ProviderLaneState {
   };
 }
 
+/** The half of the run's state the vault fake contributes, for every write. */
+type VaultLaneState = Pick<LaneState, 'vaultPid' | 'vaultUrl' | 'vaultKeyDir' | 'vaultApiKey'>;
+
+/** The one place the vault's origin is spelled, for both the server and the spec. */
+function vaultOrigin(vault: VaultFixture): string {
+  return `http://127.0.0.1:${vault.port}`;
+}
+
+/**
+ * Project the launched vault onto the fields the seed journey and teardown read.
+ *
+ * `vaultUrl` is the same origin `serverEnvironment` hands the server as
+ * `CREEK_VAULT_URL`, derived from one port rather than written twice, so a spec
+ * asking what arrived cannot end up asking a different process than the one
+ * adepthood dialled.
+ */
+function vaultLaneState(vault: VaultFixture): VaultLaneState {
+  return {
+    vaultPid: vault.pid,
+    vaultUrl: vaultOrigin(vault),
+    vaultKeyDir: vault.keyDir,
+    vaultApiKey: vault.apiKey,
+  };
+}
+
 /** Create the per-run directory the capture backend appends its mail to. */
 function createMailFixture(): MailFixture {
   const mailDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-mail-'));
@@ -305,6 +351,75 @@ function launchFakeCreek(): Promise<CreekFixture> {
 }
 
 /**
+ * The loopback Creek Vault and the bearer the lane's server presents to it.
+ *
+ * The vault half of `seed.upload-document` had no destination at all: the lane
+ * runs no vault, so every import took the local-fallback path and the accepted
+ * outcome was unreachable. This is that destination, reached through
+ * adepthood's own production `CREEK_VAULT_URL` -- a plaintext loopback origin,
+ * which `services.creek_vault_url` admits for the *operator's* value by
+ * deliberate design (whoever sets it owns the machine the process runs on).
+ * The per-user rules are stricter and refuse loopback outright, which is why
+ * this boundary is configured deployment-wide and bound to one account.
+ */
+interface VaultFixture {
+  pid: number;
+  port: number;
+  keyDir: string;
+  apiKey: string;
+  keyFile: string;
+}
+
+function createVaultKey(): Omit<VaultFixture, 'pid' | 'port'> {
+  const keyDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-vault-'));
+  const keyFile = join(keyDir, 'api-key');
+  const apiKey = testCredential();
+  writeFileSync(keyFile, apiKey, { encoding: 'utf8', mode: 0o600 });
+  return { keyDir, keyFile, apiKey };
+}
+
+function launchFakeVault(): Promise<VaultFixture> {
+  const fixture = createVaultKey();
+  const child = spawn(process.execPath, [join(__dirname, 'fakeCreekVault.mjs')], {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, FAKE_VAULT_API_KEY_FILE: fixture.keyFile },
+  });
+  return new Promise<VaultFixture>((resolvePort, reject) => {
+    let log = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), BOOT_TIMEOUT_MS);
+    const fail = (reason: string): void => {
+      clearTimeout(timer);
+      rmSync(fixture.keyDir, { recursive: true, force: true });
+      reject(new Error(`${reason}\n--- fake Creek Vault output ---\n${log}`));
+    };
+    const onChunk = (chunk: Buffer): void => {
+      log += chunk.toString();
+      const match = /FAKE_VAULT_READY port=(\d+)/u.exec(log);
+      if (!match?.[1]) return;
+      clearTimeout(timer);
+      resolvePort({ ...fixture, pid: child.pid ?? 0, port: Number(match[1]) });
+    };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    child.on('exit', (code, signal) =>
+      fail(`the fake Creek Vault exited (${String(code)}, ${String(signal)}) before ready`),
+    );
+    child.on('error', (error: Error) =>
+      fail(`could not start the fake Creek Vault: ${error.message}`),
+    );
+  });
+}
+
+/** The four out-of-process fixtures one run owns, passed around as one value. */
+interface LaneFixtures {
+  creek: CreekFixture;
+  mail: MailFixture;
+  provider: ProviderFixture;
+  vault: VaultFixture;
+}
+
+/**
  * Everything the server reads from its environment, and nothing it does not.
  *
  * Split out from `launchServer` because the two are separate questions: what
@@ -316,9 +431,7 @@ function launchFakeCreek(): Promise<CreekFixture> {
 function serverEnvironment(
   databaseUrl: string,
   adminUrl: string,
-  creek: CreekFixture,
-  mail: MailFixture,
-  provider: ProviderFixture,
+  { creek, mail, provider, vault }: LaneFixtures,
 ): typeof process.env {
   return {
     ...process.env,
@@ -350,6 +463,14 @@ function serverEnvironment(
     // ("ours to restore, not yours") is about.
     LLM_API_KEY: provider.spentAnthropicKey,
     BOTMASON_PROVIDER_PROBE_TOKEN: provider.probeToken,
+    // The deployment-wide vault, and the single account it belongs to. Both are
+    // ordinary production settings: adepthood builds its real HTTP vault
+    // adapter from them and negotiates the real contract over the wire. Every
+    // account but the owner is served the local fallback, exactly as before --
+    // which is the whole of why no other journey's outcome moves.
+    CREEK_VAULT_URL: vaultOrigin(vault),
+    CREEK_VAULT_API_KEY: vault.apiKey,
+    CREEK_VAULT_OWNER_USER_ID: String(VAULT_OWNER_USER_ID),
   };
 }
 
@@ -357,15 +478,13 @@ function serverEnvironment(
 function launchServer(
   databaseUrl: string,
   adminUrl: string,
-  creek: CreekFixture,
-  mail: MailFixture,
-  provider: ProviderFixture,
+  fixtures: LaneFixtures,
 ): Promise<Launch> {
   const child = spawn(pythonExecutable(), ['-m', 'tests.e2e.server'], {
     cwd: BACKEND_DIR,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: serverEnvironment(databaseUrl, adminUrl, creek, mail, provider),
+    env: serverEnvironment(databaseUrl, adminUrl, fixtures),
   });
 
   return new Promise<Launch>((resolvePort, reject) => {
@@ -400,6 +519,55 @@ function launchServer(
   });
 }
 
+/** The vault owner's credentials, as the run records them for its one spec. */
+type VaultOwner = Pick<LaneState, 'vaultOwnerEmail' | 'vaultOwnerPassword'>;
+
+/**
+ * Sign the vault's owner up over HTTP, and refuse the lane if it is not the owner.
+ *
+ * The assertion is the whole point of doing this here rather than in the spec.
+ * `CREEK_VAULT_OWNER_USER_ID` was fixed before this database existed, so if the
+ * account that comes back holds any other id then the deployment's vault belongs
+ * to nobody, every import in the seed journey quietly takes the local-fallback
+ * path, and a spec would sit there asserting `vault_unavailable` while counting
+ * as coverage. Throwing here turns that into a red lane at setup, naming the two
+ * ids that disagreed.
+ *
+ * Signup rather than a direct insert: the licence gate, the password hashing,
+ * the entitlement grant and the identity sequence are all the production ones,
+ * so the owner is an ordinary account that merely happens to be first.
+ */
+async function provisionVaultOwner(baseUrl: string): Promise<VaultOwner> {
+  const vaultOwnerEmail = `e2e-vault-owner-${randomUUID()}@example.com`;
+  const response = await fetch(`${baseUrl}/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: vaultOwnerEmail,
+      password: VAULT_OWNER_PASSWORD,
+      timezone: VAULT_OWNER_TIMEZONE,
+      license_key: `e2e-license-${randomUUID()}`,
+    }),
+  });
+  const body: unknown = await response.json();
+  const { user_id: userId } = body as { user_id?: unknown };
+  if (response.status !== HTTP_OK) {
+    throw new Error(
+      `the lane could not create the vault owner: POST /auth/signup answered ` +
+        `${response.status} ${JSON.stringify(body)}`,
+    );
+  }
+  if (userId !== VAULT_OWNER_USER_ID) {
+    throw new Error(
+      `the lane's vault is bound to user ${VAULT_OWNER_USER_ID} but the first account ` +
+        `it created is user ${String(userId)}. Nothing in the lane would reach the vault, ` +
+        `and the seed journey would assert an outcome it can never produce. Something ` +
+        `now writes to "user" before globalSetup does -- a seeder, or a migration.`,
+    );
+  }
+  return { vaultOwnerEmail, vaultOwnerPassword: VAULT_OWNER_PASSWORD };
+}
+
 export default async function globalSetup(): Promise<void> {
   const adminUrl = process.env[POSTGRES_URL_ENV]?.trim();
   if (!adminUrl) throw new Error(POSTGRES_HELP);
@@ -413,38 +581,38 @@ export default async function globalSetup(): Promise<void> {
   const mail = createMailFixture();
   const creek = await launchFakeCreek();
   const provider = await launchFakeProvider();
-  const providerState = providerLaneState(provider);
-  writeLaneState({
-    pid: 0,
+  const vault = await launchFakeVault();
+  const fixtures: LaneFixtures = { creek, mail, provider, vault };
+  const fixtureState = {
     creekPid: creek.pid,
-    baseUrl: '',
     databaseUrl,
     adminUrl,
     credentialDir: creek.credentialDir,
     mailDir: mail.mailDir,
     emailCaptureFile: mail.captureFile,
     webBaseUrl: mail.webBaseUrl,
-    ...providerState,
+    ...providerLaneState(provider),
+    ...vaultLaneState(vault),
+  };
+  writeLaneState({
+    pid: 0,
+    baseUrl: '',
+    vaultOwnerEmail: '',
+    vaultOwnerPassword: '',
+    ...fixtureState,
   });
 
   try {
-    const { pid, port } = await launchServer(databaseUrl, adminUrl, creek, mail, provider);
+    const { pid, port } = await launchServer(databaseUrl, adminUrl, fixtures);
     const baseUrl = `http://127.0.0.1:${port}`;
     writeFileSync(creek.callbackFile, baseUrl, { encoding: 'utf8', mode: 0o600 });
-    const state: LaneState = {
-      pid,
-      creekPid: creek.pid,
-      baseUrl,
-      databaseUrl,
-      adminUrl,
-      credentialDir: creek.credentialDir,
-      mailDir: mail.mailDir,
-      emailCaptureFile: mail.captureFile,
-      webBaseUrl: mail.webBaseUrl,
-      ...providerState,
-    };
-    writeLaneState(state);
+    // Recorded before the owner exists so a server that booted and then failed
+    // its probe is still reaped, exactly as the pre-boot write does for the fakes.
+    writeLaneState({ pid, baseUrl, vaultOwnerEmail: '', vaultOwnerPassword: '', ...fixtureState });
     await assertHealthy(baseUrl);
+    const owner = await provisionVaultOwner(baseUrl);
+    const state: LaneState = { pid, baseUrl, ...owner, ...fixtureState };
+    writeLaneState(state);
     process.env.EXPO_PUBLIC_API_BASE_URL = baseUrl;
   } catch (error: unknown) {
     // Jest runs globalTeardown only after a globalSetup that returned, so a

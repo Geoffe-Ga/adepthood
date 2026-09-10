@@ -18,11 +18,13 @@ import type { DocumentImportT } from '@/api';
  * tests never see this client. This is the one place the two agree on the path,
  * the verb, the request body, and which of the two destinations answered.
  *
- * **The lane's accounts have no vault, and that is the case under test.** No
- * `CREEK_VAULT_*` configuration reaches the server, so the resolver hands back
- * the local fallback and every import here routes to the account's own corpus.
- * A spec that asserted a vault outcome would be asserting something this lane
- * cannot produce.
+ * **The accounts here have no vault, and that is the case under test.** The lane
+ * does configure one now — `seed-upload.e2e.test.ts` needs somewhere to seed
+ * into — but `CREEK_VAULT_OWNER_USER_ID` binds it to a single pre-provisioned
+ * account, and every account this spec creates is somebody else. The resolver
+ * hands those the local fallback, byte for byte as it did when the lane had no
+ * vault at all, so every import here still routes to the account's own corpus.
+ * The first assertion below is what proves it rather than assumes it.
  *
  * What it does not assert is a stored fragment. Placing writing among the
  * frequencies costs a provider call and this lane has no provider, so a
