@@ -176,6 +176,40 @@ describe('useTranscriptionRun — the concurrency bound survives a mid-flight re
     expect(result.current.hasTerminalError).toBe(false);
   });
 
+  it('still finishes the run a page was trimmed out of — the slot is held, never stranded', async () => {
+    // The failure mode a held slot could turn into: hold it and never let go and
+    // the run stalls at reduced concurrency, short of complete, with the Save
+    // button disabled forever. Held is only correct if it is also temporary.
+    const handles = queueDeferred(4);
+    const { result, rerender } = renderRun(FOUR_PAGES);
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(HARD_BOUND));
+
+    await act(async () => {
+      rerender({ livePages: FOUR_PAGES.slice(1) });
+    });
+    await act(async () => {
+      handles[0]?.resolve('ghost text');
+    });
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(HARD_BOUND + 1));
+
+    await act(async () => {
+      handles[1]?.resolve('page two');
+    });
+    await act(async () => {
+      handles[2]?.resolve('page three');
+    });
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(HARD_BOUND + 2));
+    await act(async () => {
+      handles[3]?.resolve('page four');
+    });
+
+    await waitFor(() => expect(result.current.isComplete).toBe(true));
+    expect(result.current.mergedText).toBe('page two\n\npage three\n\npage four');
+    expect(result.current.progress).toBe('Transcribing 3 of 3…');
+    // One read per surviving page, plus the one the trimmed page had already spent.
+    expect(mockTranscribe).toHaveBeenCalledTimes(4);
+  });
+
   it('holds both slots when both in-flight pages are removed at once', async () => {
     const handles = queueDeferred(4);
     const { rerender } = renderRun(FOUR_PAGES);
