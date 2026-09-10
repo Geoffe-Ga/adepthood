@@ -37,6 +37,52 @@ interface EssayState {
   error: string | null;
 }
 
+/**
+ * Why an ask for a note's letter settled without one, keyed by note id.
+ *
+ * The server deliberately leaves ``essay`` NULL when it refuses a completion as
+ * not-a-letter, and when the entry is intimate, so the writer can ask again
+ * (``backend/src/routers/journal.py::_cache_essay``). That is precisely why the
+ * note itself cannot record "already asked" — so the fact is remembered here
+ * instead, and only for as long as this screen is mounted.
+ */
+type UnansweredNotes = Map<number, string>;
+
+/**
+ * The state a note can be shown from without asking the server, or ``null``
+ * when it must be asked for: its own cached letter, else a remembered ask that
+ * produced none. A blank cached essay counts as missing, so an empty body is
+ * never rendered.
+ */
+function settledState(note: Marginalia, unanswered: UnansweredNotes): EssayState | null {
+  if (note.essay) return { essay: note.essay, loading: false, error: null };
+  const remembered = unanswered.get(note.id);
+  if (remembered !== undefined) return { essay: null, loading: false, error: remembered };
+  return null;
+}
+
+/** The two ways an ask settles, handed to {@link askForEssay} by the hook. */
+interface EssaySettlers {
+  /** A real letter arrived, and should be cached back onto the note. */
+  onLetter: (_updated: Marginalia) => void;
+  /** The ask produced no letter: a refusal, an intimate entry, or a failure. */
+  onUnanswered: (_message: string) => void;
+}
+
+/** Ask the server for one note's letter and route the outcome to ``settlers``. */
+function askForEssay(noteId: number, settlers: EssaySettlers): void {
+  resonance
+    .essay(noteId)
+    .then((updated) => {
+      if (updated.essay) {
+        settlers.onLetter(updated);
+        return;
+      }
+      settlers.onUnanswered(BLANK_ESSAY_MESSAGE);
+    })
+    .catch((err: unknown) => settlers.onUnanswered(formatApiError(err)));
+}
+
 /** Lazily load the note's essay (unless it already carries one). */
 function useEssay(
   note: Marginalia | null,
@@ -46,7 +92,18 @@ function useEssay(
 } {
   const [state, setState] = useState<EssayState>({ essay: null, loading: false, error: null });
   const [attempt, setAttempt] = useState(0);
-  const retry = useCallback(() => setAttempt((a) => a + 1), []);
+  // Notes already asked about, that came back with no letter (#2435). A ref, so
+  // it survives closing and reopening the modal and dies with the screen: an
+  // automatic re-ask on every reopen is what this stops, while leaving a
+  // refusal — which is transient — askable again both on purpose (``retry``)
+  // and on a later visit.
+  const unansweredRef = useRef<UnansweredNotes>(new Map());
+  const retry = useCallback(() => {
+    // The deliberate ask: forget the remembered outcome first, or the effect
+    // below would answer from memory instead of the server.
+    if (note != null) unansweredRef.current.delete(note.id);
+    setAttempt((a) => a + 1);
+  }, [note]);
   // Hold the callback in a ref so a non-memoised caller can't retrigger fetches:
   // the fetch effect depends only on the note + retry attempt.
   const onLoadedRef = useRef(onEssayLoaded);
@@ -56,29 +113,30 @@ function useEssay(
 
   useEffect(() => {
     if (note == null) return undefined;
-    if (note.essay) {
-      // Treat a blank essay the same as missing (don't render an empty body).
-      setState({ essay: note.essay, loading: false, error: null });
+    // Already answered — by the note's own letter, or by an earlier ask for this
+    // note that produced none. Say so again rather than asking the server the
+    // same question every time the note is reopened (#2435).
+    const settled = settledState(note, unansweredRef.current);
+    if (settled !== null) {
+      setState(settled);
       return undefined;
     }
     let active = true;
     setState({ essay: null, loading: true, error: null });
-    resonance
-      .essay(note.id)
-      .then((updated) => {
+    askForEssay(note.id, {
+      onLetter: (updated) => {
         if (!active) return;
-        if (updated.essay) {
-          // Same blank-as-missing contract as the cached path above.
-          setState({ essay: updated.essay, loading: false, error: null });
-          onLoadedRef.current?.(updated);
-          return;
-        }
-        // Don't cache a blank essay back (it would re-fetch on every reopen).
-        setState({ essay: null, loading: false, error: BLANK_ESSAY_MESSAGE });
-      })
-      .catch((err: unknown) => {
-        if (active) setState({ essay: null, loading: false, error: formatApiError(err) });
-      });
+        // The note carries the letter from here on, via ``onEssayLoaded``.
+        setState({ essay: updated.essay, loading: false, error: null });
+        onLoadedRef.current?.(updated);
+      },
+      // Remembered even if the modal has since closed: the ask did happen and
+      // produced nothing, so reopening should show that, not ask again.
+      onUnanswered: (message) => {
+        unansweredRef.current.set(note.id, message);
+        if (active) setState({ essay: null, loading: false, error: message });
+      },
+    });
     return () => {
       active = false;
     };

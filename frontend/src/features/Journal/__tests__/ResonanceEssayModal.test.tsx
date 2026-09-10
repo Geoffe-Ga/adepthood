@@ -109,3 +109,125 @@ describe('ResonanceEssayModal', () => {
     expect(mockEssay).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * Reopening a note the server answered without a letter.
+ *
+ * The server deliberately leaves ``essay`` NULL when a completion is refused as
+ * not-a-letter, so the writer can ask again. That contract is what made the
+ * modal re-ask on *every* reopen (#2435). The guard below has to stop the
+ * automatic ask without taking the deliberate one away.
+ *
+ * The copy asserted here is hand-written rather than imported: a test that
+ * reads the same constant the screen renders proves only that a string equals
+ * itself. Every assertion counts calls to ``resonance.essay`` explicitly, and
+ * checks the reopened modal really is on screen showing the note — so a build
+ * that simply never reopened it could not pass by issuing no request.
+ */
+describe('ResonanceEssayModal reopened after a letter that never arrived', () => {
+  /** Hand-written copy of the blank-essay sentence the screen renders. */
+  const BLANK_COPY = "This note's essay isn't ready yet.";
+  /** A rejection whose message is passed through verbatim by ``formatApiError``. */
+  const FAILURE_COPY = 'The provider never answered.';
+
+  /** Close the modal, then open the same note again — a fresh object with the
+   *  same id, which is what a refreshed marginalia list hands the screen. */
+  async function reopen(
+    rerender: (_ui: React.ReactElement) => void,
+    reopened: Marginalia,
+  ): Promise<void> {
+    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
+    rerender(<ResonanceEssayModal note={reopened} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
+    // Flush any effect-scheduled promise, so a re-ask would be counted below.
+    await act(async () => {});
+  }
+
+  it('does not re-ask for a note whose letter came back blank, and still says so', async () => {
+    mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
+    const { findByTestId, getByTestId, getByText, queryByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await findByTestId('essay-retry');
+
+    await reopen(rerender, note({ id: 4 }));
+
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    // Not vacuous: the modal really is open on that note, showing the message
+    // and the retry affordance rather than an empty card.
+    expect(getByTestId('essay-quote').props.children.join('')).toContain('willow');
+    expect(getByText(BLANK_COPY)).toBeTruthy();
+    expect(getByTestId('essay-retry')).toBeTruthy();
+    expect(queryByTestId('essay-text')).toBeNull();
+    expect(queryByTestId('essay-loading')).toBeNull();
+  });
+
+  it('does not re-ask for a note whose request failed, and still shows the error', async () => {
+    mockEssay.mockRejectedValue(new Error(FAILURE_COPY));
+    const { findByTestId, getByTestId, getByText, queryByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await findByTestId('essay-retry');
+
+    await reopen(rerender, note({ id: 4 }));
+
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    expect(getByTestId('essay-quote').props.children.join('')).toContain('willow');
+    expect(getByText(FAILURE_COPY)).toBeTruthy();
+    expect(getByTestId('essay-retry')).toBeTruthy();
+    expect(queryByTestId('essay-loading')).toBeNull();
+  });
+
+  it('still lets the writer ask again on purpose after a reopen', async () => {
+    mockEssay
+      .mockResolvedValueOnce(note({ id: 4, essay: '' }))
+      .mockResolvedValueOnce(note({ id: 4, essay: 'The letter, on the second ask.' }));
+    const { findByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await findByTestId('essay-retry');
+
+    await reopen(rerender, note({ id: 4 }));
+    await act(async () => {
+      fireEvent.press(await findByTestId('essay-retry'));
+    });
+
+    expect(mockEssay).toHaveBeenCalledTimes(2);
+    expect((await findByTestId('essay-text')).props.children).toBe(
+      'The letter, on the second ask.',
+    );
+  });
+
+  it('still asks for a different note that has never been opened', async () => {
+    mockEssay
+      .mockResolvedValueOnce(note({ id: 4, essay: '' }))
+      .mockResolvedValueOnce(note({ id: 9, essay: 'A letter for the other note.' }));
+    const { findByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await findByTestId('essay-retry');
+
+    await reopen(rerender, note({ id: 9, anchor_text: 'the river' }));
+
+    expect(mockEssay).toHaveBeenCalledTimes(2);
+    expect(mockEssay).toHaveBeenLastCalledWith(9);
+    expect((await findByTestId('essay-text')).props.children).toBe('A letter for the other note.');
+  });
+
+  it('asks again on a fresh mount, because a refusal is transient', async () => {
+    mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
+    const first = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await first.findByTestId('essay-retry');
+    first.unmount();
+
+    const second = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await second.findByTestId('essay-retry');
+
+    // The memory dies with the screen: leaving the journal and coming back is
+    // the writer asking again, which the server's do-not-cache contract allows.
+    expect(mockEssay).toHaveBeenCalledTimes(2);
+  });
+});
