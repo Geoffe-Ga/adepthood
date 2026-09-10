@@ -1976,6 +1976,8 @@ describe('habitManager', () => {
       (habitsApi.listAll as jest.Mock).mockImplementation(() => Promise.resolve([]) as never);
       (habitsApi.create as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
       (habitsApi.update as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
+      (habitsApi.delete as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
+      (loadHabits as jest.Mock).mockImplementation(() => Promise.resolve(null) as never);
     });
 
     /** Echo the store back through the list endpoint so the reload is a no-op. */
@@ -2129,6 +2131,134 @@ describe('habitManager', () => {
       expect(habitsApi.update).not.toHaveBeenCalled();
       expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Meditate']);
       expect(alertMock()).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The id the server hands back for the newly-created row. Deliberately not
+     * 1 or 2 — the ids of the rows already in the store — so a compensating
+     * DELETE aimed at the wrong habit cannot satisfy the assertion.
+     */
+    const CREATED_HABIT_ID = 77;
+
+    /** POST answers with a real server id; every displacing PUT is refused. */
+    const halfFailedInsert = (): void => {
+      (habitsApi.create as jest.Mock).mockImplementation(
+        () => Promise.resolve({ id: CREATED_HABIT_ID }) as never,
+      );
+      (habitsApi.update as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('boom')) as never,
+      );
+    };
+
+    it('takes the habit it just created back off the server when a displacing PUT fails', async () => {
+      // #2729: the create landed and a PUT did not, so rolling the STORE back
+      // to ``prev`` left a habit the writer never confirmed sitting on the
+      // server, ready to reappear at the next cold load.
+      echoStore();
+      useHabitStore.setState({
+        habits: [makeHabit({ id: 1, name: 'Meditate' }), makeHabit({ id: 2, name: 'Walk' })],
+      });
+      halfFailedInsert();
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      // Non-vacuity: the row has to have been created before its absence can
+      // mean anything, and the DELETE has to name THAT row.
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Journaling', sort_order: 0 }),
+      );
+      expect(habitsApi.delete).toHaveBeenCalledTimes(1);
+      expect(habitsApi.delete).toHaveBeenCalledWith(CREATED_HABIT_ID);
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['Meditate', 'Walk']);
+    });
+
+    it('tells the writer the habit is not in their list, and claims nothing about the rest', async () => {
+      // The old sentence said "Your habits are as they were", which was true of
+      // the device and false of the server: some of the displacing PUTs may
+      // have landed before one was refused. Written out by hand rather than
+      // imported, so a copy change that breaks the promise fails here.
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      halfFailedInsert();
+
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(alertMock()).toHaveBeenCalledTimes(1);
+      expect(alertMock()).toHaveBeenCalledWith(
+        "Couldn't sync",
+        "We couldn't save that habit in the place you chose, so it isn't in your list. " +
+          'Try adding it again when you are ready.',
+      );
+    });
+
+    it('says the habit was saved out of place when it cannot be taken back off', async () => {
+      // The compensating DELETE has its own failure path, and it must still end
+      // in a true sentence rather than in the "nothing changed" reassurance.
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      halfFailedInsert();
+      (habitsApi.delete as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('nope')) as never,
+      );
+
+      const saved = await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(alertMock()).toHaveBeenCalledWith(
+        "Couldn't sync",
+        'That habit was saved, but not in the place you chose — and we could not take it ' +
+          'back off. It will be in your Habits list once the list refreshes, somewhere other ' +
+          'than the spot you picked. Move or delete it there rather than adding it again.',
+      );
+      // The row IS on the server, so the offer must not invite a second add.
+      expect(saved).toBe(true);
+    });
+
+    it('fails closed when the create answered with no id to aim the DELETE at', async () => {
+      // A POST that resolved put a row up there whether or not the body carried
+      // an id back. With no id there is nothing to compensate with, so the
+      // writer must get the honest sentence rather than the reassuring one.
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      (habitsApi.create as jest.Mock).mockImplementation(() => Promise.resolve({}) as never);
+      (habitsApi.update as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('boom')) as never,
+      );
+
+      const saved = await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+      expect(saved).toBe(true);
+      expect(alertMock()).toHaveBeenCalledWith(
+        "Couldn't sync",
+        'That habit was saved, but not in the place you chose — and we could not take it ' +
+          'back off. It will be in your Habits list once the list refreshes, somewhere other ' +
+          'than the spot you picked. Move or delete it there rather than adding it again.',
+      );
+    });
+
+    it('does not report a failed write when only the confirming re-fetch fails', async () => {
+      // #2729 defect 2: create and every PUT landed. A re-fetch that then blows
+      // up says nothing about the write, so it must neither roll the store back
+      // nor undo the habit.
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      (loadHabits as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('cache read failed')) as never,
+      );
+
+      const saved = await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
+
+      expect(saved).toBe(true);
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([
+        'Journaling',
+        'Meditate',
+      ]);
+      expect(habitsApi.delete).not.toHaveBeenCalled();
+      expect(alertMock()).toHaveBeenCalledWith(
+        "Couldn't sync",
+        'Your habit is saved in the place you chose. We could not refresh your list from the ' +
+          'server afterwards, so what you see may be out of date — pull down to refresh.',
+      );
     });
 
     it('dates the new habit by the rung it lands on, not the rung an append would have given it', async () => {

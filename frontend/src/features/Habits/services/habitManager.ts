@@ -19,7 +19,7 @@ import {
   goals as goalsApi,
   toLocalHabit,
 } from '../../../api';
-import type { CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
+import type { ApiHabit, CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
@@ -1129,6 +1129,121 @@ const loadHabits = async (tz?: string): Promise<void> => {
 const DELETE_FAILED_COPY =
   "We couldn't delete that habit, so it's back in your list with its history intact. Try once more; if it returns again, that is ours to fix, so tell us.";
 
+/**
+ * What the writer is told when an insert ended with nothing of theirs on the
+ * server: either the POST itself was refused, or it landed and the
+ * compensating DELETE took it straight back off.
+ *
+ * It used to end "Your habits are as they were — check your connection and try
+ * again", and neither half of that could be relied on. The first was a claim
+ * about the SERVER made from the state of the device: the displacing PUTs fan
+ * out under one ``Promise.all``, so some of them may well have landed before
+ * one was refused, and the rows they moved keep their new ``sort_order`` and
+ * ``stage`` whatever the store is rolled back to. The second names a cause
+ * ``formatApiError`` has already ruled out — this fallback is consulted only
+ * after the timeout, validation and unreachable-host branches have declined
+ * the error (#2763). So this says the one thing that is true in both branches
+ * and stops: the habit is not in their list. Retrying is offered because
+ * nothing of theirs is on the server, which makes a second attempt safe.
+ */
+const INSERT_NOT_KEPT_COPY =
+  "We couldn't save that habit in the place you chose, so it isn't in your list. " +
+  'Try adding it again when you are ready.';
+
+/**
+ * What the writer is told when the habit reached the server and could not be
+ * taken back off — the one branch that leaves a row they never confirmed.
+ *
+ * Deliberately NOT routed through ``formatApiError``. Every sentence that
+ * function can produce ends in some form of "try again", and trying again here
+ * POSTs a second habit: the transport's story is not merely unhelpful in this
+ * branch, its call to action is the one move that makes things worse. So the
+ * copy names what happened, where the row will turn up, and the two safe moves
+ * (move it, or delete it) in place of the unsafe one.
+ */
+const INSERT_KEPT_OUT_OF_PLACE_COPY =
+  'That habit was saved, but not in the place you chose — and we could not take it ' +
+  'back off. It will be in your Habits list once the list refreshes, somewhere other ' +
+  'than the spot you picked. Move or delete it there rather than adding it again.';
+
+/**
+ * What the writer is told when every write landed and only the re-fetch that
+ * CONFIRMS them failed.
+ *
+ * "The write failed" and "we could not confirm the write" are different facts
+ * and used to share one sentence, because the confirming ``loadHabits`` sat
+ * inside the same ``try`` as the writes. Reporting a landed write as a failure
+ * is the worse direction of the two: it tells someone their habit is gone
+ * while the server has it. Like the branch above this bypasses
+ * ``formatApiError`` — a request that never reached the server is what that
+ * function describes, and here one did.
+ */
+const INSERT_UNCONFIRMED_COPY =
+  'Your habit is saved in the place you chose. We could not refresh your list from the ' +
+  'server afterwards, so what you see may be out of date — pull down to refresh.';
+
+/**
+ * Take a just-created habit back off the server after the writes that were
+ * supposed to place it failed.
+ *
+ * Reports whether the server is now free of that row, which is the only thing
+ * the caller can honestly tell the writer. There are three ways in and they
+ * are not interchangeable: the POST never resolved (nothing was created, so
+ * there is nothing to remove); the POST resolved and the DELETE resolved; or
+ * the POST resolved and the DELETE did not.
+ *
+ * A create that resolves without a server-issued id counts as "still out
+ * there" rather than as an error. The POST answered, so a row exists — we
+ * merely have no id to aim a DELETE at — and failing closed is what keeps the
+ * copy true.
+ *
+ * The DELETE is safe to fire unconditionally because the row is seconds old:
+ * it can carry no completions and no goal groups, so the server's cascade can
+ * take nothing with it beyond the default goals its own POST seeded.
+ */
+const removeOrphanedInsert = async (created: ApiHabit | undefined): Promise<boolean> => {
+  if (created === undefined) return true;
+  if (!isServerIssuedId(created.id)) return false;
+  return habitsApi.delete(created.id).then(
+    () => true,
+    () => false,
+  );
+};
+
+/**
+ * Settle a failed insert and say one true sentence about it.
+ *
+ * Resolves to whether the habit is on the server — the question
+ * ``insertHabitAt``'s caller actually acts on. It is TRUE in exactly the
+ * branch that could not be compensated, and that is not a contradiction: an
+ * offer told ``false`` reopens its placement step, and a second confirm there
+ * would create a duplicate of the row that is already up there. Telling the
+ * offer to settle, while the alert explains that the habit landed somewhere
+ * other than the chosen spot, is the pair of statements that are both true.
+ *
+ * The store is restored to ``prev`` either way, because the optimistic list
+ * describes neither outcome: the new row in it carries an id this device
+ * minted, which names nobody's row on the server.
+ */
+const settleFailedInsert = async (
+  prev: Habit[],
+  created: ApiHabit | undefined,
+  err: unknown,
+): Promise<boolean> => {
+  if (await removeOrphanedInsert(created)) {
+    revertOnFailure(prev, INSERT_NOT_KEPT_COPY)(err);
+    return false;
+  }
+  setHabits(prev);
+  void persistHabits(prev);
+  Alert.alert(SYNC_FAILURE_TITLE, INSERT_KEPT_OUT_OF_PLACE_COPY);
+  // Best effort, so the list can show the row the sentence above just
+  // promised. Its own failure needs no second alert: "once the list refreshes"
+  // is already what the writer was told.
+  await loadHabits().catch(() => undefined);
+  return true;
+};
+
 export const habitManager = {
   loadHabits,
 
@@ -1326,11 +1441,29 @@ export const habitManager = {
    * the previous order is restored once — in the store AND on disk — and the
    * person is told once.
    *
-   * Resolves TRUE only when the habit is really on the server. Unlike the other
-   * mutations here it reports rather than swallowing, because its caller is an
-   * offer that has to decide whether to tell the writer their habit was kept —
-   * and an offer that says so over a rolled-back write is worse than one that
-   * quietly stays open.
+   * That ``try`` used to hold two more things than it should have (#2729).
+   *
+   * The first was the create's own consequence. A POST that landed followed by
+   * a PUT that did not took the same rollback as a POST that never landed, and
+   * a rollback only reaches the store — so the habit stayed on the server, to
+   * reappear at the next cold load, under a sentence claiming nothing had
+   * changed. ``settleFailedInsert`` now compensates the create with a DELETE
+   * and, in the branch where even that is refused, says so.
+   *
+   * The second was the confirming re-fetch. ``loadHabits`` runs AFTER the
+   * writes have all landed; its job is to swap this device's provisional ids
+   * for the server's. Inside the ``try`` its failure rolled back — and
+   * reported as failed — a write that had entirely succeeded. It now sits
+   * outside, where a failure can only mean "we could not confirm this", which
+   * is a different sentence and not a rollback.
+   *
+   * Resolves TRUE when the habit is really on the server — including the one
+   * branch where it is there in the wrong place and could not be removed,
+   * because an offer that reopens over a row that exists invites a duplicate.
+   * Unlike the other mutations here it reports rather than swallowing, because
+   * its caller is an offer that has to decide whether to tell the writer their
+   * habit was kept — and an offer that says so over a rolled-back write is
+   * worse than one that quietly stays open.
    */
   insertHabitAt: async (input: AddHabitInput, position: number): Promise<boolean> => {
     const prev = getHabits();
@@ -1344,22 +1477,25 @@ export const habitManager = {
     const next = stampPositionalOrder(insertAt(prev, newHabit, at));
     setHabits(next);
     void persistHabits(next);
+    // Held outside the ``try`` so the catch can tell "nothing was created" from
+    // "a row exists and these writes did not place it".
+    let created: ApiHabit | undefined;
     try {
-      await habitsApi.create(toApiPayload(next[at] ?? newHabit));
+      created = await habitsApi.create(toApiPayload(next[at] ?? newHabit));
       await Promise.all(
         next
           .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
           .map((habit) => habitsApi.update(habit.id, toApiPayload(habit))),
       );
-      await loadHabits();
-      return true;
     } catch (err) {
-      revertOnFailure(
-        prev,
-        "We couldn't save that habit in the place you chose. Your habits are as they were — check your connection and try again.",
-      )(err);
-      return false;
+      return settleFailedInsert(prev, created, err);
     }
+    try {
+      await loadHabits();
+    } catch {
+      Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
+    }
+    return true;
   },
 
   /**
