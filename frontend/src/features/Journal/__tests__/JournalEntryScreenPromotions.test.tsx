@@ -430,7 +430,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     fireEvent.press(screen.getByTestId('quote-highlight-90'));
     expect(await screen.findByTestId('promotion-remove-90')).toBeTruthy();
 
-    fireEvent.press(screen.getByTestId('journal-body-read'));
+    fireEvent(screen.getByTestId('journal-body-read'), 'click');
     expect(screen.queryByTestId('promotion-remove-90')).toBeNull();
   });
 
