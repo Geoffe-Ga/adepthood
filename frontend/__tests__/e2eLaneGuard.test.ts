@@ -33,6 +33,7 @@ const BROWSER_E2E_CONFIG = join(FRONTEND_ROOT, 'playwright.config.ts');
 const E2E_DIR = join(FRONTEND_ROOT, 'e2e');
 const GLOBAL_SETUP = join(E2E_DIR, 'globalSetup.ts');
 const FAKE_CREEK = join(E2E_DIR, 'fakeCreekServer.mjs');
+const FAKE_VAULT = join(E2E_DIR, 'fakeCreekVault.mjs');
 const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
 const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 
@@ -90,6 +91,7 @@ const EXPECTED_JOURNEYS = [
   'prompt-history.e2e.test.ts',
   'prompt-set-aside.e2e.test.ts',
   'resonance.e2e.test.ts',
+  'seed-upload.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
   'vault-connection.e2e.test.ts',
@@ -447,6 +449,43 @@ describe('the external Creek boundary stays protocol-shaped and secret hostile',
     expect(fake).toContain("const CONTRACT_VERSION = '1.0.0'");
     expect(fake).toContain("['passphrase', 'recovery_code', 'recoveryCode']");
     expect(fake).toContain('/internal/vault-provisioning/completions');
+  });
+});
+
+describe('the external Creek Vault boundary stays protocol-shaped and narrowly advertised', () => {
+  it('launches the vault fake as a separate process and wires only production settings', () => {
+    const setup = read(GLOBAL_SETUP, 'The seed journey needs a vault to seed a document into.');
+
+    expect(setup).toContain("spawn(process.execPath, [join(__dirname, 'fakeCreekVault.mjs')]");
+    expect(setup).toContain('CREEK_VAULT_URL:');
+    expect(setup).toContain('CREEK_VAULT_API_KEY:');
+    expect(setup).toContain('CREEK_VAULT_OWNER_USER_ID:');
+    expect(setup).not.toContain('dependency_overrides');
+  });
+
+  it('advertises only the two capabilities the seed journey needs', () => {
+    // The sharpest constraint on this boundary, and the reason it changes no
+    // other journey: adepthood consults the advertised list before every
+    // capability call, so a vault claiming the journal replication capability
+    // would put every journal write in the lane on the wire toward this process.
+    // Asserted as the absence of its wire name anywhere in the file, which is
+    // why that string does not appear there even in prose.
+    const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
+
+    expect(fake).toContain("const ADVERTISED_CAPABILITIES = ['capabilities', 'upload']");
+    expect(fake).not.toContain('journal-upsert');
+  });
+
+  it('requires the contract version on the upload route and admits no third tier', () => {
+    const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
+
+    expect(fake).toContain("const CONTRACT_HEADER = 'x-creek-contract-version'");
+    expect(fake).toContain("const CONTRACT_VERSION = '0.15.0'");
+    expect(fake).toContain('incompatible_version');
+    expect(fake).toContain("const ADMITTED_TIERS = ['open', 'personal']");
+    // Declared *and* enforced: a constant nothing consults would leave the
+    // privacy assertion resting on adepthood's refusal alone.
+    expect(fake).toContain('ADMITTED_TIERS.includes(body.tier)');
   });
 });
 

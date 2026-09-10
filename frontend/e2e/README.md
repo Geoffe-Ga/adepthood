@@ -49,7 +49,7 @@ with Playwright. A local machine that already has Google Chrome can avoid the
 separate Chromium download with `PLAYWRIGHT_BROWSER_CHANNEL=chrome`; CI always
 installs and runs the package-pinned Chromium build.
 
-## What is real, and the three external boundaries that are not
+## What is real, and the four external boundaries that are not
 
 Real: the routers, the middleware stack, CORS, session handling, the Pydantic
 schemas, the migrations, the startup seeders, the JWTs, bcrypt password hashing,
@@ -84,7 +84,7 @@ external allocator is represented by the fake. The fake rejects a ceremony body
 containing passphrase or recovery-key fields, returns `attested_confidential:
 false`, and is killed with its generated credential directory at teardown.
 
-The spent-provider-balance journey adds the third and last external boundary: a
+The spent-provider-balance journey adds the third external boundary: a
 loopback process that speaks both LLM providers' HTTP APIs. The lane's server
 runs the stub BotMason provider, which has no account, no key and no network and
 therefore cannot refuse for billing, so the one condition that journey is about
@@ -124,6 +124,66 @@ forensic surface for operators), and it is the only place that distinguishes
 deduction before the first dial, so the second is what actually happens on a
 refusal. The helper only ever reads.
 
+The seed journey adds the fourth and last: a loopback process answering Creek
+Vault's published `/v1` surface, `fakeCreekVault.mjs`. `seed.upload-document` is
+about a document the vault **accepts**, and the lane had no vault at all, so
+every import took the local-fallback path and that outcome was unreachable — a
+spec written anyway would have asserted `vault_unavailable` forever while
+counting as coverage. Creek Vault is an external product with its own
+repository, which is what makes it a boundary and not an adepthood surface.
+
+Nothing on the request path is stubbed to reach it. The server is booted with
+`CREEK_VAULT_URL` and `CREEK_VAULT_API_KEY` — ordinary production settings — so
+adepthood builds its real `HttpCreekVaultClient`, negotiates the real capability
+document, and posts a real `UploadRequest` over a real socket. The fake refuses
+like the real thing: an unrecognised bearer is a 401, a missing
+`X-Creek-Contract-Version` is a 409, a field adepthood invented is a 400, so a
+mis-wired lane fails loudly rather than serving something that looks like
+success. Its bearer is minted per run into a `0600` directory and dies with it.
+
+Plaintext loopback is admitted here for one specific reason, and only here. The
+**operator's** deployment-wide `CREEK_VAULT_URL` exempts loopback by design
+(`services/creek_vault_url`) — whoever set it owns the machine the process runs
+on. A **user-supplied** URL arriving in a `PUT /vault/connection` body is judged
+by a stricter rule set (`services/creek_vault_url_user`) that refuses loopback
+outright and re-judges the stored host on every dial, which is why the
+connect-your-own path cannot reach a stand-in vault beside the lane, and why
+this boundary is configured deployment-wide.
+
+Two things keep it from disturbing any other journey. The vault advertises
+`capabilities` and `upload` and nothing else — most pointedly not the journal
+replication capability, whose absence `e2eLaneGuard.test.ts` asserts by reading
+the file, because a vault claiming it would put every journal write in the lane
+on the wire toward this process. And `CREEK_VAULT_OWNER_USER_ID` binds the vault
+to exactly one account: every other account in the lane is served the local
+fallback, which is byte-for-byte the behaviour it had before.
+
+`GET /__lane/uploads` reports what actually arrived — every `/v1` request in
+order and the fragments the ledger holds, by shape and by a digest of the bytes,
+never by the bytes. That is what lets the spec prove both halves of the privacy
+guarantee at once: an Intimate document adds no request and its digest never
+appears, and because the personal one's digest _is_ there, "nothing arrived"
+cannot be satisfied by a fake nobody ever dialled.
+
+The owner is provisioned by `globalSetup`, and the assertion that it worked is
+the point. `CREEK_VAULT_OWNER_USER_ID` is read from the server process's
+environment, so it names an id fixed before the database exists. The lane closes
+that circle by naming the first id `user`'s identity sequence will hand out and
+then signing that account up over HTTP as the lane's very first request — real
+signup, real licence gate, real hashing — and throwing the whole run down if the
+id it gets back is not the one already named. A guess that stopped holding fails
+at setup, loudly, instead of leaving one spec asserting `vault_unavailable` and
+calling it coverage.
+
+One consequence is worth stating rather than leaving to be discovered: with
+`CREEK_VAULT_URL` set, `DELETE /users/me` reports `vault.configured: true` and
+the guidance a vault-holding deployment owes, for **every** account rather than
+only the owner's — `services/account_deletion` reads the deployment variable,
+not the caller's own connection. That is the one observable difference this
+boundary makes to another journey, and `account-deletion.e2e.test.ts` now
+asserts that exact sentence rather than merely a non-empty one, so it is pinned
+instead of merely tolerated.
+
 One thing is configured rather than faked, and it is worth stating plainly
 because it looks like a fake and is not. The password-recovery journey has to
 read a plaintext reset token, and that token exists nowhere but the rendered
@@ -143,10 +203,20 @@ journey can assert on the browser-followable link the mail carries without
 anything ever resolving it. The captured mail is deleted at teardown with the
 directory it lives in.
 
-`frontend/__tests__/e2eLaneGuard.test.ts` enforces both of those boundaries
+`frontend/__tests__/e2eLaneGuard.test.ts` enforces every one of those boundaries
 mechanically. It runs in the ordinary frontend suite and fails if a journey ever
 mocks the API module or `fetch`, if the launcher stubs anything besides the
-license check, or if the CI job acquires a way to be disarmed.
+license check, if the vault fake widens what it advertises, or if the CI job
+acquires a way to be disarmed.
+
+Note what the guard's "exactly one stub" rule is and is not about. It reads the
+lane's **Python** for a module attribute rebound to a callable — a function, a
+lambda, a `Mock` — because that is what stubbing means on the request path. A
+loopback process that the production client genuinely dials over a real socket
+is the opposite of that: nothing is rebound, the transport is real, and the
+protocol is exercised rather than assumed. All four boundaries above are of that
+second kind. The one in-process stub is still, and only, the Gumroad licence
+check.
 
 ## The ledger
 

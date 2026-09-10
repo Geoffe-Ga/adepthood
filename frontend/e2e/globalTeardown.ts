@@ -85,6 +85,7 @@ export default async function globalTeardown(): Promise<void> {
     await stopServer(state.pid);
     await stopServer(state.creekPid);
     await stopServer(state.providerPid);
+    await stopServer(state.vaultPid);
     dropDatabase(state);
   } finally {
     rmSync(state.credentialDir, { recursive: true, force: true });
@@ -95,6 +96,9 @@ export default async function globalTeardown(): Promise<void> {
     // The fake provider's keys open nothing but a loopback process that is now
     // dead, and they do not outlive it either.
     rmSync(state.providerKeyDir, { recursive: true, force: true });
+    // The vault bearer is the same kind of thing: a credential for a loopback
+    // process that no longer exists, and it does not outlive it either.
+    rmSync(state.vaultKeyDir, { recursive: true, force: true });
     clearLaneState();
   }
 }
