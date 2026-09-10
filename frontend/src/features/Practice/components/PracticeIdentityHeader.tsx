@@ -10,12 +10,13 @@
  * with neither source the chip is simply omitted — never a crash, never a
  * dead control. Tapping the chip opens a light stage-picker card over the
  * dark ground; picking a stage reports it upward and the parent re-drives
- * the load. All text on the umber ground uses `onShowcase.*` ink so every
- * label clears WCAG AA contrast.
+ * the load, while a tap on the dimmed ground outside the card backs out of the
+ * invitation exactly as Cancel does. All text on the umber ground uses
+ * `onShowcase.*` ink so every label clears WCAG AA contrast.
  */
 import { Pencil } from 'lucide-react-native';
 import React, { useState } from 'react';
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import {
   BORDER_RADIUS,
@@ -85,17 +86,45 @@ interface StagePickerModalProps {
   onCancel: () => void;
 }
 
+/**
+ * Stable no-op that swallows taps landing on the card, so choosing a stage
+ * never bubbles out to the backdrop and dismisses the picker underfoot.
+ */
+const SWALLOW_PRESS = (): void => {};
+
 // A light picker card floating over the dark player: StageSelector's own
 // light-surface tokens are correct here because the card provides the light
-// ground the chips were designed for.
+// ground the chips were designed for. Every way out of the card — the backdrop,
+// Cancel, and the Android back button / iOS dismissal via `onRequestClose` —
+// runs the same `onCancel`, so backing out can never commit a stage.
 const StagePickerModal = ({
   visible,
   onPick,
   onCancel,
 }: StagePickerModalProps): React.JSX.Element => (
-  <Modal animationType="fade" onRequestClose={onCancel} transparent visible={visible}>
-    <View style={styles.pickerBackdrop}>
-      <View style={styles.pickerCard}>
+  <Modal
+    animationType="fade"
+    onRequestClose={onCancel}
+    transparent
+    visible={visible}
+    testID="practice-stage-pick-modal"
+  >
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Close the stage picker without changing stage"
+      onPress={onCancel}
+      style={styles.pickerBackdrop}
+      testID="practice-stage-pick-backdrop"
+    >
+      <Pressable
+        // `accessible={false}` keeps the card a plain container for screen
+        // readers: the chips and Cancel stay individually reachable rather than
+        // collapsing into one giant button.
+        accessible={false}
+        onPress={SWALLOW_PRESS}
+        style={styles.pickerCard}
+        testID="practice-stage-pick-card"
+      >
         <Text style={styles.pickerHeading} accessibilityRole="header">
           Pick a stage
         </Text>
@@ -109,8 +138,8 @@ const StagePickerModal = ({
         >
           <Text style={styles.pickerCancelText}>Cancel</Text>
         </TouchableOpacity>
-      </View>
-    </View>
+      </Pressable>
+    </Pressable>
   </Modal>
 );
 
