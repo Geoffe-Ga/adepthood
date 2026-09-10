@@ -6,7 +6,7 @@ import { StyleSheet, Text } from 'react-native';
 
 import { Button, busyIndicatorTestID, type ButtonVariant } from '../Button';
 
-import { accent, surface, touchTarget } from '@/design/tokens';
+import { accent, SPACING, surface, touchTarget } from '@/design/tokens';
 import * as reducedMotion from '@/hooks/useReducedMotion';
 
 describe('Button', () => {
@@ -246,6 +246,14 @@ describe('Button — the busy indicator', () => {
     );
 
     expect(getByTestId(BUSY_ID).props.color).toBe('#1F1F1F');
+  });
+
+  // Beside the label means beside it: with no gap the mark and the first glyph
+  // collide, which is a different bug wearing the same fix.
+  it('keeps a token gap between the mark and what follows it', () => {
+    const { getByTestId } = render(<Button label="Save" onPress={jest.fn()} busy testID="b" />);
+
+    expect(StyleSheet.flatten(getByTestId(BUSY_ID).props.style).marginRight).toBe(SPACING.sm);
   });
 
   it('leads the row, ahead of both an icon and the label', () => {
