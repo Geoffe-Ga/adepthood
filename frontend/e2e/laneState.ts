@@ -36,6 +36,33 @@ export interface LaneState {
    * `backend/src/services/provider_probe.py`.
    */
   providerProbeToken: string;
+  /** Process group leader of the loopback fake serving Creek's `/v1` surface. */
+  vaultPid: number;
+  /**
+   * Origin of that vault, which the seed journey reads its arrival ledger from.
+   *
+   * The same string the lane's server holds as `CREEK_VAULT_URL`, so a spec
+   * asking what arrived is asking the process adepthood actually dialled rather
+   * than one it happens to agree with.
+   */
+  vaultUrl: string;
+  /** Per-run directory holding only the generated vault bearer. */
+  vaultKeyDir: string;
+  /** The bearer the lane's server presents to that vault, minted per run. */
+  vaultApiKey: string;
+  /**
+   * The one account the deployment-wide vault belongs to, and its password.
+   *
+   * `CREEK_VAULT_OWNER_USER_ID` is read from the server's environment, so the
+   * id it names has to exist before the server that reads it does. `globalSetup`
+   * closes that circle by signing this account up over HTTP as the lane's very
+   * first request and asserting it received exactly the id the environment
+   * already named -- so a spec logs in as an owner rather than trying to become
+   * one. Every other account in the lane is a non-owner and reaches no vault,
+   * which is what leaves every other journey's behaviour where it was.
+   */
+  vaultOwnerEmail: string;
+  vaultOwnerPassword: string;
   /** Loopback origin the production client is pointed at. */
   baseUrl: string;
   /** URL of the throwaway database the run owns. */

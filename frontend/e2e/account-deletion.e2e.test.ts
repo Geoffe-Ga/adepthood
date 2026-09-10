@@ -106,8 +106,17 @@ describe('account-deletion journey against a live server', () => {
     expect(receipt.erased).not.toContain('accountdeletionaudit');
     // Adepthood has no purge verb on the vault contract, so it may never claim
     // one -- and it has to say what is left for the user to do themselves.
+    //
+    // Which sentence that is depends on the deployment, and this lane is now one
+    // with a vault: it boots the server with `CREEK_VAULT_URL` so the seed
+    // journey has somewhere to seed into. `configured` is read from that
+    // variable rather than from this account's own connection, so every account
+    // here is told what a vault-holding deployment owes them. Asserted rather
+    // than tolerated -- a length check passes under both configurations, which
+    // would make the day the lane loses its vault invisible from here.
     expect(receipt.vault.purged).toBe(false);
-    expect(receipt.vault.guidance.length).toBeGreaterThan(0);
+    expect(receipt.vault.configured).toBe(true);
+    expect(receipt.vault.guidance).toContain('creek purge');
   });
 
   it('kills the session it was holding, so the token cannot outlive the account', async () => {

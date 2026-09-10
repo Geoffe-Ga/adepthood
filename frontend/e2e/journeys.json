@@ -499,15 +499,15 @@
   },
   {
     "id": "seed.upload-document",
-    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision. Still uncovered, and the count of reasons went from two to one and back to two. Per-user vault configuration (#2233) retired the environment binding, so a spec can now connect a vault for the account it just created; what stands is that the lane has no vault to connect to, and that the app has no way to connect one. The client half and the screen that connects a vault both ship now, so the shipped app can reach the state this journey opens in and a spec no longer has to hand-roll the connection. What replaced that reason is narrower and harder: a user-supplied vault URL is refused unless it names a globally routable destination, so a stand-in vault served on loopback beside the lane is rejected before any row is written. Covering it therefore needs a vault reachable from the open internet, not lane infrastructure alone. Meanwhile every e2e import takes the local-fallback path, and a spec asserting only vault_unavailable would count as coverage while proving the journey's outcome never happens. The corpus half of the same decision is covered by corpus.import-without-a-vault.",
+    "description": "A person who HAS connected a vault chooses a document from their device and seeds it there; the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves both destinations -- POST /corpus/import decides per account -- and this entry is the vault half of that decision, the corpus half being corpus.import-without-a-vault. The lane now has a vault to reach: a loopback process answering Creek's published GET /v1/capabilities and POST /v1/uploads, reached through adepthood's own production CREEK_VAULT_URL and bound to one pre-provisioned account by CREEK_VAULT_OWNER_USER_ID. That binding is what closed the last blocker -- the variable is read from the server's environment and so names an id fixed before any account exists, which globalSetup settles by signing that account up as the lane's first request and refusing the whole run if the id it gets back is not the one already named. The deployment-wide value is also the only one that may name loopback: a user-supplied vault URL is refused unless it names a globally routable destination, which is why the connect-your-own path cannot serve this. The spec proves the seam end to end -- accepted with a ref, a re-send reported as one fragment edited in place rather than a second, and an Intimate document withheld before the vault is contacted at all, asserted against the vault's own record of what arrived.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
-      "client": ["corpus"],
-      "routes": ["POST /corpus/import"],
+      "client": ["auth", "setTokenGetter", "corpus"],
+      "routes": ["POST /auth/login", "POST /corpus/import"],
       "tables": ["user"]
     },
-    "status": "uncovered",
-    "issue": 2317
+    "status": "covered",
+    "coveredBy": "frontend/e2e/seed-upload.e2e.test.ts"
   },
   {
     "id": "corpus.import-without-a-vault",
@@ -575,7 +575,7 @@
   },
   {
     "id": "account.delete",
-    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt.",
+    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt. The receipt's vault half is pinned to the answer a deployment WITH a vault owes them -- adepthood holds no purge verb on the vault contract, so it names what is left for them to run themselves. The lane is such a deployment because seed.upload-document needs somewhere to seed into, and `configured` is read from the deployment's own CREEK_VAULT_URL rather than from this account's connection.",
     "crosses": {
       "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
       "client": ["users"],
