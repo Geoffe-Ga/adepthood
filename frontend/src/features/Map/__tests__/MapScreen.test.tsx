@@ -133,18 +133,7 @@ describe('MapScreen', () => {
     }
   });
 
-  it('navigates to Practice with stageNumber when Practice is tapped', () => {
-    const tree = create(<MapScreen />);
-    act(() => {
-      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
-    });
-    act(() => {
-      tree.root.findByProps({ testID: 'practice-link' }).props.onPress();
-    });
-    expect(mockNavigate).toHaveBeenCalledWith('Practice', { stageNumber: 1 });
-  });
-
-  it('navigates to Course with stageNumber when Course is tapped', () => {
+  it('navigates to Course with stageNumber when the primary Continue is tapped', () => {
     const tree = create(<MapScreen />);
     act(() => {
       tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
@@ -153,6 +142,17 @@ describe('MapScreen', () => {
       tree.root.findByProps({ testID: 'course-link' }).props.onPress();
     });
     expect(mockNavigate).toHaveBeenCalledWith('Course', { stageNumber: 1 });
+  });
+
+  it('navigates to Practice with stageNumber when the secondary Practice is tapped', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'practice-link' }).props.onPress();
+    });
+    expect(mockNavigate).toHaveBeenCalledWith('Practice', { stageNumber: 1 });
   });
 
   it('navigates to the Journal tab when Journal is tapped', () => {

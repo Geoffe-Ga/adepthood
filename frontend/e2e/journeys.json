@@ -522,6 +522,22 @@
     "coveredBy": "frontend/e2e/map.e2e.test.ts"
   },
   {
+    "id": "map.continue-stage-in-course",
+    "description": "A traveller opens the current stage on the Map and takes its strongest action, Continue, directly into that stage's Course chapter. The stage modal offers Course exactly once through that primary action; Practice and Journal occupy the two secondary slots, so no destination is duplicated. The component journey separately pins the stage-number route parameter and the close-before-navigation/double-tap guard, while this real-browser journey proves the rendered accessibility name, action hierarchy, modal dismissal, tab hand-off, and selected Course cover together.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages", "course"],
+      "routes": [
+        "GET /stages",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/stages/{stage_number}/progress"
+      ],
+      "tables": ["coursestage", "stagecontent", "contentcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-continue-course.browser.e2e.test.ts"
+  },
+  {
     "id": "depth.choose-rings",
     "description": "Someone turns a depth ring on or off and the app they come back to is the one they chose: Habits, Practice and Course each add or remove their primary destination; Sangha adds or removes the Digital Sangha door in Settings (SanghaSection.tsx), and its switch is offered only in a build with EXPO_PUBLIC_SANGHA_INVITE_URL configured, because a switch with nothing to close would be a false choice. The live-wire spec proves enable_sangha round-trips independently; the in-process pairing of each switch with its destination is pinned by src/features/Settings/__tests__/depthSwitchesHaveEffect.test.tsx.",
     "crosses": {

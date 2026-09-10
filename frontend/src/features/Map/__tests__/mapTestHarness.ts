@@ -135,6 +135,26 @@ export const mockLoadStages = jest.fn();
 /** ``stageService.beginAgain`` spy. */
 export const mockBeginAgain = jest.fn();
 
+let deferInteractions = false;
+const interactionCallbacks: Array<() => void> = [];
+
+/** Hold navigation work so a suite can observe the modal-close boundary. */
+export function mockDeferMapInteractions(): void {
+  deferInteractions = true;
+  interactionCallbacks.length = 0;
+}
+
+/** Release every deferred navigation callback in registration order. */
+export function mockFlushMapInteractions(): void {
+  const callbacks = interactionCallbacks.splice(0);
+  deferInteractions = false;
+  callbacks.forEach((callback) => callback());
+}
+
+export function mockPendingMapInteractions(): number {
+  return interactionCallbacks.length;
+}
+
 /** Reset state and clear the shared spies (call from ``beforeEach``). */
 export function resetMapMocks(): void {
   resetMapMockState();
@@ -142,6 +162,8 @@ export function resetMapMocks(): void {
   mockSetOptions.mockClear();
   mockLoadStages.mockClear();
   mockBeginAgain.mockClear();
+  deferInteractions = false;
+  interactionCallbacks.length = 0;
 }
 
 /** The single source of truth for the unlock rule, matching ``stageService``. */
@@ -179,7 +201,8 @@ export function buildMockStageState() {
 export function mockInteractionManagerModule() {
   const manager = {
     runAfterInteractions: (cb: () => void) => {
-      cb();
+      if (deferInteractions) interactionCallbacks.push(cb);
+      else cb();
       return { then: () => {}, done: () => {}, cancel: () => {} };
     },
     createInteractionHandle: () => 1,
