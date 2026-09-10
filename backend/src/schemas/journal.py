@@ -16,6 +16,7 @@ from models.journal_entry import (
     JournalClassification,
     JournalTag,
 )
+from schemas.journal_title import JournalTitle
 
 JOURNAL_MESSAGE_MAX_LENGTH = 10_000
 
@@ -66,7 +67,7 @@ class JournalMessageCreate(BaseModel):
     """
 
     message: str = Field(min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
-    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    title: JournalTitle | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     tag: JournalTag = JournalTag.FREEFORM
     classification: JournalClassification = JournalClassification.PERSONAL
     practice_session_id: RowIdField | None = None
@@ -95,7 +96,7 @@ class JournalEntryUpdate(BaseModel):
     """
 
     message: str | None = Field(default=None, min_length=1, max_length=JOURNAL_MESSAGE_MAX_LENGTH)
-    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    title: JournalTitle | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     status: EntryStatus | None = None
     classification: JournalClassification | None = None
     primary_aspect: int | None = Field(default=None, ge=ASPECT_MIN, le=ASPECT_MAX)

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from bounds import INT32_MAX, MIN_ROW_ID
 from models.journal_entry import JOURNAL_TITLE_MAX_LENGTH
+from schemas.journal_title import JournalTitle
 
 PROMPT_RESPONSE_MAX_LENGTH = 10_000
 
@@ -80,7 +81,7 @@ class PromptSubmit(BaseModel):
     response: str = Field(min_length=1, max_length=PROMPT_RESPONSE_MAX_LENGTH)
     # Optional compose title. When omitted or blank the router falls back to
     # the week's default band label; the length cap mirrors the DB column.
-    title: str | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
+    title: JournalTitle | None = Field(default=None, max_length=JOURNAL_TITLE_MAX_LENGTH)
     # Which of the stage's prompts the response answers, 1-based. Omitted
     # means the prompt the week itself draws, so clients written against the
     # one-prompt-per-week contract keep working unchanged. An ordinal the
