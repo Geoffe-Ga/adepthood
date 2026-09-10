@@ -28,6 +28,7 @@ import openai
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required, service_unavailable
 from security import sanitize_user_text
+from services.provider_probe import probed_provider
 from services.stub_completions import canned_completion
 
 if TYPE_CHECKING:
@@ -665,19 +666,33 @@ def provider_for_api_key(api_key: str) -> str | None:
     return None
 
 
-def _provider_for_request(api_key: str | None) -> str:
+def _provider_for_request(api_key: str | None, user_message: str) -> str:
     """Return the LLM provider to serve this request.
 
     A user-supplied BYOK key selects its own provider (derived from the key
     prefix) so a valid key activates a real model even when the server
     default is ``stub``.  Requests without a user key fall back to the
     server-configured :func:`get_provider`.
+
+    A deployment whose configured provider is *not* a real one — the stub, in
+    practice — may also carry an armed
+    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`, in which case a prompt
+    marked with that token is dialled to the provider it names rather than
+    answered by the stub. That branch is reached last and only from a
+    stub-configured server: when an operator has configured OpenAI or
+    Anthropic, ``configured`` is returned before the probe is consulted, so no
+    text in a request can redirect a real deployment's traffic to another
+    provider. See :mod:`services.provider_probe` for why the seam exists and
+    what keeps it shut.
     """
     if api_key is not None:
         derived = provider_for_api_key(api_key)
         if derived is not None:
             return derived
-    return get_provider()
+    configured = get_provider()
+    if configured in PROVIDER_REGISTRY:
+        return configured
+    return probed_provider(user_message, PROVIDER_REGISTRY) or configured
 
 
 def get_system_prompt() -> str:
@@ -1091,7 +1106,7 @@ async def generate_response(
     # key / quota client errors) likewise passes through unchanged.
     try:
         resolved_prompt = system_prompt or get_system_prompt()
-        provider = _provider_for_request(api_key)
+        provider = _provider_for_request(api_key, user_message)
 
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
