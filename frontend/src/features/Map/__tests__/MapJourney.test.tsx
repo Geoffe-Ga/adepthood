@@ -9,7 +9,15 @@ import MapScreen from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
 
 import type { StageHistoryData } from './mapTestHarness';
-import { mockMakeStage, mockMapState, mockNavigate, resetMapMocks } from './mapTestHarness';
+import {
+  mockDeferMapInteractions,
+  mockFlushMapInteractions,
+  mockMakeStage,
+  mockMapState,
+  mockNavigate,
+  mockPendingMapInteractions,
+  resetMapMocks,
+} from './mapTestHarness';
 
 import { showcase } from '@/design/tokens';
 
@@ -165,20 +173,52 @@ describe('MapScreen — journey narrative', () => {
     const tree = create(<MapScreen />);
     openStage(tree, 1);
 
-    // Primary action keeps the practice-link handler but reads "Continue".
+    // The primary Course action reads "Continue" and appears exactly once.
     expect(findText(tree, 'Continue')).toBe(true);
-    act(() => tree.root.findByProps({ testID: 'practice-link' }).props.onPress());
-    expect(mockNavigate).toHaveBeenCalledWith('Practice', { stageNumber: 1 });
-
-    // Each action closes the modal on navigate, so reopen between presses; the
-    // two secondary actions remain wired to Course / Journal.
-    openStage(tree, 1);
-    act(() => tree.root.findByProps({ testID: 'course-link' }).props.onPress());
+    const primary = tree.root.findByProps({ testID: 'course-link' });
+    expect(primary.props.accessibilityLabel).toBe('Continue this stage');
+    expect(primary.findByProps({ children: 'Continue' })).toBeTruthy();
+    act(() => primary.props.onPress());
     expect(mockNavigate).toHaveBeenCalledWith('Course', { stageNumber: 1 });
 
+    // Each action closes the modal on navigate, so reopen between presses; the
+    // two secondary actions remain wired to Practice / Journal.
     openStage(tree, 1);
-    act(() => tree.root.findByProps({ testID: 'journal-link' }).props.onPress());
+    const secondary = tree.root.findByProps({ testID: 'stage-secondary-actions' });
+    expect(secondary.findAllByProps({ testID: 'course-link' })).toHaveLength(0);
+    const practice = secondary.findByProps({ testID: 'practice-link' });
+    expect(practice.props.accessibilityRole).toBe('button');
+    expect(practice.props.accessibilityLabel).toBe('Practice this stage');
+    expect(practice.findByProps({ children: 'Practice' })).toBeTruthy();
+    act(() => practice.props.onPress());
+    expect(mockNavigate).toHaveBeenCalledWith('Practice', { stageNumber: 1 });
+
+    openStage(tree, 1);
+    const journal = tree.root.findByProps({ testID: 'journal-link' });
+    expect(journal.props.accessibilityRole).toBe('button');
+    expect(journal.props.accessibilityLabel).toBe('Journal about this stage');
+    act(() => journal.props.onPress());
     expect(mockNavigate).toHaveBeenCalledWith('Journal');
+  });
+
+  it('closes before deferred Continue navigation and ignores a transition double-tap', () => {
+    mockDeferMapInteractions();
+    const tree = create(<MapScreen />);
+    openStage(tree, 1);
+    const continueAction = tree.root.findByProps({ testID: 'course-link' });
+
+    act(() => {
+      continueAction.props.onPress();
+      continueAction.props.onPress();
+    });
+
+    expect(tree.root.findAllByProps({ testID: 'stage-modal' })).toHaveLength(0);
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockPendingMapInteractions()).toBe(1);
+
+    act(() => mockFlushMapInteractions());
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('Course', { stageNumber: 1 });
   });
 
   it('plays the Celebration when a stage newly completes', () => {

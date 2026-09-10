@@ -590,32 +590,35 @@ interface ActionLinksProps {
   onNavigate: (_screen: 'Practice' | 'Course' | 'Journal', _stage: StageData) => void;
 }
 
-// Ranked actions: the primary "Continue" (the stage's Practice) sits full-width
-// above two secondary links. Visual hierarchy only — every handler + testID is
-// unchanged, so Practice/Course/Journal still route exactly as before.
+// Ranked actions: the stage's Course is the primary continuation, above the
+// two distinct secondary destinations. Test ids name destinations, not rank.
 const ActionLinks = ({ stage, onNavigate }: ActionLinksProps): React.JSX.Element => (
   <View style={styles.actions}>
     <TouchableOpacity
-      testID="practice-link"
+      testID="course-link"
       style={styles.primaryAction}
-      onPress={() => onNavigate('Practice', stage)}
+      onPress={() => onNavigate('Course', stage)}
       accessibilityRole="button"
       accessibilityLabel="Continue this stage"
     >
       <Text style={styles.primaryActionText}>Continue</Text>
     </TouchableOpacity>
-    <View style={styles.secondaryActionsRow}>
+    <View style={styles.secondaryActionsRow} testID="stage-secondary-actions">
       <TouchableOpacity
-        testID="course-link"
+        testID="practice-link"
         style={styles.secondaryAction}
-        onPress={() => onNavigate('Course', stage)}
+        onPress={() => onNavigate('Practice', stage)}
+        accessibilityRole="button"
+        accessibilityLabel="Practice this stage"
       >
-        <Text style={styles.secondaryActionText}>Course</Text>
+        <Text style={styles.secondaryActionText}>Practice</Text>
       </TouchableOpacity>
       <TouchableOpacity
         testID="journal-link"
         style={styles.secondaryAction}
         onPress={() => onNavigate('Journal', stage)}
+        accessibilityRole="button"
+        accessibilityLabel="Journal about this stage"
       >
         <Text style={styles.secondaryActionText}>Journal</Text>
       </TouchableOpacity>

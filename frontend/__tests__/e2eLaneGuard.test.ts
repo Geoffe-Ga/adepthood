@@ -60,6 +60,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-return-offer.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'journal-title-single-line.browser.e2e.test.ts',
+  'map-continue-course.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
