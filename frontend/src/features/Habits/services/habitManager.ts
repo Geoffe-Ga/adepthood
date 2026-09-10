@@ -1107,6 +1107,28 @@ const loadHabits = async (tz?: string): Promise<void> => {
   await replayPendingCheckIns(zone);
 };
 
+/**
+ * What the user is told when the server refuses to delete their habit.
+ *
+ * It used to end "check your connection and try again", and that sentence
+ * could not be true here. ``formatApiError`` consults a caller's fallback only
+ * after ``classifyNetworkError`` has already claimed every failure that is
+ * about the connection -- a timeout, an unreachable host, a dead socket. By
+ * the time this string is reached, the request left, arrived, and came back
+ * refused. Naming the network is not merely a guess the client cannot support;
+ * it is the one explanation already ruled out, and it sent the reporter of
+ * #2763 to check their wifi over a constraint violation in the database.
+ *
+ * So it says what is known and no more: the habit is still there, with
+ * everything it had. Retrying is offered because a transient server fault is
+ * real and this call is safe to repeat, but it is not promised -- the failure
+ * that prompted this rewrite would have repeated forever. When the response
+ * carried a request id, ``formatApiError`` appends it, which is what makes
+ * "tell us" something we can actually act on.
+ */
+const DELETE_FAILED_COPY =
+  "We couldn't delete that habit, so it's back in your list with its history intact. Try once more; if it returns again, that is ours to fix, so tell us.";
+
 export const habitManager = {
   loadHabits,
 
@@ -1242,14 +1264,7 @@ export const habitManager = {
     void persistHabits(next);
     void cancelForHabit(habitId);
     if (!isServerBackedHabit(target)) return;
-    habitsApi
-      .delete(habitId)
-      .catch(
-        revertOnFailure(
-          prev,
-          "We couldn't delete that habit on the server. It's back in your list — check your connection and try again.",
-        ),
-      );
+    habitsApi.delete(habitId).catch(revertOnFailure(prev, DELETE_FAILED_COPY));
   },
 
   /**

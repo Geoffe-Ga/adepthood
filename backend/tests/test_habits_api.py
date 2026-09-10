@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import NamedTuple
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import event
+from sqlalchemy import Select, event, func, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ClauseElement
@@ -20,6 +21,7 @@ from sqlmodel import col, select
 from conftest import test_engine
 from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import today_in_tz
+from models.completion_suggestion import CompletionSuggestion, CompletionTargetType
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -388,6 +390,20 @@ _SUBTRACTIVE_TIERS_FOR_API: tuple[tuple[str, float], ...] = (
 )
 
 
+async def _foreign_user_id(client: AsyncClient, username: str) -> int:
+    """Register a second, real account and return its id.
+
+    The cross-tenant tests need a completion row that belongs to somebody other
+    than the caller. They used to write a made-up ``user_id`` of 999999, which
+    only worked because the test database was not enforcing foreign keys; a row
+    like that cannot exist in Postgres, so the guard was being proved against a
+    tenant who could never appear. A registered second account is both the thing
+    the filter actually has to exclude and a row the database will accept.
+    """
+    _, user_id = await _signup_with_user_id(client, username)
+    return user_id
+
+
 async def _signup_with_user_id(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
     """Variant of ``_signup`` that also returns the user id for DB-direct seeding."""
     resp = await client.post(
@@ -477,7 +493,8 @@ async def test_get_habit_completions_filtered_to_caller(
 
     # Foreign sentinel (Alice's seeded clear goal writes 2.0); 42.0 is unmistakable.
     stray_units = 42.0
-    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=stray_units)
+    mallory_id = await _foreign_user_id(async_client, "mallory_persist")
+    stray = GoalCompletion(goal_id=goal_id, user_id=mallory_id, completed_units=stray_units)
     db_session.add(stray)
     await db_session.commit()
 
@@ -753,12 +770,13 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     query layer the relation is never touched in Python and this commit
     is a harmless no-op.
     """
-    headers = await _signup(async_client, "tenantguard")
+    headers, owner_id = await _signup_with_user_id(async_client, "tenantguard")
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
     goal_id = next(g["id"] for g in create_resp.json()["goals"] if g["tier"] == "clear")
 
-    stray = GoalCompletion(goal_id=goal_id, user_id=999_999, completed_units=42.0)
+    mallory_id = await _foreign_user_id(async_client, "tenantguard_other")
+    stray = GoalCompletion(goal_id=goal_id, user_id=mallory_id, completed_units=42.0)
     db_session.add(stray)
     await db_session.commit()
     stray_id = stray.id
@@ -774,7 +792,11 @@ async def test_cross_tenant_completions_survive_a_commit_after_get(
     persisted = await db_session.get(GoalCompletion, stray_id)
     assert persisted is not None, "cross-tenant completion row was lost by a post-GET commit"
     assert persisted.goal_id == goal_id
-    assert persisted.user_id == 999_999
+    assert persisted.user_id == mallory_id
+    # Binds the survivor to a tenant that is not the caller: without this the
+    # assertion above would still hold if ``mallory_id`` were the owner's own
+    # id, and the test would have stopped being about cross-tenant rows.
+    assert persisted.user_id != owner_id
 
 
 # ── Locked-by-default / manual unlock persistence ───────────────────────
@@ -1333,12 +1355,12 @@ async def test_clear_completions_filters_by_user_id_defense_in_depth(
     habit_row = await db_session.get(Habit, habit_id)
     assert habit_row is not None
 
-    owned = await _seed_completion(
-        db_session, goal_id=goal_id, user_id=habit_row.user_id, days_back=0
-    )
+    owner_id = habit_row.user_id  # read before ``expire_all`` below detaches it
+    owned = await _seed_completion(db_session, goal_id=goal_id, user_id=owner_id, days_back=0)
+    mallory_id = await _foreign_user_id(async_client, "clear_defense_other")
     stray = GoalCompletion(
         goal_id=goal_id,
-        user_id=999_999,
+        user_id=mallory_id,
         completed_units=1.0,
         local_day=today_in_tz("UTC") - timedelta(days=1),
     )
@@ -1354,7 +1376,8 @@ async def test_clear_completions_filters_by_user_id_defense_in_depth(
     assert await db_session.get(GoalCompletion, owned_id) is None
     survivor = await db_session.get(GoalCompletion, stray_id)
     assert survivor is not None
-    assert survivor.user_id == 999_999
+    assert survivor.user_id == mallory_id
+    assert survivor.user_id != owner_id
 
 
 @pytest.mark.asyncio
@@ -1492,3 +1515,230 @@ async def test_list_orders_within_each_carryover_partition(async_client: AsyncCl
     carryover = [h["name"] for h in habits if h["is_carryover"] is True]
     assert program == ["Program A", "Program B"]
     assert carryover == ["Carryover X", "Carryover Y"]
+
+
+# ── Delete cascades over a habit's whole history ────────────────────────
+
+
+async def _seed_return_release(
+    db_session: AsyncSession, *, user_id: int, habit_id: int
+) -> MettaReturnHabitRelease:
+    """Release ``habit_id`` inside a fresh Return arc; return the release row."""
+    now = datetime.now(UTC)
+    arc = MettaReturnArc(user_id=user_id, started_at=now)
+    db_session.add(arc)
+    await db_session.flush()
+    assert arc.id is not None
+    release = MettaReturnHabitRelease(
+        user_id=user_id,
+        arc_id=arc.id,
+        habit_id=habit_id,
+        released_at=now,
+    )
+    db_session.add(release)
+    await db_session.commit()
+    return release
+
+
+async def _seed_habit_suggestion(
+    db_session: AsyncSession, *, entry_id: int, user_id: int, goal_id: int
+) -> CompletionSuggestion:
+    """Seed a pending habit-target completion suggestion against ``goal_id``."""
+    suggestion = CompletionSuggestion(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        target_type=CompletionTargetType.HABIT,
+        goal_id=goal_id,
+        user_practice_id=None,
+        label="drank a glass of water",
+        anchor_start=0,
+        anchor_end=24,
+        anchor_text="drank a glass of water!!",
+    )
+    db_session.add(suggestion)
+    await db_session.commit()
+    return suggestion
+
+
+async def _count_rows(db_session: AsyncSession, statement: Select[tuple[int]]) -> int:
+    """Run a COUNT statement, bypassing the session's identity map."""
+    return int((await db_session.execute(statement)).scalar_one())
+
+
+@asynccontextmanager
+async def _foreign_keys_enforced(db_session: AsyncSession) -> AsyncIterator[None]:
+    """Make this SQLite connection behave like the Postgres one production uses.
+
+    SQLite ships with ``PRAGMA foreign_keys`` OFF, per connection, so the test
+    database neither rejects a dangling reference nor runs ``ON DELETE
+    CASCADE``. That is exactly the blind spot #2763 came through:
+    ``DELETE /habits/{id}`` leans entirely on the cascade, and a cascade that
+    never fired left the same green as one that had worked perfectly.
+
+    Three things about the scope, each learned the hard way:
+
+    * It is switched on here rather than in ``conftest`` because enforcing it
+      for the whole suite fails 230 unrelated tests that seed rows against
+      fabricated ids. That is a real cleanup and much too wide to smuggle into
+      a bug fix.
+    * It must be switched back off. The pragma belongs to the *connection*, and
+      the in-memory engine pools one, so leaving it on leaked enforcement into
+      every later test sharing that worker -- 89 failures in files that have
+      nothing to do with habits, all of them green when run alone.
+    * SQLite ignores the pragma inside a transaction, which would leave the
+      assertions proving nothing, so the transaction is closed first and the
+      setting is read back before the caller is trusted with it.
+
+    The session and the app share one connection (``async_client`` overrides
+    ``get_session`` with this very object), so the pragma reaches the DELETE
+    the request itself issues.
+    """
+    await db_session.commit()
+    await _set_foreign_keys(db_session, enabled=True)
+    try:
+        yield
+    finally:
+        # ``rollback`` rather than ``commit``: when the body failed because the
+        # delete raised, the session is in a pending-rollback state and a commit
+        # here would raise over the top of the real error, hiding it.
+        await db_session.rollback()
+        await _set_foreign_keys(db_session, enabled=False)
+
+
+async def _set_foreign_keys(db_session: AsyncSession, *, enabled: bool) -> None:
+    """Set ``PRAGMA foreign_keys`` on this session's connection and confirm it took."""
+    await db_session.execute(text(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}"))
+    actual = (await db_session.execute(text("PRAGMA foreign_keys"))).scalar_one()
+    assert bool(actual) is enabled, "SQLite ignored the foreign-key pragma"
+
+
+class _HabitHistory(NamedTuple):
+    """One habit and the primary key of every row that hangs off it."""
+
+    headers: dict[str, str]
+    habit_id: int
+    goal_ids: list[int]
+    completion_id: int
+    suggestion_id: int
+    release_id: int
+
+
+async def _surviving_dependents(db_session: AsyncSession, history: _HabitHistory) -> dict[str, int]:
+    """Count what is still on disk of ``history``, one entry per table.
+
+    Every count is taken over primary keys, never over the foreign key that
+    points back at the habit. That distinction is the whole reliability of the
+    assertion: a row whose FK was set to NULL rather than deleted is still
+    there, corrupting exactly the streak history this endpoint must not
+    orphan, and a ``WHERE goal_id IN (...)`` count would report it as gone.
+    """
+    db_session.expire_all()
+    return {
+        "habit": await _count_rows(
+            db_session,
+            select(func.count()).select_from(Habit).where(col(Habit.id) == history.habit_id),
+        ),
+        "goal": await _count_rows(
+            db_session,
+            select(func.count()).select_from(Goal).where(col(Goal.id).in_(history.goal_ids)),
+        ),
+        "goalcompletion": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(GoalCompletion)
+            .where(col(GoalCompletion.id) == history.completion_id),
+        ),
+        "completionsuggestion": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(CompletionSuggestion)
+            .where(col(CompletionSuggestion.id) == history.suggestion_id),
+        ),
+        "mettareturnhabitrelease": await _count_rows(
+            db_session,
+            select(func.count())
+            .select_from(MettaReturnHabitRelease)
+            .where(col(MettaReturnHabitRelease.id) == history.release_id),
+        ),
+    }
+
+
+async def _seed_habit_with_full_history(
+    async_client: AsyncClient, db_session: AsyncSession, username: str
+) -> _HabitHistory:
+    """Create a habit carrying one row in every table that references it.
+
+    Goals, a goal completion, a completion suggestion and a Return release --
+    the shape of a habit somebody has actually lived with, as opposed to the
+    bare row the original delete test covered.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, username)
+    created = await async_client.post("/habits/", json=sample_payload(), headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = int(created.json()["id"])
+    goal_ids = await _goal_ids_for_habit(db_session, habit_id)
+    assert goal_ids, "the create endpoint seeds default goals"
+    clear_goal_id = next(g["id"] for g in created.json()["goals"] if g["tier"] == "clear")
+
+    completion = await _seed_completion(
+        db_session, goal_id=clear_goal_id, user_id=user_id, days_back=0
+    )
+    entry = await async_client.post(
+        "/journal/", json={"message": "drank a glass of water!! good day"}, headers=headers
+    )
+    assert entry.status_code == HTTPStatus.CREATED
+    suggestion = await _seed_habit_suggestion(
+        db_session, entry_id=int(entry.json()["id"]), user_id=user_id, goal_id=clear_goal_id
+    )
+    release = await _seed_return_release(db_session, user_id=user_id, habit_id=habit_id)
+    assert completion.id is not None
+    assert suggestion.id is not None
+    assert release.id is not None
+    return _HabitHistory(
+        headers=headers,
+        habit_id=habit_id,
+        goal_ids=goal_ids,
+        completion_id=completion.id,
+        suggestion_id=suggestion.id,
+        release_id=release.id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_habit_with_history_removes_every_dependent_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit with goals, completions, suggestions and a Return release deletes.
+
+    The reported bug (#2763): the tile vanished and came back, because this
+    DELETE failed server-side for any habit that had accumulated history while
+    a brand-new one deleted cleanly. Deleting a goal de-associated its
+    completions instead of removing them, and ``goalcompletion.goal_id`` is
+    NOT NULL, so the transaction aborted.
+
+    Each dependent table is counted separately, and counted before the delete
+    as well as after. An absence assertion that never watched the row arrive
+    is green for two reasons that look identical, and "the habit row is gone"
+    would be green while orphaned completions corrupted streak history.
+    """
+    history = await _seed_habit_with_full_history(async_client, db_session, "delete_history")
+
+    async with _foreign_keys_enforced(db_session):
+        assert await _surviving_dependents(db_session, history) == {
+            "habit": 1,
+            "goal": len(history.goal_ids),
+            "goalcompletion": 1,
+            "completionsuggestion": 1,
+            "mettareturnhabitrelease": 1,
+        }
+
+        resp = await async_client.delete(f"/habits/{history.habit_id}", headers=history.headers)
+
+        assert resp.status_code == HTTPStatus.NO_CONTENT
+        assert await _surviving_dependents(db_session, history) == {
+            "habit": 0,
+            "goal": 0,
+            "goalcompletion": 0,
+            "completionsuggestion": 0,
+            "mettareturnhabitrelease": 0,
+        }

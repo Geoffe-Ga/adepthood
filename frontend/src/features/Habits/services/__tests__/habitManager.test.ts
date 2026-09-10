@@ -1427,6 +1427,35 @@ describe('habitManager', () => {
       expect(habits[0]!.id).toBe(2);
       expect(habitsApi.delete).toHaveBeenCalledWith(1);
     });
+
+    it('does not blame the connection when the server refused the delete', async () => {
+      // The failure #2763 reported was a constraint violation: the request
+      // left, arrived, and came back refused. Anything the client says about
+      // the network here is not a guess -- ``formatApiError`` reaches a
+      // caller's fallback only once it has ruled the network out -- and the
+      // old copy sent the reporter to check their wifi over a 500.
+      const previousHabits = [makeHabit({ id: 1, name: 'Long-standing' })];
+      useHabitStore.setState({ habits: previousHabits });
+      const refusal = Object.assign(new Error('Request failed with status 500: db'), {
+        status: 500,
+        detail: 'internal_server_error',
+      });
+      (habitsApi.delete as jest.Mock).mockImplementationOnce(() => Promise.reject(refusal));
+      const { Alert } = require('react-native');
+
+      habitManager.deleteHabit(1);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // The tile comes back -- that is the reported symptom, and it is correct.
+      expect(useHabitStore.getState().habits).toEqual(previousHabits);
+
+      const body = String((Alert.alert as jest.Mock).mock.calls.at(-1)?.[1] ?? '');
+      expect(body).not.toMatch(/connection/i);
+      expect(body).not.toMatch(/offline/i);
+      // What the client does know, and what the user needs: nothing was lost.
+      expect(body).toMatch(/back in your list/i);
+      expect(body).toMatch(/history/i);
+    });
   });
 
   describe('addHabit', () => {

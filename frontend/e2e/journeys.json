@@ -812,6 +812,25 @@
     "issue": 2634
   },
   {
+    "id": "habits.delete-a-habit-you-have-lived-with",
+    "description": "A person deletes a habit they have actually used, and it stays deleted. The order is the finding: a habit created moments ago always deleted cleanly, and one that had ever been checked in returned 500, so this journey checks in on the clear goal, confirms the completion is really on the wire, and only then asks for the delete. The backend suite could not see this at all -- it runs on SQLite built from the model metadata, which until #2763 was not enforcing foreign keys, so a cascade that never ran and a cascade that ran perfectly left the same green. Here the schema is the migrated Postgres one and the four ON DELETE CASCADE constraints are the real ones. The re-read after the delete is what the reporter's next screen did: the symptom was a tile that came back, because the client reverts its optimistic removal when the server rejects.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "goalCompletions", "habits", "setTokenGetter"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /habits/",
+        "POST /goal_completions/",
+        "GET /habits/",
+        "DELETE /habits/{habit_id}",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-delete.e2e.test.ts"
+  },
+  {
     "id": "vault.connect-your-own",
     "description": "Someone connects a private vault of their own from Settings: the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own \u2014 the screen's tests mock the client and the router's tests never build a request \u2014 so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
     "crosses": {
