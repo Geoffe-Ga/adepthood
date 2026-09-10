@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { FrequencyResponse } from '@/api';
@@ -165,6 +165,59 @@ describe('PracticeIdentityHeader', () => {
     const { getByTestId, queryByTestId } = renderHeader();
     fireEvent.press(getByTestId('practice-stage-chip'));
     fireEvent.press(getByTestId('practice-stage-pick-cancel'));
+    expect(queryByTestId('practice-stage-pick-1')).toBeNull();
+    expect(onStageChange).not.toHaveBeenCalled();
+  });
+
+  it('the backdrop outside the card is a labeled dismiss control', () => {
+    const { getByTestId } = renderHeader();
+    fireEvent.press(getByTestId('practice-stage-chip'));
+    const backdrop = getByTestId('practice-stage-pick-backdrop');
+    expect(backdrop.props.accessibilityRole).toBe('button');
+    expect(backdrop.props.accessibilityLabel).toBe('Close the stage picker without changing stage');
+  });
+
+  it('tapping the backdrop dismisses the picker without picking a stage', () => {
+    const { getByTestId, queryByTestId } = renderHeader();
+    fireEvent.press(getByTestId('practice-stage-chip'));
+    // A dismissal proves nothing unless the picker was open to begin with.
+    expect(getByTestId('practice-stage-pick-1')).toBeTruthy();
+    expect(getByTestId('practice-stage-pick-cancel')).toBeTruthy();
+
+    fireEvent.press(getByTestId('practice-stage-pick-backdrop'));
+
+    expect(queryByTestId('practice-stage-pick-1')).toBeNull();
+    expect(queryByTestId('practice-stage-pick-cancel')).toBeNull();
+    // Backing out must never commit the choice the user was backing out of.
+    expect(onStageChange).not.toHaveBeenCalled();
+  });
+
+  it('tapping the card or its contents does not dismiss the picker', () => {
+    const { getByTestId, getByText, queryByTestId } = renderHeader();
+    fireEvent.press(getByTestId('practice-stage-chip'));
+    expect(getByTestId('practice-stage-pick-1')).toBeTruthy();
+
+    // The card swallows the tap instead of letting it bubble to the backdrop —
+    // both for the card itself and for inert content inside it.
+    fireEvent.press(getByTestId('practice-stage-pick-card'));
+    expect(getByTestId('practice-stage-pick-1')).toBeTruthy();
+    fireEvent.press(getByText('Pick a stage'));
+
+    expect(getByTestId('practice-stage-pick-1')).toBeTruthy();
+    expect(getByTestId('practice-stage-pick-cancel')).toBeTruthy();
+    expect(queryByTestId('practice-stage-pick-backdrop')).not.toBeNull();
+    expect(onStageChange).not.toHaveBeenCalled();
+  });
+
+  it('the hardware back request dismisses the picker without picking a stage', () => {
+    const { getByTestId, queryByTestId } = renderHeader();
+    fireEvent.press(getByTestId('practice-stage-chip'));
+    expect(getByTestId('practice-stage-pick-1')).toBeTruthy();
+
+    act(() => {
+      getByTestId('practice-stage-pick-modal').props.onRequestClose();
+    });
+
     expect(queryByTestId('practice-stage-pick-1')).toBeNull();
     expect(onStageChange).not.toHaveBeenCalled();
   });
