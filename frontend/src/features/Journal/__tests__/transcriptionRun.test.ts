@@ -4,6 +4,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   TRANSCRIBE_CONCURRENCY,
   transcriptionRunReducer,
+  inFlightCount,
   selectStartable,
   isRunComplete,
   progressLabel,
@@ -16,7 +17,7 @@ import type { TranscriptionErrorKind } from '@/api';
 
 // The driver hook owns image lookups and the actual transcribePage calls; this
 // state only ever holds per-page status/text/edit/error, keyed by stable id.
-const emptyState: TranscriptionRunState = { order: [], blocks: {} };
+const emptyState: TranscriptionRunState = { order: [], blocks: {}, orphans: [] };
 
 function idsToPages(ids: readonly string[]): { id: string }[] {
   return ids.map((id) => ({ id }));
@@ -119,7 +120,7 @@ describe('transcriptionRunReducer — out-of-order completion', () => {
 });
 
 describe('transcriptionRunReducer — pagesSynced drops a removed page', () => {
-  it('drops a page no longer in the session, so a stray resolve for it is absorbed as a no-op', () => {
+  it('drops a page no longer in the session, so a stray resolve for it lands nowhere', () => {
     let state = initState(['p1', 'p2']);
     state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
     state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2'] });
@@ -132,8 +133,12 @@ describe('transcriptionRunReducer — pagesSynced drops a removed page', () => {
       attempt: 1,
       text: 'ghost text',
     });
+    // The page is gone for good — no block, no text, no place in the order. The
+    // reply does settle the slot the removed read was still holding, which is
+    // what the concurrency-bound suite below pins.
     expect(afterGhostResolve.blocks.p1).toBeUndefined();
-    expect(afterGhostResolve).toEqual(state);
+    expect(afterGhostResolve.order).toEqual(['p2']);
+    expect(mergeBlocks(afterGhostResolve, idsToPages(['p2']))).toBe('');
   });
 
   it('lets the run complete without the removed page', () => {
@@ -508,5 +513,211 @@ describe('selectStartable — a terminal failure stops the run, not just the but
     const state = failFirstPageWith('timeout');
     expect(hasTerminalError(state)).toBe(false);
     expect(selectStartable(state)).toEqual(['p2', 'p3']);
+  });
+});
+
+describe('transcriptionRunReducer — a page removed mid-flight keeps holding its slot', () => {
+  // The bound this pins is money, not tidiness: an in-flight page is a live,
+  // wallet-charged request. Dropping its block the instant the writer trims the
+  // page would make the run *believe* a slot came free and start a third read
+  // while the second was still outstanding. Hand-written 2 on purpose: importing
+  // the production constant would let the constant itself go wrong unnoticed.
+  const HARD_BOUND = 2;
+
+  // Two in flight (the bound), two more waiting behind them — so a wrongly-freed
+  // slot always has a page ready to spend it, and "nothing started" can never
+  // pass for the boring reason that there was nothing to start.
+  function twoInFlightTwoQueued(): TranscriptionRunState {
+    let state = initState(['p1', 'p2', 'p3', 'p4']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+    return state;
+  }
+
+  it('proves the queued pages would launch the moment a slot legitimately frees', () => {
+    // The control for the assertions below: with p3 and p4 waiting, freeing one
+    // slot *does* start p3. So a later "nothing startable" means the slot stayed
+    // held, not that the run had run out of work.
+    let state = twoInFlightTwoQueued();
+    expect(inFlightCount(state)).toBe(HARD_BOUND);
+    expect(selectStartable(state)).toEqual([]);
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    expect(inFlightCount(state)).toBe(HARD_BOUND - 1);
+    expect(selectStartable(state)).toEqual(['p3']);
+  });
+
+  it('still counts the removed page as in flight, so no third read starts', () => {
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+
+    expect(inFlightCount(state)).toBe(HARD_BOUND);
+    expect(selectStartable(state)).toEqual([]);
+    // The page itself is gone from the run: no block to render, no place in order.
+    expect(state.blocks.p1).toBeUndefined();
+    expect(state.order).toEqual(['p2', 'p3', 'p4']);
+  });
+
+  it('releases the slot when the orphaned request finally resolves, landing no text', () => {
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id: 'p1',
+      attempt: 1,
+      text: 'ghost text',
+    });
+
+    expect(inFlightCount(state)).toBe(HARD_BOUND - 1);
+    expect(selectStartable(state)).toEqual(['p3']);
+    expect(state.blocks.p1).toBeUndefined();
+    expect(mergeBlocks(state, idsToPages(['p2', 'p3', 'p4']))).not.toContain('ghost text');
+  });
+
+  it('releases the slot when the orphaned request finally rejects', () => {
+    // A rejected orphan must free its slot too. If only resolve cleaned up, one
+    // failed removal would strand a slot for the rest of the session and quietly
+    // halve the run's concurrency.
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+    state = transcriptionRunReducer(state, {
+      type: 'reject',
+      id: 'p1',
+      attempt: 1,
+      error: 'network',
+    });
+
+    expect(inFlightCount(state)).toBe(HARD_BOUND - 1);
+    expect(selectStartable(state)).toEqual(['p3']);
+    expect(state.blocks.p1).toBeUndefined();
+    expect(hasTerminalError(state)).toBe(false);
+  });
+
+  it('never offers the orphaned page itself, so its removal can never re-charge it', () => {
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+    state = transcriptionRunReducer(state, {
+      type: 'reject',
+      id: 'p1',
+      attempt: 1,
+      error: 'network',
+    });
+    expect(selectStartable(state)).not.toContain('p1');
+    // And it is inert to every gesture that could revive it.
+    expect(transcriptionRunReducer(state, { type: 'retry', id: 'p1' })).toEqual(state);
+    expect(transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 })).toEqual(state);
+  });
+
+  it('holds only one slot per orphan, and both when both in-flight pages are removed', () => {
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p3', 'p4'] });
+    expect(inFlightCount(state)).toBe(HARD_BOUND);
+    expect(selectStartable(state)).toEqual([]);
+
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    expect(selectStartable(state)).toEqual(['p3']);
+    state = transcriptionRunReducer(state, {
+      type: 'reject',
+      id: 'p2',
+      attempt: 1,
+      error: 'timeout',
+    });
+    expect(inFlightCount(state)).toBe(0);
+    expect(selectStartable(state)).toEqual(['p3', 'p4']);
+  });
+
+  it('drops a settled orphan for good — a repeat reply cannot free a second slot', () => {
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'x' });
+    const settled = state;
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'x' });
+    expect(state).toEqual(settled);
+    expect(inFlightCount(state)).toBe(HARD_BOUND - 1);
+  });
+
+  it('keeps a page that is merely reordered out of the orphan set', () => {
+    // Only *leaving* the session orphans a request. A drag-reorder syncs the same
+    // ids in a new order; treating that as a removal would hold slots forever.
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, {
+      type: 'pagesSynced',
+      orderedIds: ['p4', 'p3', 'p2', 'p1'],
+    });
+    expect(inFlightCount(state)).toBe(HARD_BOUND);
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p2', attempt: 1, text: 'B' });
+    expect(inFlightCount(state)).toBe(0);
+    expect(blockAt(state, 'p1').text).toBe('A');
+  });
+
+  it('leaves a pending or settled page unorphaned when it is removed', () => {
+    // Nothing is outstanding for those, so holding a slot for them would be a leak
+    // in the other direction: capacity the run never gets back.
+    let state = initState(['p1', 'p2', 'p3', 'p4']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3'] });
+    expect(inFlightCount(state)).toBe(0);
+    expect(selectStartable(state)).toEqual(['p2', 'p3']);
+  });
+
+  it('gives a re-added id a fresh block and a fresh attempt, never the orphan back', () => {
+    // Ids are unique per session today, so this is belt-and-braces — but if one
+    // ever came back, adopting the orphan would resurrect a request the writer
+    // already dismissed, and sharing its attempt token would let the old reply
+    // land on the new page.
+    let state = twoInFlightTwoQueued();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p3', 'p4'] });
+    state = transcriptionRunReducer(state, {
+      type: 'pagesSynced',
+      orderedIds: ['p2', 'p3', 'p4', 'p1'],
+    });
+
+    expect(blockAt(state, 'p1').status).toBe('pending');
+    expect(blockAt(state, 'p1').attempt).not.toBe(1);
+    // The slot is still held by the orphan, so the re-added page waits its turn.
+    expect(inFlightCount(state)).toBe(HARD_BOUND);
+    expect(selectStartable(state)).toEqual([]);
+
+    // The orphan's late reply settles the orphan and leaves the new page pending.
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id: 'p1',
+      attempt: 1,
+      text: 'ghost text',
+    });
+    expect(blockAt(state, 'p1').status).toBe('pending');
+    expect(blockAt(state, 'p1').text).toBe('');
+    expect(selectStartable(state)).toEqual(['p3']);
+  });
+
+  it('never lets the orphan set outgrow the concurrency bound across a long session', () => {
+    // Bounded by construction, not by a cap: an orphan only ever replaces an
+    // in-flight page one-for-one, so the same bound that limits in-flight pages
+    // limits orphans too. Trim every page mid-read, round after round, and the
+    // held count never passes two — nor is a slot ever left behind at the end.
+    const ids = Array.from({ length: 10 }, (_unused, index) => `p${index + 1}`);
+    let state = initState(ids);
+    for (let round = 0; round < ids.length; round += 1) {
+      for (const id of selectStartable(state)) {
+        state = transcriptionRunReducer(state, { type: 'start', id, attempt: 1 });
+      }
+      const flying = state.order.filter((id) => state.blocks[id]?.status === 'inFlight');
+      if (flying.length === 0) break;
+      expect(inFlightCount(state)).toBeLessThanOrEqual(HARD_BOUND);
+
+      const remaining = state.order.filter((id) => !flying.includes(id));
+      state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: remaining });
+      // Every trimmed page is still holding its slot, and nothing new may start.
+      expect(inFlightCount(state)).toBe(flying.length);
+      expect(selectStartable(state)).toEqual([]);
+
+      for (const id of flying) {
+        state = transcriptionRunReducer(state, { type: 'resolve', id, attempt: 1, text: 'late' });
+      }
+      expect(inFlightCount(state)).toBe(0);
+    }
+    expect(state.order).toEqual([]);
+    expect(inFlightCount(state)).toBe(0);
   });
 });

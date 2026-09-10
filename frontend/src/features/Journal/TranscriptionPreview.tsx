@@ -34,7 +34,10 @@ const RETAKE_LABEL = 'Retake this page';
 const REMOVE_LABEL = 'Remove this page';
 const REDO_LABEL = 'Read this page again';
 const REDO_CONFIRM_LABEL = 'Read again and replace my edits';
-const BLOCK_INPUT_A11Y = 'Edit the transcribed text of this page';
+/** A run stacks several identical editors, and a screen reader announces only the
+ *  label — so each one names the page it belongs to rather than "this page". */
+const blockInputA11y = (position: number): string =>
+  `Edit the transcribed text of page ${position}`;
 
 /** The 402 status a spent wallet reports, so its copy stays the shared 402 source. */
 const WALLET_EXHAUSTED_STATUS = 402;
@@ -126,7 +129,7 @@ function DoneBlock({
         selectionColor={writingField.caret}
         cursorColor={writingField.caret}
         multiline
-        accessibilityLabel={BLOCK_INPUT_A11Y}
+        accessibilityLabel={blockInputA11y(position)}
       />
       <View style={styles.blockActions}>
         <Button
