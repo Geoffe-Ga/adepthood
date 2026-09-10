@@ -24,7 +24,6 @@ import {
   RESONANCE_EXPLAINER_CHOICE,
   RESONANCE_EXPLAINER_CONTINUE,
   RESONANCE_EXPLAINER_CONTINUE_A11Y,
-  RESONANCE_EXPLAINER_COST,
   RESONANCE_EXPLAINER_DONT_SHOW,
   RESONANCE_EXPLAINER_DONT_SHOW_A11Y,
   RESONANCE_EXPLAINER_SCRIM_A11Y,
@@ -43,6 +42,10 @@ import {
 
 export interface ResonanceExplainerDialogProps {
   visible: boolean;
+  /** Truthful price copy resolved from key presence and the served allowance. */
+  cost: string;
+  /** Prevent a pass while the payer is unknown or its wallet is exhausted. */
+  continueDisabled: boolean;
   /** Whether the reader has ticked "don’t show this again" on this showing. */
   dontShowAgain: boolean;
   onToggleDontShowAgain: () => void;
@@ -84,9 +87,11 @@ function DontShowAgain({
  * spends money — not which one we would rather the reader took.
  */
 function ExplainerActions({
+  continueDisabled,
   onContinue,
   onCancel,
 }: {
+  continueDisabled: boolean;
   onContinue: () => void;
   onCancel: () => void;
 }): React.JSX.Element {
@@ -102,9 +107,11 @@ function ExplainerActions({
         <Text style={styles.cancelLabel}>{RESONANCE_EXPLAINER_CANCEL}</Text>
       </TouchableOpacity>
       <TouchableOpacity
-        style={[styles.action, styles.continue]}
+        style={[styles.action, styles.continue, continueDisabled && styles.continueDisabled]}
         onPress={onContinue}
+        disabled={continueDisabled}
         accessibilityRole="button"
+        accessibilityState={{ disabled: continueDisabled }}
         accessibilityLabel={RESONANCE_EXPLAINER_CONTINUE_A11Y}
         testID="resonance-explainer-continue"
       >
@@ -116,6 +123,8 @@ function ExplainerActions({
 
 function ResonanceExplainerDialog({
   visible,
+  cost,
+  continueDisabled,
   dontShowAgain,
   onToggleDontShowAgain,
   onContinue,
@@ -138,13 +147,17 @@ function ResonanceExplainerDialog({
         {RESONANCE_EXPLAINER_WHAT}
       </Text>
       <Text style={styles.body} testID="resonance-explainer-cost">
-        {RESONANCE_EXPLAINER_COST}
+        {cost}
       </Text>
       <Text style={styles.body} testID="resonance-explainer-choice">
         {RESONANCE_EXPLAINER_CHOICE}
       </Text>
       <DontShowAgain checked={dontShowAgain} onToggle={onToggleDontShowAgain} />
-      <ExplainerActions onContinue={onContinue} onCancel={onCancel} />
+      <ExplainerActions
+        continueDisabled={continueDisabled}
+        onContinue={onContinue}
+        onCancel={onCancel}
+      />
     </JournalModalShell>
   );
 }
@@ -200,6 +213,9 @@ const styles = StyleSheet.create({
   },
   continue: {
     backgroundColor: colors.primary,
+  },
+  continueDisabled: {
+    opacity: 0.45,
   },
   continueLabel: {
     ...editorialType.action,

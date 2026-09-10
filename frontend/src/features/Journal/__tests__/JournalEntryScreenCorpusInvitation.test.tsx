@@ -69,6 +69,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 const INVITATION = 'journal-corpus-invitation';

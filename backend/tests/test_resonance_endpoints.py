@@ -187,6 +187,30 @@ async def test_resonance_insufficient_wallet_is_402_no_rows(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_byok_resonance_bypasses_both_wallet_buckets(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller-paid pass works with no allowance and leaves both wallets untouched."""
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": _BODY, "note": "A note."})
+    headers = await _signup(async_client, "byok_wallet_free")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(
+        f"/journal/{entry_id}/resonance",
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert len(resp.json()["marginalia"]) == 1
+    await db_session.rollback()
+    user = await _user(db_session, "byok_wallet_free")
+    assert user.monthly_messages_used == 0
+    assert user.offering_balance == 0
+    assert await _audit_reasons(db_session, "byok_wallet_free@example.com") == []
+
+
+@pytest.mark.asyncio
 async def test_resonance_other_users_entry_is_404(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -998,23 +1022,23 @@ def _raise_credit_exhausted(monkeypatch: pytest.MonkeyPatch, provider: str = "an
     monkeypatch.setattr(marginalia_service, "generate_response", _refuse)
 
 
-async def _assert_nothing_was_charged(db_session: AsyncSession, email: str) -> None:
-    """No note landed and the committed monthly deduction was refunded.
+async def _assert_nothing_was_charged(
+    db_session: AsyncSession, email: str, *, server_paid: bool
+) -> None:
+    """No note landed and any server-paid monthly deduction was refunded.
 
-    Both callers spend from the monthly bucket, so the audit trail must show
-    the spend and its compensating reversal side by side — net zero, but never
-    silence. The leading rollback discards anything merely flushed on the
-    shared test session, so only committed (durable) state can satisfy this.
+    A server-key failure leaves its spend and compensating reversal side by
+    side. A caller-key failure never touches the wallet, so its honest audit is
+    empty. The leading rollback discards anything merely flushed on the shared
+    test session, so only committed (durable) state can satisfy this.
     """
     await db_session.rollback()
     rows = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert rows == 0
     user = (await db_session.execute(select(User).where(col(User.email) == email))).scalar_one()
     assert user.monthly_messages_used == 0
-    assert await _audit_reasons(db_session, email) == [
-        REASON_SPEND_MONTHLY,
-        REASON_REFUND_FAILED_RESONANCE,
-    ]
+    expected = [REASON_SPEND_MONTHLY, REASON_REFUND_FAILED_RESONANCE] if server_paid else []
+    assert await _audit_reasons(db_session, email) == expected
 
 
 @pytest.mark.asyncio
@@ -1037,7 +1061,7 @@ async def test_byok_credit_exhausted_is_402_not_502(
 
     assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
     assert resp.json()["detail"] == _CREDIT_EXHAUSTED_DETAIL
-    await _assert_nothing_was_charged(db_session, "byokdry@example.com")
+    await _assert_nothing_was_charged(db_session, "byokdry@example.com", server_paid=False)
 
 
 @pytest.mark.asyncio
@@ -1053,7 +1077,7 @@ async def test_server_key_credit_exhausted_is_503_not_502(
 
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
     assert resp.json()["detail"] == _SERVICE_CREDIT_EXHAUSTED_DETAIL
-    await _assert_nothing_was_charged(db_session, "serverdry@example.com")
+    await _assert_nothing_was_charged(db_session, "serverdry@example.com", server_paid=True)
 
 
 @pytest.mark.asyncio

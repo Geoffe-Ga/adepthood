@@ -1,10 +1,10 @@
 /**
  * The words of the resonance spend disclosure.
  *
- * A resonance pass costs money. The backend deducts one message from the
- * account's monthly BotMason allowance before it dials the model, and until this
- * disclosure existed the first anyone heard of that was the 402 that arrives
- * once the allowance is gone — the price was quoted after it had been paid.
+ * A resonance pass costs money. The caller's own API key pays when present;
+ * otherwise the backend deducts one message from the account's BotMason wallet
+ * before it dials the model. Until this disclosure existed the first anyone
+ * heard of that was the 402 that arrives once the allowance is gone.
  *
  * So the copy has one job, in this order: what the pass does, where the entry
  * goes, what it costs, and that declining is free. It is deliberately flat about
@@ -26,9 +26,40 @@ export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 export const RESONANCE_EXPLAINER_WHAT =
   'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry is sent to an AI model.';
 
-/** The price, said plainly and without softening. */
-export const RESONANCE_EXPLAINER_COST =
-  'Each reading spends one of your free BotMason messages for the month. If you have added your own API key in Settings, it bills that key instead.';
+const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
+
+/** The price, derived from who pays and the allowance this deployment serves. */
+export function resonanceExplainerCost(
+  hasKey: boolean,
+  monthlyCap: number | null,
+  monthlyRemaining: number | null = null,
+  offeringBalance: number | null = null,
+): string {
+  if (hasKey) {
+    return 'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.';
+  }
+  if (monthlyRemaining === 0 && offeringBalance === 0) {
+    return `You have no BotMason monthly messages or offerings available for this reading. ${ADD_KEY}`;
+  }
+  if (monthlyCap === 0 || monthlyRemaining === 0) {
+    return `This reading spends one BotMason offering. ${ADD_KEY}`;
+  }
+  if (monthlyCap !== null) {
+    return `This reading spends one of your ${monthlyCap} BotMason messages for the month. ${ADD_KEY}`;
+  }
+  return `This reading spends one BotMason message from your account. ${ADD_KEY}`;
+}
+
+/** Whether the known payer snapshot can fund a pass; unknown reads stay retryable. */
+export function resonanceExplainerCanContinue(
+  hasKey: boolean,
+  monthlyRemaining: number | null,
+  offeringBalance: number | null,
+): boolean {
+  return hasKey || monthlyRemaining === null || offeringBalance === null
+    ? true
+    : monthlyRemaining > 0 || offeringBalance > 0;
+}
 
 /** That either answer is fine, and that nothing is lost by waiting. */
 export const RESONANCE_EXPLAINER_CHOICE =

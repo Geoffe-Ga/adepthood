@@ -37,6 +37,7 @@ import {
   reflectionDueResponseSchema,
   reflectionSourcesResponseSchema,
   resonanceResponseSchema,
+  botmasonUsageSchema,
   stageIntroSchema,
   userPracticeSchema,
   stageProgressRecordSchema,
@@ -55,6 +56,7 @@ import {
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
   type CareKindT,
+  type BotmasonUsageT,
   type CareResourceT,
   type CareResponseT,
   type CompletionSuggestionT,
@@ -1642,8 +1644,11 @@ export interface JournalListParams {
 // Resolve the bring-your-own-key header: an explicit per-call key wins, else the
 // key registered by the BYOK provider (ApiKeyContext) at call time so rotations
 // apply immediately. Empty/absent → no header (backend falls back to its env).
-const byokHeaders = (apiKey?: string): Record<string, string> | undefined => {
-  const key = apiKey ?? llmApiKeyGetter?.() ?? null;
+const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined => {
+  // `undefined` means "use the session's current key" for legacy callers.
+  // Explicit `null` pins a disclosed server-paid request even if key hydration
+  // finishes before the fetch is constructed.
+  const key = apiKey === undefined ? (llmApiKeyGetter?.() ?? null) : apiKey;
   return key ? { [LLM_API_KEY_HEADER]: key } : undefined;
 };
 
@@ -2001,7 +2006,7 @@ export const reflections = {
  */
 export const resonance = {
   /** Run a resonance pass over an entry: persists + returns notes and balances. */
-  generate(entryId: number, token?: string, apiKey?: string): Promise<ResonanceResponse> {
+  generate(entryId: number, token?: string, apiKey?: string | null): Promise<ResonanceResponse> {
     return request<ResonanceResponse>(`/journal/${entryId}/resonance`, {
       method: 'POST',
       token,
@@ -2019,6 +2024,16 @@ export const resonance = {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+    });
+  },
+};
+
+/** Read the deployment's allowance policy and this account's wallet state. */
+export const botmasonUsage = {
+  get(token?: string): Promise<BotmasonUsageT> {
+    return request<BotmasonUsageT>('/user/usage', {
+      token,
+      schema: botmasonUsageSchema as unknown as z.ZodType<BotmasonUsageT>,
     });
   },
 };

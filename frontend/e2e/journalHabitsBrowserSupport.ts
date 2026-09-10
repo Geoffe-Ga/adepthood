@@ -139,10 +139,10 @@ export async function openReorder(page: Page): Promise<void> {
 /**
  * Ask a finished entry for its resonance, through the spend disclosure.
  *
- * A resonance pass is charged — one BotMason message — so the first press on an
- * account that has not set the note aside opens the cost disclosure instead of
- * running anything. These journeys are about what a pass produces, so they take
- * the Continue arm; the disclosure itself is the subject of
+ * A server-paid resonance pass spends one BotMason message; a BYOK pass bills
+ * only the caller's key. The first press on an account that has not set the note
+ * aside opens that payer disclosure instead of running anything. These journeys
+ * are about what a pass produces, so they take the Continue arm; the disclosure itself is the subject of
  * `resonance-explainer.browser.e2e.test.ts`.
  */
 export async function askForResonance(page: Page): Promise<void> {

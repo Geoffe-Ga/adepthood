@@ -284,7 +284,7 @@
   },
   {
     "id": "journal.told-what-resonance-costs-before-it-charges",
-    "description": "A writer opens a finished page and presses Get Resonance for the first time. A resonance pass is charged -- the route deducts one BotMason message from the wallet before it dials the model -- and until this gate existed the first anyone heard of that price was the 402 that arrives once the allowance is spent. So the press opens a disclosure instead: what a pass does, that the entry's text is sent to an AI model, and what it costs. The load-bearing assertions are counted requests and server state rather than visible text. While the disclosure is up, and again after the back-out arm, no POST /journal/{entry_id}/resonance has left the browser and the server is holding no marginalia; Continue then sends exactly one pass and the notes really are persisted, so the gate neither charges early nor swallows the request. A spec that only asserted the dialog was on screen would pass just as happily against a build that showed it and charged behind it. The dismissal is then taken and the next press goes straight through. This has to be the browser lane: the node lane runs with node_modules untransformed and cannot mount JournalEntryScreen at all (#2324), and the whole claim is about what a rendered press does. What is pinned in Jest beside it rather than here is the per-account namespacing of the dismissal flag (frontend/src/storage/__tests__/resonanceExplainerStorage.test.ts): one account's \"don't show this again\" must not answer for the next account on the same device, because the charge would land on the incoming reader's own allowance.",
+    "description": "A writer opens a finished page and presses Get Resonance for the first time. The press opens a disclosure before any request leaves the browser: what a pass does, that the entry's text is sent to an AI model, and who pays. With no key, the rendered copy uses the deployment-served monthly cap and never promises that the allowance is free. The writer backs out, saves their own key through Settings, reopens the same page, and now sees that the key pays and neither BotMason bucket will move. Continue sends exactly one real request through the screen and production API to the lane's provider; its deterministic credit refusal proves the BYOK header arrived, while GET /user/usage proves both BotMason buckets stayed unchanged. The dismissal is then taken and the next press goes straight through without silently switching payer. Counted requests and server state keep the journey non-vacuous: a dialog-only assertion could pass while charging too early or charging both payers. This has to be the browser lane because the claim spans rendered presses and device key storage. Per-account namespacing of the dismissal flag remains pinned in the Jest specs beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -292,7 +292,8 @@
         "POST /journal/",
         "PATCH /journal/{entry_id}",
         "POST /journal/{entry_id}/resonance",
-        "GET /journal/{entry_id}/marginalia"
+        "GET /journal/{entry_id}/marginalia",
+        "GET /user/usage"
       ],
       "tables": ["journalentry", "marginalia", "walletaudit"]
     },

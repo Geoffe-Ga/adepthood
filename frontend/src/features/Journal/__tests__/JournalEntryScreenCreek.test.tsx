@@ -47,6 +47,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 function entry(): JournalMessage {
@@ -92,7 +94,7 @@ async function runPass(response: ResonanceResponse) {
   const view = renderScreen();
   await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
   fireEvent.press(view.getByTestId('get-resonance-button'));
-  await waitFor(() => expect(mockGenerate).toHaveBeenCalledWith(7));
+  await waitFor(() => expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null));
   return view;
 }
 

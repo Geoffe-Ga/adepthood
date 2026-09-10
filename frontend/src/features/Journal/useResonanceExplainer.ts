@@ -1,9 +1,10 @@
 /**
- * The gate in front of a charged resonance pass.
+ * The payer gate in front of a resonance pass.
  *
  * A press on "Get Resonance" used to reach ``resonance.generate`` directly, and
- * that call deducts one message from the account's BotMason allowance before it
- * dials the model. This hook puts the spend disclosure in between: the first
+ * that call either uses the caller's API key or deducts one message from the
+ * account's BotMason allowance before it dials the model. This hook puts the
+ * payer disclosure in between: the first
  * press (for an account that has not asked otherwise) opens
  * ``ResonanceExplainerDialog``, and only the dialog's Continue arm runs the
  * pass.
@@ -29,7 +30,12 @@
  * silently fell through to the charge.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 
+import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
+
+import { botmasonUsage } from '@/api';
+import { useApiKey } from '@/context/ApiKeyContext';
 import {
   loadResonanceExplainerDismissed,
   saveResonanceExplainerDismissed,
@@ -40,13 +46,91 @@ export interface ResonanceExplainerGate {
   onPress: () => Promise<void>;
   /** Whether the disclosure is on screen. */
   visible: boolean;
+  /** Spend copy for the payer and deployment policy currently in force. */
+  cost: string;
+  /** True while the payer is unknown or the known wallet cannot fund a pass. */
+  continueDisabled: boolean;
   /** The state of the "don’t show this again" box for this showing. */
   dontShowAgain: boolean;
   onToggleDontShowAgain: () => void;
-  /** Take the charged arm: close, persist any tick, then run the pass. */
+  /** Take the disclosed arm: close, persist any tick, then run the pass. */
   onContinue: () => void;
   /** Leave without a pass; a ticked box is still honoured. */
   onCancel: () => void;
+}
+
+const UNKNOWN_COST = resonanceExplainerCost(false, null);
+
+interface ResonanceCostState {
+  copy: string;
+  canContinue: boolean;
+  loading: boolean;
+}
+
+const UNKNOWN_COST_STATE: ResonanceCostState = {
+  copy: UNKNOWN_COST,
+  canContinue: true,
+  loading: false,
+};
+
+/**
+ * Resolve price copy without ever exposing the key itself.
+ *
+ * The defensive catches keep the disclosure truthful during a failed usage
+ * read (and while component tests intentionally supply a partial API seam): a
+ * generic BotMason-message statement replaces any guessed allowance.
+ */
+function useResonanceCost(): {
+  current: ResonanceCostState;
+  refresh: (_apiKey: string | null) => void;
+} {
+  const [current, setCurrent] = useState(UNKNOWN_COST_STATE);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
+    },
+    [],
+  );
+
+  const refresh = useCallback((apiKey: string | null): void => {
+    const generation = ++generationRef.current;
+    const publish = (next: ResonanceCostState): void => {
+      if (mountedRef.current && generationRef.current === generation) setCurrent(next);
+    };
+    if (apiKey !== null) {
+      publish({ copy: resonanceExplainerCost(true, null), canContinue: true, loading: false });
+      return;
+    }
+
+    publish({ copy: UNKNOWN_COST, canContinue: false, loading: true });
+    try {
+      void botmasonUsage
+        .get()
+        .then((usage) => {
+          publish({
+            copy: resonanceExplainerCost(
+              false,
+              usage.monthly_cap,
+              usage.monthly_messages_remaining,
+              usage.offering_balance,
+            ),
+            canContinue: resonanceExplainerCanContinue(
+              false,
+              usage.monthly_messages_remaining,
+              usage.offering_balance,
+            ),
+            loading: false,
+          });
+        })
+        .catch(() => publish(UNKNOWN_COST_STATE));
+    } catch {
+      publish(UNKNOWN_COST_STATE);
+    }
+  }, []);
+  return useMemo(() => ({ current, refresh }), [current, refresh]);
 }
 
 /** The stored dismissal, as the gate needs to consult it. */
@@ -99,41 +183,85 @@ function useDismissedFlag(): DismissedFlag {
   return useMemo(() => ({ known, read, markDismissed }), [known, read, markDismissed]);
 }
 
-/**
- * Gate ``requestResonance`` behind the spend disclosure.
- *
- * @param requestResonance - the screen's one charged pass, called unchanged.
- */
+interface DisclosureDecisionInput {
+  cost: ReturnType<typeof useResonanceCost>;
+  disclosedKeyRef: MutableRefObject<string | null>;
+  flag: DismissedFlag;
+  requestResonance: (_apiKey: string | null) => Promise<void>;
+  show: () => void;
+}
+
+/** Build the one decision shared by immediate and post-hydration presses. */
+function useDisclosureDecision(input: DisclosureDecisionInput) {
+  const { cost, disclosedKeyRef, flag, requestResonance, show } = input;
+  const decide = useCallback(
+    (isDismissed: boolean, payerKey: string | null): void => {
+      if (isDismissed) {
+        void requestResonance(payerKey);
+        return;
+      }
+      disclosedKeyRef.current = payerKey;
+      cost.refresh(payerKey);
+      show();
+    },
+    [cost, disclosedKeyRef, requestResonance, show],
+  );
+  return useCallback(
+    async (payerKey: string | null): Promise<void> => {
+      // Deliberately synchronous once the answer is in hand: deferring a decision
+      // that is already made would put the loading state a tick behind the thumb.
+      const known = flag.known();
+      if (known !== null) {
+        decide(known, payerKey);
+        return;
+      }
+      decide(await flag.read(), payerKey);
+    },
+    [decide, flag],
+  );
+}
+
+/** Hold a press until SecureStore has established the actual payer. */
+function useHydratedPress(decideForKey: (_apiKey: string | null) => Promise<void>) {
+  const { apiKey, isLoading: keyIsLoading } = useApiKey();
+  const pendingPressRef = useRef(false);
+  const onPress = useCallback(async (): Promise<void> => {
+    if (keyIsLoading) {
+      pendingPressRef.current = true;
+      return;
+    }
+    await decideForKey(apiKey);
+  }, [apiKey, decideForKey, keyIsLoading]);
+
+  useEffect(() => {
+    if (keyIsLoading || !pendingPressRef.current) return;
+    pendingPressRef.current = false;
+    void decideForKey(apiKey);
+  }, [apiKey, decideForKey, keyIsLoading]);
+  return { apiKey, keyIsLoading, onPress };
+}
+
+/** Gate ``requestResonance`` behind disclosure pinned to the accepted payer. */
 export function useResonanceExplainer(
-  requestResonance: () => Promise<void>,
+  requestResonance: (_apiKey: string | null) => Promise<void>,
 ): ResonanceExplainerGate {
   const [visible, setVisible] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const flag = useDismissedFlag();
-
-  /** Act on the stored answer: run the pass, or disclose what it would cost. */
-  const decide = useCallback(
-    (isDismissed: boolean): void => {
-      if (isDismissed) {
-        void requestResonance();
-        return;
-      }
-      setDontShowAgain(false);
-      setVisible(true);
-    },
-    [requestResonance],
-  );
-
-  const onPress = useCallback(async (): Promise<void> => {
-    // Deliberately synchronous once the answer is in hand: deferring a decision
-    // that is already made would put the loading state a tick behind the thumb.
-    const known = flag.known();
-    if (known !== null) {
-      decide(known);
-      return;
-    }
-    decide(await flag.read());
-  }, [decide, flag]);
+  const cost = useResonanceCost();
+  const disclosedKeyRef = useRef<string | null>(null);
+  const show = useCallback(() => {
+    setDontShowAgain(false);
+    setVisible(true);
+  }, []);
+  const decideForKey = useDisclosureDecision({
+    cost,
+    disclosedKeyRef,
+    flag,
+    requestResonance,
+    show,
+  });
+  const { apiKey, keyIsLoading, onPress } = useHydratedPress(decideForKey);
 
   const onToggleDontShowAgain = useCallback(() => {
     setDontShowAgain((prev) => !prev);
@@ -151,9 +279,26 @@ export function useResonanceExplainer(
   }, [dontShowAgain, flag]);
 
   const onContinue = useCallback((): void => {
+    // A payer change invalidates the consent just given. Keep the dialog open,
+    // publish the new payer, and require a second explicit Continue.
+    if (keyIsLoading || apiKey !== disclosedKeyRef.current) {
+      disclosedKeyRef.current = apiKey;
+      cost.refresh(apiKey);
+      return;
+    }
+    if (cost.current.loading || !cost.current.canContinue) return;
     close();
-    void requestResonance();
-  }, [close, requestResonance]);
+    void requestResonance(disclosedKeyRef.current);
+  }, [apiKey, close, cost, keyIsLoading, requestResonance]);
 
-  return { onPress, visible, dontShowAgain, onToggleDontShowAgain, onContinue, onCancel: close };
+  return {
+    onPress,
+    visible,
+    cost: cost.current.copy,
+    continueDisabled: cost.current.loading || !cost.current.canContinue,
+    dontShowAgain,
+    onToggleDontShowAgain,
+    onContinue,
+    onCancel: close,
+  };
 }
