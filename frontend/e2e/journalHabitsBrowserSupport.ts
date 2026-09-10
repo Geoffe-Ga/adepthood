@@ -24,12 +24,23 @@ export function backendUrl(): string {
   return state.baseUrl;
 }
 
-export function setProgramAnchorSixDaysAgo(email: string): void {
+/**
+ * Move an account's program anchor `daysAgo` days back, so the stage calendar
+ * has genuinely moved on.
+ *
+ * `program_started_at` is only ever written as "now" and no request schema
+ * accepts it, so this arrange has to go to the lane's own throwaway database
+ * through `tests.e2e.program_anchor` -- the same out-of-band rewind the Map
+ * journey uses. It stubs nothing on the request path: the only thing faked is
+ * the passage of time, and it is faked in the database rather than anywhere the
+ * spec then reads through.
+ */
+export function setProgramAnchorDaysAgo(email: string, daysAgo: number): void {
   const state = readLaneState();
   if (state === null) throw new Error('API lane state is missing');
   const result = spawnSync(
     pythonExecutable(),
-    ['-m', 'tests.e2e.program_anchor', 'anchor', '--email', email, '--days-ago', '6'],
+    ['-m', 'tests.e2e.program_anchor', 'anchor', '--email', email, '--days-ago', String(daysAgo)],
     {
       cwd: BACKEND_DIR,
       encoding: 'utf8',
@@ -39,6 +50,13 @@ export function setProgramAnchorSixDaysAgo(email: string): void {
   if (result.status !== 0) {
     throw new Error(`program anchor arrange failed: ${result.stderr || result.stdout}`);
   }
+}
+
+/** A week into the program: the anchor the promoted-quote reflection journey needs. */
+const SIX_DAYS = 6;
+
+export function setProgramAnchorSixDaysAgo(email: string): void {
+  setProgramAnchorDaysAgo(email, SIX_DAYS);
 }
 
 export async function signUp(page: Page, prefix: string): Promise<string> {
