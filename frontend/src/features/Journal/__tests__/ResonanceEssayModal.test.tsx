@@ -213,6 +213,49 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
     expect((await findByTestId('essay-text')).props.children).toBe('A letter for the other note.');
   });
 
+  it('does not re-ask when the writer closed the modal while the ask was in flight', async () => {
+    let answer: (_n: Marginalia) => void = () => undefined;
+    mockEssay.mockReturnValue(
+      new Promise<Marginalia>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const { getByTestId, getByText, queryByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    expect(getByTestId('essay-loading')).toBeTruthy();
+
+    // The writer closes the modal before the answer arrives; the ask still
+    // lands, and produces no letter.
+    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
+    await act(async () => {
+      answer(note({ id: 4, essay: '' }));
+    });
+
+    rerender(
+      <ResonanceEssayModal note={note({ id: 4 })} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+    );
+    await act(async () => {});
+
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    expect(getByText(BLANK_COPY)).toBeTruthy();
+    expect(queryByTestId('essay-loading')).toBeNull();
+  });
+
+  it('asks for a note carrying a blank cached essay instead of drawing an empty body', async () => {
+    mockEssay.mockResolvedValue(note({ id: 4, essay: 'The letter that was missing.' }));
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ id: 4, essay: '' })}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+      />,
+    );
+
+    expect((await findByTestId('essay-text')).props.children).toBe('The letter that was missing.');
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
   it('asks again on a fresh mount, because a refusal is transient', async () => {
     mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
     const first = render(
