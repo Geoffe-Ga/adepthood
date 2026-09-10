@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import NamedTuple
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import Select, event, func
+from sqlalchemy import Select, event, func, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ClauseElement
@@ -1565,6 +1565,53 @@ async def _count_rows(db_session: AsyncSession, statement: Select[tuple[int]]) -
     return int((await db_session.execute(statement)).scalar_one())
 
 
+@asynccontextmanager
+async def _foreign_keys_enforced(db_session: AsyncSession) -> AsyncIterator[None]:
+    """Make this SQLite connection behave like the Postgres one production uses.
+
+    SQLite ships with ``PRAGMA foreign_keys`` OFF, per connection, so the test
+    database neither rejects a dangling reference nor runs ``ON DELETE
+    CASCADE``. That is exactly the blind spot #2763 came through:
+    ``DELETE /habits/{id}`` leans entirely on the cascade, and a cascade that
+    never fired left the same green as one that had worked perfectly.
+
+    Three things about the scope, each learned the hard way:
+
+    * It is switched on here rather than in ``conftest`` because enforcing it
+      for the whole suite fails 230 unrelated tests that seed rows against
+      fabricated ids. That is a real cleanup and much too wide to smuggle into
+      a bug fix.
+    * It must be switched back off. The pragma belongs to the *connection*, and
+      the in-memory engine pools one, so leaving it on leaked enforcement into
+      every later test sharing that worker -- 89 failures in files that have
+      nothing to do with habits, all of them green when run alone.
+    * SQLite ignores the pragma inside a transaction, which would leave the
+      assertions proving nothing, so the transaction is closed first and the
+      setting is read back before the caller is trusted with it.
+
+    The session and the app share one connection (``async_client`` overrides
+    ``get_session`` with this very object), so the pragma reaches the DELETE
+    the request itself issues.
+    """
+    await db_session.commit()
+    await _set_foreign_keys(db_session, enabled=True)
+    try:
+        yield
+    finally:
+        # ``rollback`` rather than ``commit``: when the body failed because the
+        # delete raised, the session is in a pending-rollback state and a commit
+        # here would raise over the top of the real error, hiding it.
+        await db_session.rollback()
+        await _set_foreign_keys(db_session, enabled=False)
+
+
+async def _set_foreign_keys(db_session: AsyncSession, *, enabled: bool) -> None:
+    """Set ``PRAGMA foreign_keys`` on this session's connection and confirm it took."""
+    await db_session.execute(text(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}"))
+    actual = (await db_session.execute(text("PRAGMA foreign_keys"))).scalar_one()
+    assert bool(actual) is enabled, "SQLite ignored the foreign-key pragma"
+
+
 class _HabitHistory(NamedTuple):
     """One habit and the primary key of every row that hangs off it."""
 
@@ -1676,21 +1723,22 @@ async def test_delete_habit_with_history_removes_every_dependent_row(
     """
     history = await _seed_habit_with_full_history(async_client, db_session, "delete_history")
 
-    assert await _surviving_dependents(db_session, history) == {
-        "habit": 1,
-        "goal": len(history.goal_ids),
-        "goalcompletion": 1,
-        "completionsuggestion": 1,
-        "mettareturnhabitrelease": 1,
-    }
+    async with _foreign_keys_enforced(db_session):
+        assert await _surviving_dependents(db_session, history) == {
+            "habit": 1,
+            "goal": len(history.goal_ids),
+            "goalcompletion": 1,
+            "completionsuggestion": 1,
+            "mettareturnhabitrelease": 1,
+        }
 
-    resp = await async_client.delete(f"/habits/{history.habit_id}", headers=history.headers)
+        resp = await async_client.delete(f"/habits/{history.habit_id}", headers=history.headers)
 
-    assert resp.status_code == HTTPStatus.NO_CONTENT
-    assert await _surviving_dependents(db_session, history) == {
-        "habit": 0,
-        "goal": 0,
-        "goalcompletion": 0,
-        "completionsuggestion": 0,
-        "mettareturnhabitrelease": 0,
-    }
+        assert resp.status_code == HTTPStatus.NO_CONTENT
+        assert await _surviving_dependents(db_session, history) == {
+            "habit": 0,
+            "goal": 0,
+            "goalcompletion": 0,
+            "completionsuggestion": 0,
+            "mettareturnhabitrelease": 0,
+        }

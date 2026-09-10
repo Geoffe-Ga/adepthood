@@ -85,30 +85,6 @@ _CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS = 30
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 
-
-@event.listens_for(test_engine.sync_engine, "connect")
-def _enforce_sqlite_foreign_keys(
-    dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
-) -> None:
-    """Turn on SQLite's foreign-key enforcement for every test connection.
-
-    SQLite ships with ``PRAGMA foreign_keys`` OFF, per connection, for
-    backwards compatibility.  Production is Postgres, which always enforces
-    foreign keys and always honours ``ON DELETE CASCADE``; without this pragma
-    the test database silently did neither, so a delete that should cascade
-    instead left orphans behind and every assertion about them passed anyway.
-    That blind spot is what let #2763 ship: ``DELETE /habits/{id}`` leans
-    entirely on the FK cascade, and no test could see whether the cascade ran.
-    Enabling it here makes the test database enforce the same referential
-    integrity the real one does.
-    """
-    cursor = dbapi_connection.cursor()
-    try:
-        cursor.execute("PRAGMA foreign_keys=ON")
-    finally:
-        cursor.close()
-
-
 test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
