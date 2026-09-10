@@ -2140,6 +2140,20 @@ describe('habitManager', () => {
      */
     const CREATED_HABIT_ID = 77;
 
+    /** Answer the list endpoint with rows the store does not currently hold. */
+    const serverHolds = (...rows: Habit[]): void => {
+      (habitsApi.listAll as jest.Mock).mockImplementation(
+        () =>
+          Promise.resolve(
+            rows.map((h) => ({
+              ...h,
+              start_date: h.start_date.toISOString().slice(0, 10),
+              goals: [],
+            })),
+          ) as never,
+      );
+    };
+
     /** POST answers with a real server id; every displacing PUT is refused. */
     const halfFailedInsert = (): void => {
       (habitsApi.create as jest.Mock).mockImplementation(
@@ -2194,11 +2208,17 @@ describe('habitManager', () => {
     it('says the habit was saved out of place when it cannot be taken back off', async () => {
       // The compensating DELETE has its own failure path, and it must still end
       // in a true sentence rather than in the "nothing changed" reassurance.
-      echoStore();
       useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
       halfFailedInsert();
       (habitsApi.delete as jest.Mock).mockImplementation(
         () => Promise.reject(new Error('nope')) as never,
+      );
+      // What the server really holds once the DELETE has been refused: the row
+      // the writer never confirmed, appended rather than placed where they
+      // asked. The re-read has to reach this, not echo the rolled-back store.
+      serverHolds(
+        makeHabit({ id: 1, name: 'Meditate' }),
+        makeHabit({ id: CREATED_HABIT_ID, name: 'Journaling' }),
       );
 
       const saved = await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
@@ -2209,6 +2229,12 @@ describe('habitManager', () => {
           'back off. It will be in your Habits list once the list refreshes, somewhere other ' +
           'than the spot you picked. Move or delete it there rather than adding it again.',
       );
+      // "once the list refreshes it will be there" is a promise, so the refresh
+      // has to actually happen and the row it names has to arrive.
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual([
+        'Meditate',
+        'Journaling',
+      ]);
       // The row IS on the server, so the offer must not invite a second add.
       expect(saved).toBe(true);
     });
