@@ -54,6 +54,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-failed-checkoff.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
+  'journal-return-offer.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
