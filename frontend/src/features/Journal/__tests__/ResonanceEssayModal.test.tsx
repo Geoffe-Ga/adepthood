@@ -94,6 +94,41 @@ describe('ResonanceEssayModal', () => {
     expect(mockEssay).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Pre-existing guard, previously unpinned: ``useEssay`` drops a letter that
+   * resolves after the modal closed. The drop itself is harmless -- the route is
+   * idempotent and the next open returns the cached essay -- but applying it
+   * would call ``onEssayLoaded``, which is ``setOpenNote`` in JournalEntryScreen,
+   * and would spring a journal surface back open that the writer had closed.
+   * The assertion is therefore on the callback, not on an absence of rendering:
+   * a modal that never mounted would satisfy the latter vacuously.
+   */
+  it('drops a letter that resolves after the modal closed instead of reopening it', async () => {
+    let answer: (_n: Marginalia) => void = () => undefined;
+    mockEssay.mockReturnValue(
+      new Promise<Marginalia>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const onEssayLoaded = jest.fn();
+    const { getByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />,
+    );
+    // The ask really is in flight against an open modal, so the drop below is
+    // the guard working rather than nothing having happened.
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    expect(getByTestId('essay-loading')).toBeTruthy();
+
+    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />);
+    await act(async () => {
+      answer(note({ id: 4, essay: 'A letter that arrived too late.' }));
+    });
+
+    // Reopening the note is the parent's to do, and only it can: the first test
+    // above proves this same resolution calls onEssayLoaded while still open.
+    expect(onEssayLoaded).not.toHaveBeenCalled();
+  });
+
   it('shows a friendly error with retry, and retry refetches', async () => {
     mockEssay
       .mockRejectedValueOnce(new Error('boom'))
