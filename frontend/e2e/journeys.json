@@ -58,7 +58,7 @@
   },
   {
     "id": "habits.calendar-auto-reveal-once",
-    "description": "A regular program habit appears when either its calendar stage opens or its start date arrives. The habits list read persists that invitation as revealed exactly once; if the person then re-locks it, another read respects the decline instead of re-opening it. The server owns eligibility and its private marker, while the client renders only the reconciled revealed flag. Carryover habits and unrecommitted Metta Return releases remain outside this automatic path, pinned by the backend API suite.",
+    "description": "A regular program habit appears when the program's invitation reaches it. A habit sitting on one of the ten rings waits for that ring to open -- its stage entering the range the calendar and the record between them have unlocked -- and a start date already in the past does not stand in for that (issue #2765: on an established account every start date is past, which opened every ring at once and stopped graduated unlock from tracking the user's level). A habit whose stage names no ring has no rung to wait for, so its start date is still its whole schedule. The habits list read persists the invitation as revealed exactly once; if the person then re-locks it, another read respects the decline instead of re-opening it. The server owns eligibility and its private marker, while the client renders only the reconciled revealed flag. Carryover habits and unrecommitted Metta Return releases remain outside this automatic path, and rows stamped before the stage gate was corrected are left open rather than retroactively re-locked, all pinned by the backend API suite.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
@@ -247,6 +247,23 @@
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
   },
   {
+    "id": "journal.told-what-resonance-costs-before-it-charges",
+    "description": "A writer opens a finished page and presses Get Resonance for the first time. A resonance pass is charged -- the route deducts one BotMason message from the wallet before it dials the model -- and until this gate existed the first anyone heard of that price was the 402 that arrives once the allowance is spent. So the press opens a disclosure instead: what a pass does, that the entry's text is sent to an AI model, and what it costs. The load-bearing assertions are counted requests and server state rather than visible text. While the disclosure is up, and again after the back-out arm, no POST /journal/{entry_id}/resonance has left the browser and the server is holding no marginalia; Continue then sends exactly one pass and the notes really are persisted, so the gate neither charges early nor swallows the request. A spec that only asserted the dialog was on screen would pass just as happily against a build that showed it and charged behind it. The dismissal is then taken and the next press goes straight through. This has to be the browser lane: the node lane runs with node_modules untransformed and cannot mount JournalEntryScreen at all (#2324), and the whole claim is about what a rendered press does. What is pinned in Jest beside it rather than here is the per-account namespacing of the dismissal flag (frontend/src/storage/__tests__/resonanceExplainerStorage.test.ts): one account's \"don't show this again\" must not answer for the next account on the same device, because the charge would land on the incoming reader's own allowance.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia"
+      ],
+      "tables": ["journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/resonance-explainer.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.short-entry-still-offers-habit-checkoff",
     "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
     "crosses": {
@@ -353,6 +370,24 @@
     "coveredBy": "frontend/e2e/practice-weekly-count.browser.e2e.test.ts"
   },
   {
+    "id": "practice.per-practice-totals-on-the-detail-screen",
+    "description": "A practitioner who has sat one practice several times walks from the player to that practice's own detail screen -- Practice, its drawer, \"Practice details\" -- and reads how much they have put into it: total sittings and total time, rendered as hours plus the minutes past 60. The totals are a backend aggregate keyed on an adoption the caller owns, never a client-side sum over a paged session list, and the aggregate widens server-side to every adoption of the same catalog practice that caller owns, so a practice carried from one stage into the next reports one lifetime figure rather than a per-stage slice. The spec logs a zero-length abort alongside two real sittings and asserts it moves neither number, which is the counting rule this endpoint had to settle: the insights rollup skips zero-duration rows, the legacy week-count route does not, and a total cannot honour both. It runs in the Playwright lane because the node lane cannot mount a screen at all (#2324), and because the rollup is read one tap from the player that writes the rows it counts -- the #2654 hazard, which only a browser holding an HTTP cache can see, so the last leg leaves the screen and comes back to force a real re-read.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeDetailScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": [
+        "GET /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/",
+        "POST /practice-sessions/",
+        "GET /practice-sessions/stats"
+      ],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-stats.browser.e2e.test.ts"
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {
@@ -405,6 +440,26 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course-passage.browser.e2e.test.ts"
+  },
+  {
+    "id": "course.reflect-and-return-to-the-reading",
+    "description": "A reader finishes a chapter, marks it read, and taps Reflect in Journal. The writing surface opens already titled for the stage and the chapter, the reflection saves, and the way out is the way in: Back to reading returns them to that same chapter instead of leaving them on the Journal shelf to find the Course tab by hand. Sibling to course.write-note-on-passage, which drives the reader's other hand-off; this one is the reflection, which closes the reader behind it and so returns to the chapter rather than to a scroll position. It runs in the browser lane because the whole journey is screen-to-screen navigation -- the returnTo that makes the exit exist never crosses the wire, so no amount of API driving could see whether it is there. Verified to be a live gate rather than a passing formality: with the returnTo removed from handleReflect the spec fails on the absent Back to reading control.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "stages", "course", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /stages",
+        "GET /stages/program-calendar",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "POST /journal/"
+      ],
+      "tables": ["user", "stagecontent", "contentcompletion", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-reflect-return.browser.e2e.test.ts"
   },
   {
     "id": "habits.full-page-grid-geometry",
@@ -568,15 +623,15 @@
   },
   {
     "id": "errors.spent-provider-balance-is-not-a-blip",
-    "description": "A writer asks for resonance while the balance behind the key that pays for it is spent. What they got was \"the AI provider is having trouble connecting, give it a moment and tap retry\" -- a transient story for a permanent, billing-level refusal, so the retry button they were pointed at could never work and the real cause reached nobody. The journey now ends in copy that names the condition and the one action that clears it, split by whose key it was, with no retry affordance and the charge reversed; on the server's own key an operator gets the WARNING that is their first signal it happened at all. Each side is pinned separately: backend/tests/services/test_botmason_credit_exhausted.py drives both SDKs through a mock transport so each builds its own typed error from the provider's real body, backend/tests/test_resonance_endpoints.py asserts the 402/503 split and the operator record, and src/api/__tests__/errorMessages.test.ts asserts neither code inherits the transient copy. Uncovered in this lane for the same reason journal.ask-for-resonance is: making it happen needs a provider that refuses for billing, and the lane has no provider to call at all.",
+    "description": "A writer asks for resonance while the balance behind the key that pays for it is spent. What they got was \"the AI provider is having trouble connecting, give it a moment and tap retry\" -- a transient story for a permanent, billing-level refusal, so the retry button they were pointed at could never work and the real cause reached nobody. The journey now ends in copy that names the condition and the one action that clears it, split by whose key it was, with no retry affordance and the charge reversed; on the server's own key an operator gets the WARNING that is their first signal it happened at all. The browser spec presses \"Get Resonance\" against the real server for both halves -- the caller's own key (402) and, through the token-gated provider probe, the server's own key (503) -- and neither half raises the typed error: the lane points the production SDK clients at a loopback fake through their own OPENAI_BASE_URL / ANTHROPIC_BASE_URL, so openai.RateLimitError and anthropic.BadRequestError are built by the SDKs out of the providers' real refusal bodies, which is the classification the bug turned on. The same spec drives the counterweight -- a genuine rate limit, same provider and same 429 with a different code, which keeps its transient copy and its retry -- proves an intimate page still reaches no provider with one armed, and reads walletaudit out of band to show the pass was charged and put back rather than never charged. Each side is still pinned separately: backend/tests/services/test_botmason_credit_exhausted.py drives both SDKs through a mock transport so each builds its own typed error from the provider's real body, backend/tests/test_resonance_endpoints.py asserts the 402/503 split and the operator record, and src/api/__tests__/errorMessages.test.ts asserts neither code inherits the transient copy.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance"],
       "routes": ["POST /journal/{entry_id}/resonance"],
       "tables": ["walletaudit"]
     },
-    "status": "uncovered",
-    "issue": 2543
+    "status": "covered",
+    "coveredBy": "frontend/e2e/resonance-credit-exhausted.browser.e2e.test.ts"
   },
   {
     "id": "practice.rename-and-delete-a-tag",
@@ -596,6 +651,18 @@
     "coveredBy": "frontend/e2e/practice-tags.e2e.test.ts"
   },
   {
+    "id": "journal.photograph-a-page-into-the-open-entry",
+    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps \"Photograph a page\", photographs their handwritten response, and the transcription is appended into the entry they already had open rather than being filed as a second one. The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/transcribe-page", "POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2768
+  },
+  {
     "id": "journal.read-past-prompts",
     "description": "Someone opens Past prompts from the journal shelf and reads the weekly questions they have already answered with what they wrote under each. Answering a prompt mirrors the response into the journal as an ordinary page, which keeps the writing and loses the question that drew it, so this route is the only one that returns the pair -- and nothing asked for it until this surface existed. What the seam has to prove is that a submitted response comes back joined to its own question, and that the limit and offset the modal sends actually slice the set rather than being ignored.",
     "crosses": {
@@ -613,32 +680,45 @@
   },
   {
     "id": "return.recover-a-habit-set-down",
-    "description": "A person lets a habit rest during a Metta Return arc, then leaves the arc, and takes the habit up again from the Return surface without long-pressing a locked tile or opening the 3-dot menu. Uncovered because the lane would have to drive a five-week arc's release-then-leave sequence and then assert on a card that only renders when a release is outstanding; the release seam itself is covered by backend integration tests and the Jest specs named below, so the gap is the end-to-end stitch rather than either half.",
+    "description": "A person lets a habit rest during a Metta Return arc, then leaves the arc, and takes the habit up again from the Return surface -- no long-press on a locked tile, no 3-dot menu. The press is asserted on the server rather than on the card: the release row reads re-committed and the habit itself is unlocked again in the account's own habit list, which is the collection read that reconciles auto-reveals, so the pause is shown outranking the program's schedule while it holds and releasing it afterwards. That the row and not merely the habit recorded the re-commit is probed by locking the habit by hand from Habit Settings, which is the only thing that can tell the two halves of the reported flag apart. It runs in the browser lane because the journey is the card: the recovery affordance renders only on a shelf whose arc has ended while a release is outstanding, and the API lane cannot mount a React Native screen at all, so a spec there could only POST the route by hand. Deliberately under-claimed: only the recovery is pressed. Beginning the Return is its own journey (return.begin-a-return-from-the-journal-entry), and the let-go card that releases habits renders only in the session that started the arc, so release-then-leave is arranged over the same live wire -- every step read back, and Orange-stage eligibility asserted false before and true after the tests.e2e.program_anchor rewind, so an arrange that did nothing fails where it happened instead of leaving the press to test an empty shelf. The cross-tenant arm presses the same route from a second account holding an arc of its own: somebody else's habit id reads exactly like a nonexistent one, and the owner's own press afterwards proves that refusal is a refusal rather than a route that moves nothing. Verified to be a live gate: with recommit resolving the active arc again, as it did before the arc-spanning fix, the press 404s and the spec fails.",
     "crosses": {
       "screen": "frontend/src/features/Return/ReturnRestingCard.tsx",
-      "client": ["mettaReturn"],
+      "client": ["auth", "habits", "stages", "mettaReturn"],
       "routes": [
+        "POST /auth/signup",
+        "POST /habits/",
+        "GET /habits/",
+        "PUT /habits/{habit_id}",
+        "GET /stages",
         "GET /metta-return",
+        "POST /metta-return/arc",
         "POST /metta-return/arc/release",
         "POST /metta-return/arc/leave",
         "POST /metta-return/arc/recommit"
       ],
-      "tables": ["mettareturnarc", "mettareturnhabitrelease", "habit"]
+      "tables": ["user", "stageprogress", "mettareturnarc", "mettareturnhabitrelease", "habit"]
     },
-    "status": "uncovered",
-    "issue": 2614
+    "status": "covered",
+    "coveredBy": "frontend/e2e/return-recover-habit.browser.e2e.test.ts"
   },
   {
     "id": "return.begin-a-return-from-the-journal-entry",
-    "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens exactly one arc even on a double-tap, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. Uncovered because the offer surfaces only when the server reports eligibility AND a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts), a state this lane cannot reach without driving a real contraction-producing pass -- the same end-to-end stitch recorded on return.recover-a-habit-set-down. Pinned meanwhile by src/features/Journal/__tests__/ContractionReflectionNote.test.tsx (the offer gate, the confirmation's contents, one start per double-tapped confirm, a cancel that starts nothing, and both failure lines) and by the backend's own metta-return tests -- neither of which proves the two halves meet.",
+    "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens an arc that lands on week one, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. It runs in the browser lane because the journey is the card: the offer surfaces only while a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts) that useMettaReturn reads, and that store is fed by the screen's own pass -- the API lane cannot mount a screen at all, so a spec there could only call the two routes by hand. Both preconditions are arranged honestly: the contraction over the wire, from a habit whose foundation has been quiet past the detection window, and the Orange-stage eligibility by rewinding program_started_at through tests.e2e.program_anchor (no request schema accepts it) and then reading GET /stages, which is what records the entry -- eligibility is asserted false before and true after, so an arrange that did nothing fails rather than silently testing the simple_ease_off card. The double-tap latch is the one arm left to the Jest spec beside the component (src/features/Journal/__tests__/ContractionReflectionNote.test.tsx), which drives it deterministically; a browser cannot dispatch the second press without racing the first request. Verified to be a live gate: with confirmStart no longer calling start(), the spec fails on the arc POST that never leaves the browser.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["mettaReturn"],
-      "routes": ["GET /metta-return", "POST /metta-return/arc", "POST /metta-return/offer/dismiss"],
-      "tables": ["mettareturnarc", "mettareturnofferdismissal"]
+      "client": ["auth", "journal", "resonance", "mettaReturn"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /journal/",
+        "POST /journal/{entry_id}/resonance",
+        "GET /metta-return",
+        "POST /metta-return/arc",
+        "POST /metta-return/offer/dismiss"
+      ],
+      "tables": ["journalentry", "stageprogress", "mettareturnarc", "mettareturnofferdismissal"]
     },
-    "status": "uncovered",
-    "issue": 2751
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-return-offer.browser.e2e.test.ts"
   },
   {
     "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
@@ -658,7 +738,7 @@
   },
   {
     "id": "journal.timed-writing-session-becomes-a-habit",
-    "description": "A person sets a length on the journal's writing timer, writes until it runs out, is offered the session as a habit, and chooses where it sits among the habits they already signed up for \u2014 first position by default, with every other habit moving along one stage. The spec drives that write on its own account: it creates the habits the writer already had, then makes the placement the offer makes \u2014 one POST for the new habit carrying its stage and its place, one PUT per displaced row carrying theirs \u2014 and reads the list back. What only a live server can answer is whether the placement survives: that PUT /habits/{habit_id} keeps sort_order and stage instead of replacing them with the schema defaults, and that GET /habits/ then returns the rows in the order those numbers name, which is what makes the arrangement outlive a cold rehydrate. It also settles the lock: the row is created revealed=false like every other new habit, and the server's own one-shot reconciliation then opens it because Beige is a stage the writer has already reached \u2014 the spec pins both halves, and a habit at a stage they have not reached stays locked in the same pass. The offer's own rules (one-tap decline, a decline never re-asked, the stage preview) are pinned by the Jest specs beside WritingSessionOffer, and the offer's reachability from the writing page by JournalEntryScreenTimer.test.tsx; neither can cross the wire.",
+    "description": "A person sets a length on the journal's writing timer, writes until it runs out, is offered the session as a habit, and chooses where it sits among the habits they already signed up for \u2014 first position by default, with every other habit moving along one stage. The spec drives that write on its own account: it creates the habits the writer already had, then makes the placement the offer makes \u2014 one POST for the new habit carrying its stage and its place, one PUT per displaced row carrying theirs \u2014 and reads the list back. What only a live server can answer is whether the placement survives: that PUT /habits/{habit_id} keeps sort_order and stage instead of replacing them with the schema defaults, and that GET /habits/ then returns the rows in the order those numbers name, which is what makes the arrangement outlive a cold rehydrate. It also settles the lock: the row is created revealed=false like every other new habit, and the server's own one-shot reconciliation then opens it because Beige is a stage the writer has already reached \u2014 the spec pins both halves, and a habit at a stage they have not reached stays locked in the same pass. The offer's own rules (one-tap decline, a decline never re-asked, the stage preview) are pinned by the Jest specs beside WritingSessionOffer, and the offer's reachability from the writing page by JournalEntryScreenTimer.test.tsx; neither can cross the wire. What this spec cannot drive is the half-failure, because no live lane can refuse ONE displacing PUT in the middle of a fan-out: a POST that lands followed by a PUT that does not used to roll back the store alone, leaving a habit on the server the writer never confirmed under copy saying their habits were as they were. That branch is pinned beside habitManager instead (habitManager.test.ts: the created row is taken back off by the id its own POST returned; the branch where that DELETE is itself refused says the habit was saved out of place rather than reassuring; and a confirming re-fetch that fails after every write landed is not reported as a failed write).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["auth", "setTokenGetter", "habits"],
@@ -743,6 +823,25 @@
     },
     "status": "uncovered",
     "issue": 2634
+  },
+  {
+    "id": "habits.delete-a-habit-you-have-lived-with",
+    "description": "A person deletes a habit they have actually used, and it stays deleted. The order is the finding: a habit created moments ago always deleted cleanly, and one that had ever been checked in returned 500, so this journey checks in on the clear goal, confirms the completion is really on the wire, and only then asks for the delete. The backend suite could not see this at all -- it runs on SQLite built from the model metadata, which until #2763 was not enforcing foreign keys, so a cascade that never ran and a cascade that ran perfectly left the same green. Here the schema is the migrated Postgres one and the four ON DELETE CASCADE constraints are the real ones. The re-read after the delete is what the reporter's next screen did: the symptom was a tile that came back, because the client reverts its optimistic removal when the server rejects.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "goalCompletions", "habits", "setTokenGetter"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /habits/",
+        "POST /goal_completions/",
+        "GET /habits/",
+        "DELETE /habits/{habit_id}",
+        "GET /habits/{habit_id}/stats"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-delete.e2e.test.ts"
   },
   {
     "id": "vault.connect-your-own",
@@ -858,5 +957,29 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/prompt-set-aside.e2e.test.ts"
+  },
+  {
+    "id": "practice.unconfirmed-stage-says-so",
+    "description": "A practitioner opens Practice on a session whose one automatic GET /stages did not come back, and is told so instead of being shown stage 1 as though it were theirs. Practice takes a single stage-load attempt per session (#2002), and when it fails the store still holds its initial currentStage of 1 -- so the screen used to render that number silently, with the only in-app recovery being a trip to Map's retry. The spec fails the real listing at the wire, crosses to Practice through the drawer, and pins the three claims together: the number is named as a placeholder, the adopted practice underneath it is still on screen and still startable (this is a notice, not an error wall -- a person who only wants to sit is never gated), and lifting the failure and tapping Try again adds exactly ONE more request to the route and takes the notice away in the same page load. That last count is the half no mocked suite can make: it is the guard from #2002 -- automatic attempts stay at one, the retry is the deliberate second -- measured against a real server rather than against a stub that agrees with itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["stages", "practices", "userPractices"],
+      "routes": ["GET /stages", "GET /practices/", "POST /user-practices/"],
+      "tables": ["coursestage", "userpractice"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-unconfirmed-stage.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.day-turns-over-on-a-mounted-screen",
+    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened. Uncovered because neither half is reachable from this lane: the rollover is clock-driven and crosses no wire at all -- that is the point of it, since only what is re-derived changes -- and the node environment cannot mount a screen to advance a clock against, the same constraint recorded on welcome.first-run-walkthrough-to-journal. The focus half does cross the wire but needs a real navigator the user can leave and return to. Jest pins both halves in process today, against a real NavigationContainer and against fake timers advanced past local midnight; covering this needs the browser lane, which can install a fake clock on the mounted app. See #2771.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2771
   }
 ]

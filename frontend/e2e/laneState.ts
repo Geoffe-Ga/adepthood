@@ -11,6 +11,31 @@ export interface LaneState {
   pid: number;
   /** Process group leader of the isolated fake Creek control plane. */
   creekPid: number;
+  /** Process group leader of the loopback fake the provider SDKs are pointed at. */
+  providerPid: number;
+  /** Origin of that fake, which a journey reads its attempt counters from. */
+  providerUrl: string;
+  /** Per-run directory holding only the generated fake-provider keys. */
+  providerKeyDir: string;
+  /**
+   * The three keys the fake recognises, minted per run.
+   *
+   * They are credentials for a loopback process and nothing else, and they are
+   * the arrangement itself: `spentOpenaiKey` is the caller's own spent account
+   * (402), `throttledOpenaiKey` is a genuine rate limit that must still retry,
+   * and the server's own `LLM_API_KEY` is the spent Anthropic account (503).
+   */
+  spentOpenaiKey: string;
+  throttledOpenaiKey: string;
+  /**
+   * The token that sends one marked prompt past the stub to a real provider.
+   *
+   * A journey needing the server's *own* key to be refused has no other way to
+   * reach a provider: a BYOK header would make it the caller's key by
+   * definition, which is the other half of the split. See
+   * `backend/src/services/provider_probe.py`.
+   */
+  providerProbeToken: string;
   /** Loopback origin the production client is pointed at. */
   baseUrl: string;
   /** URL of the throwaway database the run owns. */

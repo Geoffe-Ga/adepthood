@@ -19,6 +19,7 @@ from dependencies.ownership import (
 from dependencies.timezone import current_user_timezone
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config
+from domain.practice_stats import compute_practice_stats
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from error_responses import build_router
 from errors import bad_request, conflict, forbidden, not_found
@@ -32,6 +33,7 @@ from schemas.practice import (
     PracticeInsightsResponse,
     PracticeSessionCreate,
     PracticeSessionResponse,
+    PracticeStatsResponse,
     WeekCountResponse,
 )
 from schemas.practice_mode_config import MindfulAnchorConfig
@@ -43,17 +45,33 @@ from services.practice_session_idempotency import record_session, recorded_sessi
 # the right week after timezone normalization.
 _INSIGHTS_LOOKBACK_DAYS = 60
 
-# ``Cache-Control`` for the insights endpoint.  ``no-store``, not a freshness
-# lifetime: the only client that reads this rollup is also the client that
-# writes the rows it counts, and it re-reads the endpoint the instant a
-# ``POST /practice-sessions/`` is confirmed.  The former ``max-age=60`` made a
-# browser answer that read out of its own HTTP cache with the pre-save numbers
-# (#2654), which is a promise this endpoint cannot keep -- any
-# positive lifetime is wrong without a validator the client can revalidate
-# against, and a rollup this cheap to recompute does not earn one.  ``private``
-# is kept alongside so a shared proxy still cannot cross-pollinate per-user
-# rollups even if it ignores ``no-store``.
-_INSIGHTS_CACHE_CONTROL = "private, no-store"
+# ``Cache-Control`` for every read-only rollup on this router.  ``no-store``,
+# not a freshness lifetime: the only client that reads these aggregates is also
+# the client that writes the rows they count, and it re-reads them the instant a
+# ``POST /practice-sessions/`` is confirmed.  The former ``max-age=60`` on the
+# insights route made a browser answer that read out of its own HTTP cache with
+# the pre-save numbers (#2654), which is a promise these endpoints cannot keep
+# -- any positive lifetime is wrong without a validator the client can
+# revalidate against, and rollups this cheap to recompute do not earn one.
+# ``private`` is kept alongside so a shared proxy still cannot cross-pollinate
+# per-user rollups even if it ignores ``no-store``.
+_ROLLUP_CACHE_CONTROL = "private, no-store"
+
+# Defense-in-depth beside ``private``: a misconfigured upstream that ignores it
+# still keys its cache per credential, so one user's rollup cannot be handed to
+# another sharing the proxy.
+_ROLLUP_VARY = "Authorization"
+
+
+def _mark_uncacheable(response: Response) -> None:
+    """Stamp the shared rollup cache headers onto ``response``.
+
+    One helper rather than two literals so a future edit cannot fix the hazard
+    on one rollup route and leave it open on the other.
+    """
+    response.headers["Cache-Control"] = _ROLLUP_CACHE_CONTROL
+    response.headers["Vary"] = _ROLLUP_VARY
+
 
 logger = logging.getLogger(__name__)
 
@@ -381,11 +399,7 @@ async def get_insights(
     endpoint immediately after logging a session, so a cached copy would show
     the practitioner a count their own save has already falsified.
     """
-    response.headers["Cache-Control"] = _INSIGHTS_CACHE_CONTROL
-    # Defense-in-depth: a misconfigured upstream that ignores ``private``
-    # still has the right cache key when ``Vary: Authorization`` is set,
-    # so one user's rollup cannot leak to another sharing the proxy.
-    response.headers["Vary"] = "Authorization"
+    _mark_uncacheable(response)
     cutoff = datetime.now(UTC) - timedelta(days=_INSIGHTS_LOOKBACK_DAYS)
     rows = (
         (
@@ -403,6 +417,78 @@ async def get_insights(
     )
     insights = build_insights(rows, tz=user_tz)
     return PracticeInsightsResponse.model_validate(insights, from_attributes=True)
+
+
+async def _sessions_for_practice(
+    session: AsyncSession, user_practice: UserPractice, current_user: int
+) -> list[PracticeSession]:
+    """Every session ``current_user`` logged against ``user_practice``'s practice.
+
+    The fan-out is deliberate.  Adopting a practice is one ``UserPractice`` row
+    per stage, so a practitioner who carried the same practice from stage 1 into
+    stage 2 owns two rows for it; a total keyed strictly on the row the client
+    named would show them only the newer slice and call it a lifetime figure.
+    Either of their rows therefore answers with the whole history of that
+    catalog practice.
+
+    Both halves of the scope are filtered explicitly:
+
+    * the sibling adoptions are restricted to ``UserPractice.user_id ==
+      current_user``, because two people adopting the same preset is the
+      ordinary case — resolving siblings by ``practice_id`` alone would publish
+      a stranger's practice history under a 200 with no ownership error in
+      sight; and
+    * the sessions themselves are restricted to ``PracticeSession.user_id ==
+      current_user``, so neither predicate is load-bearing on its own.
+
+    Rows are fetched and aggregated in Python rather than summed in SQL to match
+    ``GET /habits/{habit_id}/stats``, which hands its rows to
+    :func:`domain.habit_stats.compute_habit_stats`: keeping the counting rule in
+    one pure function is what makes it testable without a database, and a single
+    practice's lifetime history is a bounded set (hundreds of rows for a daily
+    practitioner over years), not a table scan.
+    """
+    owned_adoptions = select(col(UserPractice.id)).where(
+        UserPractice.practice_id == user_practice.practice_id,
+        UserPractice.user_id == current_user,
+    )
+    result = await session.execute(
+        select(PracticeSession).where(
+            PracticeSession.user_id == current_user,
+            col(PracticeSession.user_practice_id).in_(owned_adoptions),
+        )
+    )
+    return list(result.scalars().all())
+
+
+@router.get("/stats", response_model=PracticeStatsResponse)
+async def get_practice_stats(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    response: Response,
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice_from_query)],
+) -> PracticeStatsResponse:
+    """Return all-time totals — sessions and minutes — for one practice.
+
+    Ownership of the query-carried ``user_practice_id`` runs through
+    :func:`dependencies.ownership.require_owned_user_practice_from_query`, the
+    same dependency ``GET /practice-sessions/`` uses, so a missing row is 404
+    and another user's row is 403 with a ``resource_access_denied`` audit line —
+    never an empty-looking 200 that doubles as an existence oracle.
+
+    Which sessions count is settled in :mod:`domain.practice_stats`: rows with a
+    positive duration, agreeing with the insights rollup a practitioner already
+    reads and diverging from the unfiltered legacy ``week-count`` route.  That
+    module's docstring carries the reasoning.
+
+    The response is ``private, no-store`` for the reason #2654 established: this
+    total is read from a screen one tap away from the player that writes the
+    rows it counts, so a freshness lifetime would let the browser answer the
+    post-save re-read with the pre-save number out of its own cache.
+    """
+    _mark_uncacheable(response)
+    rows = await _sessions_for_practice(session, user_practice, current_user)
+    return PracticeStatsResponse.model_validate(compute_practice_stats(rows), from_attributes=True)
 
 
 def _start_of_week_utc(tz_name: str) -> datetime:

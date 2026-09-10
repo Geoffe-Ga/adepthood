@@ -28,6 +28,7 @@ import openai
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required, service_unavailable
 from security import sanitize_user_text
+from services.provider_probe import probed_provider
 from services.stub_completions import canned_completion
 
 if TYPE_CHECKING:
@@ -80,6 +81,13 @@ STUB_MODEL_NAME = "stub"
 # Identifier the stub provider reports as its ``provider`` in usage logs.  The
 # metering pipeline branches on it to skip stub traffic (zero real tokens).
 STUB_PROVIDER_NAME = "stub"
+
+# How the stub opens its canned answer to a prompt it has nothing structured to
+# say about.  A named constant, like the two above, because it is also what a
+# test asserts is absent from anything the writer is shown: this sentence quotes
+# its entire input, so its presence in a rendered surface means a prompt reached
+# a reader (#2762), and a hand-copied literal in that assertion could drift.
+STUB_PROSE_PREFIX = "BotMason hears you. You said:"
 
 # The two real providers, named once. They key :data:`PROVIDER_REGISTRY`, label
 # a usage row, and identify whose balance is spent in an operator's log line —
@@ -658,19 +666,33 @@ def provider_for_api_key(api_key: str) -> str | None:
     return None
 
 
-def _provider_for_request(api_key: str | None) -> str:
+def _provider_for_request(api_key: str | None, user_message: str) -> str:
     """Return the LLM provider to serve this request.
 
     A user-supplied BYOK key selects its own provider (derived from the key
     prefix) so a valid key activates a real model even when the server
     default is ``stub``.  Requests without a user key fall back to the
     server-configured :func:`get_provider`.
+
+    A deployment whose configured provider is *not* a real one — the stub, in
+    practice — may also carry an armed
+    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`, in which case a prompt
+    marked with that token is dialled to the provider it names rather than
+    answered by the stub. That branch is reached last and only from a
+    stub-configured server: when an operator has configured OpenAI or
+    Anthropic, ``configured`` is returned before the probe is consulted, so no
+    text in a request can redirect a real deployment's traffic to another
+    provider. See :mod:`services.provider_probe` for why the seam exists and
+    what keeps it shut.
     """
     if api_key is not None:
         derived = provider_for_api_key(api_key)
         if derived is not None:
             return derived
-    return get_provider()
+    configured = get_provider()
+    if configured in PROVIDER_REGISTRY:
+        return configured
+    return probed_provider(user_message, PROVIDER_REGISTRY) or configured
 
 
 def get_system_prompt() -> str:
@@ -1084,7 +1106,7 @@ async def generate_response(
     # key / quota client errors) likewise passes through unchanged.
     try:
         resolved_prompt = system_prompt or get_system_prompt()
-        provider = _provider_for_request(api_key)
+        provider = _provider_for_request(api_key, user_message)
 
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
@@ -1124,7 +1146,7 @@ def _stub_response(user_message: str) -> LLMResponse:
         canned
         if canned is not None
         else (
-            f'BotMason hears you. You said: "{user_message}" — '
+            f'{STUB_PROSE_PREFIX} "{user_message}" — '
             "Let the Archetypal Wavelength guide your reflection."
         )
     )

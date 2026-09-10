@@ -345,3 +345,61 @@ export const subtractiveLongestStreakFromCompletions = (
   }
   return longest;
 };
+
+/** Milliseconds in one minute — the granularity every real day boundary sits on. */
+const MS_PER_MINUTE = 60_000;
+
+/**
+ * Widest window any single calendar day can still be running in, in minutes.
+ *
+ * A local day is at most 25 hours long (a one-hour fall-back), so from any
+ * instant inside one the next boundary is under 25 hours away. 26 buys a
+ * margin over that without ever reaching into the day after next.
+ */
+const MAX_DAY_SPAN_MINUTES = 26 * 60;
+
+/**
+ * Milliseconds from `now` until `tz`'s calendar day next changes.
+ *
+ * Deliberately defined as "when does {@link dayKeyInTZ} return something
+ * else?", and found by searching for that minute, rather than as "local
+ * midnight minus the zone's UTC offset". The two are not the same question,
+ * and every way of asking the second one has already produced a regression
+ * here (see the note on {@link addDaysInTZ}): the offset has to be sampled at
+ * the instant being solved for, which is the instant not yet known, and in a
+ * zone that starts DST at midnight — Santiago moves 2026-09-05 24:00 straight
+ * to 01:00 — the local midnight being solved for never occurs at all, so the
+ * arithmetic answer is an hour early and the day it names has not begun.
+ *
+ * Asking the display's own helper cannot disagree with the display. The search
+ * is a bisection over whole UTC minutes, which is exact because every real day
+ * boundary — plain midnight, sub-hour offsets such as Kathmandu's UTC+5:45,
+ * and DST transitions alike — falls on one; it costs ~11 formatter calls, paid
+ * once per day.
+ *
+ * @param tz - The user's IANA timezone; a malformed one falls back to UTC.
+ * @param now - The instant to count from.
+ * @returns A strictly positive millisecond delay, never zero.
+ */
+export const msUntilNextDayInTZ = (tz: string, now: Date = new Date()): number => {
+  const zone = resolveZone(tz);
+  const today = dayKeyInTZ(now, zone);
+  // Anchor on the next whole UTC minute so every probe lands on a minute the
+  // boundary could actually be at; the sub-minute remainder is added back at
+  // the end, which is also what keeps the result positive at 23:59:59.999.
+  const base = Math.ceil(now.getTime() / MS_PER_MINUTE) * MS_PER_MINUTE;
+  const isLater = (minutes: number): boolean =>
+    dayKeyInTZ(new Date(base + minutes * MS_PER_MINUTE), zone) !== today;
+
+  let low = 0;
+  let high = MAX_DAY_SPAN_MINUTES;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (isLater(middle)) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
+  }
+  return base + low * MS_PER_MINUTE - now.getTime();
+};

@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RefreshCw, X } from 'lucide-react-native';
+import { Camera, RefreshCw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { appendTranscript } from './appendTranscript';
 import AspectChordControl, { EMPTY_CHORD, type AspectChordValue } from './AspectChordControl';
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
@@ -41,10 +42,12 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
+import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
+import { useResonanceExplainer } from './useResonanceExplainer';
 import { countWords, wordCountLabel } from './wordCount';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -69,12 +72,19 @@ import { accent, colors, writingField, writingFieldFocus } from '@/design/tokens
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 
 /** Default idle delay before an edit is persisted. */
 const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
+
+/** The photograph affordance, offered while writing — including to a Course
+ *  reflection, which is an ordinary journal page opened with a title. */
+const PHOTOGRAPH_PAGE_LABEL = 'Photograph a page';
+const PHOTOGRAPH_PAGE_HINT =
+  'Photograph a handwritten page and add the transcription to this entry';
 
 /** Body-field placeholder for a free-write with no prompt to echo. */
 const DEFAULT_BODY_PLACEHOLDER = 'Begin writing…';
@@ -1224,6 +1234,8 @@ interface WritingColumnProps {
   onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
   /** Opens the rereadable source feed while composing a reflection. */
   onOpenSources?: () => void;
+  /** Opens the shared capture route to add a photographed page to this entry. */
+  onPhotographPage: () => void;
 }
 
 /** Quiet control to mark a draft finished, with a warm retry notice on failure. */
@@ -1446,6 +1458,29 @@ function WritingFooter({
   );
 }
 
+/**
+ * "Photograph a page" — the writing surface's door to the existing capture flow.
+ *
+ * A link beside the other writing controls rather than a camera embedded in the
+ * page: the capture route already owns the whole multi-page session, its privacy
+ * gate and its transcription run, and inlining any of that would fork a paid OCR
+ * path. Offered while writing only; a finished page is read, not added to.
+ */
+function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.quoteActionButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={PHOTOGRAPH_PAGE_HINT}
+      testID="journal-photograph-page"
+    >
+      <Camera color={accent.primary} size={18} accessible={false} />
+      <Text style={styles.controlLink}>{PHOTOGRAPH_PAGE_LABEL}</Text>
+    </TouchableOpacity>
+  );
+}
+
 function ReflectionSourcesButton({ onOpen }: { onOpen?: () => void }): React.JSX.Element | null {
   return onOpen ? (
     <TouchableOpacity
@@ -1479,6 +1514,7 @@ function WritingColumn({
   controlsDisabled,
   onBodySelectionChange,
   onOpenSources,
+  onPhotographPage,
 }: WritingColumnProps) {
   return (
     <View style={styles.writingColumn}>
@@ -1502,6 +1538,7 @@ function WritingColumn({
         {onFinish ? (
           <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
         ) : null}
+        <PhotographPageButton onPress={onPhotographPage} />
         <ReflectionSourcesButton onOpen={onOpenSources} />
       </View>
     </View>
@@ -2132,6 +2169,72 @@ function useReflectionComposer(autosave: AutosaveApi) {
   return { ...mode, sourcesOpen, openSources, closeSources };
 }
 
+/** What the writing surface needs to send the writer off to photograph a page. */
+interface PhotographedPage {
+  /** Opens the shared capture route in append mode, addressed to this page. */
+  openCapture: () => void;
+}
+
+/**
+ * The photographed-page seam: send the writer to the existing capture route,
+ * and fold the transcript it hands back into THIS page.
+ *
+ * The transcript arrives through {@link useCapturedTranscriptStore} rather than
+ * navigation params, and lands via ``onChangeBody`` — the same seam a folded-in
+ * quote uses — so the ordinary create-then-update writer persists it under the
+ * title and save context this page already carries. That is what makes a
+ * photographed Course reflection one entry rather than two, and it is why the
+ * capture route needs no entry id: a reflection photographed before a word is
+ * typed does not have one yet.
+ *
+ * The hand-off is addressed. More than one entry page can be mounted at once
+ * (``startNew`` pushes a second), and all of them watch this store, so a page
+ * collects only the delivery bearing the token it minted — never a sibling's.
+ */
+function usePhotographedPage(
+  navigation: ScreenNavigation,
+  body: string,
+  onChangeBody: (_next: string) => void,
+): PhotographedPage {
+  const pending = useCapturedTranscriptStore((store) => store.pending);
+  const openHandoff = useCapturedTranscriptStore((store) => store.open);
+  const clear = useCapturedTranscriptStore((store) => store.clear);
+  // The body is read at collection time, not at subscribe time: the writer may
+  // have typed on for a while before the transcript came back.
+  const bodyRef = useRef(body);
+  bodyRef.current = body;
+  const tokenRef = useRef<string | null>(null);
+
+  const openCapture = useCallback(() => {
+    tokenRef.current = openHandoff();
+    navigation.navigate('JournalPhotograph', { appendTo: tokenRef.current });
+  }, [navigation, openHandoff]);
+
+  useEffect(() => {
+    if (pending == null || pending.token !== tokenRef.current) return;
+    // Retract first: collecting is a one-shot, and clearing before the write
+    // means a re-render mid-append cannot fold the same page in twice.
+    clear();
+    onChangeBody(appendTranscript(bodyRef.current, pending.text));
+  }, [pending, clear, onChangeBody]);
+
+  return { openCapture };
+}
+
+/**
+ * The writing surface's own seams, grouped because all three write the SAME body
+ * through the same handler: the idle-bumped field writers, the reflection
+ * composer that splices a quote at the caret, and the photographed-page hand-off
+ * that appends a transcript. Anything that folds text into the page belongs here
+ * rather than scattered across the controller.
+ */
+function useWritingSeams(navigation: ScreenNavigation, autosave: AutosaveApi, bump: () => void) {
+  const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
+  const reflection = useReflectionComposer(autosave);
+  const photograph = usePhotographedPage(navigation, autosave.body, handleBody);
+  return { handleTitle, handleBody, reflection, photograph };
+}
+
 /** The finished-entry edit gate wired from the autosave's status + finish write. */
 function useEntryEditGate(
   autosave: AutosaveApi,
@@ -2161,6 +2264,40 @@ function useEntryResonance(routeEntryId: number | null, flush: () => Promise<num
   return useResonance({ routeEntryId, flush, userTimezone });
 }
 
+/** Everything the entry screen needs at the resonance seam, in one place. */
+interface ResonanceSeamInput {
+  routeEntryId: number | null;
+  autosave: AutosaveApi;
+  ctx: SaveContext;
+  isIdle: boolean;
+  justSaved: boolean;
+}
+
+/**
+ * The resonance seam: the one charged pass, the spend disclosure in front of it,
+ * and the rules for when the affordance is offered at all.
+ *
+ * Grouped rather than left inline because the three are one decision. The pass
+ * costs a BotMason message, so the button must press the gate and never the
+ * pass — and a later reader wiring a third resonance affordance should find the
+ * gate here rather than have to notice it among the controller's other seams.
+ */
+function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
+  const resonance = useEntryResonance(routeEntryId, autosave.flush);
+  const explainer = useResonanceExplainer(resonance.requestResonance);
+  const gate = deriveResonanceGate({
+    // A photograph-capture handoff (justSaved) offers resonance immediately,
+    // without waiting for the usual post-typing idle pause.
+    isIdle: isIdle || justSaved,
+    isLoading: resonance.loading,
+    body: autosave.body,
+    classification: autosave.classification,
+    isPromptCompose: ctx.weekNumber != null,
+    privateMessage: resonance.privateMessage,
+  });
+  return { resonance, explainer, gate };
+}
+
 function useJournalEntryController(
   routeEntryId: number | null,
   autosaveDelayMs: number,
@@ -2182,32 +2319,28 @@ function useJournalEntryController(
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
-  const resonance = useEntryResonance(routeEntryId, autosave.flush);
+  const { resonance, explainer, gate } = useResonanceSeam({
+    routeEntryId,
+    autosave,
+    ctx,
+    isIdle,
+    justSaved,
+  });
   const quote = useQuotePromotion(autosave.entryId);
   refreshRef.current = resonance.refresh;
-  const reflection = useReflectionComposer(autosave);
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
-  const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
-  const gate = deriveResonanceGate({
-    // A photograph-capture handoff (justSaved) offers resonance immediately,
-    // without waiting for the usual post-typing idle pause.
-    isIdle: isIdle || justSaved,
-    isLoading: resonance.loading,
-    body: autosave.body,
-    classification: autosave.classification,
-    isPromptCompose: ctx.weekNumber != null,
-    privateMessage: resonance.privateMessage,
-  });
+  const writing = useWritingSeams(navigation, autosave, bump);
 
   return {
     autosave,
     resonance,
+    explainer,
     quote,
-    reflection,
     ...gate,
-    handleTitle,
-    handleBody,
+    // handleTitle/handleBody, the reflection composer and the photographed-page
+    // hand-off — everything that writes the body — arrive together.
+    ...writing,
     modal,
     editGate,
     justSaved,
@@ -2230,7 +2363,7 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
     disabled: ctl.resonanceDisabled,
     loading: ctl.resonance.loading,
     reason: ctl.resonanceReason,
-    onPress: ctl.resonance.requestResonance,
+    onPress: ctl.explainer.onPress,
   };
 }
 
@@ -2266,6 +2399,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
       onOpenSources={ctl.reflection.active ? ctl.reflection.openSources : undefined}
+      onPhotographPage={ctl.photograph.openCapture}
     />
   ) : (
     <ReadColumn
@@ -2570,16 +2704,25 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
 function EntryOverlays({
   modal,
   editGate,
+  explainer,
   entryDrawer,
   currentEntryId,
 }: {
   modal: Controller['modal'];
   editGate: Controller['editGate'];
+  explainer: Controller['explainer'];
   entryDrawer: EntryScreenDrawer;
   currentEntryId: number | null;
 }): React.JSX.Element {
   return (
     <>
+      <ResonanceExplainerDialog
+        visible={explainer.visible}
+        dontShowAgain={explainer.dontShowAgain}
+        onToggleDontShowAgain={explainer.onToggleDontShowAgain}
+        onContinue={explainer.onContinue}
+        onCancel={explainer.onCancel}
+      />
       <ResonanceEssayModal
         note={modal.openNote}
         onClose={modal.onCloseNote}
@@ -2686,7 +2829,7 @@ function EntryWritingSurfaces({
         disabled={ctl.resonanceDisabled}
         loading={ctl.resonance.loading}
         reason={ctl.resonanceReason}
-        onPress={ctl.resonance.requestResonance}
+        onPress={ctl.explainer.onPress}
       />
     </>
   );
@@ -2767,6 +2910,7 @@ function JournalEntryScreen({
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}
+        explainer={ctl.explainer}
         entryDrawer={entryDrawer}
         currentEntryId={currentEntryId}
       />

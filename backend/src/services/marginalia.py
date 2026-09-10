@@ -26,12 +26,35 @@ from models.marginalia import Marginalia, MarginaliaStatus
 from models.promoted_quote import PromotedQuote
 from services.botmason import LLMResponse, generate_response
 
+# The system role every resonance-family call ships: margin notes, essay
+# expansion, and completion detection.  It exists because ``generate_response``
+# reads ``system_prompt=None`` as "use :func:`services.botmason.get_system_prompt`"
+# -- BotMason's *chat* persona, which an operator can swap wholesale via
+# ``BOTMASON_SYSTEM_PROMPT``.  Passing ``None`` therefore did not mean "no system
+# prompt" the way this adapter's docstring claimed; it meant "whatever the chat
+# surface is configured to be today", silently steering a task that deliberately
+# is not chat (#2762).  An empty string would not fix it: ``or`` treats it as
+# falsy and falls back just the same, so the prompt has to be real text.
+#
+# It is deliberately thin.  The authoritative instructions -- what to read, what
+# shape to answer in -- belong to the per-call prompt the domain builds, and a
+# second voice at the system role would compete with them.  The medication
+# guardrail is not restated here: ``services.botmason._augment_system_prompt``
+# appends it to whatever system prompt is supplied, so the defense-in-depth
+# second copy travels with this one exactly as it did with the persona.
+RESONANCE_SYSTEM_PROMPT = (
+    "You are reading one person's journal at their invitation. Follow the "
+    "instructions in the message exactly, including the output format it asks "
+    "for, and reply with that and nothing else."
+)
+
 
 class BotmasonResonanceLLM:
     """Adapts the BotMason provider to the resonance domain's ``ResonanceLLM``.
 
     The domain only needs ``complete(prompt) -> text``; this maps that onto
-    ``generate_response`` (no conversation history, no system prompt) so the
+    ``generate_response`` (no conversation history, and
+    :data:`RESONANCE_SYSTEM_PROMPT` rather than the BotMason chat persona) so the
     resonance feature reuses the single LLM integration / BYOK seam.  The
     adapter also accumulates each call's full ``LLMResponse`` in ``self.usage``
     (one entry per successful provider call) so the caller can meter cost.
@@ -43,7 +66,14 @@ class BotmasonResonanceLLM:
         self.usage: list[LLMResponse] = []
 
     async def complete(self, prompt: str) -> str:
-        response = await generate_response(prompt, [], system_prompt=None, api_key=self._api_key)
+        """Send ``prompt`` to the configured provider and return its text.
+
+        Records the response in :attr:`usage` first, so a metered call is
+        accounted for even though only its text goes back to the domain.
+        """
+        response = await generate_response(
+            prompt, [], system_prompt=RESONANCE_SYSTEM_PROMPT, api_key=self._api_key
+        )
         self.usage.append(response)
         return response.text
 

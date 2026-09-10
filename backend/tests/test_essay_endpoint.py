@@ -9,13 +9,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.care import MEDICATION_GUARDRAIL
 from models.journal_entry import JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
 from routers import journal as journal_router
 from services import botmason as botmason_service
 from services import marginalia as marginalia_service
-from services.botmason import STUB_MODEL_NAME, LLMResponse
+from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 
 _BODY = "I walked by the river and the willow bent without breaking."
 
@@ -229,3 +230,165 @@ async def test_essay_server_key_credit_exhausted_is_503(
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
     assert resp.json()["detail"] == "llm_service_credit_exhausted"
     await _assert_no_essay_cached(db_session, marg_id)
+
+
+# --- A completion that is not a letter is refused, not published (#2762) ----
+
+
+class _EchoingLLM:
+    """Patches the LLM seam the way the stub provider used to behave.
+
+    It answers every prompt with that prompt, wrapped in the stub's canned
+    sentence -- the exact string the reporter was shown as their letter.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(
+        self, prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del history, system_prompt, api_key
+        self.calls += 1
+        return LLMResponse(
+            text=f'{STUB_PROSE_PREFIX} "{prompt}" — Let the Archetypal Wavelength guide you.',
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_stub_provider_essay_is_a_letter_not_the_prompt(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The default provider, unpatched, end to end -- the regression that matters.
+
+    Deliberately no monkeypatch on the LLM seam: every other test here injects a
+    fake that returns well-formed prose, which is exactly why nobody looked at
+    what the documented default (``BOTMASON_PROVIDER`` unset -> ``stub``) hands
+    the writer. It handed them the prompt.
+    """
+    headers, user_id = await _signup(async_client, "stub_letter")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    essay = resp.json()["essay"]
+    assert essay is not None
+    assert MEDICATION_GUARDRAIL not in essay
+    assert "<entry>" not in essay
+    assert STUB_PROSE_PREFIX not in essay
+
+
+@pytest.mark.asyncio
+async def test_an_echoed_prompt_is_refused_and_never_cached(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any provider that echoes is refused -- the stub is only the reliable one.
+
+    The writer gets the existing no-letter state (a note with no essay, the same
+    shape the privacy floor returns), not the prompt and not an error blaming
+    them. Nothing is cached, so asking again later is still possible.
+    """
+    echo = _EchoingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", echo)
+    headers, user_id = await _signup(async_client, "echo_refused")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["essay"] is None
+    assert resp.json()["essay_generated_at"] is None
+    await _assert_no_essay_cached(db_session, marg_id)
+    assert echo.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_refused_essay_can_be_asked_for_again_and_then_succeeds(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not caching the refusal is what makes the second ask reach the provider."""
+    monkeypatch.setattr(marginalia_service, "generate_response", _EchoingLLM())
+    headers, user_id = await _signup(async_client, "echo_retry")
+    marg_id = await _seed_marginalia(db_session, user_id)
+    refused = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+    assert refused.json()["essay"] is None
+
+    recovered = _CountingLLM("A warm letter about beginnings.")
+    monkeypatch.setattr(marginalia_service, "generate_response", recovered)
+    retry = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert retry.status_code == HTTPStatus.OK, retry.text
+    assert retry.json()["essay"] == "A warm letter about beginnings."
+    assert recovered.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_letter_quoting_the_writer_is_published(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard's one real risk, pinned: quoting the writer is what a letter does."""
+    letter = (
+        "You wrote, \u201cI walked by the river and the willow bent without breaking,\u201d "
+        "and then moved straight past it. Stand there a moment longer."
+    )
+    monkeypatch.setattr(marginalia_service, "generate_response", _CountingLLM(letter))
+    headers, user_id = await _signup(async_client, "quoting")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["essay"] == letter
+
+
+@pytest.mark.asyncio
+async def test_a_blank_completion_is_not_cached_as_a_letter(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty essay is not a letter, and caching one strands the note forever."""
+    monkeypatch.setattr(marginalia_service, "generate_response", _CountingLLM("   \n  "))
+    headers, user_id = await _signup(async_client, "blank_essay")
+    marg_id = await _seed_marginalia(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["essay"] is None
+    await _assert_no_essay_cached(db_session, marg_id)
+
+
+@pytest.mark.asyncio
+async def test_the_resonance_adapter_sends_its_own_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adapter's docstring and its call agree about the system role.
+
+    ``generate_response`` reads ``system_prompt=None`` as "use the BotMason chat
+    persona", so passing ``None`` shipped the chat persona -- operator-swappable
+    via ``BOTMASON_SYSTEM_PROMPT`` -- into a task that deliberately is not chat.
+    """
+    seen: dict[str, object] = {}
+
+    async def _capture(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del prompt, history, api_key
+        seen["system_prompt"] = system_prompt
+        return LLMResponse(
+            text="ok",
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _capture)
+
+    assert await marginalia_service.BotmasonResonanceLLM(None).complete("hello") == "ok"
+    assert seen["system_prompt"] == marginalia_service.RESONANCE_SYSTEM_PROMPT
+    assert seen["system_prompt"] != botmason_service.get_system_prompt()

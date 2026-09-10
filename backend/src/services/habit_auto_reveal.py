@@ -22,9 +22,36 @@ def _stage_number(colour: str) -> int | None:
 
 
 def _is_open(habit: Habit, *, local_today: date, open_stage: int) -> bool:
-    """Whether either independent program invitation has reached ``habit``."""
+    """Whether the program's invitation has reached ``habit``.
+
+    The two signals are not two independent invitations that either may issue
+    (issue #2765). They answer for **different habits**. A habit whose ``stage``
+    names one of the ten rings has a rung on the ladder, and the ladder is the
+    only authority for when that rung opens: ``open_through`` already unions the
+    calendar's offer with the record's entry, so a stage inside it *is* "the
+    schedule has arrived here". A habit whose ``stage`` names no ring -- the
+    column's own default is the empty string, and a user may write anything into
+    it -- has no rung to wait for, and its start date is the only schedule it
+    has.
+
+    Reading them as alternatives let the date clause speak for laddered habits
+    too, and on an established account every habit's ``start_date`` lies in the
+    past, so every ring opened at once and graduated unlock stopped tracking the
+    user's level. Requiring the stage gate for laddered habits is the issue's
+    suggested default: ``stage <= open_stage and (start_date <= today or stage
+    is open)`` reduces to ``stage <= open_stage``, because the right-hand
+    disjunction is already implied. Scoping the date clause to habits off the
+    ladder is its alternative suggestion, and the two compose rather than
+    compete.
+
+    Forward scheduling is untouched: a laddered habit still opens the day its
+    ring does, whether the date is ahead of that day or behind it, and an
+    unladdered habit still opens on its start date and not before.
+    """
     stage = _stage_number(habit.stage)
-    return habit.start_date <= local_today or (stage is not None and stage <= open_stage)
+    if stage is None:
+        return habit.start_date <= local_today
+    return stage <= open_stage
 
 
 async def _unconsumed_candidates(session: AsyncSession, user_id: int) -> list[Habit]:
@@ -136,8 +163,8 @@ async def reconcile_habit_auto_reveals(
     written are re-read under a lock and revalidated. This keeps the common
     no-op list read free of row locks while concurrent reads still cannot
     consume the same invitation twice. A live Metta Return release is an
-    explicit pause and wins over both eligibility paths until the user
-    recommits. Already-revealed eligible rows are stamped too: the marker
+    explicit pause and wins over eligibility until the user recommits.
+    Already-revealed eligible rows are stamped too: the marker
     records that their automatic invitation has been consumed, allowing a
     future manual re-lock to remain locked.
     """

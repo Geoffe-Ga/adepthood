@@ -51,7 +51,18 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
-  JournalPhotograph: undefined;
+  JournalPhotograph:
+    | {
+        /**
+         * Append mode: the capture was opened from a journal entry already being
+         * written, and this is the hand-off token that entry minted (see
+         * ``useCapturedTranscriptStore``). The transcript is handed back to that
+         * page instead of being saved as a new entry. Only the token rides here
+         * — never the transcribed prose, and never any page image.
+         */
+        appendTo?: string;
+      }
+    | undefined;
   JournalEntry:
     | {
         entryId?: number;
@@ -88,10 +99,15 @@ export type RootStackParamList = {
          * rather than asking for a session to be recorded.
          */
         writingSession?: { minutes: number; userPracticeId: number | null };
-        /** Where "Back to reading" returns the writer, restoring their scroll. */
+        /**
+         * Where "Back to reading" returns the writer. ``scrollOffset`` is
+         * optional because only the passage-note hand-off knows one: a reflection
+         * closes the reader before it leaves, so it returns to the content item
+         * and the Course screen opens it at the top (an absent offset reads as 0).
+         */
         returnTo?: {
           screen: 'Course';
-          params: { stageNumber?: number; contentId: number; scrollOffset: number };
+          params: { stageNumber?: number; contentId: number; scrollOffset?: number };
         };
       }
     | undefined;
