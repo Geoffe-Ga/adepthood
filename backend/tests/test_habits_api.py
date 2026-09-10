@@ -1313,22 +1313,22 @@ async def test_list_leaves_an_already_over_revealed_row_open_and_relockable(
 ) -> None:
     """Reveals written before the fix are left standing, and re-locking them sticks.
 
-    The recorded decision for #2765: a row already stamped cannot be told apart
-    from one the user unlocked by hand -- ``_consume_auto_reveal_on_manual_change``
-    writes the same two columns -- so nothing retroactively re-locks it. The user
-    keeps the remedy, and the one-shot marker makes their choice durable.
+    The recorded decision for #2765: a stamped row cannot be told apart from one
+    the user unlocked by hand, because ``_consume_auto_reveal_on_manual_change``
+    writes the very same two columns, so nothing retroactively re-locks it. The
+    unstamped twin -- same ring, same start date, same account, above the same
+    open stage -- is refused in the same response, which is what makes "left
+    alone" a decision the test can see rather than an absence it cannot.
     """
-    headers = await _signup(async_client, "auto_reveal_legacy_row")
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_legacy_row")
     past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
     payload = sample_payload(name="Legacy ring", stage="Yellow", start_date=past.isoformat())
-    created = await async_client.post("/habits/", json=payload, headers=headers)
-    assert created.status_code == HTTPStatus.OK
-    habit_id = created.json()["id"]
-    stamped_at = datetime.now(UTC) - timedelta(days=7)
-    legacy = await db_session.get(Habit, habit_id)
-    assert legacy is not None
+    for body in (payload, {**payload, "name": "Fresh ring", "sort_order": 2}):
+        created = await async_client.post("/habits/", json=body, headers=headers)
+        assert created.status_code == HTTPStatus.OK
+    legacy, fresh = await _habits_in_slot_order(db_session, user_id)
     legacy.revealed = True
-    legacy.auto_revealed_at = stamped_at
+    legacy.auto_revealed_at = datetime.now(UTC) - timedelta(days=7)
     db_session.add(legacy)
     await db_session.commit()
     await db_session.refresh(legacy)
@@ -1338,16 +1338,18 @@ async def test_list_leaves_an_already_over_revealed_row_open_and_relockable(
     listed = await async_client.get("/habits/", headers=headers)
 
     assert listed.status_code == HTTPStatus.OK
-    assert listed.json()[0]["revealed"] is True
+    assert _revealed_by_name(listed.json()) == {"Legacy ring": True, "Fresh ring": False}
+    await db_session.refresh(fresh)
+    assert fresh.auto_revealed_at is None
 
     relocked = await async_client.put(
-        f"/habits/{habit_id}", json={**payload, "revealed": False}, headers=headers
+        f"/habits/{legacy.id}", json={**payload, "revealed": False}, headers=headers
     )
     assert relocked.status_code == HTTPStatus.OK
     after_relock = await async_client.get("/habits/", headers=headers)
 
     assert after_relock.status_code == HTTPStatus.OK
-    assert after_relock.json()[0]["revealed"] is False
+    assert _revealed_by_name(after_relock.json())["Legacy ring"] is False
     await db_session.refresh(legacy)
     assert legacy.auto_revealed_at == stored_marker
 
