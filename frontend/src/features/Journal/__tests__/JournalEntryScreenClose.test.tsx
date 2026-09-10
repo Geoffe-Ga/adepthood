@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import type { JournalMessage } from '@/api';
@@ -11,6 +11,9 @@ const mockUpdate = jest.fn() as jest.MockedFunction<
   (_id: number, _p: unknown) => Promise<JournalMessage>
 >;
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
+const mockRespond = jest.fn() as jest.MockedFunction<
+  (_week: number, _body: string, _options?: unknown) => Promise<unknown>
+>;
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
@@ -21,7 +24,9 @@ jest.mock('@/api', () => ({
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
     update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
   },
-  prompts: { respond: jest.fn() },
+  prompts: {
+    respond: (...a: unknown[]) => (mockRespond as unknown as (...x: unknown[]) => unknown)(...a),
+  },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     generate: jest.fn(),
@@ -73,7 +78,13 @@ const RETURN_TO: ReturnToCourse = {
 };
 
 function renderScreen(
-  params?: { entryId?: number; returnTo?: ReturnToCourse },
+  params?: {
+    entryId?: number;
+    returnTo?: ReturnToCourse;
+    weekNumber?: number;
+    promptQuestion?: string;
+    prefillTitle?: string;
+  },
   extraProps: Record<string, unknown> = {},
 ) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
@@ -93,6 +104,8 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockList.mockReset();
   mockList.mockResolvedValue({ items: [] });
+  mockRespond.mockReset();
+  mockRespond.mockResolvedValue({});
 });
 
 // ---------------------------------------------------------------------------
@@ -113,9 +126,11 @@ describe('JournalEntryScreen — always-available close', () => {
     expect(close.props.accessibilityLabel.length).toBeGreaterThan(0);
   });
 
-  it('returns the writer to the Journal shelf', () => {
+  it('returns an empty draft to the Journal shelf', async () => {
     const { getByTestId, navigation } = renderScreen();
-    fireEvent.press(getByTestId('journal-close-entry'));
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
     expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
   });
 
@@ -126,34 +141,218 @@ describe('JournalEntryScreen — always-available close', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The autosave contract: fired, not awaited
+// The close contract: the final save settles before the shelf is allowed to read
 // ---------------------------------------------------------------------------
 
 describe('JournalEntryScreen — closing flushes the pending draft', () => {
-  it('persists the typed draft after the close navigates away', async () => {
+  it('does not navigate until the first save has persisted', async () => {
+    let resolveCreate: (_entry: JournalMessage) => void = () => undefined;
+    mockCreate.mockImplementation(
+      () =>
+        new Promise<JournalMessage>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const { getByTestId, navigation } = renderScreen(undefined, { autosaveDelayMs: 100 });
+    fireEvent.changeText(getByTestId('journal-body-input'), 'A thought worth keeping.');
+
+    act(() => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'A thought worth keeping.' }),
+    );
+    expect(navigation.navigate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCreate(entry({ id: 42, message: 'A thought worth keeping.' }));
+    });
+    expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+  });
+
+  it('keeps the writer on the page with the save error when the final write fails', async () => {
+    mockCreate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, navigation } = renderScreen(undefined, { autosaveDelayMs: 100 });
+    fireEvent.changeText(getByTestId('journal-body-input'), 'A thought that is still safe here.');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
+
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(getByTestId('journal-save-hint').props.children).toMatch(/couldn't save/i);
+    expect(getByTestId('journal-save-retry')).toBeTruthy();
+  });
+
+  it('closes after a weekly-prompt response persists even though that endpoint returns no entry id', async () => {
+    const { getByTestId, navigation } = renderScreen(
+      {
+        weekNumber: 3,
+        promptQuestion: 'What did you notice?',
+        prefillTitle: 'Week 3 Reflection',
+      },
+      { autosaveDelayMs: 100 },
+    );
+    fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
+
+    expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
+      title: 'Week 3 Reflection',
+    });
+    expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+  });
+
+  it('does not call a second weekly edit Saved or close over text the server refused to store', async () => {
     jest.useFakeTimers();
     try {
-      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
-      fireEvent.changeText(getByTestId('journal-body-input'), 'A thought worth keeping.');
-      fireEvent.press(getByTestId('journal-close-entry'));
+      let resolveRespond: (_value: unknown) => void = () => undefined;
+      mockRespond.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveRespond = resolve;
+          }),
+      );
+      const { getByTestId, navigation } = renderScreen(
+        {
+          weekNumber: 3,
+          promptQuestion: 'What did you notice?',
+          prefillTitle: 'Week 3 Reflection',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'The first durable answer.');
       await act(async () => {
         await jest.advanceTimersByTimeAsync(100);
       });
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'A thought worth keeping.' }),
+      fireEvent.changeText(
+        getByTestId('journal-body-input'),
+        'A later edit the one-response endpoint cannot store.',
       );
+      await act(async () => {
+        resolveRespond({});
+      });
+
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-close-entry'));
+      });
+
+      expect(mockRespond).toHaveBeenCalledTimes(1);
+      expect(navigation.navigate).not.toHaveBeenCalled();
+      expect(getByTestId('journal-save-hint').props.children).toMatch(/already answered/i);
+      expect(getByTestId('journal-save-hint').props.children).not.toBe('Saved');
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('navigates immediately rather than waiting on the write to resolve', () => {
-    // ``create`` never settles here: a close that awaited the flush would leave
-    // the writer stranded on the page it is meant to let them leave.
-    mockCreate.mockImplementation(() => new Promise<JournalMessage>(() => {}));
+  it('closes a loaded finished entry without making its durable text depend on another PATCH', async () => {
+    mockGet.mockResolvedValue(entry({ status: 'finished' }));
+    mockUpdate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, navigation } = renderScreen({ entryId: 7 });
+    await waitFor(() => expect(getByTestId('journal-edit-button')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+  });
+
+  it('does not repeat an already successful autosave just to close', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, navigation } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Already safe on the shelf.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      mockUpdate.mockRejectedValue(new Error('offline'));
+
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-close-entry'));
+      });
+
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not announce an older save as Saved while newer text is still pending', async () => {
+    jest.useFakeTimers();
+    try {
+      let resolveCreate: (_entry: JournalMessage) => void = () => undefined;
+      mockCreate.mockImplementation(
+        () =>
+          new Promise<JournalMessage>((resolve) => {
+            resolveCreate = resolve;
+          }),
+      );
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Older text.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Newer text is still pending.');
+
+      await act(async () => {
+        resolveCreate(entry({ id: 42, message: 'Older text.' }));
+      });
+
+      expect(getByTestId('journal-save-hint').props.children).not.toBe('Saved');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(42, {
+        message: 'Newer text is still pending.',
+        title: null,
+      });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps flushing text typed after X until the newest body is durable', async () => {
+    let resolveCreate: (_entry: JournalMessage) => void = () => undefined;
+    let resolveUpdate: (_entry: JournalMessage) => void = () => undefined;
+    mockCreate.mockImplementation(
+      () =>
+        new Promise<JournalMessage>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    mockUpdate.mockImplementation(
+      () =>
+        new Promise<JournalMessage>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
     const { getByTestId, navigation } = renderScreen(undefined, { autosaveDelayMs: 100 });
-    fireEvent.changeText(getByTestId('journal-body-input'), 'A thought mid-flight.');
-    fireEvent.press(getByTestId('journal-close-entry'));
+    fireEvent.changeText(getByTestId('journal-body-input'), 'The body when X was pressed.');
+    act(() => {
+      fireEvent.press(getByTestId('journal-close-entry'));
+    });
+    fireEvent.changeText(getByTestId('journal-body-input'), 'Newer text typed while X waits.');
+
+    await act(async () => {
+      resolveCreate(entry({ id: 42, message: 'The body when X was pressed.' }));
+    });
+    expect(mockUpdate).toHaveBeenCalledWith(42, {
+      message: 'Newer text typed while X waits.',
+      title: null,
+    });
+    expect(navigation.navigate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveUpdate(entry({ id: 42, message: 'Newer text typed while X waits.' }));
+    });
     expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
   });
 });

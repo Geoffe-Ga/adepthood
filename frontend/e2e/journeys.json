@@ -174,6 +174,18 @@
     "coveredBy": "frontend/e2e/journal-markdown.browser.e2e.test.ts"
   },
   {
+    "id": "journal.close-fresh-page-after-save-settles",
+    "description": "A writer types a fresh page and presses the always-available X before its debounced first save. The close waits for the create response before navigation lets the shelf refetch, the new page is visible immediately, and reopening it shows the exact body. A component regression test separately holds the create promise open to prove navigation ordering and verifies a rejected final write leaves the writer with the retry affordance.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "GET /journal/", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-close-save.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.promote-reopen-and-remove-quote",
     "description": "A reader opens a finished entry, uses a real mouse selection to promote part of its text, sees the saved highlight after a cold reload, and removes it again. The journey crosses the rendered selection affordance, production promotions client, ownership-scoped routes, and durable quote row instead of proving the API in isolation.",
     "crosses": {

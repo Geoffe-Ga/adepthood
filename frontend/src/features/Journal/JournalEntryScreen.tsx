@@ -316,6 +316,8 @@ interface AutosaveApi {
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
+  /** Persist only if needed and report durable success independently of an id. */
+  flushForExit: () => Promise<boolean>;
   /**
    * Perform the single atomic Finish write (full body + title + ``finished``
    * status) after draining any in-flight autosave, resolving to the entry id.
@@ -449,11 +451,26 @@ const chordToPatch = (chord: AspectChordValue): JournalEntryUpdate => ({
 });
 
 type TimerRef = React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
-type RunSave = (_title: string, _body: string) => Promise<void>;
+/** Whether the requested draft write reached durable storage. */
+type RunSave = (_title: string, _body: string, _generation: number) => Promise<boolean>;
+
+interface DraftText {
+  title: string;
+  body: string;
+}
+
+interface FlushResult {
+  durable: boolean;
+  entryId: number | null;
+}
+
+function sameDraft(left: DraftText | null, title: string, body: string): boolean {
+  return left?.title === title && left.body === body;
+}
 
 interface SaveTimer {
   save: (_title: string, _body: string) => void;
-  flush: (_title: string, _body: string) => Promise<number | null>;
+  flush: (_title: string, _body: string) => Promise<FlushResult>;
 }
 
 /** Debounce (``save``) + immediate (``flush``) wrappers around the async writer. */
@@ -461,26 +478,33 @@ function useSaveTimer(
   run: RunSave,
   timerRef: TimerRef,
   entryIdRef: React.MutableRefObject<number | null>,
+  generationRef: React.MutableRefObject<number>,
   delayMs: number,
   setTyping: () => void,
 ): SaveTimer {
   const save = useCallback(
     (title: string, body: string): void => {
+      const generation = ++generationRef.current;
       setTyping();
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => void run(title, body), delayMs);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        void run(title, body, generation);
+      }, delayMs);
     },
-    [run, delayMs, timerRef, setTyping],
+    [run, delayMs, timerRef, generationRef, setTyping],
   );
-  // Cancel any pending debounce and persist now; resolves to the entry id so a
-  // caller (e.g. resonance) can act on the just-saved entry.
+  // Cancel any pending debounce and persist now. Durable success is distinct
+  // from an id because the weekly-prompt endpoint saves without returning one.
   const flush = useCallback(
-    async (title: string, body: string): Promise<number | null> => {
+    async (title: string, body: string): Promise<FlushResult> => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      if (body.trim()) await run(title, body);
-      return entryIdRef.current;
+      timerRef.current = null;
+      if (!body.trim()) return { durable: true, entryId: entryIdRef.current };
+      const durable = await run(title, body, generationRef.current);
+      return { durable, entryId: entryIdRef.current };
     },
-    [run, timerRef, entryIdRef],
+    [run, timerRef, entryIdRef, generationRef],
   );
   return { save, flush };
 }
@@ -503,32 +527,34 @@ function useErrorSurfacingPersist<T>(
   );
 }
 
-/** Persist once, tracking the save state; the returned task never rejects. */
+interface WriteOutcome {
+  durable: boolean;
+  state: Extract<SaveState, 'saved' | 'error' | 'weekTaken'>;
+}
+
+/** Persist once; report its terminal state without publishing a stale result. */
 function trackedWrite(
   refs: WriteEntryRefs,
   title: string,
   body: string,
   ctx: SaveContext,
-  setSaveState: (_state: SaveState) => void,
-  onSaved: (() => void) | undefined,
   onConflict: (() => void) | undefined,
-): Promise<void> {
+): Promise<WriteOutcome> {
   return (async () => {
     try {
       await writeEntry(refs, title, body, ctx);
-      setSaveState('saved');
-      onSaved?.();
+      return { durable: true, state: 'saved' };
     } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
       // A 409 on the weekly-prompt path is not retryable — the week already holds
       // its one response — so it gets its own state rather than the retry hint.
       const weekTaken = ctx.weekNumber != null && isCreateConflict(error);
-      setSaveState(weekTaken ? 'weekTaken' : 'error');
       // Additive: a reflection-scope create can 409 because the reflection
       // already exists. Hand that case to the caller (which routes to the
       // existing entry); every other failure keeps the plain save-error hint.
       // This never rejects, so the single-flight drain loops stay safe.
       if (isCreateConflict(error)) onConflict?.();
+      return { durable: false, state: weekTaken ? 'weekTaken' : 'error' };
     }
   })();
 }
@@ -540,8 +566,38 @@ type SaveRunnerRefs = WriteEntryRefs & {
   onSavedRef: React.MutableRefObject<(() => void) | undefined>;
   /** Additively invoked on a reflection-scope create 409 (routes to the existing entry). */
   onConflictRef: React.MutableRefObject<(() => void) | undefined>;
-  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+  inFlightRef: React.MutableRefObject<Promise<unknown> | null>;
+  generationRef: React.MutableRefObject<number>;
+  durableTextRef: React.MutableRefObject<DraftText | null>;
 };
+
+/** Record a write's truth, but publish it only if no newer edit superseded it. */
+function settleTrackedWrite(
+  generationRef: React.MutableRefObject<number>,
+  durableTextRef: React.MutableRefObject<DraftText | null>,
+  onSavedRef: React.MutableRefObject<(() => void) | undefined>,
+  title: string,
+  body: string,
+  generation: number,
+  outcome: WriteOutcome,
+  setSaveState: (_state: SaveState) => void,
+): void {
+  if (outcome.durable) durableTextRef.current = { title, body };
+  if (generationRef.current !== generation) return;
+  setSaveState(outcome.state);
+  if (outcome.durable) onSavedRef.current?.();
+}
+
+function rejectSecondPromptEdit(
+  ctx: SaveContext,
+  responded: boolean,
+  isCurrent: boolean,
+  setSaveState: (_state: SaveState) => void,
+): boolean {
+  if (ctx.weekNumber == null || !responded) return false;
+  if (isCurrent) setSaveState('weekTaken');
+  return true;
+}
 
 /**
  * The debounced writer, single-flighted: if a save is already in flight, this
@@ -550,32 +606,35 @@ type SaveRunnerRefs = WriteEntryRefs & {
  */
 function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) => void): RunSave {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
-  const { entryUnsettledRef, ctxRef, onSavedRef, onConflictRef, inFlightRef } = refs;
+  const { entryUnsettledRef, ctxRef, onSavedRef, onConflictRef } = refs;
+  const { inFlightRef, generationRef, durableTextRef } = refs;
   return useCallback<RunSave>(
-    async (title, body) => {
-      // Never overwrite an entry until its load settles (still in flight or failed).
-      if (entryUnsettledRef.current) return;
-      if (!body.trim()) return; // never persist an empty draft
-      // Drain every in-flight save before starting: a released run re-registers
-      // inFlightRef synchronously, so this serializes the whole pile onto one
-      // create. Awaiting only once would let a create that fails release all
-      // queued saves together — each re-creating (the duplicate this guards).
-      // The tracked task never rejects, so awaiting a pending save never throws.
+    async (title, body, generation) => {
+      if (entryUnsettledRef.current) return false;
+      if (!body.trim()) return true; // an empty draft has nothing to lose
       while (inFlightRef.current) await inFlightRef.current;
-      setSaveState('saving');
+      if (sameDraft(durableTextRef.current, title, body)) return true;
+      // Never bless a later edit that the create-once prompt endpoint cannot persist.
+      const isCurrent = generationRef.current === generation;
+      if (rejectSecondPromptEdit(ctxRef.current, respondedRef.current, isCurrent, setSaveState))
+        return false;
+      if (isCurrent) setSaveState('saving');
       const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
-      const task = trackedWrite(
-        writeRefs,
-        title,
-        body,
-        ctxRef.current,
-        setSaveState,
-        onSavedRef.current,
-        onConflictRef.current,
-      );
+      const task = trackedWrite(writeRefs, title, body, ctxRef.current, onConflictRef.current);
       inFlightRef.current = task;
       try {
-        await task;
+        const outcome = await task;
+        settleTrackedWrite(
+          generationRef,
+          durableTextRef,
+          onSavedRef,
+          title,
+          body,
+          generation,
+          outcome,
+          setSaveState,
+        );
+        return outcome.durable;
       } finally {
         if (inFlightRef.current === task) inFlightRef.current = null;
       }
@@ -590,6 +649,8 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
       onSavedRef,
       onConflictRef,
       inFlightRef,
+      generationRef,
+      durableTextRef,
       setSaveState,
     ],
   );
@@ -599,8 +660,10 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
 type FinishRunnerRefs = WriteEntryRefs & {
   entryUnsettledRef: React.MutableRefObject<boolean>;
   ctxRef: React.MutableRefObject<SaveContext>;
-  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+  inFlightRef: React.MutableRefObject<Promise<unknown> | null>;
   timerRef: TimerRef;
+  generationRef: React.MutableRefObject<number>;
+  durableTextRef: React.MutableRefObject<DraftText | null>;
 };
 
 /** Raised when Finish is pressed before an existing entry's load has settled. */
@@ -618,10 +681,12 @@ function useFinishWriter(
   setSaveState: (_state: SaveState) => void,
 ): RunFinish {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
-  const { entryUnsettledRef, ctxRef, inFlightRef, timerRef } = refs;
+  const { entryUnsettledRef, ctxRef, inFlightRef, timerRef, generationRef, durableTextRef } = refs;
   return useCallback<RunFinish>(
     async (title, body) => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      const generation = generationRef.current;
       // The tracked autosave never rejects, so draining it is safe; this ensures a
       // slower, shorter autosave can't overwrite the body after the Finish write.
       while (inFlightRef.current) await inFlightRef.current;
@@ -639,10 +704,11 @@ function useFinishWriter(
       inFlightRef.current = shadow;
       try {
         const id = await task;
-        setSaveState('saved');
+        durableTextRef.current = { title, body };
+        if (generationRef.current === generation) setSaveState('saved');
         return id;
       } catch (error) {
-        setSaveState('error');
+        if (generationRef.current === generation) setSaveState('error');
         throw error;
       } finally {
         if (inFlightRef.current === shadow) inFlightRef.current = null;
@@ -657,6 +723,8 @@ function useFinishWriter(
       ctxRef,
       inFlightRef,
       timerRef,
+      generationRef,
+      durableTextRef,
       setSaveState,
     ],
   );
@@ -713,7 +781,14 @@ function useDraftWriters(
 ): DraftWriters {
   const setTyping = useCallback(() => setSaveState('typing'), [setSaveState]);
   const run = useSaveRunner(refs, setSaveState);
-  const { save, flush } = useSaveTimer(run, refs.timerRef, refs.entryIdRef, delayMs, setTyping);
+  const { save, flush } = useSaveTimer(
+    run,
+    refs.timerRef,
+    refs.entryIdRef,
+    refs.generationRef,
+    delayMs,
+    setTyping,
+  );
   const finish = useFinishWriter(refs, setSaveState);
   return { save, flush, finish };
 }
@@ -746,12 +821,14 @@ function useMirroredInputs(
 interface DraftRefs {
   entryIdRef: React.MutableRefObject<number | null>;
   timerRef: TimerRef;
-  inFlightRef: React.MutableRefObject<Promise<void> | null>;
+  inFlightRef: React.MutableRefObject<Promise<unknown> | null>;
   respondedRef: React.MutableRefObject<boolean>;
   onSavedRef: React.MutableRefObject<(() => void) | undefined>;
   onConflictRef: React.MutableRefObject<(() => void) | undefined>;
   ctxRef: React.MutableRefObject<SaveContext>;
   entryUnsettledRef: React.MutableRefObject<boolean>;
+  generationRef: React.MutableRefObject<number>;
+  durableTextRef: React.MutableRefObject<DraftText | null>;
 }
 
 /**
@@ -766,12 +843,14 @@ interface DraftRefs {
 function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): DraftRefs {
   const entryIdRef = useRef<number | null>(routeEntryId);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inFlightRef = useRef<Promise<void> | null>(null);
+  const inFlightRef = useRef<Promise<unknown> | null>(null);
   const respondedRef = useRef(false);
   const onSavedRef = useRef(values.onSaved);
   const onConflictRef = useRef(values.onConflict);
   const ctxRef = useRef(values.ctx);
   const entryUnsettledRef = useRef(values.entryUnsettled);
+  const generationRef = useRef(0);
+  const durableTextRef = useRef<DraftText | null>(null);
   useMirroredInputs(onSavedRef, onConflictRef, ctxRef, entryUnsettledRef, values);
   return {
     entryIdRef,
@@ -782,7 +861,18 @@ function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): Draf
     onConflictRef,
     ctxRef,
     entryUnsettledRef,
+    generationRef,
+    durableTextRef,
   };
+}
+
+function useDurableTextSeeder(durableTextRef: React.MutableRefObject<DraftText | null>) {
+  return useCallback(
+    (title: string, body: string) => {
+      durableTextRef.current = { title, body };
+    },
+    [durableTextRef],
+  );
 }
 
 /** Debounced create-then-update draft saver; tracks the save state. */
@@ -807,9 +897,9 @@ function useDebouncedSave(
   );
   const flushAndTrack = useCallback(
     async (...args: Parameters<typeof flush>) => {
-      const id = await flush(...args);
-      if (id != null) setEntryId(id);
-      return id;
+      const result = await flush(...args);
+      if (result.entryId != null) setEntryId(result.entryId);
+      return result;
     },
     [flush],
   );
@@ -821,6 +911,7 @@ function useDebouncedSave(
     },
     [finish],
   );
+  const seedDurableText = useDurableTextSeeder(refs.durableTextRef);
 
   return {
     entryId,
@@ -831,6 +922,7 @@ function useDebouncedSave(
     changeClassification: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
+    seedDurableText,
   };
 }
 
@@ -838,20 +930,32 @@ type StrRef = React.MutableRefObject<string>;
 
 /** Bind flush + finish to the latest title/body refs so callers pass no args. */
 function useBoundWriters(
-  flush: (_title: string, _body: string) => Promise<number | null>,
+  flush: (_title: string, _body: string) => Promise<FlushResult>,
   finish: (_title: string, _body: string) => Promise<number>,
   titleRef: StrRef,
   bodyRef: StrRef,
-): { flushNow: () => Promise<number | null>; finishNow: () => Promise<number> } {
+): {
+  flushNow: () => Promise<number | null>;
+  flushForExitNow: () => Promise<boolean>;
+  finishNow: () => Promise<number>;
+} {
   const flushNow = useCallback(
-    () => flush(titleRef.current, bodyRef.current),
+    async () => (await flush(titleRef.current, bodyRef.current)).entryId,
     [flush, titleRef, bodyRef],
   );
+  const flushForExitNow = useCallback(async () => {
+    for (;;) {
+      const requested = { title: titleRef.current, body: bodyRef.current };
+      const result = await flush(requested.title, requested.body);
+      if (!result.durable) return false;
+      if (sameDraft(requested, titleRef.current, bodyRef.current)) return true;
+    }
+  }, [flush, titleRef, bodyRef]);
   const finishNow = useCallback(
     () => finish(titleRef.current, bodyRef.current),
     [finish, titleRef, bodyRef],
   );
-  return { flushNow, finishNow };
+  return { flushNow, flushForExitNow, finishNow };
 }
 
 /** Referentially-stable change handlers; each save reads the other field's ref. */
@@ -900,6 +1004,8 @@ interface EntryState {
   setBody: (_v: string) => void;
   titleRef: StrRef;
   bodyRef: StrRef;
+  /** Exact server text captured during hydration, before any subsequent edit. */
+  loadedTextRef: React.MutableRefObject<DraftText | null>;
   /** Set (to {@link LOAD_ERROR_MESSAGE}) when loading an existing entry failed. */
   loadError: string | null;
   /** Flips true once an existing entry's values have been applied to state. */
@@ -948,6 +1054,7 @@ function useLocalEntryState(
   const [reflectionScopeKey, setReflectionScopeKey] = useState(initialReflectionScopeKey);
   const titleRef = useRef(initialText.title);
   const bodyRef = useRef(initialText.body);
+  const loadedTextRef = useRef<DraftText | null>(null);
   return {
     title,
     body,
@@ -961,6 +1068,7 @@ function useLocalEntryState(
     setBody,
     titleRef,
     bodyRef,
+    loadedTextRef,
     loadError,
     loaded,
     reflectionLevel,
@@ -977,6 +1085,7 @@ function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage)
   const {
     titleRef,
     bodyRef,
+    loadedTextRef,
     setTitle,
     setBody,
     setStatus,
@@ -990,6 +1099,7 @@ function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage)
     (entry: JournalMessage) => {
       titleRef.current = entry.title ?? '';
       bodyRef.current = entry.message;
+      loadedTextRef.current = { title: titleRef.current, body: bodyRef.current };
       setTitle(titleRef.current);
       setBody(bodyRef.current);
       setStatus(entry.status ?? 'draft');
@@ -1004,6 +1114,7 @@ function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage)
     },
     [
       bodyRef,
+      loadedTextRef,
       setBody,
       setChord,
       setClassification,
@@ -1098,6 +1209,20 @@ function useSeedPersistOnLoad(
   }, [entry.loaded, entry.classification, entry.chord, seedPersist]);
 }
 
+/** Seed the exact durable body/title captured by the load callback, not later edits. */
+function useSeedDurableTextOnLoad(
+  entry: Pick<EntryState, 'loaded' | 'loadedTextRef'>,
+  seedDurableText: (_title: string, _body: string) => void,
+): void {
+  const seededRef = useRef(false);
+  useEffect(() => {
+    const loaded = entry.loadedTextRef.current;
+    if (seededRef.current || !entry.loaded || loaded == null) return;
+    seededRef.current = true;
+    seedDurableText(loaded.title, loaded.body);
+  }, [entry.loaded, entry.loadedTextRef, seedDurableText]);
+}
+
 /**
  * Seed the persist ref for a NEW entry (no id to load) with the pre-set tier once
  * on mount, so the first ``journal.create`` carries it — the capture flow's
@@ -1123,6 +1248,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   flush: () => Promise<number | null>;
+  flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
 }
 
@@ -1161,7 +1287,7 @@ function useAutosaveBindings(
     entry.setTitle,
     entry.setBody,
   );
-  const { flushNow, finishNow } = useBoundWriters(
+  const { flushNow, flushForExitNow, finishNow } = useBoundWriters(
     saving.flush,
     saving.finish,
     entry.titleRef,
@@ -1174,6 +1300,7 @@ function useAutosaveBindings(
     onChangeTitle,
     onChangeBody,
     flush: flushNow,
+    flushForExit: flushForExitNow,
     finish: finishNow,
     ...choices,
   };
@@ -1203,6 +1330,7 @@ function useJournalAutosave(
   const entryUnsettled = routeEntryId != null && !entry.loaded;
   const saving = useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
   useSeedPersistOnLoad(entry, saving.seedPersist);
+  useSeedDurableTextOnLoad(entry, saving.seedDurableText);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
   const bindings = useAutosaveBindings(entry, saving);
   return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
@@ -2591,28 +2719,37 @@ const CLOSE_ENTRY_LABEL = 'Close — return to your journal';
 /**
  * The always-available way out of the writing surface. ``ReturnToReadingLink``
  * only appears for a writer who came from the course reader, which left everyone
- * else with no exit the screen itself offered. This one is never gated: it flushes
- * the pending draft on the same fired-not-awaited contract as the return link — so
- * nothing typed is lost as the stack screen unmounts, and leaving never waits on a
- * write — then lands the writer back on the Journal shelf.
+ * else with no exit the screen itself offered. This one is never gated: it waits
+ * for the pending draft to reach storage before the shelf is allowed to reload. A
+ * failed final write leaves the writer and the existing retry hint in place,
+ * making the X a keep action rather than a race against the shelf.
  */
 function CloseEntryLink({
   navigation,
   flush,
 }: {
   navigation: ScreenNavigation;
-  flush: () => Promise<number | null>;
+  flush: () => Promise<boolean>;
 }): React.JSX.Element {
-  const onPress = useCallback(() => {
-    void flush();
-    navigation.navigate('Tabs', { screen: 'Journal' });
-  }, [navigation, flush]);
+  const [closing, setClosing] = useState(false);
+  const onPress = useCallback(async () => {
+    if (closing) return;
+    setClosing(true);
+    const durable = await flush();
+    if (durable) {
+      navigation.navigate('Tabs', { screen: 'Journal' });
+      return;
+    }
+    setClosing(false);
+  }, [closing, flush, navigation]);
   return (
     <TouchableOpacity
       style={styles.quoteActionButton}
-      onPress={onPress}
+      onPress={() => void onPress()}
+      disabled={closing}
       accessibilityRole="button"
       accessibilityLabel={CLOSE_ENTRY_LABEL}
+      accessibilityState={{ busy: closing, disabled: closing }}
       testID="journal-close-entry"
     >
       <X color={accent.primary} size={24} accessible={false} />
@@ -2629,15 +2766,17 @@ function EntryExitControls({
   returnTo,
   navigation,
   flush,
+  flushForExit,
 }: {
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   flush: () => Promise<number | null>;
+  flushForExit: () => Promise<boolean>;
 }): React.JSX.Element {
   return (
     <View style={styles.entryExitRow}>
       <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
-      <CloseEntryLink navigation={navigation} flush={flush} />
+      <CloseEntryLink navigation={navigation} flush={flushForExit} />
     </View>
   );
 }
@@ -2903,6 +3042,7 @@ function JournalEntryScreen({
         returnTo={route.params?.returnTo}
         navigation={navigation}
         flush={ctl.autosave.flush}
+        flushForExit={ctl.autosave.flushForExit}
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
