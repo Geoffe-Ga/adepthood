@@ -20,9 +20,10 @@
  *   - `ActiveRitualSession` owns the engine, mode dispatch, configurator
  *     sheet, and the ritual-12 insight capture modal when a practice is
  *     active; its status is mirrored up here to gate the switcher.
- *   - `PracticeIdentityHeader` pins the player identity (title, tappable
- *     stage chip, effective ritual name, customize pencil) to the top region
- *     and collapses to the title alone while a session runs.
+ *   - `PracticeIdentityHeader` pins the player identity (tappable stage chip
+ *     over the effective ritual name as the display title, with the customize
+ *     pencil on that same row) to the top region, and collapses to the title
+ *     alone while a session runs.
  *   - `QuickLaunchWriting` sits under the identity header when — and only
  *     when — the active practice is `Journaling`, and takes the writer straight
  *     to a journal page with the practice's own length already running. It is
