@@ -134,6 +134,28 @@ async def test_wallet_exhausted_is_402_and_uncharged(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+async def test_byok_transcription_bypasses_both_wallet_buckets(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller-paid transcription works with no allowance and spends neither bucket."""
+    _patch_generate_response(monkeypatch, _priced_response("caller-paid transcription"))
+    headers = await _signup(async_client, "byok_transcribe_free")
+    before = await _wallet_snapshot(db_session, "byok_transcribe_free@example.com")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json=_payload(_JPEG_BYTES),
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    after = await _wallet_snapshot(db_session, "byok_transcribe_free@example.com")
+    assert after == before == (0, 0)
+    assert await _usage_row_count(db_session) == 1
+
+
+@pytest.mark.asyncio
 async def test_invalid_base64_is_422(async_client: AsyncClient) -> None:
     """Non-base64 image content is rejected as invalid_image."""
     headers = await _signup(async_client, "badb64")

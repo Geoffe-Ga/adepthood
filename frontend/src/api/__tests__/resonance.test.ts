@@ -1,6 +1,13 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { ApiError, LLM_API_KEY_HEADER, journal, resonance } from '../index';
+import {
+  ApiError,
+  LLM_API_KEY_HEADER,
+  botmasonUsage,
+  journal,
+  resonance,
+  setLlmApiKeyGetter,
+} from '../index';
 import type { Marginalia, ResonanceResponse } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -46,6 +53,27 @@ function resonancePayload(): ResonanceResponse {
 
 beforeEach(() => {
   mockFetch.mockReset();
+  setLlmApiKeyGetter(null);
+});
+
+describe('BotMason pricing inputs', () => {
+  test('reads and validates the deployment-served usage policy', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        monthly_messages_used: 3,
+        monthly_messages_remaining: 4,
+        monthly_cap: 7,
+        monthly_reset_date: '2026-07-01T00:00:00Z',
+        offering_balance: 2,
+      }),
+    );
+
+    const result = await botmasonUsage.get('tok');
+
+    expect(mockFetch.mock.calls[0][0]).toBe('http://test/user/usage');
+    expect(result.monthly_cap).toBe(7);
+    expect(result.monthly_messages_remaining).toBe(4);
+  });
 });
 
 describe('journal.update', () => {
@@ -89,6 +117,15 @@ describe('resonance.generate', () => {
     mockFetch.mockReturnValueOnce(jsonResponse(resonancePayload(), 200));
     await resonance.generate(7, 'tok');
     expect(mockFetch.mock.calls[1][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
+  });
+
+  test('an explicit no-key payer snapshot cannot be replaced by a later global key', async () => {
+    setLlmApiKeyGetter(() => 'sk-key-that-loaded-after-disclosure');
+    mockFetch.mockReturnValueOnce(jsonResponse(resonancePayload(), 200));
+
+    await resonance.generate(7, 'tok', null);
+
+    expect(mockFetch.mock.calls[0][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
   test('surfaces a 402 as an ApiError', async () => {

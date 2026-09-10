@@ -38,7 +38,7 @@ import { BACKEND_DIR, pythonExecutable, readLaneState, type LaneState } from './
  * Three claims, in three accounts:
  *
  * 1. The writer's own key is refused (402): the copy names the spent balance and
- *    offers no retry, and the pass is free — charged and put back.
+ *    offers no retry, and the caller-paid pass never touches either wallet.
  * 2. The same provider, same status, a *different* code: a genuine rate limit
  *    keeps its transient copy and its retry. This is the counterweight — without
  *    it, a carve-out that swallowed every 429 would pass the test above.
@@ -48,12 +48,12 @@ import { BACKEND_DIR, pythonExecutable, readLaneState, type LaneState } from './
  * intimate page cannot reach a provider even when the server has a live one to
  * reach and the page is marked for it.
  *
- * Vacuity is the failure mode this file guards hardest against. A wallet that
- * did not move because nothing was ever charged is not the claim; "no retry
- * affordance" is satisfied trivially by an error that never rendered. So every
- * press is bracketed by the fake's own attempt counters and by the wallet audit
- * trail, and the copy is read out of the margin before anything is asserted
- * absent from it.
+ * Vacuity is the failure mode this file guards hardest against. BYOK must leave
+ * no audit rows, while a failed server-paid pass must leave a spend/refund pair;
+ * either wallet result is meaningless if the provider was never reached. So
+ * every press is bracketed by the fake's own attempt counters and by the wallet
+ * audit trail, and the copy is read out of the margin before anything is
+ * asserted absent from it.
  */
 
 /** The fake's per-shape counters, which is how a press is proved to have landed. */
@@ -125,11 +125,9 @@ async function readAttempts(request: APIRequestContext): Promise<Attempts> {
  * Read an account's wallet and audit trail straight out of the lane's database.
  *
  * `walletaudit` has no API by design — it is a forensic surface for operators —
- * and it is also the only place that distinguishes "never charged" from
- * "charged and put back". The resonance route commits its deduction before the
- * first dial, so the second is what actually happens on a refusal, and a spec
- * that could see only the balance would pass against a build that had quietly
- * stopped charging at all.
+ * and it is also the only place that distinguishes caller-paid "never charged"
+ * from server-paid "charged and put back". A spec that could see only the final
+ * balance would pass against either policy and could not verify who paid.
  */
 function readWallet(email: string): Wallet {
   const state = lane();
@@ -165,6 +163,13 @@ function expectChargeReversed(before: Wallet, after: Wallet): void {
     REFUND_FAILED_PASS,
   ]);
   expect(Number(added[0]?.delta) + Number(added[1]?.delta)).toBe(0);
+}
+
+/** A caller-owned key must leave both wallet buckets and their audit trail alone. */
+function expectWalletUntouched(before: Wallet, after: Wallet): void {
+  expect(after.monthly_messages_used).toBe(before.monthly_messages_used);
+  expect(after.offering_balance).toBe(before.offering_balance);
+  expect(after.rows.slice(before.rows.length)).toEqual([]);
 }
 
 /** Write a finished page for `email`'s account and return its id. */
@@ -272,7 +277,7 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // permanent refusal is never retried, which is half of why the carve-out
   // exists at all.
   expect(afterSpent.openaiSpent).toBe(1);
-  expectChargeReversed(walletBeforeSpent, readWallet(email));
+  expectWalletUntouched(walletBeforeSpent, readWallet(email));
 
   // --- The counterweight: same provider, same 429, a different code.
   const walletBeforeThrottled = readWallet(email);
@@ -294,7 +299,7 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // differently is the observable difference between the two classifications.
   expect(afterThrottled.openaiThrottled).toBeGreaterThan(1);
   expect(afterThrottled.openaiSpent).toBe(1);
-  expectChargeReversed(walletBeforeThrottled, readWallet(email));
+  expectWalletUntouched(walletBeforeThrottled, readWallet(email));
   // A key the fake did not recognise would mean the lane wired the wrong
   // credential and every assertion above described the wrong account.
   expect(afterThrottled.openaiUnrecognised).toBe(0);

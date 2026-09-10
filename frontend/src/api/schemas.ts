@@ -978,6 +978,17 @@ export const resonanceResponseSchema = z.object({
   related_eddies: z.array(relatedEddySchema).optional(),
 });
 
+/** Current BotMason wallet policy and balances, as served for this deployment. */
+export const botmasonUsageSchema = z.object({
+  monthly_messages_used: z.number().int().nonnegative(),
+  monthly_messages_remaining: z.number().int().nonnegative(),
+  monthly_cap: z.number().int().nonnegative(),
+  monthly_reset_date: isoDateTime,
+  offering_balance: z.number().int().nonnegative(),
+});
+
+export type BotmasonUsageT = z.infer<typeof botmasonUsageSchema>;
+
 export type CareKindT = z.infer<typeof careKindSchema>;
 export type CareResourceT = z.infer<typeof careResourceSchema>;
 export type CareResponseT = z.infer<typeof careResponseSchema>;

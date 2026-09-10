@@ -49,6 +49,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 /** The timer's default length, in milliseconds — long enough to run one out. */

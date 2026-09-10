@@ -139,7 +139,7 @@ export interface UseResonanceResult {
   completedPasses: number;
   loading: boolean;
   error: string | null;
-  requestResonance: () => Promise<void>;
+  requestResonance: (_apiKey?: string | null) => Promise<void>;
   /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
   updateNote: (_note: Marginalia) => void;
   /** Re-read the persisted marginalia (after an edit re-anchors/stales them). */
@@ -299,7 +299,7 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
 
 interface GeneratePass {
   loading: boolean;
-  requestResonance: () => Promise<void>;
+  requestResonance: (_apiKey?: string | null) => Promise<void>;
 }
 
 interface LatestPassState {
@@ -414,45 +414,51 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
 
-  const requestResonance = useCallback(async (): Promise<void> => {
-    if (inFlightRef.current) return; // one pass at a time — no double-charge
-    inFlightRef.current = true;
-    setLoading(true);
-    // A fresh pass re-derives the whole margin, so it retires every complaint
-    // standing in it -- its own and any card's -- rather than only its own.
-    clearError();
-    // Latest-pass surfaces never survive into a new request. If it errors, stale
-    // care, privacy, no-notes, or Creek context must not describe this attempt.
-    clearLatestPass();
-    let entryId: number | null = null;
-    try {
-      entryId = await flush();
-      if (entryId == null) {
-        reportPassError(EMPTY_BODY_MESSAGE);
-        return;
+  const requestResonance = useCallback(
+    async (apiKey?: string | null): Promise<void> => {
+      if (inFlightRef.current) return; // one pass at a time — no double-charge
+      inFlightRef.current = true;
+      setLoading(true);
+      // A fresh pass re-derives the whole margin, so it retires every complaint
+      // standing in it -- its own and any card's -- rather than only its own.
+      clearError();
+      // Latest-pass surfaces never survive into a new request. If it errors, stale
+      // care, privacy, no-notes, or Creek context must not describe this attempt.
+      clearLatestPass();
+      let entryId: number | null = null;
+      try {
+        entryId = await flush();
+        if (entryId == null) {
+          reportPassError(EMPTY_BODY_MESSAGE);
+          return;
+        }
+        const result =
+          apiKey === undefined
+            ? await resonance.generate(entryId)
+            : await resonance.generate(entryId, undefined, apiKey);
+        setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
+        mergeFromGenerate(result.suggestions);
+        receiveLatestPass(result);
+      } catch (err) {
+        await reportPassFailure(entryId, formatApiError(err), {
+          mergeFromGenerate,
+          reportPassError,
+        });
+      } finally {
+        inFlightRef.current = false;
+        setLoading(false);
       }
-      const result = await resonance.generate(entryId);
-      setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
-      mergeFromGenerate(result.suggestions);
-      receiveLatestPass(result);
-    } catch (err) {
-      await reportPassFailure(entryId, formatApiError(err), {
-        mergeFromGenerate,
-        reportPassError,
-      });
-    } finally {
-      inFlightRef.current = false;
-      setLoading(false);
-    }
-  }, [
-    flush,
-    setMarginalia,
-    mergeFromGenerate,
-    clearLatestPass,
-    receiveLatestPass,
-    reportPassError,
-    clearError,
-  ]);
+    },
+    [
+      flush,
+      setMarginalia,
+      mergeFromGenerate,
+      clearLatestPass,
+      receiveLatestPass,
+      reportPassError,
+      clearError,
+    ],
+  );
 
   return { loading, requestResonance };
 }

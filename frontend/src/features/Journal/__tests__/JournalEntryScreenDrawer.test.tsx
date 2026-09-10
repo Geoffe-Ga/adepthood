@@ -72,6 +72,8 @@ jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({ navigate: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {

@@ -60,6 +60,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
@@ -475,7 +477,7 @@ describe('JournalEntryScreen', () => {
     const row = within(getByTestId('journal-read-actions'));
     fireEvent.press(row.getByTestId('get-resonance-button'));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
-    expect(mockGenerate).toHaveBeenCalledWith(7);
+    expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null);
   });
 
   it('still enters edit mode from the Edit action in the read-mode row', async () => {

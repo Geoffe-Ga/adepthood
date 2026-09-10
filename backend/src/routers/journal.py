@@ -1079,34 +1079,39 @@ def _log_resonance_outcome(
 
 @dataclass(frozen=True, slots=True)
 class _ResonancePassContext:
-    """What the charged literary pass needs beyond the prompt itself.
+    """What the literary pass needs beyond the prompt itself.
 
     ``byok`` records whose key paid for the call, which is what decides how a
     spent provider balance is reported — a bill the caller can settle, or one
     only an operator can. ``care`` is the standby surface a distress-flagged
     entry falls back to when the pass fails, so care never depends on the LLM.
-    ``spent`` is the deduction a failure path must compensate — it committed
-    before the dial, so a rollback can no longer un-charge it — and
-    ``user_id`` is whose wallet the compensating credit lands in.
+    ``spent`` is the optional deduction a failure path must compensate. It is
+    ``None`` when the caller's own key pays, otherwise it committed before the
+    dial so a rollback can no longer un-charge it. ``user_id`` is whose wallet
+    the compensating credit lands in when there was a deduction.
     """
 
     session: AsyncSession
     care: CareResponse | None
     byok: bool
     user_id: int
-    spent: SpendResult
+    spent: SpendResult | None
 
 
-async def _refund_failed_pass(session: AsyncSession, user_id: int, spent: SpendResult) -> None:
-    """Compensate the committed deduction for a pass that delivered nothing.
+async def _refund_failed_pass(
+    session: AsyncSession, user_id: int, spent: SpendResult | None
+) -> None:
+    """Roll back pass writes and compensate any BotMason deduction.
 
-    The deduction is already durable (it committed before the first dial), so a
-    rollback can no longer un-charge; the failed pass is settled with a
-    compensating credit instead.  ``rollback()`` first clears whatever failed
-    transaction (and staged rows) the failure left behind, so the commit here
-    lands exactly two things: the credit and its audit row.
+    A server-paid deduction is already durable before the first dial, so a
+    rollback cannot un-charge it; that pass is settled with a compensating
+    credit. BYOK carries ``spent=None`` and needs only the rollback. In both
+    cases ``rollback()`` first clears whatever failed transaction and staged
+    rows the failure left behind.
     """
     await session.rollback()
+    if spent is None:
+        return
     await refund_one_message(session, user_id, spent, reason=REASON_REFUND_FAILED_RESONANCE)
     await session.commit()
 
@@ -1118,12 +1123,12 @@ async def _generate_marginalia_or_error(
     context: _ResonancePassContext,
     prior_drafts: list[str],
 ) -> MarginaliaOutcome:
-    """Run the literary pass; a provider error refunds the committed charge and fails.
+    """Run the literary pass; a provider error settles any BotMason charge and fails.
 
-    This is the only charged LLM call — a failure here must settle the already
-    committed deduction with a compensating credit (and commit it) so a failed
-    pass never charges (the detection pass that follows is best-effort and
-    never touches the wallet).
+    This is the only LLM call that can draw from BotMason. A server-paid failure
+    must settle the already committed deduction with a compensating credit; a
+    caller-key failure has no deduction to reverse. The detection pass that
+    follows is best-effort and never touches the wallet.
 
     A spent balance is caught first because it subclasses the generic provider
     error: it is permanent, so it earns the status whose remedy the caller can
@@ -1241,10 +1246,10 @@ async def _care_only_response(
 
     Used when an elevated entry's LLM pass fails, and when a connected vault
     answers with its care escalation. Either way the marginalia charge has
-    already been refunded — a committed compensating credit — so the fresh
-    read below reports unspent balances; we surface the human + professional
-    pointers regardless, because care must never depend on the reflection
-    succeeding (NORTH-STAR §10).
+    has already been settled — by a compensating credit when BotMason paid, or
+    with no wallet work for BYOK — so the fresh read below reports unchanged
+    balances. We surface the human + professional pointers regardless, because
+    care must never depend on the reflection succeeding (NORTH-STAR §10).
     """
     user = await require_user_fresh(session, user_id)
     return _unspent_resonance(user, care=care)
@@ -1259,7 +1264,7 @@ async def _refresh_persisted(
 
 
 async def _escalated_care_response(
-    session: AsyncSession, user_id: int, spent: SpendResult
+    session: AsyncSession, user_id: int, spent: SpendResult | None
 ) -> ResonanceResponse:
     """Answer a vault care escalation with adepthood's own care surface, uncharged.
 
@@ -1268,9 +1273,10 @@ async def _escalated_care_response(
     human rather than an error or a cloud answer — falling back would hand them
     exactly the model prose that guard refused.
 
-    The refund is load-bearing: ``preflight_deduction``'s charge has already
-    committed, and returning without the compensating credit would charge a
-    person in distress for a reflection they never received.
+    The refund is load-bearing when BotMason paid: ``preflight_deduction``'s
+    charge has already committed, and returning without compensation would
+    charge a person in distress for a reflection they never received. BYOK has
+    no BotMason charge, and the same helper safely performs only its rollback.
 
     The care payload is built fresh rather than threaded in from the handler's own
     screen, and that is provably right: an entry adepthood flagged locally
@@ -1292,7 +1298,7 @@ async def _resonance_pass_or_care(
 ) -> MarginaliaOutcome | None:
     """Run the literary pass; on an LLM failure return ``None`` iff care can stand in.
 
-    A flagged entry swallows the provider failure (the committed charge was
+    A flagged entry swallows the provider failure (any committed charge was
     already settled by a compensating refund in
     :func:`_generate_marginalia_or_error`'s except arms) and yields ``None``
     so the caller can return a care-only response — care
@@ -1308,21 +1314,29 @@ async def _resonance_pass_or_care(
 
 
 @dataclass(frozen=True, slots=True)
-class _ChargedPass:
+class _PassSettlementInput:
     """Inputs to the post-dial settlement transaction.
 
     Everything here was produced with no transaction open: ``anchored`` by the
-    reflection dial, ``hits`` by the detection dial, ``spent`` by the deduction
-    that committed before either. ``llm`` carries the usage the settlement
-    records beside the rows it stages.
+    reflection dial and ``hits`` by the detection dial. ``spent`` is the
+    server-paid deduction that committed before either, or ``None`` for BYOK.
+    ``llm`` carries the usage the settlement records beside the rows it stages.
     """
 
     entry_id: int
     user_id: int
-    spent: SpendResult
+    spent: SpendResult | None
     anchored: MarginaliaOutcome
     hits: list[CompletionDetected]
     llm: BotmasonResonanceLLM
+
+
+@dataclass(frozen=True, slots=True)
+class _WalletSnapshot:
+    """Wallet values returned after settlement, whether or not it was charged."""
+
+    monthly_used: int
+    offering_balance: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1331,26 +1345,24 @@ class _SettledPass:
 
     rows: list[Marginalia]
     suggestions: list[CompletionSuggestion]
-    spent: SpendResult
+    wallet: _WalletSnapshot
     no_notes_message: str | None
     reset_date: datetime
 
 
-async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -> _SettledPass:
+async def _persist_settle_commit(
+    session: AsyncSession, prepared: _PassSettlementInput
+) -> _SettledPass:
     """Open the post-dial transaction: stage, settle, record usage, commit.
 
-    Every dial is already behind us.  The completed-pass count the corpus
+    Every dial is already behind us. The completed-pass count the corpus
     invitation runs on is staged in this same transaction (#2407): only a pass
     that commits here is one the writer actually received, so only it is
-    counted, and a pass that fails here is refunded *and* uncounted.  If
-    anything here fails before the commit
-    lands, the ``finally`` settles the committed deduction with a compensating
-    refund — a failed pass never charges, even when the failure is ours rather
-    than the provider's.  ``spent`` is rebound by the empty-pass settlement
-    before the commit; the refund only needs its ``bucket``, which both the
-    settled and unsettled values carry identically, and the leading rollback
-    inside :func:`_refund_failed_pass` discards any staged empty-pass refund
-    so the compensating credit can never double up.
+    counted. If anything fails before the commit, ``finally`` settles the
+    optional BotMason deduction; BYOK rolls back without inventing a refund.
+    ``spent`` is rebound by empty-pass settlement before commit, and the leading
+    rollback inside :func:`_refund_failed_pass` discards any staged refund so a
+    compensating credit can never double up.
 
     Compensation without an idempotency key is ambiguous in *both* directions:
     if the commit raises after the database durably applied it (a lost ack),
@@ -1360,45 +1372,48 @@ async def _persist_settle_commit(session: AsyncSession, charged: _ChargedPass) -
     over-charges; the audit trail records every entry either way.
     """
     committed = False
-    spent = charged.spent
+    spent = prepared.spent
     try:
-        # Independent detection and the charged resonance path can race after
+        # Independent detection and the full resonance path can race after
         # reading the same candidates. They share this row lock and post-dial
         # recheck so exactly one response stages each entry/target offer while
-        # the charged pass still settles its usage and wallet normally.
+        # the pass still settles its usage and optional wallet charge normally.
         fresh_hits = await _lock_and_filter_suggestion_hits(
             session,
-            entry_id=charged.entry_id,
-            user_id=charged.user_id,
-            hits=charged.hits,
+            entry_id=prepared.entry_id,
+            user_id=prepared.user_id,
+            hits=prepared.hits,
         )
         rows = _persist_marginalia(
-            session, charged.entry_id, charged.user_id, charged.anchored.notes
+            session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
         )
-        suggestions = _stage_suggestions(session, charged.entry_id, charged.user_id, fresh_hits)
+        suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
         spent, no_notes_message = await _settle_empty_pass(
-            session, charged.user_id, spent, charged.anchored
+            session, prepared.user_id, spent, prepared.anchored
         )
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
         # moment the corpus invitation's cooldown counts (#2407). Staged here so
         # the count lands with this commit and is rolled back with a failure.
-        await record_completed_pass(session, user_id=charged.user_id)
-        spent_user = await require_user_fresh(session, charged.user_id)
+        await record_completed_pass(session, user_id=prepared.user_id)
+        spent_user = await require_user_fresh(session, prepared.user_id)
         await record_llm_usage(
             session,
-            user_id=charged.user_id,
-            journal_entry_id=charged.entry_id,
-            responses=charged.llm.usage,
+            user_id=prepared.user_id,
+            journal_entry_id=prepared.entry_id,
+            responses=prepared.llm.usage,
         )
         await session.commit()
         committed = True
     finally:
         if not committed:
-            await _refund_failed_pass(session, charged.user_id, spent)
+            await _refund_failed_pass(session, prepared.user_id, spent)
     return _SettledPass(
         rows=rows,
         suggestions=suggestions,
-        spent=spent,
+        wallet=_WalletSnapshot(
+            monthly_used=spent_user.monthly_messages_used,
+            offering_balance=spent_user.offering_balance,
+        ),
         no_notes_message=no_notes_message,
         reset_date=spent_user.monthly_reset_date,
     )
@@ -1463,7 +1478,7 @@ class _ResonanceSurfaces:
 def _resonance_response(
     rows: list[Marginalia],
     suggestions: list[CompletionSuggestion],
-    spent: SpendResult,
+    wallet: _WalletSnapshot,
     reset_date: datetime,
     surfaces: _ResonanceSurfaces,
 ) -> ResonanceResponse:
@@ -1474,8 +1489,8 @@ def _resonance_response(
             CompletionSuggestionResponse.model_validate(s, from_attributes=True)
             for s in suggestions
         ],
-        remaining_messages=max(get_monthly_cap() - spent.monthly_used, 0),
-        remaining_balance=spent.offering_balance,
+        remaining_messages=max(get_monthly_cap() - wallet.monthly_used, 0),
+        remaining_balance=wallet.offering_balance,
         monthly_reset_date=reset_date,
         care=surfaces.care,
         contraction=surfaces.contraction,
@@ -1492,9 +1507,9 @@ def _resonance_response(
 
 
 async def _settle_empty_pass(
-    session: AsyncSession, user_id: int, spent: SpendResult, outcome: MarginaliaOutcome
-) -> tuple[SpendResult, str | None]:
-    """Explain a pass that kept no notes, and hand its charge back.
+    session: AsyncSession, user_id: int, spent: SpendResult | None, outcome: MarginaliaOutcome
+) -> tuple[SpendResult | None, str | None]:
+    """Explain a pass that kept no notes, and hand any BotMason charge back.
 
     The two halves are deliberately one call. A writer told "this pass wasn't
     charged" while the charge stands is worse than the silence this replaced, so
@@ -1507,6 +1522,8 @@ async def _settle_empty_pass(
     message = explain_no_notes(outcome)
     if message is None:
         return spent, None
+    if spent is None:
+        return None, message
     return await refund_one_message(session, user_id, spent), message
 
 
@@ -1539,6 +1556,16 @@ def _reflection_clients(
     return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client)
 
 
+async def _resonance_payment(
+    session: AsyncSession, user_id: int, supplied_key: str | None
+) -> tuple[str | None, SpendResult | None]:
+    """Resolve the payer, charging BotMason only when no BYOK key was supplied."""
+    byok_key = resolve_chat_api_key(supplied_key)
+    if byok_key is not None:
+        return byok_key, None
+    return None, await preflight_deduction(session, user_id)
+
+
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
 @limiter.limit("10/minute")
 async def run_resonance(
@@ -1548,23 +1575,15 @@ async def run_resonance(
     session: Annotated[AsyncSession, Depends(get_session)],
     clients: Annotated[_ReflectionClients, Depends(_reflection_clients)],
 ) -> ResonanceResponse:
-    """Run a resonance pass over the caller's entry, persist notes, charge one unit.
+    """Run a resonance pass, charging BotMason only when it pays the provider.
 
-    Wallet pre-flight deducts one message (402 when out of capacity), and the
-    deduction commits in its own transaction, together with every read the pass
-    depends on, before the first outbound call — no pooled connection is held
-    across the vault probe, the reflection pass, or completion detection. A
-    failed pass is settled by compensation, not rollback: the committed charge
-    is reversed by a crediting entry (``refund_failed_pass`` in the wallet
-    audit) and committed, so a failed pass still never charges (502
-    ``llm_provider_error``). This buys an invariant the code between the
-    deduction commit and the first refund-guarded call must keep: nothing
-    there may raise, because an exception in that gap — like a process crash
-    anywhere before the refund lands — leaves the writer charged for a pass
-    that never arrived, with no compensating path. That exposure is the
-    accepted price of not holding a pooled connection across up to three
-    provider round trips; it is bounded by the provider timeout, and the
-    audit trail (an unpaired spend row) is what makes it findable.
+    A validated caller-owned key bypasses both BotMason wallet buckets. Without
+    one, wallet pre-flight deducts one message (402 when out of capacity). That
+    deduction commits with every read the pass depends on before the first
+    outbound call, so no pooled connection is held across the vault probe,
+    reflection pass, or completion detection. A failed server-paid pass is
+    settled by a compensating credit; a failed BYOK pass merely rolls back its
+    staged writes because there is no wallet spend to reverse.
 
     A pass that *succeeds* and still persists no notes is neither an error nor a
     non-event: it is a writer who waited and received nothing. Those get the
@@ -1601,7 +1620,7 @@ async def run_resonance(
     flag. That is a 200 carrying adepthood's own reviewed care surface and no
     reflection — never a 502, and never the cloud's answer, since falling back
     would hand the writer exactly the model prose the guard refused. The
-    committed deduction is refunded, so the pass costs them nothing.
+    any committed BotMason deduction is refunded, so the pass costs them nothing.
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
@@ -1616,7 +1635,10 @@ async def run_resonance(
     care = _care_response(_care_for(entry.message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
-    spent = await preflight_deduction(session, current_user)
+    # Resolve who pays before touching either BotMason bucket. A valid caller
+    # key pays the provider directly; only the server-key/vault path draws from
+    # the deployment-configured allowance or purchased offerings.
+    byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
     grounding = await _grounding_for(session, current_user, entry_id)
     # Content-only anti-repetition context (issue #2574). Read here, with the
     # pooled connection still held, for the same reason the grounding above is:
@@ -1626,11 +1648,8 @@ async def run_resonance(
         session, user_id=current_user, exclude_entry_id=entry_id
     )
     candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
-    # Key resolution is pure (no DB, no dial) and can raise 400/402 — it must
-    # run while the deduction is still merely staged, so its errors cost nothing.
-    byok_key = resolve_chat_api_key(clients.api_key)
     llm = BotmasonResonanceLLM(byok_key)
-    # The deduction is durable and every read the dials depend on is in hand:
+    # Any deduction is durable and every read the dials depend on is in hand:
     # release the pooled connection before the first provider round trip.
     await session.commit()
     reflection_llm = await select_reflection_llm(
@@ -1656,7 +1675,7 @@ async def run_resonance(
         )
     except CreekVaultCareEscalationError:
         # The vault's care guard fired: answer with adepthood's own care surface
-        # instead of a reflection, and refund the committed charge.
+        # instead of a reflection, and settle any committed charge.
         return await _escalated_care_response(session, current_user, spent)
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
@@ -1666,7 +1685,7 @@ async def run_resonance(
     )
     settled = await _persist_settle_commit(
         session,
-        _ChargedPass(
+        _PassSettlementInput(
             entry_id=entry_id,
             user_id=current_user,
             spent=spent,
@@ -1687,7 +1706,7 @@ async def run_resonance(
         related=related_surfaces(reflection_llm),
     )
     return _resonance_response(
-        settled.rows, settled.suggestions, settled.spent, settled.reset_date, surfaces
+        settled.rows, settled.suggestions, settled.wallet, settled.reset_date, surfaces
     )
 
 

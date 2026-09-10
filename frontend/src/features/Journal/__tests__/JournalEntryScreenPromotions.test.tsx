@@ -78,6 +78,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 const BODY = 'A page about a daily run to the river and back.';

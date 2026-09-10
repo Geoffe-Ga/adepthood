@@ -1,15 +1,15 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { configure, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, configure, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 /**
  * The spend disclosure in front of "Get Resonance".
  *
- * A resonance pass is charged: the backend deducts one message from the
- * account's monthly BotMason allowance (402 when it is empty), or bills the
- * user's own API key. Before this gate the first anyone heard of that was the
- * 402 — the cost was disclosed only after it had been spent.
+ * A resonance pass has one payer: the backend deducts one message from the
+ * account's BotMason wallet (402 when it is empty), or bills the user's own API
+ * key without touching that wallet. Before this gate the first anyone heard of
+ * the BotMason price was the 402 — the cost was disclosed only after a pass.
  *
  * The load-bearing assertion in this file is the negative one: pressing the
  * button must not reach ``resonance.generate``. A spec that only checked the
@@ -20,9 +20,54 @@ import type { JournalMessage, ResonanceResponse } from '@/api';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
-const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<ResonanceResponse>>;
+const mockGenerate = jest.fn() as jest.MockedFunction<
+  (_id: number, _token?: string, _apiKey?: string | null) => Promise<ResonanceResponse>
+>;
+const mockUsage = jest.fn() as jest.MockedFunction<
+  () => Promise<{
+    monthly_messages_used: number;
+    monthly_messages_remaining: number;
+    monthly_cap: number;
+    monthly_reset_date: string;
+    offering_balance: number;
+  }>
+>;
+const mockApiKeyState: { apiKey: string | null; isLoading: boolean } = {
+  apiKey: null,
+  isLoading: false,
+};
+
+interface UsageSnapshot {
+  monthly_messages_used: number;
+  monthly_messages_remaining: number;
+  monthly_cap: number;
+  monthly_reset_date: string;
+  offering_balance: number;
+}
+
+function usageSnapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
+  return {
+    monthly_messages_used: 0,
+    monthly_messages_remaining: 7,
+    monthly_cap: 7,
+    monthly_reset_date: '2026-07-01T00:00:00Z',
+    offering_balance: 0,
+    ...overrides,
+  };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (_value: T) => void } {
+  let resolve: (_value: T) => void = () => undefined;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
 
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+jest.mock('@/context/ApiKeyContext', () => ({
+  useApiKey: () => mockApiKeyState,
+}));
 
 jest.mock('@/api', () => ({
   journal: {
@@ -39,6 +84,9 @@ jest.mock('@/api', () => ({
     list: jest.fn(() => Promise.resolve({ items: [] })),
     accept: jest.fn(),
     dismiss: jest.fn(),
+  },
+  botmasonUsage: {
+    get: (...a: unknown[]) => (mockUsage as unknown as (...x: unknown[]) => unknown)(...a),
   },
   promotions: {
     create: jest.fn(),
@@ -93,18 +141,24 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   } as JournalMessage;
 }
 
-function renderScreen() {
+function screenElement(): React.JSX.Element {
   const route = { key: 'k', name: 'JournalEntry' as const, params: { entryId: 7 } };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
-  return render(<Screen navigation={navigation} route={route} autosaveDelayMs={100} />);
+  return <Screen navigation={navigation} route={route} autosaveDelayMs={100} />;
+}
+
+function renderScreen() {
+  return render(screenElement());
 }
 
 /** Render, wait for the saved entry to settle, and press "Get Resonance". */
 async function openEntryAndAsk() {
   const view = renderScreen();
   await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
-  fireEvent.press(view.getByTestId('get-resonance-button'));
+  await act(async () => {
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+  });
   return view;
 }
 
@@ -112,6 +166,7 @@ beforeEach(() => {
   mockGet.mockReset();
   mockList.mockReset();
   mockGenerate.mockReset();
+  mockUsage.mockReset();
   mockLoadDismissed.mockReset();
   mockSaveDismissed.mockReset();
   mockGet.mockResolvedValue(entry());
@@ -130,6 +185,9 @@ beforeEach(() => {
   } as ResonanceResponse);
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
+  mockApiKeyState.apiKey = null;
+  mockApiKeyState.isLoading = false;
+  mockUsage.mockResolvedValue(usageSnapshot());
 });
 
 describe('JournalEntryScreen — nothing is charged before the cost is disclosed', () => {
@@ -140,12 +198,146 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 
-  it('names the cost in the explainer body: a message, or the reader’s own key', async () => {
+  it('uses the deployment-served monthly cap without calling the allowance free', async () => {
+    mockUsage.mockResolvedValueOnce({
+      monthly_messages_used: 0,
+      monthly_messages_remaining: 7,
+      monthly_cap: 7,
+      monthly_reset_date: '2026-07-01T00:00:00Z',
+      offering_balance: 0,
+    });
     const { findByTestId } = await openEntryAndAsk();
 
     const body = await findByTestId('resonance-explainer-cost');
-    expect(body).toHaveTextContent(/one .*message/i);
-    expect(body).toHaveTextContent(/API key/i);
+    await waitFor(() =>
+      expect(body).toHaveTextContent(/one of your 7 BotMason messages for the month/u),
+    );
+    expect(body).not.toHaveTextContent(/free/i);
+  });
+
+  it('names an offering when the deployment serves no monthly allowance', async () => {
+    mockUsage.mockResolvedValueOnce({
+      monthly_messages_used: 0,
+      monthly_messages_remaining: 0,
+      monthly_cap: 0,
+      monthly_reset_date: '2026-07-01T00:00:00Z',
+      offering_balance: 3,
+    });
+    const { findByTestId } = await openEntryAndAsk();
+
+    const body = await findByTestId('resonance-explainer-cost');
+    await waitFor(() => expect(body).toHaveTextContent(/one BotMason offering/u));
+    expect(body).toHaveTextContent(/Add your own API key in Settings/u);
+  });
+
+  it('names an offering after a nonzero monthly allowance is exhausted', async () => {
+    mockUsage.mockResolvedValueOnce({
+      monthly_messages_used: 7,
+      monthly_messages_remaining: 0,
+      monthly_cap: 7,
+      monthly_reset_date: '2026-07-01T00:00:00Z',
+      offering_balance: 3,
+    });
+    const { findByTestId } = await openEntryAndAsk();
+
+    const body = await findByTestId('resonance-explainer-cost');
+    await waitFor(() => expect(body).toHaveTextContent(/one BotMason offering/u));
+  });
+
+  it('says a stored API key pays and no BotMason message is drawn', async () => {
+    mockApiKeyState.apiKey = 'sk-stored-caller-key'; // pragma: allowlist secret
+    const { findByTestId } = await openEntryAndAsk();
+
+    const body = await findByTestId('resonance-explainer-cost');
+    expect(body).toHaveTextContent(/Your own API key pays for this reading/u);
+    expect(body).toHaveTextContent(/Nothing is drawn from your BotMason messages/u);
+    expect(mockUsage).not.toHaveBeenCalled();
+  });
+
+  it('names an exhausted wallet and disables an impossible pass', async () => {
+    mockUsage.mockResolvedValueOnce(
+      usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 }),
+    );
+    const { findByTestId } = await openEntryAndAsk();
+
+    const body = await findByTestId('resonance-explainer-cost');
+    await waitFor(() =>
+      expect(body).toHaveTextContent(/no BotMason monthly messages or offerings/u),
+    );
+    const continueButton = await findByTestId('resonance-explainer-continue');
+    expect(continueButton.props.accessibilityState.disabled).toBe(true);
+
+    fireEvent.press(continueButton);
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('waits for stored-key hydration before disclosing and pins that key to the pass', async () => {
+    mockApiKeyState.isLoading = true;
+    const view = renderScreen();
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(mockUsage).not.toHaveBeenCalled();
+
+    mockApiKeyState.apiKey = 'sk-key-loaded-from-device'; // pragma: allowlist secret
+    mockApiKeyState.isLoading = false;
+    await act(async () => view.rerender(screenElement()));
+
+    expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
+      /Your own API key pays/u,
+    );
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    await waitFor(() =>
+      expect(mockGenerate).toHaveBeenCalledWith(7, undefined, 'sk-key-loaded-from-device'),
+    );
+  });
+
+  it('re-discloses instead of charging when the payer changes while the dialog is open', async () => {
+    const view = await openEntryAndAsk();
+    await waitFor(() =>
+      expect(
+        view.getByTestId('resonance-explainer-continue').props.accessibilityState.disabled,
+      ).toBe(false),
+    );
+
+    mockApiKeyState.apiKey = 'sk-key-added-after-open'; // pragma: allowlist secret
+    await act(async () => view.rerender(screenElement()));
+    fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(view.getByTestId('resonance-explainer')).toBeTruthy();
+    expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(
+      /Your own API key pays/u,
+    );
+
+    fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    await waitFor(() =>
+      expect(mockGenerate).toHaveBeenCalledWith(7, undefined, 'sk-key-added-after-open'),
+    );
+  });
+
+  it('ignores an older wallet read that resolves after a newer disclosure', async () => {
+    const oldRead = deferred<UsageSnapshot>();
+    const newRead = deferred<UsageSnapshot>();
+    mockUsage.mockReset();
+    mockUsage.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
+    const view = await openEntryAndAsk();
+    fireEvent.press(view.getByTestId('resonance-explainer-cancel'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('get-resonance-button'));
+    });
+
+    await act(async () =>
+      newRead.resolve(usageSnapshot({ monthly_cap: 11, monthly_messages_remaining: 11 })),
+    );
+    await waitFor(() =>
+      expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/your 11 BotMason/u),
+    );
+
+    await act(async () => oldRead.resolve(usageSnapshot()));
+    expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/your 11 BotMason/u);
+    expect(view.getByTestId('resonance-explainer-cost')).not.toHaveTextContent(/your 7 BotMason/u);
   });
 
   it('says the entry leaves the device for a model', async () => {

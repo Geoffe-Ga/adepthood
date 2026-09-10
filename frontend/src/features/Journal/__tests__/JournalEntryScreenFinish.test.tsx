@@ -49,6 +49,8 @@ jest.mock('@/navigation/hooks', () => ({
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
 }));
 
+jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 // Comfortably longer than the shelf's EXCERPT_MAX (140 chars) and multi-paragraph,

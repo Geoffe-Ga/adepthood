@@ -95,6 +95,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     reason:
       'Prefixed "api" in the client to keep it distinct from the local GoalGroup view model, which the name-based match cannot see through.',
   },
+  botmasonUsageSchema: {
+    component: 'UsageResponse',
+    reason:
+      'The client names the snapshot for its BotMason domain while the server uses the route-local UsageResponse name; both describe GET /user/usage.',
+  },
   goalCompletionSchema: {
     component: 'GoalCompletionPublic',
     reason:

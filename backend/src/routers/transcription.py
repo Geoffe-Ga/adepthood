@@ -49,8 +49,9 @@ logger = logging.getLogger(__name__)
 router = build_router(
     prefix="/journal",
     tags=["journal"],
-    # 402 is the wallet's: ``preflight_deduction`` refuses a page when neither
-    # wallet has capacity, and ``resolve_chat_api_key`` when no key is available.
+    # 402 is a payer refusal: ``preflight_deduction`` refuses a server-paid page
+    # when neither wallet has capacity, and ``resolve_chat_api_key`` refuses a
+    # provider configuration that requires a missing caller/server key.
     extra_statuses=(status.HTTP_402_PAYMENT_REQUIRED, status.HTTP_502_BAD_GATEWAY),
 )
 
@@ -150,25 +151,25 @@ def _validate_image(image_base64: str, media_type: str) -> ImagePayload:
 
 
 async def _run_transcription(
-    session: AsyncSession, image: ImagePayload, api_key: str | None
+    session: AsyncSession, image: ImagePayload, resolved_api_key: str | None
 ) -> LLMResponse:
-    """Run the vision LLM for one page; roll the charge back on any provider error.
+    """Run the vision LLM for one page; roll back on any provider error.
 
-    The wallet was already deducted, so a failure here must un-deduct it: every
-    branch rolls the session back before mapping the error. The two
+    The wallet was deducted only on the server-key path; BYOK has no wallet
+    mutation. Every failure branch rolls the transaction back before mapping
+    the error. The two
     :class:`LLMProviderError` subclasses are checked before their base, each
     naming a condition a 502 would flatten — a text-only model is a well-formed
     request the model cannot serve (422 ``model_lacks_vision``), and a spent
     balance is permanent rather than the transient upstream failure a 502
     ``llm_provider_error`` invites the reader to retry.
     """
-    byok_key = resolve_chat_api_key(api_key)
     try:
         return await generate_response(
             "",
             [],
             system_prompt=build_transcription_prompt(),
-            api_key=byok_key,
+            api_key=resolved_api_key,
             images=[image],
         )
     except LLMVisionUnsupportedError as exc:
@@ -176,7 +177,7 @@ async def _run_transcription(
         raise unprocessable("model_lacks_vision") from exc
     except LLMCreditExhaustedError as exc:
         await session.rollback()
-        raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
+        raise credit_exhausted_error(exc, byok=resolved_api_key is not None) from exc
     except LLMProviderError as exc:
         await session.rollback()
         raise bad_gateway("llm_provider_error") from exc
@@ -193,21 +194,24 @@ async def transcribe_page(
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
 ) -> TranscribePageResponse:
-    """Transcribe one photographed handwritten page, charging one message.
+    """Transcribe one page, charging BotMason only when it pays the provider.
 
     Stateless: no journal row is written and the metered call carries no
     ``journal_entry_id``. Strict ordering — the image is validated first (422
-    without any charge), the wallet is deducted next (402 when out of capacity),
-    then the vision LLM runs; a provider failure rolls the charge back so a
-    failed pass never bills. Usage is metered (one row per real, non-stub call)
-    and committed atomically with the charge.
+    without any charge), then the caller key is resolved. A valid caller key
+    bypasses both BotMason buckets; otherwise the wallet is deducted (402 when
+    out of capacity). A provider failure rolls the transaction back so a failed
+    pass never bills. Usage is metered (one row per real, non-stub call) and
+    committed atomically with any charge.
 
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
     """
     image = _validate_image(payload.image_base64, payload.media_type)
-    await preflight_deduction(session, current_user)
-    response = await _run_transcription(session, image, x_llm_api_key)
+    byok_key = resolve_chat_api_key(x_llm_api_key)
+    if byok_key is None:
+        await preflight_deduction(session, current_user)
+    response = await _run_transcription(session, image, byok_key)
     await record_llm_usage(
         session, user_id=current_user, journal_entry_id=None, responses=[response]
     )

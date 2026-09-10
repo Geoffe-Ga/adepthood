@@ -2887,6 +2887,8 @@ function EntryOverlays({
     <>
       <ResonanceExplainerDialog
         visible={explainer.visible}
+        cost={explainer.cost}
+        continueDisabled={explainer.continueDisabled}
         dontShowAgain={explainer.dontShowAgain}
         onToggleDontShowAgain={explainer.onToggleDontShowAgain}
         onContinue={explainer.onContinue}
