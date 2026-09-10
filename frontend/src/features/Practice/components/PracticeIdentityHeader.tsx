@@ -4,9 +4,12 @@
  * own name as the display title, with a pencil that opens the ritual
  * configurator riding the trailing edge of that same row. The title is the
  * effective name — the one the practitioner gave their copy ("Metta - 30"),
- * not the catalog base name it was copied from, which stays discoverable in
- * the Catalog and the configurator. While a session holds the engine
- * (`collapsed`) the block quiets down to that title alone.
+ * not the catalog base name it was copied from. That base name stays
+ * discoverable in the Catalog (`PracticeCatalogList` renders `practice.name`)
+ * and nowhere else on this path -- the configurator the pencil opens is seeded
+ * with the effective name, so it shows the practitioner their own name back.
+ * While a session holds the engine (`collapsed`) the block quiets down to that
+ * title alone.
  *
  * The chip's identity comes from the server frequency payload
  * (`useFrequency`), falling back to the stage store when the fetch fails;
