@@ -13,6 +13,12 @@
  * `pending` from a settled page (`done` or `failed`) is an explicit `retry` — a
  * user gesture, never the loop's own doing.
  *
+ * COST EXPOSURE: {@link TRANSCRIBE_CONCURRENCY} is a hard bound on live charges,
+ * not a rendering convenience, so a slot is held by the *request* rather than by
+ * the page it was reading. Trimming a page mid-read leaves its request in flight
+ * whatever the page list now says, so the run keeps counting it — as an
+ * {@link OrphanedRequest} — until it settles. See {@link applyPagesSynced}.
+ *
  * PRIVACY: a block carries status/text/edit/error only — never the page image. The
  * driver hook cross-references the live {@link CapturePage} by id at call time, so
  * no base64 ever lands in this state (and thus never in a log, error, or testID).
@@ -59,10 +65,26 @@ export interface TranscriptionBlock {
   error: TranscriptionErrorKind | null;
 }
 
-/** The whole run: the session's start-priority order and the keyed blocks. */
+/**
+ * A charged request that outlived the page it was reading: the writer trimmed the
+ * page while it was `inFlight`. It is not a block — it has no text, no status the
+ * screen can render, and no way back into the run — it is just the bookkeeping that
+ * remembers a slot is still spent, keyed by the same `(id, attempt)` pair that will
+ * identify its reply.
+ */
+export interface OrphanedRequest {
+  id: string;
+  attempt: number;
+}
+
+/**
+ * The whole run: the session's start-priority order, the keyed blocks, and the
+ * requests still outstanding for pages that have left (see {@link OrphanedRequest}).
+ */
 export interface TranscriptionRunState {
   order: string[];
   blocks: Record<string, TranscriptionBlock>;
+  orphans: OrphanedRequest[];
 }
 
 /** The minimal shape the `pages`-taking selectors need: a page is just its id. */
@@ -80,7 +102,8 @@ export interface PageRef {
  *  - `retry`       — an explicit re-read of a settled page (→ `pending`, attempt++).
  *  - `pagesSynced` — reconcile order + additions/removals from the session's pages;
  *                    this alone seeds a fresh run (from the empty state) and drops a
- *                    page that leaves the session (its late reply becomes inert).
+ *                    page that leaves the session (its late reply lands nowhere,
+ *                    though a read still running for it keeps holding its slot).
  */
 export type TranscriptionRunAction =
   | { type: 'start'; id: string; attempt: number }
@@ -91,17 +114,44 @@ export type TranscriptionRunAction =
   | { type: 'pagesSynced'; orderedIds: readonly string[] };
 
 /** A brand-new page, waiting its turn. */
-function pendingBlock(id: string): TranscriptionBlock {
-  return { id, status: 'pending', text: '', edited: false, attempt: FIRST_ATTEMPT, error: null };
+function pendingBlock(id: string, attempt: number = FIRST_ATTEMPT): TranscriptionBlock {
+  return { id, status: 'pending', text: '', edited: false, attempt, error: null };
 }
 
-/** Return a new state with one block replaced (order untouched). */
+/** Return a new state with one block replaced (order and orphans untouched). */
 function withBlock(
   state: TranscriptionRunState,
   id: string,
   next: TranscriptionBlock,
 ): TranscriptionRunState {
-  return { order: state.order, blocks: { ...state.blocks, [id]: next } };
+  return {
+    order: state.order,
+    blocks: { ...state.blocks, [id]: next },
+    orphans: state.orphans,
+  };
+}
+
+/** Whether this reply belongs to a request whose page has left the run. */
+function isOrphanReply(state: TranscriptionRunState, id: string, attempt: number): boolean {
+  return state.orphans.some((orphan) => orphan.id === id && orphan.attempt === attempt);
+}
+
+/**
+ * Settle one orphaned request: forget it, releasing the concurrency slot it was
+ * holding. The reply itself is discarded — its page is gone, so there is nothing
+ * to land it on and nothing to show. Both a resolve and a reject arrive here, or a
+ * failed read would strand its slot for the rest of the session.
+ */
+function releaseOrphan(
+  state: TranscriptionRunState,
+  id: string,
+  attempt: number,
+): TranscriptionRunState {
+  return {
+    order: state.order,
+    blocks: state.blocks,
+    orphans: state.orphans.filter((orphan) => orphan.id !== id || orphan.attempt !== attempt),
+  };
 }
 
 /** `start`: only a `pending` page may go in flight — the first double-charge guard. */
@@ -122,6 +172,7 @@ function applyResolve(
   attempt: number,
   text: string,
 ): TranscriptionRunState {
+  if (isOrphanReply(state, id, attempt)) return releaseOrphan(state, id, attempt);
   const block = state.blocks[id];
   if (!block || block.attempt !== attempt || block.edited) return state;
   return withBlock(state, id, { ...block, status: 'done', text });
@@ -134,6 +185,7 @@ function applyReject(
   attempt: number,
   error: TranscriptionErrorKind,
 ): TranscriptionRunState {
+  if (isOrphanReply(state, id, attempt)) return releaseOrphan(state, id, attempt);
   const block = state.blocks[id];
   if (!block || block.attempt !== attempt || block.edited) return state;
   return withBlock(state, id, { ...block, status: 'failed', error });
@@ -166,21 +218,66 @@ function applyRetry(state: TranscriptionRunState, id: string): TranscriptionRunS
 }
 
 /**
+ * The requests left holding a slot after a sync: whatever was already orphaned,
+ * plus every page that was mid-read when it left the session. Nothing else is
+ * orphaned — a `pending` page never started a request, and a settled one has no
+ * reply left to come — so neither can strand capacity the run would never get back.
+ *
+ * The set cannot grow without bound, and needs no cap to say so: an orphan only
+ * ever replaces an in-flight page one-for-one, and {@link selectStartable} counts
+ * both against the same {@link TRANSCRIBE_CONCURRENCY}, so there are never more
+ * orphans outstanding than slots — and each is dropped the moment its reply lands.
+ */
+function orphansAfterSync(
+  state: TranscriptionRunState,
+  kept: ReadonlySet<string>,
+): OrphanedRequest[] {
+  const orphans = [...state.orphans];
+  for (const id of state.order) {
+    const block = state.blocks[id];
+    if (block?.status === 'inFlight' && !kept.has(id)) {
+      orphans.push({ id, attempt: block.attempt });
+    }
+  }
+  return orphans;
+}
+
+/**
+ * The attempt token a page entering the run starts on: past any orphan still
+ * outstanding under the same id. Session ids are unique today, so this is
+ * belt-and-braces — but were one ever reused, sharing a token with a request
+ * already in the air would let that old reply land on the new page's block.
+ */
+function seedAttempt(id: string, orphans: readonly OrphanedRequest[]): number {
+  let attempt = FIRST_ATTEMPT;
+  for (const orphan of orphans) {
+    if (orphan.id === id && orphan.attempt >= attempt) attempt = orphan.attempt + 1;
+  }
+  return attempt;
+}
+
+/**
  * `pagesSynced`: make the session's page list authoritative for order and
  * membership. Existing blocks are preserved as-is (a `done` page stays done), ids
  * new to the run enter `pending`, and ids no longer present are dropped — which is
  * exactly what a fresh run (from the empty state), a retake (an id swapped in place),
- * or an in-run removal each need. A dropped page's late reply is inert (no block).
+ * or an in-run removal each need. A dropped page's late reply lands nowhere.
+ *
+ * What survives the drop is the *request*, not the page: a page trimmed mid-read is
+ * recorded as an {@link OrphanedRequest} so its live charge keeps holding its slot
+ * until it settles. Dropping the block alone would tell the run a slot came free
+ * while the wallet was still paying for it, and a third read would start.
  */
 function applyPagesSynced(
   state: TranscriptionRunState,
   orderedIds: readonly string[],
 ): TranscriptionRunState {
+  const orphans = orphansAfterSync(state, new Set(orderedIds));
   const blocks: Record<string, TranscriptionBlock> = {};
   for (const id of orderedIds) {
-    blocks[id] = state.blocks[id] ?? pendingBlock(id);
+    blocks[id] = state.blocks[id] ?? pendingBlock(id, seedAttempt(id, orphans));
   }
-  return { order: [...orderedIds], blocks };
+  return { order: [...orderedIds], blocks, orphans };
 }
 
 /** Advance a run by one action. */
@@ -206,9 +303,14 @@ export function transcriptionRunReducer(
   }
 }
 
-/** Count the pages a run currently has in flight (each is one live charge). */
-function inFlightCount(state: TranscriptionRunState): number {
-  let count = 0;
+/**
+ * Count the reads a run currently has outstanding — each is one live charge. That
+ * is per *request*, not per visible page: a read whose page was trimmed mid-flight
+ * (an {@link OrphanedRequest}) is still costing money and still counts, right up
+ * until its reply lands.
+ */
+export function inFlightCount(state: TranscriptionRunState): number {
+  let count = state.orphans.length;
   for (const id of state.order) {
     const block = state.blocks[id];
     if (block && block.status === 'inFlight') count += 1;
