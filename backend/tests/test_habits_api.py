@@ -1133,6 +1133,225 @@ async def test_list_keeps_active_metta_return_release_paused(
     assert persisted.auto_revealed_at is None
 
 
+# Issue #2765 fixtures. The reporter's account had every habit backfilled to a
+# start date years in the past, so the date clause alone opened all ten rings at
+# once. These tests put the two clauses in conflict, which no earlier test did.
+#
+# Stage numbers are written out by hand rather than derived from
+# ``domain.frequencies`` so a renumbering of the ladder fails these tests
+# instead of silently moving them: Beige 1, Purple 2, Red 3, Blue 4, Orange 5,
+# Green 6, Yellow 7, Teal 8, Ultraviolet 9, Clear Light 10.
+_LONG_PAST_DAYS = 900
+
+
+async def _seed_open_through_stage_two(db_session: AsyncSession, user_id: int) -> None:
+    """Stand ``user_id`` open through stage 2 by the record, stage 1 by the calendar.
+
+    ``program_started_at`` is now, so ``calendar_stage`` answers 1 while the
+    record answers 2; ``open_through`` takes the union, which is 2. Written this
+    way rather than by winding the anchor back through ``STAGE_DURATIONS_DAYS``
+    so the expected open stage is a literal in the test, not a restatement of the
+    production schedule.
+    """
+    db_session.add(
+        StageProgress(
+            user_id=user_id,
+            current_stage=2,
+            completed_stages=[1],
+            highest_stage_reached=2,
+            program_started_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+
+def _revealed_by_name(payload: list[dict[str, object]]) -> dict[str, object]:
+    """Index a habits list response by habit name for order-free assertions."""
+    return {str(habit["name"]): habit["revealed"] for habit in payload}
+
+
+async def _habits_in_slot_order(db_session: AsyncSession, user_id: int) -> list[Habit]:
+    """Read a user's persisted habits in slot order, for DB-level assertions."""
+    result = await db_session.execute(
+        select(Habit).where(Habit.user_id == user_id).order_by(col(Habit.sort_order))
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_list_leaves_past_dated_habit_above_open_stage_locked(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A years-old start date does not open a stage the program has not reached.
+
+    Regression for #2765. Both habits carry the same long-past start date and
+    differ only in stage, and the reached one is asserted revealed in the same
+    response: the locked row is therefore locked because it was evaluated and
+    refused, not because reconciliation skipped, filtered or never saw it.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_old_account")
+    await _seed_open_through_stage_two(db_session, user_id)
+    long_past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
+    for name, stage, slot in (("Reached ring", "Purple", 1), ("Unreached ring", "Red", 2)):
+        created = await async_client.post(
+            "/habits/",
+            json=sample_payload(
+                name=name, stage=stage, start_date=long_past.isoformat(), sort_order=slot
+            ),
+            headers=headers,
+        )
+        assert created.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    body = listed.json()
+    assert len(body) == 2
+    assert _revealed_by_name(body) == {"Reached ring": True, "Unreached ring": False}
+    stored = await _habits_in_slot_order(db_session, user_id)
+    reached, unreached = stored
+    assert reached.auto_revealed_at is not None
+    assert unreached.revealed is False
+    assert unreached.auto_revealed_at is None
+
+
+@pytest.mark.asyncio
+async def test_list_auto_reveals_habit_off_the_ladder_on_its_start_date(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit whose ``stage`` names no ring keeps the start-date invitation.
+
+    The stage gate has nothing to say about a habit outside the ten-ring ladder
+    (the column's own default is the empty string), so the schedule is the only
+    signal left and must still work in both directions.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_unladdered")
+    past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
+    future = today_in_tz("UTC") + timedelta(days=30)
+    for name, start, slot in (("Arrived", past, 1), ("Not yet", future, 2)):
+        created = await async_client.post(
+            "/habits/",
+            json=sample_payload(name=name, stage="", start_date=start.isoformat(), sort_order=slot),
+            headers=headers,
+        )
+        assert created.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    body = listed.json()
+    assert len(body) == 2
+    assert _revealed_by_name(body) == {"Arrived": True, "Not yet": False}
+    stored = await _habits_in_slot_order(db_session, user_id)
+    arrived, not_yet = stored
+    assert arrived.auto_revealed_at is not None
+    assert not_yet.auto_revealed_at is None
+
+
+@pytest.mark.asyncio
+async def test_list_keeps_stage_eligible_habit_paused_by_metta_return_release(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A rest taken in a Return outlasts an invitation the stage gate would grant.
+
+    Both habits are on a ring the user is open through and both start in the
+    past, so both are unambiguously eligible; the released one is held back only
+    by the unrecommitted release. The sibling proves the pass ran, and recording
+    the recommit proves the released row was eligible all along rather than
+    quietly ineligible for some other reason.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "auto_reveal_return_stage")
+    await _seed_open_through_stage_two(db_session, user_id)
+    past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
+    habit_ids: list[int] = []
+    for name, slot in (("Resting ring", 1), ("Working ring", 2)):
+        created = await async_client.post(
+            "/habits/",
+            json=sample_payload(
+                name=name, stage="Purple", start_date=past.isoformat(), sort_order=slot
+            ),
+            headers=headers,
+        )
+        assert created.status_code == HTTPStatus.OK
+        habit_ids.append(created.json()["id"])
+    resting_id = habit_ids[0]
+    now = datetime.now(UTC)
+    arc = MettaReturnArc(user_id=user_id, started_at=now)
+    db_session.add(arc)
+    await db_session.flush()
+    assert arc.id is not None
+    release = MettaReturnHabitRelease(
+        user_id=user_id, arc_id=arc.id, habit_id=resting_id, released_at=now
+    )
+    db_session.add(release)
+    await db_session.commit()
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    body = listed.json()
+    assert len(body) == 2
+    assert _revealed_by_name(body) == {"Resting ring": False, "Working ring": True}
+    resting = await db_session.get(Habit, resting_id)
+    assert resting is not None
+    assert resting.auto_revealed_at is None
+
+    release.recommitted_at = datetime.now(UTC)
+    db_session.add(release)
+    await db_session.commit()
+    after_recommit = await async_client.get("/habits/", headers=headers)
+
+    assert after_recommit.status_code == HTTPStatus.OK
+    assert _revealed_by_name(after_recommit.json())["Resting ring"] is True
+    await db_session.refresh(resting)
+    assert resting.auto_revealed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_leaves_an_already_over_revealed_row_open_and_relockable(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Reveals written before the fix are left standing, and re-locking them sticks.
+
+    The recorded decision for #2765: a row already stamped cannot be told apart
+    from one the user unlocked by hand -- ``_consume_auto_reveal_on_manual_change``
+    writes the same two columns -- so nothing retroactively re-locks it. The user
+    keeps the remedy, and the one-shot marker makes their choice durable.
+    """
+    headers = await _signup(async_client, "auto_reveal_legacy_row")
+    past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
+    payload = sample_payload(name="Legacy ring", stage="Yellow", start_date=past.isoformat())
+    created = await async_client.post("/habits/", json=payload, headers=headers)
+    assert created.status_code == HTTPStatus.OK
+    habit_id = created.json()["id"]
+    stamped_at = datetime.now(UTC) - timedelta(days=7)
+    legacy = await db_session.get(Habit, habit_id)
+    assert legacy is not None
+    legacy.revealed = True
+    legacy.auto_revealed_at = stamped_at
+    db_session.add(legacy)
+    await db_session.commit()
+    await db_session.refresh(legacy)
+    stored_marker = legacy.auto_revealed_at
+    assert stored_marker is not None
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json()[0]["revealed"] is True
+
+    relocked = await async_client.put(
+        f"/habits/{habit_id}", json={**payload, "revealed": False}, headers=headers
+    )
+    assert relocked.status_code == HTTPStatus.OK
+    after_relock = await async_client.get("/habits/", headers=headers)
+
+    assert after_relock.status_code == HTTPStatus.OK
+    assert after_relock.json()[0]["revealed"] is False
+    await db_session.refresh(legacy)
+    assert legacy.auto_revealed_at == stored_marker
+
+
 @pytest.mark.asyncio
 async def test_subtractive_habit_no_logs_streaks_from_start_date_via_list(
     async_client: AsyncClient, db_session: AsyncSession

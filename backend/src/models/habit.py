@@ -17,7 +17,9 @@ class Habit(SQLModel, table=True):
     ``revealed`` is the single source of truth for whether a habit is unlocked
     ("unlocked" == ``revealed is True`` in product terms). New and seeded
     habits default to locked. The list read reveals a regular program habit
-    once its stage or start date is open and stamps ``auto_revealed_at``. A
+    once the program's invitation reaches it -- its stage entering the user's
+    open range when ``stage`` names one of the ten rings, otherwise its start
+    date arriving -- and stamps ``auto_revealed_at``. A
     manual lock-state transition also consumes that invitation, including one
     made before eligibility arrives. The durable one-shot marker lets a later
     manual re-lock remain a real choice: subsequent reads never auto-reveal the
