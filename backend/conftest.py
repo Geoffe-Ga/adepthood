@@ -84,6 +84,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 _CONCURRENT_SQLITE_BUSY_TIMEOUT_SECONDS = 30
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+
 test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 

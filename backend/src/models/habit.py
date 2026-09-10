@@ -68,5 +68,16 @@ class Habit(SQLModel, table=True):
     user: "User" = Relationship(back_populates="habits")
     goals: list["Goal"] = Relationship(
         back_populates="habit",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+        # ``passive_deletes`` hands the cascade to the database, which is the
+        # only participant that can do it in one statement and the only one
+        # that is right about rows this session never loaded.  Deleting a habit
+        # emits exactly ``DELETE FROM habit``; Postgres then removes the goals
+        # (``goal_habit_id_fkey ON DELETE CASCADE``), their completions and
+        # suggestions, and the Return releases, none of which the ORM has to
+        # fetch first.  See :class:`~models.goal.Goal.completions` for the
+        # failure this replaces.
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
     )
