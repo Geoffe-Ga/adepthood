@@ -84,6 +84,7 @@ export default async function globalTeardown(): Promise<void> {
   try {
     await stopServer(state.pid);
     await stopServer(state.creekPid);
+    await stopServer(state.providerPid);
     dropDatabase(state);
   } finally {
     rmSync(state.credentialDir, { recursive: true, force: true });
@@ -91,6 +92,9 @@ export default async function globalTeardown(): Promise<void> {
     // run that needed it -- and it never outlives the tokens, which the dropped
     // database took with it a line above.
     rmSync(state.mailDir, { recursive: true, force: true });
+    // The fake provider's keys open nothing but a loopback process that is now
+    // dead, and they do not outlive it either.
+    rmSync(state.providerKeyDir, { recursive: true, force: true });
     clearLaneState();
   }
 }

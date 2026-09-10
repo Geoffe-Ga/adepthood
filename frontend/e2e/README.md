@@ -49,7 +49,7 @@ with Playwright. A local machine that already has Google Chrome can avoid the
 separate Chromium download with `PLAYWRIGHT_BROWSER_CHANNEL=chrome`; CI always
 installs and runs the package-pinned Chromium build.
 
-## What is real, and the two external boundaries that are not
+## What is real, and the three external boundaries that are not
 
 Real: the routers, the middleware stack, CORS, session handling, the Pydantic
 schemas, the migrations, the startup seeders, the JWTs, bcrypt password hashing,
@@ -83,6 +83,46 @@ Postgres lifecycle, and authenticated one-way handoff endpoint; only Creek's
 external allocator is represented by the fake. The fake rejects a ceremony body
 containing passphrase or recovery-key fields, returns `attested_confidential:
 false`, and is killed with its generated credential directory at teardown.
+
+The spent-provider-balance journey adds the third and last external boundary: a
+loopback process that speaks both LLM providers' HTTP APIs. The lane's server
+runs the stub BotMason provider, which has no account, no key and no network and
+therefore cannot refuse for billing, so the one condition that journey is about
+was unreachable from any spec. The fake is reached through the SDKs' own
+`OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL`, so nothing is patched or injected:
+adepthood builds its production `openai.AsyncOpenAI` / `anthropic.AsyncAnthropic`
+clients exactly as it does in production, and `openai.RateLimitError` /
+`anthropic.BadRequestError` are constructed by those SDKs out of the fake's
+response bytes. That is the whole point — injecting the typed error would prove
+the routing and _assume_ the classification, and the classification is where the
+bug lived. Which refusal a request gets is decided by the API key it presents,
+because that is what decides it in reality; the three keys are minted per run
+into a `0600` directory and an unrecognised key gets each provider's own 401, so
+a mis-wired lane fails loudly rather than serving something that looks like
+success. `GET /__lane/attempts` reports how many requests reached each surface,
+by shape and never by key, which is what lets a spec prove a press actually
+reached a provider instead of a wallet that never moved because nothing was ever
+charged.
+
+`BOTMASON_PROVIDER` stays unset, so every other journey still runs the stub. Two
+things reach the fake at all: a request carrying a BYOK key (whose prefix selects
+its own provider, which is what the 402 half is _about_), and a request whose
+prompt carries the `BOTMASON_PROVIDER_PROBE_TOKEN` marker. The probe is the only
+way a pass paid for by the _server's_ key can reach a provider on a
+stub-configured deployment, which is the 503 half. It is off unless configured,
+consulted only when no real provider is configured — so no text in a request can
+redirect a deployment that already dials OpenAI or Anthropic — and
+`main.validate_provider_probe_config` refuses a production boot while it is
+armed, on the same terms as the capture email backend below. The privacy floor is
+asserted with all of it live: an intimate page carrying the marker, on a server
+whose own key is armed, still reaches no provider at all.
+
+That journey also reads `walletaudit` out of band, through
+`backend/tests/e2e/wallet_audit.py`. The table has no API by design (it is a
+forensic surface for operators), and it is the only place that distinguishes
+"never charged" from "charged and put back" — the resonance route commits its
+deduction before the first dial, so the second is what actually happens on a
+refusal. The helper only ever reads.
 
 One thing is configured rather than faked, and it is worth stating plainly
 because it looks like a fake and is not. The password-recovery journey has to
