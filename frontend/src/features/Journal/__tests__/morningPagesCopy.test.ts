@@ -1,11 +1,14 @@
 /* eslint-env jest */
 import { describe, it, expect } from '@jest/globals';
 
-import { MORNING_PAGES_COPY_ENTRIES } from '../morningPagesCopy';
+import { MORNING_PAGES_COPY_ENTRIES, morningPageTitle } from '../morningPagesCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 describe('morningPagesCopy — balance-not-altitude intent rule', () => {
+  it('builds a sortable, single-line daily title', () => {
+    expect(morningPageTitle('2026-09-10')).toBe('2026-09-10 Daily Journal');
+  });
   it('exposes at least one copy entry to sweep', () => {
     expect(MORNING_PAGES_COPY_ENTRIES.length).toBeGreaterThan(0);
   });

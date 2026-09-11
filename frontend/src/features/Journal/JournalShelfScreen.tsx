@@ -663,6 +663,7 @@ interface TopMatterProps {
   onPrompt: (_prompt: StagePromptDetail) => void;
   onPastPrompts: () => void;
   onNew: () => void;
+  onMorningPage: (_prefillTitle: string) => void;
   onSearch: (_query: string) => void;
   query: string;
   resultCount?: number;
@@ -679,6 +680,7 @@ function ShelfTopMatter({
   onPrompt,
   onPastPrompts,
   onNew,
+  onMorningPage,
   onSearch,
   query,
   resultCount,
@@ -702,7 +704,7 @@ function ShelfTopMatter({
       <StagePromptSection band={stagePrompts} onOpen={onPrompt} />
       <ReflectionInvitationBand />
       <VoiceReadinessBand />
-      <MorningPagesTip onBegin={onNew} />
+      <MorningPagesTip onBegin={onMorningPage} />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
       </View>
@@ -713,6 +715,7 @@ function ShelfTopMatter({
 interface ShelfNav {
   openEntry: (_id: number) => void;
   newEntry: () => void;
+  newMorningPage: (_prefillTitle: string) => void;
   openPhotograph: () => void;
   openPrompt: (_prompt: StagePromptDetail) => void;
   openWithPrompt: () => void;
@@ -725,6 +728,12 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     [navigation],
   );
   const newEntry = useCallback(() => navigation.navigate('JournalEntry'), [navigation]);
+  // Morning pages are a client-owned daily practice, not server curriculum:
+  // their generated title belongs on this entrypoint while prompt titles remain server-owned.
+  const newMorningPage = useCallback(
+    (prefillTitle: string) => navigation.navigate('JournalEntry', { prefillTitle }),
+    [navigation],
+  );
   const openPhotograph = useCallback(() => navigation.navigate('JournalPhotograph'), [navigation]);
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
@@ -748,7 +757,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     },
     [navigation, week],
   );
-  return { openEntry, newEntry, openPhotograph, openPrompt, openWithPrompt };
+  return { openEntry, newEntry, newMorningPage, openPhotograph, openPrompt, openWithPrompt };
 }
 
 function renderSectionHeader({
@@ -836,6 +845,7 @@ function ShelfBody({
           onPrompt={nav.openPrompt}
           onPastPrompts={onPastPrompts}
           onNew={nav.newEntry}
+          onMorningPage={nav.newMorningPage}
           onSearch={onSearch}
           query={query}
           resultCount={resultCount}

@@ -26,9 +26,11 @@ import {
   MORNING_PAGES_DISMISS_A11Y,
   MORNING_PAGES_LABEL,
   MORNING_PAGES_TITLE,
+  morningPageTitle,
 } from './morningPagesCopy';
 import ReflectionDismiss from './ReflectionDismiss';
 
+import { useAuth } from '@/context/AuthContext';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -44,22 +46,24 @@ import {
   loadMorningPagesTipDismissed,
   saveMorningPagesTipDismissed,
 } from '@/storage/morningPagesTipStorage';
+import { todayInUserTZ } from '@/utils/dateUtils';
 
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
 const ACCENT_BAR_WIDTH = 3;
 
 export interface MorningPagesTipProps {
   /** Opens the shelf's new-entry flow so the person can start a page right away. */
-  onBegin: () => void;
+  onBegin: (_prefillTitle: string) => void;
 }
 
 /**
  * Owns the dismissal state, the load-on-mount, and the begin/dismiss actions.
- * ``dismissed`` starts null while the persisted flag loads; both actions
- * persist the flag and retire the band, and only ``onBeginPress`` hands off
- * to ``onBegin``.
+ * ``dismissed`` starts null while the persisted flag loads. Only dismissal
+ * persists/retires the band; ``onBeginPress`` hands the dated
+ * title to the shelf without treating acceptance as dismissal.
  */
-function useMorningPagesTip(onBegin: () => void) {
+function useMorningPagesTip(onBegin: (_prefillTitle: string) => void) {
+  const { userTimezone } = useAuth();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -73,8 +77,8 @@ function useMorningPagesTip(onBegin: () => void) {
   }, []);
 
   const onBeginPress = useCallback(() => {
-    onBegin();
-  }, [onBegin]);
+    onBegin(morningPageTitle(todayInUserTZ(userTimezone)));
+  }, [onBegin, userTimezone]);
 
   const onDismiss = useCallback(() => {
     void saveMorningPagesTipDismissed(true);

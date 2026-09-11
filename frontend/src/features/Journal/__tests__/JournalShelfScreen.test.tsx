@@ -99,8 +99,13 @@ jest.mock('@/features/Invitations/InvitationStack', () => {
 // dedicated suite; stub it so its post-mount load never fires setState after
 // these shelf tests resolve, keeping them focused on ordering and list wiring.
 jest.mock('../MorningPagesTip', () => {
-  const { View } = require('react-native');
-  const Stub = () => <View testID="morning-pages-tip-stub" />;
+  const { TouchableOpacity } = require('react-native');
+  const Stub = ({ onBegin }: { onBegin: (_title: string) => void }) => (
+    <TouchableOpacity
+      testID="morning-pages-tip-stub"
+      onPress={() => onBegin('2026-09-10 Daily Journal')}
+    />
+  );
   return { __esModule: true, default: Stub };
 });
 
@@ -326,6 +331,14 @@ describe('JournalShelfScreen', () => {
     const { findByTestId } = render(<JournalShelfScreen />);
     fireEvent.press(await findByTestId('journal-new-entry'));
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry');
+  });
+
+  it('opens the morning-pages door with its date-prefilled title', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('morning-pages-tip-stub'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', {
+      prefillTitle: '2026-09-10 Daily Journal',
+    });
   });
 
   it('opens the tapped entry by id', async () => {

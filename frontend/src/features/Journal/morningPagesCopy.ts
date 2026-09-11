@@ -14,6 +14,13 @@ export const MORNING_PAGES_LABEL = 'A practice to try';
 /** The tip heading — names the practice plainly. */
 export const MORNING_PAGES_TITLE = 'Morning pages';
 
+/** The stable suffix used after the local calendar date on a new page. */
+export const MORNING_PAGES_TITLE_SUFFIX = 'Daily Journal';
+
+/** Shelf-safe name shared by every door into this daily writing practice. */
+export const morningPageTitle = (isoDate: string): string =>
+  `${isoDate} ${MORNING_PAGES_TITLE_SUFFIX}`;
+
 /** The tip body — what the practice is, framed as an invitation to let it pour. */
 export const MORNING_PAGES_BODY =
   'Twenty minutes of unfiltered writing, first thing — no editing, no rereading, just let it pour. It clears the fog before the day begins.';
@@ -34,6 +41,7 @@ export const MORNING_PAGES_DISMISS_A11Y = 'Set the morning-pages tip aside';
 export const MORNING_PAGES_COPY_ENTRIES: readonly string[] = [
   MORNING_PAGES_LABEL,
   MORNING_PAGES_TITLE,
+  MORNING_PAGES_TITLE_SUFFIX,
   MORNING_PAGES_BODY,
   MORNING_PAGES_CTA,
   MORNING_PAGES_CTA_A11Y,

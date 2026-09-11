@@ -2,7 +2,7 @@
 /**
  * The quick launch, as the writer meets it: a button in the player region that
  * exists only for a saved ``Journaling`` practice, and that lands them on a
- * blank journal page with the practice's own length already running.
+ * dated journal page with the practice's own length already running.
  *
  * Driven through the whole screen rather than through the button alone. The
  * decision it renders is pure and tested next to ``planQuickLaunch``; what only
@@ -72,6 +72,7 @@ const openSelection = (practice: PracticeItem, overrides: Partial<UserPractice> 
 const mockPracticesList = jest.fn<() => Promise<PracticeItem[]>>();
 const mockUserPracticesList = jest.fn<() => Promise<UserPractice[]>>();
 const mockRootNavigate = jest.fn();
+let mockUserTimezone = 'UTC';
 
 jest.mock('react-native-safe-area-context', () => {
   // Structurally typed rather than `typeof import('react')`: a jest.mock
@@ -112,7 +113,7 @@ jest.mock('../../../api', () => ({
 }));
 
 jest.mock('../../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+  useAuth: () => ({ token: 'test-token', userTimezone: mockUserTimezone }),
 }));
 
 const mockRouteParams: Record<string, unknown> = { stageNumber: GREEN };
@@ -159,6 +160,7 @@ beforeEach(() => {
   mockRootNavigate.mockReset();
   mockPracticesList.mockReset();
   mockUserPracticesList.mockReset();
+  mockUserTimezone = 'UTC';
   act(() => {
     useStageStore.getState().reset();
     useStageStore.getState().setCurrentStage(GREEN);
@@ -166,6 +168,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   jest.clearAllMocks();
 });
 
@@ -207,7 +210,9 @@ describe('the Practice player’s quick launch into a timed page', () => {
     expect(queryByTestId('practice-quick-launch-waiting')).toBeNull();
   });
 
-  it('opens a blank page with the practice’s own length, already running', async () => {
+  it('opens today’s titled page with the practice’s own length already running', async () => {
+    mockUserTimezone = 'America/Los_Angeles';
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-11T01:00:00.000Z'));
     mockPracticesList.mockResolvedValue([journaling]);
     mockUserPracticesList.mockResolvedValue([openSelection(journaling)]);
 
@@ -217,6 +222,7 @@ describe('the Practice player’s quick launch into a timed page', () => {
     expect(mockRootNavigate).toHaveBeenCalledTimes(1);
     expect(mockRootNavigate).toHaveBeenCalledWith('JournalEntry', {
       writingSession: { minutes: SEEDED_MINUTES, userPracticeId: SELECTION_ID },
+      prefillTitle: '2026-09-10 Daily Journal',
     });
   });
 
@@ -235,6 +241,7 @@ describe('the Practice player’s quick launch into a timed page', () => {
 
     expect(mockRootNavigate).toHaveBeenCalledWith('JournalEntry', {
       writingSession: { minutes: 45, userPracticeId: SELECTION_ID },
+      prefillTitle: expect.stringMatching(/^\d{4}-\d{2}-\d{2} Daily Journal$/),
     });
   });
 });
@@ -264,6 +271,7 @@ describe('the quick launch for a stage the writer has not reached', () => {
 
     expect(mockRootNavigate).toHaveBeenCalledWith('JournalEntry', {
       writingSession: { minutes: SEEDED_MINUTES, userPracticeId: null },
+      prefillTitle: expect.stringMatching(/^\d{4}-\d{2}-\d{2} Daily Journal$/),
     });
   });
 });
