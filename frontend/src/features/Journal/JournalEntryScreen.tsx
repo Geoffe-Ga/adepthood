@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Camera, RefreshCw, X } from 'lucide-react-native';
+import { Camera, KeyRound, RefreshCw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -43,6 +43,7 @@ import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
+import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
@@ -66,7 +67,12 @@ import type {
   ReflectionLevel,
 } from '@/api';
 import { Button } from '@/components/Button';
-import { useScreenDrawer, type ScreenDrawerState } from '@/components/drawer';
+import {
+  NAV_ICON_SIZE,
+  NAV_ICON_STROKE,
+  useScreenDrawer,
+  type ScreenDrawerState,
+} from '@/components/drawer';
 import { useAuth } from '@/context/AuthContext';
 import {
   accent,
@@ -1848,6 +1854,7 @@ interface ReadResonanceAction {
   visible: boolean;
   disabled: boolean;
   loading: boolean;
+  checking: boolean;
   /** Why resonance is withheld, shown only while it is disabled. */
   reason: string;
   onPress: () => Promise<void>;
@@ -1871,6 +1878,7 @@ function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX
         layout="inline"
         visible={resonance.visible}
         loading={resonance.loading}
+        checking={resonance.checking}
         disabled={resonance.disabled}
         onPress={resonance.onPress}
       />
@@ -2447,7 +2455,7 @@ function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: Re
     // A photograph-capture handoff (justSaved) offers resonance immediately,
     // without waiting for the usual post-typing idle pause.
     isIdle: isIdle || justSaved,
-    isLoading: resonance.loading,
+    isLoading: resonance.loading || explainer.pending,
     body: autosave.body,
     classification: autosave.classification,
     isPromptCompose: ctx.weekNumber != null,
@@ -2520,6 +2528,7 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
     visible: !ctl.isPromptCompose && ctl.autosave.body.trim().length > 0,
     disabled: ctl.resonanceDisabled,
     loading: ctl.resonance.loading,
+    checking: ctl.explainer.pending,
     reason: ctl.resonanceReason,
     onPress: ctl.explainer.onPress,
   };
@@ -2745,6 +2754,27 @@ function ReturnToReadingLink({
 
 /** Screen-reader name for the exit that is offered no matter how they arrived. */
 const CLOSE_ENTRY_LABEL = 'Close — return to your journal';
+const PAYER_SETTINGS_LABEL = 'Add or change your API key';
+
+/** Direct access to the payer setting without discarding or saving over the page. */
+function ApiKeySettingsLink({ onPress }: { onPress: () => void }): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.entryIconButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={PAYER_SETTINGS_LABEL}
+      testID="journal-api-key-settings"
+    >
+      <KeyRound
+        color={accent.primary}
+        size={NAV_ICON_SIZE}
+        strokeWidth={NAV_ICON_STROKE}
+        accessible={false}
+      />
+    </TouchableOpacity>
+  );
+}
 
 /**
  * The always-available way out of the writing surface. ``ReturnToReadingLink``
@@ -2774,7 +2804,7 @@ function CloseEntryLink({
   }, [closing, flush, navigation]);
   return (
     <TouchableOpacity
-      style={styles.quoteActionButton}
+      style={styles.entryIconButton}
       onPress={() => void onPress()}
       disabled={closing}
       accessibilityRole="button"
@@ -2797,15 +2827,18 @@ function EntryExitControls({
   navigation,
   flush,
   flushForExit,
+  onOpenApiKey,
 }: {
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   flush: () => Promise<number | null>;
   flushForExit: () => Promise<boolean>;
+  onOpenApiKey: () => void;
 }): React.JSX.Element {
   return (
     <View style={styles.entryExitRow}>
       <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
+      <ApiKeySettingsLink onPress={onOpenApiKey} />
       <CloseEntryLink navigation={navigation} flush={flushForExit} />
     </View>
   );
@@ -2868,21 +2901,30 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
   return { drawer, onSelectEntry, onNewEntry };
 }
 
-/** The screen's floating layers: the essay modal, the edit-confirm dialog, and
- *  the header drawer — grouped so the screen component stays under the line cap. */
-function EntryOverlays({
-  modal,
-  editGate,
+/** A modal owned by this entry must never outlive the route's foreground turn. */
+function useCancelResonanceOnBlur(navigation: ScreenNavigation, cancelPending: () => void): void {
+  useEffect(() => navigation.addListener?.('blur', cancelPending), [cancelPending, navigation]);
+}
+
+function useOpenApiKey(navigation: ScreenNavigation, cancelPending: () => void): () => void {
+  useCancelResonanceOnBlur(navigation, cancelPending);
+  return useCallback(() => {
+    cancelPending();
+    navigation.navigate('ApiKeySettings');
+  }, [cancelPending, navigation]);
+}
+
+function ResonanceOverlays({
   explainer,
-  entryDrawer,
-  currentEntryId,
+  onOpenApiKey,
 }: {
-  modal: Controller['modal'];
-  editGate: Controller['editGate'];
   explainer: Controller['explainer'];
-  entryDrawer: EntryScreenDrawer;
-  currentEntryId: number | null;
+  onOpenApiKey: () => void;
 }): React.JSX.Element {
+  const openApiKey = useCallback(() => {
+    explainer.onCancelRefill();
+    onOpenApiKey();
+  }, [explainer, onOpenApiKey]);
   return (
     <>
       <ResonanceExplainerDialog
@@ -2894,6 +2936,38 @@ function EntryOverlays({
         onContinue={explainer.onContinue}
         onCancel={explainer.onCancel}
       />
+      <ResonanceRefillDialog
+        visible={explainer.refillVisible}
+        monthlyResetDate={explainer.monthlyResetDate}
+        monthlyCap={explainer.monthlyCap}
+        reason={explainer.refillReason}
+        onAddKey={openApiKey}
+        onCancel={explainer.onCancelRefill}
+      />
+    </>
+  );
+}
+
+/** The screen's floating layers: the essay modal, the edit-confirm dialog, and
+ *  the header drawer — grouped so the screen component stays under the line cap. */
+function EntryOverlays({
+  modal,
+  editGate,
+  explainer,
+  entryDrawer,
+  currentEntryId,
+  onOpenApiKey,
+}: {
+  modal: Controller['modal'];
+  editGate: Controller['editGate'];
+  explainer: Controller['explainer'];
+  entryDrawer: EntryScreenDrawer;
+  currentEntryId: number | null;
+  onOpenApiKey: () => void;
+}): React.JSX.Element {
+  return (
+    <>
+      <ResonanceOverlays explainer={explainer} onOpenApiKey={onOpenApiKey} />
       <ResonanceEssayModal
         note={modal.openNote}
         onClose={modal.onCloseNote}
@@ -2925,12 +2999,14 @@ function ResonanceControls({
   visible,
   disabled,
   loading,
+  checking,
   reason,
   onPress,
 }: {
   visible: boolean;
   disabled: boolean;
   loading: boolean;
+  checking: boolean;
   reason: string;
   onPress: () => Promise<void>;
 }): React.JSX.Element {
@@ -2940,6 +3016,7 @@ function ResonanceControls({
       <GetResonanceButton
         visible={visible}
         loading={loading}
+        checking={checking}
         disabled={disabled}
         onPress={onPress}
       />
@@ -2999,6 +3076,7 @@ function EntryWritingSurfaces({
         visible={ctl.visible}
         disabled={ctl.resonanceDisabled}
         loading={ctl.resonance.loading}
+        checking={ctl.explainer.pending}
         reason={ctl.resonanceReason}
         onPress={ctl.explainer.onPress}
       />
@@ -3064,6 +3142,7 @@ function JournalEntryScreen({
     justSaved,
     initialClassification,
   );
+  const openApiKey = useOpenApiKey(navigation, ctl.explainer.cancelPending);
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />
@@ -3075,6 +3154,7 @@ function JournalEntryScreen({
         navigation={navigation}
         flush={ctl.autosave.flush}
         flushForExit={ctl.autosave.flushForExit}
+        onOpenApiKey={openApiKey}
       />
       <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       <ReflectionComposer reflection={ctl.reflection} />
@@ -3085,6 +3165,7 @@ function JournalEntryScreen({
         explainer={ctl.explainer}
         entryDrawer={entryDrawer}
         currentEntryId={currentEntryId}
+        onOpenApiKey={openApiKey}
       />
     </SafeAreaView>
   );

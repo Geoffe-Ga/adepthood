@@ -143,6 +143,36 @@ describe('JournalEntryScreen — always-available close', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The API-key route beside the exit keeps this exact page mounted underneath it
+// ---------------------------------------------------------------------------
+
+describe('JournalEntryScreen — API-key settings shortcut', () => {
+  it('is an accessible button in write mode and leaves the in-memory draft intact', () => {
+    const { getByTestId, navigation } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-title-input'), 'A title still in hand');
+    fireEvent.changeText(getByTestId('journal-body-input'), 'A draft still in hand.');
+
+    const shortcut = getByTestId('journal-api-key-settings');
+    expect(shortcut.props.accessibilityRole).toBe('button');
+    expect(shortcut.props.accessibilityLabel).toBe('Add or change your API key');
+    fireEvent.press(shortcut);
+
+    expect(navigation.navigate).toHaveBeenCalledWith('ApiKeySettings');
+    expect(getByTestId('journal-title-input').props.value).toBe('A title still in hand');
+    expect(getByTestId('journal-body-input').props.value).toBe('A draft still in hand.');
+  });
+
+  it('is present in read mode beside the close control', async () => {
+    mockGet.mockResolvedValue(entry({ status: 'finished' }));
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    await waitFor(() => expect(getByTestId('journal-edit-button')).toBeTruthy());
+
+    expect(getByTestId('journal-api-key-settings')).toBeTruthy();
+    expect(getByTestId('journal-close-entry')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The close contract: the final save settles before the shelf is allowed to read
 // ---------------------------------------------------------------------------
 

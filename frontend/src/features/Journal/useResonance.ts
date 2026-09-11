@@ -139,7 +139,7 @@ export interface UseResonanceResult {
   completedPasses: number;
   loading: boolean;
   error: string | null;
-  requestResonance: (_apiKey?: string | null) => Promise<void>;
+  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
   /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
   updateNote: (_note: Marginalia) => void;
   /** Re-read the persisted marginalia (after an edit re-anchors/stales them). */
@@ -299,7 +299,20 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
 
 interface GeneratePass {
   loading: boolean;
-  requestResonance: (_apiKey?: string | null) => Promise<void>;
+  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
+}
+
+/** The gate only needs to distinguish a pass that now needs another payer. */
+export type ResonanceRequestOutcome =
+  'completed' | 'funding_required' | 'key_required' | 'failed' | 'ignored';
+
+function fundingOutcome(error: unknown): 'funding_required' | 'key_required' | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const response = error as { status?: unknown; detail?: unknown };
+  if (response.status !== 402) return null;
+  if (response.detail === 'insufficient_offerings') return 'funding_required';
+  if (response.detail === 'llm_key_required') return 'key_required';
+  return null;
 }
 
 interface LatestPassState {
@@ -370,9 +383,18 @@ interface GeneratePassDeps {
   clearError: () => void;
 }
 
-interface PassFailureDeps {
+interface PassFailureContext {
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   reportPassError: (_message: string) => void;
+  isCurrent: () => boolean;
+}
+
+interface PassFailureDeps extends PassFailureContext {
+  surfaceError: boolean;
+}
+
+function reportIfCurrent(message: string, deps: PassFailureDeps): void {
+  if (deps.surfaceError && deps.isCurrent()) deps.reportPassError(message);
 }
 
 /**
@@ -389,22 +411,52 @@ async function reportPassFailure(
   deps: PassFailureDeps,
 ): Promise<void> {
   if (entryId == null) {
-    deps.reportPassError(reason);
+    reportIfCurrent(reason, deps);
     return;
   }
   try {
     const detection = await completionSuggestions.detect(entryId);
     deps.mergeFromGenerate(detection.items);
-    deps.reportPassError(
+    reportIfCurrent(
       detection.checked
         ? completionsCheckedAfterResonanceError(reason)
         : completionsUncheckedAfterResonanceError(reason),
+      deps,
     );
   } catch {
     // Keep this contextual instead of repeating the provider's generic
     // BotMason copy: the writer needs to know both actions were attempted.
-    deps.reportPassError(completionsUncheckedAfterResonanceError(reason));
+    reportIfCurrent(completionsUncheckedAfterResonanceError(reason), deps);
   }
+}
+
+async function settlePassFailure(
+  error: unknown,
+  entryId: number | null,
+  deps: PassFailureContext,
+): Promise<ResonanceRequestOutcome> {
+  const funding = fundingOutcome(error);
+  const failure = reportPassFailure(entryId, formatApiError(error), {
+    ...deps,
+    // Funding has its own immediate, actionable surface. Detection still runs
+    // and merges offers, but must not announce a contradictory retry error.
+    surfaceError: funding === null,
+  });
+  if (funding !== null) {
+    // Payment recovery is local and actionable. Do not hold it behind the
+    // separate, best-effort completion detector (which may make its own
+    // provider round-trip); that work can still finish in the margin.
+    void failure;
+    return funding;
+  }
+  await failure;
+  return 'failed';
+}
+
+function generateForPayer(entryId: number, apiKey?: string | null) {
+  return apiKey === undefined
+    ? resonance.generate(entryId)
+    : resonance.generate(entryId, undefined, apiKey);
 }
 
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
@@ -413,11 +465,13 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const { clear: clearLatestPass, receive: receiveLatestPass } = latestPass;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
+  const generationRef = useRef(0);
 
   const requestResonance = useCallback(
-    async (apiKey?: string | null): Promise<void> => {
-      if (inFlightRef.current) return; // one pass at a time — no double-charge
+    async (apiKey?: string | null): Promise<ResonanceRequestOutcome> => {
+      if (inFlightRef.current) return 'ignored'; // one pass at a time — no double-charge
       inFlightRef.current = true;
+      const generation = ++generationRef.current;
       setLoading(true);
       // A fresh pass re-derives the whole margin, so it retires every complaint
       // standing in it -- its own and any card's -- rather than only its own.
@@ -430,19 +484,18 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
         entryId = await flush();
         if (entryId == null) {
           reportPassError(EMPTY_BODY_MESSAGE);
-          return;
+          return 'failed';
         }
-        const result =
-          apiKey === undefined
-            ? await resonance.generate(entryId)
-            : await resonance.generate(entryId, undefined, apiKey);
+        const result = await generateForPayer(entryId, apiKey);
         setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
         mergeFromGenerate(result.suggestions);
         receiveLatestPass(result);
+        return 'completed';
       } catch (err) {
-        await reportPassFailure(entryId, formatApiError(err), {
+        return settlePassFailure(err, entryId, {
           mergeFromGenerate,
           reportPassError,
+          isCurrent: () => generationRef.current === generation,
         });
       } finally {
         inFlightRef.current = false;

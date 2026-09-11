@@ -39,16 +39,18 @@ export type ResonanceButtonLayout = 'floating' | 'inline';
 export interface GetResonanceButtonProps {
   visible: boolean;
   loading?: boolean;
+  checking?: boolean;
   disabled?: boolean;
   layout?: ResonanceButtonLayout;
   onPress: () => void;
 }
 
 /** Derive the button's view state (keeps the component's branching low). */
-function getButtonState(visible: boolean, loading: boolean, disabled: boolean) {
+function getButtonState(visible: boolean, loading: boolean, checking: boolean, disabled: boolean) {
+  const busy = loading || checking;
   return {
     // Hidden = inert: not pressable and not reachable by the screen reader.
-    interactive: visible && !disabled && !loading,
+    interactive: visible && !disabled && !busy,
     // ``box-none``, not ``auto``: the floating wrapper spans the page edge to
     // edge, so an ``auto`` band takes every touch across its full width — not
     // only the ones aimed at the button centred in it. The button below claims
@@ -56,8 +58,13 @@ function getButtonState(visible: boolean, loading: boolean, disabled: boolean) {
     // invisible affordance is inert rather than merely transparent.
     pointerEvents: (visible ? 'box-none' : 'none') as 'box-none' | 'none',
     importantForA11y: (visible ? 'auto' : 'no-hide-descendants') as 'auto' | 'no-hide-descendants',
-    label: loading ? 'Listening…' : 'Get Resonance',
-    a11yLabel: loading ? 'Listening to your writing' : 'Get resonance',
+    label: loading ? 'Listening…' : checking ? 'Checking availability…' : 'Get Resonance',
+    a11yLabel: loading
+      ? 'Listening to your writing'
+      : checking
+        ? 'Checking resonance availability'
+        : 'Get resonance',
+    busy,
   };
 }
 
@@ -82,9 +89,14 @@ function ResonanceSpinner(): React.JSX.Element {
   );
 }
 
+function busyIndicator(busy: boolean): React.JSX.Element | null {
+  return busy ? <ResonanceSpinner /> : null;
+}
+
 function GetResonanceButton({
   visible,
   loading = false,
+  checking = false,
   disabled = false,
   layout = 'floating',
   onPress,
@@ -100,7 +112,7 @@ function GetResonanceButton({
   }, [visible, anim]);
 
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [SLIDE_DISTANCE, 0] });
-  const view = getButtonState(visible, loading, disabled);
+  const view = getButtonState(visible, loading, checking, disabled);
   // Only the inline variant has to give its space back. Floating is absolutely
   // positioned, so a hidden one already costs the flow nothing; inline sits in
   // the flow and would otherwise leave a transparent gap in the action row.
@@ -126,10 +138,10 @@ function GetResonanceButton({
         disabled={!view.interactive}
         accessibilityRole="button"
         accessibilityLabel={view.a11yLabel}
-        accessibilityState={{ disabled: !view.interactive, busy: loading }}
+        accessibilityState={{ disabled: !view.interactive, busy: view.busy }}
         testID="get-resonance-button"
       >
-        {loading ? <ResonanceSpinner /> : null}
+        {busyIndicator(view.busy)}
         <Text style={styles.label}>{view.label}</Text>
       </TouchableOpacity>
     </Animated.View>

@@ -23,6 +23,9 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockGenerate = jest.fn() as jest.MockedFunction<
   (_id: number, _token?: string, _apiKey?: string | null) => Promise<ResonanceResponse>
 >;
+const mockDetect = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<{ checked: boolean; items: unknown[] }>
+>;
 const mockUsage = jest.fn() as jest.MockedFunction<
   () => Promise<{
     monthly_messages_used: number;
@@ -36,6 +39,12 @@ const mockApiKeyState: { apiKey: string | null; isLoading: boolean } = {
   apiKey: null,
   isLoading: false,
 };
+const mockNavigate = jest.fn();
+let mockBlurListener = (): void => undefined;
+const mockAddListener = jest.fn((event: string, listener: () => void) => {
+  if (event === 'blur') mockBlurListener = listener;
+  return jest.fn();
+});
 
 interface UsageSnapshot {
   monthly_messages_used: number;
@@ -56,12 +65,22 @@ function usageSnapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
   };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (_value: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (_value: T) => void;
+  reject: (_reason: unknown) => void;
+} {
   let resolve: (_value: T) => void = () => undefined;
-  const promise = new Promise<T>((settle) => {
+  let reject = (_reason: unknown): void => undefined;
+  const promise = new Promise<T>((settle, fail) => {
     resolve = settle;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
+}
+
+function apiError(status: number, detail: string): Error & { status: number; detail: string } {
+  return Object.assign(new Error(detail), { status, detail });
 }
 
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
@@ -82,6 +101,7 @@ jest.mock('@/api', () => ({
   },
   completionSuggestions: {
     list: jest.fn(() => Promise.resolve({ items: [] })),
+    detect: (...a: unknown[]) => (mockDetect as unknown as (...x: unknown[]) => unknown)(...a),
     accept: jest.fn(),
     dismiss: jest.fn(),
   },
@@ -143,7 +163,12 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 
 function screenElement(): React.JSX.Element {
   const route = { key: 'k', name: 'JournalEntry' as const, params: { entryId: 7 } };
-  const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+  const navigation = {
+    navigate: mockNavigate,
+    goBack: jest.fn(),
+    push: jest.fn(),
+    addListener: mockAddListener,
+  };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
   return <Screen navigation={navigation} route={route} autosaveDelayMs={100} />;
 }
@@ -166,9 +191,13 @@ beforeEach(() => {
   mockGet.mockReset();
   mockList.mockReset();
   mockGenerate.mockReset();
+  mockDetect.mockReset();
   mockUsage.mockReset();
   mockLoadDismissed.mockReset();
   mockSaveDismissed.mockReset();
+  mockNavigate.mockReset();
+  mockAddListener.mockClear();
+  mockBlurListener = (): void => undefined;
   mockGet.mockResolvedValue(entry());
   mockList.mockResolvedValue({ items: [] });
   mockGenerate.mockResolvedValue({
@@ -183,6 +212,7 @@ beforeEach(() => {
     related_eddies: [],
     no_notes_message: null,
   } as ResonanceResponse);
+  mockDetect.mockResolvedValue({ checked: true, items: [] });
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockApiKeyState.apiKey = null;
@@ -254,21 +284,46 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(mockUsage).not.toHaveBeenCalled();
   });
 
-  it('names an exhausted wallet and disables an impossible pass', async () => {
+  it('opens a refill invitation instead of the spend explainer for an exhausted wallet', async () => {
     mockUsage.mockResolvedValueOnce(
-      usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 }),
+      usageSnapshot({
+        monthly_messages_used: 7,
+        monthly_messages_remaining: 0,
+        monthly_reset_date: '2026-07-01T00:00:00Z',
+      }),
+    );
+    const { findByTestId, queryByTestId } = await openEntryAndAsk();
+
+    const refill = await findByTestId('journal-resonance-refill');
+    expect(refill).toHaveTextContent(/July 1, 2026/u);
+    expect(refill).toHaveTextContent(/Add your own API key/u);
+    expect(refill).not.toHaveTextContent(/Don.t show this again/u);
+    expect(refill).not.toHaveTextContent(/Continue/u);
+    expect(queryByTestId('resonance-explainer')).toBeNull();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('does not promise a zero-cap deployment that messages return at reset', async () => {
+    mockUsage.mockResolvedValueOnce(
+      usageSnapshot({ monthly_cap: 0, monthly_messages_remaining: 0, offering_balance: 0 }),
     );
     const { findByTestId } = await openEntryAndAsk();
 
-    const body = await findByTestId('resonance-explainer-cost');
-    await waitFor(() =>
-      expect(body).toHaveTextContent(/no BotMason monthly messages or offerings/u),
-    );
-    const continueButton = await findByTestId('resonance-explainer-continue');
-    expect(continueButton.props.accessibilityState.disabled).toBe(true);
+    const refill = await findByTestId('journal-resonance-refill');
+    expect(refill).toHaveTextContent(/next monthly reset is July 1, 2026/u);
+    expect(refill).not.toHaveTextContent(/messages come back/u);
+  });
 
-    fireEvent.press(continueButton);
-    expect(mockGenerate).not.toHaveBeenCalled();
+  it('takes the refill invitation directly to API-key settings', async () => {
+    mockUsage.mockResolvedValueOnce(
+      usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 }),
+    );
+    const { findByTestId, queryByTestId } = await openEntryAndAsk();
+
+    fireEvent.press(await findByTestId('journal-resonance-refill-add-key'));
+
+    expect(queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
   });
 
   it('waits for stored-key hydration before disclosing and pins that key to the pass', async () => {
@@ -293,6 +348,25 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     );
   });
 
+  it('cancels a press queued during key hydration when API-key settings opens', async () => {
+    mockApiKeyState.isLoading = true;
+    const view = renderScreen();
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    fireEvent.press(view.getByTestId('journal-api-key-settings'));
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+
+    mockApiKeyState.apiKey = 'sk-key-loaded-in-settings'; // pragma: allowlist secret
+    mockApiKeyState.isLoading = false;
+    await act(async () => view.rerender(screenElement()));
+
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
   it('re-discloses instead of charging when the payer changes while the dialog is open', async () => {
     const view = await openEntryAndAsk();
     await waitFor(() =>
@@ -303,7 +377,9 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
 
     mockApiKeyState.apiKey = 'sk-key-added-after-open'; // pragma: allowlist secret
     await act(async () => view.rerender(screenElement()));
-    fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    });
 
     expect(mockGenerate).not.toHaveBeenCalled();
     expect(view.getByTestId('resonance-explainer')).toBeTruthy();
@@ -317,16 +393,49 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     );
   });
 
-  it('ignores an older wallet read that resolves after a newer disclosure', async () => {
+  it('coalesces a pending preflight and rechecks the payer before publishing it', async () => {
+    const heldUsage = deferred<UsageSnapshot>();
+    mockUsage.mockReturnValueOnce(heldUsage.promise);
+    const view = renderScreen();
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    await waitFor(() => {
+      const button = view.getByTestId('get-resonance-button');
+      expect(button.props.accessibilityState.busy).toBe(true);
+      expect(button.props.accessibilityState.disabled).toBe(true);
+      expect(button.props.accessibilityLabel).toBe('Checking resonance availability');
+    });
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    expect(mockUsage).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(view.getByTestId('journal-api-key-settings'));
+    mockApiKeyState.apiKey = 'sk-key-saved-during-preflight'; // pragma: allowlist secret
+    await act(async () => view.rerender(screenElement()));
+    await act(async () => heldUsage.resolve(usageSnapshot({ monthly_messages_remaining: 0 })));
+
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
+      /Your own API key pays/u,
+    );
+    expect(mockUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an older 402 refresh that resolves after a newer disclosure', async () => {
     const oldRead = deferred<UsageSnapshot>();
     const newRead = deferred<UsageSnapshot>();
     mockUsage.mockReset();
-    mockUsage.mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(newRead.promise);
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot({ monthly_messages_remaining: 4 }))
+      .mockReturnValueOnce(oldRead.promise)
+      .mockReturnValueOnce(newRead.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
     const view = await openEntryAndAsk();
-    fireEvent.press(view.getByTestId('resonance-explainer-cancel'));
-    await act(async () => {
-      fireEvent.press(view.getByTestId('get-resonance-button'));
-    });
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    fireEvent.press(await view.findByTestId('journal-resonance-refill-cancel'));
+    fireEvent.press(view.getByTestId('get-resonance-button'));
 
     await act(async () =>
       newRead.resolve(usageSnapshot({ monthly_cap: 11, monthly_messages_remaining: 11 })),
@@ -335,9 +444,11 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
       expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/your 11 BotMason/u),
     );
 
-    await act(async () => oldRead.resolve(usageSnapshot()));
+    await act(async () =>
+      oldRead.resolve(usageSnapshot({ monthly_cap: 0, monthly_messages_remaining: 0 })),
+    );
     expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/your 11 BotMason/u);
-    expect(view.getByTestId('resonance-explainer-cost')).not.toHaveTextContent(/your 7 BotMason/u);
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
   });
 
   it('says the entry leaves the device for a model', async () => {
@@ -432,6 +543,161 @@ describe('JournalEntryScreen — a reader who already dismissed it', () => {
 
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
     expect(queryByTestId('resonance-explainer')).toBeNull();
+  });
+
+  it('still shows the refill invitation when the wallet is exhausted', async () => {
+    mockUsage.mockResolvedValueOnce(
+      usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 }),
+    );
+    const { findByTestId } = await openEntryAndAsk();
+
+    expect(await findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+});
+
+describe('JournalEntryScreen — a stale wallet read is corrected by the pass', () => {
+  const fundingFailures: Array<[string, RegExp, RegExp | null]> = [
+    ['insufficient_offerings', /BotMason balance has run out/u, null],
+    ['llm_key_required', /deployment needs an API key/u, /balance has run out|monthly reset/u],
+  ];
+
+  it.each(fundingFailures)(
+    'opens a truthful refill invitation when the server returns 402 %s',
+    async (detail, expectedCopy, excludedCopy) => {
+      mockGenerate.mockRejectedValueOnce(apiError(402, detail));
+      const { findByTestId, queryByTestId } = await openEntryAndAsk();
+      fireEvent.press(await findByTestId('resonance-explainer-continue'));
+
+      const refill = await findByTestId('journal-resonance-refill');
+      expect(refill).toHaveTextContent(expectedCopy);
+      if (excludedCopy !== null) expect(refill).not.toHaveTextContent(excludedCopy);
+      expect(queryByTestId('resonance-explainer')).toBeNull();
+      expect(mockGenerate).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does not make the 402 recovery wait for a second usage read', async () => {
+    const heldRefresh = deferred<UsageSnapshot>();
+    mockUsage.mockReset();
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot({ monthly_messages_remaining: 4 }))
+      .mockReturnValueOnce(heldRefresh.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const { findByTestId } = await openEntryAndAsk();
+    fireEvent.press(await findByTestId('resonance-explainer-continue'));
+
+    expect(await findByTestId('journal-resonance-refill')).toBeTruthy();
+  });
+
+  it('uses coherent fallback copy when the reset date cannot be read', async () => {
+    mockUsage.mockRejectedValue(new Error('usage unavailable'));
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const { findByTestId } = await openEntryAndAsk();
+    fireEvent.press(await findByTestId('resonance-explainer-continue'));
+
+    const refill = await findByTestId('journal-resonance-refill');
+    expect(refill).toHaveTextContent(/check your BotMason balance again later/iu);
+    expect(refill).not.toHaveTextContent(/reset is your next monthly reset/u);
+  });
+
+  it('does not make the 402 recovery wait for completion detection', async () => {
+    const heldDetection = deferred<{ checked: boolean; items: unknown[] }>();
+    mockDetect.mockReturnValueOnce(heldDetection.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const { findByTestId, queryByTestId } = await openEntryAndAsk();
+    fireEvent.press(await findByTestId('resonance-explainer-continue'));
+
+    expect(await findByTestId('journal-resonance-refill')).toBeTruthy();
+    await act(async () => heldDetection.resolve({ checked: true, items: [] }));
+    expect(queryByTestId('journal-resonance-error')).toBeNull();
+  });
+
+  it('keeps Not now final when the post-402 usage refresh resolves later', async () => {
+    const heldRefresh = deferred<UsageSnapshot>();
+    mockUsage.mockReset();
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot({ monthly_messages_remaining: 4 }))
+      .mockReturnValueOnce(heldRefresh.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    fireEvent.press(await view.findByTestId('journal-resonance-refill-cancel'));
+
+    await act(async () => heldRefresh.resolve(usageSnapshot({ monthly_messages_remaining: 0 })));
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+  });
+
+  it('does not reopen stale no-key refill after Add key and a payer change', async () => {
+    const heldRefresh = deferred<UsageSnapshot>();
+    mockUsage.mockReset();
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot({ monthly_messages_remaining: 4 }))
+      .mockReturnValueOnce(heldRefresh.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    fireEvent.press(await view.findByTestId('journal-resonance-refill-add-key'));
+    mockApiKeyState.apiKey = 'sk-key-added-after-402'; // pragma: allowlist secret
+    await act(async () => view.rerender(screenElement()));
+
+    await act(async () => heldRefresh.resolve(usageSnapshot({ monthly_messages_remaining: 0 })));
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+  });
+
+  it('does not let a held resonance 402 portal refill over API-key settings', async () => {
+    const heldPass = deferred<ResonanceResponse>();
+    mockGenerate.mockReturnValueOnce(heldPass.promise);
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
+
+    fireEvent.press(view.getByTestId('journal-api-key-settings'));
+    mockApiKeyState.apiKey = 'sk-key-added-during-pass'; // pragma: allowlist secret
+    await act(async () => view.rerender(screenElement()));
+    await act(async () => heldPass.reject(apiError(402, 'insufficient_offerings')));
+
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+  });
+
+  it('cancels a held pass on blur before another journal route takes the foreground', async () => {
+    const heldPass = deferred<ResonanceResponse>();
+    mockGenerate.mockReturnValueOnce(heldPass.promise);
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
+
+    fireEvent.press(view.getByTestId('journal-edit-button'));
+    fireEvent.press(view.getByTestId('edit-confirm-edit'));
+    fireEvent.press(await view.findByTestId('journal-photograph-page'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalPhotograph', {
+      appendTo: expect.any(String),
+    });
+    act(() => mockBlurListener());
+    await act(async () => heldPass.reject(apiError(402, 'insufficient_offerings')));
+
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+  });
+
+  it('does not let old completion detection overwrite a newer successful BYOK pass', async () => {
+    const heldDetection = deferred<{ checked: boolean; items: unknown[] }>();
+    mockDetect.mockReturnValueOnce(heldDetection.promise);
+    mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    fireEvent.press(await view.findByTestId('journal-resonance-refill-add-key'));
+    mockApiKeyState.apiKey = 'sk-retry-key'; // pragma: allowlist secret
+    await act(async () => view.rerender(screenElement()));
+
+    fireEvent.press(view.getByTestId('get-resonance-button'));
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(2));
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
+
+    await act(async () => heldDetection.resolve({ checked: true, items: [] }));
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
   });
 });
 

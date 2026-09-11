@@ -43,6 +43,17 @@ describe('GetResonanceButton', () => {
     expect(getByTestId('get-resonance-button').props.accessibilityState.busy).toBe(true);
   });
 
+  it('names payer preflight without claiming the model is listening', () => {
+    const { getByTestId, getByText, queryByText } = render(
+      <GetResonanceButton visible checking onPress={jest.fn()} />,
+    );
+    const button = getByTestId('get-resonance-button');
+    expect(getByText('Checking availability…')).toBeTruthy();
+    expect(queryByText('Listening…')).toBeNull();
+    expect(button.props.accessibilityLabel).toBe('Checking resonance availability');
+    expect(button.props.accessibilityState.busy).toBe(true);
+  });
+
   it('does not fire onPress when disabled', () => {
     const onPress = jest.fn();
     const { getByTestId } = render(<GetResonanceButton visible disabled onPress={onPress} />);

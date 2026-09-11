@@ -313,6 +313,18 @@
     "coveredBy": "frontend/e2e/resonance-explainer.browser.e2e.test.ts"
   },
   {
+    "id": "journal.empty-wallet-offers-a-refill-path",
+    "description": "A writer can open API-key settings from the journal entry's exit row and return to the exact editor with its title and body intact. When the account has neither a monthly message nor an offering and no device key, Get Resonance opens a refill invitation naming the reset date instead of a disabled spend disclosure; its Add your API key arm reaches the same settings screen and returns without losing the draft. A second browser account makes the usage read stale, takes and dismisses the ordinary spend disclosure, and receives a real-shaped 402 from the pass: the refill invitation still replaces the old dialog, proving the dismissal flag cannot suppress the recovery path. A third holds the initial wallet response while the writer uses the live Settings form to save a lane key, then proves the mounted entry publishes only the new BYOK payer when that obsolete zero-wallet response arrives. A fourth holds an accepted resonance POST, opens and saves API-key settings, then releases a key-required 402 and proves the obsolete request cannot portal a funding invitation over Settings or the preserved entry. The browser intercepts only the deterministic wallet arrangements and funding failures; navigation, editor state, key storage/context, modal decisions, API client parsing, and request count all run through production code.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance", "botmasonUsage"],
+      "routes": ["POST /journal/", "POST /journal/{entry_id}/resonance", "GET /user/usage"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-resonance-refill.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.short-entry-still-offers-habit-checkoff",
     "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
     "crosses": {
