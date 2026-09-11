@@ -49,8 +49,8 @@ All 4 issues are fully independent — no internal dependencies.
 - Input validation: max_length on core request schemas (journal, botmason, practice, prompt)
 - CORS: explicit origins, no wildcards, HTTPS enforced in production
 - Security headers (backend): X-Content-Type-Options, X-Frame-Options, HSTS
-- JWT: HS256 with explicit algorithm, 1-hour TTL, unified error messages
-- Token refresh: proactive refresh 5 min before expiry, retry-after-401
+- JWT: HS256 with explicit algorithm, 30-day sliding TTL (rotated and revoked on refresh, invalidated by password change), unified error messages
+- Token refresh: proactive refresh at half-life (floor: 5 min before expiry), retry-after-401
 - Token expiration: expired tokens discarded on app startup
 - Secret validation: SECRET_KEY and LLM_API_KEY fail fast if unset
 - Path traversal prevention: BotMason prompt restricted to allowed directory
