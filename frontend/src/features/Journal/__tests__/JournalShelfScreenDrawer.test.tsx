@@ -9,11 +9,13 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import type { VoiceReadinessT } from '@/api/schemas';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
+const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -24,6 +26,10 @@ jest.mock('@/api', () => ({
   prompts: {
     current: (...a: unknown[]) =>
       (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  corpus: {
+    voiceReadiness: (...a: unknown[]) =>
+      (mockVoiceReadiness as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -127,6 +133,13 @@ beforeEach(() => {
   headerLeftStore.listeners.clear();
   mockList.mockResolvedValue(page([entry(1)]));
   mockPromptCurrent.mockResolvedValue(prompt());
+  mockVoiceReadiness.mockResolvedValue({
+    ready: false,
+    state: 'not_consented',
+    message: 'Choose whether your journal can shape your reflections.',
+    grounding_source: 'recent_entries',
+    classified_fragment_count: 0,
+  });
 });
 
 describe('Journal header drawer from JournalShelfScreen', () => {
@@ -227,5 +240,102 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('JournalPhotograph');
+  });
+
+  it('keeps Your corpus in the drawer and routes an undecided account to consent', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
+    const callsBeforeDrawerPress = mockVoiceReadiness.mock.calls.length;
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent'));
+    expect(mockVoiceReadiness).toHaveBeenCalledTimes(callsBeforeDrawerPress + 1);
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it('coalesces corpus presses and cancels a held route when the drawer closes', async () => {
+    let releaseReadiness: (_value: VoiceReadinessT) => void = () => undefined;
+    const heldReadiness = new Promise<VoiceReadinessT>((resolve) => {
+      releaseReadiness = resolve;
+    });
+    const { getByTestId, getByLabelText } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
+    mockVoiceReadiness.mockClear();
+    mockVoiceReadiness.mockReturnValue(heldReadiness);
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+    expect(mockVoiceReadiness).toHaveBeenCalledTimes(1);
+    fireEvent.press(getByTestId('screen-drawer-scrim'));
+
+    await act(async () => {
+      releaseReadiness({
+        ready: false,
+        state: 'not_consented',
+        message: 'Choose whether your journal can shape your reflections.',
+        grounding_source: 'recent_entries',
+        classified_fragment_count: 0,
+      });
+      await heldReadiness;
+    });
+    expect(mockNavigate).not.toHaveBeenCalledWith('CorpusConsent');
+    expect(mockNavigate).not.toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  it('keeps a failed corpus door actionable and explains that another press retries', async () => {
+    const { getByTestId, getByLabelText, getByRole, queryByTestId } = render(
+      <ShelfScreenWithHeader />,
+    );
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
+    mockVoiceReadiness.mockRejectedValueOnce(new Error('offline'));
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() =>
+      expect(getByRole('alert').props.children).toBe(
+        "Couldn't open your corpus. Check your connection and try again.",
+      ),
+    );
+    expect(queryByTestId('screen-drawer')).toBeTruthy();
+    expect(getByTestId('journal-drawer-corpus').props.accessibilityLabel).toContain('try again');
+
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent'));
+  });
+
+  it('cancels a held corpus route when its screen host unmounts', async () => {
+    let releaseReadiness: (_value: VoiceReadinessT) => void = () => undefined;
+    const heldReadiness = new Promise<VoiceReadinessT>((resolve) => {
+      releaseReadiness = resolve;
+    });
+    const result = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(result.getByTestId('journal-shelf-card-1')).toBeTruthy());
+    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
+    mockVoiceReadiness.mockClear();
+    mockVoiceReadiness.mockReturnValue(heldReadiness);
+
+    fireEvent.press(result.getByLabelText('Open Journal menu'));
+    fireEvent.press(result.getByTestId('journal-drawer-corpus'));
+    result.unmount();
+
+    await act(async () => {
+      releaseReadiness({
+        ready: false,
+        state: 'not_consented',
+        message: 'Choose whether your journal can shape your reflections.',
+        grounding_source: 'recent_entries',
+        classified_fragment_count: 0,
+      });
+      await heldReadiness;
+    });
+    expect(mockNavigate).not.toHaveBeenCalledWith('CorpusConsent');
+    expect(mockNavigate).not.toHaveBeenCalledWith('SeedCorpus');
   });
 });

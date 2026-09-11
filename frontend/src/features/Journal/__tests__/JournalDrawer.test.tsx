@@ -7,7 +7,7 @@
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { SquarePen } from 'lucide-react-native';
+import { Camera, Library, SquarePen } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
@@ -65,11 +65,14 @@ interface DrawerHarness {
   onRowPress?: (_id: number) => void;
   onNewEntry?: () => void;
   onPhotograph?: () => void;
+  onOpenCorpus?: () => void;
+  corpusOpenState?: 'idle' | 'pending' | 'error';
 }
 
 function renderDrawer(props: Partial<DrawerHarness> = {}) {
   const onRowPress = props.onRowPress ?? jest.fn();
   const onNewEntry = props.onNewEntry ?? jest.fn();
+  const onOpenCorpus = props.onOpenCorpus ?? jest.fn();
   const onLoadMore = jest.fn();
   const onRetry = jest.fn();
   const onConfirmBodySearch = jest.fn();
@@ -84,12 +87,22 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onRowPress={onRowPress}
       onNewEntry={onNewEntry}
       onPhotograph={props.onPhotograph}
+      onOpenCorpus={onOpenCorpus}
+      corpusOpenState={props.corpusOpenState ?? 'idle'}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
       onConfirmBodySearch={onConfirmBodySearch}
     />,
   );
-  return { ...result, onRowPress, onNewEntry, onLoadMore, onRetry, onConfirmBodySearch };
+  return {
+    ...result,
+    onRowPress,
+    onNewEntry,
+    onOpenCorpus,
+    onLoadMore,
+    onRetry,
+    onConfirmBodySearch,
+  };
 }
 
 describe('JournalDrawer (presentational)', () => {
@@ -240,6 +253,24 @@ describe('JournalDrawer (presentational)', () => {
     expect(getByTestId('journal-photograph-entry')).toBeTruthy();
   });
 
+  it('gives Photograph and Your corpus muted leading icons', () => {
+    const { getByTestId } = renderDrawer({ items: [], onPhotograph: jest.fn() });
+    const photographIcon = getByTestId('journal-photograph-entry').findByType(Camera);
+    const corpusIcon = getByTestId('journal-drawer-corpus').findByType(Library);
+
+    expect(photographIcon.props.color).toBe(ink.muted);
+    expect(corpusIcon.props.color).toBe(ink.muted);
+  });
+
+  it('always renders Your corpus and fires its action', () => {
+    const onOpenCorpus = jest.fn();
+    const { getByRole, getByTestId } = renderDrawer({ items: [], onOpenCorpus });
+
+    expect(getByRole('button', { name: 'Your corpus' })).toBeTruthy();
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+    expect(onOpenCorpus).toHaveBeenCalledTimes(1);
+  });
+
   it('fires onPhotograph when the Photograph row is pressed', () => {
     const onPhotograph = jest.fn();
     const { getByTestId } = renderDrawer({ items: [], onPhotograph });
@@ -269,6 +300,8 @@ function Harness(): React.JSX.Element {
           hasMore={hasMore}
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
+          onOpenCorpus={() => undefined}
+          corpusOpenState="idle"
           onLoadMore={loadMore}
           onRetry={retry}
           onConfirmBodySearch={() => undefined}

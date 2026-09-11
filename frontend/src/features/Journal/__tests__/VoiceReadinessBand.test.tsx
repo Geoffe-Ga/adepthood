@@ -12,8 +12,10 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { VoiceReadinessT } from '@/api/schemas';
+import { ink, touchTarget } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockReadiness = jest.fn() as jest.MockedFunction<() => Promise<VoiceReadinessT>>;
@@ -232,6 +234,17 @@ describe('VoiceReadinessBand — where it goes', () => {
 });
 
 describe('VoiceReadinessBand — declining it', () => {
+  it('keeps the one-tap decline large and legible', async () => {
+    const { findByTestId, getByText } = render(<VoiceReadinessBand />);
+    const dismiss = await findByTestId(DISMISS);
+    const controlStyle = StyleSheet.flatten(dismiss.props.style);
+    const textStyle = StyleSheet.flatten(getByText('Not now').props.style);
+
+    expect(controlStyle.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(controlStyle.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(textStyle.color).toBe(ink.soft);
+  });
+
   it('retires on one tap and does not come back on a later visit', async () => {
     let stored = false;
     mockLoadDismissed.mockImplementation(() => Promise.resolve(stored));

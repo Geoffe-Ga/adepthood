@@ -24,6 +24,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { corpusDestinationForReadiness } from './corpusDestination';
 import ReflectionDismiss from './ReflectionDismiss';
 
 import { corpus } from '@/api';
@@ -123,7 +124,7 @@ function useVoiceReadiness(navigation: BandNavigation) {
     // that has not made it: granting also sorts the writing already there,
     // where the import surface would offer a person a second thing to do
     // before the first one is answered.
-    navigation.navigate(band.state === 'not_consented' ? 'CorpusConsent' : 'SeedCorpus');
+    navigation.navigate(corpusDestinationForReadiness(band));
   }, [band, navigation]);
 
   const onDismiss = useCallback(() => {

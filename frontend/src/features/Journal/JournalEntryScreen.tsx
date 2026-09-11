@@ -27,6 +27,7 @@ import AspectChordControl, { EMPTY_CHORD, type AspectChordValue } from './Aspect
 import CareSupportNote from './CareSupportNote';
 import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
+import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import FromYourCreekPanel from './FromYourCreekPanel';
@@ -2960,6 +2961,7 @@ interface EntryScreenDrawer {
   drawer: ScreenDrawerState;
   onSelectEntry: (_id: number) => void;
   onNewEntry: () => void;
+  onOpenCorpus: (_destination: CorpusDestination) => void;
 }
 
 /**
@@ -2980,7 +2982,11 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
     navigation.push('JournalEntry');
     drawer.close();
   }, [navigation, drawer]);
-  return { drawer, onSelectEntry, onNewEntry };
+  const onOpenCorpus = useCallback(
+    (destination: CorpusDestination) => navigation.navigate(destination),
+    [navigation],
+  );
+  return { drawer, onSelectEntry, onNewEntry, onOpenCorpus };
 }
 
 /** A modal owned by this entry must never outlive the route's foreground turn. */
@@ -3066,6 +3072,7 @@ function EntryOverlays({
         currentEntryId={currentEntryId}
         onSelectEntry={entryDrawer.onSelectEntry}
         onNewEntry={entryDrawer.onNewEntry}
+        onOpenCorpus={entryDrawer.onOpenCorpus}
       />
     </>
   );
