@@ -98,6 +98,35 @@ describe('GetResonanceButton', () => {
     expect(wrapperStyle(view.root.props.style).position).not.toBe('absolute');
   });
 
+  it('centres the margin variant in its column without floating over the page', () => {
+    const view = render(<GetResonanceButton visible layout="margin" onPress={jest.fn()} />);
+    const style = wrapperStyle(view.root.props.style);
+    expect(style.position).not.toBe('absolute');
+    expect(style.alignItems).toBe('center');
+  });
+
+  it('uses compact visible copy while checking inside the fixed-width margin', () => {
+    const view = render(
+      <GetResonanceButton visible checking layout="margin" onPress={jest.fn()} />,
+    );
+    expect(view.getByText('Checking…')).toBeTruthy();
+    expect(view.queryByText('Checking availability…')).toBeNull();
+    expect(view.getByTestId('get-resonance-button').props.accessibilityLabel).toBe(
+      'Checking resonance availability',
+    );
+  });
+
+  it('keeps the listening state when checking and a model pass overlap', () => {
+    const view = render(
+      <GetResonanceButton visible loading checking layout="margin" onPress={jest.fn()} />,
+    );
+    expect(view.getByText('Listening…')).toBeTruthy();
+    expect(view.queryByText('Checking…')).toBeNull();
+    expect(view.getByTestId('get-resonance-button').props.accessibilityLabel).toBe(
+      'Listening to your writing',
+    );
+  });
+
   it('keeps the inline variant inert and busy while a pass runs', () => {
     const onPress = jest.fn();
     const { getByTestId } = render(

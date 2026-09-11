@@ -25,10 +25,9 @@ import {
 const PREVIEW_STRIPE_WIDTH = 3;
 
 /**
- * Bottom inset reserving room for the floating "Get Resonance" button so page
- * content (the save hint, Finish link, and the stacked margin column on narrow
- * screens) never renders underneath it. Mirrors the button's own offset
- * (``bottom: SPACING.xl``) plus its height plus a small breathing gap.
+ * Lower band reserved for the floating "Get Resonance" button on narrow screens
+ * and used as the writing timer's baseline at every width. It mirrors the
+ * button's own offset (``bottom: SPACING.xl``), height, and breathing gap.
  *
  * Applies to the writing surface ONLY, via ``pageWithFloatingAction``: the
  * reading view carries its resonance action in the page flow, so reserving the
@@ -150,6 +149,7 @@ const styles = StyleSheet.create({
   marginColumn: {
     width: journalLayout.marginColumnWidth,
     paddingLeft: journalLayout.marginNoteGap,
+    paddingRight: journalLayout.marginNoteGap,
     paddingVertical: spacing(3),
     // Faint page-margin rule between the writing column and the marginalia —
     // intentionally hairline-light so it reads as a margin, not a divider.
@@ -159,6 +159,7 @@ const styles = StyleSheet.create({
   marginColumnNarrow: {
     width: '100%',
     paddingLeft: 0,
+    paddingRight: 0,
     // When the marginalia stacks under the writing area, rule the top instead.
     borderLeftWidth: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -193,6 +194,34 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: spacing(2),
+  },
+  /** One unbroken action rail below the save state, at phone and desktop widths. */
+  writingControlsRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingTop: spacing(2),
+  },
+  /** Finish keeps its label while yielding first if the secondary controls need room. */
+  writingPrimaryControl: {
+    flexShrink: 1,
+  },
+  /** Icon and optional label share one touch target; compact mode simply omits the label. */
+  writingSecondaryControl: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    flexDirection: 'row',
+    flexShrink: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+  },
+  writingControlLabel: {
+    ...editorialType.action,
+    color: accent.primary,
+    flexShrink: 1,
   },
   saveStatusRow: {
     flex: 1,
@@ -408,6 +437,17 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.sm,
+  },
+  /** Keep the wide privacy caption and its action together at the foot of marginalia. */
+  marginResonanceControls: {
+    marginTop: 'auto',
+    alignItems: 'center',
+    paddingTop: SPACING.xl,
+  },
+  /** A dormant margin affordance contributes no phantom gap to the note stream. */
+  marginResonanceControlsHidden: {
+    height: 0,
+    overflow: 'hidden',
   },
   /** Optional chord (Aspect) tagging block above the growing body. */
   aspectChordControl: {

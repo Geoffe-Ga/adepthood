@@ -1,11 +1,11 @@
 /**
  * ``GetResonanceButton`` — the affordance that asks the page to read itself back.
  *
- * Two presentations. Floating (the default) is the writing surface's: it fades in
- * when the user pauses writing and tucks away while they type. Inline sits in the
- * page flow as a steady control, for the reading view where nothing is being
- * typed and so nothing should be getting out of the way. Presentational only:
- * the hosting screen wires the resonance request.
+ * Three presentations. Floating (the default) is the narrow writing surface's:
+ * it fades in when the user pauses writing and tucks away while they type.
+ * Margin keeps that same writing action in the wide page's marginalia column.
+ * Inline sits in the reading page's action row. Presentational only: the hosting
+ * screen wires the resonance request.
  */
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
@@ -33,8 +33,8 @@ export function shouldShowResonance({
 const FADE_DURATION_MS = 220;
 const SLIDE_DISTANCE = 8;
 
-/** Where the button sits: lifted over the page, or in the flow of it. */
-export type ResonanceButtonLayout = 'floating' | 'inline';
+/** Where the button sits: lifted over the page, in its margin, or in an action row. */
+export type ResonanceButtonLayout = 'floating' | 'margin' | 'inline';
 
 export interface GetResonanceButtonProps {
   visible: boolean;
@@ -93,6 +93,18 @@ function busyIndicator(busy: boolean): React.JSX.Element | null {
   return busy ? <ResonanceSpinner /> : null;
 }
 
+/** Resolve one of the three explicit hosts without making the render branch on layout. */
+function layoutWrapperStyle(layout: ResonanceButtonLayout) {
+  if (layout === 'floating') return styles.floatingWrapper;
+  if (layout === 'margin') return styles.marginWrapper;
+  return styles.inlineWrapper;
+}
+
+/** Keep the longest transient label inside the fixed marginalia measure. */
+function visibleLabel(layout: ResonanceButtonLayout, label: string): string {
+  return layout === 'margin' && label === 'Checking availability…' ? 'Checking…' : label;
+}
+
 function GetResonanceButton({
   visible,
   loading = false,
@@ -113,15 +125,15 @@ function GetResonanceButton({
 
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [SLIDE_DISTANCE, 0] });
   const view = getButtonState(visible, loading, checking, disabled);
-  // Only the inline variant has to give its space back. Floating is absolutely
-  // positioned, so a hidden one already costs the flow nothing; inline sits in
-  // the flow and would otherwise leave a transparent gap in the action row.
-  const collapsed = layout === 'inline' && !visible;
+  const label = visibleLabel(layout, view.label);
+  // Both in-flow variants have to give their space back. Floating is absolutely
+  // positioned, so a hidden one already costs the flow nothing.
+  const collapsed = layout !== 'floating' && !visible;
 
   return (
     <Animated.View
       style={[
-        layout === 'inline' ? styles.inlineWrapper : styles.floatingWrapper,
+        layoutWrapperStyle(layout),
         collapsed ? styles.inlineCollapsed : null,
         { opacity: anim, transform: [{ translateY }] },
       ]}
@@ -142,7 +154,7 @@ function GetResonanceButton({
         testID="get-resonance-button"
       >
         {busyIndicator(view.busy)}
-        <Text style={styles.label}>{view.label}</Text>
+        <Text style={styles.label}>{label}</Text>
       </TouchableOpacity>
     </Animated.View>
   );
@@ -161,8 +173,12 @@ const styles = StyleSheet.create({
   inlineWrapper: {
     alignItems: 'flex-start',
   },
+  /** Centred within the margin group; that parent owns vertical settlement. */
+  marginWrapper: {
+    alignItems: 'center',
+  },
   /**
-   * A hidden inline button surrenders its box entirely rather than fading to a
+   * A hidden in-flow button surrenders its box entirely rather than fading to a
    * transparent one — a zero-height clip, not a design measure. The fade still
    * runs; this only stops the invisible frame from spacing the row apart.
    */

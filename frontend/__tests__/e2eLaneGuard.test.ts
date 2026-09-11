@@ -53,6 +53,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'course-reflect-return.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
+  'journal-entry-controls.browser.e2e.test.ts',
   'journal-failed-checkoff.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
