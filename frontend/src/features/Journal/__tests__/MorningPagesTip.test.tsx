@@ -1,13 +1,20 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+
+import { morningPageTitle } from '../morningPagesCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockLoad = jest.fn() as jest.MockedFunction<() => Promise<boolean>>;
 const mockSave = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockOnBegin = jest.fn();
+let mockUserTimezone = 'America/Los_Angeles';
+
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ userTimezone: mockUserTimezone }),
+}));
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
   loadMorningPagesTipDismissed: (...a: unknown[]) =>
@@ -44,6 +51,11 @@ beforeEach(() => {
   mockOnBegin.mockReset();
   mockLoad.mockResolvedValue(false);
   mockSave.mockResolvedValue(undefined);
+  mockUserTimezone = 'America/Los_Angeles';
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 /**
@@ -99,7 +111,8 @@ describe('MorningPagesTip', () => {
     await waitFor(() => expect(queryByTestId('journal-morning-pages-tip')).toBeNull());
   });
 
-  it('the CTA calls onBegin and leaves the tip in place — beginning is not declining', async () => {
+  it('the CTA supplies today’s sortable Daily Journal title in the writer’s time zone', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-11T01:00:00.000Z'));
     const { findByTestId, getByTestId, queryByTestId } = render(
       <MorningPagesTip onBegin={mockOnBegin} />,
     );
@@ -110,6 +123,7 @@ describe('MorningPagesTip', () => {
     });
 
     expect(mockOnBegin).toHaveBeenCalledTimes(1);
+    expect(mockOnBegin).toHaveBeenCalledWith(morningPageTitle('2026-09-10'));
     // The inversion of the original assertion, kept rather than deleted so the
     // reversal of #1889's "starting an entry also counts as dismissal" stays
     // legible here. Taking up the invitation is the opposite of declining it.

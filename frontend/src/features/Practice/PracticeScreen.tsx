@@ -84,8 +84,9 @@ import {
   surface,
   touchTarget,
 } from '@/design/tokens';
-import type { WritingQuickLaunch } from '@/features/Journal/quickLaunchWriting';
+import { morningPageTitle } from '@/features/Journal/morningPagesCopy';
 import { planQuickLaunch } from '@/features/Journal/quickLaunchWriting';
+import type { WritingQuickLaunch } from '@/features/Journal/quickLaunchWriting';
 import { stageService } from '@/features/Map/services/stageService';
 import ActiveRitualSession, {
   type ActiveRitualSessionHandle,
@@ -114,6 +115,7 @@ import {
   selectStagesLoading,
   useStageStore,
 } from '@/store/useStageStore';
+import { todayInUserTZ } from '@/utils/dateUtils';
 
 type ActivePracticeHook = ReturnType<typeof useActivePractice>;
 type WeeklyProgressHook = ReturnType<typeof useWeeklyProgress>;
@@ -185,7 +187,7 @@ interface QuickLaunchState {
  * be refused — so it is read from the programme rather than from the chip, which
  * the writer can move without moving their programme.
  */
-function useQuickLaunch(active: ActivePracticeHook): QuickLaunchState {
+function useQuickLaunch(active: ActivePracticeHook, userTimezone: string): QuickLaunchState {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const storeCurrentStage = useStageStore(selectCurrentStage);
   const openedStage = useDerivedCurrentStage(storeCurrentStage);
@@ -198,8 +200,9 @@ function useQuickLaunch(active: ActivePracticeHook): QuickLaunchState {
     if (plan === null) return;
     navigation.navigate('JournalEntry', {
       writingSession: { minutes: plan.minutes, userPracticeId: plan.userPracticeId },
+      prefillTitle: morningPageTitle(todayInUserTZ(userTimezone)),
     });
-  }, [plan, navigation]);
+  }, [plan, navigation, userTimezone]);
   return { plan, begin };
 }
 
@@ -259,7 +262,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   const insets = useSafeAreaInsets();
   const tabs = usePracticeTabs(active.refresh);
   const logSheet = useLogSheet();
-  const quickLaunch = useQuickLaunch(active);
+  const quickLaunch = useQuickLaunch(active, userTimezone);
   // Mirror of the engine status, lifted to screen level so the tab switcher
   // can hide while a session holds the screen (running or paused).
   const [status, setStatus] = useState<RitualStatus>('idle');

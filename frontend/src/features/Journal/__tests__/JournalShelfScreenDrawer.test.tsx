@@ -27,6 +27,10 @@ jest.mock('@/api', () => ({
   },
 }));
 
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ userTimezone: 'UTC' }),
+}));
+
 const headerLeftStore: {
   current: (() => ReactElement) | undefined;
   listeners: Set<() => void>;
