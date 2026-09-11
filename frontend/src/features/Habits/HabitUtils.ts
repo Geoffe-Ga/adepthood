@@ -26,17 +26,26 @@ const STAGE_COUNT = STAGE_ORDER.length;
 
 /**
  * Map a habit's list slot to its Spiral-Dynamics stage. Wraps with a Euclidean
- * modulo so positions past the tenth cycle back to Beige and negative
- * carryover slots wrap backwards from the final stage (slot -1 → Clear Light).
+ * modulo so positions past the tenth cycle back to Beige and negative signed
+ * positions can still be described with a mirrored stage label.
  * The Euclidean result is always a valid `[0, STAGE_COUNT)` index, so the `??`
  * is a defensive no-op kept only to narrow the indexed type. The single source
- * of truth for the slot-based stage coloring shared by the Habits screen, the
- * reorder modals, and the onboarding flow.
+ * of truth for program-slot stage identity shared by the Habits screen, the
+ * reorder modal, and onboarding. Negative-slot presentation is resolved below:
+ * carryover is deliberately unranked even though its position remains signed.
  */
 export const stageAtIndex = (index: number): string => {
   const wrapped = ((index % STAGE_COUNT) + STAGE_COUNT) % STAGE_COUNT;
   return STAGE_ORDER[wrapped] ?? STAGE_ORDER[STAGE_COUNT - 1]!;
 };
+
+/**
+ * Resolve the presentation color for a signed habit slot. Program slots retain
+ * the stage gradient; every negative carryover slot shares the caller's active
+ * Candle & Ink accent so the pre-program lap does not imply a backwards rank.
+ */
+export const habitColorAtSlot = (slot: number, carryoverColor: string): string =>
+  slot < 0 ? carryoverColor : (STAGE_COLORS[stageAtIndex(slot)] ?? colors.neutral);
 
 /**
  * 1-based inclusive stage bounds for a habits page/lap: page 0 → stages 1..10,

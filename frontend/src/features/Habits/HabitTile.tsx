@@ -61,6 +61,7 @@ const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
 interface HabitHeaderProps {
   habit: Habit;
   stageColor: string;
+  achievedTextColor: string;
   scale: number;
   streakText: string;
   hasCompletedGoal: boolean;
@@ -68,11 +69,16 @@ interface HabitHeaderProps {
   onIconPress?: () => void;
 }
 
-const getStreakStyle = (hasCompleted: boolean, stageColor: string, scale: number) =>
+const getStreakStyle = (
+  hasCompleted: boolean,
+  stageColor: string,
+  achievedTextColor: string,
+  scale: number,
+) =>
   hasCompleted
     ? {
         backgroundColor: stageColor,
-        color: '#fff',
+        color: achievedTextColor,
         paddingHorizontal: spacing(0.5, scale),
         borderRadius: spacing(0.5, scale),
       }
@@ -133,13 +139,14 @@ const HeaderRow = ({
 const HabitHeader = ({
   habit,
   stageColor,
+  achievedTextColor,
   scale,
   streakText,
   hasCompletedGoal,
   iconInline,
   onIconPress,
 }: HabitHeaderProps) => {
-  const streakStyle = getStreakStyle(hasCompletedGoal, stageColor, scale);
+  const streakStyle = getStreakStyle(hasCompletedGoal, stageColor, achievedTextColor, scale);
 
   if (iconInline) {
     return (
@@ -628,6 +635,7 @@ const LockedTile = ({ onUnlockHabit, ...rest }: LockedTileProps) => {
 interface UnlockedTileProps {
   habit: Habit;
   stageColor: string;
+  achievedTextColor: string;
   onOpenGoals?: () => void;
   onLongPress?: () => void;
   onIconPress?: () => void;
@@ -704,6 +712,7 @@ const TileProgressSection = ({
 const UnlockedTile = ({
   habit,
   stageColor,
+  achievedTextColor,
   onOpenGoals,
   onLongPress,
   onIconPress,
@@ -731,6 +740,7 @@ const UnlockedTile = ({
       <HabitHeader
         habit={habit}
         stageColor={stageColor}
+        achievedTextColor={achievedTextColor}
         scale={scale}
         streakText={streakText}
         hasCompletedGoal={hasCompletedGoal}
@@ -761,6 +771,7 @@ const HabitTileComponent = ({
   onLogUnit,
   tz = DEFAULT_TIMEZONE,
   stageColor,
+  achievedTextColor = '#fff',
   globalIndex = 0,
 }: HabitTileProps) => {
   const { scale, gridGutter, tileMinHeight } = useTileLayout();
@@ -790,6 +801,7 @@ const HabitTileComponent = ({
     <UnlockedTile
       habit={habit}
       stageColor={color}
+      achievedTextColor={achievedTextColor}
       onOpenGoals={onOpenGoals ? () => onOpenGoals(habit) : undefined}
       onLongPress={onLongPress ? () => onLongPress(habit) : undefined}
       onIconPress={onIconPress ? () => onIconPress(globalIndex) : undefined}

@@ -151,7 +151,7 @@
   },
   {
     "id": "habits.reorder-across-signed-laps",
-    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; the component suite separately pins the -10 to -1, 1\u201310, and later-lap markers plus program-date recalculation and carryover-date preservation.",
+    "description": "A user opens Reorder Habits and performs a real browser pointer drag across the visible carryover/program boundary. Crossing that line changes the persisted is_carryover classification; after saving, the browser walks both pages and verifies that the remaining program habit keeps the ranked Beige stage color while the moved carryover tile and its progress use the unranked Candle & Ink accent. The component suite separately pins light/dark accents, achieved-state brightening, the -10 to -1, 1\u201310, and later-lap markers, plus program-date recalculation and carryover-date preservation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
