@@ -192,6 +192,8 @@ export interface HabitTileProps {
   tz?: string;
   /** Border/accent color; falls back to ``STAGE_COLORS[habit.stage]`` when omitted. */
   stageColor?: string;
+  /** Foreground for the achieved streak chip; positive stage chips retain white. */
+  achievedTextColor?: string;
   /** Global (page-offset) index passed to ``onIconPress``; defaults to 0. */
   globalIndex?: number;
 }

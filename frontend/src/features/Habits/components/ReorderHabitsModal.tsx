@@ -5,7 +5,8 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 
 import { Button } from '../../../components/Button';
 import { parseISODate, toISODate } from '../../../components/DatePicker';
-import { colors, STAGE_COLORS, SPACING } from '../../../design/tokens';
+import { useTheme } from '../../../design/ThemeContext';
+import { SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
@@ -14,6 +15,7 @@ import {
   calculateHabitStartDate,
   carryoverSlot,
   formatStageRange,
+  habitColorAtSlot,
   isCarryoverHabit,
   stageAtIndex,
   stageRangeForPage,
@@ -77,8 +79,8 @@ const ReorderHabitItem = ({
   isActive,
   staticWebRow = false,
 }: ReorderItemProps) => {
-  const stage = stageAtIndex(slot);
-  const color = STAGE_COLORS[stage] ?? colors.neutral;
+  const { accent: activeAccent } = useTheme();
+  const color = habitColorAtSlot(slot, activeAccent.primary);
   const displayedPosition = slot < 0 ? slot : slot + 1;
   const content = (
     <View style={styles.reorderItemContent}>
@@ -88,7 +90,7 @@ const ReorderHabitItem = ({
         </Text>
         <Text style={styles.reorderPosition}>{displayedPosition}</Text>
         <Text style={styles.reorderItemText}>
-          {item.icon} {item.name} ({stage})
+          {item.icon} {item.name} ({stageAtIndex(slot)})
         </Text>
       </View>
       <Text style={styles.reorderItemDate}>{formatDate(new Date(item.start_date))}</Text>
@@ -100,10 +102,13 @@ const ReorderHabitItem = ({
     { borderLeftColor: color, borderLeftWidth: 4 },
   ];
 
-  // The browser wrapper owns pointer, native drag, and keyboard interaction.
-  // Rendering another button inside it would announce a misleading long-press
-  // action and create nested interactive controls for assistive technology.
-  if (staticWebRow) return <View style={itemStyle}>{content}</View>;
+  // The browser wrapper owns interaction; another button would be nested and misleading.
+  if (staticWebRow)
+    return (
+      <View testID={`reorder-habit-${item.id}`} style={itemStyle}>
+        {content}
+      </View>
+    );
 
   return (
     <TouchableOpacity
@@ -113,6 +118,7 @@ const ReorderHabitItem = ({
       accessibilityRole="button"
       accessibilityLabel={`Move ${item.name}, position ${displayedPosition}`}
       accessibilityHint="Long press and drag to a new position or range"
+      testID={`reorder-habit-${item.id}`}
       style={itemStyle}
     >
       {content}

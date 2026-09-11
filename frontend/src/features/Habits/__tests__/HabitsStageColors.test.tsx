@@ -116,12 +116,12 @@ jest.mock('../components/StatsModal', () => ({
   default: jest.fn(() => null),
 }));
 
-// Wrap the real stageAtIndex in a jest.fn so page-2 tests can assert which
+// Wrap the shared color resolver in a jest.fn so page-2 tests can assert which
 // index (page-relative vs global) HabitsScreen actually calls it with, while
 // every other test in this file still gets the real coloring behavior.
 jest.mock('../HabitUtils', () => {
   const actual: typeof HabitUtilsModule = jest.requireActual('../HabitUtils');
-  return { ...actual, stageAtIndex: jest.fn(actual.stageAtIndex) };
+  return { ...actual, habitColorAtSlot: jest.fn(actual.habitColorAtSlot) };
 });
 
 const { habits: habitsApi } = require('../../../api');
@@ -246,16 +246,16 @@ describe('HabitsScreen position-based stage colors', () => {
     expect(tileBorderAt(tree, 1)).toBe(STAGE_COLORS.Purple);
   });
 
-  it('calls stageAtIndex with global indices (10, 11), not page-relative ones, for page-2 tiles', async () => {
-    const { stageAtIndex: stageAtIndexMock } = require('../HabitUtils');
+  it('resolves colors from global slots (10, 11), not page-relative ones, for page-2 tiles', async () => {
+    const { habitColorAtSlot: habitColorAtSlotMock } = require('../HabitUtils');
     const testRenderer = await renderScreen(buildApiHabits(12));
     const tree = testRenderer.root;
     const nextButton = tree.findByProps({ testID: 'pagination-next' });
-    stageAtIndexMock.mockClear();
+    habitColorAtSlotMock.mockClear();
     await renderer.act(async () => {
       nextButton.props.onPress();
     });
-    const calledWithIndices = stageAtIndexMock.mock.calls.map((args: unknown[]) => args[0]);
+    const calledWithIndices = habitColorAtSlotMock.mock.calls.map((args: unknown[]) => args[0]);
     expect(calledWithIndices).toContain(10);
     expect(calledWithIndices).toContain(11);
   });

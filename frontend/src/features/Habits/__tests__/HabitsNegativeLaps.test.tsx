@@ -10,7 +10,8 @@ import { Text } from 'react-native';
 import renderer from 'react-test-renderer';
 
 import type * as ApiModule from '../../../api';
-import { STAGE_COLORS } from '../../../design/tokens';
+import { ThemeProvider, type ThemeMode } from '../../../design/ThemeContext';
+import { accent, accentDark, brightenColor } from '../../../design/tokens';
 
 const makeApiHabit = (id: number, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -135,14 +136,21 @@ const HabitsScreen = require('../HabitsScreen').default;
 
 const mounted: any[] = [];
 
-const renderScreen = async (apiHabits: Array<ReturnType<typeof makeApiHabit>>) => {
+const renderScreen = async (
+  apiHabits: Array<ReturnType<typeof makeApiHabit>>,
+  mode: ThemeMode = 'light',
+) => {
   habitsApi.listAll.mockResolvedValue(apiHabits);
   jest
     .spyOn(require('react-native'), 'useWindowDimensions')
     .mockReturnValue({ width: 400, height: 800, scale: 1, fontScale: 1 });
   let testRenderer: any;
   await renderer.act(async () => {
-    testRenderer = renderer.create(React.createElement(HabitsScreen));
+    testRenderer = renderer.create(
+      <ThemeProvider initialMode={mode}>
+        <HabitsScreen />
+      </ThemeProvider>,
+    );
   });
   await renderer.act(async () => {
     await Promise.resolve();
@@ -280,19 +288,78 @@ describe('Habits screen negative carryover laps', () => {
     expect(visibleTextMatches(tree, /-20 to -11/)).toBe(false);
   });
 
-  it('paints the negative lap with the re-anchored gradient: slot -1 Clear Light, slot -10 Beige', async () => {
-    // Every API habit is stage Beige; position-based coloring must override it.
+  it('paints every negative-lap tile with one unranked Candle & Ink accent', async () => {
+    // Every carryover slot shares one tone; it never walks the stage gradient backwards.
     const testRenderer = await renderScreen(buildCarryoverHabits(10));
     const tree = testRenderer.root;
 
     await pressPrev(tree);
     expect(uniqueTiles(tree)).toHaveLength(10);
 
-    expect(tileBorderAt(tree, 0)).toBe(STAGE_COLORS['Clear Light']);
-    expect(tileBorderAt(tree, 9)).toBe(STAGE_COLORS.Beige);
+    expect(tileBorderAt(tree, 0)).toBe(accent.primary);
+    expect(tileBorderAt(tree, 9)).toBe(accent.primary);
 
     const borders = uniqueTiles(tree).map((_: any, i: number) => tileBorderAt(tree, i));
-    expect(new Set(borders).size).toBeGreaterThan(1);
+    expect(new Set(borders)).toEqual(new Set([accent.primary]));
+  });
+
+  it('threads the carryover accent through the progress fill and achieved streak chip', async () => {
+    const now = new Date().toISOString();
+    const completed = makeApiHabit(101, {
+      sort_order: 0,
+      is_carryover: true,
+      revealed: true,
+      streak: 1,
+      goals: [
+        {
+          ...makeApiHabit(101).goals[0],
+          completions: [{ id: 9001, timestamp: now, completed_units: 1 }],
+        },
+      ],
+    });
+    const testRenderer = await renderScreen([completed]);
+    const tree = testRenderer.root;
+    await pressPrev(tree);
+
+    const tile = uniqueTiles(tree)[0];
+    const fill = tile.findAllByProps({ testID: 'progress-fill' })[0];
+    expect(fill.props.style.backgroundColor).toBe(brightenColor(accent.primary));
+    const achieved = tile
+      .findAllByType(Text)
+      .find((node: any) => String(node.props.children ?? '').includes('ACHIEVED TODAY'));
+    const streakStyle = Array.isArray(achieved.props.style)
+      ? Object.assign({}, ...achieved.props.style)
+      : achieved.props.style;
+    expect(streakStyle.backgroundColor).toBe(accent.primary);
+  });
+
+  it('uses the accessible dark-mode accent pair for an achieved negative-lap tile', async () => {
+    const now = new Date().toISOString();
+    const completed = makeApiHabit(201, {
+      sort_order: 0,
+      is_carryover: true,
+      revealed: true,
+      streak: 1,
+      goals: [
+        {
+          ...makeApiHabit(201).goals[0],
+          completions: [{ id: 9002, timestamp: now, completed_units: 1 }],
+        },
+      ],
+    });
+    const testRenderer = await renderScreen([completed], 'dark');
+    const tree = testRenderer.root;
+    await pressPrev(tree);
+
+    expect(tileBorderAt(tree, 0)).toBe(accentDark.primary);
+    const achieved = uniqueTiles(tree)[0]
+      .findAllByType(Text)
+      .find((node: any) => String(node.props.children ?? '').includes('ACHIEVED TODAY'));
+    const streakStyle = Array.isArray(achieved.props.style)
+      ? Object.assign({}, ...achieved.props.style)
+      : achieved.props.style;
+    expect(streakStyle.backgroundColor).toBe(accentDark.primary);
+    expect(streakStyle.color).toBe(accentDark.onPrimary);
   });
 
   it('adding from the negative invite lap creates a carryover habit and stays on the negative lap', async () => {

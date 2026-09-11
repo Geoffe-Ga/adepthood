@@ -2,7 +2,7 @@
 /* global describe, test, expect, jest */
 import { validate as uuidValidate } from 'uuid';
 
-import { brightenColor, colors, STAGE_COLORS } from '../../../design/tokens';
+import { accent, brightenColor, colors, STAGE_COLORS } from '../../../design/tokens';
 import type { Habit, Goal } from '../Habits.types';
 import {
   getProgressPercentage,
@@ -24,6 +24,7 @@ import {
   stageRangeForPage,
   carryoverSlot,
   formatStageRange,
+  habitColorAtSlot,
   countCarryover,
   buildPagedHabits,
   STAGE_ORDER,
@@ -1146,6 +1147,20 @@ describe('progress percentage, bar color, and clamp scenarios', () => {
     test('always returns a defined stage string', () => {
       expect(typeof stageAtIndex(0)).toBe('string');
       expect(typeof stageAtIndex(STAGE_ORDER.length * 2)).toBe('string');
+    });
+  });
+
+  describe('habitColorAtSlot', () => {
+    test('uses one unranked accent for every negative carryover slot', () => {
+      expect(habitColorAtSlot(-1, accent.primary)).toBe(accent.primary);
+      expect(habitColorAtSlot(-10, accent.primary)).toBe(accent.primary);
+      expect(habitColorAtSlot(-11, accent.primary)).toBe(accent.primary);
+    });
+
+    test('keeps the positive program gradient and wraps each ten-slot lap', () => {
+      expect(habitColorAtSlot(0, accent.primary)).toBe(STAGE_COLORS.Beige);
+      expect(habitColorAtSlot(9, accent.primary)).toBe(STAGE_COLORS['Clear Light']);
+      expect(habitColorAtSlot(10, accent.primary)).toBe(STAGE_COLORS.Beige);
     });
   });
 });

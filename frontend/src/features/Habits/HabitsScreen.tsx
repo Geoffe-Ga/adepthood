@@ -6,7 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { habits as habitsApi } from '../../api';
 import { useAuth } from '../../context/AuthContext';
-import { STAGE_COLORS, spacing } from '../../design/tokens';
+import { useTheme } from '../../design/ThemeContext';
+import { spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
@@ -31,8 +32,8 @@ import {
   calculateMissedDays,
   countCarryover,
   formatStageRange,
+  habitColorAtSlot,
   isHabitUnlocked,
-  stageAtIndex,
   stageRangeForPage,
 } from './HabitUtils';
 import { useHabits } from './hooks/useHabits';
@@ -445,6 +446,7 @@ const useHabitTileRenderer = (
   flatIndices: number[],
   colorIndices: number[],
 ) => {
+  const { accent: activeAccent } = useTheme();
   const { handleOpenGoals, handleLongPress, handleIconPress } = useTileHandlers(
     mode,
     modals.open,
@@ -452,26 +454,20 @@ const useHabitTileRenderer = (
     setSelectedHabit,
   );
   const { unlockHabit, logUnit } = actions;
-  const renderHabitTile = useCallback(
+  return useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
-      // Render only the server-reconciled ``revealed`` flag. The backend owns
-      // calendar/start-date eligibility and the one-shot manual-relock marker;
-      // repeating that math here would undo an explicit re-lock.
       const isLocked = !isHabitUnlocked(item);
       // globalIndex is the habit's true flat-list position — it drives icon
       // editing into that array. colorIndex is the signed display slot
-      // (negative on carryover laps): stageAtIndex's Euclidean mod-wrap restarts
-      // the Beige → Clear Light gradient on each lap and mirrors it backwards
-      // on negative laps, so every lap paints consistently.
-      const globalIndex = flatIndices[index] ?? index;
-      const colorIndex = colorIndices[index] ?? index;
-      const stageColor = STAGE_COLORS[stageAtIndex(colorIndex)]!;
+      // Program slots follow the stage gradient; carryover uses one unranked theme accent.
+      const slot = colorIndices[index] ?? index;
       return (
         <HabitTile
           habit={item}
           locked={isLocked}
-          stageColor={stageColor}
-          globalIndex={globalIndex}
+          stageColor={habitColorAtSlot(slot, activeAccent.primary)}
+          achievedTextColor={slot < 0 ? activeAccent.onPrimary : undefined}
+          globalIndex={flatIndices[index] ?? index}
           onOpenGoals={handleOpenGoals}
           onLongPress={handleLongPress}
           onIconPress={handleIconPress}
@@ -484,6 +480,7 @@ const useHabitTileRenderer = (
     [
       flatIndices,
       colorIndices,
+      activeAccent,
       tz,
       handleOpenGoals,
       handleLongPress,
@@ -492,7 +489,6 @@ const useHabitTileRenderer = (
       logUnit,
     ],
   );
-  return renderHabitTile;
 };
 
 const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | null => {

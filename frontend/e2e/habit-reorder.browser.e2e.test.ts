@@ -15,6 +15,8 @@ import {
  * short enough to sit well inside the per-assertion timeout.
  */
 const REORDER_PUT_DELAY_MS = 1500;
+const CANDLE_AND_INK_ACCENT = 'rgb(165, 87, 47)';
+const BEIGE_STAGE = 'rgb(216, 203, 184)';
 
 test('a real pointer drag reorders a habit across the program boundary and persists it', async ({
   page,
@@ -58,4 +60,19 @@ test('a real pointer drag reorders a habit across the program boundary and persi
   expect(saved.ok()).toBe(true);
   const rows = (await saved.json()) as Array<{ id: number; is_carryover: boolean }>;
   expect(rows.find((habit) => habit.id === firstId)?.is_carryover).toBe(true);
+
+  // Program habits keep their ranked spiral color after the cross-boundary
+  // reorder. The carryover habit is deliberately unranked: its tile and
+  // progress paint with one Candle & Ink accent rather than running the stage
+  // gradient backwards.
+  const programTile = page.getByTestId('habit-tile').filter({ hasText: 'Browser Habit Two' });
+  await expect(programTile).toHaveCSS('border-color', BEIGE_STAGE);
+
+  await page.getByTestId('pagination-prev').click();
+  const carryoverTile = page.getByTestId('habit-tile').filter({ hasText: 'Browser Habit One' });
+  await expect(carryoverTile).toHaveCSS('border-color', CANDLE_AND_INK_ACCENT);
+  await expect(carryoverTile.getByTestId('progress-fill')).toHaveCSS(
+    'background-color',
+    CANDLE_AND_INK_ACCENT,
+  );
 });

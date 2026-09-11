@@ -3,7 +3,9 @@
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
+import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import type { Habit } from '../../Habits.types';
 
@@ -1030,5 +1032,19 @@ describe('ReorderHabitsModal — the anchor commits when the order commits', () 
     expect(result.getByText(/B \(Purple\)/)).toBeTruthy();
     // The brought-along row takes a mirrored negative slot, as it does everywhere else.
     expect(result.getByText(/Morning pages \(Clear Light\)/)).toBeTruthy();
+  });
+
+  it('paints a negative-slot row with the carryover accent and keeps program colors', () => {
+    const mixed: Habit[] = [carryoverHabit, makeHabit(1, 'Beige', 'A')];
+    const result = render(
+      <ReorderHabitsModal visible habits={mixed} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(
+      StyleSheet.flatten(result.getByTestId('reorder-habit-10').props.style).borderLeftColor,
+    ).toBe(accent.primary);
+    expect(
+      StyleSheet.flatten(result.getByTestId('reorder-habit-1').props.style).borderLeftColor,
+    ).toBe(STAGE_COLORS.Beige);
   });
 });
