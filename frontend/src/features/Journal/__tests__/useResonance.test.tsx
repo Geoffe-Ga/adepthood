@@ -100,18 +100,19 @@ describe('useResonance', () => {
     expect(result.current.marginalia).toHaveLength(1);
   });
 
-  it('maps a 402 to a friendly error and leaves the page usable', async () => {
+  it('returns wallet exhaustion to its recovery gate without a competing margin error', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockRejectedValue(new ApiError(402, 'insufficient_offerings'));
     const { result } = renderHook(() =>
       useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
     );
 
+    let outcome: Awaited<ReturnType<typeof result.current.requestResonance>> | undefined;
     await act(async () => {
-      await result.current.requestResonance();
+      outcome = await result.current.requestResonance();
     });
-    expect(result.current.error).toBeTruthy();
-    expect(result.current.error).not.toContain('insufficient_offerings'); // friendly, not raw
+    expect(outcome).toBe('funding_required');
+    expect(result.current.error).toBeNull();
     expect(result.current.loading).toBe(false);
   });
 

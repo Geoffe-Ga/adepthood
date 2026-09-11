@@ -288,6 +288,12 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
     paddingHorizontal: journalSheet.deskPaddingH,
   },
+  entryIconButton: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   /** Read-mode quote affordances (Promote / Remove promotion): 44dp touch floor. */
   quoteActionButton: {
     minHeight: touchTarget.minimum,
