@@ -96,6 +96,7 @@ const EXPECTED_JOURNEYS = [
   'prompt-set-aside.e2e.test.ts',
   'resonance.e2e.test.ts',
   'seed-upload.e2e.test.ts',
+  'session-lifetime.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
   'vault-connection.e2e.test.ts',
