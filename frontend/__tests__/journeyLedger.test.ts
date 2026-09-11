@@ -54,7 +54,7 @@ const LEDGER_SCRIPT = 'check:journeys';
  * each gap in the ledger is closed, so coverage that quietly went backwards
  * fails here rather than passing as "still at least three".
  */
-const SHIPPED_JOURNEYS = 7;
+const SHIPPED_JOURNEYS = 8;
 
 const SPEC = 'frontend/e2e/habits.e2e.test.ts';
 const OTHER_SPEC = 'frontend/e2e/course.e2e.test.ts';

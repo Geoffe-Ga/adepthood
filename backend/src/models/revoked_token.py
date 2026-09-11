@@ -23,7 +23,7 @@ class RevokedToken(SQLModel, table=True):
 
     Tokens minted before this column existed have no ``jti`` claim and
     are treated as legacy-but-valid by ``get_current_user`` for the
-    duration of their original 1-hour TTL — that's the grace window
+    duration of their original TTL — that's the grace window
     the prompt requires for the JWT-shape change so existing sessions
     don't all 401 at once on deploy.
     """

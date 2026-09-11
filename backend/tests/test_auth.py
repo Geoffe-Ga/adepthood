@@ -790,6 +790,50 @@ async def test_refresh_preserves_user_id(async_client: AsyncClient) -> None:
     assert body["user_id"] == data["user_id"]
 
 
+# Sliding-session ceiling (#2804).  The token doubles as the refresh
+# credential: it lives in device secure storage, ``/auth/refresh`` revokes
+# the previous ``jti``, and a password change invalidates everything minted
+# before it.  30 days is the default refresh-token lifetime the mainstream
+# identity providers ship, and the client renews at half-life, so a user who
+# opens the app at least monthly is never re-prompted.
+EXPECTED_TOKEN_LIFETIME = timedelta(days=30)
+
+# ``exp`` is floored to a whole second while ``iat`` keeps its fraction, so
+# the measured lifetime lands within one second below the constant.
+_EXP_FLOOR_TOLERANCE = timedelta(seconds=1)
+
+
+def _token_lifetime(token: str) -> timedelta:
+    """Return ``exp - iat`` of a minted token as a ``timedelta``."""
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    return timedelta(seconds=decoded["exp"] - decoded["iat"])
+
+
+@pytest.mark.asyncio
+async def test_signup_login_and_refresh_tokens_live_thirty_days(
+    async_client: AsyncClient,
+) -> None:
+    """Every minting path hands out the 30-day sliding-session token (#2804).
+
+    Asserting on the decoded claims rather than on ``_TOKEN_TTL`` pins the
+    wire contract the mobile client schedules its half-life renewal
+    against; a refactor that minted from a different constant would still
+    be caught here.
+    """
+    email = "alice@example.com"
+    password = "securepassword123"  # pragma: allowlist secret
+    signup = await _signup(async_client, email=email, password=password)
+    login = await async_client.post(LOGIN_URL, json={"email": email, "password": password})
+    refresh = await async_client.post(
+        REFRESH_URL, headers={"Authorization": f"Bearer {login.json()['token']}"}
+    )
+
+    for token in (signup["token"], login.json()["token"], refresh.json()["token"]):
+        lifetime = _token_lifetime(str(token))
+        assert lifetime >= EXPECTED_TOKEN_LIFETIME - _EXP_FLOOR_TOLERANCE
+        assert lifetime <= EXPECTED_TOKEN_LIFETIME
+
+
 @pytest.mark.asyncio
 async def test_refresh_without_token_returns_401(async_client: AsyncClient) -> None:
     """Refresh without Authorization header returns 401."""
@@ -1288,7 +1332,7 @@ async def test_refresh_revokes_previous_token(
     The first refresh succeeds and stores the old ``jti`` in the
     revocation table.  Replaying the original token afterwards must
     400/401, not return a fresh response -- otherwise a stolen token
-    keeps working until its original 1-hour ``exp``.
+    keeps working until its original ``exp``.
     """
     data = await _signup(async_client, email="revoke@example.com")
     old_token = data["token"]
@@ -1326,7 +1370,7 @@ async def test_legacy_token_without_jti_still_authenticates(
 
     A deployment landing this PR cannot revoke every active session at
     once.  Tokens whose payload omits ``jti`` are passed through the
-    revocation check transparently -- the 1-hour TTL is the grace
+    revocation check transparently -- their own TTL is the grace
     window, after which every new token has a jti and the legacy path
     naturally drops.
     """

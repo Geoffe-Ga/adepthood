@@ -41,6 +41,9 @@ jest.mock('@/utils/token', () => ({
   decodeJwtPayload: jest.fn(() => null),
   isTokenExpired: jest.fn(() => false),
   shouldRefreshToken: jest.fn(() => false),
+  // The deadline arithmetic is pure; keep the real one so the timer tests
+  // below schedule against the same instant production does.
+  refreshDeadlineMs: jest.requireActual<typeof tokenModule>('@/utils/token').refreshDeadlineMs,
   REFRESH_BUFFER_SECONDS: 300,
 }));
 
@@ -61,6 +64,7 @@ import {
   clearLogoutPending,
 } from '@/storage/authStorage';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
+import type * as tokenModule from '@/utils/token';
 
 const mockAuth = auth as jest.Mocked<typeof auth>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
@@ -833,6 +837,44 @@ describe('AuthContext', () => {
       });
 
       await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledTimes(1));
+    });
+
+    // #2804: ``setTimeout`` treats a delay above 2^31-1 ms (~24.8 days) as
+    // zero and fires at once. A 30-day token renews at its 15-day half-life,
+    // which fits, but the scheduler must clamp and re-arm rather than trust
+    // the arithmetic -- a refresh storm against a 1/minute endpoint is the
+    // failure mode.
+    it('re-arms instead of refreshing early when the deadline exceeds the setTimeout ceiling', async () => {
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const SETTIMEOUT_CEILING_MS = 2 ** 31 - 1;
+      mockLoadToken.mockResolvedValue('long-lived-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+      mockShouldRefreshToken.mockReturnValue(false);
+      const nowSec = Math.floor(Date.now() / 1000);
+      // 60-day token: half-life is 30 days out, past the ceiling.
+      (
+        require('@/utils/token') as { decodeJwtPayload: jest.Mock }
+      ).decodeJwtPayload.mockReturnValue({
+        exp: nowSec + 60 * (DAY_MS / 1000),
+        iat: nowSec,
+      });
+      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.token).toBe('long-lived-jwt'));
+
+      await act(async () => {
+        jest.advanceTimersByTime(SETTIMEOUT_CEILING_MS + 1000);
+      });
+      // The clamped timer fired, but the deadline is still days away.
+      expect(mockAuth.refresh).not.toHaveBeenCalled();
+
+      await act(async () => {
+        jest.advanceTimersByTime(30 * DAY_MS - SETTIMEOUT_CEILING_MS + 1000);
+      });
+
+      await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledTimes(1));
+      expect(mockAuth.refresh).toHaveBeenCalledWith('long-lived-jwt');
     });
   });
 

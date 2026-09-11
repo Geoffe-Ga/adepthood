@@ -79,15 +79,21 @@ router = build_router(
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 _JWT_ALGORITHM = "HS256"
 
-# JWT token lifetime. One hour balances security (limits the window for a
-# stolen token to be misused) with UX (a typical session lasts under an
-# hour, so most users won't be interrupted by forced re-authentication).
-_TOKEN_TTL = timedelta(hours=1)
+# JWT lifetime (#2804).  The token doubles as the refresh credential -- it
+# lives in device secure storage, ``/auth/refresh`` rotates it and revokes
+# the previous ``jti``, a password change invalidates everything minted
+# before it (SPEC R7), and disabled or deleted users are refused on every
+# request -- so it is sized like a rotating refresh token rather than a
+# browser session.  30 days is the default lifetime the mainstream identity
+# providers ship for that role and the ceiling this project treats as best
+# practice; the client renews at half-life, so only a month without opening
+# the app ends a session.  Do not raise this without also revisiting the
+# controls above: they are what make a month-long bearer acceptable.
+_TOKEN_TTL = timedelta(days=30)
 
 # Password-reset token TTL.  30 minutes is long enough for slow inboxes
 # and a user who walks away mid-flow, short enough to bound exposure if
-# the link leaks via screenshot or shoulder surf.  Mirrors ``_TOKEN_TTL``
-# below for visual parity.
+# the link leaks via screenshot or shoulder surf.
 _PASSWORD_RESET_TTL = timedelta(minutes=30)
 
 # bcrypt cost for the reset-token digest.  These tokens are 256-bit
@@ -338,7 +344,7 @@ def _create_token(user_id: int) -> tuple[str, str]:
     previous token (e.g. ``/auth/refresh``) can persist the old jti
     before swapping in the new one.  Tokens minted before the jti
     column existed have no claim and are treated as legacy-but-valid
-    by ``get_current_user`` -- the 1-hour TTL is the grace window.
+    by ``get_current_user`` -- their original TTL is the grace window.
 
     ``iat`` is encoded as a fractional Unix timestamp (RFC 7519
     NumericDate allows non-integer values) so the SPEC R7
@@ -963,7 +969,7 @@ async def _check_token_not_revoked(session: AsyncSession, payload: dict[str, obj
 
     Tokens minted before the ``jti`` claim existed are treated as
     legacy-but-valid -- the missing claim short-circuits without a DB
-    hit, and the 1-hour TTL is the grace window the prompt requires
+    hit, and the token's own TTL is the grace window the prompt requires
     so existing sessions do not all 401 at once on deploy
     (BUG-AUTH-013).
     """
@@ -997,7 +1003,7 @@ def _coerce_iat_to_datetime(payload: dict[str, object]) -> datetime | None:
     """Return the JWT's ``iat`` claim as a UTC datetime, or ``None`` if absent.
 
     Tokens minted before the ``iat`` claim existed simply skip the
-    SPEC R7 password-changed gate -- their 1-hour TTL is the grace
+    SPEC R7 password-changed gate -- their own TTL is the grace
     window the same way it is for the ``jti`` revocation check.
     """
     iat = payload.get("iat")
@@ -1109,7 +1115,7 @@ async def _revoke_token_payload(
     """Persist the token's ``jti`` to ``revokedtoken`` so it cannot be reused.
 
     Tokens minted before the ``jti`` claim existed are silently passed
-    through (no row to insert) -- the 1-hour TTL is the grace window.
+    through (no row to insert) -- their own TTL is the grace window.
     The ``exp`` claim is mirrored into ``expires_at`` so a periodic
     cleanup job can prune past-due rows without re-decoding the JWT.
     Conflicting writes (same jti revoked twice) are caught and ignored
@@ -1150,7 +1156,7 @@ async def refresh_token(
     one is minted so a stolen-and-refreshed token cannot be replayed
     until its original ``exp``.  Tokens minted before the jti claim
     existed are passed through transparently for the duration of their
-    TTL -- the 1-hour grace window the prompt requires for the
+    TTL -- the grace window the prompt requires for the
     JWT-shape change.
 
     The response also re-asserts the stored ``timezone`` so a frontend

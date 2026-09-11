@@ -27,7 +27,7 @@ import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
   decodeJwtPayload,
   isTokenExpired,
-  REFRESH_BUFFER_SECONDS,
+  refreshDeadlineMs,
   shouldRefreshToken,
 } from '@/utils/token';
 
@@ -152,7 +152,23 @@ function silentRefresh(
   );
 }
 
-/** Schedule proactive token refresh before expiration. */
+/**
+ * Longest delay ``setTimeout`` honours. A larger value overflows the 32-bit
+ * signed millisecond counter and the timer fires immediately (#2804) --
+ * against a 1/minute refresh endpoint that is a silent 429 storm, not a
+ * crash. A 30-day token renews at its 15-day half-life, which fits, but
+ * the scheduler clamps and re-arms rather than trusting the arithmetic.
+ */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
+/**
+ * Schedule proactive token refresh at ``refreshDeadlineMs`` (#2804).
+ *
+ * Fires at most one refresh per token: the effect re-runs when the token
+ * changes and tears down the pending timer. A deadline further out than
+ * ``MAX_TIMER_DELAY_MS`` is reached in hops -- each hop re-reads the
+ * current token and either refreshes (deadline passed) or arms the next.
+ */
 function useProactiveRefresh(
   token: string | null,
   tokenRef: React.MutableRefObject<string | null>,
@@ -166,18 +182,36 @@ function useProactiveRefresh(
       return undefined;
     }
 
-    const payload = decodeJwtPayload(token);
-    if (!payload) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const delay = payload.exp * 1000 - Date.now() - REFRESH_BUFFER_SECONDS * 1000;
-    if (delay <= 0) return undefined;
+    const msUntilDue = (current: string): number | null => {
+      const payload = decodeJwtPayload(current);
+      return payload ? refreshDeadlineMs(payload) - Date.now() : null;
+    };
 
-    const timer = setTimeout(() => {
-      const current = tokenRef.current;
-      if (current) silentRefresh(current, applyNewToken);
-    }, delay);
+    const arm = (remainingMs: number): void => {
+      timer = setTimeout(
+        () => {
+          const latest = tokenRef.current;
+          if (!latest) return;
+          const stillDueIn = msUntilDue(latest);
+          if (stillDueIn !== null && stillDueIn > 0) {
+            arm(stillDueIn); // clamped hop landed early; the deadline is still ahead
+            return;
+          }
+          silentRefresh(latest, applyNewToken);
+        },
+        Math.min(remainingMs, MAX_TIMER_DELAY_MS),
+      );
+    };
 
-    return () => clearTimeout(timer);
+    const dueIn = msUntilDue(token);
+    if (dueIn === null || dueIn <= 0) return undefined;
+    arm(dueIn);
+
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [token, tokenRef, applyNewToken]);
 }
 

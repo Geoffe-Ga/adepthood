@@ -3,9 +3,14 @@ import { describe, it, expect } from '@jest/globals';
 import {
   decodeJwtPayload,
   isTokenExpired,
+  refreshDeadlineMs,
   shouldRefreshToken,
   REFRESH_BUFFER_SECONDS,
+  SLIDING_RENEWAL_FRACTION,
 } from '../token';
+
+const SECONDS_PER_DAY = 24 * 60 * 60;
+const THIRTY_DAYS_SECONDS = 30 * SECONDS_PER_DAY;
 
 /** Build a fake JWT with the given payload (no real signature). */
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -63,8 +68,9 @@ describe('isTokenExpired', () => {
 
 describe('shouldRefreshToken', () => {
   it('returns false when token expiry is well beyond the buffer', () => {
-    const farFuture = Math.floor(Date.now() / 1000) + REFRESH_BUFFER_SECONDS + 600;
-    expect(shouldRefreshToken(fakeJwt({ sub: '1', exp: farFuture, iat: 0 }))).toBe(false);
+    const now = Math.floor(Date.now() / 1000);
+    const farFuture = now + REFRESH_BUFFER_SECONDS + 600;
+    expect(shouldRefreshToken(fakeJwt({ sub: '1', exp: farFuture, iat: now }))).toBe(false);
   });
 
   it('returns true when token is within the refresh buffer', () => {
@@ -79,5 +85,70 @@ describe('shouldRefreshToken', () => {
 
   it('returns true for an unparseable token', () => {
     expect(shouldRefreshToken('not.a.jwt')).toBe(true);
+  });
+});
+
+// Sliding session (#2804): a 30-day token that only renewed in the last five
+// minutes would log a daily user out on day 30 regardless of activity. Past
+// the half-life mark any open app renews, so the window slides.
+describe('shouldRefreshToken sliding renewal', () => {
+  it('returns false before the token has consumed half its lifetime', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const issuedAt = now - 14 * SECONDS_PER_DAY;
+    const token = fakeJwt({ sub: '1', exp: issuedAt + THIRTY_DAYS_SECONDS, iat: issuedAt });
+
+    expect(shouldRefreshToken(token)).toBe(false);
+  });
+
+  it('returns true once the token has consumed half its lifetime', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const issuedAt = now - 16 * SECONDS_PER_DAY;
+    const token = fakeJwt({ sub: '1', exp: issuedAt + THIRTY_DAYS_SECONDS, iat: issuedAt });
+
+    expect(shouldRefreshToken(token)).toBe(true);
+  });
+
+  it('keeps the five-minute floor for a token too short for half-life to matter', () => {
+    // A 5-minute token issued a minute ago is not yet at half-life, but
+    // it is inside the 5-minute buffer: whichever deadline is earlier wins.
+    const now = Math.floor(Date.now() / 1000);
+    const token = fakeJwt({ sub: '1', exp: now + 4 * 60, iat: now - 60 });
+
+    expect(shouldRefreshToken(token)).toBe(true);
+  });
+
+  it('falls back to the buffer rule when the token carries no iat', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = fakeJwt({ sub: '1', exp: now + THIRTY_DAYS_SECONDS });
+
+    expect(shouldRefreshToken(token)).toBe(false);
+  });
+});
+
+describe('refreshDeadlineMs', () => {
+  it('lands on the half-life mark for a long-lived token', () => {
+    const issuedAt = 1_700_000_000;
+    const deadline = refreshDeadlineMs({
+      sub: '1',
+      exp: issuedAt + THIRTY_DAYS_SECONDS,
+      iat: issuedAt,
+    });
+
+    expect(deadline).toBe((issuedAt + THIRTY_DAYS_SECONDS * SLIDING_RENEWAL_FRACTION) * 1000);
+  });
+
+  it('lands on the buffer mark when that comes earlier than half-life', () => {
+    const issuedAt = 1_700_000_000;
+    const exp = issuedAt + 6 * 60;
+    const deadline = refreshDeadlineMs({ sub: '1', exp, iat: issuedAt });
+
+    expect(deadline).toBe((exp - REFRESH_BUFFER_SECONDS) * 1000);
+  });
+
+  it('ignores an iat that is not before exp', () => {
+    const exp = 1_700_000_000;
+    const deadline = refreshDeadlineMs({ sub: '1', exp, iat: exp + 10 });
+
+    expect(deadline).toBe((exp - REFRESH_BUFFER_SECONDS) * 1000);
   });
 });
