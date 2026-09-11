@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Camera, KeyRound, RefreshCw, X } from 'lucide-react-native';
+import { BookOpen, Camera, KeyRound, RefreshCw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -30,7 +30,10 @@ import ContractionReflectionNote from './ContractionReflectionNote';
 import CorpusInvitationNote from './CorpusInvitationNote';
 import EditConfirmDialog from './EditConfirmDialog';
 import FromYourCreekPanel from './FromYourCreekPanel';
-import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
+import GetResonanceButton, {
+  shouldShowResonance,
+  type ResonanceButtonLayout,
+} from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
@@ -92,6 +95,13 @@ const AUTOSAVE_DELAY_MS = 1500;
 
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
+
+/**
+ * The fixed margin first appears at 600px, but it initially leaves the writing
+ * rail too narrow for every secondary label. Keep those actions icon-only
+ * through that transition; their accessible names remain complete.
+ */
+const COMPACT_WRITING_CONTROLS_BREAKPOINT = NARROW_BREAKPOINT + 120;
 
 /** The photograph affordance, offered while writing — including to a Course
  *  reflection, which is an ordinary journal page opened with a title. */
@@ -1386,35 +1396,23 @@ interface WritingColumnProps {
   onOpenSources?: () => void;
   /** Opens the shared capture route to add a photographed page to this entry. */
   onPhotographPage: () => void;
+  /** Phone layout: secondary actions keep their names for a11y but show icon-only. */
+  compactControls: boolean;
 }
 
-/** Quiet control to mark a draft finished, with a warm retry notice on failure. */
-function FinishControl({
-  onFinish,
-  finishing,
-  finishError,
-}: {
-  onFinish: () => void;
-  finishing: boolean;
-  finishError: string | null;
-}) {
+/** Quiet primary control to mark a draft finished. */
+function FinishControl({ onFinish, finishing }: { onFinish: () => void; finishing: boolean }) {
   return (
-    <>
-      <Button
-        variant="tertiary"
-        onPress={onFinish}
-        accessibilityLabel="Mark this entry finished"
-        testID="journal-finish-button"
-        label="Finish"
-        busy={finishing}
-        disabled={finishing}
-      />
-      {finishError == null ? null : (
-        <Text style={styles.marginError} testID="journal-finish-error">
-          {finishError}
-        </Text>
-      )}
-    </>
+    <Button
+      variant="tertiary"
+      onPress={onFinish}
+      accessibilityLabel="Mark this entry finished"
+      testID="journal-finish-button"
+      label="Finish"
+      busy={finishing}
+      disabled={finishing}
+      style={styles.writingPrimaryControl}
+    />
   );
 }
 
@@ -1630,37 +1628,98 @@ function WritingFooter({
  * gate and its transcription run, and inlining any of that would fork a paid OCR
  * path. Offered while writing only; a finished page is read, not added to.
  */
-function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.Element {
+function PhotographPageButton({
+  onPress,
+  compact,
+}: {
+  onPress: () => void;
+  compact: boolean;
+}): React.JSX.Element {
   return (
     <TouchableOpacity
-      style={styles.quoteActionButton}
+      style={styles.writingSecondaryControl}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={PHOTOGRAPH_PAGE_HINT}
       testID="journal-photograph-page"
     >
-      <Camera color={accent.primary} size={18} accessible={false} />
-      <Text style={styles.controlLink}>{PHOTOGRAPH_PAGE_LABEL}</Text>
+      <View accessible={false} testID="journal-photograph-page-icon">
+        <Camera color={accent.primary} size={18} accessible={false} />
+      </View>
+      {compact ? null : <Text style={styles.writingControlLabel}>{PHOTOGRAPH_PAGE_LABEL}</Text>}
     </TouchableOpacity>
   );
 }
 
-function ReflectionSourcesButton({ onOpen }: { onOpen?: () => void }): React.JSX.Element | null {
+function ReflectionSourcesButton({
+  onOpen,
+  compact,
+}: {
+  onOpen?: () => void;
+  compact: boolean;
+}): React.JSX.Element | null {
   return onOpen ? (
     <TouchableOpacity
-      style={styles.quoteActionButton}
+      style={styles.writingSecondaryControl}
       onPress={onOpen}
       accessibilityRole="button"
       accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
       testID="reflection-sources-toggle"
     >
-      <Text style={styles.controlLink}>Sources</Text>
+      <View accessible={false} testID="reflection-sources-icon">
+        <BookOpen color={accent.primary} size={18} accessible={false} />
+      </View>
+      {compact ? null : <Text style={styles.writingControlLabel}>Sources</Text>}
     </TouchableOpacity>
   ) : null;
 }
 
+/** The page's one unbroken action rail, with any Finish error beneath the rail. */
+function WritingControls({
+  onFinish,
+  finishing,
+  finishError,
+  onPhotographPage,
+  onOpenSources,
+  compactControls,
+}: Pick<
+  WritingColumnProps,
+  | 'onFinish'
+  | 'finishing'
+  | 'finishError'
+  | 'onPhotographPage'
+  | 'onOpenSources'
+  | 'compactControls'
+>): React.JSX.Element {
+  return (
+    <>
+      <View style={styles.writingControlsRow} testID="journal-writing-controls">
+        {onFinish ? <FinishControl onFinish={onFinish} finishing={finishing} /> : null}
+        <PhotographPageButton onPress={onPhotographPage} compact={compactControls} />
+        <ReflectionSourcesButton onOpen={onOpenSources} compact={compactControls} />
+      </View>
+      {finishError == null ? null : (
+        <Text style={styles.marginError} testID="journal-finish-error">
+          {finishError}
+        </Text>
+      )}
+    </>
+  );
+}
+
 /** The scrollable writing column (title + growing body + save hint). */
-function WritingColumn({
+function WritingColumn(props: WritingColumnProps): React.JSX.Element {
+  return (
+    <View style={styles.writingColumn}>
+      <View style={styles.writingColumnContent}>
+        <WritingColumnContent {...props} />
+      </View>
+    </View>
+  );
+}
+
+/** The writing column's content, separate from the two wrappers that make it grow. */
+function WritingColumnContent({
   title,
   body,
   saveState,
@@ -1679,33 +1738,35 @@ function WritingColumn({
   onBodySelectionChange,
   onOpenSources,
   onPhotographPage,
+  compactControls,
 }: WritingColumnProps) {
   return (
-    <View style={styles.writingColumn}>
-      <View style={styles.writingColumnContent}>
-        <EntryTagControls
-          classification={classification}
-          chord={chord}
-          onChangeClassification={onChangeClassification}
-          onChangeChord={onChangeChord}
-          controlsDisabled={controlsDisabled}
-        />
-        <WritingFields
-          title={title}
-          body={body}
-          onChangeTitle={onChangeTitle}
-          onChangeBody={onChangeBody}
-          onBodySelectionChange={onBodySelectionChange}
-          bodyPlaceholder={bodyPlaceholder}
-        />
-        <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
-        {onFinish ? (
-          <FinishControl onFinish={onFinish} finishing={finishing} finishError={finishError} />
-        ) : null}
-        <PhotographPageButton onPress={onPhotographPage} />
-        <ReflectionSourcesButton onOpen={onOpenSources} />
-      </View>
-    </View>
+    <>
+      <EntryTagControls
+        classification={classification}
+        chord={chord}
+        onChangeClassification={onChangeClassification}
+        onChangeChord={onChangeChord}
+        controlsDisabled={controlsDisabled}
+      />
+      <WritingFields
+        title={title}
+        body={body}
+        onChangeTitle={onChangeTitle}
+        onChangeBody={onChangeBody}
+        onBodySelectionChange={onBodySelectionChange}
+        bodyPlaceholder={bodyPlaceholder}
+      />
+      <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
+      <WritingControls
+        onFinish={onFinish}
+        finishing={finishing}
+        finishError={finishError}
+        onPhotographPage={onPhotographPage}
+        onOpenSources={onOpenSources}
+        compactControls={compactControls}
+      />
+    </>
   );
 }
 
@@ -2535,15 +2596,18 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
 }
 
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
-function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
+function PageBodyColumn({
+  ctl,
+  bodyPlaceholder,
+  compactControls,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  compactControls: boolean;
+}) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
-  const { finishing, finishError } = ctl.editGate;
-  // Until an existing entry's load settles (still in flight or failed) the
-  // controls are bound to an unseen entry, so disable them.
   const controlsDisabled = ctl.autosave.controlsLocked;
-  // Withhold Finish in weekly-prompt compose: the respond endpoint has no local
-  // id to finish, so the affordance would be a dead end.
   const canOfferFinish = canFinish && !ctl.isPromptCompose;
   return editMode ? (
     <WritingColumn
@@ -2558,8 +2622,8 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       onChangeChord={ctl.autosave.onChangeChord}
       onRetrySave={ctl.autosave.flush}
       onFinish={canOfferFinish ? markFinished : undefined}
-      finishing={finishing}
-      finishError={finishError}
+      finishing={ctl.editGate.finishing}
+      finishError={ctl.editGate.finishError}
       bodyPlaceholder={bodyPlaceholder}
       controlsDisabled={controlsDisabled}
       onBodySelectionChange={
@@ -2567,6 +2631,7 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       }
       onOpenSources={ctl.reflection.active ? ctl.reflection.openSources : undefined}
       onPhotographPage={ctl.photograph.openCapture}
+      compactControls={compactControls}
     />
   ) : (
     <ReadColumn
@@ -2604,12 +2669,25 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
           onDismiss={ctl.resonance.dismissSuggestion}
         />
       ) : null}
+      {ctl.editGate.editMode && !narrow ? (
+        <ResonanceControls
+          layout="margin"
+          visible={ctl.visible}
+          disabled={ctl.resonanceDisabled}
+          loading={ctl.resonance.loading}
+          checking={ctl.explainer.pending}
+          reason={ctl.resonanceReason}
+          onPress={ctl.explainer.onPress}
+        />
+      ) : null}
     </View>
   );
 }
 
 function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
-  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
+  const viewportWidth = useWindowDimensions().width;
+  const narrow = viewportWidth < NARROW_BREAKPOINT;
+  const compactControls = viewportWidth < COMPACT_WRITING_CONTROLS_BREAKPOINT;
   const settle = useEntrance();
   return (
     <View style={styles.desk}>
@@ -2631,7 +2709,11 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
             ]}
             testID="journal-page"
           >
-            <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+            <PageBodyColumn
+              ctl={ctl}
+              bodyPlaceholder={bodyPlaceholder}
+              compactControls={compactControls}
+            />
             <JournalMargin ctl={ctl} narrow={narrow} />
           </View>
         </ScrollView>
@@ -3002,6 +3084,7 @@ function ResonanceControls({
   checking,
   reason,
   onPress,
+  layout = 'floating',
 }: {
   visible: boolean;
   disabled: boolean;
@@ -3009,11 +3092,13 @@ function ResonanceControls({
   checking: boolean;
   reason: string;
   onPress: () => Promise<void>;
+  layout?: Exclude<ResonanceButtonLayout, 'inline'>;
 }): React.JSX.Element {
-  return (
+  const content = (
     <>
       <PrivacyResonanceReason visible={visible && disabled} reason={reason} />
       <GetResonanceButton
+        layout={layout}
         visible={visible}
         loading={loading}
         checking={checking}
@@ -3022,14 +3107,24 @@ function ResonanceControls({
       />
     </>
   );
+  if (layout !== 'margin') return content;
+  return (
+    <View
+      style={visible ? styles.marginResonanceControls : styles.marginResonanceControlsHidden}
+      testID="journal-margin-resonance-controls"
+    >
+      {content}
+    </View>
+  );
 }
 
 /**
  * The writing surface's own screen-level siblings, in edit mode only.
  *
- * Both lift clear of the writing area rather than sitting in it, and for the
- * timer that is not only a layout choice: its engine ticks ten times a second,
- * so whatever subtree hosts it repaints ten times a second — and the subtree
+ * The timer lifts clear of the writing area, while resonance only floats here
+ * on a narrow screen (wide screens host it in the margin). The timer's engine
+ * ticks ten times a second, so whatever subtree hosts it repaints ten times a
+ * second — and the subtree
  * that must not is the page holding the writer's text fields and live word
  * count. The reading view carries its own inline resonance action instead, and
  * has nothing to time.
@@ -3063,6 +3158,7 @@ function EntryWritingSurfaces({
   launch: WritingLaunchParam;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
+  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   if (!ctl.editGate.editMode) return null;
   return (
     <>
@@ -3072,14 +3168,16 @@ function EntryWritingSurfaces({
         onSession={session.onSession}
         renderOffer={session.launched ? undefined : renderSessionOffer}
       />
-      <ResonanceControls
-        visible={ctl.visible}
-        disabled={ctl.resonanceDisabled}
-        loading={ctl.resonance.loading}
-        checking={ctl.explainer.pending}
-        reason={ctl.resonanceReason}
-        onPress={ctl.explainer.onPress}
-      />
+      {narrow ? (
+        <ResonanceControls
+          visible={ctl.visible}
+          disabled={ctl.resonanceDisabled}
+          loading={ctl.resonance.loading}
+          checking={ctl.explainer.pending}
+          reason={ctl.resonanceReason}
+          onPress={ctl.explainer.onPress}
+        />
+      ) : null}
     </>
   );
 }

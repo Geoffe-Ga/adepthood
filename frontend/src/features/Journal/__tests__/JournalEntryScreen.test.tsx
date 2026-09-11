@@ -433,7 +433,7 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance in edit mode, where two affordances float over the page', () => {
+  it('reserves bottom clearance in edit mode for the floating writing timer', () => {
     const { getByTestId } = renderScreen();
     const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
     // Sized to the topmost floating affordance, the writing timer, which is
@@ -441,6 +441,109 @@ describe('JournalEntryScreen', () => {
     // inset covering both rather than a second added beside the first.
     expect(page.paddingBottom).toBe(WRITING_TIMER_CLEARANCE);
     expect(page.paddingBottom).toBeGreaterThan(RESONANCE_BUTTON_CLEARANCE);
+  });
+
+  it.each([
+    { width: 375, compact: true },
+    { width: 600, compact: true },
+    { width: 1200, compact: false },
+  ])('keeps the writing controls on one row at $width px', async ({ width, compact }) => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+    try {
+      mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
+      const view = renderScreen({ entryId: 7 });
+      await waitFor(() => expect(view.getByTestId('journal-finish-button')).toBeTruthy());
+      const row = view.getByTestId('journal-writing-controls');
+      const rowStyle = StyleSheet.flatten(row.props.style);
+      expect(rowStyle.flexDirection).toBe('row');
+      expect(rowStyle.flexWrap).toBe('nowrap');
+      expect(within(row).getByTestId('journal-finish-button')).toBeTruthy();
+
+      const photograph = within(row).getByTestId('journal-photograph-page');
+      expect(StyleSheet.flatten(photograph.props.style).flexDirection).toBe('row');
+      expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
+      expect(view.queryByText('Photograph a page')).toEqual(compact ? null : expect.anything());
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    { width: 375, inMargin: false },
+    { width: 600, inMargin: true },
+    { width: 1200, inMargin: true },
+  ])('hosts writing resonance responsively at $width px', async ({ width, inMargin }) => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+    mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
+    try {
+      const view = renderScreen({ entryId: 7 });
+      await waitFor(() =>
+        expect(view.getByTestId('journal-body-input').props.value).toContain('rivers'),
+      );
+      const margin = within(view.getByTestId('journal-margin-column'));
+      if (inMargin) {
+        expect(margin.getByTestId('get-resonance-button')).toBeTruthy();
+        expect(hostWrapperStyle(view.getByTestId('get-resonance-button')).alignItems).toBe(
+          'center',
+        );
+      } else {
+        expect(margin.queryByTestId('get-resonance-button')).toBeNull();
+        expect(hostWrapperStyle(view.getByTestId('get-resonance-button')).position).toBe(
+          'absolute',
+        );
+      }
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps an intimate-entry reason and its disabled margin action together', async () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1200, height: 800, scale: 1, fontScale: 1 });
+    mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft', classification: 'intimate' }));
+    try {
+      const view = renderScreen({ entryId: 7 });
+      await waitFor(() => expect(view.getByTestId('privacy-resonance-reason')).toBeTruthy());
+      const margin = within(view.getByTestId('journal-margin-column'));
+      const controls = margin.getByTestId('journal-margin-resonance-controls');
+      expect(within(controls).getByTestId('privacy-resonance-reason')).toBeTruthy();
+      expect(
+        within(controls).getByTestId('get-resonance-button', { includeHiddenElements: true }),
+      ).toBeTruthy();
+      expect(StyleSheet.flatten(controls.props.style).marginTop).toBe('auto');
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('collapses an unavailable margin action without retaining its top padding', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1200, height: 800, scale: 1, fontScale: 1 });
+    try {
+      const view = renderScreen();
+      const controls = within(view.getByTestId('journal-margin-column')).getByTestId(
+        'journal-margin-resonance-controls',
+      );
+      const style = StyleSheet.flatten(controls.props.style);
+      expect(style.height).toBe(0);
+      expect(style.paddingTop ?? 0).toBe(0);
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('leaves no dead band below the entry in read mode, where nothing floats', async () => {

@@ -10,7 +10,7 @@
 // 409 wiring, not the panel's own rendering (covered by
 // `ReflectionSourcesPanel.test.tsx`).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type {
@@ -246,6 +246,40 @@ const REFLECTION_PARAMS = {
 };
 
 describe('JournalEntryScreen -- reflection mode', () => {
+  it.each([
+    { width: 375, compact: true },
+    { width: 600, compact: true },
+    { width: 1200, compact: false },
+  ])(
+    'keeps Photograph and Sources in the same control row at $width px',
+    async ({ width, compact }) => {
+      const rn = require('react-native');
+      const spy = jest
+        .spyOn(rn, 'useWindowDimensions')
+        .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+      try {
+        const screen = renderScreen(REFLECTION_PARAMS);
+        await act(async () => {
+          await Promise.resolve();
+        });
+        const row = within(screen.getByTestId('journal-writing-controls'));
+        const photograph = row.getByTestId('journal-photograph-page');
+        const sources = row.getByTestId('reflection-sources-toggle');
+        expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
+        expect(within(sources).getByTestId('reflection-sources-icon')).toBeTruthy();
+        expect(within(photograph).queryByText('Photograph a page')).toEqual(
+          compact ? null : expect.anything(),
+        );
+        expect(within(sources).queryByText('Sources')).toEqual(compact ? null : expect.anything());
+        expect(photograph.props.accessibilityLabel).toMatch(/Photograph a handwritten page/);
+        expect(sources.props.accessibilityLabel).toMatch(/Open the sources/);
+        screen.unmount();
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
   it('pre-fills the title, sends reflection fields on create, offers Finish, and never calls prompts.respond', async () => {
     jest.useFakeTimers();
     try {
