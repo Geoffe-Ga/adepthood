@@ -380,7 +380,7 @@ describe('PracticeScreen', () => {
     expect(errorFlat.paddingTop).not.toBe(47);
   });
 
-  it('renders the identity header with title, ritual name, and pencil when a practice is selected', async () => {
+  it('titles the identity header with the effective ritual name when a practice is selected', async () => {
     mockUserPracticesList.mockResolvedValue([
       sampleUserPractice({ custom_name: 'Morning Sit', effective_name: 'Morning Sit' }),
     ]);
@@ -389,10 +389,11 @@ describe('PracticeScreen', () => {
       expect(getByTestId('practice-identity-header')).toBeTruthy();
       expect(getByTestId('meditation-timer-view')).toBeTruthy();
     });
-    // Title is the underlying practice's name; the ritual name shows the
-    // user's effective (customized) name for it.
-    expect(getByTestId('practice-identity-title')).toHaveTextContent('Breath Awareness');
-    expect(getByTestId('practice-identity-ritual-name')).toHaveTextContent('Morning Sit');
+    // The headline is the user's effective (customized) name for their copy,
+    // exactly -- not the catalog base name it was copied from, and not both.
+    expect(getByTestId('practice-identity-title')).toHaveTextContent(/^Morning Sit$/);
+    expect(queryByText('Breath Awareness')).toBeNull();
+    expect(queryByTestId('practice-identity-ritual-name')).toBeNull();
     const pencil = getByTestId('practice-customize-pencil');
     expect(pencil.props.accessibilityRole).toBe('button');
     expect(pencil.props.accessibilityLabel).toBe('Customize this ritual');
@@ -679,7 +680,9 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('practice-stage-chip')).toBeNull();
     expect(queryByTestId('practice-customize-pencil')).toBeNull();
     expect(queryByTestId('practice-identity-ritual-name')).toBeNull();
-    expect(getByTestId('practice-identity-title')).toBeTruthy();
+    // An uncustomized copy falls back to the catalog name, and the collapsed
+    // header still renders it in full rather than merely existing.
+    expect(getByTestId('practice-identity-title')).toHaveTextContent(/^Breath Awareness$/);
     jest.useRealTimers();
   });
 

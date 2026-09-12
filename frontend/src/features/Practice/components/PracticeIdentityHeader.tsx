@@ -1,9 +1,15 @@
 /**
  * `PracticeIdentityHeader` — the player identity block at the top of the dark
- * Practice screen: the practice title, a tappable stage chip
- * (`COLOR · aspect`), the user's effective ritual name when it differs from
- * the title, and a pencil that opens the ritual configurator. While a session
- * holds the engine (`collapsed`) it quiets down to the title alone.
+ * Practice screen: a tappable stage chip (`COLOR · aspect`) over the ritual's
+ * own name as the display title, with a pencil that opens the ritual
+ * configurator riding the trailing edge of that same row. The title is the
+ * effective name — the one the practitioner gave their copy ("Metta - 30"),
+ * not the catalog base name it was copied from. That base name stays
+ * discoverable in the Catalog (`PracticeCatalogList` renders `practice.name`)
+ * and nowhere else on this path -- the configurator the pencil opens is seeded
+ * with the effective name, so it shows the practitioner their own name back.
+ * While a session holds the engine (`collapsed`) the block quiets down to that
+ * title alone.
  *
  * The chip's identity comes from the server frequency payload
  * (`useFrequency`), falling back to the stage store when the fetch fails;
@@ -39,7 +45,7 @@ const PENCIL_ICON_SIZE = 18;
 
 export interface PracticeIdentityHeaderProps {
   stageNumber: number;
-  practiceName: string;
+  /** The effective ritual name: the user's own name for their copy. */
   ritualName: string;
   collapsed: boolean;
   onCustomize: () => void;
@@ -157,7 +163,6 @@ const PencilButton = ({ onPress }: { onPress: () => void }): React.JSX.Element =
 
 const PracticeIdentityHeader = ({
   stageNumber,
-  practiceName,
   ritualName,
   collapsed,
   onCustomize,
@@ -174,19 +179,12 @@ const PracticeIdentityHeader = ({
       {!collapsed && identity !== null && (
         <StageChip identity={identity} onPress={() => setPickerOpen(true)} />
       )}
-      <Text style={styles.title} testID="practice-identity-title">
-        {practiceName}
-      </Text>
-      {!collapsed && (
-        <View style={styles.ritualRow}>
-          {ritualName !== practiceName && (
-            <Text style={styles.ritualName} testID="practice-identity-ritual-name">
-              {ritualName}
-            </Text>
-          )}
-          <PencilButton onPress={onCustomize} />
-        </View>
-      )}
+      <View style={styles.titleRow} testID="practice-identity-title-row">
+        <Text style={styles.title} testID="practice-identity-title">
+          {ritualName}
+        </Text>
+        {!collapsed && <PencilButton onPress={onCustomize} />}
+      </View>
       {!collapsed && (
         <StagePickerModal
           visible={pickerOpen}
@@ -211,15 +209,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
   },
   stageChipText: { ...editorialType.action, color: onShowcase.soft, letterSpacing: 1 },
-  title: { ...editorialType.display, color: onShowcase.primary },
-  ritualRow: { alignItems: 'center', flexDirection: 'row', marginTop: SPACING.xs },
-  ritualName: { ...editorialType.note, color: onShowcase.soft, flex: 1 },
+  titleRow: { alignItems: 'center', flexDirection: 'row' },
+  // The title claims the row's free space, so the pencil rides the trailing
+  // edge rather than butting against the last glyph of the name, and a long
+  // name wraps inside the row instead of pushing the pencil off the screen.
+  title: { ...editorialType.display, color: onShowcase.primary, flex: 1 },
   pencilButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    // Auto margin keeps the pencil pinned to the trailing edge even when the
-    // ritual name is deduped away.
-    marginLeft: 'auto',
     minHeight: touchTarget.minimum,
     minWidth: touchTarget.minimum,
   },
