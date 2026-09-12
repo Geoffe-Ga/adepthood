@@ -61,11 +61,13 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, or_, update
+from sqlalchemy import case, delete, func, or_, text, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 
 from domain.creek_vault import (
     CreekCapability,
@@ -85,9 +87,16 @@ from domain.creek_vault import (
     VaultPipelineStage,
 )
 from domain.dates import ensure_aware
+from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 
 _LOGGER = logging.getLogger(__name__)
+
+# PostgreSQL's two-int advisory-lock namespace for per-user classification
+# scheduling.  It is deliberately unrelated to every other lock namespace in
+# the application; the second key is the account id, never content or a vault
+# identifier.
+_CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE = 0x41504450
 
 #: The outcomes that mean a classification pass actually put labels in the
 #: vault. ``ATTEMPTED`` is absent deliberately -- it records a call that was
@@ -141,6 +150,13 @@ class VaultPipelineTrigger(enum.StrEnum):
 
     JOURNAL_WRITE = "journal_write"
     DOCUMENT_IMPORT = "document_import"
+
+
+def _strongest_trigger(*values: str | None) -> VaultPipelineTrigger:
+    """Return the deepest valid scope represented by ``values``."""
+    if VaultPipelineTrigger.DOCUMENT_IMPORT.value in values:
+        return VaultPipelineTrigger.DOCUMENT_IMPORT
+    return VaultPipelineTrigger.JOURNAL_WRITE
 
 
 #: Which rungs each trigger is willing to pay for. The journal path's exclusion
@@ -401,6 +417,70 @@ def _record(
     return run
 
 
+async def _lock_classification_scheduler(session: AsyncSession, user_id: int) -> None:
+    """Serialize run admission and terminalization for one PostgreSQL user.
+
+    The lock is transaction-scoped, so every caller releases it by committing
+    the scheduling mutation that it protects.  SQLite's deterministic writer
+    queue supplies the equivalent test-only serialization.
+    """
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :user_id)"),
+        {
+            "namespace": _CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE,
+            "user_id": user_id,
+        },
+    )
+
+
+async def _persist_follow_up_intent(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+) -> None:
+    """Durably merge one post-snapshot write into the per-user intent row."""
+    table = SQLModel.metadata.tables["vaultpipelinefollowup"]
+    insert = (
+        postgresql_insert(table)
+        if session.get_bind().dialect.name == "postgresql"
+        else sqlite_insert(table)
+    )
+    incoming = trigger.value
+    merged = incoming if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT else table.c.trigger
+    statement = insert.values(user_id=user_id, trigger=incoming).on_conflict_do_update(
+        index_elements=[table.c.user_id],
+        set_={"trigger": merged},
+    )
+    await session.execute(statement)
+    # The marker must be visible while a terminalizer owns the run row.  Keeping
+    # it in the later, potentially blocking UPDATE transaction recreates the
+    # finish-vs-join deadlock this table exists to break.
+    await session.commit()
+
+
+async def _pending_follow_up(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    for_update: bool = False,
+) -> VaultPipelineFollowUp | None:
+    """Read the content-free follow-up marker for ``user_id``."""
+    statement = select(VaultPipelineFollowUp).where(col(VaultPipelineFollowUp.user_id) == user_id)
+    if for_update:
+        statement = statement.with_for_update()
+    result = await session.execute(statement)
+    return result.scalars().one_or_none()
+
+
+async def _consume_follow_up(session: AsyncSession, user_id: int) -> None:
+    """Delete a marker once an unadmitted queued run carries its scope."""
+    await session.execute(
+        delete(VaultPipelineFollowUp).where(col(VaultPipelineFollowUp.user_id) == user_id)
+    )
+
+
 def _note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
     """Log real partial data loss, in enum values and integers alone.
 
@@ -501,6 +581,72 @@ def _finish_run(
     session.add(run)
 
 
+async def _classification_completion_target(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+) -> tuple[VaultPipelineRun, VaultPipelineFollowUp | None] | None:
+    """Lock and refresh one classification row plus its independent intent."""
+    await _lock_classification_scheduler(session, run.user_id)
+    result = await session.execute(
+        select(VaultPipelineRun)
+        .where(col(VaultPipelineRun.id) == run.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    locked = result.scalars().one()
+    if locked.outcome != VaultPipelineOutcome.ATTEMPTED.value:
+        await session.commit()
+        return None
+    pending = await _pending_follow_up(session, locked.user_id, for_update=True)
+    return locked, pending
+
+
+async def _completion_target(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+) -> tuple[VaultPipelineRun, VaultPipelineFollowUp | None] | None:
+    """Return the row and marker a terminal result is allowed to mutate."""
+    if run.stage == VaultPipelineStage.CLASSIFY.value:
+        return await _classification_completion_target(session, run)
+    return run, None
+
+
+def _follow_up_scope(
+    run: VaultPipelineRun,
+    pending: VaultPipelineFollowUp | None,
+) -> VaultPipelineTrigger | None:
+    """Resolve the strongest scope only when a later snapshot is required."""
+    if run.follow_up_trigger is None and pending is None:
+        return None
+    return _strongest_trigger(
+        run.trigger,
+        run.follow_up_trigger,
+        None if pending is None else pending.trigger,
+    )
+
+
+async def _queue_follow_up(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    pending: VaultPipelineFollowUp | None,
+) -> None:
+    """Move a run/intent marker onto one unadmitted successor."""
+    scope = _follow_up_scope(run, pending)
+    if scope is None:
+        return
+    _record(
+        session,
+        _StageContext(
+            user_id=run.user_id,
+            stage=VaultPipelineStage.CLASSIFY,
+            trigger=scope,
+            resume_claim_id=run.resume_claim_id,
+        ),
+        VaultPipelineOutcome.QUEUED,
+    )
+    await _consume_follow_up(session, run.user_id)
+
+
 async def _commit_finished_run(
     session: AsyncSession,
     run: VaultPipelineRun,
@@ -519,32 +665,13 @@ async def _commit_finished_run(
     changes share one commit: a killed process therefore leaves either the old
     recoverable attempt or the new recoverable queued row, never a silent gap.
     """
-    if run.stage == VaultPipelineStage.CLASSIFY.value:
-        result = await session.execute(
-            select(VaultPipelineRun)
-            .where(col(VaultPipelineRun.id) == run.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        locked = result.scalars().one()
-        if locked.outcome != VaultPipelineOutcome.ATTEMPTED.value:
-            await session.commit()
-            return
-    else:
-        locked = run
+    target = await _completion_target(session, run)
+    if target is None:
+        return
+    locked, pending = target
     _finish_run(session, locked, outcome, counts)
     await session.flush()
-    if locked.follow_up_trigger is not None:
-        _record(
-            session,
-            _StageContext(
-                user_id=locked.user_id,
-                stage=VaultPipelineStage.CLASSIFY,
-                trigger=VaultPipelineTrigger(locked.follow_up_trigger),
-                resume_claim_id=locked.resume_claim_id,
-            ),
-            VaultPipelineOutcome.QUEUED,
-        )
+    await _queue_follow_up(session, locked, pending)
     await session.commit()
 
 
@@ -610,6 +737,17 @@ async def _run_stage(
     polls the same pass instead of guessing whether it landed or submitting a
     concurrent duplicate.
     """
+    if context.stage is VaultPipelineStage.CLASSIFY:
+        await _lock_classification_scheduler(session, context.user_id)
+        pending = await _pending_follow_up(session, context.user_id, for_update=True)
+        if pending is not None:
+            context = _StageContext(
+                user_id=context.user_id,
+                stage=context.stage,
+                trigger=_strongest_trigger(context.trigger.value, pending.trigger),
+                resume_claim_id=context.resume_claim_id,
+            )
+            await _consume_follow_up(session, context.user_id)
     run = _record(session, context, VaultPipelineOutcome.ATTEMPTED)
     await session.commit()
     if run.id is None:
@@ -658,6 +796,16 @@ async def _attempt_committed_run(
     return _RunResult(run_id=run.id, outcome=outcome)
 
 
+async def _consume_pending_for_claim(
+    session: AsyncSession,
+    run: VaultPipelineRun | None,
+    pending: VaultPipelineFollowUp | None,
+) -> None:
+    """Clear an intent only when this worker actually admitted its queue."""
+    if run is not None and pending is not None:
+        await _consume_follow_up(session, run.user_id)
+
+
 async def _start_queued_run(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -672,6 +820,12 @@ async def _start_queued_run(
     """
     if run.id is None:
         raise RuntimeError("persisted vault pipeline run has no id")
+    await _lock_classification_scheduler(session, run.user_id)
+    pending = await _pending_follow_up(session, run.user_id, for_update=True)
+    trigger = _strongest_trigger(
+        run.trigger,
+        None if pending is None else pending.trigger,
+    )
     result = await session.execute(
         update(VaultPipelineRun)
         .where(col(VaultPipelineRun.id) == run.id)
@@ -679,10 +833,12 @@ async def _start_queued_run(
         .values(
             outcome=VaultPipelineOutcome.ATTEMPTED.value,
             attempt_count=1,
+            trigger=trigger.value,
         )
         .returning(VaultPipelineRun)
     )
     claimed = result.scalars().one_or_none()
+    await _consume_pending_for_claim(session, claimed, pending)
     await session.commit()
     if claimed is None:
         return None
@@ -890,7 +1046,14 @@ async def _reconcile_existing_job(
     run: VaultPipelineRun,
     job: VaultPipelineJob,
 ) -> VaultPipelineOutcome | None:
-    """Land, retire, or bound one persisted job; ``None`` permits readmission."""
+    """Poll off-pool, then land, retire, or bound one persisted job.
+
+    Callers normally arrive immediately after a commit, but reconciliation is a
+    loop and every terminal result opens a new transaction.  Releasing again at
+    the polling chokepoint makes that caller ordering non-load-bearing: no path
+    can carry a pooled connection through Creek's potentially long status wait.
+    """
+    await session.commit()
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
@@ -996,11 +1159,96 @@ def _stages_to_run(
     return ()
 
 
+@dataclass(frozen=True)
+class _ClassificationJoin:
+    """Result of joining a snapshot, including work this caller must start."""
+
+    joined: bool
+    queued: VaultPipelineRun | None = None
+
+
+async def _observe_active_snapshot(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+) -> tuple[str | None, str | None] | None:
+    """Persist intent for the active run and return its immutable scope values."""
+    observed = await _active_classification(session, user_id)
+    if observed is None:
+        return None
+    snapshot = observed.trigger, observed.follow_up_trigger
+    await session.commit()
+    await _persist_follow_up_intent(session, user_id, trigger)
+    return snapshot
+
+
+def _stronger_scope_expression(
+    trigger: VaultPipelineTrigger,
+) -> str | ColumnElement[str]:
+    """Build the SQL expression merging requested, original, and joined scope."""
+    requested = trigger.value
+    if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT:
+        return requested
+    document = VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    return case(
+        (
+            or_(
+                col(VaultPipelineRun.trigger) == document,
+                col(VaultPipelineRun.follow_up_trigger) == document,
+            ),
+            document,
+        ),
+        else_=requested,
+    )
+
+
+async def _finish_active_join(
+    session: AsyncSession,
+    user_id: int,
+    active: VaultPipelineRun | None,
+) -> _ClassificationJoin | None:
+    """Commit an active-row join, consuming intent when admission is still pending."""
+    if active is None:
+        return None
+    queued = active if active.outcome == VaultPipelineOutcome.QUEUED.value else None
+    if queued is not None:
+        await _consume_follow_up(session, user_id)
+    await session.commit()
+    return _ClassificationJoin(joined=True, queued=queued)
+
+
+async def _materialize_missed_join(
+    session: AsyncSession,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+    observed_scope: tuple[str | None, str | None],
+) -> _ClassificationJoin:
+    """Create the queue when the observed run terminalized before the join."""
+    pending = await _pending_follow_up(session, user_id, for_update=True)
+    successor_scope = _strongest_trigger(
+        *observed_scope,
+        trigger.value,
+        None if pending is None else pending.trigger,
+    )
+    queued = _record(
+        session,
+        _StageContext(
+            user_id=user_id,
+            stage=VaultPipelineStage.CLASSIFY,
+            trigger=successor_scope,
+        ),
+        VaultPipelineOutcome.QUEUED,
+    )
+    await _consume_follow_up(session, user_id)
+    await session.commit()
+    return _ClassificationJoin(joined=True, queued=queued)
+
+
 async def _join_active_classification(
     session: AsyncSession,
     user_id: int,
     trigger: VaultPipelineTrigger,
-) -> bool:
+) -> _ClassificationJoin:
     """Persist that this write is not covered by an admitted shared snapshot.
 
     An ``attempted`` row has already crossed the admission boundary, so a write
@@ -1009,22 +1257,23 @@ async def _join_active_classification(
     that promise is safely coalesced into it, with document-import scope winning
     over journal scope.
 
-    Atomic updates rather than an ORM snapshot close the finish/join race.  If a
-    terminalizer replaces the attempted row with its queued successor while an
-    update waits, the second statement sees and joins that successor.  No
-    content and no network call enters either transaction.
+    The first read establishes whether this successful write arrived while a
+    snapshot was active.  If so, its scope is committed to the separate intent
+    row *before* this function waits on the per-user scheduler lock.  A
+    terminalizer can therefore consume that intent even while it owns the run
+    row; if it committed first, this writer materializes the durable queue.
+
+    This ordering is specifically stronger than one conditional PostgreSQL
+    ``UPDATE``. Under READ COMMITTED a statement that found an attempted row,
+    waited on its lock, and then saw it become terminal does not rescan for a
+    successor inserted after its original statement snapshot.
     """
-    requested = trigger.value
-    stronger_follow_up = (
-        requested
-        if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT
-        else func.coalesce(col(VaultPipelineRun.follow_up_trigger), requested)
-    )
-    stronger_queued_trigger = (
-        requested
-        if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT
-        else col(VaultPipelineRun.trigger)
-    )
+    observed_scope = await _observe_active_snapshot(session, user_id, trigger)
+    if observed_scope is None:
+        return _ClassificationJoin(joined=False)
+
+    await _lock_classification_scheduler(session, user_id)
+    stronger_scope = _stronger_scope_expression(trigger)
     joined = await session.execute(
         update(VaultPipelineRun)
         .where(col(VaultPipelineRun.user_id) == user_id)
@@ -1041,24 +1290,30 @@ async def _join_active_classification(
             trigger=case(
                 (
                     col(VaultPipelineRun.outcome) == VaultPipelineOutcome.QUEUED.value,
-                    stronger_queued_trigger,
+                    stronger_scope,
                 ),
                 else_=col(VaultPipelineRun.trigger),
             ),
             follow_up_trigger=case(
                 (
                     col(VaultPipelineRun.outcome) == VaultPipelineOutcome.ATTEMPTED.value,
-                    stronger_follow_up,
+                    stronger_scope,
                 ),
                 else_=col(VaultPipelineRun.follow_up_trigger),
             ),
         )
-        .returning(col(VaultPipelineRun.id))
+        .returning(VaultPipelineRun)
     )
-    active = joined.scalar_one_or_none() is not None
-    if active:
-        await session.commit()
-    return active
+    active = joined.scalars().one_or_none()
+    finished = await _finish_active_join(session, user_id, active)
+    if finished is not None:
+        return finished
+    return await _materialize_missed_join(
+        session,
+        user_id,
+        trigger,
+        observed_scope,
+    )
 
 
 async def _active_classification(
@@ -1425,6 +1680,29 @@ async def _claim_resumable_runs(session: AsyncSession) -> list[VaultPipelineRun]
             return runs
 
 
+async def _materialize_orphaned_follow_ups(session: AsyncSession) -> None:
+    """Turn crash-surviving intent rows without an active run into queues."""
+    result = await session.execute(select(col(VaultPipelineFollowUp.user_id)))
+    user_ids = tuple(result.scalars().all())
+    await session.commit()
+    for user_id in user_ids:
+        await _lock_classification_scheduler(session, user_id)
+        pending = await _pending_follow_up(session, user_id, for_update=True)
+        active = await _active_classification(session, user_id)
+        if pending is not None and active is None:
+            _record(
+                session,
+                _StageContext(
+                    user_id=user_id,
+                    stage=VaultPipelineStage.CLASSIFY,
+                    trigger=VaultPipelineTrigger(pending.trigger),
+                ),
+                VaultPipelineOutcome.QUEUED,
+            )
+            await _consume_follow_up(session, user_id)
+        await session.commit()
+
+
 async def _build_resume_continuation(
     factory: async_sessionmaker[AsyncSession],
     resolve_client: VaultClientResolver,
@@ -1495,6 +1773,7 @@ async def resume_vault_pipeline_runs(
 ) -> None:
     """Resume every persisted in-flight run after an Adepthood restart."""
     async with factory() as session:
+        await _materialize_orphaned_follow_ups(session)
         runs = await _claim_resumable_runs(session)
         for index, run in enumerate(runs):
             try:
@@ -1669,6 +1948,14 @@ async def _evaluate_pipeline_stages(
     )
 
 
+@dataclass(frozen=True)
+class _PipelinePlan:
+    """Either due foreground stages or one durable queue this caller can start."""
+
+    stages: tuple[VaultPipelineStage, ...] = ()
+    queued: VaultPipelineRun | None = None
+
+
 async def _settle_pipeline_recheck(
     session: AsyncSession,
     user_id: int,
@@ -1676,18 +1963,19 @@ async def _settle_pipeline_recheck(
     stages: tuple[VaultPipelineStage, ...],
     *,
     landed: bool,
-) -> tuple[VaultPipelineStage, ...]:
+) -> _PipelinePlan:
     """Finish the race recheck, preserving a newly active shared pass's scope."""
     if stages:
         await session.commit()
-        return stages
+        return _PipelinePlan(stages=stages)
     if landed:
         await session.commit()
     else:
         joined = await _join_active_classification(session, user_id, trigger)
-        if not joined:
-            await session.commit()
-    return ()
+        if joined.joined:
+            return _PipelinePlan(queued=joined.queued)
+        await session.commit()
+    return _PipelinePlan()
 
 
 async def _recheck_first_classification(
@@ -1696,13 +1984,14 @@ async def _recheck_first_classification(
     trigger: VaultPipelineTrigger,
     *,
     classification_landed: bool,
-) -> tuple[VaultPipelineStage, ...]:
+) -> _PipelinePlan:
     """Close the initial-classification race for a deep import trigger."""
     if trigger is not VaultPipelineTrigger.DOCUMENT_IMPORT or classification_landed:
         await session.commit()
-        return ()
-    if await _join_active_classification(session, user_id, trigger):
-        return ()
+        return _PipelinePlan()
+    joined = await _join_active_classification(session, user_id, trigger)
+    if joined.joined:
+        return _PipelinePlan(queued=joined.queued)
     stages, landed = await _evaluate_pipeline_stages(session, user_id, trigger)
     return await _settle_pipeline_recheck(
         session,
@@ -1717,14 +2006,15 @@ async def _pipeline_stages(
     session: AsyncSession,
     user_id: int,
     trigger: VaultPipelineTrigger,
-) -> tuple[VaultPipelineStage, ...]:
+) -> _PipelinePlan:
     """Join active classification or resolve the stages this write made due."""
-    if await _join_active_classification(session, user_id, trigger):
-        return ()
+    joined = await _join_active_classification(session, user_id, trigger)
+    if joined.joined:
+        return _PipelinePlan(queued=joined.queued)
     stages, landed = await _evaluate_pipeline_stages(session, user_id, trigger)
     if stages:
         await session.commit()
-        return stages
+        return _PipelinePlan(stages=stages)
     return await _recheck_first_classification(
         session,
         user_id,
@@ -1737,15 +2027,60 @@ async def _recover_scheduler_conflict(
     session: AsyncSession,
     user_id: int,
     trigger: VaultPipelineTrigger,
-) -> None:
+) -> VaultPipelineRun | None:
     """Join the winner after a stale scheduler loses the active-row insert."""
     _LOGGER.warning("creek vault pipeline could not record its pass")
     await session.rollback()
     try:
-        if not await _join_active_classification(session, user_id, trigger):
+        joined = await _join_active_classification(session, user_id, trigger)
+        if not joined.joined:
             await session.commit()
     except SQLAlchemyError:
         await session.rollback()
+        return None
+    else:
+        return joined.queued
+
+
+def _schedule_queued_follow_up(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+) -> None:
+    """Start a queue entry this request materialized; startup remains fallback."""
+    continuation = _continuation_from_active_run(
+        run,
+        factory=_session_factory_for(session),
+        client=client,
+        user_id=run.user_id,
+    )
+    if continuation is not None:
+        _schedule_continuation(continuation)
+
+
+async def _execute_pipeline_plan(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    user_id: int,
+    trigger: VaultPipelineTrigger,
+    plan: _PipelinePlan,
+) -> None:
+    """Start either the durable queue or the foreground stages in ``plan``."""
+    if plan.queued is not None:
+        _schedule_queued_follow_up(session, client, plan.queued)
+        return
+    if not plan.stages:
+        return
+    await _climb(
+        session,
+        client,
+        _ClimbContext(
+            user_id=user_id,
+            trigger=trigger,
+            stages=plan.stages,
+            deadline=time.monotonic() + _run_budget(trigger),
+        ),
+    )
 
 
 async def drive_vault_pipeline(
@@ -1776,21 +2111,18 @@ async def drive_vault_pipeline(
     # advertising it implements the narrower polling protocol.
     pipeline_client = cast("CreekVaultPipelineClient", client)
     try:
-        stages = await _pipeline_stages(session, user_id, trigger)
-        if not stages:
-            return
-        await _climb(
+        plan = await _pipeline_stages(session, user_id, trigger)
+        await _execute_pipeline_plan(
             session,
             pipeline_client,
-            _ClimbContext(
-                user_id=user_id,
-                trigger=trigger,
-                stages=stages,
-                deadline=time.monotonic() + _run_budget(trigger),
-            ),
+            user_id,
+            trigger,
+            plan,
         )
     except SQLAlchemyError:
         # This is also the deliberate loser path when two stale schedulers race
         # real inserts: the partial active-run index accepts one, this boundary
         # rolls the other session back, and only the winner reaches Creek.
-        await _recover_scheduler_conflict(session, user_id, trigger)
+        queued = await _recover_scheduler_conflict(session, user_id, trigger)
+        if queued is not None:
+            _schedule_queued_follow_up(session, pipeline_client, queued)

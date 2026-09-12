@@ -11,8 +11,9 @@ of those joined writes.  Terminalizing the active row can then enqueue exactly
 one successor in the same transaction.  ``queued`` distinguishes that durable
 promise from an admission whose HTTP outcome is already uncertain.
 
-Both fields are content-free closed vocabulary.  No fragment identifier,
-filename, excerpt, path, or body crosses into scheduling metadata.
+Both fields and the one-row-per-user race marker are content-free closed
+vocabulary.  No fragment identifier, filename, excerpt, path, or body crosses
+into scheduling metadata.
 """
 
 from collections.abc import Sequence
@@ -27,6 +28,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _TABLE = "vaultpipelinerun"
+_FOLLOW_UP_TABLE = "vaultpipelinefollowup"
 _ACTIVE_INDEX = "ix_vaultpipelinerun_active_user_stage_unique"
 _OLD_OUTCOMES = "outcome IN ('attempted', 'completed', 'incomplete', 'failed', 'ambiguous')"
 _NEW_OUTCOMES = (
@@ -41,6 +43,28 @@ _TRIGGERS = "follow_up_trigger IN ('journal_write', 'document_import')"
 
 def upgrade() -> None:
     """Add the joined-write marker and make queued work uniquely recoverable."""
+    op.create_table(
+        _FOLLOW_UP_TABLE,
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column(
+            "trigger",
+            sqlmodel.sql.sqltypes.AutoString(length=20),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "trigger IN ('journal_write', 'document_import')",
+            name="ck_vaultpipelinefollowup_trigger_valid",
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_vaultpipelinefollowup_user_id_unique",
+        _FOLLOW_UP_TABLE,
+        ["user_id"],
+        unique=True,
+    )
     op.add_column(
         _TABLE,
         sa.Column(
@@ -92,3 +116,8 @@ def downgrade() -> None:
         sqlite_where=sa.text("outcome = 'attempted'"),
     )
     op.drop_column(_TABLE, "follow_up_trigger")
+    op.drop_index(
+        "ix_vaultpipelinefollowup_user_id_unique",
+        table_name=_FOLLOW_UP_TABLE,
+    )
+    op.drop_table(_FOLLOW_UP_TABLE)

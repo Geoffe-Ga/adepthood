@@ -293,6 +293,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "The content-free private-vault provisioning handle. Its upstream job "
         "is copied into a detached teardown receipt before this account link is erased.",
     ),
+    "vaultpipelinefollowup": _erase(
+        "user_id",
+        "A content-free scheduling marker saying the account's vault needs one "
+        "classification pass after an in-flight snapshot. It has no meaning "
+        "once the account and vault connection are gone.",
+    ),
     "vaultpipelinerun": _erase(
         "user_id",
         "When each stage of the account's vault ontologization last ran, and "

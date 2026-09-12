@@ -40,6 +40,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineStage,
 )
+from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import (
@@ -50,6 +51,7 @@ from services.creek_vault_client import (
 from services.creek_vault_pipeline import _BACKGROUND_TASKS as BACKGROUND_TASKS
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_pipeline import _commit_finished_run as commit_finished_run
+from services.creek_vault_pipeline import _PipelinePlan as PipelinePlan
 from services.creek_vault_pipeline import _reconcile_run as reconcile_run
 from services.creek_vault_pipeline import _RunResult as RunResult
 from services.creek_vault_pipeline import _StageCounts as StageCounts
@@ -988,13 +990,13 @@ async def test_two_stale_schedulers_race_real_inserts_then_follow_up_serially(
         _session: AsyncSession,
         _user_id: int,
         _trigger: VaultPipelineTrigger,
-    ) -> tuple[VaultPipelineStage, ...]:
+    ) -> PipelinePlan:
         nonlocal schedulers_arrived
         schedulers_arrived += 1
         if schedulers_arrived == 2:
             both_schedulers_are_stale.set()
         await both_schedulers_are_stale.wait()
-        return (VaultPipelineStage.CLASSIFY,)
+        return PipelinePlan(stages=(VaultPipelineStage.CLASSIFY,))
 
     async def _hold_the_winner(request: httpx.Request) -> httpx.Response:
         if request.url.path == _CLASSIFICATIONS_PATH:
@@ -1083,8 +1085,8 @@ async def test_the_partial_unique_index_rejects_a_stale_duplicate_and_rolls_back
         _session: AsyncSession,
         _user_id: int,
         _trigger: VaultPipelineTrigger,
-    ) -> tuple[VaultPipelineStage, ...]:
-        return (VaultPipelineStage.CLASSIFY,)
+    ) -> PipelinePlan:
+        return PipelinePlan(stages=(VaultPipelineStage.CLASSIFY,))
 
     monkeypatch.setattr(pipeline, "_pipeline_stages", _stale_due_answer)
     recorder = _Recorder()
@@ -1173,6 +1175,79 @@ async def test_an_import_joins_a_journal_classification_without_losing_its_deep_
     assert rows[0].trigger == VaultPipelineTrigger.JOURNAL_WRITE.value
     assert rows[0].follow_up_trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
     assert {row.trigger for row in rows[1:]} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
+@pytest.mark.asyncio
+async def test_a_journal_write_joining_an_import_preserves_the_import_ladder(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A weaker joined trigger cannot replace the active import's deep scope."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    status_started = asyncio.Event()
+    release_status = asyncio.Event()
+    recorder = _DurableJobRecorder()
+
+    async def _hold_first_status(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        if (
+            request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}"
+            and response.json().get("state") == "running"
+        ):
+            status_started.set()
+            await release_status.wait()
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_first_status))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+    factory = _test_session_factory(db_session)
+
+    async with factory() as import_session, factory() as journal_session:
+        imported = asyncio.create_task(
+            drive_vault_pipeline(
+                import_session,
+                client,
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+            )
+        )
+        await status_started.wait()
+        await drive_vault_pipeline(
+            journal_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+        release_status.set()
+        await imported
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    assert recorder.pipeline_bodies == [
+        {"method": "llm"},
+        {"method": "llm"},
+        {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "threads"},
+    ]
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows] == [
+        "classify",
+        "classify",
+        "temporal",
+        "embeddings",
+        "eddies",
+        "threads",
+    ]
+    assert rows[0].trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert rows[0].follow_up_trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert {row.trigger for row in rows} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
     assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
 
 
@@ -1307,6 +1382,109 @@ async def test_a_joined_write_follow_up_survives_process_restart(
     assert {row.trigger for row in rows[1:]} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
     assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
     assert all(row.resume_claim_id is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_weaker_joined_follow_up_preserves_import_scope_after_restart(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery derives the ladder from the strongest scope in the chain."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add_all(
+        [
+            VaultPipelineRun(
+                user_id=_OWNER,
+                stage=VaultPipelineStage.CLASSIFY.value,
+                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT.value,
+                outcome=VaultPipelineOutcome.ATTEMPTED.value,
+                job_id=recorder.CLASSIFICATION_JOB,
+                fragments_seen=0,
+                fragments_touched=0,
+                fragments_lost=0,
+            ),
+            VaultPipelineFollowUp(
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    assert recorder.pipeline_bodies == [
+        {"method": "llm"},
+        {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "threads"},
+    ]
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows] == [
+        VaultPipelineStage.CLASSIFY,
+        VaultPipelineStage.CLASSIFY,
+        VaultPipelineStage.TEMPORAL,
+        VaultPipelineStage.EMBEDDINGS,
+        VaultPipelineStage.EDDIES,
+        VaultPipelineStage.THREADS,
+    ]
+    assert rows[0].trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert rows[0].follow_up_trigger is None
+    assert {row.trigger for row in rows} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
+@pytest.mark.asyncio
+async def test_an_orphaned_follow_up_intent_is_materialized_after_restart(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash between intent persistence and run joining loses no write."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _Recorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineFollowUp(
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.DOCUMENT_IMPORT.value,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    rows = await _rows(db_session)
+    assert [(row.stage, row.trigger) for row in rows] == [
+        (VaultPipelineStage.CLASSIFY, VaultPipelineTrigger.DOCUMENT_IMPORT),
+        (VaultPipelineStage.TEMPORAL, VaultPipelineTrigger.DOCUMENT_IMPORT),
+        (VaultPipelineStage.EMBEDDINGS, VaultPipelineTrigger.DOCUMENT_IMPORT),
+        (VaultPipelineStage.EDDIES, VaultPipelineTrigger.DOCUMENT_IMPORT),
+        (VaultPipelineStage.THREADS, VaultPipelineTrigger.DOCUMENT_IMPORT),
+    ]
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+    pending = await db_session.scalar(
+        select(VaultPipelineFollowUp).where(col(VaultPipelineFollowUp.user_id) == _OWNER)
+    )
+    assert pending is None
 
 
 @pytest.mark.asyncio

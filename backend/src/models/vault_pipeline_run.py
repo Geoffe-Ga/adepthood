@@ -24,15 +24,18 @@ excerpt, or error string.
 **Every logical run writes one row before its first attempt.** Retries increment
 that row rather than creating new debounce stamps. A write that arrives after a
 classification was admitted cannot be claimed by that earlier snapshot, so it
-adds only a follow-up trigger to the active row. Terminalizing that row and
-inserting one ``queued`` successor share a transaction. The partial unique
-index spans both queued and attempted user/stage pairs, closing concurrent
-admission across workers; a durable job id lets startup resume the accepted
-pass instead of submitting a duplicate after a process restart. Startup itself
-takes a content-free UUID and timestamp lease on the row before it schedules
-recovery. A live process renews that timestamp, another process cannot release
-an owner it did not claim, and a hard-killed process's lease becomes stale so
-the next healthy boot can recover the same durable handle.
+adds only a follow-up trigger to the active row. Its scope is first committed to
+the separate content-free ``vaultpipelinefollowup`` rendezvous row, allowing a
+terminalizer to see it even while PostgreSQL makes the run-row update wait.
+Terminalizing that row and inserting one ``queued`` successor then share a
+transaction. The partial unique index spans both queued and attempted
+user/stage pairs, closing concurrent admission across workers; a durable job id
+lets startup resume the accepted pass instead of submitting a duplicate after
+a process restart. Startup itself takes a content-free UUID and timestamp lease
+on the row before it schedules recovery. A live process renews that timestamp,
+another process cannot release an owner it did not claim, and a hard-killed
+process's lease becomes stale so the next healthy boot can recover the same
+durable handle.
 
 It also keeps a persistently failing linker from starving the rungs behind it:
 after bounded retries its terminal or ambiguous result closes its interval and
