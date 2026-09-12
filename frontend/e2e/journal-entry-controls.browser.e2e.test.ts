@@ -102,6 +102,11 @@ test('journal entry actions remain one row and resonance uses the responsive mar
 
   await page.setViewportSize({ width: 375, height: 800 });
   await expect(row).toBeVisible();
+  // ``setViewportSize`` resolves before React Native Web has necessarily
+  // delivered the resize through ``useWindowDimensions``.  The row is already
+  // visible in the prior two-column layout, so visibility cannot synchronize
+  // the geometry assertion below.  Wait for the product breakpoint itself.
+  await expect(page.getByTestId('journal-page')).toHaveCSS('flex-direction', 'column');
   const narrowRow = await rowGeometry(row);
   expect(Math.max(...narrowRow.centres) - Math.min(...narrowRow.centres)).toBeLessThanOrEqual(1);
   expect(narrowRow.scrollWidth).toBeLessThanOrEqual(narrowRow.clientWidth + 1);
