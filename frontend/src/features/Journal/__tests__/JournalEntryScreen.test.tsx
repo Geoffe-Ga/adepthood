@@ -444,33 +444,39 @@ describe('JournalEntryScreen', () => {
   });
 
   it.each([
-    { width: 375, compact: true },
-    { width: 600, compact: true },
-    { width: 1200, compact: false },
-  ])('keeps the writing controls on one row at $width px', async ({ width, compact }) => {
-    const rn = require('react-native');
-    const spy = jest
-      .spyOn(rn, 'useWindowDimensions')
-      .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
-    try {
-      mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
-      const view = renderScreen({ entryId: 7 });
-      await waitFor(() => expect(view.getByTestId('journal-finish-button')).toBeTruthy());
-      const row = view.getByTestId('journal-writing-controls');
-      const rowStyle = StyleSheet.flatten(row.props.style);
-      expect(rowStyle.flexDirection).toBe('row');
-      expect(rowStyle.flexWrap).toBe('nowrap');
-      expect(within(row).getByTestId('journal-finish-button')).toBeTruthy();
+    { width: 375, compact: true, pageDirection: 'column' },
+    { width: 600, compact: true, pageDirection: 'row' },
+    { width: 1200, compact: false, pageDirection: 'row' },
+  ])(
+    'keeps the writing controls on one row at $width px',
+    async ({ width, compact, pageDirection }) => {
+      const rn = require('react-native');
+      const spy = jest
+        .spyOn(rn, 'useWindowDimensions')
+        .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+      try {
+        mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
+        const view = renderScreen({ entryId: 7 });
+        await waitFor(() => expect(view.getByTestId('journal-finish-button')).toBeTruthy());
+        const row = view.getByTestId('journal-writing-controls');
+        const rowStyle = StyleSheet.flatten(row.props.style);
+        expect(StyleSheet.flatten(view.getByTestId('journal-page').props.style).flexDirection).toBe(
+          pageDirection,
+        );
+        expect(rowStyle.flexDirection).toBe('row');
+        expect(rowStyle.flexWrap).toBe('nowrap');
+        expect(within(row).getByTestId('journal-finish-button')).toBeTruthy();
 
-      const photograph = within(row).getByTestId('journal-photograph-page');
-      expect(StyleSheet.flatten(photograph.props.style).flexDirection).toBe('row');
-      expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
-      expect(view.queryByText('Photograph a page')).toEqual(compact ? null : expect.anything());
-      view.unmount();
-    } finally {
-      spy.mockRestore();
-    }
-  });
+        const photograph = within(row).getByTestId('journal-photograph-page');
+        expect(StyleSheet.flatten(photograph.props.style).flexDirection).toBe('row');
+        expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
+        expect(view.queryByText('Photograph a page')).toEqual(compact ? null : expect.anything());
+        view.unmount();
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 
   it.each([
     { width: 375, inMargin: false },
