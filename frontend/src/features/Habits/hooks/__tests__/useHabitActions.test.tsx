@@ -180,6 +180,29 @@ describe('useHabitActions.logUnit', () => {
     expect(savedHabits[0]!.completions).toHaveLength(1);
   });
 
+  it('reconciles the optimistic streak to the server response after a successful check-in', async () => {
+    useHabitStore.setState({ habits: [makeHabit({ streak: 2 })] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.resolve({
+        streak: 7,
+        milestones: [],
+        reason_code: 'streak_incremented',
+      }),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useHabitStore.getState().habits[0]!.streak).toBe(7);
+    const lastCall = (saveHabits as jest.Mock).mock.calls.at(-1);
+    const savedHabits = lastCall?.[0] as Habit[];
+    expect(savedHabits[0]!.streak).toBe(7);
+  });
+
   it('fires a milestone toast only after the API confirms the check-in', async () => {
     useHabitStore.setState({ habits: [makeHabit()] });
     const { result, showToast } = renderActions();

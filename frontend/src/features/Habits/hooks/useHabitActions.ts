@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 
 import { ApiError, ApiValidationError } from '../../../api';
+import type { CheckInResult } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
@@ -166,11 +167,11 @@ const useLogUnitMutation = (
   showToast: ShowToast,
   tz: string,
 ): ((_habitId: number, _amount: number, _date?: Date) => void) => {
-  const { mutate } = useOptimisticMutation<LogUnitContext, unknown>({
+  const { mutate } = useOptimisticMutation<LogUnitContext, CheckInResult | null>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
-    onSuccess: (ctx) => {
+    onSuccess: (ctx, result) => {
       if (ctx.isDemoSeed === true) {
         // ``commitLogUnitContext`` short-circuits a demo tile to ``null``, which
         // resolves — so this path, not ``rollback``, is where a sample tap lands.
@@ -179,6 +180,7 @@ const useLogUnitMutation = (
         showDemoSeedNotice(showToast);
         return;
       }
+      if (result !== null) habitManager.reconcileLogUnitContext(ctx, result);
       showToast(habitManager.buildLogUnitToast(ctx));
     },
   });

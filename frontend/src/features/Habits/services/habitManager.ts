@@ -519,7 +519,7 @@ const applyLogUnit = (
   // ``date`` backfills a missed day; a past-day log leaves today's
   // progress untouched so no milestone celebration fires for it.
   const oldProgress = calculateTodaysProgress(habit, tz);
-  const updatedHabit = logHabitUnits(habit, amount, date);
+  const updatedHabit = logHabitUnits(habit, amount, date, tz);
   const newProgress = calculateTodaysProgress(updatedHabit, tz);
   return { updatedHabit, oldProgress, newProgress };
 };
@@ -532,6 +532,8 @@ const applyLogUnit = (
  * own context and rolls back to the right baseline.
  */
 export interface LogUnitContext {
+  /** Habit whose optimistic row and authoritative server streak this operation owns. */
+  habitId: number;
   prev: Habit[];
   next: Habit[];
   habitName: string;
@@ -1598,6 +1600,7 @@ export const habitManager = {
     const dayKey = date ? dayKeyInTZ(date, tz) : undefined;
     const completedOn = dayKey && dayKey !== todayInUserTZ(tz) ? dayKey : undefined;
     return {
+      habitId,
       prev,
       next,
       habitName,
@@ -1648,6 +1651,15 @@ export const habitManager = {
       did_complete: true,
       completed_on: ctx.completedOn,
     });
+  },
+
+  /** Replace only this habit's placeholder streak with the confirmed server value. */
+  reconcileLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
+    const next = getHabits().map((habit) =>
+      habit.id === ctx.habitId ? { ...habit, streak: result.streak } : habit,
+    );
+    setHabits(next);
+    void persistHabits(next);
   },
 
   /**
