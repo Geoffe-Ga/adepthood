@@ -47,6 +47,7 @@ from services.creek_vault_client import (
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
+from services.creek_vault_pipeline import _BACKGROUND_TASKS as BACKGROUND_TASKS
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_pipeline import _commit_finished_run as commit_finished_run
 from services.creek_vault_pipeline import _reconcile_run as reconcile_run
@@ -1321,14 +1322,12 @@ async def test_a_joined_follow_up_survives_lost_status_and_background_cancellati
     recorder = _DurableJobRecorder()
     background_status_waiting = asyncio.Event()
     release_status = asyncio.Event()
-    classification_status_calls = 0
 
     async def _lose_status_answers(request: httpx.Request) -> httpx.Response:
-        nonlocal classification_status_calls
         response = recorder(request)
         if request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}":
-            classification_status_calls += 1
-            if classification_status_calls >= 2:
+            current = asyncio.current_task()
+            if current is not None and current in BACKGROUND_TASKS.values():
                 background_status_waiting.set()
             await release_status.wait()
         return response
