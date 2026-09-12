@@ -8,6 +8,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { JournalListResponse, JournalMessage } from '@/api';
+import type { VoiceReadinessT } from '@/api/schemas';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -20,6 +21,8 @@ const mockResonanceList = jest.fn() as jest.MockedFunction<
 const mockJournalList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
+const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
+const mockRootNavigate = jest.fn();
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
@@ -47,6 +50,10 @@ jest.mock('@/api', () => ({
     setIncluded: jest.fn(),
     list: jest.fn(() => Promise.resolve([])),
   },
+  corpus: {
+    voiceReadiness: (...a: unknown[]) =>
+      (mockVoiceReadiness as unknown as (...x: unknown[]) => unknown)(...a),
+  },
 }));
 
 // useScreenDrawer installs the header-left toggle through useAppNavigation
@@ -69,7 +76,7 @@ jest.mock('@/navigation/hooks', () => ({
 // stub it so the entry screen renders outside a real NavigationContainer.
 jest.mock('@react-navigation/native', () => ({
   ...(jest.requireActual('@react-navigation/native') as object),
-  useNavigation: () => ({ navigate: jest.fn() }),
+  useNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
@@ -136,6 +143,13 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockResonanceList.mockResolvedValue({ items: [] });
   mockJournalList.mockResolvedValue(page([]));
+  mockVoiceReadiness.mockResolvedValue({
+    ready: false,
+    state: 'gathering',
+    message: 'Your voice is still taking shape.',
+    grounding_source: 'corpus',
+    classified_fragment_count: 2,
+  });
 });
 
 describe('Journal header drawer from JournalEntryScreen', () => {
@@ -189,6 +203,18 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     });
 
     expect(navigation.push).toHaveBeenCalledWith('JournalEntry');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it('routes a consented account from Your corpus to the import surface', async () => {
+    const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('SeedCorpus'));
+    expect(mockVoiceReadiness).toHaveBeenCalledTimes(1);
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 });

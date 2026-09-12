@@ -86,6 +86,8 @@ function renderDrawer(props: Partial<DrawerHarnessProps> = {}) {
       hasMore={props.hasMore ?? false}
       onRowPress={jest.fn()}
       onNewEntry={jest.fn()}
+      onOpenCorpus={jest.fn()}
+      corpusOpenState="idle"
       onLoadMore={jest.fn()}
       onRetry={jest.fn()}
       onConfirmBodySearch={onConfirmBodySearch}
@@ -259,6 +261,8 @@ function Harness(): React.JSX.Element {
           hasMore={hasMore}
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
+          onOpenCorpus={() => undefined}
+          corpusOpenState="idle"
           onLoadMore={loadMore}
           onRetry={retry}
           onConfirmBodySearch={confirmBodySearch}

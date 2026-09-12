@@ -15,6 +15,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
+import type { CorpusDestination } from './corpusDestination';
 import { deleteEntryLabel } from './deleteEntryCopy';
 import DeleteEntryDialog from './DeleteEntryDialog';
 import { excerpt } from './excerpt';
@@ -719,6 +720,7 @@ interface ShelfNav {
   openPhotograph: () => void;
   openPrompt: (_prompt: StagePromptDetail) => void;
   openWithPrompt: () => void;
+  openCorpus: (_destination: CorpusDestination) => void;
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
@@ -735,6 +737,10 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     [navigation],
   );
   const openPhotograph = useCallback(() => navigation.navigate('JournalPhotograph'), [navigation]);
+  const openCorpus = useCallback(
+    (destination: CorpusDestination) => navigation.navigate(destination),
+    [navigation],
+  );
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
@@ -757,7 +763,15 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     },
     [navigation, week],
   );
-  return { openEntry, newEntry, newMorningPage, openPhotograph, openPrompt, openWithPrompt };
+  return {
+    openEntry,
+    newEntry,
+    newMorningPage,
+    openPhotograph,
+    openPrompt,
+    openWithPrompt,
+    openCorpus,
+  };
 }
 
 function renderSectionHeader({
@@ -773,6 +787,7 @@ interface ShelfDrawer {
   onSelectEntry: (_id: number) => void;
   onNewEntry: () => void;
   onPhotograph: () => void;
+  onOpenCorpus: (_destination: CorpusDestination) => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -794,7 +809,7 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openPhotograph();
     drawer.close();
   }, [nav, drawer]);
-  return { drawer, onSelectEntry, onNewEntry, onPhotograph };
+  return { drawer, onSelectEntry, onNewEntry, onPhotograph, onOpenCorpus: nav.openCorpus };
 }
 
 /** A shelf row's renderer, bound to the callbacks and clock the screen holds. */
@@ -918,6 +933,7 @@ function JournalShelfScreen(): React.JSX.Element {
         onSelectEntry={shelfDrawer.onSelectEntry}
         onNewEntry={shelfDrawer.onNewEntry}
         onPhotograph={shelfDrawer.onPhotograph}
+        onOpenCorpus={shelfDrawer.onOpenCorpus}
       />
       <DeleteEntryDialog
         visible={deletion.pending !== null}

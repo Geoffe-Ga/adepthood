@@ -8,7 +8,7 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
-import { SquarePen } from 'lucide-react-native';
+import { Camera, Library, SquarePen } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,10 +19,11 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { corpusDestinationForReadiness, type CorpusDestination } from './corpusDestination';
 import { groupByRecency, formatDate, type ShelfSection } from './recency';
 import { usePagedJournal } from './usePagedJournal';
 
-import type { JournalMessage } from '@/api';
+import { corpus, type JournalMessage } from '@/api';
 import {
   DrawerItem,
   DrawerNavSection,
@@ -39,6 +40,9 @@ import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/desi
 const NEW_ENTRY_LABEL = 'New entry';
 /** Row that opens the photograph-a-page capture flow. */
 const PHOTOGRAPH_LABEL = 'Photograph a page';
+/** Permanent door to the writing corpus behind reflections. */
+const CORPUS_LABEL = 'Your corpus';
+const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
 /** Fallback label for an entry saved without a title. */
@@ -403,6 +407,10 @@ export interface JournalDrawerProps {
   onNewEntry: () => void;
   /** Open the photograph-a-page capture flow. Omitted where the flow is unavailable. */
   onPhotograph?: () => void;
+  /** Open the consent decision or corpus import surface, as readiness requires. */
+  onOpenCorpus: () => void;
+  /** Status of the readiness lookup started by the corpus row. */
+  corpusOpenState: CorpusOpenState;
   /** Fetch and append the next older page. */
   onLoadMore: () => void;
   /** Refetch the first page after a failure. */
@@ -452,14 +460,20 @@ function useDrawerSearch(
   return { bodySearchActive, isSearching, matches, handleQueryChange, handleConfirmDeepSearch };
 }
 
-/** The drawer's top action rows: start a blank entry, and (from the shelf) begin
- *  a photograph capture. The photograph row appears only when a handler is wired. */
+/**
+ * The drawer's top action rows: start a blank entry, optionally photograph a
+ * page, and always tend the corpus behind reflections.
+ */
 function DrawerActions({
   onNewEntry,
   onPhotograph,
+  onOpenCorpus,
+  corpusOpenState,
 }: {
   onNewEntry: () => void;
   onPhotograph?: () => void;
+  onOpenCorpus: () => void;
+  corpusOpenState: CorpusOpenState;
 }): React.JSX.Element {
   return (
     <>
@@ -473,34 +487,65 @@ function DrawerActions({
         <DrawerItem
           testID="journal-photograph-entry"
           label={PHOTOGRAPH_LABEL}
+          icon={<Camera color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
           onPress={onPhotograph}
         />
+      ) : null}
+      <CorpusDrawerAction state={corpusOpenState} onPress={onOpenCorpus} />
+    </>
+  );
+}
+
+/** Permanent corpus door plus local progress/failure feedback for its live lookup. */
+function CorpusDrawerAction({
+  state,
+  onPress,
+}: {
+  state: CorpusOpenState;
+  onPress: () => void;
+}): React.JSX.Element {
+  const { width } = useWindowDimensions();
+  const accessibilityLabel =
+    state === 'pending'
+      ? 'Opening your corpus'
+      : state === 'error'
+        ? 'Your corpus. Previous attempt failed; try again'
+        : CORPUS_LABEL;
+  return (
+    <>
+      <DrawerItem
+        testID="journal-drawer-corpus"
+        label={CORPUS_LABEL}
+        icon={<Library color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
+        accessibilityLabel={accessibilityLabel}
+        onPress={onPress}
+      />
+      {state === 'error' ? (
+        <Text
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          style={[type(width).caption, styles.corpusError]}
+        >
+          {CORPUS_ERROR}
+        </Text>
       ) : null}
     </>
   );
 }
 
 /** The Journal header drawer's contents: New entry, a search field, then the list. */
-export default function JournalDrawer({
-  items,
-  now,
-  loading,
-  error,
-  hasMore,
-  currentEntryId,
-  onRowPress,
-  onNewEntry,
-  onPhotograph,
-  onLoadMore,
-  onRetry,
-  onConfirmBodySearch,
-}: JournalDrawerProps): React.JSX.Element {
+export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Element {
   const { bodySearchActive, isSearching, matches, handleQueryChange, handleConfirmDeepSearch } =
-    useDrawerSearch(items, onConfirmBodySearch);
+    useDrawerSearch(props.items, props.onConfirmBodySearch);
 
   return (
     <View testID="journal-drawer">
-      <DrawerActions onNewEntry={onNewEntry} onPhotograph={onPhotograph} />
+      <DrawerActions
+        onNewEntry={props.onNewEntry}
+        onPhotograph={props.onPhotograph}
+        onOpenCorpus={props.onOpenCorpus}
+        corpusOpenState={props.corpusOpenState}
+      />
       <DrawerSearchField
         resultCount={isSearching ? matches.length : undefined}
         bodySearchActive={bodySearchActive}
@@ -511,22 +556,22 @@ export default function JournalDrawer({
         <SearchView
           matches={matches}
           bodySearchActive={bodySearchActive}
-          loading={loading}
-          error={error}
-          currentEntryId={currentEntryId}
-          onRowPress={onRowPress}
-          onConfirmBodySearch={onConfirmBodySearch}
+          loading={props.loading}
+          error={props.error}
+          currentEntryId={props.currentEntryId}
+          onRowPress={props.onRowPress}
+          onConfirmBodySearch={props.onConfirmBodySearch}
         />
       ) : (
         <DrawerBody
-          sections={groupByRecency(items, now)}
-          loading={loading}
-          error={error}
-          hasMore={hasMore}
-          currentEntryId={currentEntryId}
-          onRowPress={onRowPress}
-          onLoadMore={onLoadMore}
-          onRetry={onRetry}
+          sections={groupByRecency(props.items, props.now)}
+          loading={props.loading}
+          error={props.error}
+          hasMore={props.hasMore}
+          currentEntryId={props.currentEntryId}
+          onRowPress={props.onRowPress}
+          onLoadMore={props.onLoadMore}
+          onRetry={props.onRetry}
         />
       )}
     </View>
@@ -544,6 +589,60 @@ export interface JournalScreenDrawerProps {
   onNewEntry: () => void;
   /** Open the photograph-a-page capture flow. Omitted where it is unavailable. */
   onPhotograph?: () => void;
+  /** Navigate through the corpus door once the shared readiness rule resolves it. */
+  onOpenCorpus: (_destination: CorpusDestination) => void;
+}
+
+type CorpusOpenState = 'idle' | 'pending' | 'error';
+
+interface CorpusOpenAction {
+  open: () => void;
+  state: CorpusOpenState;
+}
+
+/** Resolve and open the corpus door once, cancelling a slow read if the drawer closes. */
+function useOpenCorpusFromDrawer(
+  drawer: ScreenDrawerState,
+  onOpenCorpus: (_destination: CorpusDestination) => void,
+): CorpusOpenAction {
+  const requestGeneration = useRef(0);
+  const requestPending = useRef(false);
+  const [state, setState] = useState<CorpusOpenState>('idle');
+  const { close, isOpen } = drawer;
+
+  useEffect(() => {
+    if (!isOpen) {
+      requestGeneration.current += 1;
+      requestPending.current = false;
+      setState('idle');
+    }
+    return () => {
+      requestGeneration.current += 1;
+      requestPending.current = false;
+    };
+  }, [isOpen]);
+
+  const open = useCallback(() => {
+    if (requestPending.current) return;
+    requestPending.current = true;
+    setState('pending');
+    const generation = requestGeneration.current;
+    void corpus
+      .voiceReadiness()
+      .then((readiness) => {
+        if (generation !== requestGeneration.current) return;
+        close();
+        onOpenCorpus(corpusDestinationForReadiness(readiness));
+      })
+      .catch(() => {
+        if (generation === requestGeneration.current) setState('error');
+      })
+      .finally(() => {
+        if (generation === requestGeneration.current) requestPending.current = false;
+      });
+  }, [close, onOpenCorpus]);
+
+  return { open, state };
 }
 
 /** The Journal header drawer wired to its lazy, cache-above-the-panel entry fetch. */
@@ -553,9 +652,12 @@ export function JournalScreenDrawer({
   onSelectEntry,
   onNewEntry,
   onPhotograph,
+  onOpenCorpus,
 }: JournalScreenDrawerProps): React.JSX.Element {
   const { items, loading, error, hasMore, loadMore, retry, confirmBodySearch } =
     useJournalDrawerEntries(drawer.isOpen);
+  const corpusAction = useOpenCorpusFromDrawer(drawer, onOpenCorpus);
+
   return (
     <ScreenDrawer
       visible={drawer.isOpen}
@@ -574,6 +676,8 @@ export function JournalScreenDrawer({
         onRowPress={onSelectEntry}
         onNewEntry={onNewEntry}
         onPhotograph={onPhotograph}
+        onOpenCorpus={corpusAction.open}
+        corpusOpenState={corpusAction.state}
         onLoadMore={loadMore}
         onRetry={retry}
         onConfirmBodySearch={confirmBodySearch}
@@ -593,6 +697,10 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: ink.muted,
+  },
+  corpusError: {
+    color: ink.muted,
+    paddingBottom: SPACING.xs,
   },
   searchStatusRow: {
     flexDirection: 'row',
