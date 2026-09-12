@@ -165,18 +165,18 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Ten capability members, eight of which Creek publishes a wire name for."""
+    """Eleven capability members, nine of which Creek publishes a wire name for."""
 
-    def test_has_ten_members(self) -> None:
-        """Exactly ten capabilities are defined.
+    def test_has_eleven_members(self) -> None:
+        """Exactly eleven capabilities are defined.
 
-        Eight of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
+        Nine of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
         are adepthood-side concepts Creek does not advertise. The count is easy
         to misread: this enum held seven members while Creek published five, and
         later held nine while Creek published seven. The count is deliberately
         independent of the published capability count.
         """
-        assert len(CreekCapability) == 10
+        assert len(CreekCapability) == 11
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
@@ -189,6 +189,10 @@ class TestCreekCapability:
     def test_journal_value_is_wire_name(self) -> None:
         """JOURNAL's value is the creek.journal wire name."""
         assert CreekCapability.JOURNAL.value == "creek.journal"
+
+    def test_journal_withdraw_value_is_wire_name(self) -> None:
+        """JOURNAL_WITHDRAW has its own destructive-operation telemetry name."""
+        assert CreekCapability.JOURNAL_WITHDRAW.value == "creek.journal_withdraw"
 
     def test_save_value_is_wire_name(self) -> None:
         """SAVE's value is the creek.save wire name."""

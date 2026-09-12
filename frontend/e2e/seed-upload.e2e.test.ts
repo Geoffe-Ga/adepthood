@@ -45,7 +45,13 @@ interface VaultLedger {
     digest?: string | null;
     action?: string;
   }>;
-  fragments: Array<{ externalId: string; fragmentId: string; digest: string; writes: number }>;
+  fragments: Array<{
+    kind: 'journal' | 'upload' | 'voice-draft';
+    externalId: string;
+    fragmentId: string;
+    digest: string;
+    writes: number;
+  }>;
 }
 
 /** Where a document goes for the one account that has connected a vault. */
@@ -143,12 +149,13 @@ describe('seeding a document into a connected vault, against a live server', () 
     // route, and only the vault's own ledger proves the document arrived.
     const { received, fragments } = await vaultLedger();
     const uploads = received.filter((entry) => entry.path === '/v1/uploads');
+    const uploadedFragments = fragments.filter((fragment) => fragment.kind === 'upload');
 
     expect(uploads).toHaveLength(1);
     expect(uploads[0]?.digest).toBe(digestOf(SEED_TEXT));
     expect(uploads[0]?.tier).toBe('personal');
-    expect(fragments).toHaveLength(1);
-    expect(fragments[0]?.fragmentId).toBe(firstRef);
+    expect(uploadedFragments).toHaveLength(1);
+    expect(uploadedFragments[0]?.fragmentId).toBe(firstRef);
   });
 
   it('reports a re-send as one fragment edited in place, not a second one', async () => {
@@ -163,12 +170,13 @@ describe('seeding a document into a connected vault, against a live server', () 
 
     const { received, fragments } = await vaultLedger();
     const uploads = received.filter((entry) => entry.path === '/v1/uploads');
+    const uploadedFragments = fragments.filter((fragment) => fragment.kind === 'upload');
 
     expect(uploads).toHaveLength(2);
     expect(uploads[1]?.externalId).toBe(uploads[0]?.externalId);
     expect(uploads[1]?.action).toBe(UNCHANGED);
-    expect(fragments).toHaveLength(1);
-    expect(fragments[0]?.writes).toBe(2);
+    expect(uploadedFragments).toHaveLength(1);
+    expect(uploadedFragments[0]?.writes).toBe(2);
   });
 
   it('withholds an Intimate document from the vault entirely', async () => {

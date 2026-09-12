@@ -52,9 +52,10 @@ VAULT_NOT_PURGED = "not_purged"
 
 VAULT_GUIDANCE_NONE = "No Creek Vault was connected, so nothing of yours is held outside Adepthood."
 VAULT_GUIDANCE_CONFIGURED = (
-    "Your Creek Vault is yours, not ours. Adepthood cannot purge it — the vault "
-    "contract has no purge capability — so anything it holds is still there. Run "
-    "`creek purge` against your vault to erase that copy."
+    "Your Creek Vault is yours, not ours. Adepthood withdraws individual journal "
+    "pages when you make them Intimate or delete them, but account deletion cannot "
+    "run an account-wide purge — the vault contract has no such capability. Run "
+    "`creek purge` against your vault to erase everything else it holds."
 )
 VAULT_GUIDANCE_TEARDOWN_PENDING = (
     "Your private vault deletion has been requested. Adepthood will keep "

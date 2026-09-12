@@ -228,10 +228,12 @@ class JournalEntry(SQLModel, table=True):
     # Creek Vault write-path linkage. ``vault_ref`` is the opaque handle a
     # successful vault ingest returns; ``vault_tags`` holds the Frequency /
     # Wavelength-phase tags the vault classified. Both stay NULL for entries never
-    # sent to a vault -- intimate entries (withheld until the encrypted transit
-    # path lands) and every entry written while no vault is configured. Declared
-    # with no length / as JSON to match the migration exactly (drift-free), and
-    # both nullable so the write path is purely additive over existing rows.
+    # sent to a vault and after Creek confirms withdrawal. A newly-intimate or
+    # deleting row may retain both temporarily as its durable retry marker when
+    # Creek is offline; the row is not hidden or deleted until that confirmation.
+    # Declared with no length / as JSON to match the migration exactly
+    # (drift-free), and both nullable so the write path is purely additive over
+    # existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     # When the consent backfill last *offered* this entry to the corpus writer,

@@ -4,18 +4,19 @@ These drive the real create/update endpoints against a scripted vault client to
 pin the guarantee the router owes the writer: the entry lands in Postgres and
 comes back to the user whatever the vault does, and the ``vault_ref`` /
 ``vault_tags`` columns are reconciled to the write outcome -- written on a
-durable ingest, cleared when an entry turns intimate, and left alone on a
+durable ingest, cleared only after confirmed withdrawal, and left alone on a
 transient failure so a passing blip never drops a good reference.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
@@ -30,6 +31,7 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJournalWithdrawResult,
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
@@ -83,17 +85,26 @@ class SequencedVaultClient(NoPipelineVaultDouble):
         self,
         *,
         capabilities: frozenset[CreekCapability] = frozenset(
-            {CreekCapability.JOURNAL, CreekCapability.CLASSIFY}
+            {
+                CreekCapability.JOURNAL,
+                CreekCapability.JOURNAL_WITHDRAW,
+                CreekCapability.CLASSIFY,
+            }
         ),
         ingest_error: Exception | None = None,
     ) -> None:
         """Store the advertised capabilities and any scripted ingest failure."""
         self.ingest_calls: list[VaultIngestRequest] = []
+        self.withdraw_calls: list[int] = []
         self._capabilities = capabilities
         self._ingest_error = ingest_error
+        self.handshake_error: Exception | None = None
+        self.withdraw_error: Exception | None = None
 
     async def handshake(self) -> HandshakeResult:
         """Report available with the configured capability set."""
+        if self.handshake_error is not None:
+            raise self.handshake_error
         return HandshakeResult(
             available=True,
             contract_version=CONTRACT_VERSION,
@@ -120,6 +131,13 @@ class SequencedVaultClient(NoPipelineVaultDouble):
     async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
         """Unused on this path; raises if a test calls it by mistake."""
         raise NotImplementedError(request)
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Record the content-free stable identity and return a confirmed withdrawal."""
+        self.withdraw_calls.append(entry_id)
+        if self.withdraw_error is not None:
+            raise self.withdraw_error
+        return VaultJournalWithdrawResult(withdrawn=True)
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Return a fixed classification tag set."""
@@ -405,8 +423,235 @@ async def test_patch_to_intimate_clears_prior_vault_ref_and_tags(
 
     await db_session.refresh(first_row)
     assert len(fake.ingest_calls) == 1
+    assert fake.withdraw_calls == [entry_id]
     assert first_row.vault_ref is None
     assert first_row.vault_tags is None
+
+
+@pytest.mark.asyncio
+async def test_failed_intimate_withdrawal_is_visible_and_retryable_from_persisted_state(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A failed privacy upgrade keeps its handle until the same PATCH confirms absence."""
+    fake = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_intimate_retry")
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "Writing that must leave Creek.", "classification": "personal"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+    fake.withdraw_error = CreekVaultUnavailableError(
+        "creek vault call failed: creek.journal_withdraw"
+    )
+
+    failed = await async_client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert failed.json() == {"detail": "vault_withdrawal_pending"}
+    row = await _entry_row(db_session, entry_id)
+    assert row.classification == "intimate"
+    assert row.vault_ref == "vault-ref-1"
+
+    fake.withdraw_error = None
+    retried = await async_client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+    assert retried.status_code == HTTPStatus.OK
+    await db_session.refresh(row)
+    assert fake.withdraw_calls == [entry_id, entry_id]
+    assert row.vault_ref is None
+    assert row.vault_tags is None
+
+
+@pytest.mark.asyncio
+async def test_failed_withdrawal_handshake_is_visible_and_retryable(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A handshake transport failure preserves the same durable Intimate retry state."""
+    fake = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_intimate_handshake_retry")
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "Privacy survives a handshake outage.", "classification": "personal"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+    fake.handshake_error = CreekVaultUnavailableError("creek vault handshake failed")
+
+    failed = await async_client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert failed.json() == {"detail": "vault_withdrawal_pending"}
+    row = await _entry_row(db_session, entry_id)
+    assert row.classification == "intimate"
+    assert row.vault_ref == "vault-ref-1"
+
+
+@pytest.mark.asyncio
+async def test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """DELETE never hides its row while the connected vault still reports a retryable miss."""
+    fake = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_delete_retry")
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "Delete me everywhere.", "classification": "public"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+    fake.withdraw_error = CreekVaultUnavailableError(
+        "creek vault call failed: creek.journal_withdraw"
+    )
+
+    failed = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert failed.json() == {"detail": "vault_withdrawal_pending"}
+    row = await _entry_row(db_session, entry_id)
+    assert row.deleted_at is None
+    assert row.vault_ref == "vault-ref-1"
+
+    fake.withdraw_error = None
+    retried = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert retried.status_code == HTTPStatus.NO_CONTENT
+    await db_session.refresh(row)
+    assert fake.withdraw_calls == [entry_id, entry_id]
+    assert row.deleted_at is not None
+    assert row.vault_ref is None
+    assert row.vault_tags is None
+
+
+@pytest.mark.asyncio
+async def test_other_user_cannot_withdraw_an_entry_by_guessing_its_id(
+    async_client: AsyncClient,
+) -> None:
+    """The owner-scoped 404 fires before Creek receives another user's stable id."""
+    fake = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    owner = await _signup(async_client, "vault_withdraw_owner")
+    other = await _signup(async_client, "vault_withdraw_other")
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "Only the owner may withdraw this.", "classification": "personal"},
+        headers=owner,
+    )
+    entry_id = int(created.json()["id"])
+
+    denied = await async_client.delete(f"/journal/{entry_id}", headers=other)
+
+    assert denied.status_code == HTTPStatus.NOT_FOUND
+    assert fake.withdraw_calls == []
+
+
+class PausedSecondIngestVaultClient(SequencedVaultClient):
+    """Pause one update PUT so an intimate PATCH can attempt to overtake it."""
+
+    def __init__(self) -> None:
+        """Initialize the two synchronization points for the second ingest."""
+        super().__init__()
+        self.second_started = asyncio.Event()
+        self.release_second = asyncio.Event()
+        self.remote_order: list[str] = []
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        self.remote_order.append("upsert")
+        if len(self.remote_order) == 2:
+            self.second_started.set()
+            await self.release_second.wait()
+        return await super().ingest(request)
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        self.remote_order.append("withdraw")
+        return await super().withdraw_journal_entry(entry_id)
+
+
+@pytest.mark.asyncio
+async def test_late_in_flight_upsert_cannot_resurrect_an_intimate_entry(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A privacy PATCH linearizes after an already-started PUT, then withdraws it."""
+    fake = PausedSecondIngestVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(concurrent_async_client, "vault_upsert_race")
+    created = await concurrent_async_client.post(
+        "/journal/",
+        json={"message": "First body.", "classification": "personal"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+
+    editing = asyncio.create_task(
+        concurrent_async_client.patch(
+            f"/journal/{entry_id}", json={"message": "Second body."}, headers=headers
+        )
+    )
+    await fake.second_started.wait()
+    privatizing = asyncio.create_task(
+        concurrent_async_client.patch(
+            f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+        )
+    )
+    await asyncio.sleep(0)
+    fake.release_second.set()
+    edited, privatized = await asyncio.gather(editing, privatizing)
+
+    assert edited.status_code == HTTPStatus.OK
+    assert privatized.status_code == HTTPStatus.OK
+    assert fake.remote_order == ["upsert", "upsert", "withdraw"]
+    async with concurrent_session_factory() as checking:
+        row = await _entry_row(checking, entry_id)
+    assert row.classification == "intimate"
+    assert row.vault_ref is None
+
+
+@pytest.mark.asyncio
+async def test_late_in_flight_upsert_cannot_outlive_a_deleted_entry(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """DELETE waits out an already-started PUT, withdraws it, then hides the row."""
+    fake = PausedSecondIngestVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(concurrent_async_client, "vault_delete_race")
+    created = await concurrent_async_client.post(
+        "/journal/",
+        json={"message": "First body.", "classification": "personal"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+
+    editing = asyncio.create_task(
+        concurrent_async_client.patch(
+            f"/journal/{entry_id}", json={"message": "Second body."}, headers=headers
+        )
+    )
+    await fake.second_started.wait()
+    deleting = asyncio.create_task(
+        concurrent_async_client.delete(f"/journal/{entry_id}", headers=headers)
+    )
+    await asyncio.sleep(0)
+    fake.release_second.set()
+    edited, deleted = await asyncio.gather(editing, deleting)
+
+    assert edited.status_code == HTTPStatus.OK
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert fake.remote_order == ["upsert", "upsert", "withdraw"]
+    async with concurrent_session_factory() as checking:
+        row = await _entry_row(checking, entry_id)
+    assert row.deleted_at is not None
+    assert row.vault_ref is None
 
 
 @pytest.mark.asyncio
@@ -531,11 +776,17 @@ class TransactionObservingVaultClient(SequencedVaultClient):
         super().__init__()
         self._session = session
         self.in_transaction_during_ingest: list[bool] = []
+        self.in_transaction_during_withdraw: list[bool] = []
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Sample the session's transaction state, then ingest normally."""
         self.in_transaction_during_ingest.append(self._session.in_transaction())
         return await super().ingest(request)
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Sample the request session at the exact content-free DELETE boundary."""
+        self.in_transaction_during_withdraw.append(self._session.in_transaction())
+        return await super().withdraw_journal_entry(entry_id)
 
 
 @pytest.mark.asyncio
@@ -597,3 +848,26 @@ async def test_patch_does_not_hold_a_db_transaction_across_the_vault_call(
     assert fake.in_transaction_during_ingest == [False, False], (
         "a vault call ran with the request session's transaction still open"
     )
+
+
+@pytest.mark.asyncio
+async def test_withdrawal_does_not_hold_a_db_transaction_across_the_vault_call(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The privacy-critical remote DELETE borrows no request-pool connection."""
+    fake = TransactionObservingVaultClient(db_session)
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake
+    headers = await _signup(async_client, "vault_withdraw_no_hold")
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "A mirrored entry.", "classification": "personal"},
+        headers=headers,
+    )
+    entry_id = int(created.json()["id"])
+
+    patched = await async_client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+    assert patched.status_code == HTTPStatus.OK
+    assert fake.in_transaction_during_withdraw == [False]

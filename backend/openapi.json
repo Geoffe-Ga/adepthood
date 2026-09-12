@@ -14143,6 +14143,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Journal Entries",
@@ -14281,6 +14291,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Create Journal Entry",
@@ -14439,6 +14459,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Expand Marginalia Essay",
@@ -14580,6 +14610,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Accept Suggestion",
@@ -14721,6 +14761,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Dismiss Suggestion",
@@ -15022,6 +15072,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Voice Drafts",
@@ -15156,6 +15216,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Delete Journal Entry",
@@ -15295,6 +15365,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Get Journal Entry",
@@ -15444,6 +15524,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Update Journal Entry",
@@ -15585,6 +15675,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Marginalia",
@@ -15979,6 +16079,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Run Resonance",
@@ -16138,6 +16248,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Suggestions",
@@ -16296,6 +16416,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Detect Entry Suggestions",

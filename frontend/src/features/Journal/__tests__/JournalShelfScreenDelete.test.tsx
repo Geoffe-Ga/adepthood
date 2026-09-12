@@ -129,6 +129,8 @@ describe('deleting one journal entry from the shelf', () => {
     expect(body).toMatch(/no way back to it from inside the app/i);
     // The withdrawal from the ontologized corpus is a promise about where the writing goes.
     expect(body).toMatch(/reflections draw on/i);
+    expect(body).toMatch(/connected Creek vault.*removed/i);
+    expect(body).toMatch(/offline.*shelf.*try again/i);
     // Never scold somebody for unwriting their own page.
     expect(body).not.toMatch(/permanent|forever|warning|sure\?/i);
   });
@@ -169,5 +171,18 @@ describe('deleting one journal entry from the shelf', () => {
     const notice = await findByTestId('journal-delete-error');
     expect(notice.props.children).toMatch(/still on your shelf/i);
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+  });
+
+  it('names the connected-vault recovery path when Creek has not confirmed removal', async () => {
+    mockDelete.mockRejectedValue({ status: 503, detail: 'vault_withdrawal_pending' });
+    const { getByTestId, findByTestId } = await shelfWithDeleteRequested();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-delete-confirm'));
+    });
+
+    const notice = await findByTestId('journal-delete-error');
+    expect(notice.props.children).toMatch(/still on your shelf/i);
+    expect(notice.props.children).toMatch(/Creek.*online.*delete .*again/i);
   });
 });

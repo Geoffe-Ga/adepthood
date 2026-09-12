@@ -25,6 +25,7 @@ from __future__ import annotations
 from domain.creek_vault import (
     CreekCapabilityUnsupportedError,
     VaultClassificationPass,
+    VaultJournalWithdrawResult,
     VaultLinkPass,
     VaultLinkStage,
 )
@@ -40,6 +41,10 @@ class NoPipelineVaultDouble:
     *does* exercise the pipeline overrides them, exactly as it would if it had
     declared them itself.
     """
+
+    async def withdraw_journal_entry(self, _entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Raise: this double was not built to withdraw a journal entry."""
+        raise CreekCapabilityUnsupportedError(_UNSERVED)
 
     async def classify_corpus(self) -> VaultClassificationPass:
         """Raise: this double was not built to run a classification pass."""

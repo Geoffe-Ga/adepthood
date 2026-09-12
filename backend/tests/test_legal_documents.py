@@ -698,7 +698,12 @@ async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
         "the entry never reached the corpus, so the withdrawal below proves nothing"
     )
 
-    await delete_journal_entry(current_user=_DELETING_ACCOUNT, session=db_session, entry=entry)
+    await delete_journal_entry(
+        current_user=_DELETING_ACCOUNT,
+        session=db_session,
+        entry=entry,
+        vault_client=LocalFallbackCreekVaultClient(),
+    )
 
     assert entry.deleted_at is not None, "the delete did not mark the row"
     assert await db_session.get(JournalEntry, entry.id) is not None, (

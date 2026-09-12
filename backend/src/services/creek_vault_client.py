@@ -119,6 +119,7 @@ from domain.creek_vault import (
     VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJournalWithdrawResult,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -148,6 +149,7 @@ from services.creek_vault_payload import (
     _link_request_body,
     _parse_classification_pass,
     _parse_http_ingest_result,
+    _parse_http_journal_withdraw_result,
     _parse_http_upload_result,
     _parse_http_voice_draft_delete_result,
     _parse_http_voice_draft_result,
@@ -583,6 +585,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
         "journal-upsert": CreekCapability.JOURNAL,
+        "journal-withdraw": CreekCapability.JOURNAL_WITHDRAW,
         "reflections": CreekCapability.REFLECT,
         "wheel": CreekCapability.WHEEL,
         "upload": CreekCapability.UPLOAD,
@@ -949,6 +952,15 @@ _CONTRACT_ERROR_CODES: frozenset[VaultErrorCode] = frozenset(
 _INGEST_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.JOURNAL)
 _INGEST_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.JOURNAL)
 _CREDENTIAL_REJECTED_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.JOURNAL)
+_JOURNAL_WITHDRAW_FAILED_MESSAGE = _capability_message(
+    _CALL_FAILED, CreekCapability.JOURNAL_WITHDRAW
+)
+_JOURNAL_WITHDRAW_REJECTED_MESSAGE = _capability_message(
+    _REQUEST_REJECTED, CreekCapability.JOURNAL_WITHDRAW
+)
+_JOURNAL_WITHDRAW_CREDENTIAL_MESSAGE = _capability_message(
+    _CREDENTIAL_REJECTED, CreekCapability.JOURNAL_WITHDRAW
+)
 _UPLOAD_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.UPLOAD)
 _UPLOAD_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.UPLOAD)
 _UPLOAD_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.UPLOAD)
@@ -977,6 +989,13 @@ _PIPELINE_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCa
 # to **accept**, which the parsers verify the vault's echo against.
 _PIPELINE_TIER_CEILING = VaultTierCeiling.PERSONAL
 _PIPELINE_WIRE_CEILING = wire_ceiling_for(_PIPELINE_TIER_CEILING)
+
+# Withdrawal carries no prose and returns no identity, but it must be admitted
+# to remove either network-storable journal tier. ``personal`` is therefore the
+# narrowest ceiling that can retract every copy this adapter could have created;
+# intimate remains unspellable on the wire.
+_JOURNAL_WITHDRAW_TIER_CEILING = VaultTierCeiling.PERSONAL
+_JOURNAL_WITHDRAW_WIRE_CEILING = wire_ceiling_for(_JOURNAL_WITHDRAW_TIER_CEILING)
 
 # How long one cold embedding stage may hold the wire. Creek's own schema is
 # explicit that ``eddies`` and ``threads`` fill a vector cache on first use -- a
@@ -1275,7 +1294,7 @@ def _write_failure(
         return (
             CreekVaultContractError(request_rejected, code=code)
             if code in _CONTRACT_ERROR_CODES
-            else CreekVaultUnavailableError(call_failed)
+            else CreekVaultUnavailableError(call_failed, code=code)
         )
     return _uncoded_write_failure(
         response,
@@ -1360,6 +1379,16 @@ def _upload_failure(response: httpx.Response) -> CreekVaultError:
         call_failed=_UPLOAD_FAILED_MESSAGE,
         request_rejected=_UPLOAD_REJECTED_MESSAGE,
         credential_rejected=_UPLOAD_CREDENTIAL_MESSAGE,
+    )
+
+
+def _journal_withdraw_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a journal withdrawal failure under its own capability."""
+    return _write_failure(
+        response,
+        call_failed=_JOURNAL_WITHDRAW_FAILED_MESSAGE,
+        request_rejected=_JOURNAL_WITHDRAW_REJECTED_MESSAGE,
+        credential_rejected=_JOURNAL_WITHDRAW_CREDENTIAL_MESSAGE,
     )
 
 
@@ -1903,6 +1932,46 @@ class HttpCreekVaultClient:
         )
         return result
 
+    async def _delete_journal_entry(self, entry_id: int) -> httpx.Response:
+        """Issue one bounded, authorized, content-free DELETE by stable id."""
+        entry_url = f"{self._url}{_JOURNAL_ENTRIES_PATH}{_entry_path_segment(entry_id)}"
+        try:
+            return await self._authorized_request(
+                "DELETE",
+                entry_url,
+                ceiling=_JOURNAL_WITHDRAW_WIRE_CEILING,
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_JOURNAL_WITHDRAW_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_JOURNAL_WITHDRAW_FAILED_MESSAGE) from None
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Withdraw one consumer-scoped journal identity without sending prose."""
+        with _CountingOutcome(CreekCapability.JOURNAL_WITHDRAW):
+            if not self.supports(CreekCapability.JOURNAL_WITHDRAW):
+                raise CreekCapabilityUnsupportedError(
+                    _unsupported_message(CreekCapability.JOURNAL_WITHDRAW)
+                )
+            response = await self._delete_journal_entry(entry_id)
+            if not response.is_success:
+                raise _journal_withdraw_failure(response) from None
+            try:
+                payload = response.json()
+            except ValueError:
+                raise CreekVaultUnavailableError(_JOURNAL_WITHDRAW_FAILED_MESSAGE) from None
+            result = _parse_http_journal_withdraw_result(
+                payload,
+                tier_ceiling=_JOURNAL_WITHDRAW_WIRE_CEILING,
+            )
+            record_vault_outcome(
+                VaultTelemetryOutcome.SUCCESS
+                if result.withdrawn
+                else VaultTelemetryOutcome.SCHEMA_FAILURE,
+                CreekCapability.JOURNAL_WITHDRAW,
+            )
+            return result
+
     async def _post_document(self, request: VaultUploadRequest) -> httpx.Response:
         """Hand one document to the uploads collection, normalizing any transport failure.
 
@@ -2099,7 +2168,7 @@ class HttpCreekVaultClient:
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
-        Creek does publish classification at the pinned contract 0.15.0, as
+        Creek does publish classification at the pinned contract 0.16.0, as
         ``pipeline``: a whole-vault pass whose schema says it carries no
         fragment selector and never will, so it cannot answer one entry's
         question. What is absent is a shape, not a capability. Counted through
@@ -2471,6 +2540,11 @@ class LocalFallbackCreekVaultClient:
         """No-op ingest: report not stored without raising (Postgres is authoritative)."""
         record_vault_outcome(self._outcome, CreekCapability.JOURNAL)
         return VaultIngestResult(stored=False, vault_ref=None)
+
+    async def withdraw_journal_entry(self, _entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Report an unconfirmed no-op when there is no vault to withdraw from."""
+        record_vault_outcome(self._outcome, CreekCapability.JOURNAL_WITHDRAW)
+        return VaultJournalWithdrawResult(withdrawn=False)
 
     async def upload(self, _request: VaultUploadRequest, /) -> VaultUploadResult:
         """No-op upload: report not stored without raising, exactly as ingest does.

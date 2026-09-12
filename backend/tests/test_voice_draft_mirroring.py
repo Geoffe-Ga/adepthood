@@ -402,6 +402,74 @@ async def test_failed_retraction_never_costs_the_intimate_reclassification(
 
 
 @pytest.mark.asyncio
+async def test_failed_voice_draft_retraction_keeps_journal_delete_retryable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """DELETE stays pending and visible until Creek confirms the draft is absent."""
+    headers, user_id = await _signup(async_client, "draft_delete_retry")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay="Existing draft")
+    vault = _RecordingDraftVault(db_session, fail_delete=True)
+    _wire_vault(vault)
+
+    failed = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert failed.json() == {"detail": "vault_withdrawal_pending"}
+    visible = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert visible.status_code == HTTPStatus.OK
+    persisted = await db_session.get(JournalEntry, entry_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.deleted_at is None
+
+    vault.fail_delete = False
+    retried = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert retried.status_code == HTTPStatus.NO_CONTENT
+    assert vault.deletes == [
+        (voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL),
+        (voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL),
+    ]
+    gone = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert gone.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_missing_connected_voice_draft_capability_keeps_journal_delete_retryable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Capability withdrawal is not proof that an earlier mirrored draft is absent."""
+    headers, user_id = await _signup(async_client, "draft_delete_capability_downgrade")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay="Previously mirrored draft")
+    vault = _RecordingDraftVault(db_session, supported=False)
+    _wire_vault(vault)
+
+    failed = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert failed.json() == {"detail": "vault_withdrawal_pending"}
+    assert vault.deletes == []
+    visible = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert visible.status_code == HTTPStatus.OK
+    persisted = await db_session.get(JournalEntry, entry_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.deleted_at is None
+
+    vault.supported = True
+    retried = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert retried.status_code == HTTPStatus.NO_CONTENT
+    assert vault.deletes == [
+        (voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL),
+    ]
+    gone = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert gone.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_intimate_patch_during_generation_prevents_the_later_mirror(
     concurrent_async_client: AsyncClient,
@@ -505,5 +573,110 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
     assert expanded.status_code == HTTPStatus.OK
     assert patched.status_code == HTTPStatus.OK
     assert patched.json()["classification"] == "intimate"
+    assert vault.operations == ["put", "delete"]
+    assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_delete_during_generation_prevents_the_later_mirror(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed DELETE makes a delayed Voice Draft generation ineligible to mirror."""
+    headers, user_id = await _signup(concurrent_async_client, "draft_delete_generation_race")
+    async with concurrent_session_factory() as session:
+        entry_id, note_id = await _seed_note(session, user_id)
+
+    generation_started = asyncio.Event()
+    finish_generation = asyncio.Event()
+
+    async def _slow_essay(
+        prompt: str,
+        history: object,
+        *,
+        system_prompt: object,
+        api_key: object,
+    ) -> LLMResponse:
+        del prompt, history, system_prompt, api_key
+        generation_started.set()
+        await finish_generation.wait()
+        return LLMResponse(
+            text=_ESSAY,
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _slow_essay)
+    vault = _RecordingDraftVault(None)
+    _wire_vault(vault)
+
+    expansion = asyncio.create_task(
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay",
+            headers=headers,
+        )
+    )
+    await asyncio.wait_for(generation_started.wait(), timeout=2)
+
+    deleted = await concurrent_async_client.delete(
+        f"/journal/{entry_id}",
+        headers=headers,
+    )
+    finish_generation.set()
+    expanded = await expansion
+
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert expanded.status_code == HTTPStatus.OK
+    assert vault.upserts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE cannot return while a Voice Draft PUT can still remain in Creek."""
+    headers, user_id = await _signup(concurrent_async_client, "draft_delete_mirror_race")
+    async with concurrent_session_factory() as session:
+        entry_id, note_id = await _seed_note(session, user_id)
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _EssayLLM())
+    vault = _BlockingDraftVault()
+    _wire_vault(vault)
+
+    expansion = asyncio.create_task(
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay",
+            headers=headers,
+        )
+    )
+    await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
+    deletion = asyncio.create_task(
+        concurrent_async_client.delete(
+            f"/journal/{entry_id}",
+            headers=headers,
+        )
+    )
+
+    delete_was_serialized = False
+    try:
+        await asyncio.wait_for(asyncio.shield(deletion), timeout=0.05)
+    except TimeoutError:
+        delete_was_serialized = True
+    finally:
+        vault.finish_upsert.set()
+
+    expanded = await expansion
+    deleted = await deletion
+
+    assert delete_was_serialized, "DELETE overtook the in-flight Voice Draft PUT"
+    assert expanded.status_code == HTTPStatus.OK
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert vault.operations == ["put", "delete"]
     assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]

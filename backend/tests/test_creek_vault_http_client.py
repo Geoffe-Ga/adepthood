@@ -1,7 +1,7 @@
 """Tests for the HTTP/JSON Creek Vault adapter in services.creek_vault_client.
 
 Every case drives the adapter through an ``httpx.MockTransport`` handler, so no
-test touches a network or waits on real time. Four response shapes are asserted
+test touches a network or waits on real time. The response shapes are asserted
 here: the capability document the handshake already parses, the journal ingest
 exchange, the wheel read, and the reflection exchange -- the capabilities whose
 ``/v1`` shapes Creek has ratified. Nothing beyond those is invented, and every
@@ -251,6 +251,7 @@ _PROTOCOL_MEMBERS = (
     "is_available",
     "supports",
     "ingest",
+    "withdraw_journal_entry",
     "classify",
     "reflect",
     "wheel",
@@ -320,6 +321,7 @@ def _handshake_payload(
     wire_name = {
         CreekCapability.HANDSHAKE.value: "capabilities",
         CreekCapability.JOURNAL.value: "journal-upsert",
+        CreekCapability.JOURNAL_WITHDRAW.value: "journal-withdraw",
         CreekCapability.REFLECT.value: "reflections",
         CreekCapability.WHEEL.value: "wheel",
         CreekCapability.UPLOAD.value: "upload",
@@ -1418,6 +1420,7 @@ async def test_local_fallback_still_serves_every_feature_without_a_url(
     for capability in CreekCapability:
         assert client.supports(capability) is False
     assert await client.ingest(_ingest_request()) == VaultIngestResult(stored=False, vault_ref=None)
+    assert (await client.withdraw_journal_entry(_ENTRY_ID)).withdrawn is False
     with pytest.raises(CreekCapabilityUnsupportedError):
         await client.classify(_ENTRY_BODY, VaultTierCeiling.OPEN)
     with pytest.raises(CreekCapabilityUnsupportedError):
@@ -3410,6 +3413,11 @@ async def _fallback_ingest(client: LocalFallbackCreekVaultClient) -> None:
     assert (await client.ingest(_ingest_request())).stored is False
 
 
+async def _fallback_withdraw(client: LocalFallbackCreekVaultClient) -> None:
+    """Withdraw through the local fallback, which cannot confirm remote absence."""
+    assert (await client.withdraw_journal_entry(_ENTRY_ID)).withdrawn is False
+
+
 async def _fallback_classify(client: LocalFallbackCreekVaultClient) -> None:
     """Ask the local fallback to classify, which it has nothing to serve."""
     with pytest.raises(CreekCapabilityUnsupportedError):
@@ -3433,6 +3441,7 @@ FallbackCall = Callable[[LocalFallbackCreekVaultClient], Coroutine[None, None, N
 _FALLBACK_CALLS: tuple[tuple[CreekCapability, FallbackCall], ...] = (
     (CreekCapability.HANDSHAKE, _fallback_handshake),
     (CreekCapability.JOURNAL, _fallback_ingest),
+    (CreekCapability.JOURNAL_WITHDRAW, _fallback_withdraw),
     (CreekCapability.CLASSIFY, _fallback_classify),
     (CreekCapability.REFLECT, _fallback_reflect),
     (CreekCapability.WHEEL, _fallback_wheel),

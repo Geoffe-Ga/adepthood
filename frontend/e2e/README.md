@@ -124,13 +124,16 @@ forensic surface for operators), and it is the only place that distinguishes
 deduction before the first dial, so the second is what actually happens on a
 refusal. The helper only ever reads.
 
-The seed journey adds the fourth and last: a loopback process answering Creek
-Vault's published `/v1` surface, `fakeCreekVault.mjs`. `seed.upload-document` is
-about a document the vault **accepts**, and the lane had no vault at all, so
-every import took the local-fallback path and that outcome was unreachable — a
-spec written anyway would have asserted `vault_unavailable` forever while
-counting as coverage. Creek Vault is an external product with its own
-repository, which is what makes it a boundary and not an adepthood surface.
+The two vault journeys add the fourth and last boundary: a loopback process
+answering Creek Vault's published `/v1` surface, `fakeCreekVault.mjs`.
+`seed.upload-document` proves a document is accepted, while
+`journal.withdraw-connected-vault-copy` proves a page and its generated Voice
+Draft are not presented as deleted until Creek confirms both content-free
+retractions. Without this process every import takes the local-fallback path and
+the withdrawal retry never reaches a remote replica; specs written anyway would
+register coverage while proving neither real outcome. Creek Vault is an
+external product with its own repository, which is what makes this a boundary
+and not an adepthood surface.
 
 Nothing on the request path is stubbed to reach it. The server is booted with
 `CREEK_VAULT_URL` and `CREEK_VAULT_API_KEY` — ordinary production settings — so
@@ -150,20 +153,22 @@ outright and re-judges the stored host on every dial, which is why the
 connect-your-own path cannot reach a stand-in vault beside the lane, and why
 this boundary is configured deployment-wide.
 
-Two things keep it from disturbing any other journey. The vault advertises
-`capabilities` and `upload` and nothing else — most pointedly not the journal
-replication capability, whose absence `e2eLaneGuard.test.ts` asserts by reading
-the file, because a vault claiming it would put every journal write in the lane
-on the wire toward this process. And `CREEK_VAULT_OWNER_USER_ID` binds the vault
-to exactly one account: every other account in the lane is served the local
-fallback, which is byte-for-byte the behaviour it had before.
+Two things keep it from disturbing any other journey. The vault advertises only
+the five capabilities those two journeys exercise — capabilities, upload,
+journal upsert, journal withdrawal, and Voice Drafts — with the exact list
+ratcheted by `e2eLaneGuard.test.ts`. And `CREEK_VAULT_OWNER_USER_ID` binds the
+vault to exactly one pre-provisioned account used only by those specs: every
+other account in the lane is served the local fallback, which is byte-for-byte
+the behaviour it had before.
 
 `GET /__lane/uploads` reports what actually arrived — every `/v1` request in
-order and the fragments the ledger holds, by shape and by a digest of the bytes,
-never by the bytes. That is what lets the spec prove both halves of the privacy
-guarantee at once: an Intimate document adds no request and its digest never
-appears, and because the personal one's digest _is_ there, "nothing arrived"
-cannot be satisfied by a fake nobody ever dialled.
+order and the upload, journal, and Voice Draft fragments the ledger holds, by
+kind, identity, action, and a digest of the bytes, never by the bytes. That is
+what lets the specs prove both halves of their privacy claims: an Intimate
+document adds no request, and a failed draft deletion leaves its opaque identity
+present until a confirmed retry removes it. `POST
+/__lane/fail-next-voice-draft-delete` arms exactly one deterministic 503 so the
+recovery path is exercised over the socket rather than by replacing a client.
 
 The owner is provisioned by `globalSetup`, and the assertion that it worked is
 the point. `CREEK_VAULT_OWNER_USER_ID` is read from the server process's

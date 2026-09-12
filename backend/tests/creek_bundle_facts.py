@@ -31,12 +31,12 @@ PINNED_PATH = "docs/contracts/adepthood-v1"
 #: The upstream commit the vendored copy was fetched at. A sha rather than a
 #: branch: a branch name would let the "pinned" copy move underneath the digests
 #: that are the only thing making it a pin.
-PINNED_COMMIT = "8c93bcdf4c9585b6157a58ba6e76c526c34efe97"  # pragma: allowlist secret
+PINNED_COMMIT = "b0b1bd149d1d822a2ead9f4784f7c765a0d738b3"  # pragma: allowlist secret
 
 #: The contract version the vendored bundle publishes. Restated rather than read
 #: from ``domain.creek_vault``, so the suites compare two independent claims
 #: instead of agreeing with whatever the pin happens to say.
-PINNED_CONTRACT_VERSION = "0.15.0"
+PINNED_CONTRACT_VERSION = "0.16.0"
 
 #: The ontology the wire vocabulary is drawn from. Unchanged across 0.8 to 0.15.
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
@@ -44,20 +44,20 @@ ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
 #: Files listed inside Creek's own ``manifest.json``. It covers neither itself
 #: nor the hand-written ``README.md``, which is why this is two short of the
 #: vendored total.
-CREEK_MANIFEST_ENTRIES = 94
+CREEK_MANIFEST_ENTRIES = 102
 
 #: Files our ``vendor.json`` sidecar records. The sidecar excludes only itself:
 #: it is the record, not the record's subject.
-VENDORED_FILES = 96
+VENDORED_FILES = 104
 
 #: JSON Schemas the bundle publishes -- one per entry in Creek's own
 #: ``CONTRACT_MODELS``. It grew with the capability axis: 0.7 published 16.
-SCHEMA_FILES = 37
+SCHEMA_FILES = 38
 
-#: Capabilities on the example matrix's first axis, at contract 0.15.0:
+#: Capabilities on the example matrix's first axis, at contract 0.16.0:
 #: ``capabilities``, ``journal-upsert``, ``reflections``, ``wheel``, ``upload``,
-#: ``drive-connector``, ``pipeline`` and ``voice-drafts``.
-CAPABILITY_COUNT = 8
+#: ``drive-connector``, ``pipeline``, ``voice-drafts`` and ``journal-withdraw``.
+CAPABILITY_COUNT = 9
 
 #: States on the matrix's second axis. Unchanged since the matrix was published.
 STATE_COUNT = 7
@@ -65,13 +65,13 @@ STATE_COUNT = 7
 #: Cells in the published example matrix -- one per (capability, state) pair.
 #: Written out rather than multiplied, so a suite can still assert that the two
 #: axes and the cell count are three agreeing observations of one grid.
-EXAMPLE_CELLS = 56
+EXAMPLE_CELLS = 63
 
 #: Cells holding Creek's "this branch does not exist" sentinel. The care guard
 #: runs in ``reflections`` alone, so every other capability's ``care-escalation``
-#: cell is a ``NotApplicableExample`` rather than a document a client can be
-#: driven with.
-UNREACHABLE_CELLS = 7
+#: cell is unreachable. Journal withdrawal additionally has no refusal branch:
+#: unknown, foreign and already-withdrawn identities are absent-equivalent.
+UNREACHABLE_CELLS = 9
 
 #: Cells a client can actually be driven with.
 REACHABLE_CELLS = EXAMPLE_CELLS - UNREACHABLE_CELLS

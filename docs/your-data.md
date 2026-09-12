@@ -66,12 +66,33 @@ The server notes the date, your account id, and how many records went — and
 nothing else. Not a line of what the archive said. The same rule as the
 deletion receipt, for the same reason.
 
+## Making one page Intimate
+
+Changing a Public or Personal page to **Intimate** keeps the stricter choice in
+Adepthood first, then withdraws that page's stable journal identity from a
+connected Creek Vault without sending its title or body again. The page's local
+corpus copy is withdrawn too. Adepthood clears the remote reference only after
+Creek confirms that the source page, active fragment, and derived surfaces no
+longer contain it.
+
+If Creek is offline or cannot confirm the removal, Adepthood keeps the page
+Intimate and keeps the remote reference as a retry marker. The editor tells you
+the withdrawal is pending: bring the vault online, then choose **Intimate**
+again. Repeating the operation is safe.
+
 ## Deleting one page
 
 **Journal → the page's Delete.** The shelf asks once, and then the page leaves
 your journal. Its copy in the ontologized corpus is withdrawn at the same
 moment, so that writing stops being retrieved as context for anything you write
-afterwards.
+afterwards. If you connected a Creek Vault and that page was mirrored there,
+Adepthood also withdraws its stable journal identity before reporting the
+delete complete. Creek does not receive the page body during this operation.
+
+If the vault is offline or cannot confirm removal, the page returns to your
+shelf and its remote reference is retained. Bring the vault online and delete
+the page again; the content-free withdrawal is idempotent, so a repeated request
+does not recreate or reveal anything.
 
 There is no restore inside the app. The row is not shredded the instant you
 confirm — it is marked deleted and kept out of every read path, which is how
@@ -137,11 +158,14 @@ cleared off them.
 
 ### If you use a Creek Vault
 
-Deleting your Adepthood account **does not purge your vault**, and cannot.
-Creek's published capability set has no purge verb, so nothing Adepthood does
-reaches inside your enclave — which is the point of an enclave.
+Deleting your Adepthood account **does not run an account-wide vault purge**.
+Adepthood automatically withdraws an individual mirrored journal page when you
+make it Intimate or delete that page, but Creek's published contract has no
+account-wide purge verb. Account deletion therefore cannot promise to erase
+other vault sources or journal copies whose per-page withdrawal was never
+completed.
 
-Run `creek purge` against your own vault to erase the copy it holds. The
+Run `creek purge` against your own vault to erase everything it holds. The
 deletion confirmation screen repeats this if a vault is configured, and an
 unreachable vault never delays or blocks the deletion of your Adepthood data.
 

@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.15.0"
+CONTRACT_VERSION = "0.16.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -80,6 +80,7 @@ class CreekCapability(enum.StrEnum):
 
     HANDSHAKE = "creek.handshake"
     JOURNAL = "creek.journal"
+    JOURNAL_WITHDRAW = "creek.journal_withdraw"
     UPLOAD = "creek.upload"
     SAVE = "creek.save"
     CLASSIFY = "creek.classify"
@@ -526,6 +527,21 @@ class VaultIngestResult:
     stored: bool
     vault_ref: str | None
     action: VaultIngestAction | None = None
+
+
+@dataclass(frozen=True)
+class VaultJournalWithdrawResult:
+    """Whether Creek confirmed one stable journal identity absent.
+
+    The response deliberately carries no external id, fragment id, path, or
+    prose: the caller already knows what it addressed, and the absence of those
+    fields keeps the destructive operation from becoming an enumeration
+    surface. ``False`` means a 2xx response could not be verified against the
+    closed published confirmation shape; callers must preserve their retry
+    marker and never present that as completed withdrawal.
+    """
+
+    withdrawn: bool
 
 
 class VaultUploadStatus(enum.StrEnum):
@@ -1027,6 +1043,9 @@ class CreekVaultClient(Protocol):
 
     async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
         """Hand a piece of writing to the vault for durable storage."""
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        """Retract one stable journal identity without sending its content."""
 
     async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
         """Hand one user-supplied document to the vault for its ingestors to parse.
