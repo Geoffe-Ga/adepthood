@@ -143,15 +143,37 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
 const makeScaffoldHabit = (overrides: Partial<Habit> = {}): Habit =>
   makeHabit({ hasClientMintedIds: true, ...overrides });
 
-const renderActions = () => {
+const renderActions = (tz = 'UTC') => {
   const showToast = jest.fn();
   const { result } = renderHook(() => {
     const ui = useHabitUI();
-    const actions = useHabitActions(ui, showToast, 'UTC');
+    const actions = useHabitActions(ui, showToast, tz);
     return { ui, actions };
   });
   return { result, showToast };
 };
+
+describe('useHabitActions timezone wiring', () => {
+  it('forwards the authenticated zone to date-bearing habit creates', async () => {
+    const zone = 'America/Los_Angeles';
+    const addHabit = jest.spyOn(habitManager, 'addHabit').mockResolvedValue(undefined);
+    const { result } = renderActions(zone);
+
+    try {
+      await act(async () => {
+        await result.current.actions.addHabit({ name: 'Evening reading', icon: '📚' });
+      });
+
+      expect(addHabit).toHaveBeenCalledWith(
+        { name: 'Evening reading', icon: '📚' },
+        undefined,
+        zone,
+      );
+    } finally {
+      addHabit.mockRestore();
+    }
+  });
+});
 
 beforeEach(() => {
   useHabitStore.setState({ habits: [], loading: false, error: null });
@@ -178,6 +200,29 @@ describe('useHabitActions.logUnit', () => {
     const lastCall = (saveHabits as jest.Mock).mock.calls.at(-1);
     const savedHabits = lastCall?.[0] as Habit[];
     expect(savedHabits[0]!.completions).toHaveLength(1);
+  });
+
+  it('reconciles the optimistic streak to the server response after a successful check-in', async () => {
+    useHabitStore.setState({ habits: [makeHabit({ streak: 2 })] });
+    (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+      Promise.resolve({
+        streak: 7,
+        milestones: [],
+        reason_code: 'streak_incremented',
+      }),
+    );
+    const { result } = renderActions();
+
+    await act(async () => {
+      result.current.actions.logUnit(1, 1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useHabitStore.getState().habits[0]!.streak).toBe(7);
+    const lastCall = (saveHabits as jest.Mock).mock.calls.at(-1);
+    const savedHabits = lastCall?.[0] as Habit[];
+    expect(savedHabits[0]!.streak).toBe(7);
   });
 
   it('fires a milestone toast only after the API confirms the check-in', async () => {

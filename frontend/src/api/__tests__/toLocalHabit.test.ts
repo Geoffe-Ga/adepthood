@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect */
+import { dayKeyInTZ } from '../../utils/dateUtils';
 import { toLocalHabit } from '../index';
 import type { ApiHabitWithGoals } from '../index';
 
@@ -37,6 +38,13 @@ describe('toLocalHabit', () => {
     const local = toLocalHabit(apiHabit);
     expect(local.start_date).toBeInstanceOf(Date);
     expect(local.start_date.toISOString()).toContain('2024-01-15');
+  });
+
+  test('keeps the server start_date on the same user-local calendar day', () => {
+    const zone = 'America/Los_Angeles';
+    const local = toLocalHabit(apiHabit, zone);
+
+    expect(dayKeyInTZ(local.start_date, zone)).toBe(apiHabit.start_date);
   });
 
   test('preserves id as required number', () => {

@@ -7,6 +7,7 @@ import { StyleSheet } from 'react-native';
 
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
+import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Habit } from '../../Habits.types';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -289,6 +290,33 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(stored.getFullYear()).toBe(2020);
     expect(stored.getMonth()).toBe(0);
     expect(stored.getDate()).toBe(1);
+  });
+
+  it('restamps reorder writes on the selected day in the account timezone', async () => {
+    const accountZone = 'Pacific/Honolulu';
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={HABITS}
+        userTimezone={accountZone}
+        onClose={jest.fn()}
+        onSaveOrder={onSaveOrder}
+      />,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    const saved = onSaveOrder.mock.calls[0]![0] as Habit[];
+    expect(saved.map((habit) => dayKeyInTZ(habit.start_date, accountZone))).toEqual([
+      '2026-06-01',
+      '2026-06-22',
+      '2026-07-13',
+    ]);
   });
 
   it('mounts the picker only after the user opens it and dismisses cleanly on cancel', () => {

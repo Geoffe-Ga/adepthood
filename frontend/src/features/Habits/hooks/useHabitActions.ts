@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 
 import { ApiError, ApiValidationError } from '../../../api';
+import type { CheckInResult } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
@@ -166,11 +167,11 @@ const useLogUnitMutation = (
   showToast: ShowToast,
   tz: string,
 ): ((_habitId: number, _amount: number, _date?: Date) => void) => {
-  const { mutate } = useOptimisticMutation<LogUnitContext, unknown>({
+  const { mutate } = useOptimisticMutation<LogUnitContext, CheckInResult | null>({
     apply: (ctx) => habitManager.applyLogUnitContext(ctx),
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
-    onSuccess: (ctx) => {
+    onSuccess: (ctx, result) => {
       if (ctx.isDemoSeed === true) {
         // ``commitLogUnitContext`` short-circuits a demo tile to ``null``, which
         // resolves — so this path, not ``rollback``, is where a sample tap lands.
@@ -179,6 +180,7 @@ const useLogUnitMutation = (
         showDemoSeedNotice(showToast);
         return;
       }
+      if (result !== null) habitManager.reconcileLogUnitContext(ctx, result);
       showToast(habitManager.buildLogUnitToast(ctx));
     },
   });
@@ -220,10 +222,10 @@ export const useHabitActions = (
   const emojiSelect = useCallback(
     (emoji: string) => {
       const index = emojiHabitIndexRef.current;
-      if (index !== null) habitManager.setEmojiForHabit(index, emoji);
+      if (index !== null) habitManager.setEmojiForHabit(index, emoji, tz);
       setEmojiHabitIndex(null);
     },
-    [setEmojiHabitIndex],
+    [setEmojiHabitIndex, tz],
   );
 
   // Passed straight through: the modal states either bare picks (a first run,
@@ -231,8 +233,8 @@ export const useHabitActions = (
   // showed the user, and the merge already speaks both.
   const onboardingSave = useCallback(
     (input: readonly OnboardingHabit[] | HabitMergePlan) =>
-      habitManager.onboardingSave(input, showToast),
-    [showToast],
+      habitManager.onboardingSave(input, showToast, tz),
+    [showToast, tz],
   );
 
   return useMemo(
@@ -242,21 +244,21 @@ export const useHabitActions = (
       updateGoal: habitManager.updateGoal,
       updateGoalUnits: habitManager.updateGoalUnits,
       logUnit,
-      updateHabit: habitManager.updateHabit,
+      updateHabit: (habit) => habitManager.updateHabit(habit, tz),
       deleteHabit: habitManager.deleteHabit,
-      addHabit: habitManager.addHabit,
-      saveHabitOrder: habitManager.saveHabitOrder,
+      addHabit: (input, isCarryover) => habitManager.addHabit(input, isCarryover, tz),
+      saveHabitOrder: (habits) => habitManager.saveHabitOrder(habits, tz),
       // Bind the hook tz so a backfill buckets its completed_on days into the
       // user's stored zone, matching the online log path.
       backfillMissedDays: (habitId: number, days: Date[]) =>
         habitManager.backfillMissedDays(habitId, days, tz),
-      setNewStartDate: habitManager.setNewStartDate,
+      setNewStartDate: (habitId, date) => habitManager.setNewStartDate(habitId, date, tz),
       onboardingSave,
       iconPress,
       emojiSelect,
-      revealAllHabits: habitManager.revealAllHabits,
-      lockUntouchedHabits: habitManager.lockUntouchedHabits,
-      unlockHabit: habitManager.unlockHabit,
+      revealAllHabits: () => habitManager.revealAllHabits(tz),
+      lockUntouchedHabits: () => habitManager.lockUntouchedHabits(tz),
+      unlockHabit: (habitId) => habitManager.unlockHabit(habitId, tz),
     }),
     [logUnit, iconPress, emojiSelect, onboardingSave, tz],
   );

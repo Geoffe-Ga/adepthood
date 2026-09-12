@@ -69,6 +69,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.subtractive-no-log-streak",
+    "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS — ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits", "goals"],
+      "routes": ["POST /habits/", "GET /habits/", "PUT /goals/{goal_id}"],
+      "tables": ["habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-subtractive-streak.browser.e2e.test.ts"
+  },
+  {
     "id": "habits.calendar-auto-reveal-once",
     "description": "A regular program habit appears when the program's invitation reaches it. A habit sitting on one of the ten rings waits for that ring to open -- its stage entering the range the calendar and the record between them have unlocked -- and a start date already in the past does not stand in for that (issue #2765: on an established account every start date is past, which opened every ring at once and stopped graduated unlock from tracking the user's level). A habit whose stage names no ring has no rung to wait for, so its start date is still its whole schedule. The habits list read persists the invitation as revealed exactly once; if the person then re-locks it, another read respects the decline instead of re-opening it. The server owns eligibility and its private marker, while the client renders only the reconciled revealed flag. Carryover habits and unrecommitted Metta Return releases remain outside this automatic path, and rows stamped before the stage gate was corrected are left open rather than retroactively re-locked, all pinned by the backend API suite.",
     "crosses": {

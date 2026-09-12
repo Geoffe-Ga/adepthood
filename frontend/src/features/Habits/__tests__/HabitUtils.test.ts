@@ -292,7 +292,7 @@ describe('HabitUtils', () => {
     });
   });
 
-  test('logHabitUnits accumulates progress and increments streak once per day', () => {
+  test('logHabitUnits increments an additive streak once per user-local day', () => {
     const goals: Goal[] = [
       {
         id: 1,
@@ -326,16 +326,20 @@ describe('HabitUtils', () => {
       },
     ];
     let habit: Habit = { ...baseHabit, goals, completions: [], streak: 0 };
-    const day = new Date('2023-01-01T08:00:00');
-    habit = logHabitUnits(habit, 3, day);
+    const zone = 'America/Los_Angeles';
+    // Both instants are January 1 in UTC, but they fall on consecutive days
+    // in Los Angeles. The optimistic streak follows the user's calendar.
+    habit = logHabitUnits(habit, 3, new Date('2023-01-01T06:30:00Z'), zone);
     expect(habit.streak).toBe(1);
-    habit = logHabitUnits(habit, 4, new Date('2023-01-01T12:00:00'));
-    expect(habit.streak).toBe(1);
-    habit = logHabitUnits(habit, 2, new Date('2023-01-02T09:00:00'));
+    habit = logHabitUnits(habit, 4, new Date('2023-01-01T18:00:00Z'), zone);
+    expect(habit.streak).toBe(2);
+    // This instant has crossed UTC midnight but is still January 1 locally,
+    // so it must not add a third day.
+    habit = logHabitUnits(habit, 2, new Date('2023-01-02T05:00:00Z'), zone);
     expect(habit.streak).toBe(2);
   });
 
-  test('logHabitUnits supports subtractive habits', () => {
+  test('logHabitUnits leaves a subtractive streak untouched while appending logs', () => {
     const goals: Goal[] = [
       {
         id: 1,
@@ -368,12 +372,14 @@ describe('HabitUtils', () => {
         is_additive: false,
       },
     ];
-    let habit: Habit = { ...baseHabit, goals, completions: [], streak: 0 };
-    habit = logHabitUnits(habit, 4, new Date('2023-01-01T08:00:00'));
-    habit = logHabitUnits(habit, 3, new Date('2023-01-01T12:00:00'));
-    expect(habit.streak).toBe(1);
-    habit = logHabitUnits(habit, 1, new Date('2023-01-02T09:00:00'));
-    expect(habit.streak).toBe(2);
+    let habit: Habit = { ...baseHabit, goals, completions: [], streak: 9 };
+    const zone = 'America/Los_Angeles';
+    habit = logHabitUnits(habit, 4, new Date('2023-01-01T08:00:00Z'), zone);
+    habit = logHabitUnits(habit, 3, new Date('2023-01-01T12:00:00Z'), zone);
+    expect(habit.streak).toBe(9);
+    habit = logHabitUnits(habit, 1, new Date('2023-01-02T09:00:00Z'), zone);
+    expect(habit.streak).toBe(9);
+    expect(habit.completions).toHaveLength(3);
   });
 
   test('STAGE_DURATIONS_DAYS sums to 36 weeks (252 days)', () => {

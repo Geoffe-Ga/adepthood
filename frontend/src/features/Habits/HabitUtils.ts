@@ -403,13 +403,6 @@ const emptyStats = (): HabitStatsData => ({
 });
 
 /**
- * UTC day key for `logHabitUnits`, whose optimistic-update path operates on
- * bare `Date` objects with no notion of user TZ. UTC bucketing matches the
- * historical de-dupe behavior for logging a completion once per calendar day.
- */
-const utcDayKey = (d: Date): string => dayKeyInTZ(d, DEFAULT_TIMEZONE);
-
-/**
  * Bucket completions into the user's local day (BUG-FE-HABIT-002).
  *
  * Uses `dayKeyInTZ` so a Sunday-night Pacific completion lands in
@@ -670,13 +663,20 @@ export const calculateMissedDays = (habit: Habit, tz: string = DEFAULT_TIMEZONE)
   return missed;
 };
 
-// Logs a number of units for the given habit. Multiple logs can occur within
-// the same day; however, the streak counter will only increment once per
-// calendar day. Returns the updated habit object.
-export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Date()): Habit => {
+// Logs a number of units for the given habit. The additive optimistic streak
+// advances once per user-local day; a subtractive streak is already earned by
+// abstaining and is left for the server's check-in response to authoritatively
+// reconcile. Returns the updated habit object.
+export const logHabitUnits = (
+  habit: Habit,
+  amount: number,
+  date: Date = new Date(),
+  tz: string = DEFAULT_TIMEZONE,
+): Habit => {
+  const isSubtractive = subtractiveStreakInputs(habit, tz) !== null;
   const alreadyLoggedToday =
     habit.last_completion_date &&
-    utcDayKey(new Date(habit.last_completion_date)) === utcDayKey(date);
+    dayKeyInTZ(new Date(habit.last_completion_date), tz) === dayKeyInTZ(date, tz);
 
   const completion: Completion = {
     id: uuidv4(),
@@ -686,7 +686,7 @@ export const logHabitUnits = (habit: Habit, amount: number, date: Date = new Dat
 
   return {
     ...habit,
-    streak: alreadyLoggedToday ? habit.streak : habit.streak + 1,
+    streak: isSubtractive || alreadyLoggedToday ? habit.streak : habit.streak + 1,
     last_completion_date: date,
     completions: habit.completions ? [...habit.completions, completion] : [completion],
   };

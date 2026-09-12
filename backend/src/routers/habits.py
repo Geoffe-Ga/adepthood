@@ -32,7 +32,7 @@ from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
-from services.streaks import SubtractiveContext, compute_habit_streak
+from services.streaks import compute_habit_streak, subtractive_context_for_goals
 
 logger = logging.getLogger(__name__)
 
@@ -79,39 +79,6 @@ _DEFAULT_GOAL_TIERS: tuple[tuple[str, str, float], ...] = (
 )
 
 
-def _subtractive_context(habit: Habit) -> SubtractiveContext | None:
-    """Return the streak context for a subtractive habit, else ``None``.
-
-    ``None`` selects the additive code path in :func:`compute_habit_streak`.
-
-    Polarity is decided by a single rule shared with the frontend
-    (``HabitUtils.getGoalTier``): a habit is subtractive iff **any** of its
-    goals is non-additive. Probing one specific tier let the backend and the UI
-    disagree when the tiers were not perfectly consistent — the backend took the
-    additive path and a never-logged abstention habit reported a ``0`` streak
-    while the badge said "Achieved" (BUG #768). The clear threshold comes from
-    the ``clear``-tier goal's target; if that tier is absent it falls back to the
-    first non-additive goal's target so a subtractive habit never silently
-    returns ``None`` and mis-counts down the additive path.
-    """
-    non_additive = [g for g in habit.goals if not g.is_additive]
-    if not non_additive:
-        return None
-    threshold = _subtractive_threshold(habit, non_additive[0])
-    return SubtractiveContext(clear_threshold=threshold, start_date=habit.start_date)
-
-
-def _subtractive_threshold(habit: Habit, fallback: Goal) -> float:
-    """Abstention threshold for a subtractive streak.
-
-    The ``clear``-tier goal's target is the ceiling; if that tier is absent the
-    first non-additive goal (``fallback``) stands in so the streak still
-    computes rather than mis-counting down the additive path.
-    """
-    clear = next((g for g in habit.goals if g.tier == "clear"), None)
-    return clear.target if clear is not None else fallback.target
-
-
 def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timezone: str) -> None:
     """Set ``habit.streak`` from the FULL completion history (issue #294).
 
@@ -121,7 +88,8 @@ def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timez
     history via :func:`_streak_completions_by_habit` — server-side only,
     so the response payload stays bounded.
     """
-    habit.streak = compute_habit_streak(completions, user_timezone, _subtractive_context(habit))
+    subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
+    habit.streak = compute_habit_streak(completions, user_timezone, subtractive)
 
 
 async def _populate_streaks_for(
@@ -491,4 +459,5 @@ async def get_habit_stats(
     # All-time aggregates: deliberately NOT windowed (issue #294).
     habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
-    return compute_habit_stats(completions, user_tz, _subtractive_context(habit))
+    subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
+    return compute_habit_stats(completions, user_tz, subtractive)
