@@ -107,14 +107,15 @@ def _fake(
         )
 
     async def _complete(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
     ) -> LLMResponse:
-        del history, system_prompt, api_key
-        # Routes by prompt content: the detection prompt asks for a JSON ``{"hits": ...}``
-        # payload and labels resolved spans ``COMPLETED``, while the literary/marginalia
-        # prompt asks for ``{"notes": ...}``. Keying on either of those detection-only
-        # markers lets one seam serve both passes without inspecting the domain module.
-        if '"hits"' in prompt or "COMPLETED" in prompt:  # the detection prompt
+        del history, api_key
+        # Routes by task content across provider roles: the detection task now
+        # belongs to the system prompt while the candidate list and entry stay
+        # in the user prompt. One fake still serves both passes without
+        # inspecting the domain module.
+        task = f"{system_prompt or ''}\n{prompt}"
+        if '"hits"' in task or "COMPLETED" in task:  # the detection prompt
             if detection_calls is not None:
                 detection_calls.append(prompt)
             if detection_error is not None:

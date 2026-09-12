@@ -187,10 +187,11 @@ async def test_two_llm_calls_accumulate_two_usage_rows(
     hits_payload = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
 
     async def _complete(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
     ) -> LLMResponse:
-        del history, system_prompt, api_key
-        if '"hits"' in prompt or "COMPLETED" in prompt:
+        del history, api_key
+        task = f"{system_prompt or ''}\n{prompt}"
+        if '"hits"' in task or "COMPLETED" in task:
             return _priced_response(
                 hits_payload, model="gpt-4o", prompt_tokens=200, completion_tokens=50
             )
@@ -230,10 +231,11 @@ async def test_stub_provider_is_skipped_alongside_a_priced_sibling_call(
     hits_payload = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
 
     async def _complete(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
     ) -> LLMResponse:
-        del history, system_prompt, api_key
-        if '"hits"' in prompt or "COMPLETED" in prompt:
+        del history, api_key
+        task = f"{system_prompt or ''}\n{prompt}"
+        if '"hits"' in task or "COMPLETED" in task:
             return _stub_response(hits_payload)
         return _priced_response(notes_payload)
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 
+from domain.detection import DETECTION_JSON_SHAPE
 from domain.resonance import ANCHOR_TEXT_MAX, ESSAY_TASK_INSTRUCTION, MARGINALIA_JSON_SHAPE
 
 # The entry the resonance prompt wants read, as ``build_prompt`` wraps it. The
@@ -51,7 +52,7 @@ _PASSAGE_BLOCK = re.compile(r"<passage>\n(?P<passage>.*?)\n</passage>", re.DOTAL
 # returning ``None`` on drift is safer than pretending an ordinary chat is a
 # structured answer.
 _DETECTION_BLOCK = re.compile(
-    r"Candidates:\n(?P<candidates>.*?)\n\nEntry:\n(?P<body>.*?)\n\nReturn JSON: \{\"hits\":",
+    r"Candidates:\n(?P<candidates>.*?)\n\nEntry:\n(?P<body>.*)",
     re.DOTALL,
 )
 _CANDIDATE_LINE = re.compile(r"^(?P<index>\d+)\. (?P<name>.+) \((?:habit|practice)\)$")
@@ -163,25 +164,26 @@ def _canned_essay(user_message: str) -> str | None:
     return None if passage is None else _essay_completion(passage.group("passage"))
 
 
-def _canned_marginalia(user_message: str) -> str | None:
+def _canned_marginalia(user_message: str, task_instructions: str) -> str | None:
     """Return the canned reading for a resonance prompt, or None if it is not one."""
-    if MARGINALIA_JSON_SHAPE not in user_message:
+    if MARGINALIA_JSON_SHAPE not in task_instructions:
         return None
     match = _ENTRY_BLOCK.search(user_message)
     return None if match is None else _marginalia_completion(match.group("body"))
 
 
-def canned_completion(user_message: str) -> str | None:
-    """Return the stub's structured answer to ``user_message``, else ``None``.
+def canned_completion(user_message: str, system_prompt: str = "") -> str | None:
+    """Return the stub's structured answer across both provider roles, else ``None``.
 
     ``None`` means "this prompt is none of this module's business" — a chat
     turn, or a structured shape it does not recognise — and keeps the canned
     sentence it has always had. Essay expansion used to fall in that bucket; it
     no longer does, because that sentence quotes its whole input (#2762).
     """
+    task_instructions = f"{system_prompt}\n{user_message}"
     detection = _DETECTION_BLOCK.search(user_message)
-    if detection is not None:
+    if detection is not None and DETECTION_JSON_SHAPE in task_instructions:
         return _detection_completion(detection.group("candidates"), detection.group("body"))
-    if ESSAY_TASK_INSTRUCTION in user_message:
+    if ESSAY_TASK_INSTRUCTION in task_instructions:
         return _canned_essay(user_message)
-    return _canned_marginalia(user_message)
+    return _canned_marginalia(user_message, task_instructions)

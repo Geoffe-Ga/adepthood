@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from domain.care import MEDICATION_GUARDRAIL
-from domain.resonance import ResonanceLLM, _load_json_list, _overlaps, _quote_span
+from domain.resonance import ResonanceLLM, _load_json_list, _overlaps, _quote_span, resonance_prompt
 from security import TextTooLongError, sanitize_user_text
 
 # Domain-level literals so this module stays free of DB/model imports (mirrors
@@ -31,6 +31,10 @@ VALID_TARGET_TYPES = frozenset({"habit", "practice"})
 # constants together.
 LABEL_MAX = 255
 MAX_HITS = 5
+# The task marker the stub provider uses after instructions and journal material
+# are separated across provider roles.  One canonical literal prevents prompt
+# wording and local-development recognition from drifting apart.
+DETECTION_JSON_SHAPE = '{"hits": [{"index": 0, "quote": "..."}]}'
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,7 @@ def build_detection_prompt(body: str, candidates: Sequence[DetectionCandidate]) 
     path (defense-in-depth) — do not remove either copy.
     """
     listed = "\n".join(f"{c.index}. {c.name} ({c.target_type})" for c in candidates)
-    return (
+    instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
         "You read a journal entry and decide which of the listed habits or "
         "practices the writer actually DID or COMPLETED in it.\n\n"
@@ -90,10 +94,10 @@ def build_detection_prompt(body: str, candidates: Sequence[DetectionCandidate]) 
         '- "index" is the number of the candidate from the list below.\n'
         '- "quote" is a VERBATIM substring copied exactly from the entry that '
         "shows they did it.\n\n"
-        f"Candidates:\n{listed}\n\n"
-        f"Entry:\n{body}\n\n"
-        'Return JSON: {"hits": [{"index": 0, "quote": "..."}]}'
+        f"Return JSON: {DETECTION_JSON_SHAPE}"
     )
+    material = f"Candidates:\n{listed}\n\nEntry:\n{body}"
+    return resonance_prompt(instructions, material)
 
 
 def _hit_from_item(item: object) -> _HitDraft | None:

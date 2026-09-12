@@ -654,7 +654,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
       predicate, no ``| None`` branch, strictly less egress); a follow-up may
       widen it on purpose.
     * Newest first, bounded by ``PRIOR_DRAFT_LIMIT`` -- the same constant that
-      bounds the prompt-side slice in ``domain.resonance._prior_letters_block``,
+      bounds the prompt-side slice in ``domain.resonance._prior_letters_parts``,
       so what is fetched and what is sent cannot drift apart.
     """
     return (

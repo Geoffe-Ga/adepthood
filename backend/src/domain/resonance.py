@@ -40,7 +40,7 @@ _PRIOR_ENTRY_CHARS = 1000
 # app has already written the account ride along with a new pass, each truncated
 # to this many characters. Both are public because the same PRIOR_DRAFT_LIMIT
 # bounds the SQL ``LIMIT`` in ``routers.journal._prior_letters_query`` and the
-# slice in :func:`_prior_letters_block` -- one number, so what is fetched and
+# slice in :func:`_prior_letters_parts` -- one number, so what is fetched and
 # what is sent cannot drift apart -- and because
 # ``tests/test_legal_documents.py`` pins the privacy policy's stated count to
 # it without importing a router.
@@ -60,7 +60,9 @@ NO_STYLE_TRANSFER_INSTRUCTION = (
     "imitate their wording, cadence, structure, or imagery; do not quote them; and "
     "do not treat them as a sample of anyone's voice, neither yours nor the "
     "writer's. Write this reading exactly as you would have written it having never "
-    "seen them, except that you will not repeat an observation they already make."
+    "seen them, except that you will not repeat an observation they already make. "
+    "Avoiding a repeated observation must never mean writing fewer notes; find a "
+    "different supported observation on this page instead, up to the number requested."
 )
 
 # The closing line of the essay prompt, naming the task. A module constant for
@@ -253,8 +255,39 @@ class ResonanceLLM(Protocol):
     async def complete(self, prompt: str) -> str: ...
 
 
-def _prior_letters_block(prior_drafts: Sequence[str] | None) -> str:
-    """Render the content-only anti-repetition block, or ``""`` when there is none.
+_RESONANCE_USER_BOUNDARY = "\n\n<adepthood_resonance_user_material>\n\n"
+
+
+def resonance_prompt(system_instructions: str, user_material: str) -> str:
+    """Return one prompt string with a documented provider-role boundary.
+
+    Domain fakes, the Creek fallback, and older callers all consume one prompt
+    string, so replacing that protocol with a two-argument call would widen this
+    fix far beyond the provider seam.  The boundary preserves that contract and
+    lets the BotMason adapter recover the two authoritative roles.
+
+    Splitting on the first boundary is safe even when a writer types the literal
+    marker: the builder's boundary always precedes every byte of user material,
+    so a copy inside the entry remains inside the user half.
+    """
+    return f"{system_instructions}{_RESONANCE_USER_BOUNDARY}{user_material}"
+
+
+def split_resonance_prompt(prompt: str) -> tuple[str, str]:
+    """Return ``(system instructions, user material)`` from one domain prompt.
+
+    A plain string from an injected legacy caller has no per-task system half;
+    preserving it whole as user material keeps the existing narrow
+    ``complete(prompt)`` protocol backward compatible.
+    """
+    if _RESONANCE_USER_BOUNDARY not in prompt:
+        return "", prompt
+    system_instructions, user_material = prompt.split(_RESONANCE_USER_BOUNDARY, maxsplit=1)
+    return system_instructions, user_material
+
+
+def _prior_letters_parts(prior_drafts: Sequence[str] | None) -> tuple[str, str]:
+    """Render the system instruction and user-material block for prior letters.
 
     The letters are the app's own earlier output about this account's entries.
     They travel for CONTENT -- what has already been said -- and never for
@@ -263,16 +296,19 @@ def _prior_letters_block(prior_drafts: Sequence[str] | None) -> str:
     since a rule about letters that are not present is instruction the model has
     to reconcile against nothing.
 
-    A plain ``<prior_letters>`` tag, matching ``<entry>`` and ``<prior>``: the
-    whole assembled prompt is nonce-wrapped once downstream in
-    ``services.marginalia``, and a second per-letter delimiter here would read as
-    an injection defence that does not exist.
+    A plain ``<prior_letters>`` tag, matching ``<entry>`` and ``<prior>``, stays
+    in the user-material half that is nonce-wrapped downstream.  The rule that
+    governs those letters is authoritative task instruction, so it stays in the
+    system half and appears only when there is material for it to govern.
     """
     if not prior_drafts:
-        return ""
+        return "", ""
     capped = [draft[:PRIOR_DRAFT_CHARS] for draft in prior_drafts[:PRIOR_DRAFT_LIMIT]]
     joined = _PRIOR_LETTER_SEPARATOR.join(capped)
-    return f"\n\n{NO_STYLE_TRANSFER_INSTRUCTION}\n<prior_letters>\n{joined}\n</prior_letters>"
+    return (
+        f"\n\n{NO_STYLE_TRANSFER_INSTRUCTION}",
+        f"\n\n<prior_letters>\n{joined}\n</prior_letters>",
+    )
 
 
 def build_prompt(
@@ -288,15 +324,15 @@ def build_prompt(
     guardrail at the system role, so it is intentionally present twice on this
     path (defense-in-depth) — do not "deduplicate" by removing either copy.
     """
-    prior_block = ""
+    prior_entries_instruction = ""
+    prior_material = ""
     if prior_entries:
         capped = [entry[:_PRIOR_ENTRY_CHARS] for entry in prior_entries[:MAX_PRIOR_ENTRIES]]
         joined = "\n---\n".join(capped)
-        prior_block = (
-            "\n\nEarlier entries (context for 'connection' notes only):\n"
-            f"<prior>\n{joined}\n</prior>"
-        )
-    return (
+        prior_entries_instruction = "\n\nEarlier entries (context for 'connection' notes only):"
+        prior_material = f"\n\n<prior>\n{joined}\n</prior>"
+    prior_instruction, prior_letters_material = _prior_letters_parts(prior_drafts)
+    instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
         "You are a thoughtful reader leaving margin notes on someone's journal "
         "page. Read the entry and surface up to "
@@ -309,10 +345,12 @@ def build_prompt(
         'Never refer to yourself or say "as an AI".\n'
         "- Use 'connection' only when linking to an earlier entry.\n\n"
         "Return STRICT JSON only, no prose, of the form:\n"
-        f"{MARGINALIA_JSON_SHAPE}\n\n"
-        f"<entry>\n{body}\n</entry>{prior_block}"
-        f"{_prior_letters_block(prior_drafts)}"
+        f"{MARGINALIA_JSON_SHAPE}"
+        f"{prior_entries_instruction}"
+        f"{prior_instruction}"
     )
+    material = f"<entry>\n{body}\n</entry>{prior_material}{prior_letters_material}"
+    return resonance_prompt(instructions, material)
 
 
 def _draft_from_item(item: object) -> MarginaliaDraft | None:
@@ -467,7 +505,7 @@ def _anchor_drafts(body: str, parsed: _ParsedCompletion, max_notes: int) -> Marg
 # something, and filler reflection on someone's journal is worse than silence.
 _RETRY_CORRECTION = (
     'Your previous reply produced no usable notes. Every "quote" must be copied '
-    "character-for-character from the entry above: do not paraphrase it, do not "
+    "character-for-character from the entry in the user turn: do not paraphrase it, do not "
     "correct its spelling, do not add or remove punctuation, and do not join text "
     "from two places. If you cannot reproduce a passage exactly, leave that note "
     "out. Returning one exactly-quoted note beats five approximate ones, and an "
@@ -486,10 +524,12 @@ def _retry_prompt(
     Deliberately the *same* question with a correction appended rather than a
     different, easier one: the writer asked for a reading of this entry with
     this grounding, and quietly narrowing the ask would answer a question they
-    did not put. The correction trails the entry so the medication guardrail
-    still leads the prompt.
+    did not put. The correction follows the original task in the system half;
+    the writer's entry remains unchanged in the user-material half.
     """
-    return f"{build_prompt(body, prior_entries, max_notes, prior_drafts)}\n\n{_RETRY_CORRECTION}"
+    prompt = build_prompt(body, prior_entries, max_notes, prior_drafts)
+    instructions, material = split_resonance_prompt(prompt)
+    return resonance_prompt(f"{instructions}\n\n{_RETRY_CORRECTION}", material)
 
 
 async def _one_pass(body: str, llm: ResonanceLLM, prompt: str, max_notes: int) -> MarginaliaOutcome:
@@ -619,18 +659,23 @@ def _build_essay_prompt(
     injects it at the system role, so it is intentionally present twice on this
     path (defense-in-depth) — do not remove either copy.
     """
-    return (
+    prior_instruction, prior_letters_material = _prior_letters_parts(prior_drafts)
+    instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
         "You are writing a short, warm letter to the person whose journal this is, "
-        f"expanding on a margin note you left. Stay grounded in the passage you "
-        f"anchored to; speak in second person; never refer to yourself as an AI.\n\n"
+        "expanding on a margin note you left. Stay grounded in the passage you "
+        "anchored to; speak in second person; never refer to yourself as an AI.\n\n"
+        f"{ESSAY_TASK_INSTRUCTION}"
+        f"{prior_instruction}"
+    )
+    material = (
         f"Margin note kind: {kind}\n"
         f"Your margin note: {note}\n"
         f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
-        f"The full entry for context:\n<entry>\n{body}\n</entry>\n\n"
-        f"{ESSAY_TASK_INSTRUCTION}"
-        f"{_prior_letters_block(prior_drafts)}"
+        f"The full entry for context:\n<entry>\n{body}\n</entry>"
+        f"{prior_letters_material}"
     )
+    return resonance_prompt(instructions, material)
 
 
 def _echoes_prompt(completion: str) -> bool:

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.marginalia_anchoring import reanchor_one
+from domain.resonance import split_resonance_prompt
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaStatus
@@ -36,16 +37,15 @@ from services.botmason import LLMResponse, generate_response
 # is not chat (#2762).  An empty string would not fix it: ``or`` treats it as
 # falsy and falls back just the same, so the prompt has to be real text.
 #
-# It is deliberately thin.  The authoritative instructions -- what to read, what
-# shape to answer in -- belong to the per-call prompt the domain builds, and a
-# second voice at the system role would compete with them.  The medication
+# It is deliberately thin.  The authoritative per-call instructions -- what to
+# read and what shape to answer in -- are appended beside it at the system role
+# by :class:`BotmasonResonanceLLM`.  The medication
 # guardrail is not restated here: ``services.botmason._augment_system_prompt``
 # appends it to whatever system prompt is supplied, so the defense-in-depth
 # second copy travels with this one exactly as it did with the persona.
 RESONANCE_SYSTEM_PROMPT = (
-    "You are reading one person's journal at their invitation. Follow the "
-    "instructions in the message exactly, including the output format it asks "
-    "for, and reply with that and nothing else."
+    "You are reading one person's journal at their invitation. Follow the task "
+    "instructions below exactly and reply with only the requested output."
 )
 
 
@@ -71,8 +71,15 @@ class BotmasonResonanceLLM:
         Records the response in :attr:`usage` first, so a metered call is
         accounted for even though only its text goes back to the domain.
         """
+        task_instructions, user_message = split_resonance_prompt(prompt)
+        if task_instructions:
+            system_prompt = f"{RESONANCE_SYSTEM_PROMPT}\n\n{task_instructions}"
+        else:
+            # Preserve the narrow prompt-in/text-out protocol for injected
+            # callers that do not use the resonance builders.
+            system_prompt = RESONANCE_SYSTEM_PROMPT
         response = await generate_response(
-            prompt, [], system_prompt=RESONANCE_SYSTEM_PROMPT, api_key=self._api_key
+            user_message, [], system_prompt=system_prompt, api_key=self._api_key
         )
         self.usage.append(response)
         return response.text
