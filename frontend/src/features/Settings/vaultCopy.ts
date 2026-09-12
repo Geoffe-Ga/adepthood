@@ -64,10 +64,12 @@ export const VAULT_FLOOR =
   'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds a copy in your own space; nothing else changes.';
 
 /**
- * The Intimate boundary. An entry marked Intimate stops before any vault is
- * contacted at all, so this is a statement of shipped behaviour, not intent.
+ * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is
+ * withdrawn by identity, and an unavailable vault leaves the stricter local
+ * choice in place with an explicit retry rather than claiming it was removed.
  */
-export const VAULT_INTIMATE = 'Entries you mark Intimate are never sent to a vault.';
+export const VAULT_INTIMATE =
+  'An Intimate entry is never sent to your vault. If it was copied there before, Adepthood removes that copy. If your vault is offline, keep Intimate selected and choose it again when the vault is online.';
 
 /**
  * The hinge between the two decks. It opens with the condition rather than the

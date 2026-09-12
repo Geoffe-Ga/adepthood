@@ -274,6 +274,25 @@
     "coveredBy": "frontend/e2e/journal-delete.e2e.test.ts"
   },
   {
+    "id": "journal.withdraw-connected-vault-copy",
+    "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault deletes that page. The first content-free Voice Draft retraction fails at the real HTTP boundary, so Adepthood answers with its stable retryable withdrawal message and keeps the page visible instead of claiming success while derived plaintext remains. Repeating the same action after Creek recovers confirms both the AI-attributed draft and journal replica are absent before the local page disappears. The lane uses the production client and an out-of-process contract fake that records only opaque ids, tiers, actions, and digests; no journal or generated prose returns through its control surface.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-vault-withdrawal.e2e.test.ts"
+  },
+  {
     "id": "journal.stage-prompts-and-cadences",
     "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. The second seam is the one-response-per-week rule: uq_promptresponse_user_week means a week holds a single response whichever prompt it answers, so the shelf stops offering a tap once this week's is written and the entry page says so if a save is refused anyway. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about the ordinal check, the stage's unlock gate, and the unique constraint -- the three things only the server can refuse.",
     "crosses": {

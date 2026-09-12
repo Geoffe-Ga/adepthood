@@ -25,7 +25,8 @@ export type PrivacyTier = JournalClassification;
 export const DEFAULT_TIER: PrivacyTier = 'personal';
 
 /** One-line copy shown under the control when ``intimate`` is selected. */
-const INTIMATE_EXPLAINER = 'Intimate entries are never sent to AI.';
+const INTIMATE_EXPLAINER =
+  'Intimate entries are never sent to AI. Any mirrored Creek copy is withdrawn; if your vault is offline, keep Intimate selected. When it is online, choose Intimate again.';
 
 interface TierOption {
   tier: PrivacyTier;

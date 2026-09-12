@@ -4,13 +4,14 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.15.0 (tracks Creek's published
+- **Pinned contract version:** 0.16.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
   moved to 0.10.0 with the 2026-08-30 note, moved to 0.14.0 with
-  the 2026-09-05 note, and moved to 0.15.0 with the 2026-09-06 note,
-  which adopts the AI-attributed Voice Draft resource)
+  the 2026-09-05 note, moved to 0.15.0 with the 2026-09-06 note,
+  which adopts the AI-attributed Voice Draft resource, and moved to 0.16.0
+  with the 2026-09-12 note, which adopts journal withdrawal)
 
 ## Context
 
@@ -1395,3 +1396,43 @@ complete orders wins: the intimate PATCH commits first and the mirror observes
 it and skips, or the mirror finishes first and the PATCH then commits and
 retracts it. A delete-before-PUT interleaving cannot leave a late draft resident
 after its source has become intimate.
+
+## Note, 2026-09-12 — the pin moves to 0.16.0; privacy transitions withdraw journal resources
+
+Creek-Vault #1799 publishes the content-free, idempotent journal-withdrawal
+boundary and Adepthood #2828 adopts it. The vendored bundle is re-cut
+byte-for-byte from upstream `b0b1bd14`: 102 manifest entries, 104 vendored
+files, 38 schemas, and a 9 × 7 example matrix. The ontology version is
+unchanged.
+
+The new capability is `journal-withdraw`, served as an authenticated
+`DELETE /v1/journal-entries/{external_id}` with the negotiated ceiling and
+contract headers and no request body. Existing and already-absent resources
+return the same exact three-field confirmation: `status=ok`, the admitted
+`tier_ceiling`, and `action=withdrawn`. It deliberately echoes neither consumer
+nor external id. Adepthood accepts success only for that closed shape; this
+preserves both idempotence and the route's anti-enumeration contract.
+
+Moving a mirrored Public or Personal page to Intimate now commits the local tier
+first, withdraws its Creek resource, removes the local reflection-corpus copy,
+and clears the opaque vault linkage only after confirmation. Deletion follows
+the same rule and does not hide the row until both local and remote withdrawal
+succeed. If Creek is absent, incompatible, unauthorized, or ambiguous, the
+Intimate tier remains truthful and the content-free linkage remains as a durable
+retry marker. Repeating Intimate or repeating delete performs the retry; no
+plaintext retry queue is created.
+
+All Creek mutations for one journal entry share the same per-worker and
+cross-worker lock. PostgreSQL takes that advisory lock on the dedicated
+`NullPool` privacy connection, and the application session is committed before
+the bounded network call. Upsert, Voice Draft mirror/retraction, privacy change,
+and delete therefore have one complete order across workers: a late upsert
+cannot recreate a resource after withdrawal has returned success, and a pooled
+request connection is never held while Creek is on the wire.
+
+An opt-in real-boundary regression now drives Adepthood's router and HTTP client
+against a disposable Creek 0.16 vault. It proves Public mirroring, Intimate
+withdrawal from plaintext files, retrieval and wheel eligibility, one Personal
+remirror under the same stable id, and final deletion. This closes that journal
+lifecycle proof only. Epic #2043's broader operator run across every adopted
+capability and its telemetry remains independently outstanding.

@@ -289,6 +289,43 @@ describe('JournalEntryScreen — classification on first create (#896)', () => {
 // ---------------------------------------------------------------------------
 
 describe('JournalEntryScreen — tier change PATCH failure', () => {
+  it('keeps Intimate selected and names the Creek retry when local privacy saved first', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+      const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_pending' });
+
+      const page = within(getByTestId('journal-page'));
+      fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+        true,
+      );
+      expect(getByTestId('journal-save-hint').props.children).toMatch(
+        /Intimate here.*Creek.*choose Intimate again/i,
+      );
+
+      fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('surfaces the save-error hint and reverts to the persisted tier when the PATCH rejects', async () => {
     jest.useFakeTimers();
     try {

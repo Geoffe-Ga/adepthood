@@ -35,12 +35,12 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.15** caller receives, not a document every caller receives, and
-the counts in :mod:`tests.creek_bundle_facts` (eight capabilities, fifty-six
-cells, seven unreachable care-escalation sentinels) are the 0.15 shape rather than
-a permanent one. 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``,
-and 0.15.0 added ``voice-drafts``; treat every count here as a fact about one
-pinned commit.
+document a **0.16** caller receives, not a document every caller receives, and
+the counts in :mod:`tests.creek_bundle_facts` (nine capabilities, sixty-three
+cells, nine unreachable sentinels) are the 0.16 shape rather than a permanent
+one. 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
+``voice-drafts``, and 0.16.0 added ``journal-withdraw``; treat every count here
+as a fact about one pinned commit.
 
 Naming a capability is not calling it
 -------------------------------------
@@ -81,6 +81,7 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJournalWithdrawResult,
     VaultPraxisKind,
     VaultPraxisStatus,
     VaultReflectionNote,
@@ -127,6 +128,7 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 _WHEEL_PATH = "/v1/wheel"
 _REFLECTIONS_PATH = "/v1/reflections"
 _UPLOADS_PATH = "/v1/uploads"
+_JOURNAL_ENTRIES_PATH = "/v1/journal-entries/"
 
 # The ceiling every reflections cell is driven at. Creek's own reflection
 # examples echo ``personal`` in both tier fields, so accepting less would reject
@@ -392,6 +394,8 @@ class _Recorder:
     reflect_status: int = HTTPStatus.OK
     upload_payload: object = None
     upload_status: int = HTTPStatus.OK
+    withdraw_payload: object = None
+    withdraw_status: int = HTTPStatus.OK
     calls: list[str] = field(default_factory=list)
     bodies: list[object] = field(default_factory=list)
 
@@ -409,6 +413,9 @@ class _Recorder:
         if request.url.path == _UPLOADS_PATH:
             self.bodies.append(json.loads(request.content))
             return httpx.Response(self.upload_status, json=self.upload_payload)
+        if request.method == "DELETE" and request.url.path.startswith(_JOURNAL_ENTRIES_PATH):
+            self.bodies.append(request.content)
+            return httpx.Response(self.withdraw_status, json=self.withdraw_payload)
         return httpx.Response(self.journal_status, json=self.journal_payload)
 
 
@@ -645,7 +652,7 @@ def test_ontology_version_agrees_across_both_manifests() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_example_matrix_is_the_published_seven_by_seven_grid() -> None:
+def test_the_example_matrix_is_the_published_nine_by_seven_grid() -> None:
     """Non-vacuity first: an emptied bundle fails here rather than passing silently."""
     assert len(_CELLS) == EXAMPLE_CELLS
     assert len(_CAPABILITIES) == CAPABILITY_COUNT
@@ -663,10 +670,13 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
     assert len(_CAPABILITY_ERROR_CELLS) == len(_ERROR_STATES)
 
 
-def test_only_reflections_publishes_a_reachable_care_escalation() -> None:
-    """The care guard runs in one capability, so every other cell is a sentinel."""
-    assert {cell.capability for cell in _UNREACHABLE} == _CAPABILITIES - {"reflections"}
-    assert {cell.state for cell in _UNREACHABLE} == {"care-escalation"}
+def test_only_published_impossible_branches_are_unreachable() -> None:
+    """Care is reflections-only, and journal withdrawal cannot reveal refusal."""
+    pairs = {(cell.capability, cell.state) for cell in _UNREACHABLE}
+    assert pairs == {
+        *((capability, "care-escalation") for capability in _CAPABILITIES - {"reflections"}),
+        ("journal-withdraw", "refusal"),
+    }
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
 
 
@@ -689,7 +699,7 @@ def test_capability_translation_table_matches_the_manifest() -> None:
 
 
 def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
-    """What a 0.15 caller is told and what the matrix documents are one list.
+    """What a 0.16 caller is told and what the matrix documents are one list.
 
     The advertised list and the example directory names are generated from the
     same upstream enum, so a bundle where they disagree is a bundle that was
@@ -726,6 +736,7 @@ async def test_no_advertised_capability_is_dropped_at_the_parse_boundary(
     assert client.supports(CreekCapability.DRIVE_CONNECTOR) is True
     assert client.supports(CreekCapability.PIPELINE) is True
     assert client.supports(CreekCapability.VOICE_DRAFTS) is True
+    assert client.supports(CreekCapability.JOURNAL_WITHDRAW) is True
 
 
 @pytest.mark.asyncio
@@ -763,7 +774,7 @@ def test_the_capabilities_added_since_0_8_are_named_and_carry_a_full_example_col
     would leave the matrix-driven privacy and prose tests below covering less
     than they appear to.
     """
-    added = frozenset({"drive-connector", "pipeline", "voice-drafts"})
+    added = frozenset({"drive-connector", "pipeline", "voice-drafts", "journal-withdraw"})
 
     assert added <= frozenset(_CAPABILITY_BY_CREEK_NAME)
     assert added <= _CAPABILITIES
@@ -972,6 +983,50 @@ async def test_journal_upsert_error_states_raise_their_classified_failure(
 
     with pytest.raises(expected):
         await client.ingest(_ingest_request())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["success", "empty"])
+async def test_journal_withdraw_success_states_confirm_content_free_absence(
+    state: str,
+    vault_clients: ClientFactory,
+) -> None:
+    """Both ratified 200 states confirm absence without echoing an identity."""
+    published = _read_json(f"examples/journal-withdraw/{state}.json")
+    recorder = _Recorder(withdraw_payload=published)
+    client = await _handshaken(vault_clients, recorder)
+
+    result = await client.withdraw_journal_entry(_ENTRY_ID)
+
+    assert result == VaultJournalWithdrawResult(withdrawn=True)
+    assert recorder.calls[-1] == f"DELETE {_JOURNAL_ENTRIES_PATH}{_ENTRY_ID}"
+    assert recorder.bodies == [b""]
+    assert set(published) == {"action", "status", "tier_ceiling"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("malformed-input", CreekVaultContractError),
+        ("incompatible-version", CreekVaultContractError),
+        ("unavailable-service", CreekVaultUnavailableError),
+    ],
+)
+async def test_journal_withdraw_error_states_raise_their_classified_failure(
+    state: str,
+    expected: type[Exception],
+    vault_clients: ClientFactory,
+) -> None:
+    """Every reachable withdrawal error keeps Creek's published disposition."""
+    recorder = _Recorder(
+        withdraw_payload=_read_json(f"examples/journal-withdraw/{state}.json"),
+        withdraw_status=_STATUS_BY_STATE[state],
+    )
+    client = await _handshaken(vault_clients, recorder)
+
+    with pytest.raises(expected):
+        await client.withdraw_journal_entry(_ENTRY_ID)
 
 
 @pytest.mark.asyncio

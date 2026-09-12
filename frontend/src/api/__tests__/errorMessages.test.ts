@@ -57,6 +57,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'stage_number_mismatch',
       'active_practice_exists_for_stage',
       'habits_must_not_be_empty',
+      'vault_withdrawal_pending',
       // wallet
       'payment_required',
       'insufficient_offerings',

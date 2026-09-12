@@ -192,25 +192,31 @@ async def test_retraction_deletes_by_opaque_id_at_the_widest_remote_ceiling() ->
     """Intimate reclassification deletes the prior copy without sending its prose."""
     client = _RecordingVoiceDraftClient()
 
-    await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
+    confirmed = await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
 
+    assert confirmed is True
     assert client.handshake_calls == 1
     assert client.upserts == []
     assert client.deletes == [(voice_draft_external_id(12, 34), VaultTierCeiling.PERSONAL)]
 
 
 @pytest.mark.parametrize(
-    ("available", "supported"),
-    [(False, True), (True, False)],
+    ("available", "supported", "expected_confirmation"),
+    [(False, True, False), (True, False, False)],
     ids=["unavailable", "unsupported"],
 )
 @pytest.mark.asyncio
-async def test_retraction_is_also_capability_gated(available: bool, supported: bool) -> None:
-    """A vault that cannot serve Voice Drafts receives no DELETE attempt."""
+async def test_retraction_is_also_capability_gated(
+    available: bool,
+    supported: bool,
+    expected_confirmation: bool,
+) -> None:
+    """A connected vault that cannot serve DELETE never confirms absence."""
     client = _RecordingVoiceDraftClient(available=available, supported=supported)
 
-    await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
+    confirmed = await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
 
+    assert confirmed is expected_confirmation
     assert client.handshake_calls == 1
     assert client.deletes == []
 
@@ -220,7 +226,20 @@ async def test_failed_voice_draft_retraction_is_swallowed_and_never_retried() ->
     """A retraction failure is one content-free attempt, with no local backlog."""
     client = _RecordingVoiceDraftClient(fail_delete=True)
 
-    await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
+    confirmed = await retract_voice_draft(client, owner_user_id=12, marginalia_id=34)
 
+    assert confirmed is False
     assert client.handshake_calls == 1
     assert len(client.deletes) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_confirms_there_is_no_remote_draft() -> None:
+    """No configured destination cannot hold a replica that deletion must chase."""
+    confirmed = await retract_voice_draft(
+        LocalFallbackCreekVaultClient(),
+        owner_user_id=12,
+        marginalia_id=34,
+    )
+
+    assert confirmed is True

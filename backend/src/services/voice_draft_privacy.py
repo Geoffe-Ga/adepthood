@@ -1,9 +1,10 @@
-"""Serialize Voice Draft mirrors against entry privacy-floor changes.
+"""Serialize every Creek mutation against entry privacy/lifecycle changes.
 
-The journal database and Creek cannot participate in one transaction.  A mirror
-and a concurrent transition to ``intimate`` must therefore agree on an ordering:
-either the mirror finishes first and the PATCH retracts it, or the PATCH commits
-first and the mirror observes the new tier and skips egress.
+The journal database and Creek cannot participate in one transaction. Journal
+upserts, Voice Draft mirrors, privacy upgrades, and deletion must therefore
+agree on one per-entry ordering: a writer finishes first and the later privacy
+operation retracts it, or the privacy operation finishes first and a later
+writer observes the now-intimate/deleted row and skips egress.
 
 One weakly-held asyncio lock closes the race inside a worker without retaining an
 unbounded key set. PostgreSQL deployments add a session advisory lock on a
@@ -51,7 +52,11 @@ def _async_engine_for(session: AsyncSession) -> AsyncEngine:
 
 
 class VoiceDraftPrivacySerializer:
-    """Coordinate one entry's mirror and intimate-transition critical sections."""
+    """Coordinate one entry's Creek writes and privacy/lifecycle transitions.
+
+    The historical class name remains public for test and import compatibility;
+    the singleton's journal-wide alias below states its expanded responsibility.
+    """
 
     def __init__(self) -> None:
         """Start with no retained per-entry locks."""
@@ -105,3 +110,9 @@ class VoiceDraftPrivacySerializer:
 
 
 voice_draft_privacy = VoiceDraftPrivacySerializer()
+
+# All journal Creek mutations share the same lock table and PostgreSQL advisory
+# namespace. An alias, not a second instance: two serializers would provide two
+# mutually unaware locks and reopen the exact upsert/withdraw race this boundary
+# exists to close.
+journal_vault_mutations = voice_draft_privacy

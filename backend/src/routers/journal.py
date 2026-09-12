@@ -52,6 +52,7 @@ from errors import (
     conflict,
     forbidden,
     not_found,
+    service_unavailable,
     unprocessable,
 )
 from models.completion_suggestion import (
@@ -108,7 +109,12 @@ from services.botmason import (
 from services.checkin import CheckInContext, current_check_in, record_goal_completion
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
-from services.corpus_ingest import ingest_journal_entry, withdraw_journal_entry
+from services.corpus_ingest import (
+    ingest_journal_entry,
+)
+from services.corpus_ingest import (
+    withdraw_journal_entry as withdraw_local_journal_entry,
+)
 from services.corpus_invitation import record_completed_pass
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
@@ -117,6 +123,7 @@ from services.creek_vault_reflect import (
     select_reflection_llm,
 )
 from services.creek_vault_voice_drafts import mirror_voice_draft, retract_voice_draft
+from services.creek_vault_withdraw import withdraw_journal_from_vault
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -133,7 +140,7 @@ from services.marginalia import (
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
-from services.voice_draft_privacy import voice_draft_privacy
+from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
 from services.wallet import (
     SpendResult,
     preflight_deduction,
@@ -182,6 +189,7 @@ router = build_router(
         status.HTTP_402_PAYMENT_REQUIRED,
         status.HTTP_409_CONFLICT,
         status.HTTP_502_BAD_GATEWAY,
+        status.HTTP_503_SERVICE_UNAVAILABLE,
     ),
 )
 
@@ -259,23 +267,15 @@ def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> boo
 
     - ``INGESTED`` writes the new ref + tags (a re-ingest overwrites any prior
       ref; tags are empty while per-entry vault classification is deferred).
-    - ``SKIPPED_INTIMATE`` clears a prior non-intimate ref/tags, since an entry
-      re-classified intimate must not retain a handle to plaintext it no longer
-      consents to expose (the model documents these columns stay NULL for
-      intimate entries). The vault still holds that plaintext until a retract
-      capability exists -- see :mod:`services.creek_vault_write`.
+    - ``SKIPPED_INTIMATE`` leaves a prior ref untouched. That ref is the durable
+      proof that a remote copy still needs withdrawal; only Creek's confirmed,
+      content-free destructive inverse may clear it.
     - ``DEGRADED`` / ``UNAVAILABLE`` are transient, so any existing ref is kept
       untouched rather than dropped on a passing network blip.
     """
     if outcome.status is VaultWriteStatus.INGESTED:
         entry.vault_ref = outcome.vault_ref
         entry.vault_tags = list(outcome.tags)
-        return True
-    if outcome.status is VaultWriteStatus.SKIPPED_INTIMATE and (
-        entry.vault_ref is not None or entry.vault_tags is not None
-    ):
-        entry.vault_ref = None
-        entry.vault_tags = None
         return True
     return False
 
@@ -336,6 +336,40 @@ async def _record_vault_outcome(
             user_id=entry.user_id,
             trigger=VaultPipelineTrigger.JOURNAL_WRITE,
         )
+
+
+async def _withdraw_remote_journal_copy(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultClient,
+) -> None:
+    """Clear remote metadata only after Creek confirms the stable id absent.
+
+    ``vault_ref`` is the durable retry marker. A missing ref proves this row has
+    no known remote copy and needs no call; a present one survives every
+    unavailable, unsupported, malformed, or partial outcome. The request
+    session is committed before the HTTP call so no pooled connection rides
+    across Creek latency. Raising a stable 503 is intentional: a privacy change
+    or delete is not complete while the connected vault still may hold it.
+    """
+    if entry.vault_ref is None:
+        if entry.vault_tags is not None:
+            entry.vault_tags = None
+            session.add(entry)
+            await session.commit()
+            await session.refresh(entry)
+        return
+    entry_id = entry.id
+    if entry_id is None:
+        raise RuntimeError("persisted vault reference requires a journal entry id")
+    await session.commit()
+    if not await withdraw_journal_from_vault(vault_client, entry_id=entry_id):
+        raise service_unavailable("vault_withdrawal_pending")
+    entry.vault_ref = None
+    entry.vault_tags = None
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
@@ -433,8 +467,17 @@ async def create_journal_entry(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    await _record_vault_outcome(session, entry, vault_client)
-    await _record_corpus_fragment(session, entry)
+    entry_id = cast("int", entry.id)
+    async with journal_vault_mutations.hold(session, entry_id):
+        # The row became visible before this lock because its id had to be
+        # committed first. A concurrent delete or privacy PATCH may therefore
+        # have completed while this request waited. Reload inside the critical
+        # section and never send the stale pre-lock object to Creek.
+        current = await _load_user_entry(session, entry_id, current_user)
+        if current is not None:
+            entry = current
+            await _record_vault_outcome(session, entry, vault_client)
+            await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
 
@@ -788,33 +831,39 @@ async def update_journal_entry(
     re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
     refreshed.
     """
-    if payload.classification == JournalClassification.INTIMATE:
-        async with voice_draft_privacy.hold(session, entry_id):
+    reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
+    if not reingests:
+        entry, _previous_classification = await _persist_entry_update(
+            entry_id,
+            payload,
+            current_user,
+            session,
+        )
+    else:
+        # One per-entry order spans the committed local update and every Creek
+        # mutation. A concurrent PUT therefore finishes before this privacy
+        # transition withdraws it, or begins after and observes the intimate
+        # row; it cannot land stale plaintext after a successful response.
+        async with journal_vault_mutations.hold(session, entry_id):
             entry, previous_classification = await _persist_entry_update(
                 entry_id,
                 payload,
                 current_user,
                 session,
             )
-    else:
-        entry, previous_classification = await _persist_entry_update(
-            entry_id,
-            payload,
-            current_user,
-            session,
-        )
-    # Re-ingest only when the body or privacy tier changed; a title/status/chord
-    # PATCH leaves the vault's copy and the corpus fragment untouched (and
-    # issues zero vault calls and zero classifications).
-    if payload.model_fields_set & _REINGEST_FIELDS:
-        await _record_vault_outcome(session, entry, vault_client)
-        await _record_corpus_fragment(session, entry)
-    await _retract_newly_intimate_entry(
-        session,
-        entry,
-        vault_client,
-        became_intimate=_became_intimate(previous_classification, entry.classification),
-    )
+            if entry.classification == JournalClassification.INTIMATE:
+                await withdraw_local_journal_entry(
+                    session,
+                    user_id=current_user,
+                    entry_id=entry_id,
+                )
+                await session.commit()
+                if previous_classification != JournalClassification.INTIMATE:
+                    await _retract_entry_voice_drafts(session, entry, vault_client)
+                await _withdraw_remote_journal_copy(session, entry, vault_client)
+            else:
+                await _record_vault_outcome(session, entry, vault_client)
+                await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
 
@@ -853,39 +902,26 @@ async def _persist_entry_update(
     return entry, previous_classification
 
 
-def _became_intimate(previous: str, current: str) -> bool:
-    """Return whether one PATCH crossed into the intimate privacy tier."""
-    return previous != JournalClassification.INTIMATE and current == JournalClassification.INTIMATE
-
-
-async def _retract_newly_intimate_entry(
-    session: AsyncSession,
-    entry: JournalEntry,
-    vault_client: CreekVaultPipelineClient,
-    *,
-    became_intimate: bool,
-) -> None:
-    """Retract existing drafts exactly once when a PATCH crosses the privacy floor."""
-    if became_intimate:
-        await _retract_entry_voice_drafts(session, entry, vault_client)
-
-
 async def _retract_entry_voice_drafts(
     session: AsyncSession,
     entry: JournalEntry,
     vault_client: CreekVaultPipelineClient,
-) -> None:
-    """Best-effort retract every expanded essay when its parent becomes intimate.
+) -> bool:
+    """Retract expanded essays and report whether every absence was confirmed.
 
     The query projects ids only -- never essay text -- and the transaction it
     opens is committed before the first network call, returning the pooled
     connection. Each retraction is therefore content-free and cannot roll back
     the privacy change, which was committed before this helper was reached.
-    A same-value INTIMATE patch never calls this helper, so a failed deletion is
-    not turned into an implicit retry channel.
+    A same-value INTIMATE patch never calls this helper, so a failed retraction
+    is not turned into an implicit retry channel. Journal deletion consumes the
+    return value: the shared mutation lock makes that DELETE run after an
+    in-flight draft PUT and retract it, or before a delayed writer that then
+    observes ``deleted_at``; an unconfirmed retraction keeps the row live for an
+    explicit retry.
     """
     if entry.id is None:
-        return
+        return True
     result = await session.execute(
         select(Marginalia.id).where(
             Marginalia.journal_entry_id == entry.id,
@@ -895,12 +931,15 @@ async def _retract_entry_voice_drafts(
     )
     marginalia_ids = tuple(result.scalars().all())
     await session.commit()
-    for marginalia_id in marginalia_ids:
+    confirmations = [
         await retract_voice_draft(
             vault_client,
             owner_user_id=entry.user_id,
             marginalia_id=marginalia_id,
         )
+        for marginalia_id in marginalia_ids
+    ]
+    return all(confirmations)
 
 
 async def _load_user_entry(
@@ -2202,15 +2241,18 @@ async def _cache_and_mirror_essay(
     # mirroring a refusal would put it in the vault the cache refused it from.
     if cached.essay is None:
         return cached
-    # Generation may outlive a concurrent privacy PATCH. Serialize the final
-    # tier read and mirror against transitions to INTIMATE: if the PATCH won it
-    # commits first and this skips; if this won, the PATCH waits and retracts
-    # only after the PUT finishes. The request transaction is committed before
-    # Creek I/O; PostgreSQL holds the cross-worker lock on a non-pooled,
-    # dedicated connection rather than consuming the application pool.
+    # Generation may outlive a concurrent privacy PATCH or journal DELETE.
+    # Serialize the final liveness/tier read and mirror: an already-completed
+    # deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
+    # and if this PUT linearized first, the competing mutation waits and retracts
+    # it. The request transaction is committed before Creek I/O; PostgreSQL holds
+    # the cross-worker lock on a non-pooled, dedicated connection rather than
+    # consuming the application pool.
     async with voice_draft_privacy.hold(session, cast("int", entry.id)):
         await session.refresh(entry)
         await session.commit()
+        if entry.deleted_at is not None:
+            return cached
         await mirror_voice_draft(
             clients.vault_client,
             owner_user_id=current_user,
@@ -2316,6 +2358,7 @@ async def delete_journal_entry(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     entry: Annotated[JournalEntry, Depends(require_owned_journal_entry)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> Response:
     """Soft-delete a journal entry (BUG-JOURNAL-007).
 
@@ -2326,16 +2369,31 @@ async def delete_journal_entry(
     read paths (list, get, ``load_recent_conversation``) which filter
     ``deleted_at IS NULL``.
     """
-    entry_id = entry.id
-    entry.deleted_at = datetime.now(UTC)
-    session.add(entry)
-    if entry_id is not None:
-        # The corpus copy goes with the entry. A fragment that outlived a
-        # delete would keep the deleted writing in circulation as context for
-        # newer reflections -- soft-deletion hides an entry from every read
-        # path, and the corpus is a read path.
-        await withdraw_journal_entry(session, user_id=current_user, entry_id=entry_id)
+    entry_id = cast("int", entry.id)
+    # The ownership dependency's read opened a transaction. End it before
+    # waiting for the cross-worker mutation lock so neither the wait nor Creek's
+    # bounded DELETE occupies a pooled application connection.
     await session.commit()
+    async with journal_vault_mutations.hold(session, entry_id):
+        current = await _load_user_entry(session, entry_id, current_user)
+        if current is None or current.sender != "user":
+            raise not_found("journal_entry")
+        # The local corpus stops circulating the entry as soon as deletion is
+        # requested. The row itself remains live, with its remote handle intact,
+        # until Creek confirms absence so the identical DELETE stays retryable.
+        await withdraw_local_journal_entry(
+            session,
+            user_id=current_user,
+            entry_id=entry_id,
+        )
+        await session.commit()
+        drafts_withdrawn = await _retract_entry_voice_drafts(session, current, vault_client)
+        if not drafts_withdrawn:
+            raise service_unavailable("vault_withdrawal_pending")
+        await _withdraw_remote_journal_copy(session, current, vault_client)
+        current.deleted_at = datetime.now(UTC)
+        session.add(current)
+        await session.commit()
     logger.info(
         "journal_entry_soft_deleted",
         extra={"user_id": current_user, "entry_id": entry_id},

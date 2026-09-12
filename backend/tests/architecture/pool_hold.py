@@ -154,6 +154,7 @@ TRAMPOLINES = frozenset({"asyncio.to_thread", "anyio.to_thread.run_sync"})
 DIAL_METHODS: Mapping[str, str] = {
     "handshake": "domain.creek_vault.CreekVaultClient",
     "ingest": "domain.creek_vault.CreekVaultClient",
+    "withdraw_journal_entry": "domain.creek_vault.CreekVaultClient",
     "upload": "domain.creek_vault.CreekVaultClient",
     "classify": "domain.creek_vault.CreekVaultClient",
     "classify_corpus": "domain.creek_vault.CreekVaultClient",

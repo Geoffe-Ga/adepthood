@@ -141,7 +141,8 @@ const LOAD_ERROR_MESSAGE =
 const FINISH_ERROR_MESSAGE =
   "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
 
-type SaveState = 'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken';
+type SaveState =
+  'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken' | 'vaultWithdrawalPending';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
@@ -161,6 +162,8 @@ const BLANK_HINT = ' ';
  * of telling the writer to keep going.
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
+const VAULT_WITHDRAWAL_PENDING_HINT =
+  'Intimate here. Creek has not confirmed removal yet — bring your vault online, then choose Intimate again.';
 
 /**
  * The state the save hint should show while a quote is being folded in.
@@ -186,6 +189,7 @@ function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
   if (state === 'weekTaken') return WEEK_TAKEN_HINT;
+  if (state === 'vaultWithdrawalPending') return VAULT_WITHDRAWAL_PENDING_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -229,6 +233,15 @@ function isCreateConflict(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     (error as { status?: unknown }).status === REFLECTION_CONFLICT_STATUS
+  );
+}
+
+/** True only for the stable failure emitted after local privacy commits first. */
+function isVaultWithdrawalPending(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { detail?: unknown }).detail === 'vault_withdrawal_pending'
   );
 }
 
@@ -410,6 +423,13 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
   );
 }
 
+type PersistState = Extract<SaveState, 'saved' | 'error' | 'vaultWithdrawalPending'> | null;
+
+interface PersistResult<T> {
+  revertTo: T | null;
+  state: PersistState;
+}
+
 interface RefPersist<T> {
   /** The optimistic ref holding the latest value; the create writer rides it. */
   ref: React.MutableRefObject<T>;
@@ -418,7 +438,7 @@ interface RefPersist<T> {
    * Resolves to the value the UI should revert to when a PATCH fails and no
    * later change has superseded it, else null.
    */
-  change: (_value: T) => Promise<T | null>;
+  change: (_value: T) => Promise<PersistResult<T>>;
   /**
    * Seed the last-persisted value from a loaded entry so a failed re-tag reverts
    * to the entry's real value rather than the module default.
@@ -444,23 +464,29 @@ function useRefPersist<T>(
 ): RefPersist<T> {
   const ref = useRef<T>(initial);
   const change = useCallback(
-    async (value: T): Promise<T | null> => {
+    async (value: T): Promise<PersistResult<T>> => {
       // Never PATCH until the entry's load settles (still in flight or failed) —
       // the ref is stale and a write here could overwrite the stored (unseen) value.
-      if (entryUnsettledRef.current) return null;
+      if (entryUnsettledRef.current) return { revertTo: null, state: null };
       const previous = ref.current;
       ref.current = value;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
-      if (entryIdRef.current == null) return null;
+      if (entryIdRef.current == null) return { revertTo: null, state: null };
       try {
         await journal.update(entryIdRef.current, toPatch(value));
-        return null;
-      } catch {
+        return { revertTo: null, state: 'saved' };
+      } catch (error) {
         // A rapid superseding change already owns the ref and the UI — leave both
         // to it rather than reverting to this now-stale value.
-        if (ref.current !== value) return null;
+        if (ref.current !== value) return { revertTo: null, state: null };
+        // The server commits the stricter Intimate tier before asking Creek to
+        // withdraw. Keep that safer truth selected and expose its retry path;
+        // reverting to Personal would visually contradict persisted privacy.
+        if (isVaultWithdrawalPending(error)) {
+          return { revertTo: null, state: 'vaultWithdrawalPending' };
+        }
         ref.current = previous;
-        return previous;
+        return { revertTo: previous, state: 'error' };
       }
     },
     [entryIdRef, entryUnsettledRef, toPatch],
@@ -546,13 +572,13 @@ function useSaveTimer(
  * save-error hint (used identically by the privacy-tier and chord controls).
  */
 function useErrorSurfacingPersist<T>(
-  change: (_value: T) => Promise<T | null>,
+  change: (_value: T) => Promise<PersistResult<T>>,
   setSaveState: (_state: SaveState) => void,
 ): (_value: T) => Promise<T | null> {
   return useCallback(
     async (value: T): Promise<T | null> => {
-      const revertTo = await change(value);
-      if (revertTo != null) setSaveState('error');
+      const { revertTo, state } = await change(value);
+      if (state != null) setSaveState(state);
       return revertTo;
     },
     [change, setSaveState],

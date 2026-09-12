@@ -1,6 +1,6 @@
 {
   "bundle": "adepthood-v1",
-  "contract_version": "0.15.0",
+  "contract_version": "0.16.0",
   "files": [
     {
       "path": "README.md",
@@ -12,7 +12,7 @@
     },
     {
       "path": "examples/capabilities/empty.json",
-      "sha256": "9f5724fa068ef2f9f7f351208c2fdf136bd7f058ca44d31c6705c294653b9604"
+      "sha256": "1f66031d1028f28dbe7d7b3298ea30edc48fd2301d1cb7979e28ee8e9e4957e6"
     },
     {
       "path": "examples/capabilities/incompatible-version.json",
@@ -28,7 +28,7 @@
     },
     {
       "path": "examples/capabilities/success.json",
-      "sha256": "888e1cf5513416260d73c5ffd55fd540a3e8ef0fd77d159628a67708640ad363"
+      "sha256": "3f8033cc6b6cc54642a1ada4a3686ed3df741880c98c99cab84b37aeba750237"
     },
     {
       "path": "examples/capabilities/unavailable-service.json",
@@ -89,6 +89,34 @@
     {
       "path": "examples/journal-upsert/unavailable-service.json",
       "sha256": "a29004223b68de26c66e2dfaa64ff3fde4495e0b3bee0c21c3aae8c56be6a6a6"
+    },
+    {
+      "path": "examples/journal-withdraw/care-escalation.json",
+      "sha256": "a5d2d2bfcd3b274cfe9d191a22b419fbceb1ade75b8ae1326004d4ca2ac58f97"
+    },
+    {
+      "path": "examples/journal-withdraw/empty.json",
+      "sha256": "892d9a2a95a8b9ca959d4b21af4fea821947ccfdea0b74f8863efc10d64868d7"
+    },
+    {
+      "path": "examples/journal-withdraw/incompatible-version.json",
+      "sha256": "2d9e2e3ec21a9a3ea2eddfb477db588eee1f17a27b12e148605e7f66b4132826"
+    },
+    {
+      "path": "examples/journal-withdraw/malformed-input.json",
+      "sha256": "23048ef025a692b5c386e9e2d6a30df232516ef4d34f21f56264b9194a3ffe4f"
+    },
+    {
+      "path": "examples/journal-withdraw/refusal.json",
+      "sha256": "ba3fdf3beadde42b67b682df4a9fdce513b2b622f895d70a08c0ae1dc73378c6"
+    },
+    {
+      "path": "examples/journal-withdraw/success.json",
+      "sha256": "892d9a2a95a8b9ca959d4b21af4fea821947ccfdea0b74f8863efc10d64868d7"
+    },
+    {
+      "path": "examples/journal-withdraw/unavailable-service.json",
+      "sha256": "1b12751aecb7dd9dfd03f66e4fb3374b22596edb422bd1c1d5f252c466af82f8"
     },
     {
       "path": "examples/pipeline/care-escalation.json",
@@ -232,7 +260,7 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "e4052984c267909f23b9f003b2e63b822fe825028830d0e1ff88d660d18c2116"
+      "sha256": "1ad3e5aff3b85f935a59cd22392745be8f4fcd1dfc01be1347c60f126e1478ce"
     },
     {
       "path": "retry-policy.json",
@@ -240,7 +268,7 @@
     },
     {
       "path": "schemas/CapabilitiesResponse.schema.json",
-      "sha256": "f2a8986459a94dc61cc33114edb738a039a5ea667dcbd275c1bf06a8c8c2807b"
+      "sha256": "9452bb982cf229a696dc33a873086fb2e4e756449c5fbaec8585704f94ba935a"
     },
     {
       "path": "schemas/CareEscalationResponse.schema.json",
@@ -305,6 +333,10 @@
     {
       "path": "schemas/JournalUpsertResponse.schema.json",
       "sha256": "3ee3856e89c4739327d96c5ea035150912891a4ec3e0be344aeb1eaf2bbd912c"
+    },
+    {
+      "path": "schemas/JournalWithdrawResponse.schema.json",
+      "sha256": "47a8a8bca1dded1ab4371cdf08a7f676e01287fa0915ac0780550e8134c03e3a"
     },
     {
       "path": "schemas/LinkRequest.schema.json",
@@ -389,7 +421,7 @@
   ],
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "source": {
-    "commit": "8c93bcdf4c9585b6157a58ba6e76c526c34efe97",
+    "commit": "b0b1bd149d1d822a2ead9f4784f7c765a0d738b3",
     "path": "docs/contracts/adepthood-v1",
     "repo": "Geoffe-Ga/creek-vault"
   }

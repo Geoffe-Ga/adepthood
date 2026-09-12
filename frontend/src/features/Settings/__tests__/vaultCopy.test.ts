@@ -199,8 +199,10 @@ describe('vaultCopy — the promise deck, verbatim', () => {
     );
   });
 
-  it('VAULT_INTIMATE keeps Intimate entries out of any vault', () => {
-    expect(vaultCopy.VAULT_INTIMATE).toBe('Entries you mark Intimate are never sent to a vault.');
+  it('VAULT_INTIMATE names both withdrawal and the offline retry', () => {
+    expect(vaultCopy.VAULT_INTIMATE).toBe(
+      'An Intimate entry is never sent to your vault. If it was copied there before, Adepthood removes that copy. If your vault is offline, keep Intimate selected and choose it again when the vault is online.',
+    );
   });
 
   it('VAULT_CONNECT_INTRO offers the form and says leaving is free', () => {

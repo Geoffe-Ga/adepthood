@@ -4,8 +4,8 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.15.0
-- **Date:** 2026-09-06
+- **Contract version:** 0.16.0
+- **Date:** 2026-09-12
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
   originally drafted under [#950](https://github.com/Geoffe-Ga/adepthood/issues/950),
@@ -41,9 +41,9 @@ ADR 0004's Context section documents in detail. Instead:
 
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
-  `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/creek-vault`
-  repository: at contract 0.15.0, 37 JSON Schemas, a
-  `retry-policy.json` disposition table, an eight-capability by
+  `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/Creek-Vault`
+  repository: at contract 0.16.0, 38 JSON Schemas, a
+  `retry-policy.json` disposition table, a nine-capability by
   seven-state example matrix, and a `manifest.json` recording a sha256
   per generated file. Those counts move — the matrix was four
   capabilities wide through 0.7 and five at 0.8.0 — so read the
@@ -327,6 +327,27 @@ capability is still used for the others it supports:
   (ADR 0004's 2026-08-07 note) — Creek's own MCP server is untouched
   and remains what agents like CrawDad, Claude Code, and Hermes talk
   to, but nothing in this repository calls it any more.
+- **JOURNAL_WITHDRAW** — the required, content-free complement to JOURNAL.
+  Adepthood maps Creek's published `journal-withdraw` name to its distinct
+  `creek.journal_withdraw` capability and sends a bounded, authenticated
+  `DELETE /v1/journal-entries/{external_id}` with no request body.
+  A successful response must contain exactly `status=ok`,
+  `tier_ceiling=personal`, and `action=withdrawn`; a syntactically successful
+  but incomplete or extended response is a failure. Creek intentionally returns the same
+  success for an existing fragment and an already-absent fragment, so retries
+  are idempotent and the route is not an existence oracle.
+
+  This capability is not optional cleanup. Moving a previously mirrored journal
+  page to Intimate, or deleting it, first commits the local intent and then
+  requires Creek to confirm withdrawal before Adepthood clears `vault_ref` and
+  `vault_tags` or hides the deleted row. A missing capability, incompatible
+  contract, refused credential, timeout, or malformed response leaves that
+  content-free linkage in place as a durable retry marker and returns a truthful
+  retryable 503. A same-entry cross-worker mutation lock serializes journal
+  upserts, privacy changes, deletion, Voice Draft mirroring, and withdrawal;
+  the application request transaction is committed before bounded network I/O.
+  Thus a late writer cannot resurrect a page after withdrawal reports success,
+  and no pooled request connection is held across Creek I/O.
 - **UPLOAD** — a *required* capability for the document-upload surface,
   and gated entirely separately from JOURNAL: a vault that advertises
   `creek.journal` has said nothing about whether it accepts files, so
@@ -511,13 +532,14 @@ the adepthood-to-vault seam is recorded in
 Decision 6, not in this document. **It differs by surface**, and the
 split is deliberate:
 
-- **Journal entries — skip-only, unchanged.** The ciphertext/attested
-  transit topology in Decision 6 (a)–(d) is **entirely unshipped**, so
-  today's behavior remains the skip-only mode from
-  [ADR 0002](adr/0002-intimate-content-local-routing.md): an `intimate`
-  classification short-circuits before any vault call at all, not even
-  a handshake. No intimate journal *entry* is transmitted to any vault
-  today, in any form.
+- **Journal entries — content skip plus required withdrawal.** The
+  ciphertext/attested transit topology in Decision 6 (a)–(d) is
+  **entirely unshipped**, so an `intimate` body still never crosses the vault
+  boundary. A page that was never mirrored short-circuits without a vault call.
+  A page that has a prior `vault_ref`, however, sends the content-free
+  JOURNAL_WITHDRAW request described above and remains visibly Intimate with a
+  retry marker until Creek confirms absence. No intimate journal *content* is
+  transmitted in either case.
 - **Document uploads — skip-only too, since 2026-08-21.** An `intimate`
   document sent to `POST /corpus/import` is withheld before the vault
   is probed, because `/v1`'s tier vocabulary has no `intimate` member
@@ -532,7 +554,9 @@ split is deliberate:
   supersession.
 
 There is no longer an asymmetry between the two surfaces: no intimate
-material of any kind is transmitted to any vault today, in any form.
+material of any kind is transmitted to any vault today. The only call caused by
+an Intimate transition is a content-free withdrawal of a previously mirrored
+journal resource.
 
 ## Vault tenancy: pointer only
 

@@ -542,6 +542,23 @@ describe('the ledger gate rejects a malformed ledger', () => {
 });
 
 describe('the committed ledger is true of this repository', () => {
+  it('accounts for retrying a journal deletion across the connected Creek seam', () => {
+    const ledger = readLedger(REPO_ROOT);
+    if (!Array.isArray(ledger)) throw new Error('the committed journey ledger is not an array');
+    const journey = ledger.find(
+      (entry: unknown) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        'id' in entry &&
+        entry.id === 'journal.withdraw-connected-vault-copy',
+    );
+
+    expect(journey).toMatchObject({
+      status: 'covered',
+      coveredBy: 'frontend/e2e/journal-vault-withdrawal.e2e.test.ts',
+    });
+  });
+
   it('passes the same audit the CI gate runs', () => {
     const audit = auditJourneyLedger(readLedger(REPO_ROOT), realLedgerEnvironment(REPO_ROOT));
 

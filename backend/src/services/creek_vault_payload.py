@@ -65,6 +65,7 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJournalWithdrawResult,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -705,10 +706,13 @@ _NOT_STORED_VOICE_DRAFT = VaultVoiceDraftResult(
     action=None,
 )
 _NOT_DELETED_VOICE_DRAFT = VaultVoiceDraftDeleteResult(deleted=False)
+_NOT_WITHDRAWN_JOURNAL = VaultJournalWithdrawResult(withdrawn=False)
 
 _VOICE_DRAFT_OK_STATUS = "ok"
 _VOICE_DRAFT_DELETED_ACTION = "deleted"
 _VOICE_DRAFT_ATTRIBUTION_FIELDS = frozenset({"author", "author_slug", "voice_weight"})
+_JOURNAL_WITHDRAW_RESPONSE_FIELDS = frozenset({"status", "tier_ceiling", "action"})
+_JOURNAL_WITHDRAWN_ACTION = "withdrawn"
 
 
 def _is_storable_ref(fragment_id: str) -> bool:
@@ -922,6 +926,32 @@ def _parse_http_voice_draft_delete_result(
     if observed == expected:
         return VaultVoiceDraftDeleteResult(deleted=True)
     return _NOT_DELETED_VOICE_DRAFT
+
+
+def _parse_http_journal_withdraw_result(
+    payload: object,
+    *,
+    tier_ceiling: WireTierCeiling,
+) -> VaultJournalWithdrawResult:
+    """Accept only Creek's complete, content-free withdrawal confirmation.
+
+    The key set is exact because every additional field would violate the
+    published anti-oracle shape, while any absent field would leave success
+    unconfirmed. The response intentionally does not echo the stable identity:
+    the request URL already addressed it and Creek makes foreign, absent, and
+    already-withdrawn identities indistinguishable.
+    """
+    if not isinstance(payload, Mapping) or frozenset(payload) != _JOURNAL_WITHDRAW_RESPONSE_FIELDS:
+        return _NOT_WITHDRAWN_JOURNAL
+    observed = (
+        payload.get("status"),
+        payload.get("tier_ceiling"),
+        payload.get("action"),
+    )
+    expected = (_VOICE_DRAFT_OK_STATUS, tier_ceiling.value, _JOURNAL_WITHDRAWN_ACTION)
+    if observed == expected:
+        return VaultJournalWithdrawResult(withdrawn=True)
+    return _NOT_WITHDRAWN_JOURNAL
 
 
 def _coerce_ingest_action(raw: object) -> VaultIngestAction | None:

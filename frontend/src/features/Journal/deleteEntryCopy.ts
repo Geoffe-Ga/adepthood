@@ -16,7 +16,8 @@ export const DELETE_ENTRY_TITLE = 'Delete this page?';
  * quietly — deleting a page stops that writing being retrieved as context.
  */
 export const DELETE_ENTRY_BODY =
-  'It leaves your journal, and the copy your reflections draw on goes with it. ' +
+  'It leaves your journal, and the copy your reflections draw on goes with it. Its copy in a connected Creek vault is removed too. ' +
+  'If that vault is offline, the page stays on your shelf so you can try again. ' +
   'There is no way back to it from inside the app.';
 
 export const DELETE_ENTRY_CONFIRM = 'Delete';

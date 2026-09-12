@@ -148,6 +148,8 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
+  vault_withdrawal_pending:
+    'Creek has not confirmed removal yet. Bring your vault online, then delete this page again.',
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required:

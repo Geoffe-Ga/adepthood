@@ -130,6 +130,8 @@ describe('PrivacyTierControl — intimate explainer', () => {
     const text: string = getByTestId('privacy-tier-explainer').props.children as string;
     // The implementation-specialist must put copy about AI not accessing intimate entries.
     expect(text.toLowerCase()).toMatch(/never sent to ai|not shared with ai|ai won.t|ai cannot/);
+    expect(text).toMatch(/Creek.*withdraw/i);
+    expect(text).toMatch(/online.*Intimate again/i);
   });
 
   it('does NOT show the explainer when value="personal"', () => {

@@ -2,9 +2,11 @@
 
 Postgres remains the system of record. A generated essay gets one immediate,
 capability-gated upsert into the writer's connected vault; a later intimate
-reclassification gets one content-free delete. Neither operation is queued or
-retried, and every Creek failure degrades after a content-free log record so a
-vault can never cost the writer their local draft.
+reclassification gets one content-free delete. Neither operation is queued.
+Creek failures degrade after a content-free log record so a vault can never cost
+the writer their local draft. Retraction additionally reports whether absence
+was confirmed: a privacy PATCH may remain best-effort, while journal deletion
+uses that answer to retain its local retry surface until every replica is gone.
 
 This is a dedicated capability rather than the document-upload path. Creek owns
 the former's fixed ``ai-as-user`` attribution and zero voice weight; the latter
@@ -24,6 +26,7 @@ from domain.creek_vault import (
     VaultVoiceDraftRequest,
     tier_ceiling_for,
 )
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import _expressible_on_the_wire
 
 _LOGGER = logging.getLogger(__name__)
@@ -111,16 +114,24 @@ async def retract_voice_draft(
     *,
     owner_user_id: int,
     marginalia_id: int,
-) -> None:
-    """Make one best-effort content-free retraction of a mirrored draft.
+) -> bool:
+    """Retract one mirrored draft and report whether its absence is confirmed.
 
     ``PERSONAL`` is the widest ceiling the remote wire admits, so it can delete
     either an open or a personal copy. The local essay is intentionally absent
     from this signature: an intimate reclassification must not resend the prose
-    it is retracting.
+    it is retracting. A true local fallback is absence-equivalent because this
+    request has no remote destination. An unreachable connected adapter is not:
+    it may still hold an earlier mirror, so its failed handshake stays
+    unconfirmed and lets a required caller preserve a retry surface. Nor is a
+    connected capability downgrade absence-equivalent: the vault may retain a
+    draft written while that capability was previously advertised.
     """
-    if not await _supports_voice_drafts(client):
-        return
+    handshake = await client.handshake()
+    if not handshake.available:
+        return type(client) is LocalFallbackCreekVaultClient
+    if not client.supports(CreekCapability.VOICE_DRAFTS):
+        return type(client) is LocalFallbackCreekVaultClient
     external_id = voice_draft_external_id(owner_user_id, marginalia_id)
     try:
         result = await client.delete_voice_draft(
@@ -132,11 +143,12 @@ async def retract_voice_draft(
             _RETRACTION_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "vault_error"},
         )
-        return
+        return False
     if not result.deleted:
         _LOGGER.warning(
             _RETRACTION_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "not_deleted"},
         )
-        return
+        return False
     _LOGGER.info(_RETRACTED_EVENT, extra={"external_id": external_id})
+    return True
