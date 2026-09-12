@@ -65,6 +65,10 @@ _CONSTRAINED_VALUES: dict[str, Any] = {
     # Keyed on the column name rather than on the table so a fourth one needs
     # no edit here.
     "anchor_end": 2,
+    # ``queued`` is the first outcome literal, but its relational constraint
+    # requires attempt_count=0 while the schema synthesiser's ordinary integer
+    # is 1. ``attempted`` is the neutral, valid seeded lifecycle state.
+    "vaultpipelinerun.outcome": "attempted",
 }
 
 # Nullable columns the seeder must leave NULL. ``ck_completion_suggestion_target_fk_matches``
@@ -197,7 +201,10 @@ def _scalar_value(
         return True, account.email
     if column.nullable:
         return False, None
-    pinned = _CONSTRAINED_VALUES.get(column.name)
+    pinned = _CONSTRAINED_VALUES.get(
+        f"{table.name}.{column.name}",
+        _CONSTRAINED_VALUES.get(column.name),
+    )
     if pinned is None:
         pinned = _enumerated_values(table).get(column.name)
     if pinned is not None:

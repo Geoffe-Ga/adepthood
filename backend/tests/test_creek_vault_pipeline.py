@@ -48,6 +48,11 @@ from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
 )
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
+from services.creek_vault_pipeline import _commit_finished_run as commit_finished_run
+from services.creek_vault_pipeline import _reconcile_run as reconcile_run
+from services.creek_vault_pipeline import _RunResult as RunResult
+from services.creek_vault_pipeline import _StageCounts as StageCounts
+from services.creek_vault_pipeline import _start_queued_run as start_queued_run
 from services.creek_vault_telemetry import (
     VaultTelemetryOutcome,
     reset_vault_telemetry_for_tests,
@@ -967,11 +972,11 @@ async def test_concurrent_triggers_submit_only_one_pass_per_user_and_stage(
 
 
 @pytest.mark.asyncio
-async def test_two_stale_schedulers_race_real_inserts_and_only_one_reaches_creek(
+async def test_two_stale_schedulers_race_real_inserts_then_follow_up_serially(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The partial index rejects one of two genuinely concurrent active inserts."""
+    """The partial index rejects overlap without losing the later scheduler."""
     schedulers_arrived = 0
     both_schedulers_are_stale = asyncio.Event()
     creek_started = asyncio.Event()
@@ -1035,13 +1040,14 @@ async def test_two_stale_schedulers_race_real_inserts_and_only_one_reaches_creek
         finally:
             release_creek.set()
             await asyncio.gather(*contenders)
+    await _wait_for_background_pipeline()
     await http.aclose()
 
     assert len(losers) == 1
-    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 1
+    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 2
     async with concurrent_session_factory() as reading:
         rows = await _rows(reading)
-    assert [row.stage for row in rows].count(VaultPipelineStage.CLASSIFY) == 1
+    assert [row.stage for row in rows].count(VaultPipelineStage.CLASSIFY) == 2
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1107,7 @@ async def test_an_import_joins_a_journal_classification_without_losing_its_deep_
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A deeper trigger promotes the durable run instead of opening a duplicate."""
+    """A deeper joined trigger follows the missed snapshot before deep stages."""
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
     status_started = asyncio.Event()
     release_status = asyncio.Event()
@@ -1142,6 +1148,140 @@ async def test_an_import_joins_a_journal_classification_without_losing_its_deep_
         )
         release_status.set()
         await journal
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    assert recorder.pipeline_bodies == [
+        {"method": "llm"},
+        {"method": "llm"},
+        {"method": "temporal"},
+        {"method": "embeddings"},
+        {"method": "eddies"},
+        {"method": "threads"},
+    ]
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows] == [
+        "classify",
+        "classify",
+        "temporal",
+        "embeddings",
+        "eddies",
+        "threads",
+    ]
+    assert rows[0].trigger == VaultPipelineTrigger.JOURNAL_WRITE.value
+    assert rows[0].follow_up_trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert {row.trigger for row in rows[1:]} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
+@pytest.mark.asyncio
+async def test_a_write_after_the_active_snapshot_gets_one_serial_follow_up(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A joined write is classified after the pass whose snapshot missed it."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    first_snapshot_taken = asyncio.Event()
+    release_first_snapshot = asyncio.Event()
+    recorder = _Recorder()
+    classification_submissions = 0
+    active_classifications = 0
+    maximum_active_classifications = 0
+
+    async def _hold_the_first_snapshot(request: httpx.Request) -> httpx.Response:
+        nonlocal classification_submissions
+        nonlocal active_classifications
+        nonlocal maximum_active_classifications
+        if request.url.path != _CLASSIFICATIONS_PATH:
+            return recorder(request)
+        classification_submissions += 1
+        active_classifications += 1
+        maximum_active_classifications = max(
+            maximum_active_classifications,
+            active_classifications,
+        )
+        try:
+            if classification_submissions == 1:
+                first_snapshot_taken.set()
+                await release_first_snapshot.wait()
+            return recorder(request)
+        finally:
+            active_classifications -= 1
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_the_first_snapshot))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+    factory = _test_session_factory(db_session)
+
+    async with factory() as first_session, factory() as joined_session:
+        first = asyncio.create_task(
+            drive_vault_pipeline(
+                first_session,
+                client,
+                user_id=_OWNER,
+                trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+            )
+        )
+        await first_snapshot_taken.wait()
+        await drive_vault_pipeline(
+            joined_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+        await drive_vault_pipeline(
+            joined_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+        release_first_snapshot.set()
+        await first
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert classification_submissions == 2
+    assert maximum_active_classifications == 1
+    rows = await _rows(db_session)
+    assert [row.stage for row in rows].count(VaultPipelineStage.CLASSIFY) == 2
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+
+
+@pytest.mark.asyncio
+async def test_a_joined_write_follow_up_survives_process_restart(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup completes the old job, its promised pass, then the deeper ladder."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage=VaultPipelineStage.CLASSIFY.value,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            follow_up_trigger=VaultPipelineTrigger.DOCUMENT_IMPORT.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            job_id=recorder.CLASSIFICATION_JOB,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
     await http.aclose()
 
     assert recorder.classification_submissions == 1
@@ -1154,14 +1294,282 @@ async def test_an_import_joins_a_journal_classification_without_losing_its_deep_
     ]
     rows = await _rows(db_session)
     assert [row.stage for row in rows] == [
-        "classify",
-        "temporal",
-        "embeddings",
-        "eddies",
-        "threads",
+        VaultPipelineStage.CLASSIFY,
+        VaultPipelineStage.CLASSIFY,
+        VaultPipelineStage.TEMPORAL,
+        VaultPipelineStage.EMBEDDINGS,
+        VaultPipelineStage.EDDIES,
+        VaultPipelineStage.THREADS,
     ]
-    assert {row.trigger for row in rows} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
+    assert rows[0].trigger == VaultPipelineTrigger.JOURNAL_WRITE.value
+    assert rows[0].follow_up_trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert {row.trigger for row in rows[1:]} == {VaultPipelineTrigger.DOCUMENT_IMPORT.value}
     assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
+    assert all(row.resume_claim_id is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_joined_follow_up_survives_lost_status_and_background_cancellation(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The persisted promise survives both request and continuation lifetimes."""
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    background_status_waiting = asyncio.Event()
+    release_status = asyncio.Event()
+    classification_status_calls = 0
+
+    async def _lose_status_answers(request: httpx.Request) -> httpx.Response:
+        nonlocal classification_status_calls
+        response = recorder(request)
+        if request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}":
+            classification_status_calls += 1
+            if classification_status_calls >= 2:
+                background_status_waiting.set()
+            await release_status.wait()
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_lose_status_answers))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with concurrent_session_factory() as first_session:
+        await drive_vault_pipeline(
+            first_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+    await asyncio.wait_for(
+        background_status_waiting.wait(),
+        _CONCURRENT_RACE_SETTLE_SECONDS,
+    )
+    async with concurrent_session_factory() as joined_session:
+        await drive_vault_pipeline(
+            joined_session,
+            client,
+            user_id=_OWNER,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )
+    await pipeline.close_vault_pipeline_tasks()
+
+    async with concurrent_session_factory() as checking:
+        interrupted = await _rows(checking)
+    assert len(interrupted) == 1
+    assert interrupted[0].outcome == VaultPipelineOutcome.ATTEMPTED.value
+    assert interrupted[0].follow_up_trigger == VaultPipelineTrigger.JOURNAL_WRITE.value
+
+    release_status.set()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(concurrent_session_factory, _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 2
+    async with concurrent_session_factory() as checking:
+        landed = await _rows(checking)
+    assert [(row.stage, row.outcome) for row in landed] == [
+        (VaultPipelineStage.CLASSIFY, VaultPipelineOutcome.COMPLETED),
+        (VaultPipelineStage.CLASSIFY, VaultPipelineOutcome.COMPLETED),
+        (VaultPipelineStage.TEMPORAL, VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_write_joins_a_queued_follow_up_before_it_opens_a_socket(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-admission writes coalesce into the queued pass rather than chaining."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _Recorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+    queued = VaultPipelineRun(
+        user_id=_OWNER,
+        stage=VaultPipelineStage.CLASSIFY.value,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+        outcome=VaultPipelineOutcome.QUEUED.value,
+        attempt_count=0,
+        fragments_seen=0,
+        fragments_touched=0,
+        fragments_lost=0,
+    )
+    db_session.add(queued)
+    await db_session.commit()
+
+    await drive_vault_pipeline(
+        db_session,
+        client,
+        user_id=_OWNER,
+        trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+    )
+    await http.aclose()
+
+    rows = await _rows(db_session)
+    assert recorder.requests == []
+    assert len(rows) == 1
+    assert rows[0].outcome == VaultPipelineOutcome.QUEUED.value
+    assert rows[0].trigger == VaultPipelineTrigger.DOCUMENT_IMPORT.value
+    assert rows[0].follow_up_trigger is None
+
+
+@pytest.mark.asyncio
+async def test_only_one_recovery_worker_admits_the_same_queued_follow_up(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A duplicate recovery owner loses an atomic queue transition before I/O."""
+    queued = VaultPipelineRun(
+        user_id=_OWNER,
+        stage=VaultPipelineStage.CLASSIFY.value,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+        outcome=VaultPipelineOutcome.QUEUED.value,
+        attempt_count=0,
+        fragments_seen=0,
+        fragments_touched=0,
+        fragments_lost=0,
+    )
+    async with concurrent_session_factory() as session:
+        session.add(queued)
+        await session.commit()
+        assert queued.id is not None
+        run_id = queued.id
+
+    both_loaded = asyncio.Event()
+    loaded = 0
+    original_start = start_queued_run
+
+    async def _start_after_both_loaded(
+        session: AsyncSession,
+        client: HttpCreekVaultClient,
+        run: VaultPipelineRun,
+        stage: VaultPipelineStage,
+    ) -> RunResult | None:
+        nonlocal loaded
+        loaded += 1
+        if loaded == 2:
+            both_loaded.set()
+        await both_loaded.wait()
+        return await original_start(session, client, run, stage)
+
+    monkeypatch.setattr(pipeline, "_start_queued_run", _start_after_both_loaded)
+    classification_started = asyncio.Event()
+    release_classification = asyncio.Event()
+    submissions = 0
+    recorder = _Recorder()
+
+    async def _hold_classification(request: httpx.Request) -> httpx.Response:
+        nonlocal submissions
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            submissions += 1
+            classification_started.set()
+            await release_classification.wait()
+        return recorder(request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_hold_classification))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async def _recover() -> VaultPipelineOutcome | None:
+        async with concurrent_session_factory() as session:
+            return await reconcile_run(
+                session,
+                client,
+                run_id,
+                VaultPipelineStage.CLASSIFY,
+            )
+
+    contenders = (asyncio.create_task(_recover()), asyncio.create_task(_recover()))
+    try:
+        await asyncio.wait_for(classification_started.wait(), _CONCURRENT_RACE_SETTLE_SECONDS)
+        done, _pending = await asyncio.wait(
+            contenders,
+            timeout=_CONCURRENT_RACE_SETTLE_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert len(done) == 1
+        assert submissions == 1
+    finally:
+        release_classification.set()
+        outcomes = await asyncio.gather(*contenders, return_exceptions=True)
+        await http.aclose()
+
+    assert outcomes.count(None) == 1
+    assert outcomes.count(VaultPipelineOutcome.COMPLETED) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_terminalizer_cannot_replay_a_consumed_follow_up(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stale completion cannot enqueue the same joined generation twice."""
+    original = VaultPipelineRun(
+        user_id=_OWNER,
+        stage=VaultPipelineStage.CLASSIFY.value,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+        follow_up_trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+        outcome=VaultPipelineOutcome.ATTEMPTED.value,
+        fragments_seen=0,
+        fragments_touched=0,
+        fragments_lost=0,
+    )
+    async with concurrent_session_factory() as seed:
+        seed.add(original)
+        await seed.commit()
+        assert original.id is not None
+        run_id = original.id
+
+    async with concurrent_session_factory() as first, concurrent_session_factory() as stale:
+        first_copy = await first.get(VaultPipelineRun, run_id)
+        stale_copy = await stale.get(VaultPipelineRun, run_id)
+        assert first_copy is not None
+        assert stale_copy is not None
+        await commit_finished_run(
+            first,
+            first_copy,
+            VaultPipelineOutcome.COMPLETED,
+            StageCounts(seen=1, touched=1),
+        )
+
+        async with concurrent_session_factory() as successor_session:
+            result = await successor_session.execute(
+                select(VaultPipelineRun).where(
+                    col(VaultPipelineRun.outcome) == VaultPipelineOutcome.QUEUED.value
+                )
+            )
+            successor = result.scalars().one()
+            successor.outcome = VaultPipelineOutcome.COMPLETED.value
+            successor.attempt_count = 1
+            successor_session.add(successor)
+            await successor_session.commit()
+
+        await commit_finished_run(
+            stale,
+            stale_copy,
+            VaultPipelineOutcome.COMPLETED,
+            StageCounts(seen=1, touched=1),
+        )
+
+    async with concurrent_session_factory() as checking:
+        rows = await _rows(checking)
+    assert len(rows) == 2
+    assert all(row.outcome == VaultPipelineOutcome.COMPLETED for row in rows)
 
 
 @pytest.mark.asyncio

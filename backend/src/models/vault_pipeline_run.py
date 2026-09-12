@@ -14,21 +14,25 @@ outlives the request that wrote it. A log line outlives nothing that can be
 compared: it is retained for a window, it cannot be read back by the code that
 has to decide, and no surface can query it.
 
-**The row is content-free.** A stage and trigger, an outcome, attempt count,
-opaque job and lease UUIDs, three counts and two instants. Nothing from any
-fragment, nothing from any document, and nothing a reader could reconstruct one
-from. Creek's job surface and pipeline responses publish counts and opaque
-correlation only: no fragment id, path, title, excerpt, or error string.
+**The row is content-free.** A stage, original trigger and optional follow-up
+trigger, an outcome, attempt count, opaque job and lease UUIDs, three counts and
+two instants. Nothing from any fragment, nothing from any document, and nothing
+a reader could reconstruct one from. Creek's job surface and pipeline responses
+publish counts and opaque correlation only: no fragment id, path, title,
+excerpt, or error string.
 
 **Every logical run writes one row before its first attempt.** Retries increment
-that row rather than creating new debounce stamps. The partial unique index on
-an ``attempted`` user/stage pair closes concurrent admission across workers; a
-durable job id lets startup resume the accepted pass instead of submitting a
-duplicate after a process restart. Startup itself takes a content-free UUID and
-timestamp lease on the row before it schedules recovery. A live process renews
-that timestamp, another process cannot release an owner it did not claim, and a
-hard-killed process's lease becomes stale so the next healthy boot can recover
-the same durable handle.
+that row rather than creating new debounce stamps. A write that arrives after a
+classification was admitted cannot be claimed by that earlier snapshot, so it
+adds only a follow-up trigger to the active row. Terminalizing that row and
+inserting one ``queued`` successor share a transaction. The partial unique
+index spans both queued and attempted user/stage pairs, closing concurrent
+admission across workers; a durable job id lets startup resume the accepted
+pass instead of submitting a duplicate after a process restart. Startup itself
+takes a content-free UUID and timestamp lease on the row before it schedules
+recovery. A live process renews that timestamp, another process cannot release
+an owner it did not claim, and a hard-killed process's lease becomes stale so
+the next healthy boot can recover the same durable handle.
 
 It also keeps a persistently failing linker from starving the rungs behind it:
 after bounded retries its terminal or ambiguous result closes its interval and
@@ -68,9 +72,10 @@ _MIN_ATTEMPTS = 1
 
 
 class VaultPipelineOutcome(enum.StrEnum):
-    """How one attempted rung ended.
+    """Where one durable rung is in its admission lifecycle.
 
-    Five members, separating incomplete work from both failure and ambiguity.
+    Six members, separating promised work, uncertain admission, incomplete work,
+    failure, and ambiguity.
     ``INCOMPLETE`` is Creek's ``complete: false`` — a classification pass that
     skipped some fragments — and it is neither a success nor a failure: the pass
     is resumable, so it means the honest next step is to call again, while the
@@ -82,6 +87,9 @@ class VaultPipelineOutcome(enum.StrEnum):
     reworded without a migration.
 
     Attributes:
+        QUEUED: A joined write durably promised one follow-up, but no socket has
+            opened for it yet. It is inserted in the same transaction that
+            terminalizes the snapshot it follows, and startup may claim it.
         ATTEMPTED: The row was written and committed *before* the vault was
             dialled, and no answer has replaced it yet. It is what makes the
             stamp visible to a concurrent request while the call is still in
@@ -101,6 +109,7 @@ class VaultPipelineOutcome(enum.StrEnum):
             must never be promoted into proof that it failed.
     """
 
+    QUEUED = "queued"
     ATTEMPTED = "attempted"
     COMPLETED = "completed"
     INCOMPLETE = "incomplete"
@@ -122,7 +131,7 @@ def _stage_check() -> CheckConstraint:
 
 
 def _outcome_check() -> CheckConstraint:
-    """CHECK that a row names one of the three ways a rung can end."""
+    """CHECK that a row names one state in the durable admission lifecycle."""
     return CheckConstraint(
         f"outcome IN ({_quoted(tuple(outcome.value for outcome in VaultPipelineOutcome))})",
         name="ck_vaultpipelinerun_outcome_valid",
@@ -161,10 +170,19 @@ def _trigger_check() -> CheckConstraint:
     )
 
 
-def _attempt_count_check() -> CheckConstraint:
-    """CHECK that every logical run includes at least its first attempt."""
+def _follow_up_trigger_check() -> CheckConstraint:
+    """CHECK the content-free scope requested by a write that joined this run."""
     return CheckConstraint(
-        f"attempt_count >= {_MIN_ATTEMPTS}",
+        "follow_up_trigger IS NULL OR follow_up_trigger IN ('journal_write', 'document_import')",
+        name="ck_vaultpipelinerun_follow_up_trigger_valid",
+    )
+
+
+def _attempt_count_check() -> CheckConstraint:
+    """CHECK that only a durably queued follow-up has no wire attempt yet."""
+    return CheckConstraint(
+        "(outcome = 'queued' AND attempt_count = 0) OR "
+        f"(outcome != 'queued' AND attempt_count >= {_MIN_ATTEMPTS})",
         name="ck_vaultpipelinerun_attempt_count_range",
     )
 
@@ -220,12 +238,13 @@ class VaultPipelineRun(SQLModel, table=True):
             "user_id",
             "stage",
             unique=True,
-            postgresql_where=text("outcome = 'attempted'"),
-            sqlite_where=text("outcome = 'attempted'"),
+            postgresql_where=text("outcome IN ('queued', 'attempted')"),
+            sqlite_where=text("outcome IN ('queued', 'attempted')"),
         ),
         _stage_check(),
         _outcome_check(),
         _trigger_check(),
+        _follow_up_trigger_check(),
         _attempt_count_check(),
         _resume_claim_check(),
         _fragments_seen_check(),
@@ -238,6 +257,7 @@ class VaultPipelineRun(SQLModel, table=True):
     stage: str = Field(max_length=_STAGE_WIDTH)
     outcome: str = Field(max_length=_OUTCOME_WIDTH)
     trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
+    follow_up_trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
     job_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
     attempt_count: int = Field(default=_MIN_ATTEMPTS, nullable=False)
     resume_claim_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)

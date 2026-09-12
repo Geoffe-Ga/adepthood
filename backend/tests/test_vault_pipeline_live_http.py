@@ -45,6 +45,7 @@ from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from routers.auth import get_current_user
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import HttpCreekVaultClient
+from services.creek_vault_pipeline import VaultPipelineTrigger
 
 _HOST = "127.0.0.1"
 _API_KEY = "live-boundary-key"  # pragma: allowlist secret
@@ -63,12 +64,14 @@ class _Fragment:
     labels: dict[str, str]
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Job:
     """The minimum private state needed to advance one durable job."""
 
     method: str
     started_at: float
+    fragment_ids: tuple[str, ...]
+    completed: bool = False
 
 
 class _SlowCreekPeer:
@@ -82,6 +85,7 @@ class _SlowCreekPeer:
         self.classification_requests: list[Mapping[str, object]] = []
         self.link_methods: list[str] = []
         self.classification_elapsed: float | None = None
+        self.maximum_active_classifications = 0
         self._mount()
 
     def _mount(self) -> None:
@@ -162,10 +166,14 @@ class _SlowCreekPeer:
             "tier_ceiling": request.headers["x-creek-tier-ceiling"],
         }
 
-    def _accepted(self, method: str) -> JSONResponse:
+    def _accepted(self, method: str, *, fragment_ids: tuple[str, ...] = ()) -> JSONResponse:
         """Persist one opaque job before returning its published 202 handle."""
         job_id = str(uuid4())
-        self.jobs[job_id] = _Job(method=method, started_at=time.monotonic())
+        self.jobs[job_id] = _Job(
+            method=method,
+            started_at=time.monotonic(),
+            fragment_ids=fragment_ids,
+        )
         return JSONResponse(
             status_code=HTTPStatus.ACCEPTED,
             content={"status": "accepted", "job_id": job_id, "state": "queued"},
@@ -178,7 +186,12 @@ class _SlowCreekPeer:
         body = await request.json()
         assert body == {"method": "llm"}
         self.classification_requests.append(body)
-        return self._accepted("llm")
+        active = sum(job.method == "llm" and not job.completed for job in self.jobs.values())
+        self.maximum_active_classifications = max(
+            self.maximum_active_classifications,
+            active + 1,
+        )
+        return self._accepted("llm", fragment_ids=tuple(self.fragments))
 
     async def _link(self, request: Request) -> Mapping[str, object] | JSONResponse:
         """Answer short links inline and the published embeddings method by job."""
@@ -193,9 +206,9 @@ class _SlowCreekPeer:
             return self._accepted(method)
         return self._link_result(method)
 
-    def _classification_result(self) -> Mapping[str, object]:
+    @staticmethod
+    def _classification_result(count: int) -> Mapping[str, object]:
         """Return counts for the labels the peer has actually landed."""
-        count = len(self.fragments)
         return {
             "status": "ok",
             "tier_ceiling": "personal",
@@ -234,10 +247,13 @@ class _SlowCreekPeer:
         if job.method == "llm" and elapsed < _CLASSIFICATION_SECONDS:
             return {"status": "ok", "job_id": job_id, "state": "running", "result": None}
         if job.method == "llm":
-            for fragment in self.fragments.values():
-                fragment.labels.update({"frequency.primary": "F6", "wavelength.phase": "rising"})
+            for fragment_id in job.fragment_ids:
+                self.fragments[fragment_id].labels.update(
+                    {"frequency.primary": "F6", "wavelength.phase": "rising"}
+                )
+            job.completed = True
             self.classification_elapsed = elapsed
-            result = self._classification_result()
+            result = self._classification_result(len(job.fragment_ids))
         else:
             result = self._link_result(job.method)
         return {"status": "ok", "job_id": job_id, "state": "succeeded", "result": result}
@@ -340,6 +356,78 @@ async def _submit_writes_while_jobs_continue(
     assert time.monotonic() - started < _CLASSIFICATION_SECONDS
     assert all(peer.classification_elapsed is None for peer in peers)
     return responses
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_a_late_journal_fragment_gets_a_serial_follow_up_over_live_http(
+    concurrent_async_client: httpx.AsyncClient,  # noqa: ARG001 - provisions the live app DB
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second HTTP write missed by Creek's snapshot is classified by one follow-up."""
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.03)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_MAX_SECONDS", 0.02)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setitem(globals(), "_CLASSIFICATION_SECONDS", 0.2)
+    peer = _SlowCreekPeer()
+
+    async with (
+        _serve_tcp(app) as adepthood_url,
+        _serve_tcp(peer.app) as creek_url,
+        httpx.AsyncClient() as creek_http,
+    ):
+        vault = HttpCreekVaultClient(creek_url, _API_KEY, http_client=creek_http)
+        await vault.handshake()
+
+        async with httpx.AsyncClient(base_url=adepthood_url, timeout=5) as client:
+            email, headers = await _signup(client, "live-follow-up-writer")
+            ids = await _user_ids(concurrent_session_factory, (email, email))
+
+            async def _vault_for_user(
+                current_user: Annotated[int, Depends(get_current_user)],
+            ) -> CreekVaultPipelineClient:
+                assert current_user == ids[email]
+                return vault
+
+            app.dependency_overrides[get_creek_vault_client] = _vault_for_user
+            try:
+                first = await client.post(
+                    "/journal/",
+                    json={"message": _JOURNAL_TEXT, "classification": "personal"},
+                    headers=headers,
+                )
+                assert first.status_code == HTTPStatus.CREATED
+                assert len(peer.classification_requests) == 1
+                assert len(peer.fragments) == 1
+
+                second = await client.post(
+                    "/journal/",
+                    json={"message": _DOCUMENT_TEXT, "classification": "personal"},
+                    headers=headers,
+                )
+                assert second.status_code == HTTPStatus.CREATED
+                await pipeline.wait_for_vault_pipeline_tasks()
+            finally:
+                app.dependency_overrides.pop(get_creek_vault_client, None)
+                await pipeline.close_vault_pipeline_tasks()
+
+    assert len(peer.classification_requests) == 2
+    assert peer.maximum_active_classifications == 1
+    assert len(peer.fragments) == 2
+    assert {tuple(fragment.labels.items()) for fragment in peer.fragments.values()} == {
+        (("frequency.primary", "F6"), ("wavelength.phase", "rising"))
+    }
+    rows = await _pipeline_rows(concurrent_session_factory, {ids[email]})
+    assert [(row.stage, row.fragments_seen) for row in rows] == [
+        ("classify", 1),
+        ("classify", 2),
+        ("temporal", 2),
+    ]
+    assert rows[0].follow_up_trigger == VaultPipelineTrigger.JOURNAL_WRITE.value
+    assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
 
 
 @pytest.mark.asyncio
