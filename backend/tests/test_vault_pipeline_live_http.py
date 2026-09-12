@@ -77,7 +77,7 @@ class _Job:
 class _SlowCreekPeer:
     """A 0.16 Creek HTTP peer whose LLM job really takes longer than ten seconds."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, classification_release: asyncio.Event | None = None) -> None:
         """Create the observable state and mount the published routes."""
         self.app = FastAPI()
         self.fragments: dict[str, _Fragment] = {}
@@ -86,6 +86,7 @@ class _SlowCreekPeer:
         self.link_methods: list[str] = []
         self.classification_elapsed: float | None = None
         self.maximum_active_classifications = 0
+        self.classification_release = classification_release
         self._mount()
 
     def _mount(self) -> None:
@@ -244,7 +245,12 @@ class _SlowCreekPeer:
         self._require_contract(request)
         job = self.jobs[job_id]
         elapsed = time.monotonic() - job.started_at
-        if job.method == "llm" and elapsed < _CLASSIFICATION_SECONDS:
+        classification_is_running = (
+            not self.classification_release.is_set()
+            if self.classification_release is not None
+            else elapsed < _CLASSIFICATION_SECONDS
+        )
+        if job.method == "llm" and classification_is_running:
             return {"status": "ok", "job_id": job_id, "state": "running", "result": None}
         if job.method == "llm":
             for fragment_id in job.fragment_ids:
@@ -366,13 +372,13 @@ async def test_a_late_journal_fragment_gets_a_serial_follow_up_over_live_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A second HTTP write missed by Creek's snapshot is classified by one follow-up."""
-    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.03)
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.5)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.005)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.005)
     monkeypatch.setattr(pipeline, "_JOB_POLL_MAX_SECONDS", 0.02)
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
-    monkeypatch.setitem(globals(), "_CLASSIFICATION_SECONDS", 0.2)
-    peer = _SlowCreekPeer()
+    classification_release = asyncio.Event()
+    peer = _SlowCreekPeer(classification_release=classification_release)
 
     async with (
         _serve_tcp(app) as adepthood_url,
@@ -409,6 +415,7 @@ async def test_a_late_journal_fragment_gets_a_serial_follow_up_over_live_http(
                     headers=headers,
                 )
                 assert second.status_code == HTTPStatus.CREATED
+                classification_release.set()
                 await pipeline.wait_for_vault_pipeline_tasks()
             finally:
                 app.dependency_overrides.pop(get_creek_vault_client, None)
