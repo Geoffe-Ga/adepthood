@@ -39,6 +39,7 @@ const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
 
 const E2E_SCRIPT = 'test:e2e';
 const BROWSER_E2E_SCRIPT = 'test:e2e:web';
+const AUTH_OVERFLOW_JOURNEY = 'auth-overflow.browser.e2e.test.ts';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
 const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
@@ -48,6 +49,7 @@ const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
  * flake waiting for the first checkout that reads them the other way round.
  */
 const EXPECTED_BROWSER_JOURNEYS = [
+  AUTH_OVERFLOW_JOURNEY,
   BROWSER_JOURNEY,
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
@@ -371,6 +373,27 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(spec).toContain("getByTestId('habits-list')");
     expect(spec).toContain("getByTestId('habits-pagination')");
     expect(spec).toContain('boundingBox()');
+  });
+
+  it('keeps the auth journey measuring both ends of every shared scroll surface', () => {
+    const spec = read(
+      join(E2E_DIR, AUTH_OVERFLOW_JOURNEY),
+      'The auth overflow browser journey spec is missing.',
+    );
+
+    for (const testID of [
+      'get-started',
+      'login',
+      'signup',
+      'forgot-password',
+      'reset-password',
+      'cancel-reset',
+    ]) {
+      expect(spec).toContain(`'${testID}'`);
+    }
+    expect(spec).toContain('scrollHeight');
+    expect(spec).toContain('boundingBox()');
+    expect(spec).toContain('element.scrollTop = element.scrollHeight');
   });
 
   it('keeps Playwright specs out of the Jest API journey lane', () => {

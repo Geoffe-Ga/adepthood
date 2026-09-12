@@ -40,6 +40,18 @@
     "coveredBy": "frontend/e2e/session-lifetime.e2e.test.ts"
   },
   {
+    "id": "auth.screens-remain-reachable-with-large-content",
+    "description": "A signed-out reader sees the editorial auth layout vertically centred when it fits, then can reach both ends of the Get Started content when the available height shrinks to a keyboard-sized viewport. Every auth route -- Get Started, Login, Signup, Forgot Password, Reset Password and Cancel Reset -- exposes the same scroll surface, and the journey finishes by creating an account through the production client so the tested surface crosses its real seam. The browser half pins actual overflow and centring geometry; the native PR evidence separately exercises iOS 18.6 at accessibility-extra-extra-extra-large because a browser cannot emulate iOS Dynamic Type.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/AuthScreenContainer.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/signup"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/auth-overflow.browser.e2e.test.ts"
+  },
+  {
     "id": "welcome.first-run-walkthrough-to-journal",
     "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {

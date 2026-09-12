@@ -1,5 +1,5 @@
 import React from 'react';
-import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { authStyles } from './auth.styles';
@@ -22,7 +22,17 @@ export function AuthScreenContainer({ testID, children }: Props): React.JSX.Elem
         style={authStyles.container}
         testID={`${testID}-keyboard-avoiding`}
       >
-        <View style={authStyles.form}>{children}</View>
+        <ScrollView
+          style={authStyles.scroll}
+          contentContainerStyle={authStyles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          testID={`${testID}-scroll`}
+        >
+          <View style={authStyles.form} testID={`${testID}-form`}>
+            {children}
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

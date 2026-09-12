@@ -32,6 +32,15 @@ export const authStyles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: surface.canvas },
   container: {
     flex: 1,
+    backgroundColor: surface.canvas,
+  },
+  scroll: { flex: 1 },
+  // `flexGrow` keeps short forms as tall as the viewport so they retain their
+  // centred editorial composition. When Dynamic Type makes a form taller than
+  // the viewport, the content takes its natural height and this same container
+  // becomes scrollable instead of centring its ends beyond reach.
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
     padding: SPACING.xl,
     backgroundColor: surface.canvas,
