@@ -11,7 +11,13 @@ import { habitManager } from '@/features/Habits/services/habitManager';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 
+const mockUserTimezone = 'America/Los_Angeles';
+
 const keepPractice = keepAsPractice as jest.Mock;
+
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ userTimezone: mockUserTimezone }),
+}));
 
 jest.mock('@/features/Habits/services/habitManager', () => ({
   habitManager: {
@@ -226,7 +232,11 @@ describe('WritingSessionOffer — confirming', () => {
     fireEvent.press(view.getByTestId('save-as-habit-confirm'));
 
     await waitFor(() => expect(insertHabitAt).toHaveBeenCalled());
-    expect(insertHabitAt).toHaveBeenCalledWith({ name: 'Journaling', icon: '📓' }, 1);
+    expect(insertHabitAt).toHaveBeenCalledWith(
+      { name: 'Journaling', icon: '📓' },
+      1,
+      mockUserTimezone,
+    );
   });
 
   it('is not offered again on a later session once the habit has been kept', async () => {
@@ -304,6 +314,7 @@ describe('WritingSessionOffer — confirming', () => {
     fireEvent.press(view.getByTestId('save-as-habit-accept'));
 
     expect(habitManager.loadHabits).toHaveBeenCalledTimes(1);
+    expect(habitManager.loadHabits).toHaveBeenCalledWith(mockUserTimezone);
   });
 });
 

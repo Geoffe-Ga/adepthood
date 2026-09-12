@@ -90,6 +90,7 @@ interface HabitModalsProps {
   habits: Habit[];
   actions: ReturnType<typeof useHabits>['actions'];
   onAddHabit: (_input: AddHabitInput) => Promise<void>;
+  userTimezone: string;
 }
 
 /**
@@ -108,7 +109,7 @@ const HabitDataModals = ({
   selectedHabit,
   habitStats,
   actions,
-}: Omit<HabitModalsProps, 'habits' | 'onAddHabit'>) => {
+}: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => {
   const { userTimezone } = useAuth();
   return (
     <>
@@ -145,6 +146,7 @@ const HabitWriteModals = ({
   habits,
   actions,
   onAddHabit,
+  userTimezone,
 }: Omit<HabitModalsProps, 'habitStats'>) => (
   <>
     <HabitSettingsModal
@@ -162,6 +164,7 @@ const HabitWriteModals = ({
     <ReorderHabitsModal
       visible={modals.reorder}
       habits={habits}
+      userTimezone={userTimezone}
       onClose={() => modals.close('reorder')}
       onSaveOrder={actions.saveHabitOrder}
     />
@@ -201,6 +204,7 @@ const HabitModals = (props: HabitModalsProps) => (
       habits={props.habits}
       actions={props.actions}
       onAddHabit={props.onAddHabit}
+      userTimezone={props.userTimezone}
     />
   </>
 );
@@ -689,7 +693,6 @@ const useHabitsScreenState = () => {
     () => buildPagedHabits(habitsReturn.habits, pagination.page, HABITS_PER_PAGE),
     [habitsReturn.habits, pagination.page],
   );
-  const pagedHabits = paged.habits;
   const handleSelectMode = useSelectMode(habitsReturn.setMode, modals.closeAll);
   const renderHabitTile = useHabitTileRenderer(
     habitsReturn.mode,
@@ -703,8 +706,7 @@ const useHabitsScreenState = () => {
   const reveal = useToggleReveal(habitsReturn.habits, habitsReturn.actions, modals.closeAll);
   /**
    * Wrap addHabit so the modal can await it, the screen jumps to the page
-   * containing the newly added row, and any in-flight failure surfaces via
-   * the existing rollback toast before the modal closes. Adding from a
+   * containing the new row, and failures surface before close. Adding from a
    * negative lap creates a carryover habit and stays on the carryover side.
    */
   const handleAddHabit = useCallback(
@@ -722,12 +724,13 @@ const useHabitsScreenState = () => {
     habitStats,
     responsive,
     pagination,
-    pagedHabits,
+    pagedHabits: paged.habits,
     emptyStageStart,
     emptyStageEnd,
     handleSelectMode,
     renderHabitTile,
     handleAddHabit,
+    userTimezone,
     ...reveal,
   };
 };
@@ -861,6 +864,7 @@ const HabitsScreen = () => {
           habits={habits}
           actions={actions}
           onAddHabit={state.handleAddHabit}
+          userTimezone={state.userTimezone}
         />
       </ContentContainer>
       <HabitsScreenDrawer

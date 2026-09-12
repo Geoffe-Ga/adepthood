@@ -27,6 +27,7 @@
  */
 
 import type { HabitCreatePayload } from '../../../api';
+import { DEFAULT_TIMEZONE, dayKeyInTZ } from '../../../utils/dateUtils';
 import type {
   Goal,
   Habit,
@@ -54,11 +55,10 @@ const GOAL_TIERS = [
 const TIERS_PER_HABIT = GOAL_TIERS.length;
 
 /** The habit fields the API round-trips, in the shape `POST` and `PUT` share. */
-export const toApiPayload = (h: Habit): HabitCreatePayload => ({
+export const toApiPayload = (h: Habit, tz: string = DEFAULT_TIMEZONE): HabitCreatePayload => ({
   name: h.name,
   icon: h.icon,
-  start_date:
-    h.start_date instanceof Date ? h.start_date.toISOString().slice(0, 10) : String(h.start_date),
+  start_date: dayKeyInTZ(h.start_date, tz),
   energy_cost: h.energy_cost,
   energy_return: h.energy_return,
   notification_times: h.notificationTimes ?? null,

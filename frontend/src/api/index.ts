@@ -103,6 +103,7 @@ import {
 import { API_BASE_URL } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
 import type { ModeConfig } from '@/features/Practice/engine/types';
+import { DEFAULT_TIMEZONE, dayKeyToInstant } from '@/utils/dateUtils';
 
 export type { Page } from './schemas';
 
@@ -1226,7 +1227,10 @@ function narrowTier(value: unknown): Tier {
   return isTier(value) ? value : 'clear';
 }
 
-export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
+export function toLocalHabit(
+  apiHabit: ApiHabitWithGoals,
+  tz: string = DEFAULT_TIMEZONE,
+): LocalHabit {
   return {
     id: apiHabit.id,
     name: apiHabit.name,
@@ -1235,7 +1239,7 @@ export function toLocalHabit(apiHabit: ApiHabitWithGoals): LocalHabit {
     streak: apiHabit.streak,
     energy_cost: apiHabit.energy_cost,
     energy_return: apiHabit.energy_return,
-    start_date: new Date(apiHabit.start_date),
+    start_date: dayKeyToInstant(apiHabit.start_date, tz),
     goals: apiHabit.goals.map((g) => ({
       id: g.id,
       title: g.title,

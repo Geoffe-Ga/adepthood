@@ -51,6 +51,29 @@ describe('useProgramStore', () => {
     );
   });
 
+  it('stores a canonical day key alongside the device-local display date', () => {
+    const { useProgramStore } = require('../useProgramStore');
+    act(() => useProgramStore.getState().setProgramStartDate(new Date(2026, 5, 15, 23, 30)));
+
+    expect(useProgramStore.getState().programStartDay).toBe('2026-06-15');
+  });
+
+  it('sets an account-derived day without re-bucketing its instant in the device zone', async () => {
+    const { useProgramStore } = require('../useProgramStore');
+    act(() => useProgramStore.getState().setProgramStartDay('2026-06-15'));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const stored = useProgramStore.getState().programStartDate!;
+    expect(stored.getFullYear()).toBe(2026);
+    expect(stored.getMonth()).toBe(5);
+    expect(stored.getDate()).toBe(15);
+    expect(useProgramStore.getState().programStartDay).toBe('2026-06-15');
+    expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
+      '@adepthood/program_start_date',
+      '2026-06-15',
+    );
+  });
+
   it('setProgramStartDate(null) clears persisted storage', async () => {
     const { useProgramStore } = require('../useProgramStore');
     act(() => useProgramStore.getState().setProgramStartDate(null));
@@ -82,6 +105,7 @@ describe('useProgramStore', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(useProgramStore.getState().programStartDate).toBeNull();
+    expect(useProgramStore.getState().programStartDay).toBeNull();
     expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith('@adepthood/program_start_date');
   });
 

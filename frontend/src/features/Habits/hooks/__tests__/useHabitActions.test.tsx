@@ -143,15 +143,37 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
 const makeScaffoldHabit = (overrides: Partial<Habit> = {}): Habit =>
   makeHabit({ hasClientMintedIds: true, ...overrides });
 
-const renderActions = () => {
+const renderActions = (tz = 'UTC') => {
   const showToast = jest.fn();
   const { result } = renderHook(() => {
     const ui = useHabitUI();
-    const actions = useHabitActions(ui, showToast, 'UTC');
+    const actions = useHabitActions(ui, showToast, tz);
     return { ui, actions };
   });
   return { result, showToast };
 };
+
+describe('useHabitActions timezone wiring', () => {
+  it('forwards the authenticated zone to date-bearing habit creates', async () => {
+    const zone = 'America/Los_Angeles';
+    const addHabit = jest.spyOn(habitManager, 'addHabit').mockResolvedValue(undefined);
+    const { result } = renderActions(zone);
+
+    try {
+      await act(async () => {
+        await result.current.actions.addHabit({ name: 'Evening reading', icon: '📚' });
+      });
+
+      expect(addHabit).toHaveBeenCalledWith(
+        { name: 'Evening reading', icon: '📚' },
+        undefined,
+        zone,
+      );
+    } finally {
+      addHabit.mockRestore();
+    }
+  });
+});
 
 beforeEach(() => {
   useHabitStore.setState({ habits: [], loading: false, error: null });

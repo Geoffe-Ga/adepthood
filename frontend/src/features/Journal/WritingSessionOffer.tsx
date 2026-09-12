@@ -75,6 +75,7 @@ import { SAVE_AS_PRACTICE_ACCEPT, SAVE_AS_PRACTICE_ACCEPT_A11Y } from './saveAsP
 import SaveAsPracticeStep from './SaveAsPracticeStep';
 import type { WritingSessionResult } from './writingSession';
 
+import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
@@ -311,7 +312,11 @@ interface OfferMoves {
  * keeping the practice — and from none of the ways back, because an offer the
  * writer stepped out of is one they have not answered.
  */
-function useOfferMoves(settle: () => void, placement: ReturnType<typeof usePlacement>): OfferMoves {
+function useOfferMoves(
+  settle: () => void,
+  placement: ReturnType<typeof usePlacement>,
+  tz: string,
+): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
 
   const decline = useCallback(() => {
@@ -322,10 +327,10 @@ function useOfferMoves(settle: () => void, placement: ReturnType<typeof usePlace
   const keepAsHabit = useCallback(() => {
     // Read the writer's habits only now: an offer nobody takes up costs no
     // request, and the list is what the next step is about.
-    void habitManager.loadHabits();
+    void habitManager.loadHabits(tz);
     placement.reset();
     setPhase('placing');
-  }, [placement]);
+  }, [placement, tz]);
 
   const confirmHabit = useCallback(() => {
     setPhase('saving');
@@ -333,6 +338,7 @@ function useOfferMoves(settle: () => void, placement: ReturnType<typeof usePlace
       .insertHabitAt(
         { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON },
         placement.position,
+        tz,
       )
       .then((saved) => {
         // Only a write that landed settles the offer. A rolled-back one leaves
@@ -340,7 +346,7 @@ function useOfferMoves(settle: () => void, placement: ReturnType<typeof usePlace
         if (saved) settle();
         setPhase(saved ? 'saved' : 'placing');
       });
-  }, [placement.position, settle]);
+  }, [placement.position, settle, tz]);
 
   return {
     phase,
@@ -358,10 +364,11 @@ function WritingSessionOffer({
   now = systemClock,
 }: WritingSessionOfferProps): React.JSX.Element | null {
   const habits = useHabitStore((state) => state.habits);
+  const { userTimezone } = useAuth();
   const { answered, settle } = useOfferGate();
   const placement = usePlacement(habits.length);
   const { phase, decline, keepAsHabit, keepAsPractice, practiceKept, confirmHabit, backToOffer } =
-    useOfferMoves(settle, placement);
+    useOfferMoves(settle, placement, userTimezone);
   // Stamped ONCE, at mount, and never re-read. The note appears when the session
   // ends and is keyed to it, so mount time is the session's own end instant;
   // reading the clock again at the tap would post-date the writing to whenever

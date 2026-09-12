@@ -35,6 +35,16 @@ const pick = (over: Partial<OnboardingHabit> = {}): OnboardingHabit => ({
 const rowFor = (ops: ReturnType<typeof planHabitMerge>, id: number): Habit | undefined =>
   ops.nextStore.find((row) => row.id === id);
 
+describe('habit start-date wire calendar', () => {
+  it('serialises a late-evening start on the user-local date, not tomorrow in UTC', () => {
+    const localEvening = new Date('2026-09-11T03:00:00Z'); // Sep 10, 20:00 PDT
+
+    expect(
+      toApiPayload(habit({ start_date: localEvening }), 'America/Los_Angeles').start_date,
+    ).toBe('2026-09-10');
+  });
+});
+
 describe('bringing a habit along', () => {
   it('moves a program habit onto the carryover pages', () => {
     // The choice has to do something. A user saying a habit is already part of

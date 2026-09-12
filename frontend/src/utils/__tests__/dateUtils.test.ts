@@ -193,6 +193,18 @@ describe('subtractiveStreakFromCompletions', () => {
     ).toBe(5);
   });
 
+  it('reports one no-log day for a Pacific habit created at 20:00 local', () => {
+    const evening = new Date('2026-06-16T03:00:00Z'); // Jun 15, 20:00 PDT
+
+    expect(
+      subtractiveStreakFromCompletions(
+        { completions: [], clearThreshold: 5, startDate: '2026-06-15' },
+        TZ,
+        evening,
+      ),
+    ).toBe(1);
+  });
+
   it('breaks the streak on a day where the user logged above the clear threshold', () => {
     // Two days ago the user blew past the clear limit; today and yesterday
     // are still abstention days, so streak = 2.

@@ -160,7 +160,7 @@ const serverHabits = [
     streak: 0,
     energy_cost: 1,
     energy_return: 1,
-    start_date: new Date(2020, 0, 1),
+    start_date: '2020-01-01',
     goals: [
       {
         title: 'Low',

@@ -19,8 +19,12 @@ const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
 export const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
 
 export interface ProgramStoreState {
+  /** Canonical calendar identity; Dates cannot preserve this across unlike account/device zones. */
+  programStartDay: string | null;
   programStartDate: Date | null;
   setProgramStartDate: (_date: Date | null) => void;
+  /** Set an already-zoned YYYY-MM-DD received or derived at an API boundary. */
+  setProgramStartDay: (_day: string | null) => void;
   // Seed from storage on boot without re-writing it.
   hydrateProgramStartDate: (_date: Date | null) => void;
   // BUG-FE-STATE-001: wipe on logout. Also clears persisted storage.
@@ -28,6 +32,7 @@ export interface ProgramStoreState {
 }
 
 const INITIAL_STATE = {
+  programStartDay: null as string | null,
   programStartDate: null as Date | null,
 };
 
@@ -35,6 +40,31 @@ const normalize = (date: Date): Date => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
+};
+
+const localDayKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const localDateFromDayKey = (dayKey: string): Date | null => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
 };
 
 const persistAsync = (date: Date | null): void => {
@@ -49,12 +79,26 @@ export const useProgramStore = create<ProgramStoreState>((set) => ({
 
   setProgramStartDate: (date) => {
     const normalized = date === null ? null : normalize(date);
-    set({ programStartDate: normalized });
+    set({
+      programStartDay: normalized === null ? null : localDayKey(normalized),
+      programStartDate: normalized,
+    });
+    persistAsync(normalized);
+  },
+  setProgramStartDay: (day) => {
+    const normalized = day === null ? null : localDateFromDayKey(day);
+    set({
+      programStartDay: normalized === null ? null : day,
+      programStartDate: normalized,
+    });
     persistAsync(normalized);
   },
   hydrateProgramStartDate: (date) => {
     const normalized = date === null ? null : normalize(date);
-    set({ programStartDate: normalized });
+    set({
+      programStartDay: normalized === null ? null : localDayKey(normalized),
+      programStartDate: normalized,
+    });
   },
   reset: () => {
     set({ ...INITIAL_STATE });

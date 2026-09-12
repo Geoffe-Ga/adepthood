@@ -38,7 +38,12 @@ import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStora
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
-import { dayKeyInTZ, detectDeviceTimezone, todayInUserTZ } from '../../../utils/dateUtils';
+import {
+  dayKeyInTZ,
+  dayKeyToInstant,
+  detectDeviceTimezone,
+  todayInUserTZ,
+} from '../../../utils/dateUtils';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from '../Habits.types';
 import {
@@ -115,8 +120,10 @@ const LOG_CONFIRMATION_ICON = '\u{2705}';
 // Delegate field mapping + tier/notification-frequency sanitizing to the
 // canonical ``toLocalHabit`` boundary; ``sort_order`` is the one Habits-only
 // field it does not carry, so preserve it via the spread override.
-const mapApiHabits = (apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>): Habit[] =>
-  apiHabits.map((h) => ({ ...toLocalHabit(h), sort_order: h.sort_order ?? null }));
+const mapApiHabits = (
+  apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
+  tz: string,
+): Habit[] => apiHabits.map((h) => ({ ...toLocalHabit(h, tz), sort_order: h.sort_order ?? null }));
 
 // is_additive is propagated so single-tier flips can't leave the store half-additive (normalizeGoalTiers keys off low.is_additive).
 const normalizeGoalUnits = (goals: Goal[], updatedGoal: Goal): void => {
@@ -247,17 +254,25 @@ const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
  * when neither exists: this row is itself the first rung, and today is what
  * defines the ladder.
  */
-const programCadenceBase = (prev: readonly Habit[]): Date | null =>
-  useProgramStore.getState().programStartDate ?? deriveProgramAnchor(prev);
+const programCadenceBase = (prev: readonly Habit[], tz: string): Date | null => {
+  const { programStartDay, programStartDate } = useProgramStore.getState();
+  if (programStartDay !== null) return dayKeyToInstant(programStartDay, tz);
+  return programStartDate ?? deriveProgramAnchor(prev);
+};
 
 /**
  * A carryover row's date is the day the user actually began that habit — their
  * own history, not a slot on the cadence — so it is stamped today and never
  * laid on the ladder, the same exclusion ``deriveProgramAnchor`` already makes.
  */
-const startDateForAdd = (prev: readonly Habit[], isCarryover: boolean, slotIndex: number): Date => {
+const startDateForAdd = (
+  prev: readonly Habit[],
+  isCarryover: boolean,
+  slotIndex: number,
+  tz: string,
+): Date => {
   if (isCarryover) return new Date();
-  const base = programCadenceBase(prev);
+  const base = programCadenceBase(prev, tz);
   return base === null ? new Date() : calculateHabitStartDate(base, slotIndex);
 };
 
@@ -292,6 +307,7 @@ const buildAddedHabitAtSlot = (
   prev: Habit[],
   isCarryover: boolean,
   slotIndex: number,
+  tz: string,
 ): Habit => {
   const stage = stageAtIndex(isCarryover ? carryoverSlot(slotIndex) : slotIndex);
   const tempId = -Date.now();
@@ -304,7 +320,7 @@ const buildAddedHabitAtSlot = (
     streak: 0,
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
-    start_date: startDateForAdd(prev, isCarryover, slotIndex),
+    start_date: startDateForAdd(prev, isCarryover, slotIndex, tz),
     goals: buildTierGoals(name, (ti) => tempId - ti - 1),
     completions: [],
     revealed: false,
@@ -324,8 +340,12 @@ const appendSlot = (prev: Habit[], isCarryover: boolean): number =>
  * A brand-new habit at the end of its own partition — the shape every add
  * outside ``insertHabitAt`` takes.
  */
-const buildAddedHabit = (input: AddHabitInput, prev: Habit[], isCarryover: boolean): Habit =>
-  buildAddedHabitAtSlot(input, prev, isCarryover, appendSlot(prev, isCarryover));
+const buildAddedHabit = (
+  input: AddHabitInput,
+  prev: Habit[],
+  isCarryover: boolean,
+  tz: string,
+): Habit => buildAddedHabitAtSlot(input, prev, isCarryover, appendSlot(prev, isCarryover), tz);
 
 /**
  * The universal program anchor, derived from the habits the program actually
@@ -399,17 +419,17 @@ const deriveProgramAnchor = (
  * date and a server anchor on the day they first arrived. Reconciling them is a
  * separate change.
  */
-const syncProgramAnchorFromHabits = (): void => {
+const syncProgramAnchorFromHabits = (tz: string): void => {
   if (useProgramStore.getState().programStartDate !== null) return;
   const anchor = deriveProgramAnchor(getHabits());
   if (anchor === null) return;
-  useProgramStore.getState().setProgramStartDate(anchor);
+  useProgramStore.getState().setProgramStartDay(dayKeyInTZ(anchor, tz));
 };
 
-const syncOnboardingHabits = async (fullHabits: readonly Habit[]): Promise<void> => {
+const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
   for (const habit of fullHabits) {
     try {
-      await habitsApi.create(toApiPayload(habit));
+      await habitsApi.create(toApiPayload(habit, tz));
     } catch {
       console.error(`Failed to save habit "${habit.name}" to server`);
     }
@@ -467,10 +487,10 @@ const releaseHabits = async (releases: readonly Habit[]): Promise<Habit[]> => {
 };
 
 /** Per-row tolerance, matching the create loop: one bad row does not stop the pass. */
-const pushHabitUpdates = async (updates: readonly Habit[]): Promise<void> => {
+const pushHabitUpdates = async (updates: readonly Habit[], tz: string): Promise<void> => {
   for (const habit of updates) {
     try {
-      await habitsApi.update(habit.id, toApiPayload(habit));
+      await habitsApi.update(habit.id, toApiPayload(habit, tz));
     } catch {
       console.error(`Failed to update habit "${habit.name}" on server`);
     }
@@ -500,10 +520,10 @@ const asMergePlan = (
  * create-first order turns the reuse back into the swallowed 409 the merge
  * exists to remove.
  */
-const commitHabitMerge = async (ops: HabitMergeOps): Promise<Habit[]> => {
+const commitHabitMerge = async (ops: HabitMergeOps, tz: string): Promise<Habit[]> => {
   const stillHere = await releaseHabits(ops.releases);
-  await pushHabitUpdates(ops.updates);
-  await syncOnboardingHabits(ops.creates);
+  await pushHabitUpdates(ops.updates, tz);
+  await syncOnboardingHabits(ops.creates, tz);
   return stillHere;
 };
 
@@ -612,6 +632,7 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
+  tz: string,
 ): Promise<void> => {
   // A 200 is authoritative even when it is empty. Strip any demo tiles left by
   // an earlier failed request so recovered connectivity cannot keep presenting
@@ -624,7 +645,7 @@ const handleApiSuccess = async (
     await persistHabits(liveWithoutDemo);
   }
   if (apiHabits.length > 0) {
-    const mapped = mapApiHabits(apiHabits);
+    const mapped = mapApiHabits(apiHabits, tz);
     setHabits(mapped);
     await persistHabits(mapped);
   }
@@ -651,10 +672,10 @@ const handleApiError = (err: unknown, hasCachedData: boolean): void => {
 
 type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
 
-const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
+const fetchFromApi = async (hasCachedData: boolean, tz: string): Promise<FetchResult> => {
   try {
     const apiHabits = await habitsApi.listAll();
-    await handleApiSuccess(apiHabits);
+    await handleApiSuccess(apiHabits, tz);
     setError(null);
     return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
@@ -664,13 +685,13 @@ const fetchFromApi = async (hasCachedData: boolean): Promise<FetchResult> => {
 };
 
 /** Re-push cached habits when the server has none — the caller re-fetches. */
-const recoverStuckHabits = async (cached: Habit[]): Promise<void> => {
+const recoverStuckHabits = async (cached: Habit[], tz: string): Promise<void> => {
   for (const habit of cached) {
     try {
       // ``POST /habits/`` seeds default goal targets; the caller re-fetches
       // and then replays cached customizations via
       // ``replayCachedGoalTargets`` (#286).
-      await habitsApi.create(toApiPayload(habit));
+      await habitsApi.create(toApiPayload(habit, tz));
     } catch (err) {
       // Best-effort; partial recovery is still better than the stuck state.
       // Surface to console so Sentry / CI can flag chronic recovery failures.
@@ -856,7 +877,7 @@ const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
  * are never PUT: their ids are fabricated on-device, so there is no server row
  * for the write to land on.
  */
-const syncRevealState = (next: Habit[], failureMessage: string): void => {
+const syncRevealState = (next: Habit[], failureMessage: string, tz: string): void => {
   const prev = getHabits();
   const revealedBefore = new Map(prev.map((h) => [h.id, h.revealed]));
   setHabits(next);
@@ -867,7 +888,7 @@ const syncRevealState = (next: Habit[], failureMessage: string): void => {
     // Only PUT rows whose unlock flag actually flipped, so a single unlock
     // does not rewrite every untouched row.
     if (habit.revealed === revealedBefore.get(habit.id)) continue;
-    updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
+    updates.push(habitsApi.update(habit.id, toApiPayload(habit, tz)));
   }
   if (updates.length === 0) return;
   Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
@@ -1063,30 +1084,28 @@ const postBackfillCompletions = (
 // ---------------------------------------------------------------------------
 
 /**
- * Zone from the most recent tz-carrying ``loadHabits`` call. Internal
- * re-fetches (``addHabit``, ``onboardingSave``) call ``loadHabits()``
- * without a zone; remembering the hook-supplied value here keeps their
- * queued-check-in replays on the user's stored zone instead of silently
- * falling back to the device's (#414 review).
+ * Zone from the most recent tz-carrying ``loadHabits`` call. Only re-fetches
+ * use this memory: user mutations receive the authenticated zone explicitly,
+ * so one account's mutation cannot inherit another account's calendar.
  */
 let lastKnownTz: string | undefined;
 
 const loadHabits = async (tz?: string): Promise<void> => {
   if (tz !== undefined) lastKnownTz = tz;
-  const zone = tz ?? lastKnownTz;
+  const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
   const recoverable = await hydrateRealHabitCache(cached);
   const hasCachedData = recoverable.length > 0;
-  const result = await fetchFromApi(hasCachedData);
+  const result = await fetchFromApi(hasCachedData, zone);
   // Stuck-user recovery: cache has real habits, server returned an empty list.
   // Push those back, then re-fetch so the store gets the server's ids. Demo
   // tiles left in an older cache are skipped on both legs, so a cache holding
   // nothing else means the user was never stuck.
   if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
-    await recoverStuckHabits(recoverable);
-    const refetch = await fetchFromApi(true);
+    await recoverStuckHabits(recoverable, zone);
+    const refetch = await fetchFromApi(true, zone);
     // #286: the recovery push seeded default goal targets — replay any
     // cached customizations onto the fresh server goals.
     if (refetch.kind === 'ok') {
@@ -1098,7 +1117,7 @@ const loadHabits = async (tz?: string): Promise<void> => {
   // Give Map/Practice/Course/Journal an anchor to read if none is stored yet,
   // by deriving one from the habits just loaded. A stored anchor is left alone:
   // it records a day the user chose, and this derivation does not outrank it.
-  syncProgramAnchorFromHabits();
+  syncProgramAnchorFromHabits(zone);
 
   // BUG-HABITS-007 + BUG-FE-HABIT-205 partial-success fix: replay pending
   // check-ins queued during offline, and when one fails mid-batch only re-
@@ -1345,7 +1364,7 @@ export const habitManager = {
       );
   },
 
-  updateHabit: (updatedHabit: Habit): void => {
+  updateHabit: (updatedHabit: Habit, tz?: string): void => {
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
@@ -1356,7 +1375,7 @@ export const habitManager = {
     else void persistHabits(next);
     if (!isServerBackedHabit(updatedHabit)) return;
     habitsApi
-      .update(updatedHabit.id, toApiPayload(updatedHabit))
+      .update(updatedHabit.id, toApiPayload(updatedHabit, tz ?? detectDeviceTimezone()))
       .catch(
         revertOnFailure(
           prev,
@@ -1396,15 +1415,16 @@ export const habitManager = {
    * laid on the program cadence at its own slot by ``buildAddedHabit``, so its
    * date is the rung its stage badge names, not the day it was added.
    */
-  addHabit: async (input: AddHabitInput, isCarryover = false): Promise<void> => {
+  addHabit: async (input: AddHabitInput, isCarryover = false, tz?: string): Promise<void> => {
     const prev = getHabits();
-    const newHabit = buildAddedHabit(input, prev, isCarryover);
+    const zone = tz ?? detectDeviceTimezone();
+    const newHabit = buildAddedHabit(input, prev, isCarryover, zone);
     const next = [...prev, newHabit];
     setHabits(next);
     void persistHabits(next);
     try {
-      await habitsApi.create(toApiPayload(newHabit));
-      await loadHabits();
+      await habitsApi.create(toApiPayload(newHabit, zone));
+      await loadHabits(zone);
     } catch (err) {
       revertOnFailure(
         prev,
@@ -1467,14 +1487,16 @@ export const habitManager = {
    * habit was kept — and an offer that says so over a rolled-back write is
    * worse than one that quietly stays open.
    */
-  insertHabitAt: async (input: AddHabitInput, position: number): Promise<boolean> => {
+  insertHabitAt: async (input: AddHabitInput, position: number, tz?: string): Promise<boolean> => {
     const prev = getHabits();
     const at = clampPosition(prev.length, position);
+    const zone = tz ?? detectDeviceTimezone();
     const newHabit = buildAddedHabitAtSlot(
       input,
       prev,
       false,
       prev.slice(0, at).filter(isNotCarryoverHabit).length,
+      zone,
     );
     const next = stampPositionalOrder(insertAt(prev, newHabit, at));
     setHabits(next);
@@ -1483,17 +1505,17 @@ export const habitManager = {
     // "a row exists and these writes did not place it".
     let created: ApiHabit | undefined;
     try {
-      created = await habitsApi.create(toApiPayload(next[at] ?? newHabit));
+      created = await habitsApi.create(toApiPayload(next[at] ?? newHabit, zone));
       await Promise.all(
         next
           .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
-          .map((habit) => habitsApi.update(habit.id, toApiPayload(habit))),
+          .map((habit) => habitsApi.update(habit.id, toApiPayload(habit, zone))),
       );
     } catch (err) {
       return settleFailedInsert(prev, created, err);
     }
     try {
-      await loadHabits();
+      await loadHabits(zone);
     } catch {
       Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
     }
@@ -1534,15 +1556,16 @@ export const habitManager = {
    * on claiming it saved. Completion has to be observable for the modal (and
    * the browser journey) to have anything truthful to wait on.
    */
-  saveHabitOrder: async (ordered: Habit[]): Promise<void> => {
+  saveHabitOrder: async (ordered: Habit[], tz?: string): Promise<void> => {
     const prev = getHabits();
     const stamped = stampPositionalOrder(ordered);
     setHabits(stamped);
     void persistHabits(stamped);
     const updates: Array<Promise<unknown>> = [];
+    const zone = tz ?? detectDeviceTimezone();
     for (const habit of stamped) {
       if (!isServerBackedHabit(habit)) continue;
-      updates.push(habitsApi.update(habit.id, toApiPayload(habit)));
+      updates.push(habitsApi.update(habit.id, toApiPayload(habit, zone)));
     }
     if (updates.length === 0) return;
     await Promise.all(updates).catch(
@@ -1703,8 +1726,8 @@ export const habitManager = {
    * skip the network call: a pre-sync habit still shows the backfill locally,
    * and no fabricated id can trigger the rollback that would erase it.
    *
-   * ``tz`` is the user's stored IANA zone forwarded by the hook; it falls
-   * back to the last zone a ``loadHabits`` observed, then to the device zone.
+   * ``tz`` is the user's stored IANA zone forwarded by the hook; direct
+   * service callers without auth context fall back to the device zone.
    */
   backfillMissedDays: (habitId: number, days: Date[], tz?: string): void => {
     const prev = getHabits();
@@ -1715,7 +1738,7 @@ export const habitManager = {
     if (!isServerBackedHabit(parent)) return;
     const lowGoalId = parent.goals.find((g) => g.tier === 'low')?.id;
     if (!isServerIssuedId(lowGoalId)) return;
-    const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
+    const zone = tz ?? detectDeviceTimezone();
     const updates = postBackfillCompletions(lowGoalId, days, zone);
     Promise.all(updates).catch(
       revertOnFailure(
@@ -1747,7 +1770,7 @@ export const habitManager = {
    * user is told only the check-in clear failed, so retrying re-runs the
    * idempotent reset.
    */
-  setNewStartDate: (habitId: number, newDate: Date): void => {
+  setNewStartDate: (habitId: number, newDate: Date, tz?: string): void => {
     const prev = getHabits();
     const next = prev.map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
     setHabits(next);
@@ -1759,7 +1782,7 @@ export const habitManager = {
     if (!isServerBackedHabit(updated)) return;
     const updatedId = updated.id;
     habitsApi
-      .update(updatedId, toApiPayload(updated))
+      .update(updatedId, toApiPayload(updated, tz ?? detectDeviceTimezone()))
       .then(
         () =>
           habitsApi
@@ -1789,6 +1812,7 @@ export const habitManager = {
   onboardingSave: async (
     input: readonly OnboardingHabit[] | HabitMergePlan,
     showToast?: ShowToast,
+    tz?: string,
   ): Promise<void> => {
     const existing = getHabits();
     const plan = asMergePlan(input, existing);
@@ -1810,7 +1834,8 @@ export const habitManager = {
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    const stillHere = await commitHabitMerge(ops);
+    const zone = tz ?? detectDeviceTimezone();
+    const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
     // Persist BEFORE the reload, which is the only order that survives a pass
     // that released everything: ``loadHabits`` reads this cache back, and its
@@ -1820,14 +1845,15 @@ export const habitManager = {
     await persistHabits(getHabits());
     // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
     // If this GET fails, synthetic ids survive until the next launch — see #282.
-    await loadHabits();
+    await loadHabits(zone);
   },
 
-  revealAllHabits: (): void => {
+  revealAllHabits: (tz?: string): void => {
     const next = getHabits().map((h) => ({ ...h, revealed: true }));
     syncRevealState(
       next,
       "We couldn't unlock every habit. Your previous state was restored — check your connection and try again.",
+      tz ?? detectDeviceTimezone(),
     );
   },
 
@@ -1838,7 +1864,7 @@ export const habitManager = {
    * the tile — the underlying completions are preserved, so unlocking again
    * restores full history. Keys strictly off completions, never the calendar.
    */
-  lockUntouchedHabits: (): void => {
+  lockUntouchedHabits: (tz?: string): void => {
     const next = getHabits().map((h) => ({
       ...h,
       revealed: (h.completions?.length ?? 0) > 0,
@@ -1846,14 +1872,16 @@ export const habitManager = {
     syncRevealState(
       next,
       "We couldn't re-lock those habits. Your previous state was restored — check your connection and try again.",
+      tz ?? detectDeviceTimezone(),
     );
   },
 
-  unlockHabit: (habitId: number): void => {
+  unlockHabit: (habitId: number, tz?: string): void => {
     const next = getHabits().map((h) => (h.id === habitId ? { ...h, revealed: true } : h));
     syncRevealState(
       next,
       "We couldn't unlock that habit. Your previous state was restored — check your connection and try again.",
+      tz ?? detectDeviceTimezone(),
     );
   },
 
@@ -1864,7 +1892,7 @@ export const habitManager = {
    * for instant rehydrate, then PUTs the row; on failure the rollback
    * restores both the store and the on-disk snapshot.
    */
-  setEmojiForHabit: (index: number, emoji: string): void => {
+  setEmojiForHabit: (index: number, emoji: string, tz?: string): void => {
     const prev = getHabits();
     const target = prev[index];
     if (!target) return;
@@ -1874,7 +1902,7 @@ export const habitManager = {
     void persistHabits(next);
     if (!isServerBackedHabit(updated)) return;
     habitsApi
-      .update(updated.id, toApiPayload(updated))
+      .update(updated.id, toApiPayload(updated, tz ?? detectDeviceTimezone()))
       .catch(
         revertOnFailure(
           prev,

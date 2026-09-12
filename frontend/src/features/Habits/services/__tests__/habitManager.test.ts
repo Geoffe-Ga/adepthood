@@ -222,6 +222,7 @@ const droppedStore = (): DroppedStore =>
 
 // Fixed so the program-clock assertions never drift with the calendar.
 const FIXED_TODAY = new Date(2026, 5, 1);
+const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // The demo seed as it looks once AsyncStorage hands it back on a later launch.
 const CACHED_DEMO_TILES: Habit[] = HABIT_DEFAULTS.map((habit): Habit => ({
@@ -1039,7 +1040,7 @@ describe('habitManager', () => {
         },
       ] as never);
 
-      await habitManager.loadHabits();
+      await habitManager.loadHabits('UTC');
 
       const anchor = useProgramStore.getState().programStartDate;
       expect(anchor).not.toBeNull();
@@ -1686,7 +1687,9 @@ describe('habitManager', () => {
 
       const added = lastHabit();
       expect(added.sort_order).toBe(1);
-      expect(added.start_date.getTime()).toBe(calculateHabitStartDate(storedAnchor(), 1).getTime());
+      expect(dayKeyInTZ(added.start_date, DEVICE_TIMEZONE)).toBe(
+        dayKeyInTZ(calculateHabitStartDate(storedAnchor(), 1), DEVICE_TIMEZONE),
+      );
 
       release();
       await inFlight;
@@ -1788,7 +1791,9 @@ describe('habitManager', () => {
       // the tenth rung while ``stageAtIndex`` keeps wrapping. Pinned deliberately,
       // not endorsed: this matches ``updateStartDates`` in ReorderHabitsModal, and
       // changing it means changing that function in the same breath.
-      expect(added.start_date.getTime()).toBe(calculateHabitStartDate(beige, 10).getTime());
+      expect(dayKeyInTZ(added.start_date, DEVICE_TIMEZONE)).toBe(
+        dayKeyInTZ(calculateHabitStartDate(beige, 10), DEVICE_TIMEZONE),
+      );
       expect(calculateHabitStartDate(beige, 11).getTime()).toBe(
         calculateHabitStartDate(beige, 10).getTime(),
       );
@@ -1993,6 +1998,44 @@ describe('habitManager', () => {
           ) as never,
       );
     };
+
+    it('preserves the account-local ladder day through load, anchor recovery, and insert writes', async () => {
+      // Reviewer regression: the server day is converted to an instant in the
+      // account zone by ``toLocalHabit``. Re-normalising that instant at device
+      // midnight moves the recovered anchor back a day when the device is in
+      // America/Los_Angeles and the account is in Pacific/Kiritimati. The
+      // insert path is both an add and a reorder write, so pin the actual POST
+      // and PUT payloads rather than only inspecting intermediate Dates.
+      const accountZone = 'Pacific/Kiritimati';
+      (loadHabits as jest.Mock).mockResolvedValue(null as never);
+      (habitsApi.listAll as jest.Mock)
+        .mockResolvedValueOnce([
+          {
+            id: 1,
+            name: 'Meditate',
+            icon: '\u{1F9D8}',
+            start_date: '2026-06-15',
+            energy_cost: 1,
+            energy_return: 2,
+            stage: 'Beige',
+            streak: 0,
+            milestone_notifications: false,
+            goals: [],
+          },
+        ] as never)
+        .mockResolvedValueOnce([] as never);
+
+      await habitManager.loadHabits(accountZone);
+      await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 1, accountZone);
+
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Journaling', start_date: '2026-07-06', sort_order: 1 }),
+      );
+      expect(habitsApi.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ name: 'Meditate', start_date: '2026-06-15', sort_order: 0 }),
+      );
+    });
 
     it('places the new habit first and moves every other habit up one stage', async () => {
       echoStore();
@@ -2309,7 +2352,9 @@ describe('habitManager', () => {
       await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);
 
       expect(optimistic?.name).toBe('Journaling');
-      expect(optimistic?.start_date.getTime()).toBe(calculateHabitStartDate(anchor, 0).getTime());
+      expect(dayKeyInTZ(optimistic!.start_date, DEVICE_TIMEZONE)).toBe(
+        dayKeyInTZ(calculateHabitStartDate(anchor, 0), DEVICE_TIMEZONE),
+      );
     });
 
     it('tells the caller the habit is on the server, so an offer can say so', async () => {

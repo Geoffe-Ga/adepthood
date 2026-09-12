@@ -80,7 +80,7 @@ jest.mock('../../../api', () => {
             streak: 0,
             energy_cost: 1,
             energy_return: 1,
-            start_date: new Date('2099-01-01'),
+            start_date: '2099-01-01',
             goals: [
               {
                 title: 'Low',

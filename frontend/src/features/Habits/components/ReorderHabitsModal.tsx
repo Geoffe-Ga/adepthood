@@ -8,6 +8,7 @@ import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { useTheme } from '../../../design/ThemeContext';
 import { SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
+import { dayKeyToInstant, detectDeviceTimezone } from '../../../utils/dateUtils';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
@@ -50,12 +51,17 @@ const formatDate = (date: Date): string =>
  * program's own start away from the picked day. A carryover habit's date is
  * history, not a slot on the cadence, so it is left alone.
  */
-const updateStartDates = (habits: Habit[], startDate: Date): Habit[] => {
+const updateStartDates = (habits: Habit[], startDate: Date, userTimezone: string): Habit[] => {
+  // The picker Date represents a device-calendar selection, not an instant.
+  // Reconstruct that day inside the account zone before it reaches
+  // ``toApiPayload``; one Date cannot otherwise preserve the same day across
+  // unlike device/account offsets.
+  const accountAnchor = dayKeyToInstant(toISODate(startDate), userTimezone);
   const slots = displaySlots(habits);
   return habits.map((habit, index) => {
     const slot = slots[index] ?? 0;
     if (slot < 0) return habit;
-    return { ...habit, start_date: calculateHabitStartDate(startDate, slot) };
+    return { ...habit, start_date: calculateHabitStartDate(accountAnchor, slot) };
   });
 };
 
@@ -515,6 +521,7 @@ interface ReorderState {
 interface ReorderHookInput {
   habits: Habit[];
   visible: boolean;
+  userTimezone?: string;
   onClose: () => void;
   onSaveOrder: (_habits: Habit[]) => Promise<void>;
 }
@@ -566,12 +573,12 @@ const useOrderCommit = (
 const useReorderState = ({
   habits,
   visible,
+  userTimezone = detectDeviceTimezone(),
   onClose,
   onSaveOrder,
 }: ReorderHookInput): ReorderState => {
   const programStartDate = useProgramStore((s) => s.programStartDate);
   const setProgramStartDate = useProgramStore((s) => s.setProgramStartDate);
-
   const { saving, commit } = useOrderCommit(onSaveOrder, onClose);
   const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
   const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
@@ -594,8 +601,8 @@ const useReorderState = ({
     const justOpened = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
     if (!justOpened || habits.length === 0) return;
-    setOrderedHabits(updateStartDates(groupBySignedRange(habits), startDate));
-  }, [visible, habits, startDate]);
+    setOrderedHabits(updateStartDates(groupBySignedRange(habits), startDate, userTimezone));
+  }, [visible, habits, startDate, userTimezone]);
 
   return {
     orderedHabits,
@@ -606,7 +613,7 @@ const useReorderState = ({
       const nextHabits = data.some(isReorderEntry)
         ? habitsFromEntries(data.filter(isReorderEntry))
         : (data as Habit[]);
-      setOrderedHabits(updateStartDates(nextHabits, startDate));
+      setOrderedHabits(updateStartDates(nextHabits, startDate, userTimezone));
     },
     // Preview only. The restamped rows live here until Save Order, so writing
     // the global anchor now would let a date the user previewed and then
@@ -614,7 +621,7 @@ const useReorderState = ({
     handleConfirmDate: (selectedDate) => {
       setPickerVisible(false);
       setStartDate(selectedDate);
-      setOrderedHabits((prev) => updateStartDates(prev, selectedDate));
+      setOrderedHabits((prev) => updateStartDates(prev, selectedDate, userTimezone));
     },
     handleCancelDate: () => setPickerVisible(false),
     saving,
@@ -680,10 +687,11 @@ const ReorderBody = ({
 export const ReorderHabitsModal = ({
   visible,
   habits,
+  userTimezone,
   onClose,
   onSaveOrder,
 }: ReorderHabitsModalProps) => {
-  const state = useReorderState({ habits, visible, onClose, onSaveOrder });
+  const state = useReorderState({ habits, visible, userTimezone, onClose, onSaveOrder });
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

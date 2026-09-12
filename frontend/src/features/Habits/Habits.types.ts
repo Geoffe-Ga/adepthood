@@ -238,6 +238,8 @@ export interface OnboardingModalProps {
 export interface ReorderHabitsModalProps {
   visible: boolean;
   habits: Habit[];
+  /** Account timezone used to keep the selected calendar day stable on the wire. */
+  userTimezone?: string;
   onClose: () => void;
   /**
    * Commits the order. Resolves when the reorder has SETTLED -- persisted, or
