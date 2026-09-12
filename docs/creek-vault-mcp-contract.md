@@ -520,7 +520,11 @@ capability is still used for the others it supports:
   additionally prepares embeddings and then materialises eddies and threads.
   Foreground clocks bound only the originating HTTP request: accepted work
   continues with capped polling/retry backoff, and startup resumes in-flight
-  rows. Counts in `vaultpipelinerun` come from Creek's terminal result. The
+  rows. A content-free `vaultpipelinefollowup` marker closes the PostgreSQL
+  finish-vs-join race: a write arriving after the admitted snapshot produces
+  one serial classification follow-up, even if terminalization already owns
+  the active run row. Counts in `vaultpipelinerun` come from Creek's terminal
+  result. The
   classification request omits `retier`, so ontology enrichment never rewrites
   the `public` or `personal` tier submitted on the original write.
 

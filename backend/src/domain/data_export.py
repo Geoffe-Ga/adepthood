@@ -428,6 +428,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Private-vault provisioning state and opaque control-plane handles. "
         "They describe application housekeeping, not anything the account wrote.",
     ),
+    "vaultpipelinefollowup": Omitted(
+        "Content-free scheduling state saying a newer vault write needs one "
+        "post-snapshot classification pass. It is application housekeeping, "
+        "not part of the account's writing.",
+    ),
     "vaultpipelinerun": Omitted(
         "Scheduling state: when adepthood last asked the account's vault to "
         "classify and link itself. It describes this app's housekeeping "
