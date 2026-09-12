@@ -33,6 +33,7 @@ from services.streaks import (
     check_milestones,
     compute_consecutive_streak,
     compute_streak_before_and_after,
+    subtractive_context_for_goals,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,36 +108,20 @@ async def _idempotent_already_logged_response(
 
 
 async def _subtractive_context_for_goal(
-    session: AsyncSession, habit: Habit, posted_goal: Goal
+    session: AsyncSession, habit: Habit
 ) -> SubtractiveContext | None:
     """Build the subtractive-streak context for the habit, else ``None``.
 
-    The check-in identifies a single goal (any tier), but the "transgression"
-    line the user thinks in terms of is always the clear-tier sibling. ``None``
-    selects the additive code path so additive habits behave exactly as before.
-
-    Queries the sibling directly rather than walking ``habit.goals`` because the
-    habit row is fetched with ``session.get`` (no eager relationship load), and
-    touching the lazy-loaded relationship in an async context raises
-    ``MissingGreenlet``.
-
-    Filters on ``is_additive == False`` so a mixed-polarity fixture or partial
-    migration that co-locates an additive clear goal under the same habit is
-    rejected before it builds a wrong-shape context. ``scalar_one_or_none``
-    surfaces duplicate ``clear``-tier siblings as a ``MultipleResultsFound``,
-    re-raised as a stable 500.
+    The parent habit arrives without eager relationships, so load its complete
+    ladder explicitly and pass it to the same pure polarity helper used by the
+    habit list. Looking only at the posted tier made partial direction flips
+    report an additive check-in streak and a subtractive list streak.
     """
-    if posted_goal.is_additive:
-        return None
     result = await session.execute(
-        select(Goal.target).where(
-            Goal.habit_id == habit.id,
-            Goal.tier == "clear",
-            col(Goal.is_additive).is_(False),
-        )
+        select(Goal).where(Goal.habit_id == habit.id).order_by(col(Goal.id))
     )
     try:
-        clear_target = result.scalar_one_or_none()
+        return subtractive_context_for_goals(result.scalars().all(), habit.start_date)
     except MultipleResultsFound as exc:
         logger.exception(
             "subtractive_check_in_duplicate_clear_goal",
@@ -146,9 +131,6 @@ async def _subtractive_context_for_goal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="duplicate_clear_tier_goals",
         ) from exc
-    if clear_target is None:
-        return None
-    return SubtractiveContext(clear_threshold=clear_target, start_date=habit.start_date)
 
 
 def _held_response(current_user: int, goal_id: int, old_streak: int) -> CheckInResult:
@@ -276,7 +258,7 @@ async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckI
     suggestion) so it never logs a fresh completion.
     """
     goal_id = cast("int", ctx.goal.id)
-    subtractive = await _subtractive_context_for_goal(session, ctx.habit, ctx.goal)
+    subtractive = await _subtractive_context_for_goal(session, ctx.habit)
     return await _idempotent_already_logged_response(
         session, goal_id, ctx.user_id, ctx.user_timezone, subtractive
     )
@@ -299,7 +281,7 @@ async def record_goal_completion(
     # An already-owned, persisted goal always carries a PK.
     goal_id = cast("int", ctx.goal.id)
     target_day = _resolve_target_day(completed_on, ctx.user_timezone)
-    subtractive = await _subtractive_context_for_goal(session, ctx.habit, ctx.goal)
+    subtractive = await _subtractive_context_for_goal(session, ctx.habit)
 
     if await _already_logged_on(session, goal_id, ctx.user_id, ctx.user_timezone, target_day):
         return await _idempotent_already_logged_response(

@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
+from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -30,6 +31,7 @@ from domain.streaks import (
     subtractive_current_streak,
     sum_units_by_user_day,
 )
+from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
 
@@ -41,7 +43,38 @@ __all__ = [
     "compute_consecutive_streak",
     "compute_habit_streak",
     "compute_streak_before_and_after",
+    "subtractive_context_for_goals",
 ]
+
+
+def subtractive_context_for_goals(
+    goals: Sequence[Goal], start_date: date
+) -> SubtractiveContext | None:
+    """Apply the one habit-level polarity rule used by reads and check-ins.
+
+    A habit is subtractive when any tier is non-additive. Its clear-tier target
+    is the ceiling; when that tier is absent, the first non-additive goal is the
+    fallback. More than one clear tier is an invalid ladder and remains a loud
+    error instead of making the chosen ceiling depend on row order.
+    """
+    non_additive = _non_additive_goals(goals)
+    if not non_additive:
+        return None
+    threshold_goal = _single_clear_goal(goals) or non_additive[0]
+    return SubtractiveContext(clear_threshold=threshold_goal.target, start_date=start_date)
+
+
+def _non_additive_goals(goals: Sequence[Goal]) -> list[Goal]:
+    """Return the goals that make a habit subtractive."""
+    return [goal for goal in goals if not goal.is_additive]
+
+
+def _single_clear_goal(goals: Sequence[Goal]) -> Goal | None:
+    """Return the sole clear tier, rejecting an ambiguous goal ladder."""
+    clear_goals = [goal for goal in goals if goal.tier == "clear"]
+    if len(clear_goals) > 1:
+        raise MultipleResultsFound
+    return clear_goals[0] if clear_goals else None
 
 
 async def compute_consecutive_streak(

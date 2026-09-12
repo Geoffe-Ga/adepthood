@@ -842,6 +842,76 @@ async def test_subtractive_check_in_falls_back_to_additive_for_additive_habit(
 
 
 @pytest.mark.asyncio
+async def test_mixed_polarity_check_in_matches_habit_list_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Any non-additive tier makes both check-in and list use the subtractive walk."""
+    headers, user_id = await _signup(async_client, "mixed_polarity")
+    today = today_in_tz("UTC")
+    habit = Habit(
+        name="No doomscrolling",
+        icon="📵",
+        start_date=today - timedelta(days=2),
+        energy_cost=2,
+        energy_return=5,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    goals = [
+        Goal(
+            habit_id=habit.id,
+            title="Low",
+            tier="low",
+            target=2.0,
+            target_unit="minutes",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        ),
+        Goal(
+            habit_id=habit.id,
+            title="Clear",
+            tier="clear",
+            target=10.0,
+            target_unit="minutes",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=False,
+        ),
+        Goal(
+            habit_id=habit.id,
+            title="Stretch",
+            tier="stretch",
+            target=0.0,
+            target_unit="minutes",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=False,
+        ),
+    ]
+    db_session.add_all(goals)
+    await db_session.commit()
+    await db_session.refresh(goals[0])
+    assert goals[0].id is not None
+
+    check_in = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goals[0].id, "did_complete": True},
+        headers=headers,
+    )
+    assert check_in.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=headers)
+    assert listed.status_code == HTTPStatus.OK
+    [listed_habit] = listed.json()
+    expected_streak = 3
+    assert check_in.json()["streak"] == expected_streak
+    assert listed_habit["streak"] == expected_streak
+
+
+@pytest.mark.asyncio
 async def test_subtractive_check_in_breaks_streak_on_transgression(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
