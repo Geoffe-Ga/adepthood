@@ -99,6 +99,20 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  logUnitSignToggle: {
+    width: touchTarget.minimum,
+    height: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SPACING.xs,
+    borderRadius: SPACING.md,
+    backgroundColor: COLORS.background.accent,
+  },
+  logUnitSignToggleText: {
+    color: COLORS.text.primary,
+    fontSize: 20,
+    fontWeight: '600',
+  },
 
   // Improved input field
   logUnitInput: {
