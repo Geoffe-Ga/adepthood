@@ -65,7 +65,7 @@
   },
   {
     "id": "habits.create-check-in-streak",
-    "description": "A user creates a habit, checks in against one of its goals, and sees the streak move.",
+    "description": "A user creates a habit, logs 10 units and then 5 more against one of its goals, and the real server reports the accumulated habit-day total as 15 without creating a second goal/day row. A signed -5 correction then brings the authoritative total and the freshly listed completion back to 10 while preserving the streak. The same client reconciliation that drives the tile is pinned in habitManager.test.ts: it replaces every optimistic row for the affected day with the response's day_units, so reopen and the immediate tile agree.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goalCompletions"],

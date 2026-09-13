@@ -64,6 +64,7 @@ jest.mock('react-native', () => ({
 }));
 
 import type * as ApiModule from '../../../../api';
+import type { CheckInResult } from '../../../../api';
 import {
   ApiError,
   ApiValidationError,
@@ -847,6 +848,67 @@ describe('habitManager', () => {
         did_complete: true,
         completed_on: '2025-04-01',
       });
+    });
+
+    it('forwards a queued signed amount while older amount-less entries stay compatible', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce([] as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
+        {
+          goal_id: 1,
+          did_complete: true,
+          completed_units: -5,
+          timestamp: new Date().toISOString(),
+        },
+        { goal_id: 2, did_complete: true, timestamp: new Date().toISOString() },
+      ] as never);
+
+      await habitManager.loadHabits('UTC');
+
+      expect(goalCompletionsApi.create).toHaveBeenNthCalledWith(1, {
+        goal_id: 1,
+        did_complete: true,
+        completed_on: undefined,
+        completed_units: -5,
+      });
+      expect(goalCompletionsApi.create).toHaveBeenNthCalledWith(2, {
+        goal_id: 2,
+        did_complete: true,
+        completed_on: undefined,
+      });
+    });
+
+    it('reconciles an offline replay to the server day total', async () => {
+      const timestamp = new Date().toISOString();
+      (loadHabits as jest.Mock).mockResolvedValueOnce([
+        makeServerHabit({
+          completions: [{ id: 'optimistic', timestamp: new Date(timestamp), completed_units: 12 }],
+        }),
+      ] as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('still offline') as never);
+      (loadPendingCheckIns as jest.Mock).mockResolvedValueOnce([
+        {
+          goal_id: SERVER_GOAL_IDS[0],
+          did_complete: true,
+          completed_units: -5,
+          timestamp,
+        },
+      ] as never);
+      (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(() =>
+        Promise.resolve({
+          streak: 3,
+          milestones: [],
+          reason_code: 'units_adjusted',
+          day_units: 7,
+        } satisfies CheckInResult),
+      );
+
+      await habitManager.loadHabits('UTC');
+
+      const habit = useHabitStore.getState().habits[0]!;
+      expect(habit.streak).toBe(3);
+      expect(habit.completions).toHaveLength(1);
+      expect(habit.completions![0]!.completed_units).toBe(7);
     });
 
     it('omits completed_on when the queued check-in is from today', async () => {
@@ -2421,7 +2483,91 @@ describe('habitManager', () => {
       expect(goalCompletionsApi.create).toHaveBeenCalledWith({
         goal_id: ctx.currentGoal.id,
         did_complete: true,
+        completed_units: 1,
       });
+    });
+
+    it('commitLogUnitContext sends the signed amount the person typed', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const ctx = habitManager.prepareLogUnit(1, -10, 'UTC')!;
+
+      await habitManager.commitLogUnitContext(ctx);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ completed_units: -10 }),
+      );
+    });
+
+    it('posts a correction against the tier that held the pre-correction total', async () => {
+      const goals = makeHabit().goals.map((goal) => ({ ...goal, target: goal.target * 5 }));
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            goals,
+            completions: [{ id: 'logged', timestamp: new Date(), completed_units: 15 }],
+          }),
+        ],
+      });
+
+      const ctx = habitManager.prepareLogUnit(1, -99, 'UTC')!;
+      await habitManager.commitLogUnitContext(ctx);
+
+      expect(ctx.newProgress).toBe(0);
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ goal_id: 3, completed_units: -99 }),
+      );
+    });
+
+    it('commitLogUnitContext represents an explicit zero as a miss', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const ctx = habitManager.prepareLogUnit(1, 0, 'UTC')!;
+
+      await habitManager.commitLogUnitContext(ctx);
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ did_complete: false, completed_units: 0 }),
+      );
+    });
+
+    it('serializes rapid logs for one habit/day so responses cannot reconcile out of order', async () => {
+      const goals = makeHabit().goals.map((goal) => ({ ...goal, target: goal.target * 100 }));
+      useHabitStore.setState({ habits: [makeHabit({ goals })] });
+      let resolveFirst: ((result: CheckInResult) => void) | undefined;
+      (goalCompletionsApi.create as jest.Mock)
+        .mockImplementationOnce(
+          () =>
+            new Promise<CheckInResult>((resolve) => {
+              resolveFirst = resolve;
+            }),
+        )
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            streak: 1,
+            milestones: [],
+            reason_code: 'units_adjusted',
+            day_units: 15,
+          } satisfies CheckInResult),
+        );
+
+      const first = habitManager.prepareLogUnit(1, 10, 'UTC')!;
+      habitManager.applyLogUnitContext(first);
+      const second = habitManager.prepareLogUnit(1, 5, 'UTC')!;
+      habitManager.applyLogUnitContext(second);
+
+      const firstCommit = habitManager.commitLogUnitContext(first);
+      const secondCommit = habitManager.commitLogUnitContext(second);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+      resolveFirst?.({
+        streak: 1,
+        milestones: [],
+        reason_code: 'streak_incremented',
+        day_units: 10,
+      });
+      await expect(firstCommit).resolves.toEqual(expect.objectContaining({ day_units: 10 }));
+      await expect(secondCommit).resolves.toEqual(expect.objectContaining({ day_units: 15 }));
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
     });
 
     it('prepareLogUnit records completedOn when backfilling a past day', () => {
@@ -2454,7 +2600,40 @@ describe('habitManager', () => {
         goal_id: ctx.currentGoal.id,
         did_complete: true,
         completed_on: dayKeyInTZ(yesterday, 'UTC'),
+        completed_units: 1,
       });
+    });
+
+    it('reconciles every optimistic row for the day to the authoritative habit total', () => {
+      const now = new Date();
+      useHabitStore.setState({
+        habits: [
+          makeHabit({
+            streak: 2,
+            completions: [
+              { id: 'low', timestamp: now, completed_units: 10 },
+              { id: 'clear', timestamp: now, completed_units: 5 },
+            ],
+          }),
+        ],
+      });
+      const ctx = habitManager.prepareLogUnit(1, -5, 'UTC', now)!;
+      habitManager.applyLogUnitContext(ctx);
+
+      habitManager.reconcileLogUnitContext(ctx, {
+        streak: 2,
+        milestones: [],
+        reason_code: 'units_adjusted',
+        day_units: 10,
+      });
+
+      const habit = useHabitStore.getState().habits[0]!;
+      const todayRows = habit.completions!.filter(
+        (entry) => dayKeyInTZ(entry.timestamp, 'UTC') === dayKeyInTZ(now, 'UTC'),
+      );
+      expect(todayRows).toHaveLength(1);
+      expect(todayRows.reduce((sum, entry) => sum + entry.completed_units, 0)).toBe(10);
+      expect(habit.streak).toBe(2);
     });
 
     it('buildLogUnitToast returns a milestone config when a tier is reached', () => {
@@ -2486,6 +2665,36 @@ describe('habitManager', () => {
 
       expect(toast).not.toBeNull();
       expect(toast!.message).toMatch(/logged/i);
+    });
+
+    it('buildLogUnitToast names a negative correction and its unit', () => {
+      const goals = makeHabit().goals.map((goal) => ({ ...goal, target_unit: 'g' }));
+      useHabitStore.setState({ habits: [makeHabit({ name: 'Protein', goals })] });
+      const ctx = habitManager.prepareLogUnit(1, -10, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx, {
+        streak: 1,
+        milestones: [],
+        reason_code: 'units_adjusted',
+        day_units: 5,
+      });
+
+      expect(toast.message).toBe('Subtracted 10 g from Protein');
+    });
+
+    it('buildLogUnitToast explains when a correction clamps today to zero', () => {
+      const goals = makeHabit().goals.map((goal) => ({ ...goal, target_unit: 'g' }));
+      useHabitStore.setState({ habits: [makeHabit({ name: 'Protein', goals })] });
+      const ctx = habitManager.prepareLogUnit(1, -99, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx, {
+        streak: 0,
+        milestones: [],
+        reason_code: 'units_adjusted',
+        day_units: 0,
+      });
+
+      expect(toast.message).toBe('Protein is back to 0 g today');
     });
 
     it('rollbackLogUnitContext restores both the store AND the persisted snapshot', () => {
