@@ -6,12 +6,11 @@ needing HTTP fixtures.  Pure functions stay in :mod:`domain.streaks` so they
 remain trivially unit-testable; this module only adds the DB-query layer that
 composes them into a request-ready result.
 
-Streak dates are reduced to *user-local* calendar days (BUG-STREAK-002).
-Storing timestamps in UTC and then bucketing with ``.date()`` would tick
-streaks over at the server's midnight rather than the user's, breaking
-West-Coast users by 7-8 hours every day.  All conversion goes through
-:func:`domain.dates.to_user_date`, which preserves DST jumps and never
-silently coerces naive datetimes.
+Streak dates use each completion's persisted ``local_day`` (BUG-STREAK-002).
+The write path derives that calendar identity in the user's timezone; reads
+must not reinterpret the immutable UTC audit timestamp, especially after an
+account-timezone change. The current timezone is still used to determine
+which calendar date is today for recency and subtractive streak walks.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.dates import to_user_date_bucket, today_in_tz
+from domain.dates import today_in_tz
 from domain.streaks import (
     SubtractiveContext,
     current_consecutive_streak,
@@ -88,10 +87,10 @@ async def compute_consecutive_streak(
 
     Collapses multiple rows on the same calendar day into a single day,
     fixing BUG-HABITS-011 where the old code counted rows instead of
-    unique days.  ``user_timezone`` selects which calendar's "day"
-    boundary applies (BUG-STREAK-002); routers should pass
-    :func:`services.users.get_user_timezone` so streaks tick over at the
-    user's midnight rather than UTC's.
+    unique days. Calendar membership comes from persisted ``local_day``;
+    ``user_timezone`` selects which date is today (BUG-STREAK-002). Routers
+    should pass :func:`services.users.get_user_timezone` so the recency gate
+    ticks over at the user's midnight rather than UTC's.
 
     For subtractive habits, pass ``subtractive`` to flip the success
     polarity: a day with no log = perfect abstention (success), and the
@@ -100,20 +99,18 @@ async def compute_consecutive_streak(
     legacy additive behavior, so callers that don't know the habit's
     polarity stay safe.
     """
-    day_totals = await _fetch_day_totals(session, goal_id, user_id, user_timezone)
+    day_totals = await _fetch_day_totals(session, goal_id, user_id)
     return _streak_from_day_totals(day_totals, user_timezone, subtractive)
 
 
-async def _fetch_day_totals(
-    session: AsyncSession, goal_id: int, user_id: int, user_timezone: str
-) -> dict[date, float]:
-    """Sum a goal's completion units per user-local calendar day (one query)."""
+async def _fetch_day_totals(session: AsyncSession, goal_id: int, user_id: int) -> dict[date, float]:
+    """Sum a goal's completion units per canonical ``local_day`` (one query)."""
     rows = await session.execute(
         select(GoalCompletion)
         .where(GoalCompletion.goal_id == goal_id, GoalCompletion.user_id == user_id)
         .order_by(col(GoalCompletion.timestamp).desc())
     )
-    return sum_units_by_user_day(rows.scalars().all(), user_timezone)
+    return sum_units_by_user_day(rows.scalars().all())
 
 
 def _additive_streak_from_day_totals(day_totals: dict[date, float], user_timezone: str) -> int:
@@ -177,7 +174,7 @@ async def compute_streak_before_and_after(
     exactly as the about-to-be-inserted ``GoalCompletion`` would be, so
     ``streak_after`` matches recomputing after the insert.
     """
-    day_totals = await _fetch_day_totals(session, scope.goal_id, scope.user_id, scope.user_timezone)
+    day_totals = await _fetch_day_totals(session, scope.goal_id, scope.user_id)
     before = _streak_from_day_totals(day_totals, scope.user_timezone, scope.subtractive)
     after_totals = dict(day_totals)
     after_totals[pending.day] = after_totals.get(pending.day, 0.0) + pending.units
@@ -187,18 +184,13 @@ async def compute_streak_before_and_after(
 
 def _completed_user_dates(
     completions: Sequence[GoalCompletion],
-    user_timezone: str,
 ) -> set[date]:
-    """Return the set of user-local calendar days where the goal was met.
+    """Return canonical user-local calendar days where the goal was met.
 
     Split out so :func:`compute_habit_streak` stays at xenon rank A; the
     inner generator + filter pushed the parent block over the threshold.
     """
-    return {
-        to_user_date_bucket(c.timestamp, user_timezone)
-        for c in completions
-        if c.completed_units > 0
-    }
+    return {c.local_day for c in completions if c.completed_units > 0}
 
 
 def compute_habit_streak(
@@ -209,10 +201,10 @@ def compute_habit_streak(
     """Compute current consecutive-day streak from in-memory completions.
 
     Used by ``GET /habits`` to populate streak without a per-goal DB query.
-    ``user_timezone`` mirrors the database path's parameter
-    (BUG-STREAK-002) — both call sites must agree or the same goal would
-    show two different streak counts depending on whether it was loaded
-    via the in-memory or per-goal path.
+    Each completion's persisted ``local_day`` supplies calendar membership;
+    ``user_timezone`` defines only which calendar date is today.  This keeps
+    database uniqueness, adjustment responses, and later habit reads aligned
+    even when an audit timestamp reflects the user's former timezone.
 
     For **additive** habits (the default — ``subtractive=None``),
     enforces the recency gate the frontend ``streakFromCompletions``
@@ -227,9 +219,9 @@ def compute_habit_streak(
     ``start_date`` to walk backwards counting abstention days instead.
     """
     if subtractive is not None:
-        day_totals = sum_units_by_user_day(completions, user_timezone)
+        day_totals = sum_units_by_user_day(completions)
         return subtractive_current_streak(day_totals, user_timezone, subtractive)
-    sorted_dates = sorted(_completed_user_dates(completions, user_timezone), reverse=True)
+    sorted_dates = sorted(_completed_user_dates(completions), reverse=True)
     return current_consecutive_streak(sorted_dates, today_in_tz(user_timezone))
 
 

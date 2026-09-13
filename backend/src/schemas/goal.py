@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -19,6 +19,7 @@ class GoalCompletionPublic(BaseModel):
 
     id: int
     timestamp: datetime
+    local_day: date
     completed_units: float
 
 

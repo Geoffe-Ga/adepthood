@@ -15,6 +15,7 @@ import {
   completionSuggestionListResponseSchema,
   completionDetectionResponseSchema,
   completionSuggestionSchema,
+  checkInResultSchema,
   depthPreferencesSchema,
   frequencyResponseSchema,
   habitWithGoalsSchema,
@@ -377,12 +378,11 @@ export const IDEMPOTENCY_KEY_HEADER = REQUEST_HEADER_VOCABULARY.idempotencyKey;
  * Build a deterministic idempotency key for a mutation (BUG-API-008).
  *
  * The shape ``intent[:part]*`` is intentional: a key derived from the
- * user's INTENT (e.g. ``log-unit:42:2026-05-10``) is stable across the
- * built-in retry loop and across the user retrying after a network blip
- * -- both surface the same key, so the backend dedupes the duplicate
- * write instead of recording it twice.  Wall-clock values are forbidden
- * here on purpose: a UUID or ``Date.now()`` would defeat dedup by
- * minting a fresh key on every attempt.
+ * user's INTENT (e.g. ``accept-suggestion:42``) is stable across the built-in
+ * retry loop and across replay. A repeatable state transition can derive its
+ * parts from domain identity; an accumulating action must instead mint one UUID
+ * when the act begins and persist that SAME value through every attempt. A UUID
+ * regenerated inside the request call would defeat dedup and is forbidden.
  *
  * Callers pass the result via ``headers: { [IDEMPOTENCY_KEY_HEADER]: ... }``
  * on POST/PUT/PATCH; the existing ``hasIdempotencyHeader`` check then
@@ -1109,6 +1109,8 @@ export type NotificationFrequency = 'daily' | 'weekly' | 'custom' | 'off';
 export interface ApiGoalCompletion {
   id: number;
   timestamp: string;
+  /** Canonical user-calendar identity; never re-derived from timestamp. */
+  local_day: string;
   completed_units: number;
 }
 
@@ -1367,6 +1369,8 @@ export const habits = {
 export interface GoalCompletionPayload {
   goal_id: number;
   did_complete?: boolean;
+  /** Signed unit delta. Omit for the legacy full-target/idempotent behavior. */
+  completed_units?: number;
   /**
    * Calendar day (``YYYY-MM-DD``, user's timezone) the check-in is for.
    * Omit to log today; supply a past day to backfill a missed one.
@@ -1378,19 +1382,17 @@ export interface CheckInResult {
   streak: number;
   milestones: Array<{ threshold: number }>;
   reason_code: string;
+  /** Authoritative sum across every tier row for the affected habit/day. */
+  day_units: number;
 }
 
 export const goalCompletions = {
   // Trailing slash — see the rationale on the ``habits`` client above.
   //
-  // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
-  // screen) pass a deterministic key built via :func:`idempotencyKey`
-  // (e.g. ``log-unit:${goalId}:${dayISO}``).  This route reads no such
-  // header — it is idempotent by natural key instead, on (user, goal, local
-  // day) — so the key's effect here is client-side: it marks the mutation
-  // retry-eligible so a network blip mid-tap is retried rather than
-  // surfaced as a failure.  Optional for back-compat with screens that have
-  // not yet adopted the helper.
+  // ``options.idempotencyKey`` makes the mutation retryable in the generic
+  // transport. Amount-less calls are naturally idempotent by goal/day; explicit
+  // deltas are backed by the route's durable operation receipt, so the same key
+  // can safely cross an in-flight retry and a later offline replay.
   create(
     payload: GoalCompletionPayload,
     options: { token?: string; idempotencyKey?: string } = {},
@@ -1399,6 +1401,7 @@ export const goalCompletions = {
       method: 'POST',
       body: payload,
       token: options.token,
+      schema: checkInResultSchema as z.ZodType<CheckInResult>,
       headers: options.idempotencyKey
         ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
         : undefined,

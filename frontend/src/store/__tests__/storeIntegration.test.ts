@@ -20,7 +20,9 @@ jest.mock('../../api', () => ({
     delete: jest.fn(() => Promise.resolve({})),
   },
   goalCompletions: {
-    create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
+    create: jest.fn(() =>
+      Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+    ),
   },
   // useHabitUI hydrates the energy-CTA flag server-first via uiFlags.get.
   uiFlags: {

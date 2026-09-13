@@ -45,7 +45,12 @@ const baseHabit = {
 describe('goalCompletionSchema timestamp validation', () => {
   it('accepts a UTC-suffixed ISO-8601 timestamp', () => {
     expect(() =>
-      goalCompletionSchema.parse({ id: 1, timestamp: '2026-05-09T22:31:22Z', completed_units: 1 }),
+      goalCompletionSchema.parse({
+        id: 1,
+        timestamp: '2026-05-09T22:31:22Z',
+        local_day: '2026-05-09',
+        completed_units: 1,
+      }),
     ).not.toThrow();
   });
 
@@ -54,6 +59,7 @@ describe('goalCompletionSchema timestamp validation', () => {
       goalCompletionSchema.parse({
         id: 2,
         timestamp: '2026-05-09T22:31:22+00:00',
+        local_day: '2026-05-09',
         completed_units: 1,
       }),
     ).not.toThrow();
@@ -61,19 +67,34 @@ describe('goalCompletionSchema timestamp validation', () => {
 
   it('rejects a free-form string that would silently produce Invalid Date', () => {
     expect(() =>
-      goalCompletionSchema.parse({ id: 3, timestamp: 'not-a-date', completed_units: 1 }),
+      goalCompletionSchema.parse({
+        id: 3,
+        timestamp: 'not-a-date',
+        local_day: '2026-05-09',
+        completed_units: 1,
+      }),
     ).toThrow();
   });
 
   it('rejects a date-only string (no time component)', () => {
     expect(() =>
-      goalCompletionSchema.parse({ id: 4, timestamp: '2026-05-09', completed_units: 1 }),
+      goalCompletionSchema.parse({
+        id: 4,
+        timestamp: '2026-05-09',
+        local_day: '2026-05-09',
+        completed_units: 1,
+      }),
     ).toThrow();
   });
 
   it('rejects an empty string (the previous schema accepted this)', () => {
     expect(() =>
-      goalCompletionSchema.parse({ id: 5, timestamp: '', completed_units: 1 }),
+      goalCompletionSchema.parse({
+        id: 5,
+        timestamp: '',
+        local_day: '2026-05-09',
+        completed_units: 1,
+      }),
     ).toThrow();
   });
 });
@@ -81,7 +102,12 @@ describe('goalCompletionSchema timestamp validation', () => {
 describe('goalCompletionSchema completed_units validation', () => {
   it('accepts zero (a recorded ``did_complete=false`` row)', () => {
     expect(() =>
-      goalCompletionSchema.parse({ id: 1, timestamp: '2026-05-09T22:31:22Z', completed_units: 0 }),
+      goalCompletionSchema.parse({
+        id: 1,
+        timestamp: '2026-05-09T22:31:22Z',
+        local_day: '2026-05-09',
+        completed_units: 0,
+      }),
     ).not.toThrow();
   });
 
@@ -90,6 +116,7 @@ describe('goalCompletionSchema completed_units validation', () => {
       goalCompletionSchema.parse({
         id: 2,
         timestamp: '2026-05-09T22:31:22Z',
+        local_day: '2026-05-09',
         completed_units: 5.5,
       }),
     ).not.toThrow();
@@ -100,8 +127,27 @@ describe('goalCompletionSchema completed_units validation', () => {
       goalCompletionSchema.parse({
         id: 3,
         timestamp: '2026-05-09T22:31:22Z',
+        local_day: '2026-05-09',
         completed_units: -5,
       }),
+    ).toThrow();
+  });
+});
+
+describe('goalCompletionSchema local_day validation', () => {
+  const completion = {
+    id: 1,
+    timestamp: '2026-05-09T22:31:22Z',
+    completed_units: 1,
+  };
+
+  it('requires the canonical calendar identity', () => {
+    expect(() => goalCompletionSchema.parse(completion)).toThrow();
+  });
+
+  it('rejects a datetime where a calendar date is required', () => {
+    expect(() =>
+      goalCompletionSchema.parse({ ...completion, local_day: '2026-05-09T00:00:00Z' }),
     ).toThrow();
   });
 });
@@ -116,8 +162,18 @@ describe('goalSchema embedded completions', () => {
       goalSchema.parse({
         ...baseGoal,
         completions: [
-          { id: 1, timestamp: '2026-05-09T22:31:22Z', completed_units: 3 },
-          { id: 2, timestamp: '2026-05-10T08:00:00Z', completed_units: 1 },
+          {
+            id: 1,
+            timestamp: '2026-05-09T22:31:22Z',
+            local_day: '2026-05-09',
+            completed_units: 3,
+          },
+          {
+            id: 2,
+            timestamp: '2026-05-10T08:00:00Z',
+            local_day: '2026-05-10',
+            completed_units: 1,
+          },
         ],
       }),
     ).not.toThrow();
@@ -127,7 +183,7 @@ describe('goalSchema embedded completions', () => {
     expect(() =>
       goalSchema.parse({
         ...baseGoal,
-        completions: [{ id: 1, timestamp: 'oops', completed_units: 1 }],
+        completions: [{ id: 1, timestamp: 'oops', local_day: '2026-05-09', completed_units: 1 }],
       }),
     ).toThrow();
   });
@@ -178,7 +234,14 @@ describe('habitWithGoalsSchema end-to-end', () => {
         goals: [
           {
             ...baseGoal,
-            completions: [{ id: 9, timestamp: '2026-05-09T22:31:22Z', completed_units: 2 }],
+            completions: [
+              {
+                id: 9,
+                timestamp: '2026-05-09T22:31:22Z',
+                local_day: '2026-05-09',
+                completed_units: 2,
+              },
+            ],
           },
         ],
       }),
@@ -192,7 +255,9 @@ describe('habitWithGoalsSchema end-to-end', () => {
         goals: [
           {
             ...baseGoal,
-            completions: [{ id: 9, timestamp: 'broken', completed_units: 2 }],
+            completions: [
+              { id: 9, timestamp: 'broken', local_day: '2026-05-09', completed_units: 2 },
+            ],
           },
         ],
       }),

@@ -247,7 +247,19 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/** Sum of completion units bucketed into the user's `tz` calendar day (drives the progress bar reset). */
+/** Resolve the durable calendar day, falling back only for legacy cached rows. */
+export const completionDayKey = (
+  completion: Pick<Completion, 'local_day' | 'timestamp'>,
+  tz: string = DEFAULT_TIMEZONE,
+): string => completion.local_day ?? dayKeyInTZ(completion.timestamp, tz);
+
+/**
+ * Sum completion units in the user's current calendar day, floored at zero.
+ *
+ * Corrections stay as signed rows in optimistic state, but neither the server
+ * nor the tile presents a negative day total when a subtraction exceeds what
+ * was logged.
+ */
 export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZONE): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
@@ -255,11 +267,11 @@ export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZ
   const todayKey = todayInUserTZ(tz);
   let total = 0;
   for (const c of habit.completions) {
-    if (dayKeyInTZ(c.timestamp, tz) === todayKey) {
+    if (completionDayKey(c, tz) === todayKey) {
       total += c.completed_units;
     }
   }
-  return total;
+  return Math.max(0, total);
 };
 
 interface GoalTierResult {
@@ -403,11 +415,13 @@ const emptyStats = (): HabitStatsData => ({
 });
 
 /**
- * Bucket completions into the user's local day (BUG-FE-HABIT-002).
+ * Bucket completions by the backend's canonical ``local_day``
+ * (BUG-FE-HABIT-002), falling back to timestamp conversion only for legacy
+ * cached rows created before that field existed.
  *
- * Uses `dayKeyInTZ` so a Sunday-night Pacific completion lands in
- * Sunday's bucket rather than Monday's (which is what UTC would say).
- * The day-of-week index is derived from the resolved local date so the
+ * This keeps a Sunday-night Pacific completion in Sunday's bucket rather
+ * than Monday's (which is what its UTC audit timestamp may say). The
+ * day-of-week index is derived from the canonical local date so the
  * chart agrees with the user's perception, not the server's clock.
  */
 const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
@@ -416,7 +430,7 @@ const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
   const daysWithCompletions = new Set<string>();
 
   for (const c of completions) {
-    const localDayKey = dayKeyInTZ(c.timestamp, tz);
+    const localDayKey = completionDayKey(c, tz);
     // Anchor at noon to avoid DST shoulder-day weekday skew.
     const localDate = new Date(`${localDayKey}T12:00:00Z`);
     const dayIdx = localDate.getUTCDay() % DAYS_IN_WEEK;
@@ -500,7 +514,7 @@ const computeCurrentStreak = (
     return subtractiveStreakFromCompletions(
       {
         completions: completions.map((c) => ({
-          timestamp: c.timestamp,
+          timestamp: c.local_day ?? c.timestamp,
           completed_units: c.completed_units,
         })),
         clearThreshold: subtractive.clearThreshold,
@@ -510,7 +524,7 @@ const computeCurrentStreak = (
     );
   }
   return streakFromCompletions(
-    completions.map((c) => c.timestamp),
+    completions.map((c) => c.local_day ?? c.timestamp),
     tz,
   );
 };
@@ -537,7 +551,7 @@ const computeLongestStreakFor = (
     return subtractiveLongestStreakFromCompletions(
       {
         completions: completions.map((c) => ({
-          timestamp: c.timestamp,
+          timestamp: c.local_day ?? c.timestamp,
           completed_units: c.completed_units,
         })),
         clearThreshold: subtractive.clearThreshold,
@@ -631,7 +645,8 @@ const NEXT_DAY_OFFSET = 1;
 
 /**
  * Calculate days without completions between the first and last completion,
- * bucketing each completion into the user's local day via `dayKeyInTZ`.
+ * using each row's canonical ``local_day`` (with a timestamp-derived fallback
+ * for legacy cached rows).
  *
  * Walking the gap purely on `YYYY-MM-DD` day keys (which sort and compare
  * lexicographically in chronological order) keeps the arithmetic in one
@@ -644,7 +659,7 @@ export const calculateMissedDays = (habit: Habit, tz: string = DEFAULT_TIMEZONE)
 
   const completedKeys = new Set<string>();
   for (const c of completions) {
-    completedKeys.add(dayKeyInTZ(c.timestamp, tz));
+    completedKeys.add(completionDayKey(c, tz));
   }
   if (completedKeys.size < MIN_KEYS_TO_BOUND_GAP) return [];
 
@@ -681,6 +696,7 @@ export const logHabitUnits = (
   const completion: Completion = {
     id: uuidv4(),
     timestamp: date,
+    local_day: dayKeyInTZ(date, tz),
     completed_units: amount,
   };
 

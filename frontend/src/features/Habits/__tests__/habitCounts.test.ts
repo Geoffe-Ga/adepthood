@@ -58,6 +58,22 @@ describe('countDoneToday', () => {
     // In Tokyo (UTC+9) both instants land on Jul 2, so it counts as done today.
     expect(countDoneToday([habit], 'Asia/Tokyo')).toBe(1);
   });
+
+  it('prefers canonical local_day over a stale audit timestamp', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-02T12:00:00Z'));
+    const habit = makeHabit({
+      completions: [
+        {
+          id: 'canonical-today',
+          timestamp: new Date('2000-01-01T00:00:00Z'),
+          local_day: '2026-07-02',
+          completed_units: 1,
+        },
+      ],
+    });
+
+    expect(countDoneToday([habit], 'UTC')).toBe(1);
+  });
 });
 
 afterEach(() => {

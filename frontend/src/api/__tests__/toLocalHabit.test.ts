@@ -1,5 +1,6 @@
 /* eslint-env jest */
-/* global describe, test, expect */
+/* global describe, test, expect, jest */
+import { calculateTodaysProgress, getGoalTier } from '../../features/Habits/HabitUtils';
 import { dayKeyInTZ } from '../../utils/dateUtils';
 import { toLocalHabit } from '../index';
 import type { ApiHabitWithGoals } from '../index';
@@ -99,8 +100,18 @@ describe('toLocalHabit', () => {
         {
           ...apiHabit.goals[0]!,
           completions: [
-            { id: 7, timestamp: '2024-02-01T10:00:00Z', completed_units: 3 },
-            { id: 8, timestamp: '2024-02-02T10:00:00Z', completed_units: 4 },
+            {
+              id: 7,
+              timestamp: '2024-02-01T10:00:00Z',
+              local_day: '2024-02-01',
+              completed_units: 3,
+            },
+            {
+              id: 8,
+              timestamp: '2024-02-02T10:00:00Z',
+              local_day: '2024-02-02',
+              completed_units: 4,
+            },
           ],
         },
       ],
@@ -109,7 +120,38 @@ describe('toLocalHabit', () => {
     expect(local.completions).toHaveLength(2);
     expect(local.completions![0]!.completed_units).toBe(3);
     expect(local.completions![0]!.timestamp).toBeInstanceOf(Date);
+    expect(local.completions![0]!.local_day).toBe('2024-02-01');
     expect(local.completions![0]!.id).toBe('7');
+  });
+
+  test('reload uses local_day for visible units and next-tier selection', () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-05-15T12:00:00Z'));
+    try {
+      const low = { ...apiHabit.goals[0]!, id: 101, tier: 'low', target: 5 };
+      const clear = {
+        ...apiHabit.goals[0]!,
+        id: 102,
+        tier: 'clear',
+        target: 7,
+        completions: [
+          {
+            id: 12,
+            timestamp: '2000-01-01T00:00:00Z',
+            local_day: '2026-05-15',
+            completed_units: 7,
+          },
+        ],
+      };
+      const stretch = { ...apiHabit.goals[0]!, id: 103, tier: 'stretch', target: 10 };
+
+      const local = toLocalHabit({ ...apiHabit, goals: [low, clear, stretch] }, 'UTC');
+
+      expect(calculateTodaysProgress(local, 'UTC')).toBe(7);
+      expect(getGoalTier(local, 'UTC').currentGoal.tier).toBe('clear');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('dedupes completions by id when multiple goals share a row', () => {
@@ -118,13 +160,27 @@ describe('toLocalHabit', () => {
       goals: [
         {
           ...apiHabit.goals[0]!,
-          completions: [{ id: 11, timestamp: '2024-02-01T10:00:00Z', completed_units: 1 }],
+          completions: [
+            {
+              id: 11,
+              timestamp: '2024-02-01T10:00:00Z',
+              local_day: '2024-02-01',
+              completed_units: 1,
+            },
+          ],
         },
         {
           ...apiHabit.goals[0]!,
           id: 200,
           tier: 'low',
-          completions: [{ id: 11, timestamp: '2024-02-01T10:00:00Z', completed_units: 1 }],
+          completions: [
+            {
+              id: 11,
+              timestamp: '2024-02-01T10:00:00Z',
+              local_day: '2024-02-01',
+              completed_units: 1,
+            },
+          ],
         },
       ],
     };

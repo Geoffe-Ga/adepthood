@@ -4,7 +4,7 @@
  * list they already subscribe to, rather than reading an imperative snapshot.
  */
 import type { Habit } from '@/features/Habits/Habits.types';
-import { isHabitUnlocked } from '@/features/Habits/HabitUtils';
+import { completionDayKey, isHabitUnlocked } from '@/features/Habits/HabitUtils';
 import { DEFAULT_TIMEZONE, dayKeyInTZ } from '@/utils/dateUtils';
 
 /**
@@ -19,7 +19,7 @@ export function countDoneToday(habits: readonly Habit[], tz: string = DEFAULT_TI
   const todayKey = dayKeyInTZ(new Date(), tz);
   return habits.filter((h) =>
     (h.completions ?? []).some(
-      (c) => c.completed_units > 0 && dayKeyInTZ(c.timestamp, tz) === todayKey,
+      (c) => c.completed_units > 0 && completionDayKey(c, tz) === todayKey,
     ),
   ).length;
 }

@@ -31,6 +31,7 @@ const checkIn = (streak: number): CheckInResult => ({
   streak,
   milestones: [],
   reason_code: 'streak_incremented',
+  day_units: 1,
 });
 
 const noop = () => Promise.resolve();

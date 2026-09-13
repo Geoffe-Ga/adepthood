@@ -532,6 +532,19 @@ describe('HabitUtils', () => {
       expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
     });
 
+    test('calculateTodaysProgress floors an oversized correction at zero', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [
+          { id: 't-1', timestamp: new Date(), completed_units: 5 },
+          { id: 't-2', timestamp: new Date(), completed_units: -10 },
+        ],
+      };
+
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(0);
+    });
+
     // -----------------------------------------------------------------------
     // Subtractive habits ("drink less than X / day"): yesterday's drinks must
     // not count against today's "stayed under stretch" status either.
@@ -622,6 +635,29 @@ describe('HabitUtils', () => {
         };
         expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
         expect(calculateTodaysProgress(habit, 'America/Anchorage')).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('canonical local_day survives a timezone change and selects the next tier', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-05-15T12:00:00.000Z'));
+      try {
+        const completion = {
+          id: 'canonical-today',
+          timestamp: new Date('2000-01-01T00:00:00.000Z'),
+          local_day: '2026-05-15',
+          completed_units: 2,
+        };
+        const habit: Habit = {
+          ...baseHabit,
+          goals: additiveGoals,
+          completions: [completion],
+        };
+
+        expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
+        expect(getGoalTier(habit, 'UTC').currentGoal.tier).toBe('clear');
       } finally {
         jest.useRealTimers();
       }

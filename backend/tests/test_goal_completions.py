@@ -16,6 +16,7 @@ from sqlmodel import col, select
 from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_completion_idempotency import GoalCompletionSpend
 from models.habit import Habit
 from services.streaks import compute_consecutive_streak
 
@@ -100,6 +101,7 @@ async def test_completion_increments_streak_and_returns_milestone(
     data = resp.json()
     assert data["streak"] == 1
     assert data["reason_code"] == "streak_incremented"
+    assert data["day_units"] == goal.target
     # ``Milestone`` schema expanded (BUG-SCHEMA-002): assert on the
     # threshold + the default ``kind`` rather than dict-equality so a
     # future field addition (e.g. ``label``) does not break this test.
@@ -136,6 +138,290 @@ async def test_same_day_completion_is_idempotent(
     assert data["streak"] == 1
     assert data["reason_code"] == "already_logged_today"
     assert data["milestones"] == []
+    assert data["day_units"] == goal.target
+
+
+@pytest.mark.asyncio
+async def test_explicit_units_store_typed_amount_instead_of_goal_target(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: a unit log persists the amount the person typed."""
+    headers, user_id = await _signup(async_client, "typed_units")
+    goal = await _seed_goal(db_session, user_id)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": True, "completed_units": 3.5},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["day_units"] == 3.5
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
+    )
+    row = result.scalar_one()
+    assert row.completed_units == 3.5
+
+
+@pytest.mark.asyncio
+async def test_explicit_same_day_units_accumulate_without_rewriting_timestamp(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: a later amount adjusts the one canonical goal/day row."""
+    headers, user_id = await _signup(async_client, "accumulated_units")
+    goal = await _seed_goal(db_session, user_id)
+    goal_id = goal.id
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "completed_units": 10},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.OK
+
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    original_timestamp = result.scalar_one().timestamp
+
+    second = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "completed_units": 5},
+        headers=headers,
+    )
+
+    assert second.status_code == HTTPStatus.OK
+    assert second.json()["reason_code"] == "units_adjusted"
+    assert second.json()["day_units"] == 15
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].completed_units == 15
+    assert rows[0].timestamp == original_timestamp
+
+
+@pytest.mark.asyncio
+async def test_replaying_same_explicit_operation_does_not_apply_delta_twice(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: a committed request whose response was lost replays exactly once."""
+    headers, user_id = await _signup(async_client, "lost_explicit_response")
+    goal = await _seed_goal(db_session, user_id)
+    goal_id = goal.id
+    operation_headers = {**headers, "Idempotency-Key": "log-unit:lost-response-1"}
+
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": 10},
+        headers=operation_headers,
+    )
+    replay = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": 10},
+        headers=operation_headers,
+    )
+
+    assert first.status_code == HTTPStatus.OK
+    assert replay.status_code == HTTPStatus.OK
+    assert first.json()["day_units"] == 10
+    assert replay.json()["day_units"] == 10
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    assert result.scalar_one().completed_units == 10
+
+
+@pytest.mark.asyncio
+async def test_reused_explicit_operation_key_cannot_name_different_arithmetic(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: key reuse is a conflict, not an unrelated cached success."""
+    headers, user_id = await _signup(async_client, "reused_explicit_key")
+    goal = await _seed_goal(db_session, user_id)
+    operation_headers = {**headers, "Idempotency-Key": "log-unit:reused-operation"}
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": 10},
+        headers=operation_headers,
+    )
+
+    conflicting = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": 5},
+        headers=operation_headers,
+    )
+
+    assert first.status_code == HTTPStatus.OK
+    assert conflicting.status_code == HTTPStatus.CONFLICT
+    assert conflicting.json()["detail"] == "idempotency_key_reused"
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal.id)
+    )
+    assert result.scalar_one().completed_units == 10
+
+
+@pytest.mark.asyncio
+async def test_explicit_negative_units_subtract_and_floor_at_zero(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: corrections never leave a negative stored day total."""
+    headers, user_id = await _signup(async_client, "negative_units")
+    goal = await _seed_goal(db_session, user_id)
+    goal_id = goal.id
+    for amount, expected in ((12, 12), (-5, 7), (-99, 0)):
+        resp = await async_client.post(
+            "/goal_completions/",
+            json={"goal_id": goal_id, "completed_units": amount},
+            headers=headers,
+        )
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.json()["day_units"] == expected
+
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    row = result.scalar_one()
+    assert row.completed_units == 0
+
+
+@pytest.mark.asyncio
+async def test_day_units_sum_across_tier_goal_rows(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: ``goal_id`` is provenance; the response total belongs to the habit/day."""
+    headers, user_id = await _signup(async_client, "tier_day_total")
+    low = await _seed_goal(db_session, user_id)
+    result = await db_session.execute(select(Habit).where(Habit.id == low.habit_id))
+    habit = result.scalar_one()
+    clear = Goal(
+        habit_id=habit.id,
+        title="Clear tier",
+        tier="stretch",
+        target=20.0,
+        target_unit="minutes",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    db_session.add(clear)
+    await db_session.commit()
+    await db_session.refresh(clear)
+
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": low.id, "completed_units": 10},
+        headers=headers,
+    )
+    second = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "completed_units": 5},
+        headers=headers,
+    )
+
+    assert first.json()["day_units"] == 10
+    assert second.json()["reason_code"] == "units_adjusted"
+    assert second.json()["day_units"] == 15
+
+    correction = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "completed_units": -8},
+        headers=headers,
+    )
+    oversized = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": clear.id, "completed_units": -99},
+        headers=headers,
+    )
+
+    assert correction.json()["day_units"] == 7
+    assert correction.json()["streak"] == 1
+    assert oversized.json()["day_units"] == 0
+    assert oversized.json()["streak"] == 0
+
+
+@pytest.mark.asyncio
+async def test_subtracting_today_recomputes_and_can_reduce_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: adjustment responses derive streaks from the adjusted stored units."""
+    headers, user_id = await _signup(async_client, "adjusted_streak")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user_id,
+            local_day=yesterday,
+            completed_units=1,
+            timestamp=datetime.now(UTC) - timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    logged = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": 4},
+        headers=headers,
+    )
+    corrected = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_units": -4},
+        headers=headers,
+    )
+
+    assert logged.json()["streak"] == 2
+    assert corrected.status_code == HTTPStatus.OK
+    assert corrected.json()["streak"] == 1
+    assert corrected.json()["reason_code"] == "units_adjusted"
+    assert corrected.json()["day_units"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("did_complete", "completed_units"),
+    [(True, 0), (False, 1), (False, -1), (True, "NaN"), (True, "Infinity")],
+)
+async def test_explicit_units_reject_invalid_completion_combinations(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    did_complete: bool,
+    completed_units: float | str,
+) -> None:
+    """#2852: explicit amounts are finite and agree with completion polarity."""
+    headers, user_id = await _signup(
+        async_client, f"invalid-units-{did_complete}-{str(completed_units).lower()}"
+    )
+    goal = await _seed_goal(db_session, user_id)
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={
+            "goal_id": goal.id,
+            "did_complete": did_complete,
+            "completed_units": completed_units,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_zero_explicit_units_is_valid_for_a_miss(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: zero remains the explicit representation of ``did_complete=False``."""
+    headers, user_id = await _signup(async_client, "zero-unit-miss")
+    goal = await _seed_goal(db_session, user_id)
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "did_complete": False, "completed_units": 0},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["day_units"] == 0
 
 
 @pytest.mark.asyncio
@@ -181,6 +467,106 @@ async def test_same_day_completion_is_idempotent_for_non_utc_user(
 
 
 @pytest.mark.asyncio
+async def test_local_day_row_is_adjusted_even_when_timestamp_falls_on_prior_day(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: canonical ``local_day`` wins after an account-timezone change."""
+    headers, user_id = await _signup(async_client, "canonical_day_prior_timestamp")
+    goal = await _seed_goal(db_session, user_id)
+    goal_id = goal.id
+    target_day = today_in_tz("UTC")
+    # Keep the deliberately divergent audit instant inside the 90-day
+    # completion transport window so the reload assertion exercises the wire.
+    prior_timestamp = datetime.now(UTC) - timedelta(days=30)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=user_id,
+            local_day=target_day,
+            completed_units=4,
+            timestamp=prior_timestamp,
+        )
+    )
+    await db_session.commit()
+
+    response = await asyncio.wait_for(
+        async_client.post(
+            "/goal_completions/",
+            json={"goal_id": goal_id, "completed_units": 3},
+            headers={**headers, "Idempotency-Key": "log-unit:canonical-today"},
+        ),
+        timeout=2,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["day_units"] == 7
+    assert response.json()["streak"] == 1
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].completed_units == 7
+    # SQLite strips timezone metadata on round-trip; the wall-clock value is
+    # the mutation-preservation invariant under test.
+    assert rows[0].timestamp.replace(tzinfo=UTC) == prior_timestamp
+
+    listed = await async_client.get("/habits/", headers=headers)
+    assert listed.status_code == HTTPStatus.OK
+    listed_habit = next(habit for habit in listed.json() if habit["id"] == goal.habit_id)
+    assert listed_habit["streak"] == 1
+    listed_completion = next(
+        completion
+        for listed_goal in listed_habit["goals"]
+        for completion in listed_goal["completions"]
+    )
+    assert listed_completion["local_day"] == target_day.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_timestamp_row_is_not_adjusted_when_canonical_local_day_differs(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2852: timestamp overlap cannot steal a write from its canonical day."""
+    headers, user_id = await _signup(async_client, "canonical_day_future_timestamp")
+    goal = await _seed_goal(db_session, user_id)
+    goal_id = goal.id
+    target_day = today_in_tz("UTC")
+    prior_day = target_day - timedelta(days=1)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goal_id,
+            user_id=user_id,
+            local_day=prior_day,
+            completed_units=4,
+            timestamp=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "completed_units": 3},
+        headers={**headers, "Idempotency-Key": "log-unit:canonical-next-day"},
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["day_units"] == 3
+    db_session.expire_all()
+    result = await db_session.execute(
+        select(GoalCompletion)
+        .where(GoalCompletion.goal_id == goal_id)
+        .order_by(col(GoalCompletion.local_day))
+    )
+    rows = list(result.scalars().all())
+    assert [(row.local_day, row.completed_units) for row in rows] == [
+        (prior_day, 4),
+        (target_day, 3),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_consecutive_day_completions_build_streak(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -193,6 +579,7 @@ async def test_consecutive_day_completions_build_streak(
         GoalCompletion(
             goal_id=goal.id,
             user_id=user_id,
+            local_day=today_in_tz("UTC") - timedelta(days=1),
             completed_units=goal.target,
             timestamp=datetime.now(UTC) - timedelta(days=1),
         )
@@ -261,6 +648,7 @@ async def test_miss_on_unscheduled_day_holds_streak(
         GoalCompletion(
             goal_id=goal.id,
             user_id=user_id,
+            local_day=today_in_tz("UTC") - timedelta(days=1),
             completed_units=goal.target,
             timestamp=datetime.now(UTC) - timedelta(days=1),
         )
@@ -291,6 +679,7 @@ async def test_miss_within_grace_holds_streak(
         GoalCompletion(
             goal_id=goal.id,
             user_id=user_id,
+            local_day=today_in_tz("UTC") - timedelta(days=1),
             completed_units=goal.target,
             timestamp=datetime.now(UTC) - timedelta(days=1),
         )
@@ -543,6 +932,107 @@ async def test_concurrent_completions_yield_one_db_row(
         )
         rows = list(result.scalars().all())
     assert len(rows) == 1, [(r.id, r.timestamp) for r in rows]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_explicit_units_accumulate_without_lost_updates(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """#2852: simultaneous signed logs serialize into the canonical row."""
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "raceunits@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup_resp.json()['token']}"}
+    user_id = signup_resp.json()["user_id"]
+    async with concurrent_session_factory() as session:
+        goal = await _seed_goal(session, user_id, habit_name="Unit race")
+        goal_id = goal.id
+
+    responses = await asyncio.gather(
+        *(
+            concurrent_async_client.post(
+                "/goal_completions/",
+                json={"goal_id": goal_id, "completed_units": 2},
+                headers=headers,
+            )
+            for _ in range(_CONCURRENT_COMPLETION_FANOUT)
+        )
+    )
+
+    assert all(resp.status_code == HTTPStatus.OK for resp in responses)
+    assert {resp.json()["reason_code"] for resp in responses} <= {
+        "streak_incremented",
+        "units_adjusted",
+    }
+    async with concurrent_session_factory() as session:
+        result = await session.execute(
+            select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+        )
+        rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].completed_units == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_replay_of_one_explicit_operation_applies_once(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """#2852: one operation key deduplicates across simultaneous workers."""
+    signup_resp = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "same-operation-race@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {
+        "Authorization": f"Bearer {signup_resp.json()['token']}",
+        "Idempotency-Key": "log-unit:same-race-operation",
+    }
+    user_id = signup_resp.json()["user_id"]
+    async with concurrent_session_factory() as session:
+        goal = await _seed_goal(session, user_id, habit_name="Replay race")
+        goal_id = goal.id
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post(
+                "/goal_completions/",
+                json={"goal_id": goal_id, "completed_units": 2},
+                headers=headers,
+            )
+            for _ in range(_CONCURRENT_COMPLETION_FANOUT)
+        ]
+    )
+
+    assert all(response.status_code == HTTPStatus.OK for response in responses)
+    assert {response.json()["day_units"] for response in responses} == {2}
+    async with concurrent_session_factory() as session:
+        rows = list(
+            (await session.execute(select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)))
+            .scalars()
+            .all()
+        )
+        spends = list(
+            (
+                await session.execute(
+                    select(GoalCompletionSpend).where(GoalCompletionSpend.user_id == user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
+    assert rows[0].completed_units == 2
+    assert len(spends) == 1
 
 
 @pytest.mark.asyncio
@@ -931,6 +1421,7 @@ async def test_subtractive_check_in_breaks_streak_on_transgression(
             user_id=user_id,
             completed_units=20.0,
             timestamp=datetime.now(UTC) - timedelta(days=2),
+            local_day=today - timedelta(days=2),
         )
     )
     await db_session.commit()

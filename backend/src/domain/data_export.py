@@ -243,6 +243,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         GoalCompletion,
         "Every check-in the account logged — the raw material of every streak.",
     ),
+    "goalcompletionspend": Omitted(
+        "A hashed transport-retry receipt. It prevents one check-in operation "
+        "from being applied twice but is not content the account authored; the "
+        "check-in itself is exported from goalcompletion.",
+    ),
     "goalgroup": _include(
         "goal_groups",
         GoalGroup,

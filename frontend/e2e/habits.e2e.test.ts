@@ -17,6 +17,7 @@ const ISO_DATE_LENGTH = 10;
 const ENERGY_COST = 2;
 const ENERGY_RETURN = 5;
 const HABIT_ICON = 'candle';
+const LOW_TIER = 'low';
 const CLEAR_TIER = 'clear';
 // The three tiers the server seeds with every habit, sorted for comparison.
 const EXPECTED_TIERS = ['clear', 'low', 'stretch'];
@@ -48,6 +49,7 @@ function goalForTier(goals: readonly ApiGoal[], tier: string): ApiGoal {
 describe('habits journey against a live server', () => {
   let sessionToken: string | null = null;
   let habitId = 0;
+  let lowGoalId = 0;
   let clearGoalId = 0;
 
   afterAll(() => {
@@ -100,15 +102,53 @@ describe('habits journey against a live server', () => {
       expect(goal.completions ?? []).toHaveLength(0);
     }
 
+    lowGoalId = goalForTier(habit.goals, LOW_TIER).id;
     clearGoalId = goalForTier(habit.goals, CLEAR_TIER).id;
   });
 
-  it('records a check-in on the clear goal and starts the streak', async () => {
-    const result = await goalCompletions.create({ goal_id: clearGoalId, did_complete: true });
+  it('deduplicates one act and corrects across tier rows over the real wire', async () => {
+    const firstOperation = `log-unit:${randomUUID()}`;
+    const ten = await goalCompletions.create(
+      { goal_id: lowGoalId, did_complete: true, completed_units: 10 },
+      { idempotencyKey: firstOperation },
+    );
+    const replayedTen = await goalCompletions.create(
+      { goal_id: lowGoalId, did_complete: true, completed_units: 10 },
+      { idempotencyKey: firstOperation },
+    );
+    const fifteen = await goalCompletions.create(
+      { goal_id: clearGoalId, did_complete: true, completed_units: 5 },
+      { idempotencyKey: `log-unit:${randomUUID()}` },
+    );
+    const seven = await goalCompletions.create(
+      { goal_id: clearGoalId, did_complete: true, completed_units: -8 },
+      { idempotencyKey: `log-unit:${randomUUID()}` },
+    );
+    const restoredFifteen = await goalCompletions.create(
+      { goal_id: clearGoalId, did_complete: true, completed_units: 8 },
+      { idempotencyKey: `log-unit:${randomUUID()}` },
+    );
+    const zero = await goalCompletions.create(
+      { goal_id: clearGoalId, did_complete: true, completed_units: -99 },
+      { idempotencyKey: `log-unit:${randomUUID()}` },
+    );
+    const restoredTen = await goalCompletions.create(
+      { goal_id: clearGoalId, did_complete: true, completed_units: 10 },
+      { idempotencyKey: `log-unit:${randomUUID()}` },
+    );
 
-    expect(result.streak).toBe(1);
-    expect(result.reason_code).toBe('streak_incremented');
-    expect(result.milestones.map((milestone) => milestone.threshold)).toEqual([1]);
+    expect(ten.streak).toBe(1);
+    expect(ten.reason_code).toBe('streak_incremented');
+    expect(ten.milestones.map((milestone) => milestone.threshold)).toEqual([1]);
+    expect(ten.day_units).toBe(10);
+    expect(replayedTen.day_units).toBe(10);
+    expect(fifteen.reason_code).toBe('units_adjusted');
+    expect(fifteen.day_units).toBe(15);
+    expect(seven.reason_code).toBe('units_adjusted');
+    expect(seven.day_units).toBe(7);
+    expect(restoredFifteen.day_units).toBe(15);
+    expect(zero.day_units).toBe(0);
+    expect(restoredTen.day_units).toBe(10);
   });
 
   it('reports the check-in in the habit stats', async () => {
@@ -135,10 +175,14 @@ describe('habits journey against a live server', () => {
     const completion = exactlyOne(clearGoal.completions ?? [], 'completion on the clear goal');
     expect(completion.id).toBeGreaterThan(0);
     expect(Number.isNaN(Date.parse(completion.timestamp))).toBe(false);
+    expect(completion.completed_units).toBe(10);
 
-    // Only the tier that was checked in carries a completion.
-    for (const goal of habit.goals.filter((candidate) => candidate.id !== clearGoalId)) {
-      expect(goal.completions ?? []).toHaveLength(0);
-    }
+    const lowGoal = goalForTier(habit.goals, LOW_TIER);
+    const correctedLow = exactlyOne(
+      lowGoal.completions ?? [],
+      'corrected completion on the low goal',
+    );
+    expect(correctedLow.completed_units).toBe(0);
+    expect(goalForTier(habit.goals, 'stretch').completions ?? []).toHaveLength(0);
   });
 });

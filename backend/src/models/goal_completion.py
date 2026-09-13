@@ -27,7 +27,7 @@ class GoalCompletion(SQLModel, table=True):
 
     # ``ix_goalcompletion_goal_user_ts`` is created by migration
     # ``c1d2e3f4a5b6`` (issue #466).  Every streak/stats read filters on
-    # ``goal_id`` / ``user_id`` and orders by ``timestamp``; this composite
+    # ``goal_id`` / ``user_id`` and loads the completion history; this composite
     # index covers that hot path on the app's highest-write table.  Declared
     # here so the model and migration agree — ``alembic check`` otherwise
     # reports the index as drift and fails CI.

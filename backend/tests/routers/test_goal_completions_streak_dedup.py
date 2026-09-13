@@ -73,7 +73,11 @@ async def _seed_goal(db_session: AsyncSession, user_id: int) -> Goal:
 async def _seed_completion(db_session: AsyncSession, goal: Goal, user_id: int, day: date) -> None:
     db_session.add(
         GoalCompletion(
-            goal_id=goal.id, user_id=user_id, completed_units=goal.target, timestamp=_noon(day)
+            goal_id=goal.id,
+            user_id=user_id,
+            completed_units=goal.target,
+            local_day=day,
+            timestamp=_noon(day),
         )
     )
     await db_session.commit()

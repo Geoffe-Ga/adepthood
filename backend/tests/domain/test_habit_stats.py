@@ -45,6 +45,7 @@ def _completion(days_ago: int, units: float) -> GoalCompletion:
         user_id=1,
         completed_units=units,
         timestamp=_FROZEN_NOW - timedelta(days=days_ago),
+        local_day=(_FROZEN_NOW - timedelta(days=days_ago)).date(),
     )
 
 
