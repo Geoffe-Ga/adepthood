@@ -81,6 +81,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.log-unit-operation-selector",
+    "description": "A user opens a habit modal and leaves the operation on + to add the entered amount, taps once for set to make the selected day's total exact, or taps again for − to subtract the entered amount. Log Units remains the only commit action. The set operation derives the signed correction from that selected calendar day's existing completions before using the ordinary append-only completion route. Uncovered because the browser habit journey logs through its API-backed seam but does not yet open GoalModal; pinned meanwhile by GoalModal.test.tsx for the operation cycle, add/subtract qualification, exact higher and lower totals, selected past-day bucketing, and reset after commit.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
+      "client": ["goalCompletions"],
+      "routes": ["POST /goal_completions/"],
+      "tables": ["goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2852
+  },
+  {
     "id": "habits.set-a-weekly-cadence",
     "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, and GoalModal.starLongPress.test.tsx for the drag-confirm copy.",
     "crosses": {

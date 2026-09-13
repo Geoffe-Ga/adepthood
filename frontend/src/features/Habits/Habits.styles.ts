@@ -79,7 +79,7 @@ export const styles = StyleSheet.create({
 
   // ===== Action Buttons =====
   // The footer holds two fixed-min-width children (the ~204pt log-date stepper
-  // and the ~190pt input + "Log Units" group) whose combined width exceeds the
+  // and the operation + input + "Log Units" group) whose combined width exceeds
   // modal content box on phone-sized viewports. RN Views can't shrink
   // (flexShrink: 0) and don't clip overflow, so without wrap the button paints
   // past the modal's right edge. flexWrap lets the group drop to a second line
@@ -99,7 +99,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  logUnitSignToggle: {
+  logUnitOperation: {
     width: touchTarget.minimum,
     height: touchTarget.minimum,
     alignItems: 'center',
@@ -108,9 +108,9 @@ export const styles = StyleSheet.create({
     borderRadius: SPACING.md,
     backgroundColor: COLORS.background.accent,
   },
-  logUnitSignToggleText: {
+  logUnitOperationText: {
     color: COLORS.text.primary,
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '600',
   },
 
