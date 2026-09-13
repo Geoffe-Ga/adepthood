@@ -186,6 +186,7 @@ export function isTier(value: unknown): value is Tier {
 export const goalCompletionSchema = z.object({
   id: z.number().int(),
   timestamp: isoDateTime,
+  local_day: isoDate,
   completed_units: z.number().nonnegative(),
 });
 
@@ -663,11 +664,12 @@ export const frequencyResponseSchema = z.object({
 export const completionTargetTypeSchema = z.enum(['habit', 'practice']);
 export const suggestionStatusSchema = z.enum(['pending', 'accepted', 'dismissed']);
 
-/** Matches the backend's CheckInResult (streak + milestones + reason). */
+/** Matches the backend's CheckInResult, including the authoritative habit/day total. */
 export const checkInResultSchema = z.object({
   streak: z.number().int(),
   milestones: z.array(z.object({ threshold: z.number().int() })),
   reason_code: z.string(),
+  day_units: z.number().nonnegative(),
 });
 
 export const completionSuggestionSchema = z.object({

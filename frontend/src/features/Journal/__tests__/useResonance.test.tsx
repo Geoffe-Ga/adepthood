@@ -315,7 +315,12 @@ describe('useResonance — suggestions', () => {
     mockSugList.mockResolvedValue({ items: [suggestion({ id: 1, status: 'pending' })] });
     mockAccept.mockResolvedValue({
       suggestion: suggestion({ id: 1, status: 'accepted', accepted_at: '2026-06-02T00:00:00Z' }),
-      check_in: { streak: 4, milestones: [{ threshold: 3 }], reason_code: 'streak_incremented' },
+      check_in: {
+        streak: 4,
+        milestones: [{ threshold: 3 }],
+        reason_code: 'streak_incremented',
+        day_units: 1,
+      },
     });
     const flush = jest.fn(async () => 7);
     const { result } = renderHook(() =>
@@ -407,7 +412,7 @@ describe('useResonance — suggestions', () => {
     mockAccept.mockRejectedValueOnce(new ApiError(409, 'already_dismissed'));
     mockAccept.mockResolvedValue({
       suggestion: suggestion({ id: 1, status: 'accepted' }),
-      check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+      check_in: { streak: 1, milestones: [], reason_code: 'streak_started', day_units: 1 },
     });
     const flush = jest.fn(async () => 7);
     const { result } = renderHook(() =>
@@ -436,7 +441,7 @@ describe('useResonance — suggestions', () => {
       if (id === 1) throw new ApiError(409, 'already_dismissed');
       return {
         suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
-        check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+        check_in: { streak: 1, milestones: [], reason_code: 'streak_started', day_units: 1 },
       };
     });
     const flush = jest.fn(async () => 7);
@@ -471,7 +476,7 @@ describe('useResonance — suggestions', () => {
     mockDismiss.mockRejectedValue(new ApiError(409, 'already_dismissed'));
     mockAccept.mockResolvedValue({
       suggestion: suggestion({ id: 2, label: 'I sat', status: 'accepted' }),
-      check_in: { streak: 1, milestones: [], reason_code: 'streak_started' },
+      check_in: { streak: 1, milestones: [], reason_code: 'streak_started', day_units: 1 },
     });
     const flush = jest.fn(async () => 7);
     const { result } = renderHook(() =>

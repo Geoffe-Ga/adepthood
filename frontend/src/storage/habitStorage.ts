@@ -44,6 +44,10 @@ export const MAX_DROPPED_CHECK_INS = 20;
 export interface PendingCheckIn {
   goal_id: number;
   did_complete: boolean;
+  /** Signed unit delta; absent entries retain the legacy full-target behavior. */
+  completed_units?: number;
+  /** Durable identity for exactly-once replay of an explicit signed delta. */
+  operation_id?: string;
   timestamp: string;
   /** Explicit backfill day for a backdated log; replay forwards it verbatim. */
   completed_on?: string;
@@ -53,6 +57,10 @@ export interface PendingCheckIn {
 export interface DroppedCheckIn {
   goal_id: number;
   did_complete: boolean;
+  /** Signed unit delta carried over from the pending entry, when present. */
+  completed_units?: number;
+  /** Exactly-once operation identity carried over from the pending entry. */
+  operation_id?: string;
   timestamp: string;
   /** Explicit backfill day carried over from the queued entry, if it had one. */
   completed_on?: string;

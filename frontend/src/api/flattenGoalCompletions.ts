@@ -5,6 +5,7 @@ export interface GoalWithEmbeddedCompletions {
   completions?: ReadonlyArray<{
     id: number;
     timestamp: string;
+    local_day: string;
     completed_units: number;
   }> | null;
 }
@@ -22,6 +23,7 @@ export function flattenGoalCompletions(
       flat.push({
         id: String(c.id),
         timestamp: new Date(c.timestamp),
+        local_day: c.local_day,
         completed_units: c.completed_units,
       });
     }

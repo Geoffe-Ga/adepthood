@@ -62,6 +62,8 @@ export interface Goal {
 export interface Completion {
   id?: string;
   timestamp: Date;
+  /** Persisted user-calendar identity; absent only on legacy cached rows. */
+  local_day?: string;
   completed_units: number;
 }
 

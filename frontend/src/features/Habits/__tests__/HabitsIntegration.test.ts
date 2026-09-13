@@ -39,7 +39,9 @@ jest.mock('../../../api', () => ({
     delete: jest.fn(() => Promise.resolve({})),
   },
   goalCompletions: {
-    create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
+    create: jest.fn(() =>
+      Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+    ),
   },
   goals: {
     update: jest.fn(() => Promise.resolve({})),

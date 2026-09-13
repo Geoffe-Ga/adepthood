@@ -17,6 +17,7 @@ import {
   FETCH_TIMEOUT_MS,
   goalCompletions,
   habits,
+  IDEMPOTENCY_KEY_HEADER,
   practiceSessions,
   setOnUnauthorized,
   setTokenGetter,
@@ -222,18 +223,24 @@ describe('BUG-007: retry policy', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  test('retries a POST when the caller supplies an idempotency key', async () => {
+  test('retries an explicit delta with the same server-backed idempotency key', async () => {
     jest.useFakeTimers();
     mockFetch
       .mockReturnValueOnce(jsonResponse({ detail: 'overloaded' }, 503))
-      .mockReturnValueOnce(jsonResponse({ result: 'logged', reason_code: 'ok' }));
+      .mockReturnValueOnce(
+        jsonResponse({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+      );
     const promise = goalCompletions.create(
-      { goal_id: 1, did_complete: true },
+      { goal_id: 1, did_complete: true, completed_units: 2 },
       { idempotencyKey: 'idempotency-key-abc' },
     );
     await jest.runAllTimersAsync();
     await promise;
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.map(([, init]) => init.headers[IDEMPOTENCY_KEY_HEADER])).toEqual([
+      'idempotency-key-abc',
+      'idempotency-key-abc',
+    ]);
   });
 });
 
