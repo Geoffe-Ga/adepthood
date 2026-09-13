@@ -15,6 +15,7 @@ import {
   completionSuggestionListResponseSchema,
   completionDetectionResponseSchema,
   completionSuggestionSchema,
+  checkInResultSchema,
   depthPreferencesSchema,
   frequencyResponseSchema,
   habitWithGoalsSchema,
@@ -1367,6 +1368,8 @@ export const habits = {
 export interface GoalCompletionPayload {
   goal_id: number;
   did_complete?: boolean;
+  /** Signed unit delta. Omit for the legacy full-target/idempotent behavior. */
+  completed_units?: number;
   /**
    * Calendar day (``YYYY-MM-DD``, user's timezone) the check-in is for.
    * Omit to log today; supply a past day to backfill a missed one.
@@ -1378,19 +1381,20 @@ export interface CheckInResult {
   streak: number;
   milestones: Array<{ threshold: number }>;
   reason_code: string;
+  /** Authoritative sum across every tier row for the affected habit/day. */
+  day_units: number;
 }
 
 export const goalCompletions = {
   // Trailing slash — see the rationale on the ``habits`` client above.
   //
   // BUG-API-008: ``options.idempotencyKey`` lets the caller (the check-in
-  // screen) pass a deterministic key built via :func:`idempotencyKey`
-  // (e.g. ``log-unit:${goalId}:${dayISO}``).  This route reads no such
-  // header — it is idempotent by natural key instead, on (user, goal, local
-  // day) — so the key's effect here is client-side: it marks the mutation
-  // retry-eligible so a network blip mid-tap is retried rather than
-  // surfaced as a failure.  Optional for back-compat with screens that have
-  // not yet adopted the helper.
+  // screen) mark a LEGACY amount-less check-in retryable. This route reads no
+  // such header; the retry is safe only because the natural (user, goal,
+  // local-day) key makes an amount-less replay a no-op. An explicit signed
+  // delta accumulates on every request, so forwarding an inert header there
+  // would make the generic transport repeat the arithmetic. Keep it off that
+  // wire until this route owns durable server-side operation idempotency.
   create(
     payload: GoalCompletionPayload,
     options: { token?: string; idempotencyKey?: string } = {},
@@ -1399,9 +1403,11 @@ export const goalCompletions = {
       method: 'POST',
       body: payload,
       token: options.token,
-      headers: options.idempotencyKey
-        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
-        : undefined,
+      schema: checkInResultSchema as z.ZodType<CheckInResult>,
+      headers:
+        options.idempotencyKey && payload.completed_units === undefined
+          ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+          : undefined,
     });
   },
 };

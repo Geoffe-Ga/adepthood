@@ -532,6 +532,19 @@ describe('HabitUtils', () => {
       expect(calculateTodaysProgress(habit, 'UTC')).toBe(2);
     });
 
+    test('calculateTodaysProgress floors an oversized correction at zero', () => {
+      const habit: Habit = {
+        ...baseHabit,
+        goals: additiveGoals,
+        completions: [
+          { id: 't-1', timestamp: new Date(), completed_units: 5 },
+          { id: 't-2', timestamp: new Date(), completed_units: -10 },
+        ],
+      };
+
+      expect(calculateTodaysProgress(habit, 'UTC')).toBe(0);
+    });
+
     // -----------------------------------------------------------------------
     // Subtractive habits ("drink less than X / day"): yesterday's drinks must
     // not count against today's "stayed under stretch" status either.

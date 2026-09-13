@@ -103,12 +103,31 @@ describe('habits journey against a live server', () => {
     clearGoalId = goalForTier(habit.goals, CLEAR_TIER).id;
   });
 
-  it('records a check-in on the clear goal and starts the streak', async () => {
-    const result = await goalCompletions.create({ goal_id: clearGoalId, did_complete: true });
+  it('accumulates typed units, then applies a signed correction over the real wire', async () => {
+    const ten = await goalCompletions.create({
+      goal_id: clearGoalId,
+      did_complete: true,
+      completed_units: 10,
+    });
+    const fifteen = await goalCompletions.create({
+      goal_id: clearGoalId,
+      did_complete: true,
+      completed_units: 5,
+    });
+    const corrected = await goalCompletions.create({
+      goal_id: clearGoalId,
+      did_complete: true,
+      completed_units: -5,
+    });
 
-    expect(result.streak).toBe(1);
-    expect(result.reason_code).toBe('streak_incremented');
-    expect(result.milestones.map((milestone) => milestone.threshold)).toEqual([1]);
+    expect(ten.streak).toBe(1);
+    expect(ten.reason_code).toBe('streak_incremented');
+    expect(ten.milestones.map((milestone) => milestone.threshold)).toEqual([1]);
+    expect(ten.day_units).toBe(10);
+    expect(fifteen.reason_code).toBe('units_adjusted');
+    expect(fifteen.day_units).toBe(15);
+    expect(corrected.reason_code).toBe('units_adjusted');
+    expect(corrected.day_units).toBe(10);
   });
 
   it('reports the check-in in the habit stats', async () => {
@@ -135,6 +154,7 @@ describe('habits journey against a live server', () => {
     const completion = exactlyOne(clearGoal.completions ?? [], 'completion on the clear goal');
     expect(completion.id).toBeGreaterThan(0);
     expect(Number.isNaN(Date.parse(completion.timestamp))).toBe(false);
+    expect(completion.completed_units).toBe(10);
 
     // Only the tier that was checked in carries a completion.
     for (const goal of habit.goals.filter((candidate) => candidate.id !== clearGoalId)) {

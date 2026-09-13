@@ -614,6 +614,15 @@ describe('GoalModal log-unit guards', () => {
     expect(amount).toBe(1);
   });
 
+  it('does not accept a numeric prefix followed by pasted junk', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    fireEvent.changeText(within(logSection).getByDisplayValue('1'), '-10oops');
+    fireEvent.press(getByText('Log Units'));
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, 1, expect.any(Date));
+  });
+
   it('logs an explicit 0 as 0 rather than coercing it to 1', () => {
     const { getByTestId, getByText, props } = renderModal();
     const logSection = getByTestId('goal-modal-log-unit-section');
@@ -625,6 +634,35 @@ describe('GoalModal log-unit guards', () => {
     expect(calls).toHaveLength(1);
     const [, amount] = calls[0] as [number, number, Date];
     expect(amount).toBe(0);
+  });
+
+  it('logs a signed negative amount instead of dropping its sign', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    const amountInput = within(logSection).getByDisplayValue('1');
+    fireEvent.changeText(amountInput, '-10');
+    fireEvent.press(getByText('Log Units'));
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, -10, expect.any(Date));
+  });
+
+  it('normalizes a typographic minus pasted before an amount', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    fireEvent.changeText(within(logSection).getByDisplayValue('1'), '−10');
+    fireEvent.press(getByText('Log Units'));
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, -10, expect.any(Date));
+  });
+
+  it('offers a touch sign toggle and uses a signed native keyboard', () => {
+    const { getByTestId } = renderModal();
+    const input = within(getByTestId('goal-modal-log-unit-section')).getByDisplayValue('1');
+    expect(input.props.keyboardType).toBe('numbers-and-punctuation');
+
+    fireEvent.press(getByTestId('goal-log-sign-toggle'));
+    expect(within(getByTestId('goal-modal-log-unit-section')).getByDisplayValue('-1')).toBeTruthy();
+    expect(getByTestId('goal-log-sign-toggle').props.accessibilityLabel).toMatch(/positive/i);
   });
 });
 

@@ -62,7 +62,8 @@ const showClientMintedNotice = (showToast: ShowToast): void => {
 const keepOfflineCheckIn = (ctx: LogUnitContext, goalId: number, showToast: ShowToast): void => {
   void savePendingCheckIn({
     goal_id: goalId,
-    did_complete: true,
+    did_complete: ctx.amount !== 0,
+    completed_units: ctx.amount,
     timestamp: new Date().toISOString(),
     completed_on: ctx.completedOn,
   });
@@ -181,7 +182,7 @@ const useLogUnitMutation = (
         return;
       }
       if (result !== null) habitManager.reconcileLogUnitContext(ctx, result);
-      showToast(habitManager.buildLogUnitToast(ctx));
+      showToast(habitManager.buildLogUnitToast(ctx, result ?? undefined));
     },
   });
 

@@ -40,7 +40,12 @@ function suggestion(overrides: Partial<CompletionSuggestion> = {}): CompletionSu
   };
 }
 
-const checkIn = { streak: 4, milestones: [{ threshold: 3 }], reason_code: 'streak_incremented' };
+const checkIn = {
+  streak: 4,
+  milestones: [{ threshold: 3 }],
+  reason_code: 'streak_incremented',
+  day_units: 1,
+};
 
 beforeEach(() => {
   mockFetch.mockReset();

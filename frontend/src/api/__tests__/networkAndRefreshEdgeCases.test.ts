@@ -58,7 +58,9 @@ describe('known-offline fast fail', () => {
 
   test('does not fast-fail a non-GET request even when known offline', async () => {
     setNetworkOnlineGetter(() => false);
-    mockFetch.mockReturnValueOnce(jsonResponse({ streak: 1, milestones: [], reason_code: 'ok' }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+    );
 
     const result = await goalCompletions.create({ goal_id: 1, did_complete: true });
 

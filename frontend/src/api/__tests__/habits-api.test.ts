@@ -125,7 +125,7 @@ describe('habits API client', () => {
 
 describe('goalCompletions API client', () => {
   test('goalCompletions.create sends POST with goal_id and did_complete', async () => {
-    const result = { streak: 3, milestones: [], reason_code: 'streak_incremented' };
+    const result = { streak: 3, milestones: [], reason_code: 'streak_incremented', day_units: 4 };
     mockFetch.mockReturnValueOnce(jsonResponse(result));
 
     const response = await goalCompletions.create(
@@ -139,6 +139,20 @@ describe('goalCompletions API client', () => {
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body)).toEqual({ goal_id: 42, did_complete: true });
     expect(response).toEqual(result);
+  });
+
+  test('goalCompletions.create forwards a signed completed_units delta', async () => {
+    const result = { streak: 1, milestones: [], reason_code: 'units_adjusted', day_units: 5 };
+    mockFetch.mockReturnValueOnce(jsonResponse(result));
+
+    await goalCompletions.create({ goal_id: 42, did_complete: true, completed_units: -5 });
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      goal_id: 42,
+      did_complete: true,
+      completed_units: -5,
+    });
   });
 
   test('goalCompletions.create throws ApiError on failure', async () => {
@@ -156,7 +170,9 @@ describe('goalCompletions API client', () => {
   });
 
   test('BUG-API-008: forwards an Idempotency-Key header when supplied', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ streak: 1, milestones: [], reason_code: 'ok' }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+    );
 
     await goalCompletions.create(
       { goal_id: 7, did_complete: true },
@@ -165,6 +181,20 @@ describe('goalCompletions API client', () => {
 
     const [, init] = mockFetch.mock.calls[0];
     expect(init.headers[IDEMPOTENCY_KEY_HEADER]).toBe('log-unit:7:2026-05-10');
+  });
+
+  test('does not make an accumulating signed delta retryable with an inert idempotency header', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ streak: 1, milestones: [], reason_code: 'units_adjusted', day_units: 2 }),
+    );
+
+    await goalCompletions.create(
+      { goal_id: 7, did_complete: true, completed_units: 2 },
+      { idempotencyKey: 'log-unit:7:2026-05-10' },
+    );
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.headers[IDEMPOTENCY_KEY_HEADER]).toBeUndefined();
   });
 });
 

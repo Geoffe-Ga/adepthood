@@ -36,7 +36,9 @@ jest.mock('../../../../api', () => {
       delete: jest.fn(() => Promise.resolve({})),
     },
     goalCompletions: {
-      create: jest.fn(() => Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' })),
+      create: jest.fn(() =>
+        Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
+      ),
     },
     goals: {
       update: jest.fn(() => Promise.resolve({})),
@@ -180,7 +182,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Defaults: API succeeds. Tests override per-case.
   (goalCompletionsApi.create as jest.Mock).mockImplementation(() =>
-    Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok' }),
+    Promise.resolve({ streak: 1, milestones: [], reason_code: 'ok', day_units: 1 }),
   );
 });
 
@@ -209,6 +211,7 @@ describe('useHabitActions.logUnit', () => {
         streak: 7,
         milestones: [],
         reason_code: 'streak_incremented',
+        day_units: 1,
       }),
     );
     const { result } = renderActions();
@@ -355,7 +358,12 @@ describe('useHabitActions.logUnit offline queueing (issue #415)', () => {
     });
 
     expect(savePendingCheckIn).toHaveBeenCalledWith(
-      expect.objectContaining({ goal_id: 11, did_complete: true, completed_on: undefined }),
+      expect.objectContaining({
+        goal_id: 11,
+        did_complete: true,
+        completed_on: undefined,
+        completed_units: 1,
+      }),
     );
     // Optimistic state survives — the tap is queued, not thrown away.
     expect(useHabitStore.getState().habits[0]!.completions).toHaveLength(1);

@@ -247,7 +247,13 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
-/** Sum of completion units bucketed into the user's `tz` calendar day (drives the progress bar reset). */
+/**
+ * Sum completion units in the user's current calendar day, floored at zero.
+ *
+ * Corrections stay as signed rows in optimistic state, but neither the server
+ * nor the tile presents a negative day total when a subtraction exceeds what
+ * was logged.
+ */
 export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZONE): number => {
   if (!habit.completions || habit.completions.length === 0) {
     return 0;
@@ -259,7 +265,7 @@ export const calculateTodaysProgress = (habit: Habit, tz: string = DEFAULT_TIMEZ
       total += c.completed_units;
     }
   }
-  return total;
+  return Math.max(0, total);
 };
 
 interface GoalTierResult {

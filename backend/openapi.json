@@ -535,6 +535,10 @@
       },
       "CheckInResult": {
         "properties": {
+          "day_units": {
+            "title": "Day Units",
+            "type": "number"
+          },
           "milestones": {
             "default": [],
             "items": {
@@ -548,7 +552,8 @@
               "streak_incremented",
               "streak_reset",
               "streak_held",
-              "already_logged_today"
+              "already_logged_today",
+              "units_adjusted"
             ],
             "title": "Reason Code",
             "type": "string"
@@ -560,7 +565,8 @@
         },
         "required": [
           "streak",
-          "reason_code"
+          "reason_code",
+          "day_units"
         ],
         "title": "CheckInResult",
         "type": "object"
@@ -1575,6 +1581,17 @@
               }
             ],
             "title": "Completed On"
+          },
+          "completed_units": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Units"
           },
           "did_complete": {
             "default": true,
@@ -12285,7 +12302,7 @@
     },
     "/goal_completions/": {
       "post": {
-        "description": "Record a check-in and return updated streak and milestones.\n\nLogs against today by default; ``payload.completed_on`` backfills a past\ncalendar day (a future date is rejected). Idempotent on the same\n(user, goal, day). The recording itself lives in ``services.checkin`` so the\njournal accept flow (#818) records through the identical path.",
+        "description": "Record a check-in and return updated streak and milestones.\n\nLogs against today by default; ``payload.completed_on`` backfills a past\ncalendar day (a future date is rejected). Amount-less requests are\nidempotent on the same (user, goal, day); explicit signed amounts accumulate\ninto that row. The recording itself lives in ``services.checkin`` so the\njournal accept flow (#818) records through the identical path.",
         "operationId": "create_goal_completion_goal_completions__post",
         "parameters": [
           {

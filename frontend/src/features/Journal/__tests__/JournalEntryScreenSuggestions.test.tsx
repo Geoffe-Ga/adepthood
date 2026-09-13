@@ -148,7 +148,7 @@ function acceptResult(overrides: Partial<CompletionSuggestion> = {}): AcceptSugg
       accepted_at: '2026-06-01T00:00:00Z',
       ...overrides,
     }),
-    check_in: { streak: 3, milestones: [], reason_code: 'logged' },
+    check_in: { streak: 3, milestones: [], reason_code: 'logged', day_units: 1 },
   };
 }
 

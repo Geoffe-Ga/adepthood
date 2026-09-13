@@ -569,11 +569,40 @@ export interface LogUnitContext {
    * the completion to the current wall-clock time.
    */
   completedOn?: string;
+  /** Calendar day whose optimistic rows the authoritative response replaces. */
+  dayKey: string;
+  /** Account timezone used to bucket those rows. */
+  timezone: string;
   /** Demo-seed tile: its goal id is client-fabricated, so a queued check-in could never post. */
   isDemoSeed?: boolean;
   /** The current goal's id when the server issued it; null when this device minted it. */
   serverGoalId: number | null;
 }
+
+/**
+ * Tail promise for each habit/day's signed-unit stream.
+ *
+ * The backend serializes the arithmetic, but the two HTTP responses from rapid
+ * taps can still arrive in reverse order. Reconciliation uses each response's
+ * authoritative ``day_units``; allowing an older response to run last would
+ * therefore move the tile backwards until the next refresh. Chaining only
+ * matching habit/day commits preserves the writer's order without delaying a
+ * log for another habit or calendar day. A rejected predecessor is deliberately
+ * swallowed only for sequencing: its own caller still receives that rejection,
+ * while the later log remains independently eligible to post.
+ */
+const logUnitCommitTails = new Map<string, Promise<unknown>>();
+
+const serializeLogUnitCommit = <T>(key: string, operation: () => Promise<T>): Promise<T> => {
+  const predecessor = logUnitCommitTails.get(key) ?? Promise.resolve();
+  const current = predecessor.catch(() => undefined).then(operation);
+  let tracked!: Promise<T>;
+  tracked = current.finally(() => {
+    if (logUnitCommitTails.get(key) === tracked) logUnitCommitTails.delete(key);
+  });
+  logUnitCommitTails.set(key, tracked);
+  return tracked;
+};
 
 // ---------------------------------------------------------------------------
 // Store bindings — tiny adapters so service methods read/write the store
@@ -594,6 +623,47 @@ const setError = (error: string | null): void => {
 };
 
 const getHabits = (): Habit[] => useHabitStore.getState().habits;
+
+/** Collapse one habit/day to the authoritative total returned by the server. */
+const withConfirmedHabitDay = (
+  habit: Habit,
+  dayKey: string,
+  timezone: string,
+  result: CheckInResult,
+): Habit => {
+  const completions = habit.completions ?? [];
+  const affected = completions.filter((entry) => dayKeyInTZ(entry.timestamp, timezone) === dayKey);
+  const unaffected = completions.filter(
+    (entry) => dayKeyInTZ(entry.timestamp, timezone) !== dayKey,
+  );
+  const latest = affected.at(-1);
+  return {
+    ...habit,
+    streak: result.streak,
+    completions: [
+      ...unaffected,
+      {
+        id: latest?.id ?? uuidv4(),
+        timestamp: latest?.timestamp ?? dayKeyToInstant(dayKey, timezone),
+        completed_units: result.day_units,
+      },
+    ],
+  };
+};
+
+/** Reconcile and persist one server-confirmed habit/day in the live store. */
+const reconcileStoredHabitDay = (
+  habitId: number,
+  dayKey: string,
+  timezone: string,
+  result: CheckInResult,
+): void => {
+  const next = getHabits().map((habit) =>
+    habit.id === habitId ? withConfirmedHabitDay(habit, dayKey, timezone, result) : habit,
+  );
+  setHabits(next);
+  void persistHabits(next);
+};
 
 /**
  * Per-habit promise mutex for notification rescheduling (BUG-FE-HABIT-005).
@@ -917,12 +987,10 @@ const isPermanentRejection = (err: unknown): err is ApiError | ApiValidationErro
   // ApiError and carries the response's own status, which can be a 2xx. It is
   // raised only when a received body failed its Zod schema — a deterministic
   // client/server contract defect, so a retry receives the same shape and
-  // fails identically, forever. Retrying is futile rather than harmful:
-  // ``POST /goal_completions/`` is idempotent by natural key (a unique index
-  // over goal, user, and local day, with the service short-circuiting to
-  // ``already_logged_today``), so a replay cannot duplicate a completion.
-  // Treating it as transient would re-queue the entry at the head and wedge
-  // every genuine check-in behind it — the wedge this drop exists to prevent.
+  // fails identically, forever. Retrying is harmful for a signed-unit entry:
+  // unlike the legacy amount-less natural-key no-op, each explicit replay is a
+  // fresh delta. Drop this known-bad response rather than both applying the
+  // arithmetic again and wedging every genuine check-in behind it.
   if (err instanceof ApiValidationError) return true;
   return err instanceof ApiError && PERMANENT_REJECTION_STATUSES.has(err.status);
 };
@@ -934,13 +1002,20 @@ const postPendingCheckIn = async (
   today: string,
 ): Promise<void> => {
   const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
-  await goalCompletionsApi.create({
+  const result = await goalCompletionsApi.create({
     goal_id: checkIn.goal_id,
     did_complete: checkIn.did_complete,
     // An explicit backfill day (queued by a backdated offline log)
     // wins; otherwise derive it from the queue timestamp.
     completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
+    ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
   });
+  const habit = getHabits().find((candidate) =>
+    candidate.goals.some((goal) => goal.id === checkIn.goal_id),
+  );
+  if (habit?.id !== undefined) {
+    reconcileStoredHabitDay(habit.id, checkIn.completed_on ?? dayKey, zone, result);
+  }
 };
 
 /**
@@ -1616,12 +1691,19 @@ export const habitManager = {
       return result.updatedHabit;
     });
     if (!updated) return null;
-    const { currentGoal, nextGoal } = getGoalTier(updated, tz);
+    // A negative correction belongs to the tier that held the amount before
+    // subtraction. Selecting from the optimistic post-correction total can
+    // jump all the way back to ``low``; the server would then floor an empty
+    // low-tier row while leaving the actual stretch-tier units untouched, so
+    // an oversized correction could report success without bringing the day
+    // to zero. Positive logs retain the established post-log tier provenance.
+    const goalHabit = amount < 0 && parent ? parent : updated;
+    const { currentGoal, nextGoal } = getGoalTier(goalHabit, tz);
     // Only send ``completed_on`` for a genuine backfill — a date that
     // resolves to today is left undefined so the server stamps the
     // completion with the real wall-clock time.
-    const dayKey = date ? dayKeyInTZ(date, tz) : undefined;
-    const completedOn = dayKey && dayKey !== todayInUserTZ(tz) ? dayKey : undefined;
+    const dayKey = date ? dayKeyInTZ(date, tz) : todayInUserTZ(tz);
+    const completedOn = dayKey !== todayInUserTZ(tz) ? dayKey : undefined;
     return {
       habitId,
       prev,
@@ -1633,6 +1715,8 @@ export const habitManager = {
       currentGoal,
       nextGoal,
       completedOn,
+      dayKey,
+      timezone: tz,
       isDemoSeed,
       serverGoalId: isServerBackedGoal(currentGoal, parent) ? currentGoal.id : null,
     };
@@ -1669,20 +1753,20 @@ export const habitManager = {
         'This habit has not finished saving to your account, so its goal id names no server row.',
       );
     }
-    return goalCompletionsApi.create({
-      goal_id: ctx.serverGoalId,
-      did_complete: true,
-      completed_on: ctx.completedOn,
-    });
+    const serverGoalId = ctx.serverGoalId;
+    return serializeLogUnitCommit(`${ctx.habitId}:${ctx.dayKey}`, () =>
+      goalCompletionsApi.create({
+        goal_id: serverGoalId,
+        did_complete: ctx.amount !== 0,
+        completed_on: ctx.completedOn,
+        completed_units: ctx.amount,
+      }),
+    );
   },
 
-  /** Replace only this habit's placeholder streak with the confirmed server value. */
+  /** Replace this habit/day's optimistic rows with the confirmed server total. */
   reconcileLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
-    const next = getHabits().map((habit) =>
-      habit.id === ctx.habitId ? { ...habit, streak: result.streak } : habit,
-    );
-    setHabits(next);
-    void persistHabits(next);
+    reconcileStoredHabitDay(ctx.habitId, ctx.dayKey, ctx.timezone, result);
   },
 
   /**
@@ -1703,7 +1787,22 @@ export const habitManager = {
    * — never from `apply` — so a server-rejected check-in does not flash any
    * celebration the user did not earn.
    */
-  buildLogUnitToast: (ctx: LogUnitContext): ToastConfig => {
+  buildLogUnitToast: (ctx: LogUnitContext, result?: CheckInResult): ToastConfig => {
+    if (ctx.amount < 0 && result) {
+      const unit = ctx.currentGoal.target_unit;
+      if (result.day_units === 0) {
+        return {
+          message: `${ctx.habitName} is back to 0 ${unit} today`,
+          icon: LOG_CONFIRMATION_ICON,
+          color: colors.success,
+        };
+      }
+      return {
+        message: `Subtracted ${Math.abs(ctx.amount)} ${unit} from ${ctx.habitName}`,
+        icon: LOG_CONFIRMATION_ICON,
+        color: colors.success,
+      };
+    }
     const milestone = buildMilestoneToast(
       ctx.habitName,
       ctx.oldProgress,
