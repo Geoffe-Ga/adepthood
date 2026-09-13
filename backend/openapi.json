@@ -14781,7 +14781,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one page, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key is resolved. A valid caller key\nbypasses both BotMason buckets; otherwise the wallet is deducted (402 when\nout of capacity). A provider failure rolls the transaction back so a failed\npass never bills. Usage is metered (one row per real, non-stub call) and\ncommitted atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one page, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills. Usage is metered (one row per real, non-stub call)\nand committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {

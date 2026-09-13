@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from http import HTTPStatus
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient, Response
@@ -71,18 +72,46 @@ async def _usage_rows_with_null_entry(session: AsyncSession) -> list[LLMUsageLog
 
 
 @pytest.mark.asyncio
-async def test_happy_path_stub_provider_charges_one_unit(
-    async_client: AsyncClient, db_session: AsyncSession
+async def test_production_stub_provider_is_422_before_wallet_deduction(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A stub-provider transcription returns text and spends exactly one unit."""
-    headers = await _signup(async_client, "happy")
-    before = await _wallet_snapshot(db_session, "happy@example.com")
+    """Production refuses canned vision before billing when only the stub resolves."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.setenv("ENV", "production")
+    preflight = AsyncMock()
+    monkeypatch.setattr("routers.transcription.preflight_deduction", preflight)
+    headers = await _signup(async_client, "production_stub")
+    before = await _wallet_snapshot(db_session, "production_stub@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "model_lacks_vision"
+    preflight.assert_not_awaited()
+    after = await _wallet_snapshot(db_session, "production_stub@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_development_stub_provider_returns_text_and_charges_one_unit(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Development keeps the walkable stub path and its existing wallet semantics."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.setenv("ENV", "development")
+    headers = await _signup(async_client, "development_stub")
+    before = await _wallet_snapshot(db_session, "development_stub@example.com")
 
     resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
 
     assert resp.status_code == HTTPStatus.OK
     assert isinstance(resp.json()["text"], str)
-    after = await _wallet_snapshot(db_session, "happy@example.com")
+    after = await _wallet_snapshot(db_session, "development_stub@example.com")
     assert _units_spent(before, after) == 1
 
 

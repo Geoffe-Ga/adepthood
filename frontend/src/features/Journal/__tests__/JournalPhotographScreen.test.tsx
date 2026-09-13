@@ -618,12 +618,19 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
 });
 
 describe('JournalPhotographScreen — terminal model-lacks-vision failure', () => {
-  it('shows only Remove on the block, never a wallet-charging Retry or Retake', async () => {
+  it('renders terminal copy, typed-entry offramp, and disabled Save without Retry or Retake', async () => {
     mockPick.mockResolvedValueOnce(picked());
     mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
     const { findByTestId, queryByTestId } = renderScreen();
     fireEvent.press(await findByTestId('capture-transcribe'));
-    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(/isn't available/);
+    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(
+      "Reading photos isn't available with the configured AI model. You can still write this page by hand.",
+    );
+    expect(await findByTestId('photograph-run-progress')).toHaveTextContent(
+      '0 of 1 read · 1 need attention',
+    );
+    expect(await findByTestId('photograph-typed-entry')).toBeTruthy();
+    expect((await findByTestId('photograph-save')).props.accessibilityState.disabled).toBe(true);
     expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
     expect(queryByTestId('photograph-block-1-retry')).toBeNull();
     expect(queryByTestId('photograph-block-1-retake')).toBeNull();

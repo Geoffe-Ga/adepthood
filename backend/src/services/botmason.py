@@ -537,6 +537,21 @@ def supports_vision(provider: str, model: str) -> bool:
     return model in spec.vision_models
 
 
+def vision_provider_available(api_key: str | None = None) -> bool:
+    """Return whether this request may honestly serve an image in this environment.
+
+    Real providers must advertise the configured model as vision-capable. The
+    non-registry path is the development/test stub path: it stays available there
+    so local and CI journeys remain walkable, but is never presented as a real
+    photograph transcription in production.
+    """
+    provider = _provider_for_request(api_key, "")
+    spec = PROVIDER_REGISTRY.get(provider)
+    if spec is None:
+        return os.getenv("ENV", "development") != "production"
+    return supports_vision(provider, _get_model(provider))
+
+
 def _ensure_vision_capable(
     provider: str,
     model: str,
