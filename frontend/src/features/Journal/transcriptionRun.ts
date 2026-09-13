@@ -353,6 +353,15 @@ function doneCount(state: TranscriptionRunState, pages: readonly PageRef[]): num
   return count;
 }
 
+/** How many of `pages` have settled without usable text. */
+function failedCount(state: TranscriptionRunState, pages: readonly PageRef[]): number {
+  let count = 0;
+  for (const page of pages) {
+    if (state.blocks[page.id]?.status === 'failed') count += 1;
+  }
+  return count;
+}
+
 /**
  * Whether every remaining page has settled into `done`. `pages` is authoritative:
  * a page trimmed from the session no longer holds the run back. An empty session
@@ -363,9 +372,24 @@ export function isRunComplete(state: TranscriptionRunState, pages: readonly Page
   return doneCount(state, pages) === pages.length;
 }
 
-/** The running progress line, e.g. `Transcribing 2 of 5…` (the ellipsis is copy). */
+/**
+ * Describe a running, successfully finished, or attention-blocked page run.
+ * Pending pages do not by themselves prove that work is still running: a terminal
+ * failure deliberately leaves the rest pending so they are never charged. The
+ * active wording therefore follows actual outstanding requests, including
+ * orphaned ones, plus pending work the dispatch selector can still start. A
+ * terminally halted pending block is neither.
+ */
 export function progressLabel(state: TranscriptionRunState, pages: readonly PageRef[]): string {
-  return `Transcribing ${doneCount(state, pages)} of ${pages.length}…`;
+  const done = doneCount(state, pages);
+  if (isRunComplete(state, pages)) {
+    return pages.length === 1 ? 'Page read' : `All ${pages.length} pages read`;
+  }
+  const failed = failedCount(state, pages);
+  if (failed > 0 && inFlightCount(state) === 0 && selectStartable(state).length === 0) {
+    return `${done} of ${pages.length} read · ${failed} need attention`;
+  }
+  return `Transcribing ${done} of ${pages.length}…`;
 }
 
 /**

@@ -437,6 +437,50 @@ describe('progressLabel', () => {
     expect(progressLabel(state, idsToPages(['p1', 'p2', 'p3']))).toBe('Transcribing 1 of 3…');
   });
 
+  it('reports failed pages needing attention once no page is pending or in flight', () => {
+    let state = initState(['p1', 'p2']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'reject',
+      id: 'p2',
+      attempt: 1,
+      error: 'timeout',
+    });
+    expect(progressLabel(state, idsToPages(['p1', 'p2']))).toBe('1 of 2 read · 1 need attention');
+  });
+
+  it('reports a terminally halted queue as needing attention once its last request settles', () => {
+    let state = initState(['p1', 'p2', 'p3']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'reject',
+      id: 'p1',
+      attempt: 1,
+      error: 'model_lacks_vision',
+    });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p2', attempt: 1, text: 'B' });
+
+    // The terminal failure deliberately prevents p3 from starting. A pending
+    // block is not outstanding work when the run's dispatch guard has halted it.
+    expect(inFlightCount(state)).toBe(0);
+    expect(selectStartable(state)).toEqual([]);
+    expect(progressLabel(state, idsToPages(['p1', 'p2', 'p3']))).toBe(
+      '1 of 3 read · 1 need attention',
+    );
+  });
+
+  it('reports a completed multi-page run without an in-progress verb', () => {
+    let state = initState(['p1', 'p2']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p1', attempt: 1, text: 'A' });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+    state = transcriptionRunReducer(state, { type: 'resolve', id: 'p2', attempt: 1, text: 'B' });
+    expect(progressLabel(state, idsToPages(['p1', 'p2']))).toBe('All 2 pages read');
+  });
+
   it('shrinks the total once a page leaves the session', () => {
     let state = initState(['p1', 'p2']);
     state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
@@ -449,7 +493,7 @@ describe('progressLabel', () => {
       error: 'timeout',
     });
     state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1'] });
-    expect(progressLabel(state, idsToPages(['p1']))).toBe('Transcribing 1 of 1…');
+    expect(progressLabel(state, idsToPages(['p1']))).toBe('Page read');
   });
 });
 

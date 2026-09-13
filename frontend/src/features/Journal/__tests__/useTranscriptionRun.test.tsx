@@ -205,7 +205,7 @@ describe('useTranscriptionRun — the concurrency bound survives a mid-flight re
 
     await waitFor(() => expect(result.current.isComplete).toBe(true));
     expect(result.current.mergedText).toBe('page two\n\npage three\n\npage four');
-    expect(result.current.progress).toBe('Transcribing 3 of 3…');
+    expect(result.current.progress).toBe('All 3 pages read');
     // One read per surviving page, plus the one the trimmed page had already spent.
     expect(mockTranscribe).toHaveBeenCalledTimes(4);
   });
