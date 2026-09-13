@@ -261,7 +261,7 @@ describe('GoalModal unit + frequency editor', () => {
     expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
   });
 
-  it.each(['abc', '0', '-2', '1'])(
+  it.each(['abc', '3abc', '3.5oops', '4x', '0', '-2', '1'])(
     'does not commit an invalid or unchanged cadence draft: %s',
     (draft) => {
       const { getByTestId, props } = renderModal();
@@ -328,6 +328,7 @@ describe('GoalModal cadence copy', () => {
 
   it.each([
     [makeGoal('low', { target: 1, target_unit: 'sessions' }), '1 session a day'],
+    [makeGoal('low', { target: 1, target_unit: 'calories' }), '1 calorie a day'],
     [
       makeGoal('low', {
         target: 1,

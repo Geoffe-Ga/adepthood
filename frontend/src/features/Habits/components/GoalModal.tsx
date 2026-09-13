@@ -64,7 +64,7 @@ const tooltipTextStyle: TextStyle = {
 };
 
 const singularizeGoalUnit = (unit: string): string => {
-  if (unit.endsWith('ies')) return `${unit.slice(0, -3)}y`;
+  if (unit === 'calories') return 'calorie';
   return unit.endsWith('s') ? unit.slice(0, -1) : unit;
 };
 
@@ -510,7 +510,8 @@ const useNumericDraft = (
     if (submittedRef.current) return;
     submittedRef.current = true;
     setEditing(false);
-    const parsed = Number.parseFloat(draft);
+    const trimmedDraft = draft.trim();
+    const parsed = trimmedDraft === '' ? Number.NaN : Number(trimmedDraft);
     if (!isValid(parsed) || parsed === value) {
       setDraft(String(value));
       return;
