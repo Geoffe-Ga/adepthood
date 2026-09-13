@@ -839,11 +839,10 @@ describe('single scroll surface', () => {
     const { getByTestId } = render(<CourseScreen />);
 
     await waitFor(() => {
-      expect(getByTestId('content-list')).toBeTruthy();
+      expect(within(getByTestId('content-list')).getByTestId('course-error')).toBeTruthy();
     });
 
     const listOnError = within(getByTestId('content-list'));
-    expect(listOnError.getByTestId('course-error')).toBeTruthy();
     expect(getByTestId('stage-cover')).toBeTruthy();
 
     await act(async () => {
