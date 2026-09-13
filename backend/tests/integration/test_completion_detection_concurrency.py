@@ -81,11 +81,11 @@ async def test_two_detection_requests_persist_one_offer(
     provider_calls = 0
 
     async def _complete(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
     ) -> LLMResponse:
         nonlocal provider_calls
-        del history, system_prompt, api_key
-        assert '"hits"' in prompt
+        del history, api_key
+        assert '"hits"' in f"{system_prompt or ''}\n{prompt}"
         provider_calls += 1
         if provider_calls == 1:
             await asyncio.wait_for(both_at_provider.wait(), timeout=5)
@@ -133,11 +133,12 @@ async def test_detection_and_resonance_requests_persist_one_offer(
     detection_calls = 0
 
     async def _complete(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
     ) -> LLMResponse:
         nonlocal detection_calls
-        del history, system_prompt, api_key
-        if '"hits"' not in prompt and "COMPLETED" not in prompt:
+        del history, api_key
+        task = f"{system_prompt or ''}\n{prompt}"
+        if '"hits"' not in task and "COMPLETED" not in task:
             return LLMResponse(
                 text=json.dumps(
                     {"notes": [{"kind": "theme", "quote": "I meditated", "note": "You showed up."}]}

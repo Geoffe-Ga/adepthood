@@ -140,10 +140,11 @@ def test_build_prompt_with_prior_letters_forbids_style_transfer() -> None:
     rewording moves both sides of the assertion at once.
     """
     prompt = build_prompt(_BODY, prior_drafts=[_MARCH_LETTER_SENTINEL])
-    assert NO_STYLE_TRANSFER_INSTRUCTION in prompt, (
+    assert prompt.count(NO_STYLE_TRANSFER_INSTRUCTION) == 1, (
         "prior letters are content-only context; sending them with no "
-        "anti-imitation rule is the failure mode this feature is defined against"
+        "single anti-imitation rule is the failure mode this feature is defined against"
     )
+    assert "must never mean writing fewer notes" in NO_STYLE_TRANSFER_INSTRUCTION
 
 
 @pytest.mark.parametrize("empty", [None, []])
@@ -224,7 +225,7 @@ def test_the_essay_prompt_carries_prior_letters_under_the_same_rule() -> None:
         _BODY, _ANCHOR_TEXT, _KIND, _NOTE, prior_drafts=[_MARCH_LETTER_SENTINEL]
     )
     assert _MARCH_LETTER_SENTINEL in _prior_letters_section(prompt)
-    assert NO_STYLE_TRANSFER_INSTRUCTION in prompt
+    assert prompt.count(NO_STYLE_TRANSFER_INSTRUCTION) == 1
 
 
 @pytest.mark.parametrize("empty", [None, []])

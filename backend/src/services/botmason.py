@@ -1113,7 +1113,7 @@ async def generate_response(
             # Default: stub provider for development and testing.
             if images:
                 return _stub_vision_response(user_message, len(images))
-            return _stub_response(user_message)
+            return _stub_response(user_message, resolved_prompt)
         # Capability check before dispatch: LLMVisionUnsupportedError is not in
         # _PROVIDER_ERROR_TYPES, so it escapes this try unwrapped.
         _ensure_vision_capable(provider, _get_model(provider), images)
@@ -1129,7 +1129,7 @@ async def generate_response(
     return result
 
 
-def _stub_response(user_message: str) -> LLMResponse:
+def _stub_response(user_message: str, system_prompt: str = "") -> LLMResponse:
     """Return a deterministic response for development and testing.
 
     A supported prompt that asks for a structured reply gets one — see
@@ -1141,7 +1141,7 @@ def _stub_response(user_message: str) -> LLMResponse:
     usage log's cost total honest when stub traffic is mixed with production
     calls during load tests.
     """
-    canned = canned_completion(user_message)
+    canned = canned_completion(user_message, system_prompt)
     text = (
         canned
         if canned is not None
