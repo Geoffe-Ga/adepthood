@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import get_current_user_model
+from dependencies.creek_vault import account_has_configured_vault
 from error_responses import build_router
 from errors import bad_request
 from models.user import User
@@ -32,7 +33,12 @@ from schemas.account_deletion import (
     VaultDisposition,
 )
 from schemas.timezone import TimezoneRead, TimezoneUpdate
-from services.account_deletion import Account, DeletionReceipt, delete_account
+from services.account_deletion import (
+    Account,
+    AccountVaultDisposition,
+    DeletionReceipt,
+    delete_account,
+)
 from services.creek_provisioning import (
     load_vault_activation,
     request_vault_teardown,
@@ -109,6 +115,22 @@ def _to_receipt(receipt: DeletionReceipt) -> AccountDeletionReceipt:
     )
 
 
+async def _resolve_account_vault_disposition(
+    session: AsyncSession,
+    user_id: int,
+    provisioning: CreekProvisioningClient,
+) -> AccountVaultDisposition:
+    """Resolve external erasure truth before the local sweep removes its rows."""
+    activation = await load_vault_activation(session, user_id)
+    if activation is not None:
+        teardown = await request_vault_teardown(session, activation, provisioning)
+        if teardown is not None:
+            return AccountVaultDisposition.provisioned(teardown.state)
+    if await account_has_configured_vault(session, user_id):
+        return AccountVaultDisposition.manual()
+    return AccountVaultDisposition.unconfigured()
+
+
 @router.delete("/me", response_model=AccountDeletionReceipt)
 async def delete_my_account(
     payload: AccountDeletionRequest,
@@ -136,13 +158,14 @@ async def delete_my_account(
     user_id = current_user.id
     if user_id is None:  # pragma: no cover - a persisted row always has an id
         raise bad_request("account_not_persisted")
-    teardown = None
-    activation = await load_vault_activation(session, user_id)
-    if activation is not None:
-        teardown = await request_vault_teardown(session, activation, provisioning)
+    vault_disposition = await _resolve_account_vault_disposition(
+        session,
+        user_id,
+        provisioning,
+    )
     receipt = await delete_account(
         session,
         Account(user_id=user_id, email=current_user.email),
-        vault_disposition=None if teardown is None else teardown.state,
+        vault_disposition=vault_disposition,
     )
     return _to_receipt(receipt)

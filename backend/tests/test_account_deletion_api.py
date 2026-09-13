@@ -17,13 +17,24 @@ import logging
 from http import HTTPStatus
 
 import pytest
+from cryptography.fernet import Fernet
 from httpx import AsyncClient
 from sqlalchemy import Column, Integer, Table, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, col
 
+from dependencies.creek_vault import OWNER_ENV_VAR
 from models.account_deletion_audit import AccountDeletionAudit
-from services.account_deletion import Account, ErasurePolicyGapError, delete_account
+from models.user_vault_config import UserVaultConfig
+from services import journal_encryption
+from services.account_deletion import (
+    VAULT_NOT_CONFIGURED,
+    VAULT_NOT_PURGED,
+    Account,
+    AccountVaultDisposition,
+    ErasurePolicyGapError,
+    delete_account,
+)
 from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
@@ -38,6 +49,13 @@ _USER_TABLE = "user"
 _JOURNAL_TABLE = "journalentry"
 _ID = "id"
 _USER_ID = "user_id"
+
+
+@pytest.fixture(autouse=True)
+def _no_deployment_vault(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep each receipt scenario independent of a developer's environment."""
+    monkeypatch.delenv(CREEK_VAULT_URL_ENV_VAR, raising=False)
+    monkeypatch.delenv(OWNER_ENV_VAR, raising=False)
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int, str]:
@@ -201,6 +219,167 @@ async def test_delete_me_records_a_content_free_receipt(
 
 
 @pytest.mark.asyncio
+async def test_unconfigured_account_receipt_and_audit_say_no_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """No deployment or per-user vault cannot leave a manual-purge claim."""
+    headers, user_id, email = await _signup(async_client, "no-vault")
+
+    response = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": email},
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["vault"] == {
+        "configured": False,
+        "purged": False,
+        "guidance": "No Creek Vault was connected, so nothing of yours is held outside Adepthood.",
+    }
+    audit = (
+        await db_session.execute(
+            select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)
+        )
+    ).scalar_one()
+    assert audit.vault_disposition == VAULT_NOT_CONFIGURED
+
+
+@pytest.mark.asyncio
+async def test_non_owner_does_not_claim_the_owner_bound_deployment_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A global vault belongs only to its explicit owner, not every account."""
+    _, owner_id, _ = await _signup(async_client, "vault-owner")
+    headers, user_id, email = await _signup(async_client, "not-vault-owner")
+    monkeypatch.setenv(CREEK_VAULT_URL_ENV_VAR, "https://owner-vault.invalid:9/")
+    monkeypatch.setenv(OWNER_ENV_VAR, str(owner_id))
+
+    response = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": email},
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["vault"]["configured"] is False
+    assert "No Creek Vault" in response.json()["vault"]["guidance"]
+    audit = (
+        await db_session.execute(
+            select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)
+        )
+    ).scalar_one()
+    assert audit.vault_disposition == VAULT_NOT_CONFIGURED
+
+
+@pytest.mark.asyncio
+async def test_per_user_vault_outranks_somebody_elses_deployment_vault_in_receipt(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A user's stored manual connection receives its own purge guidance only."""
+    headers, user_id, email = await _signup(async_client, "connected-leaver")
+    owner_id_canary = 42424242
+    deployment_url = "https://owner-only-vault.invalid:9/"
+    connected_url = "https://personal-vault.example.test/v1"
+    credential_canary = "never-expose-this-vault-credential"
+    monkeypatch.setenv(CREEK_VAULT_URL_ENV_VAR, deployment_url)
+    monkeypatch.setenv(OWNER_ENV_VAR, str(owner_id_canary))
+    db_session.add(
+        UserVaultConfig(
+            user_id=user_id,
+            vault_url=connected_url,
+            api_key=credential_canary,
+        )
+    )
+    await db_session.commit()
+
+    with caplog.at_level(logging.INFO):
+        response = await async_client.request(
+            "DELETE",
+            "/users/me",
+            json={"confirm_email": email},
+            headers=headers,
+        )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["vault"]["configured"] is True
+    assert response.json()["vault"]["purged"] is False
+    assert "creek purge" in response.json()["vault"]["guidance"]
+    audit = (
+        await db_session.execute(
+            select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)
+        )
+    ).scalar_one()
+    assert audit.vault_disposition == VAULT_NOT_PURGED
+    emitted = response.text + caplog.text
+    assert connected_url not in emitted
+    assert deployment_url not in emitted
+    assert credential_canary not in emitted
+    assert str(owner_id_canary) not in emitted
+
+
+@pytest.mark.asyncio
+async def test_per_user_vault_receipt_survives_an_unreadable_stored_credential(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Receipt classification tests row ownership without decrypting its secret.
+
+    Losing an old encryption key is operationally serious, but it must not make
+    local account erasure impossible.  The receipt needs only to know that this
+    account owns a stored connection; reading ``api_key`` would cross a secret
+    boundary and turn a truthful manual-purge instruction into a 500.
+    """
+    headers, user_id, email = await _signup(async_client, "rotated-key-leaver")
+    key_used_at_write = Fernet.generate_key().decode()
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, key_used_at_write)
+    journal_encryption.reset_cache()
+    stored_opaque_value = "credential-encrypted-by-retired-key"
+    db_session.add(
+        UserVaultConfig(
+            user_id=user_id,
+            vault_url="https://personal-vault.example.test/v1",
+            api_key=stored_opaque_value,
+        )
+    )
+    await db_session.commit()
+    db_session.expunge_all()
+
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    try:
+        response = await async_client.request(
+            "DELETE",
+            "/users/me",
+            json={"confirm_email": email},
+            headers=headers,
+        )
+    finally:
+        journal_encryption.reset_cache()
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["vault"]["configured"] is True
+    assert response.json()["vault"]["purged"] is False
+    assert "creek purge" in response.json()["vault"]["guidance"]
+    assert await _count(db_session, _USER_TABLE, _ID, user_id) == 0
+    audit = (
+        await db_session.execute(
+            select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)
+        )
+    ).scalar_one()
+    assert audit.vault_disposition == VAULT_NOT_PURGED
+
+
+@pytest.mark.asyncio
 async def test_delete_me_reports_what_survives(async_client: AsyncClient) -> None:
     """The response states plainly what was erased and what deliberately stays."""
     headers, _, email = await _signup(async_client, "informed")
@@ -234,8 +413,9 @@ async def test_an_unreachable_vault_does_not_block_deletion(
     deletion path grew a vault call, this test would hang until the client's
     timeout and then fail — which is the regression it exists to catch.
     """
-    monkeypatch.setenv(CREEK_VAULT_URL_ENV_VAR, "https://vault.invalid:9/")
     headers, user_id, email = await _signup(async_client, "vaulted")
+    monkeypatch.setenv(CREEK_VAULT_URL_ENV_VAR, "https://vault.invalid:9/")
+    monkeypatch.setenv(OWNER_ENV_VAR, str(user_id))
 
     resp = await async_client.request(
         "DELETE",
@@ -250,6 +430,12 @@ async def test_an_unreachable_vault_does_not_block_deletion(
     assert vault["purged"] is False
     assert "creek purge" in vault["guidance"]
     assert await _count(db_session, _USER_TABLE, _ID, user_id) == 0
+    audit = (
+        await db_session.execute(
+            select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)
+        )
+    ).scalar_one()
+    assert audit.vault_disposition == VAULT_NOT_PURGED
 
 
 @pytest.mark.asyncio
@@ -268,7 +454,11 @@ async def test_deletion_refuses_when_the_schema_outgrows_the_policy(
     intruder = Table("sanghamembership", SQLModel.metadata, Column("id", Integer, primary_key=True))
     try:
         with pytest.raises(ErasurePolicyGapError, match="sanghamembership"):
-            await delete_account(db_session, Account(user_id=user_id, email=email))
+            await delete_account(
+                db_session,
+                Account(user_id=user_id, email=email),
+                vault_disposition=AccountVaultDisposition.unconfigured(),
+            )
     finally:
         SQLModel.metadata.remove(intruder)
 

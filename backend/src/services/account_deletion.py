@@ -23,7 +23,6 @@ of that answer; an unreachable vault cannot block the sweep.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -41,7 +40,6 @@ from domain.account_deletion import (
 )
 from domain.ownership import OwnedBy, owner_predicate
 from models.account_deletion_audit import AccountDeletionAudit
-from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +47,7 @@ logger = logging.getLogger(__name__)
 # Creek's separately tracked delete states; a manual connection still has no
 # upstream allocation handle Adepthood could honestly claim to purge.
 VAULT_NOT_PURGED = "not_purged"
+VAULT_NOT_CONFIGURED = "not_configured"
 
 VAULT_GUIDANCE_NONE = "No Creek Vault was connected, so nothing of yours is held outside Adepthood."
 VAULT_GUIDANCE_CONFIGURED = (
@@ -80,6 +79,37 @@ class Account:
 
 
 @dataclass(frozen=True)
+class AccountVaultDisposition:
+    """Account-scoped truth about what may remain outside Adepthood.
+
+    Receipt construction deliberately accepts this value rather than reading
+    deployment configuration. A global endpoint is not a global claim: it
+    belongs only to the account named by its owner binding, while a stored
+    per-user connection belongs to that account regardless of the environment.
+    Resolving that distinction before the sweep also matters because the sweep
+    deletes the stored connection row.
+    """
+
+    configured: bool
+    audit_state: str
+
+    @classmethod
+    def unconfigured(cls) -> AccountVaultDisposition:
+        """No vault belongs to this account, so no external purge is owed."""
+        return cls(configured=False, audit_state=VAULT_NOT_CONFIGURED)
+
+    @classmethod
+    def manual(cls) -> AccountVaultDisposition:
+        """A manually managed vault may retain data until its owner purges it."""
+        return cls(configured=True, audit_state=VAULT_NOT_PURGED)
+
+    @classmethod
+    def provisioned(cls, state: str) -> AccountVaultDisposition:
+        """A provisioned allocation has Creek's durable teardown state."""
+        return cls(configured=True, audit_state=state)
+
+
+@dataclass(frozen=True)
 class DeletionReceipt:
     """What one erasure did, in terms a user and an auditor can both read."""
 
@@ -90,8 +120,8 @@ class DeletionReceipt:
     anonymised: tuple[str, ...]
     retained: tuple[str, ...]
     vault_configured: bool
-    vault_disposition: str = VAULT_NOT_PURGED
-    vault_guidance: str = VAULT_GUIDANCE_NONE
+    vault_disposition: str
+    vault_guidance: str
 
 
 def _policy_parent(name: str) -> tuple[Table, OwnedBy]:
@@ -159,11 +189,6 @@ def _require_total_policy() -> None:
         raise ErasurePolicyGapError(msg)
 
 
-def _vault_is_configured() -> bool:
-    """Whether this deployment points at a Creek Vault at all."""
-    return bool(os.getenv(CREEK_VAULT_URL_ENV_VAR, "").strip())
-
-
 def _tables_with(disposition: Disposition) -> tuple[str, ...]:
     """Policy table names carrying one disposition, alphabetically."""
     return tuple(
@@ -185,11 +210,9 @@ async def _sweep(session: AsyncSession, account: Account) -> dict[str, int]:
 def _build_receipt(
     account: Account,
     counts: dict[str, int],
-    vault_disposition: str | None,
+    vault_disposition: AccountVaultDisposition,
 ) -> DeletionReceipt:
     """Turn raw row counts into the receipt returned to the caller and stored."""
-    configured = vault_disposition is not None or _vault_is_configured()
-    guidance = _vault_guidance(vault_disposition, configured=configured)
     return DeletionReceipt(
         user_id=account.user_id,
         rows_erased=sum(counts.values()),
@@ -197,26 +220,26 @@ def _build_receipt(
         erased=_tables_with(Disposition.ERASE),
         anonymised=_tables_with(Disposition.ANONYMISE),
         retained=_tables_with(Disposition.RETAIN),
-        vault_configured=configured,
-        vault_disposition=vault_disposition or VAULT_NOT_PURGED,
-        vault_guidance=guidance,
+        vault_configured=vault_disposition.configured,
+        vault_disposition=vault_disposition.audit_state,
+        vault_guidance=_vault_guidance(vault_disposition),
     )
 
 
-def _vault_guidance(vault_disposition: str | None, *, configured: bool) -> str:
+def _vault_guidance(vault_disposition: AccountVaultDisposition) -> str:
     """Choose deletion guidance without mixing it into receipt construction."""
-    if vault_disposition == "deleted":
+    if vault_disposition.audit_state == "deleted":
         return VAULT_GUIDANCE_TEARDOWN_COMPLETE
-    if vault_disposition is not None:
+    if vault_disposition.audit_state not in {VAULT_NOT_CONFIGURED, VAULT_NOT_PURGED}:
         return VAULT_GUIDANCE_TEARDOWN_PENDING
-    return VAULT_GUIDANCE_CONFIGURED if configured else VAULT_GUIDANCE_NONE
+    return VAULT_GUIDANCE_CONFIGURED if vault_disposition.configured else VAULT_GUIDANCE_NONE
 
 
 async def delete_account(
     session: AsyncSession,
     account: Account,
     *,
-    vault_disposition: str | None = None,
+    vault_disposition: AccountVaultDisposition,
 ) -> DeletionReceipt:
     """Erase one account and everything the policy assigns to it, then commit.
 

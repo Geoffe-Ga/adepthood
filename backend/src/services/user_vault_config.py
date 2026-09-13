@@ -36,6 +36,19 @@ async def load_vault_config(session: AsyncSession, user_id: int) -> UserVaultCon
     return result.scalars().first()
 
 
+async def has_vault_config(session: AsyncSession, user_id: int) -> bool:
+    """Return whether this account owns a stored connection, without reading its secret.
+
+    Account-deletion receipts need existence, not a usable credential. Selecting
+    only the row id keeps that local-first path available even when a retired
+    encryption key means the stored ``api_key`` can no longer be decrypted.
+    """
+    result = await session.execute(
+        select(UserVaultConfig.id).where(UserVaultConfig.user_id == user_id)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def store_vault_config(
     session: AsyncSession,
     user_id: int,

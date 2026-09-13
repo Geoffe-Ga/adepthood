@@ -93,7 +93,7 @@ from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import vault_url_host
-from services.user_vault_config import load_vault_config
+from services.user_vault_config import has_vault_config, load_vault_config
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,31 @@ def deployment_vault_client(current_user: int) -> CreekVaultPipelineClient:
     if owner is None and vault_configured:
         _log_unowned_vault(raw_owner)
     return LocalFallbackCreekVaultClient(_degrade_outcome(vault_configured=vault_configured))
+
+
+def deployment_vault_belongs_to(current_user: int) -> bool:
+    """Whether the configured deployment-wide vault belongs to this account.
+
+    This is configuration ownership, not a reachability probe. It is used by
+    account deletion, where an offline vault must still produce manual-purge
+    guidance for its owner but must never produce that claim for another user.
+    """
+    vault_configured = bool(os.getenv(_VAULT_URL_ENV_VAR, "").strip())
+    owner = resolve_vault_owner(os.getenv(OWNER_ENV_VAR))
+    return vault_configured and owner == current_user
+
+
+async def account_has_configured_vault(session: AsyncSession, current_user: int) -> bool:
+    """Whether this account owns a stored or deployment-wide vault connection.
+
+    A stored per-user connection wins independently of the global environment,
+    matching :func:`resolve_creek_vault_client`. The lookup is local-only: this
+    answer must not dial Creek because account erasure remains available during
+    an outage.
+    """
+    return await has_vault_config(session, current_user) or deployment_vault_belongs_to(
+        current_user
+    )
 
 
 async def get_creek_vault_client(
