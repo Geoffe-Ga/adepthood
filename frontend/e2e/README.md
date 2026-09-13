@@ -180,14 +180,14 @@ id it gets back is not the one already named. A guess that stopped holding fails
 at setup, loudly, instead of leaving one spec asserting `vault_unavailable` and
 calling it coverage.
 
-One consequence is worth stating rather than leaving to be discovered: with
-`CREEK_VAULT_URL` set, `DELETE /users/me` reports `vault.configured: true` and
-the guidance a vault-holding deployment owes, for **every** account rather than
-only the owner's — `services/account_deletion` reads the deployment variable,
-not the caller's own connection. That is the one observable difference this
-boundary makes to another journey, and `account-deletion.e2e.test.ts` now
-asserts that exact sentence rather than merely a non-empty one, so it is pinned
-instead of merely tolerated.
+One consequence is worth stating rather than leaving to be discovered:
+`CREEK_VAULT_URL` configures a vault for its bound owner, not for every account
+in the deployment. `DELETE /users/me` therefore reports manual-purge guidance
+for that owner (or an account with its own stored connection), while an
+unconnected non-owner reports `vault.configured: false` and no-vault guidance.
+`account-deletion.e2e.test.ts` uses one of those later non-owner accounts and
+pins that account-scoped result, so a deployment-wide URL cannot silently turn
+another user's deletion receipt into a claim about the owner's corpus.
 
 One thing is configured rather than faked, and it is worth stating plainly
 because it looks like a fake and is not. The password-recovery journey has to

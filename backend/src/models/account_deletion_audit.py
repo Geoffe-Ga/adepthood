@@ -27,8 +27,8 @@ from sqlalchemy import JSON, Column, DateTime, String, func
 from sqlmodel import Field, SQLModel
 
 # Width for the vault-disposition token. It is a short symbolic value
-# (``not_purged``), not prose, so a small fixed width keeps a future value from
-# growing into a free-text field nobody can query.
+# (``not_purged`` or ``not_configured``), not prose, so a small fixed width keeps
+# a future value from growing into a free-text field nobody can query.
 _DISPOSITION_COLUMN_WIDTH = 32
 
 

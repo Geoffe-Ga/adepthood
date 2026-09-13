@@ -719,7 +719,7 @@
   },
   {
     "id": "account.delete",
-    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt. The receipt's vault half is pinned to the answer a deployment WITH a vault owes them -- adepthood holds no purge verb on the vault contract, so it names what is left for them to run themselves. The lane is such a deployment because seed.upload-document needs somewhere to seed into, and `configured` is read from the deployment's own CREEK_VAULT_URL rather than from this account's connection.",
+    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt. The receipt's vault half is account-scoped rather than deployment-scoped. This lane does have a deployment-wide vault for seed.upload-document, but globalSetup binds that single corpus to one pre-provisioned owner; the later account created by this journey has no per-user connection and must therefore receive `configured: false` with no-vault guidance, never a claim on the other person's vault. Backend API regressions separately pin manual owner, per-user connection, unconfigured, and provisioned teardown receipts.",
     "crosses": {
       "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
       "client": ["users"],

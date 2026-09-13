@@ -16,6 +16,7 @@ from sqlmodel import col
 
 from dependencies.creek_vault import resolve_creek_vault_client
 from main import app
+from models.account_deletion_audit import AccountDeletionAudit
 from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
@@ -60,6 +61,7 @@ class FakeProvisioningClient:
         self.fail_activate = False
         self.reject_activate = False
         self.fail_delete = False
+        self.delete_state = "deleting"
         self.fail_ceremony_code: str | None = None
         self.last_ceremony_submission: VaultKeyCeremonySubmission | None = None
         self.assert_released: object | None = None
@@ -110,7 +112,7 @@ class FakeProvisioningClient:
         if self.fail_delete:
             raise ProvisioningUnavailableError("provisioning unavailable")
         current = await self.status(job_id)
-        deleting = replace(current, state="deleting", retryable=False, failure_reason=None)
+        deleting = replace(current, state=self.delete_state, retryable=False, failure_reason=None)
         self.jobs[current.activation_id] = deleting
         return deleting
 
@@ -880,6 +882,39 @@ async def test_account_deletion_queues_upstream_teardown_and_retains_only_a_rece
     assert receipts[0].state == "deleting"
     assert not hasattr(receipts[0], "user_id")
     assert email not in repr(receipts[0])
+    audit = (await db_session.execute(select(AccountDeletionAudit))).scalar_one()
+    assert audit.vault_disposition == "deleting"
+
+
+@pytest.mark.asyncio
+async def test_account_deletion_reports_a_completed_provisioned_teardown(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """A synchronous Creek confirmation outranks all manual-vault guidance."""
+    headers, _, email = await _signup(async_client, "teardown-complete")
+    await _activate(async_client, headers)
+    creek_client.delete_state = "deleted"
+
+    deleted = await async_client.request(
+        "DELETE",
+        "/users/me",
+        headers=headers,
+        json={"confirm_email": email},
+    )
+
+    assert deleted.status_code == HTTPStatus.OK
+    assert deleted.json()["vault"] == {
+        "configured": True,
+        "purged": True,
+        "guidance": "Creek confirmed that the provisioned private-vault allocation was deleted.",
+    }
+    teardown = (await db_session.execute(select(VaultTeardownReceipt))).scalar_one()
+    assert teardown.state == "deleted"
+    assert teardown.confirmed_at is not None
+    audit = (await db_session.execute(select(AccountDeletionAudit))).scalar_one()
+    assert audit.vault_disposition == "deleted"
 
 
 @pytest.mark.asyncio
@@ -908,6 +943,8 @@ async def test_upstream_delete_outage_never_blocks_local_account_erasure(
     assert receipt.retryable is True
     assert receipt.failure_reason == "provider_unavailable"
     assert email not in repr(receipt)
+    audit = (await db_session.execute(select(AccountDeletionAudit))).scalar_one()
+    assert audit.vault_disposition == "failed"
 
 
 @pytest.mark.asyncio
