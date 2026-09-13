@@ -81,6 +81,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.set-a-weekly-cadence",
+    "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, and GoalModal.starLongPress.test.tsx for the drag-confirm copy.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
+      "client": ["habits"],
+      "routes": ["PUT /habits/{habit_id}/goals/units"],
+      "tables": ["goal"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
     "id": "habits.subtractive-no-log-streak",
     "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS — ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
     "crosses": {
