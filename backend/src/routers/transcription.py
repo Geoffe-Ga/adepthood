@@ -40,6 +40,7 @@ from services.botmason import (
     credit_exhausted_error,
     generate_response,
     resolve_chat_api_key,
+    vision_provider_available,
 )
 from services.llm_usage import record_llm_usage
 from services.wallet import preflight_deduction
@@ -198,17 +199,20 @@ async def transcribe_page(
 
     Stateless: no journal row is written and the metered call carries no
     ``journal_entry_id``. Strict ordering — the image is validated first (422
-    without any charge), then the caller key is resolved. A valid caller key
-    bypasses both BotMason buckets; otherwise the wallet is deducted (402 when
-    out of capacity). A provider failure rolls the transaction back so a failed
-    pass never bills. Usage is metered (one row per real, non-stub call) and
-    committed atomically with any charge.
+    without any charge), then the caller key and vision capability are resolved.
+    A production stub is refused before the wallet is touched. A valid caller
+    key bypasses both BotMason buckets; otherwise the wallet is deducted (402
+    when out of capacity). A provider failure rolls the transaction back so a
+    failed pass never bills. Usage is metered (one row per real, non-stub call)
+    and committed atomically with any charge.
 
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
     """
     image = _validate_image(payload.image_base64, payload.media_type)
     byok_key = resolve_chat_api_key(x_llm_api_key)
+    if not vision_provider_available(byok_key):
+        raise unprocessable("model_lacks_vision")
     if byok_key is None:
         await preflight_deduction(session, current_user)
     response = await _run_transcription(session, image, byok_key)

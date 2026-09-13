@@ -423,17 +423,17 @@ def test_botmason_provider_logged_at_boot(
     assert any("botmason_provider" in m and "openai" in m for m in messages)
 
 
-def test_stub_in_production_warns_loudly(
+def test_stub_in_production_errors_loudly(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Stub in production must be an explicit, visible choice — never silent."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "production")
-    caplog.set_level(logging.WARNING, logger="main")
+    caplog.set_level(logging.ERROR, logger="main")
     _log_botmason_provider()
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("botmason_stub_in_production" in r.getMessage() for r in warnings)
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("botmason_stub_in_production" in r.getMessage() for r in errors)
 
 
 def test_stub_in_development_does_not_warn(

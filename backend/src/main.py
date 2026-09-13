@@ -869,7 +869,7 @@ def _log_botmason_provider() -> None:
     provider = get_provider()
     logger.info("botmason_provider provider=%s", provider)
     if provider == "stub" and os.getenv("ENV", "development") == "production":
-        logger.warning(
+        logger.error(
             "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — real "
             "users will get canned responses. Set BOTMASON_PROVIDER and "
             "LLM_API_KEY (see backend/.env.example) if this is unintentional."
