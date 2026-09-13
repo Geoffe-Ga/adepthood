@@ -10,11 +10,20 @@ downstream sink — DB row, log line, LLM prompt — sees the cleaned value.
 from __future__ import annotations
 
 from http import HTTPStatus
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
+from models.corpus_fragment import CorpusFragment
+from models.journal_entry import JournalEntry
+from models.user import User
+from models.vault_pipeline_run import VaultPipelineRun
+from models.wallet_audit import WalletAudit
+from routers import journal as journal_router
 from security import TextTooLongError
 
 
@@ -30,6 +39,24 @@ async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _signup_with_id(
+    client: AsyncClient, session: AsyncSession, username: str
+) -> tuple[dict[str, str], int]:
+    """Create a user and return both auth headers and the server-owned id."""
+    headers = await _signup(client, username)
+    result = await session.execute(select(User.id).where(User.email == f"{username}@example.com"))
+    return headers, int(result.scalar_one())
+
+
+async def _journal_side_effect_counts(session: AsyncSession) -> tuple[int, int, int, int]:
+    """Count every durable write a refused journal body must leave untouched."""
+    counts: list[int] = []
+    for model in (JournalEntry, CorpusFragment, VaultPipelineRun, WalletAudit):
+        result = await session.execute(select(func.count()).select_from(model))
+        counts.append(int(result.scalar_one()))
+    return counts[0], counts[1], counts[2], counts[3]
 
 
 # ── Journal sanitization ───────────────────────────────────────────────────
@@ -93,6 +120,136 @@ async def test_journal_post_preserves_newlines_and_tabs(async_client: AsyncClien
     resp = await async_client.post("/journal/", json={"message": raw}, headers=headers)
     assert resp.status_code == HTTPStatus.CREATED
     assert resp.json()["message"] == raw
+
+
+@pytest.mark.parametrize(
+    ("case", "raw"),
+    [
+        ("spaces", "   "),
+        ("tabs-newlines", "\t\n\r"),
+        ("controls", "\x00\x07\x1b\x7f"),
+        ("zero-width", "\u200b\u200c\u2060\ufeff"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_journal_post_rejects_message_emptied_by_sanitization_without_side_effects(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    raw: str,
+) -> None:
+    """Post-sanitization emptiness is a stable refusal before any durable or remote work."""
+    headers = await _signup(async_client, f"empty-sanitized-{case}")
+    vault_write = AsyncMock()
+    corpus_write = AsyncMock()
+    monkeypatch.setattr(journal_router, "_record_vault_outcome", vault_write)
+    monkeypatch.setattr(journal_router, "_record_corpus_fragment", corpus_write)
+    before = await _journal_side_effect_counts(db_session)
+
+    resp = await async_client.post("/journal/", json={"message": raw}, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json() == {"detail": "journal_message_empty"}
+    assert await _journal_side_effect_counts(db_session) == before
+    vault_write.assert_not_awaited()
+    corpus_write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_journal_patch_rejects_message_emptied_by_sanitization_without_side_effects(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused edit keeps the live body and every downstream store unchanged."""
+    headers = await _signup(async_client, "empty-sanitized-patch")
+    created = await async_client.post(
+        "/journal/", json={"message": "The body that must remain."}, headers=headers
+    )
+    assert created.status_code == HTTPStatus.CREATED
+    entry_id = int(created.json()["id"])
+    vault_write = AsyncMock()
+    corpus_write = AsyncMock()
+    monkeypatch.setattr(journal_router, "_record_vault_outcome", vault_write)
+    monkeypatch.setattr(journal_router, "_record_corpus_fragment", corpus_write)
+    before = await _journal_side_effect_counts(db_session)
+
+    resp = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": " \u200b\x00\t\n "}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json() == {"detail": "journal_message_empty"}
+    assert await _journal_side_effect_counts(db_session) == before
+    vault_write.assert_not_awaited()
+    corpus_write.assert_not_awaited()
+    persisted = await async_client.get(f"/journal/{entry_id}", headers=headers)
+    assert persisted.json()["message"] == "The body that must remain."
+
+
+@pytest.mark.asyncio
+async def test_journal_post_preserves_multiline_prose_while_removing_controls(
+    async_client: AsyncClient,
+) -> None:
+    """Visible prose keeps its internal layout even when unsafe codepoints surround it."""
+    headers = await _signup(async_client, "multiline-controls")
+    raw = "  First\tline\x00\nSecond\u200b line\x1b  "
+
+    resp = await async_client.post("/journal/", json={"message": raw}, headers=headers)
+
+    assert resp.status_code == HTTPStatus.CREATED
+    assert resp.json()["message"] == "First\tline\nSecond line"
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_entry_refuses_resonance_before_wallet_or_provider(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row created before the boundary fix is explicit 422, never reflection input."""
+    headers, user_id = await _signup_with_id(async_client, db_session, "legacy-empty-resonance")
+    entry = JournalEntry(user_id=user_id, sender="user", message="")
+    db_session.add(entry)
+    await db_session.commit()
+    await db_session.refresh(entry)
+    assert entry.id is not None
+    payment = AsyncMock(side_effect=AssertionError("wallet/provider path reached"))
+    monkeypatch.setattr(journal_router, "_resonance_payment", payment)
+    before = await _journal_side_effect_counts(db_session)
+
+    resp = await async_client.post(f"/journal/{entry.id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json() == {"detail": "journal_message_empty"}
+    assert await _journal_side_effect_counts(db_session) == before
+    payment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_entry_refuses_completion_detection_before_candidate_or_provider_work(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second reflective route gives a pre-fix empty row the same safe disposition."""
+    headers, user_id = await _signup_with_id(async_client, db_session, "legacy-empty-detection")
+    entry = JournalEntry(user_id=user_id, sender="user", message="")
+    db_session.add(entry)
+    await db_session.commit()
+    await db_session.refresh(entry)
+    assert entry.id is not None
+    candidates = AsyncMock(side_effect=AssertionError("candidate/provider path reached"))
+    monkeypatch.setattr(journal_router, "_unoffered_candidates", candidates)
+    before = await _journal_side_effect_counts(db_session)
+
+    resp = await async_client.post(f"/journal/{entry.id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json() == {"detail": "journal_message_empty"}
+    assert await _journal_side_effect_counts(db_session) == before
+    candidates.assert_not_awaited()
 
 
 # ── Prompt response sanitization ───────────────────────────────────────────

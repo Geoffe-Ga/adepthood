@@ -95,6 +95,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
+from security import sanitize_user_text
 from services.botmason import LLMCreditExhaustedError
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
@@ -308,10 +309,10 @@ async def ingest_journal_entry(
     """Write ``entry`` into its account's corpus, replacing what it had there.
 
     Returns the fragment, or ``None`` when the entry did not become one — no
-    consent, the intimate tier, a soft-deleted row, a provider that was down,
-    or a reply that recognised no frequency. Every one of those is an ordinary
-    outcome; none of them raises, because classification enriches a corpus and
-    is never why a journal write fails.
+    consent, the intimate tier, a soft-deleted or legacy sanitized-empty row, a
+    provider that was down, or a reply that recognised no frequency. Every one
+    of those is an ordinary outcome; none of them raises, because classification
+    enriches a corpus and is never why a journal write fails.
 
     The single carve-out is :func:`ingest_content`'s:
     :class:`services.botmason.LLMCreditExhaustedError` propagates, because it is
@@ -345,6 +346,18 @@ async def ingest_journal_entry(
     entry_id = entry.id
     if entry_id is None:
         return None
+    body = sanitize_user_text(entry.message)
+    if not body:
+        # Rows written before the journal boundary rejected sanitized-empty
+        # bodies may still be selected by a consent backfill. Remove any old
+        # fragment first, then stop before consent or provider work: an empty
+        # row has an explicit withdrawn disposition and can never become
+        # reflection grounding.
+        removed = await delete_fragments_for_entry(
+            session, user_id=entry.user_id, entry_id=entry_id
+        )
+        _log_outcome(entry.user_id, entry_id, "empty_withdrawn", removed)
+        return None
     consent = await load_consent(session, user_id=entry.user_id, source=INGEST_SOURCE)
     if not consent.granted:
         return None
@@ -359,15 +372,22 @@ async def ingest_journal_entry(
         session,
         user_id=entry.user_id,
         request=IngestRequest(
-            content=entry.message,
+            content=body,
             tier=JournalClassification(entry.classification),
             source=INGEST_SOURCE,
             source_entry_id=entry_id,
         ),
         timeout_seconds=timeout_seconds,
     )
+    return _journal_fragment(result, user_id=entry.user_id, entry_id=entry_id, removed=removed)
+
+
+def _journal_fragment(
+    result: IngestResult, *, user_id: int, entry_id: int, removed: int
+) -> CorpusFragment | None:
+    """Return a stored fragment, logging every ordinary non-storage outcome."""
     if result.outcome is not IngestOutcome.STORED:
-        _log_outcome(entry.user_id, entry_id, _JOURNAL_LOG_OUTCOMES[result.outcome], removed)
+        _log_outcome(user_id, entry_id, _JOURNAL_LOG_OUTCOMES[result.outcome], removed)
     return result.fragment
 
 

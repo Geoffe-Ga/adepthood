@@ -189,6 +189,30 @@ async def test_without_consent_no_provider_is_contacted_at_all(
 
 
 @pytest.mark.asyncio
+async def test_a_legacy_empty_entry_is_withdrawn_without_provider_contact(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-fix empty row cannot enter or retain a corpus fragment during backfill."""
+    _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
+    await _consent(db_session)
+    entry = await _entry(db_session)
+    await ingest_journal_entry(db_session, entry)
+    await db_session.commit()
+    assert len(await retrieve_fragments(db_session, user_id=_OWNER)) == 1
+
+    entry.message = ""
+    db_session.add(entry)
+    await db_session.commit()
+    _forbid_provider(monkeypatch)
+
+    fragment = await ingest_journal_entry(db_session, entry)
+    await db_session.commit()
+
+    assert fragment is None
+    assert await retrieve_fragments(db_session, user_id=_OWNER) == []
+
+
+@pytest.mark.asyncio
 async def test_an_intimate_entry_is_never_offered_to_the_classifier(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

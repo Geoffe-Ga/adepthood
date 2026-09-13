@@ -150,7 +150,7 @@ from services.wallet import (
 
 
 def _sanitize_message(message: str) -> str:
-    """Apply :func:`sanitize_user_text` and translate overflow to HTTP 422.
+    """Return one non-empty sanitized journal body or a stable HTTP 422.
 
     Pydantic's ``max_length`` already caps raw input at
     :data:`JOURNAL_MESSAGE_MAX_LENGTH`, but NFC normalization can in rare
@@ -159,11 +159,20 @@ def _sanitize_message(message: str) -> str:
     raise 422 (rather than the 500 we would otherwise return on an
     unhandled domain error) so the client sees a uniform length-violation
     shape regardless of which layer rejected the value.
+
+    Raw ``min_length`` validation cannot see that stripping whitespace,
+    controls, and zero-width codepoints may leave nothing. Reject that state
+    here, before a row or any downstream journal work exists, and use the same
+    helper on reflective reads so rows written before this boundary landed are
+    never handed to a provider.
     """
     try:
-        return sanitize_user_text(message, max_len=JOURNAL_MESSAGE_MAX_LENGTH)
+        sanitized = sanitize_user_text(message, max_len=JOURNAL_MESSAGE_MAX_LENGTH)
     except TextTooLongError as exc:
         raise unprocessable("message_too_long") from exc
+    if not sanitized:
+        raise unprocessable("journal_message_empty")
+    return sanitized
 
 
 def _coerce_reflection_level(data: dict[str, object]) -> None:
@@ -1664,6 +1673,7 @@ async def run_resonance(
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    message = _sanitize_message(entry.message)
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
     # Decided from the *persisted* classification (never client-supplied) and
     # returned here — before wallet charge, LLM construction, or usage-log write —
@@ -1671,7 +1681,7 @@ async def run_resonance(
     # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
     # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
     # the intimate and non-intimate paths.
-    care = _care_response(_care_for(entry.message))
+    care = _care_response(_care_for(message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
     # Resolve who pays before touching either BotMason bucket. A valid caller
@@ -1693,14 +1703,14 @@ async def run_resonance(
     await session.commit()
     reflection_llm = await select_reflection_llm(
         clients.vault_client,
-        body=entry.message,
+        body=message,
         classification=entry.classification,
         care_flagged=care is not None,
         fallback=llm,
     )
     try:
         anchored = await _resonance_pass_or_care(
-            entry.message,
+            message,
             reflection_llm,
             list(grounding.bodies),
             _ResonancePassContext(
@@ -1720,7 +1730,7 @@ async def run_resonance(
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
     hits = await _detect_hits(
-        entry.message, candidates=candidates, llm=llm, user_id=current_user, entry_id=entry_id
+        message, candidates=candidates, llm=llm, user_id=current_user, entry_id=entry_id
     )
     settled = await _persist_settle_commit(
         session,
@@ -1901,7 +1911,7 @@ async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
-    user_id: int,
+    message: str,
     candidates: Sequence[DetectionCandidate],
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
@@ -1910,10 +1920,10 @@ async def _detect_fresh_suggestions(
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
     attempt = await _detect_hits_with_status(
-        entry.message,
+        message,
         candidates=candidates,
         llm=llm,
-        user_id=user_id,
+        user_id=entry.user_id,
         entry_id=cast("int", entry.id),
     )
     if not attempt.checked:
@@ -1921,7 +1931,7 @@ async def _detect_fresh_suggestions(
     return await _persist_detected_suggestions(
         session,
         entry_id=cast("int", entry.id),
-        user_id=user_id,
+        user_id=entry.user_id,
         hits=attempt.hits,
         llm=llm,
     )
@@ -1949,6 +1959,7 @@ async def detect_entry_suggestions(
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    message = _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
@@ -1962,7 +1973,7 @@ async def detect_entry_suggestions(
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
-        user_id=current_user,
+        message=message,
         candidates=candidates,
         api_key_header=x_llm_api_key,
     )
@@ -2215,8 +2226,13 @@ async def expand_marginalia_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     if entry.classification == JournalClassification.INTIMATE:
         return note
+    message = _sanitize_message(entry.message)
     return await _cache_and_mirror_essay(
-        session, note=note, entry=entry, clients=clients, current_user=current_user
+        session,
+        note=note,
+        entry=entry,
+        message=message,
+        clients=clients,
     )
 
 
@@ -2225,8 +2241,8 @@ async def _cache_and_mirror_essay(
     *,
     note: Marginalia,
     entry: JournalEntry,
+    message: str,
     clients: _EssayClients,
-    current_user: int,
 ) -> Marginalia:
     """Generate and cache the essay, then mirror it once if there is one.
 
@@ -2234,7 +2250,7 @@ async def _cache_and_mirror_essay(
     authorization and privacy decisions; the mirror's ordering rationale is long
     enough on its own that interleaving the two made neither readable.
     """
-    cached = await _cache_essay(session, note, entry.message, clients.api_key)
+    cached = await _cache_essay(session, note, message, clients.api_key)
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
     # state the privacy floor returns -- and nothing is mirrored, because
@@ -2255,7 +2271,7 @@ async def _cache_and_mirror_essay(
             return cached
         await mirror_voice_draft(
             clients.vault_client,
-            owner_user_id=current_user,
+            owner_user_id=entry.user_id,
             marginalia_id=cast("int", cached.id),
             essay=cached.essay,
             classification=entry.classification,
