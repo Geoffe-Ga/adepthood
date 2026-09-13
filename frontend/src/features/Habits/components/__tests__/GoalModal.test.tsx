@@ -21,7 +21,7 @@ jest.mock('../../../../context/AuthContext', () => ({
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../../constants';
 import type { Goal, Habit } from '../../Habits.types';
-import { GoalModal } from '../GoalModal';
+import { describeCadence, GoalModal } from '../GoalModal';
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', overrides: Partial<Goal> = {}): Goal => ({
   id: tier === 'low' ? 1 : tier === 'clear' ? 2 : 3,
@@ -203,42 +203,90 @@ describe('GoalModal unit + frequency editor', () => {
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('commits a numeric frequency change on blur as ONE atomic batch call (#289)', () => {
+  it('edits cadence through the same saved chip and explicit Save affordance as tier targets', () => {
+    const { getByTestId, queryByTestId } = renderModal();
+    expect(getByTestId('goal-frequency-display')).toBeTruthy();
+    expect(queryByTestId('goal-frequency-input')).toBeNull();
+
+    fireEvent.press(getByTestId('goal-frequency-display'));
+
+    expect(getByTestId('goal-frequency-input')).toBeTruthy();
+    expect(getByTestId('goal-frequency-save')).toBeTruthy();
+  });
+
+  it('commits a numeric frequency with Save and collapses the following blur into one call', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-frequency-display'));
     const input = getByTestId('goal-frequency-input');
     fireEvent.changeText(input, '3');
-    fireEvent(input, 'endEditing');
+    fireEvent.press(getByTestId('goal-frequency-save'));
+    fireEvent(input, 'blur');
 
     expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
     expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
     expect(props.onUpdateGoal).not.toHaveBeenCalled();
   });
 
-  it('drops a non-finite frequency without firing any update', () => {
+  it('commits a numeric frequency with Return and collapses the following blur into one call', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-frequency-display'));
     const input = getByTestId('goal-frequency-input');
-    fireEvent.changeText(input, 'abc');
-    fireEvent(input, 'endEditing');
-    expect(props.onUpdateGoal).not.toHaveBeenCalled();
-    expect(props.onUpdateGoalUnits).not.toHaveBeenCalled();
+    fireEvent.changeText(input, '3');
+    fireEvent(input, 'submitEditing');
+    fireEvent(input, 'blur');
+
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
   });
 
-  it('drops a zero or negative frequency (positivity invariant)', () => {
+  it('commits a numeric frequency when the input blurs on its own', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-frequency-display'));
     const input = getByTestId('goal-frequency-input');
-    fireEvent.changeText(input, '0');
-    fireEvent(input, 'endEditing');
-    fireEvent.changeText(input, '-2');
-    fireEvent(input, 'endEditing');
-    expect(props.onUpdateGoal).not.toHaveBeenCalled();
+    fireEvent.changeText(input, '3');
+    fireEvent(input, 'blur');
+
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
   });
 
-  it('skips the commit when the frequency draft equals the current value', () => {
+  it('keeps the native endEditing commit path', () => {
     const { getByTestId, props } = renderModal();
+    fireEvent.press(getByTestId('goal-frequency-display'));
     const input = getByTestId('goal-frequency-input');
-    fireEvent.changeText(input, '1'); // already 1
+    fireEvent.changeText(input, '3');
     fireEvent(input, 'endEditing');
-    expect(props.onUpdateGoal).not.toHaveBeenCalled();
+
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledTimes(1);
+    expect(props.onUpdateGoalUnits).toHaveBeenCalledWith(42, { frequency: 3 });
+  });
+
+  it.each(['abc', '3abc', '3.5oops', '4x', '0', '-2', '1'])(
+    'does not commit an invalid or unchanged cadence draft: %s',
+    (draft) => {
+      const { getByTestId, props } = renderModal();
+      fireEvent.press(getByTestId('goal-frequency-display'));
+      const input = getByTestId('goal-frequency-input');
+      fireEvent.changeText(input, draft);
+      fireEvent.press(getByTestId('goal-frequency-save'));
+      fireEvent(input, 'blur');
+
+      expect(props.onUpdateGoal).not.toHaveBeenCalled();
+      expect(props.onUpdateGoalUnits).not.toHaveBeenCalled();
+    },
+  );
+
+  it('labels the cadence row in plain language and exposes the multiplier', () => {
+    const weekly = makeHabit({
+      goals: [
+        makeGoal('low', { frequency: 3, frequency_unit: 'per_week' }),
+        makeGoal('clear', { frequency: 3, frequency_unit: 'per_week' }),
+        makeGoal('stretch', { frequency: 3, frequency_unit: 'per_week' }),
+      ],
+    });
+    const { getByTestId, getByText } = renderModal(weekly);
+    expect(getByText('How often')).toBeTruthy();
+    expect(getByTestId('goal-frequency-multiplier').props.children).toBe('×');
   });
 
   it('marks the currently-selected unit chip as checked for screen readers', () => {
@@ -251,6 +299,74 @@ describe('GoalModal unit + frequency editor', () => {
     expect(selected.props.accessibilityRole).toBe('radio');
     expect(selected.props.accessibilityState).toEqual({ checked: true });
     expect(other.props.accessibilityState).toEqual({ checked: false });
+  });
+});
+
+describe('GoalModal cadence copy', () => {
+  const weeklyHabit = makeHabit({
+    goals: [
+      makeGoal('low', {
+        target: 1,
+        target_unit: 'sessions',
+        frequency: 3,
+        frequency_unit: 'per_week',
+      }),
+      makeGoal('clear', {
+        target: 2,
+        target_unit: 'sessions',
+        frequency: 3,
+        frequency_unit: 'per_week',
+      }),
+      makeGoal('stretch', {
+        target: 4,
+        target_unit: 'sessions',
+        frequency: 3,
+        frequency_unit: 'per_week',
+      }),
+    ],
+  });
+
+  it.each([
+    [makeGoal('low', { target: 1, target_unit: 'sessions' }), '1 session a day'],
+    [makeGoal('low', { target: 1, target_unit: 'calories' }), '1 calorie a day'],
+    [
+      makeGoal('low', {
+        target: 1,
+        target_unit: 'sessions',
+        frequency: 3,
+        frequency_unit: 'per_week',
+      }),
+      '1 session, 3 times per week',
+    ],
+    [
+      makeGoal('low', {
+        target: 4,
+        target_unit: 'sessions',
+        frequency: 4,
+        frequency_unit: 'per_month',
+      }),
+      '4 sessions, 4 times per month',
+    ],
+    [
+      makeGoal('low', {
+        target: 1,
+        target_unit: 'sessions',
+        frequency_unit: 'per_session',
+      }),
+      '1 session per session',
+    ],
+  ])('describes %j as %s', (goal, expected) => {
+    expect(describeCadence(goal)).toBe(expected);
+  });
+
+  it('uses the same weekly sentence in the tier row and tooltip without duplicated prepositions', () => {
+    const { getByLabelText, getByTestId, getByText } = renderModal(weeklyHabit);
+    expect(getByLabelText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
+    expect(getByText('session, 3 times per week')).toBeTruthy();
+
+    fireEvent(getByTestId('modal-marker-low'), 'mouseEnter');
+    expect(getByText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
+    expect(() => getByText(/per per/)).toThrow();
   });
 });
 

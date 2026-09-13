@@ -63,10 +63,34 @@ const tooltipTextStyle: TextStyle = {
   letterSpacing: 0.5,
 };
 
-const formatGoalTooltip = (g: Goal | undefined): string => {
-  if (!g) return '';
-  const label = TIER_LABELS[g.tier] ?? g.tier;
-  return `${label}: ${g.target} ${g.target_unit} per ${g.frequency_unit.replace('_', ' ')}`;
+const singularizeGoalUnit = (unit: string): string => {
+  if (unit === 'calories') return 'calorie';
+  return unit.endsWith('s') ? unit.slice(0, -1) : unit;
+};
+
+const targetPhrase = (goal: Goal, target: number): string => {
+  const unit = target === 1 ? singularizeGoalUnit(goal.target_unit) : goal.target_unit;
+  return `${target} ${unit}`;
+};
+
+/** Describe a tier goal as one plain-language target-and-cadence sentence. */
+export const describeCadence = (goal: Goal, target = goal.target): string => {
+  const targetText = targetPhrase(goal, target);
+  if (goal.frequency_unit === 'per_session') return `${targetText} per session`;
+  if (goal.frequency_unit === 'per_day' && goal.frequency === 1) return `${targetText} a day`;
+
+  const period = goal.frequency_unit.replace(/^per_/, '').replace(/_/g, ' ');
+  const repetition = goal.frequency === 1 ? 'once' : `${goal.frequency} times`;
+  return `${targetText}, ${repetition} per ${period}`;
+};
+
+const cadenceAfterTarget = (goal: Goal): string =>
+  describeCadence(goal).slice(String(goal.target).length + 1);
+
+const formatGoalTooltip = (goal: Goal | undefined): string => {
+  if (!goal) return '';
+  const label = TIER_LABELS[goal.tier] ?? goal.tier;
+  return `${label} · ${describeCadence(goal)}`;
 };
 
 /** A modal marker spec carries its resolved `Goal` and (for draggable tiers) pan handlers. */
@@ -377,6 +401,14 @@ const goalEditorStyles = StyleSheet.create({
     fontWeight: '600',
     fontSize: GOAL_SAVE_BUTTON_FONT_SIZE,
   },
+  frequencySaveButton: {
+    backgroundColor: colors.tier.clear,
+  },
+  frequencyDisplay: {
+    width: GOAL_FREQ_INPUT_WIDTH,
+    marginLeft: 0,
+    marginRight: SPACING.sm,
+  },
   displayText: {
     fontSize: GOAL_INPUT_FONT_SIZE,
     fontWeight: '600',
@@ -424,13 +456,22 @@ const goalEditorStyles = StyleSheet.create({
   freqInput: {
     width: GOAL_FREQ_INPUT_WIDTH,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderTopColor: colors.bevel.edgeDark,
+    borderLeftColor: colors.bevel.edgeDark,
+    borderBottomColor: colors.bevel.edgeLight,
+    borderRightColor: colors.bevel.edgeLight,
     borderRadius: GOAL_INPUT_BORDER_RADIUS,
     paddingVertical: GOAL_INPUT_VERTICAL_PADDING,
     paddingHorizontal: SPACING.sm,
     textAlign: 'center',
     fontSize: GOAL_INPUT_FONT_SIZE,
     marginRight: SPACING.sm,
+    backgroundColor: colors.bevel.recessedSurface,
+  },
+  multiplier: {
+    marginRight: SPACING.sm,
+    color: colors.text.secondary,
+    fontSize: GOAL_INPUT_FONT_SIZE,
   },
 });
 
@@ -447,14 +488,18 @@ interface GoalTargetRowProps {
  * is asynchronous so it can't guard the second call; the ref is set
  * synchronously and reset on each ``startEdit``.
  */
-const useTargetDraft = (goal: Goal, onCommit: (_target: number) => void) => {
+const useNumericDraft = (
+  value: number,
+  onCommit: (_value: number) => void,
+  isValid: (_value: number) => boolean = Number.isFinite,
+) => {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(goal.target));
+  const [draft, setDraft] = useState(String(value));
   const submittedRef = useRef(false);
   // Skip sync mid-edit so out-of-band updates don't clobber in-flight typing.
   useEffect(() => {
-    if (!editing) setDraft(String(goal.target));
-  }, [goal.target, editing]);
+    if (!editing) setDraft(String(value));
+  }, [value, editing]);
 
   const startEdit = () => {
     submittedRef.current = false;
@@ -465,9 +510,10 @@ const useTargetDraft = (goal: Goal, onCommit: (_target: number) => void) => {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setEditing(false);
-    const parsed = Number.parseFloat(draft);
-    if (!Number.isFinite(parsed) || parsed === goal.target) {
-      setDraft(String(goal.target));
+    const trimmedDraft = draft.trim();
+    const parsed = trimmedDraft === '' ? Number.NaN : Number(trimmedDraft);
+    if (!isValid(parsed) || parsed === value) {
+      setDraft(String(value));
       return;
     }
     onCommit(parsed);
@@ -484,12 +530,15 @@ const useTargetDraft = (goal: Goal, onCommit: (_target: number) => void) => {
  *     to commit.
  */
 const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
-  const { editing, draft, setDraft, startEdit, trySave } = useTargetDraft(goal, onCommit);
+  const { editing, draft, setDraft, startEdit, trySave } = useNumericDraft(goal.target, onCommit);
   const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
   const tierColor = getTierColor(goal.tier);
 
   return (
-    <View style={goalEditorStyles.row}>
+    <View
+      style={goalEditorStyles.row}
+      accessibilityLabel={`${tierLabel} · ${describeCadence(goal)}`}
+    >
       <Text style={[goalEditorStyles.label, { color: tierColor }]}>{tierLabel}</Text>
       {editing ? (
         <>
@@ -528,9 +577,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
           <Text style={[goalEditorStyles.displayText, { color: tierColor }]}>{goal.target}</Text>
         </TouchableOpacity>
       )}
-      <Text style={goalEditorStyles.unit}>
-        {goal.target_unit} / {goal.frequency_unit.replace('_', ' ')}
-      </Text>
+      <Text style={goalEditorStyles.unit}>{cadenceAfterTarget(goal)}</Text>
     </View>
   );
 };
@@ -629,22 +676,49 @@ interface GoalUnitEditorProps {
 }
 
 interface FrequencyInputProps {
+  editing: boolean;
   draft: string;
   setDraft: (_v: string) => void;
-  onEnd: () => void;
+  startEdit: () => void;
+  trySave: () => void;
 }
 
-const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
-  <TextInput
-    testID="goal-frequency-input"
-    style={goalEditorStyles.freqInput}
-    value={draft}
-    onChangeText={setDraft}
-    onEndEditing={onEnd}
-    keyboardType="numeric"
-    returnKeyType="done"
-  />
-);
+const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: FrequencyInputProps) =>
+  editing ? (
+    <>
+      <TextInput
+        testID="goal-frequency-input"
+        style={goalEditorStyles.freqInput}
+        value={draft}
+        onChangeText={setDraft}
+        onBlur={trySave}
+        onEndEditing={trySave}
+        onSubmitEditing={trySave}
+        autoFocus
+        keyboardType="numeric"
+        returnKeyType="done"
+      />
+      <TouchableOpacity
+        testID="goal-frequency-save"
+        accessibilityRole="button"
+        accessibilityLabel="Save cadence"
+        onPress={trySave}
+        style={[goalEditorStyles.saveButton, goalEditorStyles.frequencySaveButton]}
+      >
+        <Text style={goalEditorStyles.saveButtonText}>Save</Text>
+      </TouchableOpacity>
+    </>
+  ) : (
+    <TouchableOpacity
+      testID="goal-frequency-display"
+      accessibilityRole="button"
+      accessibilityLabel={`Edit cadence, currently ${draft}`}
+      onPress={startEdit}
+      style={[goalEditorStyles.display, goalEditorStyles.frequencyDisplay]}
+    >
+      <Text style={goalEditorStyles.displayText}>{draft}</Text>
+    </TouchableOpacity>
+  );
 
 /**
  * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
@@ -654,10 +728,6 @@ const FrequencyInput = ({ draft, setDraft, onEnd }: FrequencyInputProps) => (
  */
 const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorProps) => {
   const reference = goals[0];
-  const [freqDraft, setFreqDraft] = useState(String(reference.frequency));
-  useEffect(() => {
-    setFreqDraft(String(reference.frequency));
-  }, [reference.frequency]);
 
   // Issue #289: ONE consolidated call — the backend updates every tier
   // inside a single transaction, so a failure can never strand tiers on
@@ -666,14 +736,11 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorPro
     onUpdateGoalUnits(habitId, changes);
   };
 
-  const handleFreqEnd = () => {
-    const parsed = Number.parseFloat(freqDraft);
-    if (!Number.isFinite(parsed) || parsed <= 0 || parsed === reference.frequency) {
-      setFreqDraft(String(reference.frequency));
-      return;
-    }
-    commit({ frequency: parsed });
-  };
+  const frequencyDraft = useNumericDraft(
+    reference.frequency,
+    (frequency) => commit({ frequency }),
+    (frequency) => Number.isFinite(frequency) && frequency > 0,
+  );
 
   return (
     <View testID="goal-unit-editor">
@@ -687,8 +754,11 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorPro
         />
       </View>
       <View style={goalEditorStyles.row}>
-        <Text style={goalEditorStyles.fieldLabel}>Every</Text>
-        <FrequencyInput draft={freqDraft} setDraft={setFreqDraft} onEnd={handleFreqEnd} />
+        <Text style={goalEditorStyles.fieldLabel}>How often</Text>
+        <FrequencyInput {...frequencyDraft} />
+        <Text testID="goal-frequency-multiplier" style={goalEditorStyles.multiplier}>
+          ×
+        </Text>
         <UnitChipRow
           options={FREQUENCY_UNITS}
           selected={reference.frequency_unit}
@@ -851,7 +921,7 @@ const buildPendingGoalEdit = (
     goal,
     newTarget,
     title: `Edit ${tierLabel.split(' ')[0]} Goal`,
-    message: `Edit the ${tierLabel} to be ${newTarget} ${goal.target_unit} ${goal.frequency_unit.replace('_', ' ')}?`,
+    message: `Set ${tierLabel} to ${describeCadence(goal, newTarget)}?`,
   };
 };
 

@@ -273,4 +273,37 @@ describe('GoalModal star long-press fill', () => {
     advance(FULL_SWEEP_MS * 2);
     expect(props.onLogUnit).not.toHaveBeenCalled();
   });
+
+  it('uses the shared plain-language cadence sentence in the drag confirmation', () => {
+    const weekly = makeHabit({
+      goals: [
+        makeGoal('low', {
+          target: 1,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        }),
+        makeGoal('clear', {
+          target: 2,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        }),
+        makeGoal('stretch', {
+          target: 4,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        }),
+      ],
+    });
+    const { getByTestId, getByText } = renderModal(weekly);
+    const lowMarker = getByTestId('modal-marker-low');
+
+    grantMarker(lowMarker);
+    advance(STAR_LONG_PRESS_MS / 4);
+    releaseMarker(lowMarker);
+
+    expect(getByText('Set Low Grit to 1 session, 3 times per week?')).toBeTruthy();
+  });
 });
