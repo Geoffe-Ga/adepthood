@@ -2,7 +2,6 @@ import { Check, ChevronLeft, ChevronRight, Pencil } from 'lucide-react-native';
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -39,6 +38,7 @@ import {
   getTierColor,
   getGoalTarget,
   isGoalAchieved,
+  completionDayKey,
 } from '../HabitUtils';
 import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
 import { createMarkerGesture } from '../markerGesture';
@@ -278,45 +278,75 @@ const LogDateStepper = ({ logDate, setLogDate, tz }: LogDateStepperProps) => {
 interface LogUnitSectionProps {
   logAmount: string;
   setLogAmount: (_v: string) => void;
+  logOperation: LogOperation;
+  cycleLogOperation: () => void;
   logDate: Date;
   setLogDate: (_v: Date) => void;
   tz: string;
   onLog: () => void;
-  onToggleSign: () => void;
 }
+
+type LogOperation = 'subtract' | 'add' | 'set';
+
+const LOG_OPERATION_LABEL: Record<LogOperation, string> = {
+  subtract: '−',
+  add: '+',
+  set: 'set',
+};
+
+const NEXT_LOG_OPERATION: Record<LogOperation, LogOperation> = {
+  subtract: 'add',
+  add: 'set',
+  set: 'subtract',
+};
+
+const totalUnitsForDay = (habit: GoalModalProps['habit'], date: Date, tz: string): number => {
+  const selectedDay = dayKeyInTZ(date, tz);
+  const total = (habit?.completions ?? []).reduce(
+    (sum, completion) =>
+      completionDayKey(completion, tz) === selectedDay ? sum + completion.completed_units : sum,
+    0,
+  );
+  return Math.max(0, total);
+};
+
+const qualifyLogAmount = (
+  operation: LogOperation,
+  magnitude: number,
+  currentTotal: number,
+): number => {
+  if (operation === 'subtract') return -magnitude;
+  if (operation === 'set') return magnitude - currentTotal;
+  return magnitude;
+};
 
 const LogUnitSection = ({
   logAmount,
   setLogAmount,
+  logOperation,
+  cycleLogOperation,
   logDate,
   setLogDate,
   tz,
   onLog,
-  onToggleSign,
 }: LogUnitSectionProps) => (
   <View style={styles.actionButtons} testID="goal-modal-log-unit-section">
     <LogDateStepper logDate={logDate} setLogDate={setLogDate} tz={tz} />
     <View style={styles.logUnitContainer}>
       <TouchableOpacity
-        testID="goal-log-sign-toggle"
+        testID="goal-log-operation"
         accessibilityRole="button"
-        accessibilityLabel={
-          logAmount.trimStart().startsWith('-')
-            ? 'Make logged amount positive'
-            : 'Make logged amount negative'
-        }
-        onPress={onToggleSign}
-        style={styles.logUnitSignToggle}
+        accessibilityLabel={`Logging operation: ${logOperation}. Tap to change to ${NEXT_LOG_OPERATION[logOperation]}`}
+        onPress={cycleLogOperation}
+        style={styles.logUnitOperation}
       >
-        <Text style={styles.logUnitSignToggleText}>
-          {logAmount.trimStart().startsWith('-') ? '+' : '−'}
-        </Text>
+        <Text style={styles.logUnitOperationText}>{LOG_OPERATION_LABEL[logOperation]}</Text>
       </TouchableOpacity>
       <TextInput
         style={styles.logUnitInput}
         value={logAmount}
         onChangeText={setLogAmount}
-        keyboardType={Platform.OS === 'web' ? 'default' : 'numbers-and-punctuation'}
+        keyboardType="numeric"
       />
       <Button label="Log Units" onPress={onLog} testID="goal-log-units" />
     </View>
@@ -1233,28 +1263,36 @@ const buildProgressBarProps = (
 const useLogState = (
   habit: NonNullable<GoalModalProps['habit']>,
   onLogUnit: GoalModalProps['onLogUnit'],
-) => {
+  tz: string,
+): LogUnitSectionProps => {
   const [logAmount, setLogAmount] = useState('1');
+  const [logOperation, setLogOperation] = useState<LogOperation>('add');
   const [logDate, setLogDate] = useState<Date>(() => new Date());
 
-  const toggleLogSign = () => {
-    setLogAmount((current) => {
-      const normalized = current.trim().replace(/^[−‐‑‒–—]/, '-');
-      if (normalized.startsWith('-')) return normalized.slice(1) || '1';
-      return `-${normalized.replace(/^\+/, '') || '1'}`;
-    });
-  };
+  const cycleLogOperation = () => setLogOperation((current) => NEXT_LOG_OPERATION[current]);
 
   const handleLogUnit = () => {
     if (habit.id == null) return;
     const normalized = logAmount.trim().replace(/^[−‐‑‒–—]/, '-');
     const parsed = normalized === '' ? Number.NaN : Number(normalized);
-    onLogUnit(habit.id, Number.isFinite(parsed) ? parsed : 1, logDate);
+    const magnitude = Number.isFinite(parsed) ? Math.abs(parsed) : 1;
+    const amount = qualifyLogAmount(logOperation, magnitude, totalUnitsForDay(habit, logDate, tz));
+    onLogUnit(habit.id, amount, logDate);
     setLogAmount('1');
+    setLogOperation('add');
     setLogDate(new Date());
   };
 
-  return { logAmount, setLogAmount, logDate, setLogDate, handleLogUnit, toggleLogSign };
+  return {
+    logAmount,
+    setLogAmount,
+    logOperation,
+    cycleLogOperation,
+    logDate,
+    setLogDate,
+    tz,
+    onLog: handleLogUnit,
+  };
 };
 
 const GoalEditConfirmDialog = ({
@@ -1314,7 +1352,7 @@ const GoalModalBody = ({
   const goalGroup = useGoalGroup(habit);
   const { userTimezone } = useAuth();
   const { m, fill } = useMarkersWithStarFill(habit, onUpdateGoal, onLogUnit, userTimezone);
-  const log = useLogState(habit, onLogUnit);
+  const log = useLogState(habit, onLogUnit, userTimezone);
 
   return (
     <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
@@ -1339,15 +1377,7 @@ const GoalModalBody = ({
           />
         </View>
       )}
-      <LogUnitSection
-        logAmount={log.logAmount}
-        setLogAmount={log.setLogAmount}
-        logDate={log.logDate}
-        setLogDate={log.setLogDate}
-        tz={userTimezone}
-        onLog={log.handleLogUnit}
-        onToggleSign={log.toggleLogSign}
-      />
+      <LogUnitSection {...log} />
       <GoalEditConfirmDialog m={m} />
     </View>
   );

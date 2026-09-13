@@ -636,33 +636,101 @@ describe('GoalModal log-unit guards', () => {
     expect(amount).toBe(0);
   });
 
-  it('logs a signed negative amount instead of dropping its sign', () => {
-    const { getByTestId, getByText, props } = renderModal();
-    const logSection = getByTestId('goal-modal-log-unit-section');
-    const amountInput = within(logSection).getByDisplayValue('1');
-    fireEvent.changeText(amountInput, '-10');
-    fireEvent.press(getByText('Log Units'));
-
-    expect(props.onLogUnit).toHaveBeenCalledWith(42, -10, expect.any(Date));
-  });
-
-  it('normalizes a typographic minus pasted before an amount', () => {
+  it('uses the selected operation rather than a sign pasted into the number field', () => {
     const { getByTestId, getByText, props } = renderModal();
     const logSection = getByTestId('goal-modal-log-unit-section');
     fireEvent.changeText(within(logSection).getByDisplayValue('1'), '−10');
     fireEvent.press(getByText('Log Units'));
 
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, 10, expect.any(Date));
+  });
+
+  it('qualifies the entered amount with the subtract operation', () => {
+    const { getByTestId, getByText, props } = renderModal();
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    const amountInput = within(logSection).getByDisplayValue('1');
+    fireEvent.changeText(amountInput, '10');
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByText('Log Units'));
+
     expect(props.onLogUnit).toHaveBeenCalledWith(42, -10, expect.any(Date));
   });
 
-  it('offers a touch sign toggle and uses a signed native keyboard', () => {
-    const { getByTestId } = renderModal();
-    const input = within(getByTestId('goal-modal-log-unit-section')).getByDisplayValue('1');
-    expect(input.props.keyboardType).toBe('numbers-and-punctuation');
+  it('sets the selected day to an exact higher total by logging only the difference', () => {
+    const habit = makeHabit({
+      completions: [{ id: 'today-1', timestamp: new Date(), completed_units: 4 }],
+    });
+    const { getByTestId, getByText, props } = renderModal(habit);
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    fireEvent.changeText(within(logSection).getByDisplayValue('1'), '10');
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByText('Log Units'));
 
-    fireEvent.press(getByTestId('goal-log-sign-toggle'));
-    expect(within(getByTestId('goal-modal-log-unit-section')).getByDisplayValue('-1')).toBeTruthy();
-    expect(getByTestId('goal-log-sign-toggle').props.accessibilityLabel).toMatch(/positive/i);
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, 6, expect.any(Date));
+  });
+
+  it('sets the selected day to an exact lower total with a negative correction', () => {
+    const habit = makeHabit({
+      completions: [
+        { id: 'today-1', timestamp: new Date(), completed_units: 8 },
+        { id: 'today-2', timestamp: new Date(), completed_units: 2 },
+      ],
+    });
+    const { getByTestId, getByText, props } = renderModal(habit);
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    fireEvent.changeText(within(logSection).getByDisplayValue('1'), '3');
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByText('Log Units'));
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, -7, expect.any(Date));
+  });
+
+  it('uses the selected past day total when setting an exact amount', () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const habit = makeHabit({
+      completions: [
+        { id: 'today-1', timestamp: new Date(), completed_units: 20 },
+        { id: 'yesterday-1', timestamp: yesterday, completed_units: 5 },
+      ],
+    });
+    const { getByTestId, getByText, props } = renderModal(habit);
+    const logSection = getByTestId('goal-modal-log-unit-section');
+    fireEvent.press(getByTestId('log-date-prev'));
+    fireEvent.changeText(within(logSection).getByDisplayValue('1'), '3');
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByText('Log Units'));
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, -2, expect.any(Date));
+  });
+
+  it('cycles add, set, and subtract before returning to add', () => {
+    const { getByTestId } = renderModal();
+    const operation = () => getByTestId('goal-log-operation');
+    const operationLabel = () => within(operation()).getByText(/^(\+|set|−)$/).props.children;
+    const input = within(getByTestId('goal-modal-log-unit-section')).getByDisplayValue('1');
+    expect(input.props.keyboardType).toBe('numeric');
+    expect(operationLabel()).toBe('+');
+    expect(operation().props.accessibilityLabel).toMatch(/add/i);
+
+    fireEvent.press(operation());
+    expect(operationLabel()).toBe('set');
+    expect(operation().props.accessibilityLabel).toMatch(/set/i);
+
+    fireEvent.press(operation());
+    expect(operationLabel()).toBe('−');
+    expect(operation().props.accessibilityLabel).toMatch(/subtract/i);
+
+    fireEvent.press(operation());
+    expect(operationLabel()).toBe('+');
+  });
+
+  it('resets the operation to add after logging', () => {
+    const { getByTestId, getByText } = renderModal();
+    fireEvent.press(getByTestId('goal-log-operation'));
+    fireEvent.press(getByText('Log Units'));
+    expect(within(getByTestId('goal-log-operation')).getByText('+')).toBeTruthy();
   });
 });
 
@@ -672,7 +740,7 @@ describe('GoalModal footer layout contract', () => {
   });
 
   // The footer row holds two fixed-min-width children (date stepper +
-  // input+"Log Units" group) whose combined width exceeds the modal content
+  // operation+input+"Log Units" group) whose combined width exceeds the modal content
   // box on phone viewports; RN Views don't clip and can't shrink, so without
   // wrap the button paints past the modal's right edge. Wrap is the layout
   // contract that lets the group drop to a second line instead of overflowing.
@@ -687,7 +755,7 @@ describe('GoalModal footer layout contract', () => {
     const { getByTestId } = render(<GoalModal {...buildProps()} />);
     const footer = flattenFooterStyle(getByTestId);
     expect(footer.flexWrap).toBe('wrap');
-    // A row gap keeps the wrapped input+button group off the stepper above it.
+    // A row gap keeps the wrapped operation+input+button group off the stepper above it.
     expect(footer.rowGap).toBeGreaterThan(0);
   });
 
