@@ -151,6 +151,7 @@ async def test_compute_consecutive_streak_counts_unique_days(
                 user_id=user.id,
                 completed_units=goal.target,
                 timestamp=now - timedelta(days=days_ago),
+                local_day=(now - timedelta(days=days_ago)).date(),
             )
         )
     await db_session.commit()
@@ -194,11 +195,18 @@ async def test_compute_consecutive_streak_ignores_most_recent_zero_unit_row(
             user_id=user.id,
             completed_units=goal.target,
             timestamp=now - timedelta(days=1),
+            local_day=(now - timedelta(days=1)).date(),
         )
     )
     await db_session.commit()
     db_session.add(
-        GoalCompletion(goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=now)
+        GoalCompletion(
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=0,
+            timestamp=now,
+            local_day=now.date(),
+        )
     )
     await db_session.commit()
 
@@ -221,9 +229,14 @@ async def test_compute_consecutive_streak_matches_compute_habit_streak_on_zero_u
         user_id=user.id,
         completed_units=goal.target,
         timestamp=now - timedelta(days=1),
+        local_day=(now - timedelta(days=1)).date(),
     )
     today_zero_row = GoalCompletion(
-        goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=now
+        goal_id=goal.id,
+        user_id=user.id,
+        completed_units=0,
+        timestamp=now,
+        local_day=now.date(),
     )
     db_session.add(yesterday_completion)
     await db_session.commit()
@@ -256,12 +269,17 @@ async def test_compute_consecutive_streak_zero_unit_row_does_not_extend_grace(
             user_id=user.id,
             completed_units=goal.target,
             timestamp=stale_completion,
+            local_day=stale_completion.date(),
         )
     )
     await db_session.commit()
     db_session.add(
         GoalCompletion(
-            goal_id=goal.id, user_id=user.id, completed_units=0, timestamp=today_zero_row
+            goal_id=goal.id,
+            user_id=user.id,
+            completed_units=0,
+            timestamp=today_zero_row,
+            local_day=today_zero_row.date(),
         )
     )
     await db_session.commit()
@@ -286,17 +304,15 @@ async def test_compute_consecutive_streak_returns_zero_for_new_goal(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("frozen_clock")
-async def test_streak_uses_user_timezone_across_utc_midnight(
+async def test_streak_uses_persisted_local_day_across_utc_midnight(
     db_session: AsyncSession,
 ) -> None:
-    """Same UTC day = two different Pacific days -> different streak counts.
+    """Persisted Pacific days remain distinct despite one shared UTC date.
 
-    Recreates the BUG-STREAK-002 scenario.  Two completions both fall on
-    UTC date 2026-06-15 (06:00 UTC and 18:00 UTC), so a UTC-bucketed
-    streak collapses them onto one day and reports 1.  The 06:00 UTC
-    moment is 23:00 PDT on the *previous* day, so a Pacific-bucketed
-    streak sees two consecutive days and reports 2.  This is exactly
-    the divergence West Coast users experienced in production.
+    Recreates the BUG-STREAK-002 boundary, now with the write-time calendar
+    identity made explicit. Both timestamps fall on UTC date 2026-06-15,
+    while their canonical Pacific ``local_day`` values are June 14 and 15.
+    Streak reads must not reinterpret the immutable audit timestamp.
     """
     user = await _make_user(db_session)
     assert user.id is not None
@@ -315,20 +331,22 @@ async def test_streak_uses_user_timezone_across_utc_midnight(
                 user_id=user.id,
                 completed_units=goal.target,
                 timestamp=late_pacific_yesterday,
+                local_day=date(2026, 6, 14),
             ),
             GoalCompletion(
                 goal_id=goal.id,
                 user_id=user.id,
                 completed_units=goal.target,
                 timestamp=morning_pacific_today,
+                local_day=date(2026, 6, 15),
             ),
         ]
     )
     await db_session.commit()
 
-    # In UTC both timestamps share calendar day 2026-06-15 -> streak = 1.
-    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 1
-    # In Pacific they fall on consecutive days (06-14 and 06-15) -> streak = 2.
+    # Calendar membership is durable; the supplied timezone only determines
+    # which date is "today" for the recency gate.
+    assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC") == 2
     assert (
         await compute_consecutive_streak(
             db_session,
@@ -361,24 +379,55 @@ async def test_streak_buckets_to_different_dates_pago_pago_vs_kiritimati(
     assert kiritimati_date == date(2026, 6, 15)
     assert pago_date != kiritimati_date
 
-    # Sanity-check that a single completion still streaks to 1 in both
-    # zones (the bucketing diverges, the count does not).
+    # Each write persists the date selected in its account zone; later reads
+    # consume that date instead of re-bucketing the shared UTC instant.
     user = await _make_user(db_session)
     assert user.id is not None
-    goal = await _make_goal(db_session, user.id)
-    assert goal.id is not None
-    db_session.add(
-        GoalCompletion(
-            goal_id=goal.id,
-            user_id=user.id,
-            completed_units=goal.target,
-            timestamp=moment,
-        ),
+    pago_goal = await _make_goal(db_session, user.id)
+    assert pago_goal.id is not None
+    kiritimati_goal = Goal(
+        habit_id=pago_goal.habit_id,
+        title="Sit ten minutes in Kiritimati",
+        tier="stretch",
+        target=1.0,
+        target_unit="minutes",
+        frequency=1.0,
+        frequency_unit="per_day",
+    )
+    db_session.add(kiritimati_goal)
+    await db_session.commit()
+    await db_session.refresh(kiritimati_goal)
+    assert kiritimati_goal.id is not None
+    db_session.add_all(
+        [
+            GoalCompletion(
+                goal_id=pago_goal.id,
+                user_id=user.id,
+                completed_units=pago_goal.target,
+                timestamp=moment,
+                local_day=pago_date,
+            ),
+            GoalCompletion(
+                goal_id=kiritimati_goal.id,
+                user_id=user.id,
+                completed_units=kiritimati_goal.target,
+                timestamp=moment,
+                local_day=kiritimati_date,
+            ),
+        ]
     )
     await db_session.commit()
 
-    assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Pago_Pago") == 1
-    assert await compute_consecutive_streak(db_session, goal.id, user.id, "Pacific/Kiritimati") == 1
+    assert (
+        await compute_consecutive_streak(db_session, pago_goal.id, user.id, "Pacific/Pago_Pago")
+        == 1
+    )
+    assert (
+        await compute_consecutive_streak(
+            db_session, kiritimati_goal.id, user.id, "Pacific/Kiritimati"
+        )
+        == 1
+    )
 
 
 # ── BUG-FE-HABIT-207 backend parity: recency gate on stale chains ──────────
@@ -410,6 +459,7 @@ def test_compute_habit_streak_returns_zero_when_chain_is_stale() -> None:
             user_id=user_id,
             completed_units=1.0,
             timestamp=_utc_dt_n_days_ago(days_ago),
+            local_day=_utc_dt_n_days_ago(days_ago).date(),
         )
         for days_ago in (5, 6, 7, 8, 9)
     ]
@@ -427,6 +477,7 @@ def test_compute_habit_streak_counts_chain_ending_yesterday() -> None:
             user_id=user_id,
             completed_units=1.0,
             timestamp=_utc_dt_n_days_ago(days_ago),
+            local_day=_utc_dt_n_days_ago(days_ago).date(),
         )
         for days_ago in (1, 2, 3)
     ]
@@ -444,6 +495,7 @@ def test_compute_habit_streak_counts_chain_including_today() -> None:
             user_id=user_id,
             completed_units=1.0,
             timestamp=_utc_dt_n_days_ago(days_ago),
+            local_day=_utc_dt_n_days_ago(days_ago).date(),
         )
         for days_ago in (0, 1, 2)
     ]
@@ -468,6 +520,7 @@ async def test_compute_consecutive_streak_returns_zero_when_chain_is_stale(
                 user_id=user.id,
                 completed_units=goal.target,
                 timestamp=_utc_dt_n_days_ago(days_ago),
+                local_day=_utc_dt_n_days_ago(days_ago).date(),
             ),
         )
     await db_session.commit()
@@ -500,7 +553,15 @@ def test_compute_habit_streak_subtractive_breaks_on_transgression() -> None:
     transgression (7 > clear=5) ends the chain — streak = 1.
     """
     yesterday = _utc_dt_n_days_ago(1)
-    completions = [GoalCompletion(goal_id=1, user_id=1, completed_units=7.0, timestamp=yesterday)]
+    completions = [
+        GoalCompletion(
+            goal_id=1,
+            user_id=1,
+            completed_units=7.0,
+            timestamp=yesterday,
+            local_day=yesterday.date(),
+        )
+    ]
     today_date = datetime.now(UTC).date()
     ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=10))
 
@@ -515,6 +576,7 @@ def test_compute_habit_streak_subtractive_below_threshold_keeps_streak() -> None
             user_id=1,
             completed_units=2.0,
             timestamp=_utc_dt_n_days_ago(days_ago),
+            local_day=_utc_dt_n_days_ago(days_ago).date(),
         )
         for days_ago in (0, 1, 2)
     ]
@@ -535,7 +597,15 @@ def test_compute_habit_streak_subtractive_at_threshold_is_success() -> None:
     case.
     """
     today_dt = _utc_dt_n_days_ago(0)
-    completions = [GoalCompletion(goal_id=1, user_id=1, completed_units=5.0, timestamp=today_dt)]
+    completions = [
+        GoalCompletion(
+            goal_id=1,
+            user_id=1,
+            completed_units=5.0,
+            timestamp=today_dt,
+            local_day=today_dt.date(),
+        )
+    ]
     today_date = datetime.now(UTC).date()
     ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date)
 
@@ -585,6 +655,7 @@ async def test_compute_consecutive_streak_subtractive_breaks_on_transgression(
             user_id=user.id,
             completed_units=10.0,  # well above clear=5
             timestamp=_utc_dt_n_days_ago(2),
+            local_day=_utc_dt_n_days_ago(2).date(),
         ),
     )
     await db_session.commit()

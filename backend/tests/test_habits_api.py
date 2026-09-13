@@ -744,6 +744,7 @@ async def test_streak_is_not_clipped_by_the_transport_window(
             user_id=habit_row.user_id,
             completed_units=1.0,
             timestamp=now_naive - timedelta(days=days_back, hours=1),
+            local_day=today_in_tz("UTC") - timedelta(days=days_back),
         )
         for days_back in range(streak_days)
     )

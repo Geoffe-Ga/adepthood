@@ -13,6 +13,7 @@ from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
 from .goal import Goal
 from .goal_completion import GoalCompletion
+from .goal_completion_idempotency import GoalCompletionSpend
 from .goal_group import GoalGroup
 from .gumroad_sale import GumroadSale
 from .habit import Habit
@@ -62,6 +63,7 @@ __all__ = [
     "Entitlement",
     "Goal",
     "GoalCompletion",
+    "GoalCompletionSpend",
     "GoalGroup",
     "GumroadSale",
     "Habit",

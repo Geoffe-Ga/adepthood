@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
-from domain.dates import to_user_date_bucket, today_in_tz
+from domain.dates import today_in_tz
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,20 +48,22 @@ class SubtractiveContext:
 
 def sum_units_by_user_day(
     completions: Sequence[GoalCompletion],
-    user_timezone: str,
 ) -> dict[date, float]:
-    """Sum completion units per user-local calendar day.
+    """Sum completion units by their persisted user-local calendar day.
 
     The single owner of the ``day_totals[day] = get(day, 0.0) + units`` bucketing
-    loop keyed on :func:`domain.dates.to_user_date_bucket`.  Used by both the
-    in-memory streak path (``GET /habits``) and the per-goal stats/streak paths,
-    which must agree or the same goal would report two different streaks.  No
-    ``> 0`` filter is applied: subtractive habits treat the absence of a row as
-    perfect abstention, so zero-sum days stay addressable via ``get(day, 0.0)``.
+    loop keyed on ``GoalCompletion.local_day``.  That column is the canonical
+    calendar identity used by writes and database uniqueness; ``timestamp`` is
+    immutable audit provenance and may reflect a former account timezone.  The
+    in-memory streak path (``GET /habits``) and per-goal stats/streak paths all
+    use this helper so they cannot disagree after an account-timezone change.
+    No ``> 0`` filter is applied: subtractive habits treat the absence of a row
+    as perfect abstention, so zero-sum days stay addressable via
+    ``get(day, 0.0)``.
     """
     day_totals: dict[date, float] = {}
     for c in completions:
-        day = to_user_date_bucket(c.timestamp, user_timezone)
+        day = c.local_day
         day_totals[day] = day_totals.get(day, 0.0) + c.completed_units
     return day_totals
 

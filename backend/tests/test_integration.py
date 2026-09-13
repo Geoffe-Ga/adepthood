@@ -111,12 +111,14 @@ async def test_signup_create_habit_log_completion_check_streak(
     # Seed completions on 2 prior days to build a streak history
     now = datetime.now(UTC)
     for days_ago in [2, 1]:
+        completed_at = now - timedelta(days=days_ago)
         db_session.add(
             GoalCompletion(
                 goal_id=goal.id,
                 user_id=user_id,
                 completed_units=goal.target,
-                timestamp=now - timedelta(days=days_ago),
+                local_day=completed_at.date(),
+                timestamp=completed_at,
             )
         )
     await db_session.commit()

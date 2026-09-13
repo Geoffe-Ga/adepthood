@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-from domain.dates import to_user_date_bucket, today_in_tz
+from domain.dates import today_in_tz
 from domain.streaks import (
     SubtractiveContext,
     current_consecutive_streak,
@@ -37,14 +37,13 @@ def _empty_stats() -> HabitStats:
 
 def _aggregate_by_day(
     completions: list[GoalCompletion],
-    user_timezone: str,
 ) -> tuple[list[float], list[int], set[date]]:
-    """Sum units + count events per JS weekday; returns dates as ``date`` objects."""
+    """Sum units and events by the canonical local day's JS weekday."""
     units = [0.0] * _DAYS_IN_WEEK
     counts = [0] * _DAYS_IN_WEEK
     dates: set[date] = set()
     for c in completions:
-        local_date = to_user_date_bucket(c.timestamp, user_timezone)
+        local_date = c.local_day
         js_idx = (local_date.weekday() + 1) % _DAYS_IN_WEEK
         units[js_idx] += c.completed_units
         counts[js_idx] += 1
@@ -93,9 +92,9 @@ def _subtractive_stats(
     Only the two streak fields flip polarity, which is the visible
     inconsistency that PR #379 review surfaced.
     """
-    units, presence, dates = _aggregate_by_day(completions, user_timezone)
+    units, presence, dates = _aggregate_by_day(completions)
     sorted_dates = sorted(dates)
-    day_totals = sum_units_by_user_day(completions, user_timezone)
+    day_totals = sum_units_by_user_day(completions)
     return HabitStats(
         day_labels=list(_DAY_LABELS),
         values=units,
@@ -121,7 +120,7 @@ def _additive_stats(completions: list[GoalCompletion], user_timezone: str) -> Ha
     if not completed:
         return _empty_stats()
 
-    units, counts, dates = _aggregate_by_day(completed, user_timezone)
+    units, counts, dates = _aggregate_by_day(completed)
     sorted_dates = sorted(dates)
     return HabitStats(
         day_labels=list(_DAY_LABELS),

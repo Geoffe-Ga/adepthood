@@ -2008,7 +2008,7 @@ async def _accept_pending_habit(
     """Log today's completion for a pending habit suggestion and flip it to accepted."""
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    check_in = await record_goal_completion(session, ctx, did_complete=True)
+    check_in = await record_goal_completion(session, ctx)
     suggestion.status = SuggestionStatus.ACCEPTED
     suggestion.accepted_at = datetime.now(UTC)
     session.add(suggestion)

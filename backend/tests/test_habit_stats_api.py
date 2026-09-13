@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -167,6 +167,10 @@ async def test_stats_aggregates_completions_by_day_of_week(
     """Units should be summed per day-of-week across all goals."""
     headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
+    sibling_goal_id = await db_session.scalar(
+        select(Goal.id).where(Goal.habit_id == habit_id, Goal.id != goal_id)
+    )
+    assert sibling_goal_id is not None
 
     # Monday 2024-01-01 — two completions
     db_session.add(
@@ -174,14 +178,16 @@ async def test_stats_aggregates_completions_by_day_of_week(
             goal_id=goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 1),
             completed_units=2.0,
         )
     )
     db_session.add(
         GoalCompletion(
-            goal_id=goal_id,
+            goal_id=sibling_goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 1),
             completed_units=1.0,
         )
     )
@@ -191,6 +197,7 @@ async def test_stats_aggregates_completions_by_day_of_week(
             goal_id=goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 3, 10, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 3),
             completed_units=3.0,
         )
     )
@@ -223,6 +230,7 @@ async def test_stats_longest_streak(async_client: AsyncClient, db_session: Async
                 goal_id=goal_id,
                 user_id=user_id,
                 timestamp=base + timedelta(days=day_offset),
+                local_day=(base + timedelta(days=day_offset)).date(),
                 completed_units=1.0,
             )
         )
@@ -256,6 +264,7 @@ async def test_stats_current_streak(async_client: AsyncClient, db_session: Async
                 goal_id=goal_id,
                 user_id=user_id,
                 timestamp=now - timedelta(days=days_ago),
+                local_day=(now - timedelta(days=days_ago)).date(),
                 completed_units=1.0,
             )
         )
@@ -284,6 +293,7 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
             goal_id=goal_id,
             user_id=user_id,
             timestamp=now - timedelta(days=2),
+            local_day=(now - timedelta(days=2)).date(),
             completed_units=1.0,
         )
     )
@@ -292,6 +302,7 @@ async def test_stats_completion_rate(async_client: AsyncClient, db_session: Asyn
             goal_id=goal_id,
             user_id=user_id,
             timestamp=now,
+            local_day=now.date(),
             completed_units=1.0,
         )
     )
@@ -318,6 +329,7 @@ async def test_stats_completion_rate_decays_when_paused(
                 goal_id=goal_id,
                 user_id=user_id,
                 timestamp=long_ago + timedelta(days=offset),
+                local_day=(long_ago + timedelta(days=offset)).date(),
                 completed_units=1.0,
             )
         )
@@ -333,6 +345,10 @@ async def test_stats_completion_dates(async_client: AsyncClient, db_session: Asy
     """completion_dates lists unique ISO date strings for calendar marking."""
     headers, user_id = await _signup_with_id(async_client)
     habit_id, goal_id = await _create_habit_with_goal(async_client, db_session, headers)
+    sibling_goal_id = await db_session.scalar(
+        select(Goal.id).where(Goal.habit_id == habit_id, Goal.id != goal_id)
+    )
+    assert sibling_goal_id is not None
 
     # Two completions on same day + one on another day
     db_session.add(
@@ -340,14 +356,16 @@ async def test_stats_completion_dates(async_client: AsyncClient, db_session: Asy
             goal_id=goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 1),
             completed_units=2.0,
         )
     )
     db_session.add(
         GoalCompletion(
-            goal_id=goal_id,
+            goal_id=sibling_goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 1),
             completed_units=1.0,
         )
     )
@@ -356,6 +374,7 @@ async def test_stats_completion_dates(async_client: AsyncClient, db_session: Asy
             goal_id=goal_id,
             user_id=user_id,
             timestamp=datetime(2024, 1, 3, 10, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 3),
             completed_units=3.0,
         )
     )
@@ -384,6 +403,7 @@ async def test_stats_only_counts_current_users_completions(
             goal_id=goal_id,
             user_id=alice_user_id,
             timestamp=datetime(2024, 1, 1, 8, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 1),
             completed_units=5.0,
         )
     )
@@ -393,6 +413,7 @@ async def test_stats_only_counts_current_users_completions(
             goal_id=goal_id,
             user_id=bob_user_id,
             timestamp=datetime(2024, 1, 2, 8, 0, tzinfo=UTC),
+            local_day=date(2024, 1, 2),
             completed_units=10.0,
         )
     )
@@ -428,6 +449,7 @@ async def test_stats_current_streak_returns_zero_for_stale_chain(
                 goal_id=goal_id,
                 user_id=user_id,
                 timestamp=now - timedelta(days=days_ago),
+                local_day=(now - timedelta(days=days_ago)).date(),
                 completed_units=1.0,
             ),
         )
@@ -531,6 +553,7 @@ async def test_stats_subtractive_longest_predates_current_after_transgression(
             user_id=user_id,
             completed_units=20.0,  # >> clear=5g
             timestamp=datetime.now(UTC) - timedelta(days=2),
+            local_day=today_in_tz("UTC") - timedelta(days=2),
         )
     )
     await db_session.commit()

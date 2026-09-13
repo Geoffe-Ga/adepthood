@@ -150,6 +150,10 @@ POLICY: Mapping[str, TablePolicy] = {
         owned_by=OwnedBy("habit_id", through="habit"),
     ),
     "goalcompletion": _erase("user_id", "Every check-in the account logged."),
+    "goalcompletionspend": _erase(
+        "user_id",
+        "The account's hashed transport-retry receipts for signed check-ins.",
+    ),
     "goalgroup": _erase(
         "user_id",
         "The account's own goal groupings. Shared community templates are a "
