@@ -17,6 +17,7 @@ CheckInReasonCode = Literal[
     "streak_reset",
     "streak_held",
     "already_logged_today",
+    "units_adjusted",
 ]
 
 
@@ -24,3 +25,7 @@ class CheckInResult(BaseModel):
     streak: int
     milestones: list[Milestone] = []
     reason_code: CheckInReasonCode
+    # Authoritative total for the whole habit on the affected user-local day.
+    # A tier change can create one row per tier, so a single goal row is not
+    # sufficient for client reconciliation (#2852).
+    day_units: float
