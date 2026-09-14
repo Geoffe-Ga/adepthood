@@ -50,6 +50,7 @@ const mockSave = saveRecoveryKeyLocally as jest.MockedFunction<typeof saveRecove
 const INACTIVE: VaultActivation = {
   active: false,
   state: 'inactive',
+  new_activation_available: true,
   retryable: false,
   failure_reason: null,
   credential_received: false,
@@ -126,6 +127,16 @@ beforeEach(() => {
 });
 
 describe('private vault activation choice', () => {
+  it('renders an honest low-friction unavailable state with no activation control', async () => {
+    const view = await renderActivation({ ...INACTIVE, new_activation_available: false });
+
+    expect(view.getByTestId('managed-vault-unavailable')).toBeTruthy();
+    expect(view.getByText(/not available for this account yet/u)).toBeTruthy();
+    expect(view.getByText(/journal is complete without it/u)).toBeTruthy();
+    expect(view.queryByTestId('continue-vault-activation')).toBeNull();
+    expect(view.queryByTestId('activate-private-vault')).toBeNull();
+  });
+
   it('opens with an optional, honest explanation and no secret controls', async () => {
     const view = await renderActivation();
 

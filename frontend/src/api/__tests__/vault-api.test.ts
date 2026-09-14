@@ -31,6 +31,7 @@ const CEREMONY_URL = `${ACTIVATION_URL}/key-ceremony`;
 const INACTIVE_ACTIVATION = {
   active: false,
   state: 'inactive' as const,
+  new_activation_available: true,
   retryable: false,
   failure_reason: null,
   credential_received: false,

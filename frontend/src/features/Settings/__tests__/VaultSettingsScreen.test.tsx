@@ -39,7 +39,13 @@ import {
 } from '../vaultCopy';
 import VaultSettingsScreen from '../VaultSettingsScreen';
 
-import { ApiError, vault, type VaultConnection } from '@/api';
+import {
+  ApiError,
+  vault,
+  vaultActivation,
+  type VaultActivation,
+  type VaultConnection,
+} from '@/api';
 
 /**
  * The private-vault screen, now that there is something behind it.
@@ -72,12 +78,16 @@ jest.mock('@/api', () => {
   return {
     ...actual,
     vault: { connection: jest.fn(), connect: jest.fn(), disconnect: jest.fn() },
+    vaultActivation: { status: jest.fn() },
   };
 });
 
 const mockConnection = vault.connection as jest.MockedFunction<typeof vault.connection>;
 const mockConnect = vault.connect as jest.MockedFunction<typeof vault.connect>;
 const mockDisconnect = vault.disconnect as jest.MockedFunction<typeof vault.disconnect>;
+const mockActivationStatus = vaultActivation.status as jest.MockedFunction<
+  typeof vaultActivation.status
+>;
 
 const VAULT_URL = 'https://vault.example';
 const REPLACEMENT_VAULT_URL = 'https://other-vault.example';
@@ -91,6 +101,15 @@ const REPLACED: VaultConnection = { connected: true, vault_url: REPLACEMENT_VAUL
 // The server cannot produce this pair, but the type can, and a screen that
 // read it as "nothing connected" would be inventing an answer nobody gave.
 const CONNECTED_WITHOUT_ADDRESS: VaultConnection = { connected: true, vault_url: null };
+const AVAILABLE_ACTIVATION: VaultActivation = {
+  active: false,
+  state: 'inactive',
+  new_activation_available: true,
+  retryable: false,
+  failure_reason: null,
+  credential_received: false,
+  attested_confidential: null,
+};
 
 /** Copy blocks paired with the testID the screen renders them in. */
 const COPY_BLOCKS: [string, string][] = [
@@ -205,6 +224,7 @@ async function pressConnectThroughAlert(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockActivationStatus.mockResolvedValue(AVAILABLE_ACTIVATION);
   mockConnect.mockResolvedValue(CONNECTED);
   mockDisconnect.mockResolvedValue(undefined);
 });
@@ -264,6 +284,42 @@ describe('VaultSettingsScreen — managed private vault', () => {
     const view = await renderVault(CONNECTED);
 
     expect(view.queryByTestId('open-vault-activation')).toBeNull();
+  });
+
+  test('shows the server-derived unavailable state without blocking bring-your-own-vault', async () => {
+    mockActivationStatus.mockResolvedValue({
+      ...AVAILABLE_ACTIVATION,
+      new_activation_available: false,
+    });
+
+    const view = await renderVault(NOT_CONNECTED);
+
+    expect(view.getByTestId('managed-vault-unavailable')).toBeTruthy();
+    expect(view.queryByTestId('open-vault-activation')).toBeNull();
+    expect(view.getByTestId('vault-address-input')).toBeTruthy();
+  });
+
+  test('labels an existing allocation as continuation after new activation is disabled', async () => {
+    mockActivationStatus.mockResolvedValue({
+      ...AVAILABLE_ACTIVATION,
+      active: true,
+      state: 'provisioning',
+      new_activation_available: false,
+    });
+
+    const view = await renderVault(NOT_CONNECTED);
+
+    expect(view.getByText('Continue private vault setup')).toBeTruthy();
+    expect(view.getByText('Continue setup')).toBeTruthy();
+  });
+
+  test('does not mistake an activation-status outage for account ineligibility', async () => {
+    mockActivationStatus.mockRejectedValue(new Error('offline'));
+
+    const view = await renderVault(NOT_CONNECTED);
+
+    expect(view.getByText('Managed vault availability could not be checked')).toBeTruthy();
+    expect(view.getByTestId('vault-address-input')).toBeTruthy();
   });
 });
 

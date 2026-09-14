@@ -379,6 +379,19 @@ const LoadError = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
   </View>
 );
 
+const ManagedVaultUnavailable = ({ onBack }: { onBack: () => void }): React.JSX.Element => (
+  <View style={styles.card} testID="managed-vault-unavailable" accessibilityRole="summary">
+    <Text style={styles.sectionTitle}>
+      Private vault creation is not available for this account yet.
+    </Text>
+    <Text style={styles.body}>
+      We are opening managed vaults gradually. Your journal is complete without it, and you can
+      still connect a vault you run from Private Vault settings.
+    </Text>
+    <Button label="Back to settings" onPress={onBack} testID="unavailable-vault-back" />
+  </View>
+);
+
 type MountedRef = React.RefObject<boolean>;
 type SetActivation = Dispatch<SetStateAction<VaultActivation | null>>;
 
@@ -707,6 +720,9 @@ const ActivationContent = ({
   if (activation.state === 'awaiting_key_ceremony')
     return <CeremonyContent controller={controller} />;
   if (POLLABLE_STATES.has(activation.state)) return <Progress state={activation.state} />;
+  if (!activation.active && !activation.new_activation_available) {
+    return <ManagedVaultUnavailable onBack={onCancel} />;
+  }
   if (!controller.introComplete) {
     return <Intro onContinue={() => controller.setIntroComplete(true)} onCancel={onCancel} />;
   }

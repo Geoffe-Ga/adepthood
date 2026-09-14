@@ -14,11 +14,12 @@ and plants two bugs in it: a handler that raises (``GET /boom``, a 500) and a
 handler that returns a body contradicting the schema it declares (``GET /liar``,
 ``{"count": "not-a-number"}`` where ``{"count": integer}`` is published). The
 run must fail and must name both. Then the same harness serves an application
-with the bugs removed, and that run must pass -- with the operation counts
+with the bugs removed plus the one published 503 the real activation route
+deliberately sends, and that run must pass -- with the operation counts
 asserted, because "passed" and "fuzzed nothing" are the two things this whole
-gate exists to tell apart. Only the pair means anything: the failing half alone
-could be failing for an unrelated reason, and the passing half alone is the
-vacuity it is guarding against.
+gate exists to tell apart. A third run changes only that 503 into a 500 and
+must fail. Together they prove the scoped exception accepts one status without
+widening into an all-5xx waiver.
 
 Absence of Schemathesis is deliberately *not* an ``importorskip``. Nothing here
 imports it; the script invokes the CLI, which is also how CI invokes it, so
@@ -67,11 +68,12 @@ _SCHEMA_VIOLATION_TITLE = "Response violates schema"
 _BOOM = "GET /boom"
 _LIAR = "GET /liar"
 _HEALTHY = "GET /healthy"
+_MANAGED_ACTIVATION = "POST /vault/activation"
 
-# The planted application publishes exactly these three operations, and the
+# The planted application publishes exactly these four operations, and the
 # passing half asserts the run reached all of them. A green run that selected or
 # tested fewer is the vacuity this gate exists to prevent, not a clean bill.
-_PUBLISHED_OPERATIONS = 3
+_PUBLISHED_OPERATIONS = 4
 
 _BOOT_TIMEOUT_SECONDS = 30
 _BOOT_POLL_SECONDS = 0.2
@@ -105,10 +107,25 @@ class Counted(BaseModel):
     count: int
 
 
+class Refusal(BaseModel):
+    """The one-code refusal body published by the real API."""
+
+    detail: str
+
+
 @app.get("/healthy", response_model=Counted)
 def healthy() -> Counted:
     """Answer exactly what the document promises."""
     return Counted(count=1)
+
+
+@app.post("/vault/activation", responses={503: {"model": Refusal}})
+def managed_activation() -> JSONResponse:
+    """Exercise the one intentional, declared server-unavailable response."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "managed_vault_activation_unavailable"},
+    )
 '''
 
 # ``GET /boom`` raises, which uvicorn turns into a 500: not_a_server_error.
@@ -148,6 +165,7 @@ def liar() -> Counted:
 
 BROKEN_APP = _SHARED_ROUTES + _PLANTED_BUGS
 REPAIRED_APP = _SHARED_ROUTES + _REPAIRS
+UNEXPECTED_ACTIVATION_APP = REPAIRED_APP.replace("status_code=503", "status_code=500")
 
 
 @dataclass(frozen=True)
@@ -314,6 +332,15 @@ def repaired(tmp_path_factory: pytest.TempPathFactory) -> FuzzResult:
     return fuzz(REPAIRED_APP, tmp_path_factory.mktemp("repaired"))
 
 
+@pytest.fixture(scope="module")
+def unexpected_activation(tmp_path_factory: pytest.TempPathFactory) -> FuzzResult:
+    """Fuzz the repaired app after changing only its admitted 503 into a 500."""
+    return fuzz(
+        UNEXPECTED_ACTIVATION_APP,
+        tmp_path_factory.mktemp("unexpected-activation"),
+    )
+
+
 def test_a_planted_server_error_fails_the_run(planted: FuzzResult) -> None:
     """``not_a_server_error`` fires, and the run's exit code carries it."""
     assert planted.returncode != 0, planted.output
@@ -343,11 +370,22 @@ def test_the_healthy_twin_passes(repaired: FuzzResult) -> None:
     assert _SCHEMA_VIOLATION_TITLE not in repaired.output, repaired.output
 
 
+def test_the_scoped_503_override_still_rejects_a_500(
+    unexpected_activation: FuzzResult,
+) -> None:
+    """The activation exception is one exact status, never a blanket 5xx waiver."""
+    assert unexpected_activation.returncode != 0, unexpected_activation.output
+    assert _MANAGED_ACTIVATION in unexpected_activation.output, unexpected_activation.output
+    assert _SERVER_ERROR_TITLE in unexpected_activation.output, unexpected_activation.output
+    assert _MANAGED_ACTIVATION in unexpected_activation.report, unexpected_activation.report
+
+
 def test_the_passing_run_actually_reached_every_operation(repaired: FuzzResult) -> None:
     """A green run and a run that fuzzed nothing must never look alike."""
     assert f"Selected: {_PUBLISHED_OPERATIONS}/{_PUBLISHED_OPERATIONS}" in repaired.output
     assert f"Tested: {_PUBLISHED_OPERATIONS}" in repaired.output
     assert _HEALTHY in repaired.report, repaired.report
+    assert _MANAGED_ACTIVATION in repaired.report, repaired.report
 
 
 def test_the_bearer_token_never_reaches_the_uploaded_artifact(planted: FuzzResult) -> None:

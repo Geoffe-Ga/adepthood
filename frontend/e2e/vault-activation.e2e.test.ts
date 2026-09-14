@@ -68,6 +68,7 @@ describe('private-vault activation against a fake Creek control plane', () => {
     await expect(vaultActivation.status()).resolves.toEqual({
       active: false,
       state: 'inactive',
+      new_activation_available: true,
       retryable: false,
       failure_reason: null,
       credential_received: false,

@@ -104,7 +104,7 @@ import {
   VAULT_WHAT_IT_IS,
 } from './vaultCopy';
 
-import { ApiError, vault } from '@/api';
+import { ApiError, vault, vaultActivation, type VaultActivation } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -702,29 +702,94 @@ interface VaultNavigation {
   navigate?: (_screen: keyof RootStackParamList) => void;
 }
 
-const ManagedActivationOffer = ({ onOpen }: { onOpen: () => void }): React.JSX.Element => (
+const ManagedActivationOffer = ({
+  onOpen,
+  continuing,
+}: {
+  onOpen: () => void;
+  continuing: boolean;
+}): React.JSX.Element => (
   <View style={styles.activationOffer} testID="managed-vault-offer">
-    <Text style={styles.formHeading}>Let Adepthood create one</Text>
+    <Text style={styles.formHeading}>
+      {continuing ? 'Continue private vault setup' : 'Let Adepthood create one'}
+    </Text>
     <Text style={settingsFormStyles.body}>
       Start an optional Creek vault with a recovery key that only you receive. Setup happens after
       signup, and your journal remains available throughout.
     </Text>
     <Button
-      label="Create a private vault"
+      label={continuing ? 'Continue setup' : 'Create a private vault'}
       onPress={onOpen}
       testID="open-vault-activation"
-      accessibilityLabel="Create an optional private vault"
+      accessibilityLabel={
+        continuing ? 'Continue private vault setup' : 'Create an optional private vault'
+      }
     />
   </View>
 );
+
+const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.JSX.Element => (
+  <View
+    style={styles.activationOffer}
+    testID="managed-vault-unavailable"
+    accessibilityRole="summary"
+  >
+    <Text style={styles.formHeading}>
+      {unknown
+        ? 'Managed vault availability could not be checked'
+        : 'Managed vaults are opening gradually'}
+    </Text>
+    <Text style={settingsFormStyles.body}>
+      {unknown
+        ? 'You can try again later or connect a vault you run below.'
+        : 'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run below.'}
+    </Text>
+  </View>
+);
+
+function useManagedActivationStatus(): VaultActivation | null | undefined {
+  const [activation, setActivation] = useState<VaultActivation | null>();
+  useEffect(() => {
+    let mounted = true;
+    void vaultActivation.status().then(
+      (next) => {
+        if (mounted) setActivation(next);
+      },
+      () => {
+        if (mounted) setActivation(null);
+      },
+    );
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  return activation;
+}
+
+const ManagedActivationState = ({
+  activation,
+  onOpen,
+}: {
+  activation: VaultActivation | null | undefined;
+  onOpen: () => void;
+}): React.JSX.Element | null => {
+  if (activation === undefined) return null;
+  if (activation === null) return <ManagedActivationUnavailable unknown />;
+  if (!activation.active && !activation.new_activation_available) {
+    return <ManagedActivationUnavailable unknown={false} />;
+  }
+  return <ManagedActivationOffer continuing={activation.active} onOpen={onOpen} />;
+};
 
 /** What the read found, plus managed activation and the bring-your-own form. */
 const VaultConnectionSection = ({
   controller,
   navigation,
+  managedActivation,
 }: {
   controller: VaultController;
   navigation?: VaultNavigation;
+  managedActivation: VaultActivation | null | undefined;
 }): React.JSX.Element => {
   const { state, form } = controller;
   return (
@@ -735,7 +800,10 @@ const VaultConnectionSection = ({
         onRequestDisconnect={controller.onRequestDisconnect}
       />
       {state.kind === 'none' ? (
-        <ManagedActivationOffer onOpen={() => navigation?.navigate?.('VaultActivation')} />
+        <ManagedActivationState
+          activation={managedActivation}
+          onOpen={() => navigation?.navigate?.('VaultActivation')}
+        />
       ) : null}
       <VaultConnectForm
         heading={connectHeading(state)}
@@ -760,6 +828,7 @@ const VaultSettingsScreen = ({
   navigation?: VaultNavigation;
 }): React.JSX.Element => {
   const controller = useVaultConnection();
+  const managedActivation = useManagedActivationStatus();
   return (
     <ScreenScaffold scroll testID="vault-settings-screen">
       <VaultPromiseDeck />
@@ -768,7 +837,11 @@ const VaultSettingsScreen = ({
           <ActivityIndicator size="large" />
         </View>
       ) : (
-        <VaultConnectionSection controller={controller} navigation={navigation} />
+        <VaultConnectionSection
+          controller={controller}
+          navigation={navigation}
+          managedActivation={managedActivation}
+        />
       )}
     </ScreenScaffold>
   );

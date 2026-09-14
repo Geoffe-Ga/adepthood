@@ -7077,6 +7077,10 @@
             ],
             "title": "Failure Reason"
           },
+          "new_activation_available": {
+            "title": "New Activation Available",
+            "type": "boolean"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -7101,6 +7105,7 @@
         "required": [
           "active",
           "state",
+          "new_activation_available",
           "retryable",
           "failure_reason",
           "credential_received",

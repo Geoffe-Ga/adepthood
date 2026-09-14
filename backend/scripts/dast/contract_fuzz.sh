@@ -43,6 +43,9 @@ fi
 : "${DAST_TOKEN:?DAST_TOKEN must hold a token proven to open an authenticated route}"
 : "${REPORT_DIR:?REPORT_DIR must name a directory for the JUnit report}"
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+CONFIG_FILE="$SCRIPT_DIR/schemathesis.toml"
+
 # The checks the run enforces, named one by one. `--checks all` would silently
 # change meaning with every upgrade.
 #
@@ -122,7 +125,7 @@ for name in "${EXCLUDED[@]}"; do
   exclusions+=(--exclude-name "$name")
 done
 
-exec schemathesis run "$BASE_URL/openapi.json" \
+exec schemathesis --config-file "$CONFIG_FILE" run "$BASE_URL/openapi.json" \
   --url "$BASE_URL" \
   --checks "$CHECKS" \
   --header "Authorization: Bearer $DAST_TOKEN" \

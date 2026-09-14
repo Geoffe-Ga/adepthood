@@ -105,6 +105,10 @@ from services.creek_vault_pipeline import (
     close_vault_pipeline_tasks,
     resume_vault_pipeline_runs,
 )
+from services.managed_vault_rollout import (
+    ManagedVaultRolloutState,
+    load_managed_vault_rollout,
+)
 from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
 
 logger = logging.getLogger(__name__)
@@ -801,6 +805,25 @@ def validate_creek_vault_url_config() -> None:
     )
 
 
+def validate_managed_vault_rollout_config() -> None:
+    """Make disabled, incomplete, and fully configured rollout states explicit."""
+    rollout = load_managed_vault_rollout()
+    if rollout.state is ManagedVaultRolloutState.READY:
+        logger.info(
+            "managed_vault_activation_config_state=ready eligible_accounts=%d",
+            len(rollout.eligible_user_ids),
+        )
+        return
+    if rollout.state is ManagedVaultRolloutState.DISABLED:
+        logger.info("managed_vault_activation_config_state=disabled")
+        return
+    logger.warning(
+        "managed_vault_activation_config_state=incomplete defective_settings=%s; "
+        "new managed-vault activations are disabled",
+        ",".join(rollout.defects),
+    )
+
+
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
@@ -980,6 +1003,10 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # fallback in a per-request warning; said once here, it reaches the operator
     # before the first entry rather than at request rate.
     validate_creek_vault_url_config()
+
+    # A private vault is optional, so an incomplete pilot never takes down the
+    # journal. Say the exact operator state once and fail new activation closed.
+    validate_managed_vault_rollout_config()
 
     # A model import proves what this process expects, not what its database
     # actually contains. Refuse before seeding and before the lifespan yields so

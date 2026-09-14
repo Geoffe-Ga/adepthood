@@ -1,0 +1,9 @@
+# The managed activation endpoint deliberately answers a published 503 while
+# the safe-default-off rollout is closed or its external Creek control plane is
+# unavailable. Keep fuzzing the operation and every other response check, but
+# teach the server-error check that this one exact status is part of its wire.
+[[operations]]
+include-name = "POST /vault/activation"
+
+[operations.checks.not_a_server_error]
+expected-statuses = ["2xx", "3xx", "4xx", "503"]

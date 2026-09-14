@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Issues:** [#2575](https://github.com/Geoffe-Ga/adepthood/issues/2575),
+  [#2872](https://github.com/Geoffe-Ga/adepthood/issues/2872),
   [creek-vault#1724](https://github.com/Geoffe-Ga/Creek-Vault/issues/1724)
 - **Amends:** [ADR 0002](0002-intimate-content-local-routing.md) Decision 1
   and [ADR 0005](0005-operator-side-ontologization.md) Decision 4 by fixing
@@ -167,6 +168,26 @@ distinct encrypted volume and user-held key per account, attested key release,
 no cross-user plaintext state, auditable deletion, and the same externally
 observable single-user Creek contract. "Pooled compute" may not become
 "shared readable corpus" by implementation convenience.
+
+## Decision 8 — New allocations are server-gated and account-scoped
+
+Managed vault creation is disabled by default. Adepthood admits a new allocation
+only when its emergency switch is enabled, the complete Creek control/handoff
+configuration is usable, and the authenticated account id is present in a
+bounded pilot allowlist. The browser, email address, client platform, and any
+locally cached flag are never authorities. Disabled, incomplete, and ineligible
+states intentionally produce the same authenticated public answer.
+
+The switch governs new activation identities, not custody or recovery. Turning
+it off must not strand an activation Adepthood already admitted: status polling,
+idempotent retry under its durable activation id, key ceremony, export,
+revocation, and deletion remain reachable even when the first provider response
+was lost before Adepthood learned a job id. An account with no activation row is
+still new and remains blocked. Creek's fleet cap is authoritative; Adepthood's
+allowlist is a defense-in-depth rollout bound, not a replacement for it.
+
+The operational procedure and rollback matrix live in
+[`docs/managed-vault-pilot.md`](../managed-vault-pilot.md).
 
 ## Consequences
 
