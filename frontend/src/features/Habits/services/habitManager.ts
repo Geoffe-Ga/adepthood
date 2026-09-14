@@ -561,7 +561,7 @@ export interface LogUnitContext {
   habitName: string;
   /** Amount of units the caller logged in this operation. */
   amount: number;
-  /** Stable exactly-once identity shared by the foreground request and queued replay. */
+  /** Stable identity shared by the optimistic row, foreground request, and queued replay. */
   operationId: string;
   oldProgress: number;
   newProgress: number;
@@ -637,22 +637,32 @@ const withConfirmedHabitDay = (
   dayKey: string,
   timezone: string,
   result: CheckInResult,
+  optimisticCompletionId?: string,
 ): Habit => {
   const completions = habit.completions ?? [];
   const affected = completions.filter((entry) => completionDayKey(entry, timezone) === dayKey);
   const unaffected = completions.filter((entry) => completionDayKey(entry, timezone) !== dayKey);
-  const latest = affected.at(-1);
+  const confirmedIndex = optimisticCompletionId
+    ? affected.findIndex((entry) => entry.id === optimisticCompletionId)
+    : affected.length - 1;
+  const confirmed = confirmedIndex >= 0 ? affected[confirmedIndex] : affected.at(-1);
+  // A later tap is applied optimistically before this request can settle. Keep
+  // those rows on top of the server's answer; otherwise confirmation of a
+  // preceding `set` visibly erases the following +/− until its queued request
+  // completes, making an immediate log look several network round-trips slow.
+  const stillOptimistic = confirmedIndex >= 0 ? affected.slice(confirmedIndex + 1) : [];
   return {
     ...habit,
     streak: result.streak,
     completions: [
       ...unaffected,
       {
-        id: latest?.id ?? uuidv4(),
-        timestamp: latest?.timestamp ?? dayKeyToInstant(dayKey, timezone),
+        id: confirmed?.id ?? uuidv4(),
+        timestamp: confirmed?.timestamp ?? dayKeyToInstant(dayKey, timezone),
         local_day: dayKey,
         completed_units: result.day_units,
       },
+      ...stillOptimistic,
     ],
   };
 };
@@ -663,9 +673,12 @@ const reconcileStoredHabitDay = (
   dayKey: string,
   timezone: string,
   result: CheckInResult,
+  optimisticCompletionId?: string,
 ): void => {
   const next = getHabits().map((habit) =>
-    habit.id === habitId ? withConfirmedHabitDay(habit, dayKey, timezone, result) : habit,
+    habit.id === habitId
+      ? withConfirmedHabitDay(habit, dayKey, timezone, result, optimisticCompletionId)
+      : habit,
   );
   setHabits(next);
   void persistHabits(next);
@@ -1682,33 +1695,25 @@ export const habitManager = {
     date?: Date,
   ): LogUnitContext | null => {
     const prev = getHabits();
-    let updated: Habit | null = null;
-    let oldProgress = 0;
-    let newProgress = 0;
-    let habitName = '';
-    let isDemoSeed = false;
     // The matched row is the only place the goal's provenance is recorded, so
     // keep a handle on it for the ``isServerBackedGoal`` check below.
-    let parent: Habit | null = null;
-    const next = prev.map((h) => {
-      if (h.id !== habitId) return h;
-      habitName = h.name;
-      isDemoSeed = h.isDemoSeed === true;
-      parent = h;
-      const result = applyLogUnit(h, amount, tz, date);
-      oldProgress = result.oldProgress;
-      newProgress = result.newProgress;
-      updated = result.updatedHabit;
-      return result.updatedHabit;
-    });
-    if (!updated) return null;
+    const parent = prev.find((habit) => habit.id === habitId);
+    if (!parent) return null;
+    const {
+      updatedHabit: updated,
+      oldProgress,
+      newProgress,
+    } = applyLogUnit(parent, amount, tz, date);
+    const next = prev.map((habit) => (habit.id === habitId ? updated : habit));
+    const optimisticCompletionId = updated.completions?.at(-1)?.id;
+    if (!optimisticCompletionId) return null;
     // A negative correction belongs to the tier that held the amount before
     // subtraction. Selecting from the optimistic post-correction total can
     // jump all the way back to ``low``; the server would then floor an empty
     // low-tier row while leaving the actual stretch-tier units untouched, so
     // an oversized correction could report success without bringing the day
     // to zero. Positive logs retain the established post-log tier provenance.
-    const goalHabit = amount < 0 && parent ? parent : updated;
+    const goalHabit = amount < 0 ? parent : updated;
     const { currentGoal, nextGoal } = getGoalTier(goalHabit, tz);
     // Only send ``completed_on`` for a genuine backfill — a date that
     // resolves to today is left undefined so the server stamps the
@@ -1719,9 +1724,9 @@ export const habitManager = {
       habitId,
       prev,
       next,
-      habitName,
+      habitName: parent.name,
       amount,
-      operationId: uuidv4(),
+      operationId: optimisticCompletionId,
       oldProgress,
       newProgress,
       currentGoal,
@@ -1729,7 +1734,7 @@ export const habitManager = {
       completedOn,
       dayKey,
       timezone: tz,
-      isDemoSeed,
+      isDemoSeed: parent.isDemoSeed === true,
       serverGoalId: isServerBackedGoal(currentGoal, parent) ? currentGoal.id : null,
     };
   },
@@ -1781,7 +1786,7 @@ export const habitManager = {
 
   /** Replace this habit/day's optimistic rows with the confirmed server total. */
   reconcileLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
-    reconcileStoredHabitDay(ctx.habitId, ctx.dayKey, ctx.timezone, result);
+    reconcileStoredHabitDay(ctx.habitId, ctx.dayKey, ctx.timezone, result, ctx.operationId);
   },
 
   /**

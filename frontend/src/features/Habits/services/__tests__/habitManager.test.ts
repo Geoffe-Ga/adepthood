@@ -94,6 +94,7 @@ import type { Goal, Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.
 import {
   buildPagedHabits,
   calculateHabitStartDate,
+  calculateTodaysProgress,
   carryoverSlot,
   countCarryover,
   stageAtIndex,
@@ -2578,6 +2579,43 @@ describe('habitManager', () => {
       await expect(secondCommit).resolves.toEqual(expect.objectContaining({ day_units: 15 }));
       expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
     });
+
+    it.each([
+      { laterAmount: 1, expectedTotal: 11, operation: 'add' },
+      { laterAmount: -1, expectedTotal: 9, operation: 'subtract' },
+    ])(
+      'keeps a later optimistic $operation visible when the preceding set-sized correction confirms',
+      ({ laterAmount, expectedTotal }) => {
+        const goals = makeHabit().goals.map((goal) => ({ ...goal, target: goal.target * 100 }));
+        useHabitStore.setState({ habits: [makeHabit({ goals })] });
+
+        const setToTen = habitManager.prepareLogUnit(1, 10, 'UTC')!;
+        habitManager.applyLogUnitContext(setToTen);
+        const laterLog = habitManager.prepareLogUnit(1, laterAmount, 'UTC')!;
+        habitManager.applyLogUnitContext(laterLog);
+
+        habitManager.reconcileLogUnitContext(setToTen, {
+          streak: 1,
+          milestones: [],
+          reason_code: 'streak_incremented',
+          day_units: 10,
+        });
+
+        expect(calculateTodaysProgress(useHabitStore.getState().habits[0]!, 'UTC')).toBe(
+          expectedTotal,
+        );
+
+        habitManager.reconcileLogUnitContext(laterLog, {
+          streak: 1,
+          milestones: [],
+          reason_code: 'units_adjusted',
+          day_units: expectedTotal,
+        });
+        expect(calculateTodaysProgress(useHabitStore.getState().habits[0]!, 'UTC')).toBe(
+          expectedTotal,
+        );
+      },
+    );
 
     it('prepareLogUnit records completedOn when backfilling a past day', () => {
       useHabitStore.setState({ habits: [makeHabit()] });
