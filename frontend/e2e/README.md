@@ -80,9 +80,13 @@ The private-vault activation journey also starts an isolated fake Creek control
 plane on a kernel-selected loopback port. Adepthood still uses its production
 HTTP provisioning client, bearer files, contract-version header, routers,
 Postgres lifecycle, and authenticated one-way handoff endpoint; only Creek's
-external allocator is represented by the fake. The fake rejects a ceremony body
-containing passphrase or recovery-key fields, returns `attested_confidential:
-false`, and is killed with its generated credential directory at teardown.
+external allocator is represented by the fake. A ceremony body is no longer
+part of the contract: the fake speaks provisioning `2.0.0`, moves
+directly through pending/provisioning to the authenticated handoff, and returns
+`custody_mode: provider_managed` with `attested_confidential: false`. The
+cross-platform screen tests pin the matching operator-readable/not-confidential-
+compute copy and the absence of ceremony controls. The fake is killed with its
+generated credential directory at teardown.
 
 The spent-provider-balance journey adds the third external boundary: a
 loopback process that speaks both LLM providers' HTTP APIs. The lane's server

@@ -5,7 +5,9 @@
 - **Issue:** [#898](https://github.com/Geoffe-Ga/adepthood/issues/898) (epic [#893](https://github.com/Geoffe-Ga/adepthood/issues/893); ratified in [#927](https://github.com/Geoffe-Ga/adepthood/issues/927))
 - **Lifecycle clarification:** [ADR 0007](0007-demand-provisioned-confidential-vaults.md)
   fixes when the per-user environment is created, how it scales to zero, and
-  why signup never waits for it. The custody and routing decisions below stand.
+  why signup never waits for it. It also supersedes Decisions 2 and 4 for the
+  ordinary Fly launch service: its custody is provider-managed and
+  operator-readable. The user-held/attested design below is future-only.
 
 ## Context
 
@@ -27,10 +29,12 @@ outcome for the intimate-routing question specifically — it is not a
 new decision, and none of Decisions 1-4 below are proposals; they are
 what #927 already settled.
 
-The user-facing framing #927 converged on is a single promise: "your
-writing lives in your own private space that only you can open, and
-your intimate writing is never handed to an outside AI." No technical
-tier names are exposed to the user; the promise is the whole surface.
+The user-facing framing #927 originally converged on was: "your writing lives
+in your own private space that only you can open, and your intimate writing is
+never handed to an outside AI." ADR 0007 retires the first clause for ordinary
+managed Fly because its provider-managed custody cannot keep it. The second
+clause remains the shipped promise: Intimate writing stays out of the managed
+vault and outside AI.
 
 Four options were on the table for how intimate content avoids the
 cloud:
@@ -62,6 +66,11 @@ decision exists to remove.
 
 ## Decision 2 — Key custody: user-held keys plus confidential compute
 
+**Future design, not shipped by managed Fly activation.** Contract 2.0 names
+the launch mode `provider_managed`; Fly and privileged Adepthood or Creek
+operators can access its stored bytes and restart it without the user. No
+screen or API may infer this future design from readiness or attestation flags.
+
 The volume's encryption key is held by the user, not escrowed by the
 operator, and is released into a trusted-execution-environment (TEE)
 enclave only after remote attestation of that enclave. GPU confidential
@@ -87,6 +96,10 @@ can disagree with Creek's router is a bypass surface, not a safety
 net. Adepthood passes the tier through and does not re-gate it.
 
 ## Decision 4 — Recovery: Obsidian-grade, no operator path back in
+
+**Future design, not shipped by managed Fly activation.** The launch service
+has no passphrase or recovery ceremony. This section remains a requirement for
+a future explicit attested custody mode, not a description of current custody.
 
 Key derivation is passphrase-based, held by the user, with a one-time
 recovery key shown once at setup and never stored by the operator.

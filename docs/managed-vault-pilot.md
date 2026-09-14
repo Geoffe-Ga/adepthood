@@ -1,4 +1,4 @@
-# Managed private-vault pilot operations
+# Managed-vault pilot operations
 
 This runbook controls new cost-bearing Creek allocations. It does not govern
 bring-your-own vault connections and must never hide recovery or deletion
@@ -40,9 +40,12 @@ Set `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED=false` and redeploy. Confirm startup
 records `disabled`, an inactive account sees the unavailable state, and POST
 creates no row or Creek call. Then verify an existing activation can still poll,
 retry with its durable activation id even if the first response lost the Creek
-job id, finish its key ceremony, export, revoke, and delete. This does not bypass
-the stop: only activation ids admitted before the switch changed may recover,
-and Creek still enforces its idempotency and hard fleet cap.
+job id, complete its authenticated handoff, report `provider_managed` custody at
+`ready`, export, revoke, and delete. Provider-managed custody means privileged
+Fly, Adepthood, or Creek operators can read the stored bytes and the service can
+restart without the user. This does not bypass the stop: only activation ids
+admitted before the switch changed may recover, and Creek still enforces its
+idempotency and hard fleet cap.
 
 An upstream capacity refusal remains an explicit failed activation. Do not
 expand Adepthood's cohort to work around Creek's fleet cap; reconcile or raise

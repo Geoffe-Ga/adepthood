@@ -1,5 +1,5 @@
 /* global describe, it, expect */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const FRONTEND_SOURCE = join(process.cwd(), 'src');
@@ -20,8 +20,6 @@ describe('private-vault activation privacy boundary', () => {
   it('keeps client secrets out of persistence, analytics, logs, and crash reporting', () => {
     const sources = read([
       join(FRONTEND_SOURCE, 'features/Settings/PrivateVaultActivationScreen.tsx'),
-      join(FRONTEND_SOURCE, 'features/Settings/keyCeremony.ts'),
-      join(FRONTEND_SOURCE, 'features/Settings/saveRecoveryKey.ts'),
     ]);
 
     expect(sources).not.toMatch(
@@ -29,9 +27,28 @@ describe('private-vault activation privacy boundary', () => {
     );
   });
 
-  it('keeps activation and key-ceremony controls out of signup and social auth', () => {
+  it('ships no ordinary-Fly ceremony or recovery-material implementation', () => {
+    expect(existsSync(join(FRONTEND_SOURCE, 'features/Settings/keyCeremony.ts'))).toBe(false);
+    expect(existsSync(join(FRONTEND_SOURCE, 'features/Settings/saveRecoveryKey.ts'))).toBe(false);
+  });
+
+  it('names provider-managed navigation without the stronger private-vault claim', () => {
+    const navigation = read([
+      join(FRONTEND_SOURCE, 'navigation/RootStack.tsx'),
+      join(FRONTEND_SOURCE, 'features/Settings/PrivateVaultActivationScreen.tsx'),
+    ]);
+
+    expect(navigation).toContain("options={{ title: 'Managed vault' }}");
+    expect(navigation).toContain("options={{ title: 'Create managed vault' }}");
+    expect(navigation).toContain('from Managed vault settings');
+    expect(navigation).not.toMatch(
+      /title: 'Private vault'|title: 'Create private vault'|from Private Vault settings/u,
+    );
+  });
+
+  it('keeps activation controls out of signup and social auth', () => {
     const authSources = read(sourceFilesUnder(join(FRONTEND_SOURCE, 'features/Auth')));
 
-    expect(authSources).not.toMatch(/VaultActivation|PrivateVaultActivation|prepareKeyCeremony/u);
+    expect(authSources).not.toMatch(/VaultActivation|PrivateVaultActivation/u);
   });
 });

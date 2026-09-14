@@ -211,10 +211,14 @@ origin and verify Adepthood's environment/transport policy deliberately.
 - [ ] Native document picker imports local, iCloud/Files, and Android content-
       provider documents; cancelled, slow-cloud, unavailable, permission-lost,
       zero-byte, and provider-returned URI cases do not crash or lose progress.
-- [ ] Native export and recovery-key save invoke the system share sheet, handle
-      cancel/no-target/failure, leave a readable file only where promised, and do
-      not leak plaintext into logs, previews, recent-item thumbnails, or another
-      account's flow.
+- [ ] Native export invokes the system share sheet, handles cancel/no-target/
+      failure, leaves a readable file only where promised, and does not leak
+      plaintext into logs, previews, recent-item thumbnails, or another account's
+      flow.
+- [ ] Managed-vault activation never asks for, generates, saves, downloads, or
+      confirms a passphrase or recovery key. Polling/retry reaches `ready` only
+      after authenticated handoff and shows `provider_managed` custody, including
+      the operator-readable and unattended-restart disclosure.
 - [ ] Practice bells/audio work with the silent switch and expected audio route;
       headphones, Bluetooth changes, phone call/audio interruption, background,
       and volume changes have a clear visual equivalent and do not corrupt timing.
@@ -945,15 +949,17 @@ configuration change, pause/resume, completion, and persistence:
 - [ ] Disconnect removes Adepthood's pointer/credential and accurately explains what remains
       in Creek.
 
-### 15.4 Private-vault activation and recovery
+### 15.4 Managed-vault activation and custody
 
 - [ ] Activation is optional and asynchronous; Journal remains usable while provisioning.
-- [ ] Loading, retry, allocator refusal, non-confidential attestation, timeout, and stale job
+- [ ] Loading, retry, allocator refusal, timeout, and stale job
       are honest and do not create duplicate vaults.
-- [ ] Recovery ceremony keeps the recovery material user-held, displays it only when needed,
-      supports copy/save confirmation, and never sends it to the provisioning request.
-- [ ] Refresh/back/close during ceremony cannot silently lose the only recovery path or expose
-      material to logs/another account.
+- [ ] Ordinary Fly activation progresses directly to ready with explicit `provider_managed`
+      custody and no passphrase, recovery-key, wrapped-artifact, download, or confirmation UI.
+- [ ] Web, iOS, and Android say that Fly and privileged Adepthood or Creek operators can access
+      stored bytes, that this is not confidential compute, and that INTIMATE content stays local.
+- [ ] Refresh/back/close during provisioning preserves polling and retry without exposing a
+      credential, job handle, or another account's status.
 
 ### 15.5 Wallet/refill
 
@@ -1037,7 +1043,8 @@ revision the ledger declares journeys in these families:
   quick-launch journaling, and unconfirmed stage.
 - Course: read/progress, passage note, and reflect/return.
 - Map/Depth: advance, continue in Course, and choose optional rings.
-- Vault: connect and activate with user-held recovery.
+- Vault: connect an existing vault or activate an optional provider-managed vault with direct
+  readiness, honest operator-readable custody, retry, disable, and deletion coverage.
 - Account: export, delete, and account-switch purge.
 - Errors: boundary recovery, server-versus-offline truth, and provider-balance refusal.
 

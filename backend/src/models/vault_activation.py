@@ -1,4 +1,4 @@
-"""Durable private-vault activation and content-free teardown receipts."""
+"""Durable managed-vault activation and content-free teardown receipts."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ class VaultActivationState(enum.StrEnum):
     SUBMITTING = "submitting"
     PENDING = "pending"
     PROVISIONING = "provisioning"
-    AWAITING_KEY_CEREMONY = "awaiting_key_ceremony"
     AWAITING_HANDOFF = "awaiting_handoff"
     READY = "ready"
     FAILED = "failed"
@@ -27,11 +26,19 @@ class VaultActivationState(enum.StrEnum):
     DELETED = "deleted"
 
 
+class VaultCustodyMode(enum.StrEnum):
+    """Closed custody vocabulary negotiated with Creek provisioning v2."""
+
+    PROVIDER_MANAGED = "provider_managed"
+    WRAPPED_ARTIFACT_ONLY = "wrapped_artifact_only"
+
+
 def _quoted(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
 
 
 _ACTIVATION_STATES = tuple(state.value for state in VaultActivationState)
+_CUSTODY_MODES = tuple(mode.value for mode in VaultCustodyMode)
 _TEARDOWN_STATES = (
     VaultActivationState.DELETING.value,
     VaultActivationState.DELETED.value,
@@ -47,6 +54,10 @@ class VaultActivation(SQLModel, table=True):
         CheckConstraint(
             f"state IN ({_quoted(_ACTIVATION_STATES)})",
             name="ck_vaultactivation_state_valid",
+        ),
+        CheckConstraint(
+            f"custody_mode IS NULL OR custody_mode IN ({_quoted(_CUSTODY_MODES)})",
+            name="ck_vaultactivation_custody_mode_valid",
         ),
         Index("ix_vaultactivation_state_id", "state", "id"),
     )
@@ -64,6 +75,7 @@ class VaultActivation(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
     attested_confidential: bool | None = Field(default=None, nullable=True)
+    custody_mode: str | None = Field(default=None, max_length=_STATE_WIDTH, nullable=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

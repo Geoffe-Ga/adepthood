@@ -9,10 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from schemas.vault_activation import VaultKeyCeremonySubmission
 from services.creek_provisioning_client import (
     HttpCreekProvisioningClient,
-    ProvisioningRejectedError,
     ProvisioningUnavailableError,
     get_creek_provisioning_client,
 )
@@ -32,47 +30,9 @@ def _job_payload(activation_id: str) -> dict[str, object]:
         "created_at": stamp,
         "updated_at": stamp,
         "attested_confidential": None,
+        "custody_mode": None,
         "status_url": "/control/v1/jobs/job-001",
     }
-
-
-def _submission() -> VaultKeyCeremonySubmission:
-    """Build one strictly valid ciphertext-only protocol body."""
-    return VaultKeyCeremonySubmission.model_validate(
-        {
-            "protocol_version": "1.0.0",
-            "ceremony_id": "ceremony-001",
-            "server_nonce": "A" * 43,
-            "recovery_saved": True,
-            "wrapped_artifact": {
-                "version": 2,
-                "kdf": {
-                    "algorithm": "argon2id",
-                    "salt": "01" * 16,
-                    "time_cost": 3,
-                    "lanes": 4,
-                    "memory_kib": 65536,
-                },
-                "passphrase_wrapped": {
-                    "nonce": "02" * 12,
-                    "ciphertext": "03" * 48,
-                },
-                "recovery_wrapped": {
-                    "nonce": "04" * 12,
-                    "ciphertext": "05" * 48,
-                },
-                "binding": {
-                    "protocol_version": "1.0.0",
-                    "activation_id": "activation-001",
-                    "ceremony_id": "ceremony-001",
-                    "server_nonce": "A" * 43,
-                    "client_nonce": "B" * 43,
-                },
-            },
-            "attestation": None,
-            "key_release": None,
-        }
-    )
 
 
 @pytest.mark.asyncio
@@ -86,7 +46,7 @@ async def test_http_client_sends_service_bearer_and_distinct_subject_identity() 
         return httpx.Response(
             202,
             request=request,
-            headers={"Creek-Provisioning-Version": "1.1.0"},
+            headers={"Creek-Provisioning-Version": "2.0.0"},
             json=_job_payload(str(payload["activation_id"])),
         )
 
@@ -95,6 +55,7 @@ async def test_http_client_sends_service_bearer_and_distinct_subject_identity() 
         job = await client.activate("activation-001", "adepthood-user-001")
 
     assert job.job_id == "job-001"
+    assert job.custody_mode is None
     assert seen[0].headers["Authorization"] == f"Bearer {_TOKEN}"
     assert json.loads(seen[0].content)["consumer_identity"] == "adepthood-user-001"
 
@@ -108,7 +69,7 @@ async def test_malformed_upstream_response_is_not_attached_to_the_safe_exception
         return httpx.Response(
             202,
             request=request,
-            headers={"Creek-Provisioning-Version": "1.1.0"},
+            headers={"Creek-Provisioning-Version": "2.0.0"},
             json={"unexpected": canary},
         )
 
@@ -123,71 +84,84 @@ async def test_malformed_upstream_response_is_not_attached_to_the_safe_exception
 
 
 @pytest.mark.asyncio
-async def test_http_client_relays_the_versioned_ceremony_without_secret_fields() -> None:
-    """Both ceremony calls use the backend bearer while relaying only public material."""
-    seen: list[httpx.Request] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        headers = {"Creek-Provisioning-Version": "1.1.0"}
-        if request.method == "GET":
-            return httpx.Response(
-                200,
-                request=request,
-                headers=headers,
-                json={
-                    "protocol_version": "1.0.0",
-                    "job_id": "job-001",
-                    "activation_id": "activation-001",
-                    "ceremony_id": "ceremony-001",
-                    "server_nonce": "A" * 43,
-                    "expires_at": datetime(2026, 9, 8, tzinfo=UTC).isoformat(),
-                },
-            )
-        payload = _job_payload("activation-001")
-        payload["state"] = "ready"
-        payload["attested_confidential"] = False
-        return httpx.Response(200, request=request, headers=headers, json=payload)
-
-    submission = _submission()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as transport:
-        client = HttpCreekProvisioningClient("https://control.example.test", _TOKEN, transport)
-        challenge = await client.key_ceremony("job-001")
-        completed = await client.complete_key_ceremony("job-001", submission)
-
-    assert challenge.ceremony_id == "ceremony-001"
-    assert completed.state == "ready"
-    assert [request.headers["Authorization"] for request in seen] == [
-        f"Bearer {_TOKEN}",
-        f"Bearer {_TOKEN}",
-    ]
-    forwarded = json.loads(seen[1].content)
-    assert forwarded == submission.model_dump(mode="json")
-    assert "passphrase" not in forwarded
-    assert "recovery_code" not in forwarded
-
-
-@pytest.mark.asyncio
-async def test_http_client_retains_only_an_allowlisted_ceremony_error_code() -> None:
-    """An upstream rejection can guide the UI without carrying its body or message."""
-    canary = "raw-upstream-detail-that-must-not-escape"
+async def test_http_client_refuses_the_retired_v1_contract() -> None:
+    """Adepthood cannot silently infer custody from a pre-v2 response."""
 
     def answer(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            409,
+            202,
             request=request,
             headers={"Creek-Provisioning-Version": "1.1.0"},
-            json={"code": "ceremony_expired", "message": canary},
+            json=_job_payload("activation-001"),
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as transport:
         client = HttpCreekProvisioningClient("https://control.example.test", _TOKEN, transport)
-        with pytest.raises(ProvisioningRejectedError) as caught:
-            await client.complete_key_ceremony("job-001", _submission())
+        with pytest.raises(ProvisioningUnavailableError, match="contract unavailable"):
+            await client.activate("activation-001", "adepthood-user-001")
 
-    assert caught.value.code == "ceremony_expired"
-    assert canary not in repr(caught.value)
-    assert _TOKEN not in repr(caught.value)
+
+@pytest.mark.asyncio
+async def test_http_client_accepts_explicit_provider_managed_readiness() -> None:
+    """The v2 ready response carries custody independently of lifecycle state."""
+    payload = _job_payload("activation-001")
+    payload.update(
+        state="ready",
+        custody_mode="provider_managed",
+        attested_confidential=False,
+    )
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            202,
+            request=request,
+            headers={"Creek-Provisioning-Version": "2.0.0"},
+            json=payload,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as transport:
+        client = HttpCreekProvisioningClient("https://control.example.test", _TOKEN, transport)
+        job = await client.activate("activation-001", "adepthood-user-001")
+
+    assert job.state == "ready"
+    assert job.custody_mode == "provider_managed"
+    assert job.attested_confidential is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("custody_mode", "attested_confidential"),
+    [
+        (None, False),
+        ("provider_managed", True),
+        ("wrapped_artifact_only", None),
+        ("user_held", False),
+    ],
+)
+async def test_ready_job_requires_explicit_non_confidential_custody(
+    custody_mode: object,
+    attested_confidential: object,
+) -> None:
+    """Ready is not itself custody evidence and cannot imply confidential compute."""
+    payload = _job_payload("activation-001")
+    payload.update(
+        state="ready",
+        custody_mode=custody_mode,
+        attested_confidential=attested_confidential,
+    )
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            202,
+            request=request,
+            headers={"Creek-Provisioning-Version": "2.0.0"},
+            json=payload,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as transport:
+        client = HttpCreekProvisioningClient("https://control.example.test", _TOKEN, transport)
+        with pytest.raises(ProvisioningUnavailableError, match="response malformed"):
+            await client.activate("activation-001", "adepthood-user-001")
 
 
 @pytest.mark.asyncio
@@ -213,7 +187,7 @@ async def test_upstream_fields_are_bounded_before_they_reach_persistence(
         return httpx.Response(
             202,
             request=request,
-            headers={"Creek-Provisioning-Version": "1.1.0"},
+            headers={"Creek-Provisioning-Version": "2.0.0"},
             json=payload,
         )
 

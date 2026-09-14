@@ -1179,7 +1179,7 @@ configures one deployment-wide vault bound to a single user and it is
 get around this trades a security control for a road that is being
 removed.
 
-### Demand-provisioned private-vault operations
+### Demand-provisioned managed-vault operations
 
 Private-vault activation is explicit and asynchronous. `POST /vault/activation`
 creates or replays one account-scoped activation; `GET /vault/activation`
@@ -1188,14 +1188,16 @@ activation or Creek job after a retryable failure. The committed
 `backend/openapi.json` is the authoritative request/response contract. It never
 contains the vault endpoint or credential.
 
-When progress reaches `awaiting_key_ceremony`, the authenticated client reads
-the public challenge from `GET /vault/activation/key-ceremony` and sends the
-ciphertext-only protocol body to `PUT /vault/activation/key-ceremony` after the
-user has saved the one-time recovery code. Adepthood validates the exact Creek
-1.0.0 shape, rejects extra fields, and releases its database transaction before
-relaying either call with the backend-only Creek bearer. The passphrase,
-recovery code/value, and unwrapped volume key never belong in either request.
-Both successful proxy responses are non-cacheable.
+The client consumes Creek provisioning contract 2.0. Ordinary Fly activation
+moves directly from `pending` through `provisioning` to `ready` after the
+authenticated connection handoff. Its closed `custody_mode` is
+`provider_managed`: Fly and privileged Adepthood or Creek operators can access
+stored bytes, and operator/provider-held material permits unattended restart.
+There is no client passphrase, recovery key, wrapped artifact, download, or
+confirmation step. `wrapped_artifact_only` is a historical-row marker, not a
+claim that old client material ever protected Fly storage. Any future attested
+mode requires a new explicit contract; never infer it from state or
+`attested_confidential`.
 
 Configure the three `CREEK_PROVISIONING_*` variables above with mounted secret
 files. Adepthood commits its local job identity before contacting Creek and

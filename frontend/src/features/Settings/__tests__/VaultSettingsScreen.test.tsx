@@ -109,6 +109,7 @@ const AVAILABLE_ACTIVATION: VaultActivation = {
   failure_reason: null,
   credential_received: false,
   attested_confidential: null,
+  custody_mode: null,
 };
 
 /** Copy blocks paired with the testID the screen renders them in. */
@@ -309,7 +310,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
 
     const view = await renderVault(NOT_CONNECTED);
 
-    expect(view.getByText('Continue private vault setup')).toBeTruthy();
+    expect(view.getByText('Continue managed vault setup')).toBeTruthy();
     expect(view.getByText('Continue setup')).toBeTruthy();
   });
 

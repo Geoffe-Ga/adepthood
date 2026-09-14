@@ -1,4 +1,4 @@
-"""Demand-provisioned private-vault lifecycle contract for issue #2677."""
+"""Demand-provisioned managed-vault lifecycle contract for issue #2677."""
 
 from __future__ import annotations
 
@@ -20,10 +20,6 @@ from models.account_deletion_audit import AccountDeletionAudit
 from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
-from schemas.vault_activation import (
-    VaultKeyCeremonyChallenge,
-    VaultKeyCeremonySubmission,
-)
 from services import journal_encryption
 from services.creek_provisioning import (
     reconcile_vault_teardowns,
@@ -66,8 +62,6 @@ class FakeProvisioningClient:
         self.reject_activate = False
         self.fail_delete = False
         self.delete_state = "deleting"
-        self.fail_ceremony_code: str | None = None
-        self.last_ceremony_submission: VaultKeyCeremonySubmission | None = None
         self.assert_released: object | None = None
 
     def _before_network(self) -> None:
@@ -119,42 +113,6 @@ class FakeProvisioningClient:
         deleting = replace(current, state=self.delete_state, retryable=False, failure_reason=None)
         self.jobs[current.activation_id] = deleting
         return deleting
-
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        """Return one public challenge without exposing the requester bearer."""
-        self._before_network()
-        self.calls.append(("key_ceremony", job_id))
-        current = next(job for job in self.jobs.values() if job.job_id == job_id)
-        return VaultKeyCeremonyChallenge(
-            protocol_version="1.0.0",
-            job_id=current.job_id,
-            activation_id=current.activation_id,
-            ceremony_id="ceremony-001",
-            server_nonce="A" * 43,
-            expires_at=datetime(2026, 9, 8, tzinfo=UTC),
-        )
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        """Accept only the already-wrapped artifact and settle the fake job."""
-        self._before_network()
-        self.calls.append(("complete_key_ceremony", job_id))
-        if self.fail_ceremony_code is not None:
-            raise ProvisioningRejectedError(self.fail_ceremony_code)
-        self.last_ceremony_submission = submission
-        current = next(job for job in self.jobs.values() if job.job_id == job_id)
-        completed = replace(
-            current,
-            state="ready",
-            retryable=False,
-            failure_reason=None,
-            attested_confidential=False,
-        )
-        self.jobs[current.activation_id] = completed
-        return completed
 
 
 @pytest.fixture(autouse=True)
@@ -225,67 +183,6 @@ async def _handoff(
     return response.status_code
 
 
-def _ceremony_payload(
-    activation_id: str,
-    *,
-    attested: bool = False,
-) -> dict[str, object]:
-    """Return a protocol-valid ciphertext-only completion body."""
-    binding = {
-        "protocol_version": "1.0.0",
-        "activation_id": activation_id,
-        "ceremony_id": "ceremony-001",
-        "server_nonce": "A" * 43,
-        "client_nonce": "B" * 43,
-    }
-    payload: dict[str, object] = {
-        "protocol_version": "1.0.0",
-        "ceremony_id": "ceremony-001",
-        "server_nonce": "A" * 43,
-        "recovery_saved": True,
-        "wrapped_artifact": {
-            "version": 2,
-            "kdf": {
-                "algorithm": "argon2id",
-                "salt": "01" * 16,
-                "time_cost": 3,
-                "lanes": 4,
-                "memory_kib": 65536,
-            },
-            "passphrase_wrapped": {
-                "nonce": "02" * 12,
-                "ciphertext": "03" * 48,
-            },
-            "recovery_wrapped": {
-                "nonce": "04" * 12,
-                "ciphertext": "05" * 48,
-            },
-            "binding": binding,
-        },
-        "attestation": None,
-        "key_release": None,
-    }
-    if attested:
-        recipient_public_key = "D" * 43
-        payload["attestation"] = {
-            "format": "creek-ed25519-x25519-v1",
-            "measurement": "measurement-001",
-            "challenge_nonce": "C" * 43,
-            "recipient_public_key": recipient_public_key,
-            "issued_at": "2026-09-07T00:00:00Z",
-            "expires_at": "2026-09-08T00:00:00Z",
-            "signature": "E" * 86,
-        }
-        payload["key_release"] = {
-            "algorithm": "x25519-hkdf-sha256-aes256gcm",
-            "recipient_public_key": recipient_public_key,
-            "ephemeral_public_key": "F" * 43,
-            "nonce": "G" * 16,
-            "ciphertext": "H" * 64,
-        }
-    return payload
-
-
 @pytest.mark.asyncio
 async def test_signup_and_first_journal_save_make_zero_provisioning_calls(
     async_client: AsyncClient,
@@ -332,6 +229,7 @@ async def test_activation_is_idempotent_secret_free_and_releases_the_transaction
         "failure_reason": None,
         "credential_received": False,
         "attested_confidential": None,
+        "custody_mode": None,
     }
     rows = (await db_session.execute(select(VaultActivation))).scalars().all()
     assert len(rows) == 1
@@ -373,6 +271,7 @@ async def test_unavailable_rollout_refuses_new_activation_without_an_oracle(
         "failure_reason": None,
         "credential_received": False,
         "attested_confidential": None,
+        "custody_mode": None,
     }
     assert activation_response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert activation_response.json() == {"detail": "managed_vault_activation_unavailable"}
@@ -663,6 +562,7 @@ async def test_polling_after_a_restart_reaches_ready_only_after_handoff(
         current,
         state="ready",
         attested_confidential=False,
+        custody_mode="provider_managed",
     )
 
     def assert_released() -> None:
@@ -676,6 +576,7 @@ async def test_polling_after_a_restart_reaches_ready_only_after_handoff(
     assert response.json()["state"] == "ready"
     assert response.json()["credential_received"] is True
     assert response.json()["attested_confidential"] is False
+    assert response.json()["custody_mode"] == "provider_managed"
 
 
 @pytest.mark.asyncio
@@ -693,6 +594,7 @@ async def test_ready_status_arriving_before_handoff_remains_pollable(
         current,
         state="ready",
         attested_confidential=False,
+        custody_mode="provider_managed",
     )
 
     before_handoff = await async_client.get("/vault/activation", headers=headers)
@@ -771,7 +673,7 @@ async def test_startup_recovery_preserves_admitted_idempotency_after_emergency_d
 
 
 @pytest.mark.asyncio
-async def test_handed_off_connection_stays_inert_until_ceremony_is_ready(
+async def test_handed_off_connection_stays_inert_until_provider_reports_ready(
     async_client: AsyncClient,
     db_session: AsyncSession,
     creek_client: FakeProvisioningClient,
@@ -806,185 +708,45 @@ async def test_handed_off_connection_stays_inert_until_ceremony_is_ready(
 
 
 @pytest.mark.asyncio
-async def test_key_ceremony_proxy_releases_the_transaction_and_forwards_only_ciphertext(
+async def test_retired_ceremony_state_becomes_a_visible_terminal_failure(
     async_client: AsyncClient,
     db_session: AsyncSession,
     creek_client: FakeProvisioningClient,
 ) -> None:
-    """The browser can complete Creek's ceremony without learning its service bearer."""
-    headers, _, _ = await _signup(async_client, "ceremony-proxy")
+    """A pre-v2 job cannot strand the account on a ceremony that no longer exists."""
+    headers, _, _ = await _signup(async_client, "retired-ceremony")
     await _activate(async_client, headers)
     activation = (await db_session.execute(select(VaultActivation))).scalar_one()
     current = creek_client.jobs[activation.activation_id]
     creek_client.jobs[activation.activation_id] = replace(
         current,
         state="awaiting_key_ceremony",
+        custody_mode="wrapped_artifact_only",
+        attested_confidential=False,
     )
 
     transitioned = await async_client.get("/vault/activation", headers=headers)
 
     assert transitioned.status_code == HTTPStatus.OK
-    assert transitioned.json()["state"] == "awaiting_key_ceremony"
-    await db_session.refresh(activation)
-    assert activation.state == "awaiting_key_ceremony"
-
-    def assert_released() -> None:
-        assert not db_session.in_transaction()
-
-    creek_client.assert_released = assert_released
-    challenge = await async_client.get(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-    )
-    payload = _ceremony_payload(activation.activation_id)
-    completed = await async_client.put(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-        json=payload,
-    )
-
-    assert challenge.status_code == HTTPStatus.OK
-    assert challenge.json() == {
-        "protocol_version": "1.0.0",
-        "job_id": activation.creek_job_id,
-        "activation_id": activation.activation_id,
-        "ceremony_id": "ceremony-001",
-        "server_nonce": "A" * 43,
-        "expires_at": "2026-09-08T00:00:00Z",
+    assert transitioned.json() == {
+        "active": True,
+        "state": "failed",
+        "new_activation_available": True,
+        "retryable": False,
+        "failure_reason": "provider_rejected",
+        "credential_received": False,
+        "attested_confidential": False,
+        "custody_mode": "wrapped_artifact_only",
     }
-    assert completed.status_code == HTTPStatus.OK
-    assert completed.json()["state"] == "awaiting_handoff"
-    assert creek_client.last_ceremony_submission is not None
-    forwarded = creek_client.last_ceremony_submission.model_dump(mode="json")
-    assert forwarded == payload
-    assert "passphrase" not in forwarded
-    assert "recovery_key" not in forwarded
-    assert "recovery_code" not in forwarded
+    await db_session.refresh(activation)
+    assert activation.state == "failed"
 
-
-@pytest.mark.asyncio
-async def test_key_ceremony_proxy_forwards_paired_attestation_and_key_release(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-    creek_client: FakeProvisioningClient,
-) -> None:
-    """The confidential-computing branch relays its paired public evidence exactly."""
-    headers, _, _ = await _signup(async_client, "attested-ceremony")
-    await _activate(async_client, headers)
-    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
-    current = creek_client.jobs[activation.activation_id]
-    creek_client.jobs[activation.activation_id] = replace(
-        current,
-        state="awaiting_key_ceremony",
-    )
-    status_response = await async_client.get("/vault/activation", headers=headers)
-    assert status_response.json()["state"] == "awaiting_key_ceremony"
-    payload = _ceremony_payload(activation.activation_id, attested=True)
-
-    completed = await async_client.put(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-        json=payload,
-    )
-
-    assert completed.status_code == HTTPStatus.OK
-    assert creek_client.last_ceremony_submission is not None
-    assert creek_client.last_ceremony_submission.model_dump(mode="json") == payload
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("missing", ["attestation", "key_release"])
-async def test_key_ceremony_refuses_unpaired_confidential_evidence(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-    creek_client: FakeProvisioningClient,
-    missing: str,
-) -> None:
-    """Attestation and its addressed release envelope are inseparable on the wire."""
-    headers, _, _ = await _signup(async_client, f"unpaired-{missing}")
-    await _activate(async_client, headers)
-    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
-    activation.state = "awaiting_key_ceremony"
-    db_session.add(activation)
-    await db_session.commit()
-    payload = _ceremony_payload(activation.activation_id, attested=True)
-    payload[missing] = None
-
-    refused = await async_client.put(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-        json=payload,
-    )
-
-    assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert creek_client.last_ceremony_submission is None
-
-
-@pytest.mark.asyncio
-async def test_key_ceremony_proxy_rejects_secret_fields_without_echo_or_forwarding(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-    creek_client: FakeProvisioningClient,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A client bug cannot put passphrases onto the operator-controlled hop."""
-    headers, _, _ = await _signup(async_client, "ceremony-secret-refusal")
-    await _activate(async_client, headers)
-    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
-    activation.state = "awaiting_key_ceremony"
-    db_session.add(activation)
-    await db_session.commit()
-    canary = "never-forward-this-passphrase"
-    payload = _ceremony_payload(activation.activation_id)
-    payload["passphrase"] = canary
-
-    refused = await async_client.put(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-        json=payload,
-    )
-
-    assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert canary not in refused.text
-    assert canary not in caplog.text
-    assert creek_client.last_ceremony_submission is None
-    assert not any(call[0] == "complete_key_ceremony" for call in creek_client.calls)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "failure_code",
-    [
-        "invalid_request",
-        "job_unavailable",
-        "invalid_transition",
-        "ceremony_conflict",
-        "ceremony_expired",
-    ],
-)
-async def test_key_ceremony_proxy_preserves_every_stable_rejection(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-    creek_client: FakeProvisioningClient,
-    failure_code: str,
-) -> None:
-    """The recovery UI receives every bounded Creek refusal without drift."""
-    headers, _, _ = await _signup(async_client, f"ceremony-{failure_code}")
-    await _activate(async_client, headers)
-    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
-    activation.state = "awaiting_key_ceremony"
-    db_session.add(activation)
-    await db_session.commit()
-    creek_client.fail_ceremony_code = failure_code
-
-    refused = await async_client.put(
-        "/vault/activation/key-ceremony",
-        headers=headers,
-        json=_ceremony_payload(activation.activation_id),
-    )
-
-    assert refused.status_code == HTTPStatus.CONFLICT
-    assert refused.json() == {"detail": failure_code}
+    assert (
+        await async_client.get("/vault/activation/key-ceremony", headers=headers)
+    ).status_code == HTTPStatus.NOT_FOUND
+    assert (
+        await async_client.put("/vault/activation/key-ceremony", headers=headers, json={})
+    ).status_code == HTTPStatus.NOT_FOUND
 
 
 @pytest.mark.asyncio
@@ -1046,7 +808,7 @@ async def test_account_deletion_reports_a_completed_provisioned_teardown(
     assert deleted.json()["vault"] == {
         "configured": True,
         "purged": True,
-        "guidance": "Creek confirmed that the provisioned private-vault allocation was deleted.",
+        "guidance": "Creek confirmed that the provisioned managed-vault allocation was deleted.",
     }
     teardown = (await db_session.execute(select(VaultTeardownReceipt))).scalar_one()
     assert teardown.state == "deleted"
@@ -1206,12 +968,22 @@ async def test_stuck_teardown_is_visible_only_to_operations(
 
 
 def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> None:
-    """The checked contract documents every public lifecycle rung, never handoff data."""
+    """The checked contract exposes custody truth without a ceremony or handoff data."""
     document = app.openapi()
     assert set(document["paths"]["/vault/activation"]) >= {"get", "post"}
     assert "post" in document["paths"]["/vault/activation/retry"]
-    assert set(document["paths"]["/vault/activation/key-ceremony"]) >= {"get", "put"}
+    assert document["paths"]["/vault/activation"]["get"]["summary"] == (
+        "Get Managed Vault Activation"
+    )
+    assert document["paths"]["/vault/activation"]["post"]["summary"] == ("Activate Managed Vault")
+    assert document["paths"]["/vault/activation/retry"]["post"]["summary"] == (
+        "Retry Managed Vault Activation"
+    )
+    assert "/vault/activation/key-ceremony" not in document["paths"]
     response_schema = document["components"]["schemas"]["VaultActivationResponse"]
+    assert response_schema["description"] == (
+        "Everything the frontend may learn about managed-vault progress."
+    )
     properties = response_schema["properties"]
     assert set(properties) == {
         "active",
@@ -1221,13 +993,13 @@ def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> Non
         "failure_reason",
         "credential_received",
         "attested_confidential",
+        "custody_mode",
     }
     assert properties["state"]["enum"] == [
         "inactive",
         "submitting",
         "pending",
         "provisioning",
-        "awaiting_key_ceremony",
         "awaiting_handoff",
         "ready",
         "failed",
@@ -1237,11 +1009,11 @@ def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> Non
     serialized = str(response_schema)
     assert "vault_url" not in serialized
     assert "consumer_credential" not in serialized
-    ceremony_schemas = document["components"]["schemas"]
-    ceremony_schema = str(ceremony_schemas)
-    assert "VaultKeyCeremonyChallenge" in ceremony_schema
-    assert "VaultKeyCeremonySubmission" in ceremony_schema
-    submission_properties = ceremony_schemas["VaultKeyCeremonySubmission"]["properties"]
-    assert "passphrase" not in submission_properties
-    assert "recovery_key" not in submission_properties
-    assert "recovery_code" not in ceremony_schema.lower()
+    assert properties["custody_mode"]["anyOf"][0]["enum"] == [
+        "provider_managed",
+        "wrapped_artifact_only",
+    ]
+    schemas = str(document["components"]["schemas"])
+    assert "VaultKeyCeremony" not in schemas
+    assert "passphrase" not in schemas.lower()
+    assert "recovery_key" not in schemas.lower()

@@ -239,9 +239,9 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 describe('SettingsHubScreen — private vault row', () => {
   // Literals mirror the deck pinned verbatim in vaultCopy.test.ts. Kept literal
   // so a break in the copy module cannot take this file's other suites with it.
-  const VAULT_ROW_LABEL = 'Private vault';
+  const VAULT_ROW_LABEL = 'Creek vault';
   const VAULT_ROW_DESCRIPTION =
-    'An optional copy of what you write, in a space you run yourself. Adepthood is complete without one.';
+    'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.';
 
   test('renders the vault row inside the Privacy group', () => {
     const { getByTestId } = render(<SettingsHubScreen />);

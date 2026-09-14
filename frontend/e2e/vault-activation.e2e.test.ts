@@ -4,14 +4,7 @@ import { afterAll, describe, expect, it } from '@jest/globals';
 
 import { freshLicenseKey } from './licenseKey';
 
-import {
-  auth,
-  setTokenGetter,
-  vaultActivation,
-  type VaultActivation,
-  type VaultKeyCeremonyChallenge,
-  type VaultWrappedKeyArtifact,
-} from '@/api';
+import { auth, setTokenGetter, vaultActivation, type VaultActivation } from '@/api';
 
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
@@ -19,35 +12,13 @@ const TIMEZONE = 'UTC';
 const LICENSE_KEY = freshLicenseKey();
 const email = `e2e-vault-activation-${randomUUID()}${EMAIL_DOMAIN}`;
 
-function artifactFor(challenge: VaultKeyCeremonyChallenge): VaultWrappedKeyArtifact {
-  return {
-    version: 2,
-    kdf: {
-      algorithm: 'argon2id',
-      salt: 'a'.repeat(32),
-      time_cost: 3,
-      lanes: 4,
-      memory_kib: 65_536,
-    },
-    passphrase_wrapped: { nonce: 'b'.repeat(24), ciphertext: 'c'.repeat(96) },
-    recovery_wrapped: { nonce: 'd'.repeat(24), ciphertext: 'e'.repeat(96) },
-    binding: {
-      protocol_version: '1.0.0',
-      activation_id: challenge.activation_id,
-      ceremony_id: challenge.ceremony_id,
-      server_nonce: challenge.server_nonce,
-      client_nonce: 'F'.repeat(43),
-    },
-  };
-}
-
 async function expectReady(): Promise<VaultActivation> {
   const status = await vaultActivation.status();
   expect(status.state).toBe('ready');
   return status;
 }
 
-describe('private-vault activation against a fake Creek control plane', () => {
+describe('provider-managed activation against a fake Creek v2 control plane', () => {
   let sessionToken: string | null = null;
 
   afterAll(() => setTokenGetter(null));
@@ -73,41 +44,37 @@ describe('private-vault activation against a fake Creek control plane', () => {
       failure_reason: null,
       credential_received: false,
       attested_confidential: null,
+      custody_mode: null,
     });
   });
 
-  it('activates explicitly and resumes at the client-held ceremony', async () => {
+  it('progresses directly through pending and provisioning without a ceremony', async () => {
     const started = await vaultActivation.activate();
-    expect(started.state).toBe('pending');
-    expect(started.active).toBe(true);
-
-    const resumed = await vaultActivation.status();
-    expect(resumed.state).toBe('awaiting_key_ceremony');
-    expect(resumed.credential_received).toBe(false);
-  });
-
-  it('relays a public challenge and only a wrapped completion', async () => {
-    const challenge = await vaultActivation.keyCeremony();
-    expect(challenge.protocol_version).toBe('1.0.0');
-
-    const completion = await vaultActivation.completeCeremony({
-      protocol_version: '1.0.0',
-      ceremony_id: challenge.ceremony_id,
-      server_nonce: challenge.server_nonce,
-      recovery_saved: true,
-      wrapped_artifact: artifactFor(challenge),
-      attestation: null,
-      key_release: null,
+    expect(started).toMatchObject({
+      active: true,
+      state: 'pending',
+      credential_received: false,
+      custody_mode: null,
     });
-    expect(['awaiting_handoff', 'ready']).toContain(completion.state);
-    expect(Object.keys(completion)).not.toContain('passphrase');
-    expect(Object.keys(completion)).not.toContain('recovery_key');
+
+    const provisioning = await vaultActivation.status();
+    expect(provisioning).toMatchObject({
+      state: 'provisioning',
+      credential_received: false,
+      custody_mode: null,
+    });
   });
 
-  it('finishes from the durable handoff and reports the real verified capability', async () => {
+  it('accepts the authenticated handoff and reports explicit custody at ready', async () => {
     const ready = await expectReady();
 
-    expect(ready.credential_received).toBe(true);
-    expect(ready.attested_confidential).toBe(false);
+    expect(ready).toMatchObject({
+      credential_received: true,
+      attested_confidential: false,
+      custody_mode: 'provider_managed',
+    });
+    expect(Object.keys(ready)).not.toContain('passphrase');
+    expect(Object.keys(ready)).not.toContain('recovery_key');
+    expect(Object.keys(vaultActivation)).toEqual(['status', 'activate', 'retry']);
   });
 });

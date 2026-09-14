@@ -1,34 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { prepareKeyCeremony, type PreparedKeyCeremony } from './keyCeremony';
-import { copyRecoveryKey, saveRecoveryKeyLocally } from './saveRecoveryKey';
-
-import { vaultActivation, type VaultActivation, type VaultKeyCeremonyChallenge } from '@/api';
+import { vaultActivation, type VaultActivation } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  accent,
-  colors,
-  ink,
-  rhythm,
-  surface,
-  touchTarget,
-} from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, colors, ink, rhythm, surface } from '@/design/tokens';
 
 const POLL_INTERVAL_MS = 2_000;
-const MINIMUM_PASSPHRASE_LENGTH = 12;
 const POLLABLE_STATES = new Set<VaultActivation['state']>([
   'submitting',
   'pending',
@@ -38,10 +18,6 @@ const POLLABLE_STATES = new Set<VaultActivation['state']>([
 
 interface Props {
   navigation?: { goBack?: () => void };
-}
-
-interface PreparedCeremony extends PreparedKeyCeremony {
-  challenge: VaultKeyCeremonyChallenge;
 }
 
 function useMountedRef(): React.RefObject<boolean> {
@@ -55,58 +31,53 @@ function useMountedRef(): React.RefObject<boolean> {
   return mounted;
 }
 
-function capabilityCopy(attested: boolean | null): string {
-  return attested === true
-    ? 'Intimate processing is available.'
-    : 'Intimate processing remains unavailable because confidential compute is not verified.';
-}
-
 function progressCopy(state: VaultActivation['state']): string {
   switch (state) {
     case 'submitting':
       return 'Sending your activation request…';
     case 'pending':
-      return 'Your private space is waiting for capacity…';
+      return 'Your managed space is waiting for capacity…';
     case 'provisioning':
-      return 'Creek is preparing your private space…';
+      return 'Creek is preparing your managed space…';
     case 'awaiting_handoff':
       return 'Your encrypted vault connection is being delivered…';
     default:
-      return 'Checking your private vault…';
+      return 'Checking your managed vault…';
   }
 }
 
-const PrivacyNotice = (): React.JSX.Element => (
-  <View style={styles.notice} testID="activation-privacy-notice">
-    <Text style={styles.noticeTitle}>What stays with you</Text>
+const CustodyNotice = (): React.JSX.Element => (
+  <View style={styles.notice} testID="activation-custody-notice">
+    <Text style={styles.noticeTitle}>Provider-managed custody</Text>
     <Text style={styles.body}>
-      Your passphrase and recovery key are created and used only on this device. Adepthood receives
-      a wrapped, encrypted artifact—not either secret.
+      Ordinary Fly storage is encrypted with provider-managed keys. Fly and a sufficiently
+      privileged Adepthood or Creek operator can access stored bytes. This is not confidential
+      compute.
     </Text>
     <Text style={styles.body}>
-      Intimate processing stays unavailable until confidential compute is verified. A private vault
-      alone does not make that promise true.
+      INTIMATE entries stay in Adepthood and are never sent to this managed vault or a cloud
+      language model. Activating it does not change that boundary.
     </Text>
   </View>
 );
 
 const Intro = ({ onContinue, onCancel }: { onContinue: () => void; onCancel: () => void }) => (
   <View testID="activation-intro">
-    <PrivacyNotice />
-    <Text style={styles.floor}>Adepthood is complete without a private vault.</Text>
+    <CustodyNotice />
+    <Text style={styles.floor}>Adepthood is complete without a managed vault.</Text>
     <View style={styles.actions}>
       <Button
         label="Continue"
         onPress={onContinue}
         testID="continue-vault-activation"
-        accessibilityLabel="Continue private vault setup"
+        accessibilityLabel="Continue managed vault setup"
       />
       <Button
         label="Not now"
         onPress={onCancel}
         variant="tertiary"
         testID="cancel-vault-activation"
-        accessibilityLabel="Not now, return to private vault settings"
+        accessibilityLabel="Not now, return to Creek vault settings"
       />
     </View>
   </View>
@@ -124,10 +95,11 @@ const ActivationConsent = ({
   onCancel: () => void;
 }) => (
   <View style={styles.card} testID="activation-consent">
-    <Text style={styles.sectionTitle}>Keep both ways back in</Text>
+    <Text style={styles.sectionTitle}>Create an isolated managed vault</Text>
     <Text style={styles.body}>
-      You will choose a passphrase and receive one recovery key. If both are lost, nobody can
-      recover this vault—not Adepthood and not Creek.
+      Creek will create one Fly app, machine, and volume for this account. Provider-managed keys
+      unlock it after unattended restarts; Adepthood will not ask you to create or store unlock
+      material.
     </Text>
     <Text style={styles.body}>
       Creating the vault starts an allocation. You can leave while it finishes, and your journal
@@ -140,7 +112,7 @@ const ActivationConsent = ({
     ) : null}
     <View style={styles.actions}>
       <Button
-        label="Create private vault"
+        label="Create managed vault"
         onPress={onActivate}
         busy={busy}
         testID="activate-private-vault"
@@ -156,175 +128,6 @@ const ActivationConsent = ({
   </View>
 );
 
-interface PassphraseFormProps {
-  passphrase: string;
-  confirmation: string;
-  busy: boolean;
-  error: string | null;
-  onPassphrase: (_value: string) => void;
-  onConfirmation: (_value: string) => void;
-  onPrepare: () => void;
-}
-
-interface SecretInputProps {
-  label: string;
-  value: string;
-  onChange: (_value: string) => void;
-  testID: string;
-}
-
-const SecretInput = ({ label, value, onChange, testID }: SecretInputProps): React.JSX.Element => (
-  <>
-    <Text style={styles.inputLabel}>{label}</Text>
-    <TextInput
-      value={value}
-      onChangeText={onChange}
-      secureTextEntry
-      autoCapitalize="none"
-      autoCorrect={false}
-      textContentType="newPassword"
-      accessibilityLabel={label}
-      style={styles.input}
-      testID={testID}
-    />
-  </>
-);
-
-const PassphraseForm = ({
-  passphrase,
-  confirmation,
-  busy,
-  error,
-  onPassphrase,
-  onConfirmation,
-  onPrepare,
-}: PassphraseFormProps): React.JSX.Element => (
-  <View style={styles.card} testID="vault-key-ceremony">
-    <Text style={styles.sectionTitle}>Create your two ways back in</Text>
-    <Text style={styles.body}>
-      Choose a memorable passphrase. Next, this device will show your recovery key once so you can
-      store it somewhere safe.
-    </Text>
-    <SecretInput
-      label="Private vault passphrase"
-      value={passphrase}
-      onChange={onPassphrase}
-      testID="vault-passphrase-input"
-    />
-    <SecretInput
-      label="Confirm private vault passphrase"
-      value={confirmation}
-      onChange={onConfirmation}
-      testID="vault-passphrase-confirm-input"
-    />
-    {error ? (
-      <Text style={styles.error} accessibilityRole="alert">
-        {error}
-      </Text>
-    ) : null}
-    <Button
-      label="Prepare recovery key"
-      onPress={onPrepare}
-      busy={busy}
-      testID="prepare-vault-recovery"
-    />
-  </View>
-);
-
-interface RecoveryCardProps {
-  prepared: PreparedCeremony;
-  saved: boolean;
-  busy: boolean;
-  feedback: string | null;
-  onToggleSaved: () => void;
-  onCopy: () => void;
-  onSave: () => void;
-  onComplete: () => void;
-}
-
-/** Keep native accessibility state and the web ARIA state in lockstep. */
-export function recoveryAcknowledgementA11y(saved: boolean) {
-  return {
-    accessibilityRole: 'checkbox' as const,
-    accessibilityState: { checked: saved },
-    'aria-checked': saved,
-  };
-}
-
-const RecoveryActions = ({
-  saved,
-  onToggleSaved,
-  onCopy,
-  onSave,
-}: Pick<RecoveryCardProps, 'saved' | 'onToggleSaved' | 'onCopy' | 'onSave'>): React.JSX.Element => (
-  <>
-    <View style={styles.sideBySide}>
-      <Button
-        label="Copy key"
-        onPress={onCopy}
-        variant="secondary"
-        testID="copy-vault-recovery"
-        style={styles.flexButton}
-      />
-      <Button
-        label="Save a copy"
-        onPress={onSave}
-        variant="secondary"
-        testID="save-vault-recovery"
-        style={styles.flexButton}
-      />
-    </View>
-    <TouchableOpacity
-      {...recoveryAcknowledgementA11y(saved)}
-      accessibilityLabel="I stored my recovery key somewhere safe"
-      onPress={onToggleSaved}
-      style={styles.checkboxRow}
-      testID="vault-recovery-saved"
-    >
-      <View style={[styles.checkbox, saved && styles.checkboxChecked]}>
-        <Text style={styles.checkmark}>{saved ? '✓' : ''}</Text>
-      </View>
-      <Text style={styles.checkboxLabel}>I stored my recovery key somewhere safe.</Text>
-    </TouchableOpacity>
-  </>
-);
-
-const RecoveryCard = ({
-  prepared,
-  saved,
-  busy,
-  feedback,
-  onToggleSaved,
-  onCopy,
-  onSave,
-  onComplete,
-}: RecoveryCardProps): React.JSX.Element => (
-  <View style={styles.recoveryCard} testID="vault-recovery-once">
-    <Text style={styles.recoveryEyebrow}>SHOWN ONCE</Text>
-    <Text style={styles.sectionTitle}>Store your recovery key now</Text>
-    <Text style={styles.body}>
-      After you finish this step, Adepthood cannot show this key again. Keep it apart from your
-      passphrase.
-    </Text>
-    <Text selectable style={styles.recoveryCode} testID="vault-recovery-code">
-      {prepared.recoveryCode}
-    </Text>
-    <RecoveryActions saved={saved} onToggleSaved={onToggleSaved} onCopy={onCopy} onSave={onSave} />
-    {feedback ? (
-      <Text style={styles.feedback} accessibilityLiveRegion="polite">
-        {feedback}
-      </Text>
-    ) : null}
-    <Button
-      label="Finish private vault setup"
-      onPress={onComplete}
-      disabled={!saved}
-      busy={busy}
-      testID="complete-vault-ceremony"
-    />
-  </View>
-);
-
 const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Element => (
   <View style={styles.progressCard} testID="activation-progress" accessibilityLiveRegion="polite">
     <ActivityIndicator size="small" color={accent.primary} />
@@ -335,10 +138,24 @@ const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Ele
   </View>
 );
 
+function readyCustodyCopy(custodyMode: VaultActivation['custody_mode']): string {
+  if (custodyMode === 'provider_managed') {
+    return 'Storage is encrypted with provider-managed keys. Fly and a sufficiently privileged operator can access stored bytes.';
+  }
+  if (custodyMode === 'wrapped_artifact_only') {
+    return 'This legacy allocation predates the current custody contract. Its old wrapped artifact never controlled Fly storage, so no user-held recovery claim applies.';
+  }
+  return 'Custody details are unavailable, so Adepthood makes no confidentiality claim for this allocation.';
+}
+
 const Ready = ({ activation }: { activation: VaultActivation }): React.JSX.Element => (
   <View style={styles.readyCard} testID="activation-ready">
-    <Text style={styles.sectionTitle}>Your private vault is ready.</Text>
-    <Text style={styles.body}>{capabilityCopy(activation.attested_confidential)}</Text>
+    <Text style={styles.sectionTitle}>Your managed vault is ready.</Text>
+    <Text style={styles.body}>{readyCustodyCopy(activation.custody_mode)}</Text>
+    <Text style={styles.body}>
+      This is not confidential compute. INTIMATE entries remain in Adepthood and are skipped by the
+      managed vault.
+    </Text>
   </View>
 );
 
@@ -351,9 +168,10 @@ interface FailedProps {
 
 const Failed = ({ retryable, busy, error, onRetry }: FailedProps): React.JSX.Element => (
   <View style={styles.errorCard} testID="activation-failed">
-    <Text style={styles.sectionTitle}>Your vault is not ready yet.</Text>
+    <Text style={styles.sectionTitle}>Your managed vault is not ready yet.</Text>
     <Text style={styles.body}>
-      Your journal still works. No passphrase or recovery key was kept by Adepthood.
+      Your journal still works. INTIMATE entries still stay in Adepthood and out of the managed
+      vault.
     </Text>
     {error ? (
       <Text style={styles.error} accessibilityRole="alert">
@@ -382,11 +200,11 @@ const LoadError = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
 const ManagedVaultUnavailable = ({ onBack }: { onBack: () => void }): React.JSX.Element => (
   <View style={styles.card} testID="managed-vault-unavailable" accessibilityRole="summary">
     <Text style={styles.sectionTitle}>
-      Private vault creation is not available for this account yet.
+      Managed vault creation is not available for this account yet.
     </Text>
     <Text style={styles.body}>
       We are opening managed vaults gradually. Your journal is complete without it, and you can
-      still connect a vault you run from Private Vault settings.
+      still connect a vault you run from Managed vault settings.
     </Text>
     <Button label="Back to settings" onPress={onBack} testID="unavailable-vault-back" />
   </View>
@@ -462,239 +280,31 @@ function useActivationCommands(
   return { start, retry };
 }
 
-interface PreparationControl {
-  passphrase: string;
-  confirmation: string;
-  prepared: PreparedCeremony | null;
-  setPassphrase: Dispatch<SetStateAction<string>>;
-  setConfirmation: Dispatch<SetStateAction<string>>;
-  setPrepared: Dispatch<SetStateAction<PreparedCeremony | null>>;
-  prepare: () => Promise<void>;
-}
-
-function useCeremonyPreparation(
-  mounted: MountedRef,
-  setBusy: Dispatch<SetStateAction<boolean>>,
-  setError: Dispatch<SetStateAction<string | null>>,
-): PreparationControl {
-  const [passphrase, setPassphrase] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [prepared, setPrepared] = useState<PreparedCeremony | null>(null);
-  const prepare = useCallback(async () => {
-    if (passphrase.length < MINIMUM_PASSPHRASE_LENGTH) {
-      setError('Use at least 12 characters for your passphrase.');
-      return;
-    }
-    if (passphrase !== confirmation) {
-      setError('Those passphrases do not match.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const challenge = await vaultActivation.keyCeremony();
-      const result = await prepareKeyCeremony(challenge, passphrase);
-      if (mounted.current) setPrepared({ ...result, challenge });
-    } catch {
-      if (mounted.current) setError('The recovery key could not be prepared. Try again.');
-    } finally {
-      if (mounted.current) {
-        setPassphrase('');
-        setConfirmation('');
-        setBusy(false);
-      }
-    }
-  }, [confirmation, mounted, passphrase, setBusy, setError]);
-  return {
-    passphrase,
-    confirmation,
-    prepared,
-    setPassphrase,
-    setConfirmation,
-    setPrepared,
-    prepare,
-  };
-}
-
-interface SharingControl {
-  feedback: string | null;
-  clearFeedback: () => void;
-  copy: () => Promise<void>;
-  save: () => Promise<void>;
-}
-
-function useRecoverySharing(
-  mounted: MountedRef,
-  prepared: PreparedCeremony | null,
-): SharingControl {
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const copy = useCallback(async () => {
-    if (!prepared) return;
-    const copied = await copyRecoveryKey(prepared.recoveryCode);
-    if (mounted.current) setFeedback(copied ? 'Recovery key copied.' : 'Copy is unavailable here.');
-  }, [mounted, prepared]);
-  const save = useCallback(async () => {
-    if (!prepared) return;
-    const saved = await saveRecoveryKeyLocally(prepared.recoveryCode);
-    if (mounted.current) {
-      setFeedback(saved ? 'A recovery copy was offered to your device.' : 'No copy was saved.');
-    }
-  }, [mounted, prepared]);
-  const clearFeedback = useCallback(() => setFeedback(null), []);
-  return { feedback, clearFeedback, copy, save };
-}
-
-function ceremonySubmission(prepared: PreparedCeremony) {
-  return {
-    protocol_version: '1.0.0' as const,
-    ceremony_id: prepared.challenge.ceremony_id,
-    server_nonce: prepared.challenge.server_nonce,
-    recovery_saved: true as const,
-    wrapped_artifact: prepared.wrappedArtifact,
-    attestation: null,
-    key_release: null,
-  };
-}
-
-interface CompletionOptions {
-  mounted: MountedRef;
-  prepared: PreparedCeremony | null;
-  recoverySaved: boolean;
-  loadStatus: () => Promise<void>;
-  setPrepared: Dispatch<SetStateAction<PreparedCeremony | null>>;
-  setActivation: SetActivation;
-  setBusy: Dispatch<SetStateAction<boolean>>;
-  setError: Dispatch<SetStateAction<string | null>>;
-  resetSaved: () => void;
-  clearFeedback: () => void;
-}
-
-function useCeremonyCompletion(options: CompletionOptions): () => Promise<void> {
-  const {
-    mounted,
-    prepared,
-    recoverySaved,
-    loadStatus,
-    setPrepared,
-    setActivation,
-    setBusy,
-    setError,
-    resetSaved,
-    clearFeedback,
-  } = options;
-  return useCallback(async () => {
-    if (!prepared || !recoverySaved) return;
-    setBusy(true);
-    setPrepared(null);
-    resetSaved();
-    clearFeedback();
-    try {
-      const next = await vaultActivation.completeCeremony(ceremonySubmission(prepared));
-      if (mounted.current) setActivation(next);
-    } catch {
-      if (mounted.current) {
-        setError('The wrapped key was not accepted. Your journal still works.');
-        await loadStatus();
-      }
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  }, [
-    clearFeedback,
-    loadStatus,
-    mounted,
-    prepared,
-    recoverySaved,
-    resetSaved,
-    setActivation,
-    setBusy,
-    setError,
-    setPrepared,
-  ]);
-}
-
-interface ActivationController extends StatusControl, PreparationControl, SharingControl {
+interface ActivationController extends StatusControl {
   introComplete: boolean;
   setIntroComplete: Dispatch<SetStateAction<boolean>>;
-  recoverySaved: boolean;
-  toggleRecoverySaved: () => void;
   busy: boolean;
   formError: string | null;
   start: () => Promise<void>;
   retry: () => Promise<void>;
-  complete: () => Promise<void>;
 }
 
 function useActivationController(): ActivationController {
   const mounted = useMountedRef();
   const status = useActivationStatus(mounted);
   const [introComplete, setIntroComplete] = useState(false);
-  const [recoverySaved, setRecoverySaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const preparation = useCeremonyPreparation(mounted, setBusy, setFormError);
-  const sharing = useRecoverySharing(mounted, preparation.prepared);
   const commands = useActivationCommands(mounted, status.setActivation, setBusy, setFormError);
-  const resetSaved = useCallback(() => setRecoverySaved(false), []);
-  const toggleRecoverySaved = useCallback(() => setRecoverySaved((current) => !current), []);
-  const complete = useCeremonyCompletion({
-    mounted,
-    prepared: preparation.prepared,
-    recoverySaved,
-    loadStatus: status.loadStatus,
-    setPrepared: preparation.setPrepared,
-    setActivation: status.setActivation,
-    setBusy,
-    setError: setFormError,
-    resetSaved,
-    clearFeedback: sharing.clearFeedback,
-  });
   return {
     ...status,
-    ...preparation,
-    ...sharing,
     ...commands,
     introComplete,
     setIntroComplete,
-    recoverySaved,
-    toggleRecoverySaved,
     busy,
     formError,
-    complete,
   };
 }
-
-const CeremonyContent = ({
-  controller,
-}: {
-  controller: ActivationController;
-}): React.JSX.Element => {
-  if (controller.prepared) {
-    return (
-      <RecoveryCard
-        prepared={controller.prepared}
-        saved={controller.recoverySaved}
-        busy={controller.busy}
-        feedback={controller.feedback}
-        onToggleSaved={controller.toggleRecoverySaved}
-        onCopy={() => void controller.copy()}
-        onSave={() => void controller.save()}
-        onComplete={() => void controller.complete()}
-      />
-    );
-  }
-  return (
-    <PassphraseForm
-      passphrase={controller.passphrase}
-      confirmation={controller.confirmation}
-      busy={controller.busy}
-      error={controller.formError}
-      onPassphrase={controller.setPassphrase}
-      onConfirmation={controller.setConfirmation}
-      onPrepare={() => void controller.prepare()}
-    />
-  );
-};
 
 const ActivationContent = ({
   controller,
@@ -717,8 +327,6 @@ const ActivationContent = ({
       />
     );
   }
-  if (activation.state === 'awaiting_key_ceremony')
-    return <CeremonyContent controller={controller} />;
   if (POLLABLE_STATES.has(activation.state)) return <Progress state={activation.state} />;
   if (!activation.active && !activation.new_activation_available) {
     return <ManagedVaultUnavailable onBack={onCancel} />;
@@ -742,9 +350,9 @@ const PrivateVaultActivationScreen = ({ navigation }: Props): React.JSX.Element 
   return (
     <ScreenScaffold scroll testID="private-vault-activation-screen">
       <ScreenHeader
-        eyebrow="Optional privacy"
-        title="Create your private vault"
-        lead="A space you control, opened only when you choose."
+        eyebrow="Optional storage"
+        title="Create your managed vault"
+        lead="An account-scoped managed cloud vault, activated only when you choose."
       />
       <View style={styles.content}>
         <ActivationContent controller={controller} onCancel={goBack} />
@@ -781,65 +389,7 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
   },
   actions: { gap: SPACING.sm },
-  inputLabel: { color: ink.primary, fontSize: 15, fontWeight: '600', marginBottom: SPACING.xs },
-  input: {
-    minHeight: touchTarget.minimum,
-    borderWidth: 1,
-    borderColor: surface.hairline,
-    borderRadius: BORDER_RADIUS.md,
-    paddingHorizontal: SPACING.md,
-    fontSize: 16,
-    color: ink.primary,
-    backgroundColor: surface.canvas,
-    marginBottom: SPACING.md,
-  },
   error: { color: colors.destructive.text, fontSize: 15, lineHeight: 22, marginBottom: SPACING.md },
-  recoveryCard: {
-    backgroundColor: surface.raised,
-    borderRadius: BORDER_RADIUS.lg,
-    borderWidth: 2,
-    borderColor: accent.primary,
-    padding: SPACING.lg,
-  },
-  recoveryEyebrow: {
-    color: accent.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    marginBottom: SPACING.sm,
-  },
-  recoveryCode: {
-    backgroundColor: surface.sunken,
-    borderRadius: BORDER_RADIUS.md,
-    color: ink.primary,
-    fontFamily: 'monospace',
-    fontSize: 16,
-    lineHeight: 26,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-  },
-  sideBySide: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
-  flexButton: { flex: 1, paddingHorizontal: SPACING.sm },
-  feedback: { color: ink.soft, fontSize: 14, lineHeight: 21, marginBottom: SPACING.sm },
-  checkboxRow: {
-    minHeight: touchTarget.minimum,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.md,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: BORDER_RADIUS.xs,
-    borderWidth: 2,
-    borderColor: accent.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: SPACING.sm,
-  },
-  checkboxChecked: { backgroundColor: accent.primary },
-  checkmark: { color: accent.onPrimary, fontSize: 16, fontWeight: '700' },
-  checkboxLabel: { flex: 1, color: ink.primary, fontSize: 16, lineHeight: 23 },
   progressCard: {
     backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,

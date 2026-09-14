@@ -1,38 +1,39 @@
-# ADR 0007: Confidential vaults are provisioned on demand, not at signup
+# ADR 0007: Managed vaults are provisioned on demand, not at signup
 
 - **Status:** Accepted
 - **Date:** 2026-09-06
 - **Issues:** [#2575](https://github.com/Geoffe-Ga/adepthood/issues/2575),
   [#2872](https://github.com/Geoffe-Ga/adepthood/issues/2872),
-  [creek-vault#1724](https://github.com/Geoffe-Ga/Creek-Vault/issues/1724)
-- **Amends:** [ADR 0002](0002-intimate-content-local-routing.md) Decision 1
-  and [ADR 0005](0005-operator-side-ontologization.md) Decision 4 by fixing
-  the confidential vault's lifecycle and cost posture. It does not weaken
-  their custody, routing, or privacy boundaries.
+  [#2874](https://github.com/Geoffe-Ga/adepthood/issues/2874),
+  [creek-vault#1724](https://github.com/Geoffe-Ga/Creek-Vault/issues/1724), and
+  [creek-vault#1808](https://github.com/Geoffe-Ga/Creek-Vault/issues/1808)
+- **Amends:** [ADR 0002](0002-intimate-content-local-routing.md) Decisions 1,
+  2, and 4 and [ADR 0005](0005-operator-side-ontologization.md) Decision 4.
+  It fixes the managed vault's lifecycle, cost posture, and custody truth:
+  ordinary Fly custody is provider-managed; the user-held/attested design is
+  future work and is not a property of the launch service.
 - **Upstream counterpart:** Creek Vault
   [Creek-Vault ADR-0013](https://github.com/Geoffe-Ga/Creek-Vault/blob/main/creek-tools/docs/architecture/ADR/0013-demand-provisioned-vault-lifecycle.md)
 
 ## Context
 
-ADR 0002 ratified one isolated Creek Vault deployment per user: disposable
-compute attached to a durable encrypted volume, with user-held keys released
-only to attested confidential compute. ADR 0005 later ratified the launch floor
-while that infrastructure is absent: operator-side ontologization for OPEN and
-PERSONAL material, with INTIMATE material structurally excluded.
+ADR 0002 proposed one isolated Creek Vault deployment per user with user-held
+keys and attested confidential compute. Ordinary Fly Machines cannot honestly
+provide that custody guarantee while also restarting unattended. The launch
+floor is therefore provider-managed storage for OPEN and PERSONAL material,
+with INTIMATE material structurally excluded.
 
 Issue #2575 incorrectly joined that privacy architecture to account creation.
 It asked Adepthood to provision a vault during every signup even though the
-North Star calls the journal a "wide, low door", key setup is deliberately
-irrecoverable without the user's passphrase or one-time recovery key, and an
-idle per-user allocation has a real recurring cost. Asynchrony protects signup
-latency; it does not remove the storage bill or make an unsolicited key
-ceremony consensual.
+North Star calls the journal a "wide, low door", and an idle per-user allocation
+has a real recurring cost. Asynchrony protects signup latency; it does not
+remove the storage bill or make an unsolicited managed allocation consensual.
 
 The architectural boundary and the lifecycle question are separate. A
 per-user execution boundary remains the safest fit because Creek is
 single-user by design and its `/v1` contract carries no tenant identifier.
 That does not imply a permanently running VM, nor a VM for an account that has
-never asked for the confidential capability.
+never asked for managed storage.
 
 ## Decision 1 — Signup never waits for, performs, or requires vault provisioning
 
@@ -40,15 +41,14 @@ Account creation succeeds using the shipped operator-side OPEN/PERSONAL corpus
 floor. A provisioning outage cannot delay or roll back signup, entitlement
 grant, social identity linking, or the first journal save.
 
-Adepthood offers the confidential vault as an optional, surfaced privacy
-capability. Provisioning begins only after the authenticated user explicitly
-activates it and completes its key ceremony. Activation may be invited when it
-is useful, but it follows the North Star's invitation rules: it is
+Adepthood offers a managed vault as an optional, surfaced storage capability.
+Provisioning begins only after the authenticated user explicitly activates it.
+Activation may be invited when it is useful, but it follows the North Star's invitation rules: it is
 one-tap-declinable, non-nagging, and never presented as a prerequisite for
 using the journal or course.
 
-This means "Day 1 corpus" and "confidential vault" are intentionally different
-products until the confidential path is ready. OPEN/PERSONAL content may use
+This means "Day 1 corpus" and "confidential compute" are intentionally different
+products until an attested path is ready. OPEN/PERSONAL content may use
 the operator-side floor under ADR 0005 and its consent record. INTIMATE remains
 skip-only until Decision 6's complete path ships.
 
@@ -99,19 +99,21 @@ memory restoration is tested.
 The provider and sizes are replaceable implementation choices. The isolation,
 durable-volume, scale-to-zero, and control-plane boundaries are the decision.
 
-## Decision 4 — Key ceremony happens at activation
+## Decision 4 — Launch custody is explicit and provider-managed
 
-Activation creates the user-held key material described by ADR 0002 and Creek
-ADR-0005: a passphrase-derived wrapping key plus a recovery key shown exactly
-once. Signup asks for neither. Provisioning does not create a usable plaintext
-vault and promise to secure it later; the encrypted volume is initialized only
-as part of the completed ceremony.
+Creek provisioning contract 2.0 returns a closed `custody_mode`. Ordinary Fly
+allocations return `provider_managed` and move directly from `pending` through
+`provisioning` to `ready` after the authenticated credential handoff. They do
+not create, accept, display, download, or confirm a passphrase, recovery key,
+wrapped artifact, or reusable unlock material.
 
-The operator never stores the passphrase, recovery key, or an unwrapped volume
-master key. Losing both recovery factors remains unrecoverable by design. The
-activation UX must say so before the user commits, allow cancellation, and
-offer an export/download step for the recovery key without silently placing it
-in operator-controlled storage.
+Fly and privileged Adepthood or Creek operators can access the stored bytes and
+the service can restart unattended using provider/operator-held material. The
+activation UX states that truth before consent and again at readiness. A
+historical `wrapped_artifact_only` row records only what the retired schema
+claimed; it must never be presented as protection for Fly volume bytes. A
+future attested custody mode requires a new explicit contract and ADR rather
+than inference from job state or the legacy `attested_confidential` field.
 
 ## Decision 5 — The cost floor belongs only to activated vaults
 
@@ -142,15 +144,16 @@ An ordinary cloud VM is isolated from other customers but still operated by
 the cloud provider and Adepthood's infrastructure operator. It does not make
 INTIMATE plaintext operator-blind. The full promise requires, together:
 
-1. the user-held key and no operator escrow;
+1. a genuinely user-held key and no operator escrow;
 2. client-side ciphertext transit through Adepthood;
 3. remote attestation of the measured Creek image;
 4. key release only into that attested enclave; and
 5. confidential inference for any model that sees INTIMATE plaintext.
 
-Until every item ships and is exercised end to end, INTIMATE content stays on
-the existing skip-only path. Provisioning an ordinary Fly Machine must never
-flip that gate or change user-facing copy to imply otherwise.
+None of these properties are supplied by `provider_managed` custody. Until every
+item ships and is exercised end to end under a new explicit custody mode,
+INTIMATE content stays on the existing skip-only path. Provisioning an ordinary
+Fly Machine must never flip that gate or imply otherwise.
 
 ## Decision 7 — Revisit the physical hosting shape, not the privacy invariant
 
@@ -163,10 +166,9 @@ occurs:
 - confidential-compute availability materially changes; or
 - the rolling three-month vault fleet cost exceeds its approved budget.
 
-A later design may pool attested execution capacity. It must preserve a
-distinct encrypted volume and user-held key per account, attested key release,
-no cross-user plaintext state, auditable deletion, and the same externally
-observable single-user Creek contract. "Pooled compute" may not become
+A later attested design may pool execution capacity. Its custody, key-release,
+tenant-isolation, and deletion guarantees must be specified and proven in a new
+decision before Adepthood advertises them. "Pooled compute" may not become
 "shared readable corpus" by implementation convenience.
 
 ## Decision 8 — New allocations are server-gated and account-scoped
@@ -180,10 +182,11 @@ states intentionally produce the same authenticated public answer.
 
 The switch governs new activation identities, not custody or recovery. Turning
 it off must not strand an activation Adepthood already admitted: status polling,
-idempotent retry under its durable activation id, key ceremony, export,
-revocation, and deletion remain reachable even when the first provider response
-was lost before Adepthood learned a job id. An account with no activation row is
-still new and remains blocked. Creek's fleet cap is authoritative; Adepthood's
+idempotent retry, authenticated handoff, readiness under explicit
+`provider_managed` custody, export, revocation, and deletion remain reachable
+under its durable activation id even when the first provider response was lost
+before Adepthood learned a job id. An account with no activation row is still
+new and remains blocked. Creek's fleet cap is authoritative; Adepthood's
 allowlist is a defense-in-depth rollout bound, not a replacement for it.
 
 The operational procedure and rollback matrix live in
@@ -193,11 +196,13 @@ The operational procedure and rollback matrix live in
 
 - Signup stays aligned with the Gift Economy and the North Star's low-friction
   journal floor.
-- The recurring storage floor scales with activated private vaults rather than
+- The recurring storage floor scales with activated managed vaults rather than
   registrations, while compute follows actual use.
 - The operator must build and run a new control plane, lifecycle reconciliation,
   billing alarms, and orphan cleanup.
 - Cold starts and asynchronous readiness are user-visible and need honest
   progress/error states.
+- Managed Fly vaults are operator-readable and restartable without the user;
+  they are not described as no-escrow, user-held, or confidential compute.
 - Full private Higher-Self behavior remains unavailable for INTIMATE material
-  until the attested path ships; the architecture does not paper over that gap.
+  until a separately specified attested path ships.

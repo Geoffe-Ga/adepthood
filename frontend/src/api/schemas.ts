@@ -1145,7 +1145,6 @@ export const vaultActivationResponseSchema = z
       'submitting',
       'pending',
       'provisioning',
-      'awaiting_key_ceremony',
       'awaiting_handoff',
       'ready',
       'failed',
@@ -1165,25 +1164,11 @@ export const vaultActivationResponseSchema = z
       .nullable(),
     credential_received: z.boolean(),
     attested_confidential: z.boolean().nullable(),
-  })
-  .strict();
-
-const protocolNonceSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
-
-/** Creek's short-lived public challenge; it contains no credential or key material. */
-export const vaultKeyCeremonyChallengeSchema = z
-  .object({
-    protocol_version: z.literal('1.0.0'),
-    job_id: z.string().min(1).max(200),
-    activation_id: z.string().min(1).max(200),
-    ceremony_id: z.string().min(1).max(200),
-    server_nonce: protocolNonceSchema,
-    expires_at: isoDateTime,
+    custody_mode: z.enum(['provider_managed', 'wrapped_artifact_only']).nullable(),
   })
   .strict();
 
 export type VaultActivationT = z.infer<typeof vaultActivationResponseSchema>;
-export type VaultKeyCeremonyChallengeT = z.infer<typeof vaultKeyCeremonyChallengeSchema>;
 
 // ---------------------------------------------------------------------------
 // Wheel-of-wholeness balance (Map balance reading)
