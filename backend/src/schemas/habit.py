@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from bounds import CountField
 from schemas._base import OwnedResourcePublic
 from schemas.goal import GoalWithCompletions
+from security import sanitize_user_text
 
 NOTIFICATION_FREQUENCY = Literal["daily", "weekly", "custom", "off"]
 
@@ -59,7 +60,14 @@ class HabitCreate(BaseModel):
     authenticated user's token so clients cannot impersonate other users.
     """
 
-    name: str = Field(min_length=1, max_length=HABIT_NAME_MAX_LENGTH)
+    # JSON Schema cannot express "non-empty after control/zero-width stripping".
+    # Keep the published one-character floor while the router performs the
+    # authoritative sanitization and returns one stable refusal for every
+    # invisible spelling, including a raw empty string.
+    name: str = Field(
+        max_length=HABIT_NAME_MAX_LENGTH,
+        json_schema_extra={"minLength": 1},
+    )
     icon: str = Field(max_length=HABIT_ICON_MAX_LENGTH)
     start_date: date
     energy_cost: int = Field(ge=0, le=1000)
@@ -72,3 +80,11 @@ class HabitCreate(BaseModel):
     stage: str = Field(default="", max_length=HABIT_STAGE_MAX_LENGTH)
     revealed: bool = False
     is_carryover: bool = False
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _canonical_name(cls, value: object) -> object:
+        """Canonicalize textual names before the declared length constraint."""
+        if not isinstance(value, str):
+            return value
+        return sanitize_user_text(value, max_len=HABIT_NAME_MAX_LENGTH)

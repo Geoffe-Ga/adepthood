@@ -38,16 +38,13 @@ that both models silently ignore.  What actually breaks is the plain
 ``"enable_practices": null`` in the first body and the single U+0000 inside
 ``notification_days[5]`` in the second.
 
-Both bodies are driven exactly as recorded, down to the byte.  Nothing is
-trimmed to suit a test, and one detail is worth stating because it looks like a
-mistake: the habit body's ``name`` is a single U+008F, a C0 control character
-that renders as nothing at all in a terminal.  It is one character, so it
-satisfies the ``min_length=1`` on that field, and the request therefore travels
-the whole way to the write exactly as the fuzz run sent it.  Anyone who
-reformats these literals by hand will silently drop that character -- along
-with every other control code in them -- and the body will start being refused
-for an empty ``name`` instead, which looks like a passing test and proves
-nothing.
+The depth-preferences body is driven exactly as recorded.  The habit body
+retains every recorded field except its original one-character U+008F name,
+which is itself invalid at the habit-name boundary.  The request used by these
+tests replaces only that name with visible ASCII so the body still travels to
+the intended ``notification_days`` guard.  This keeps the regression honest:
+a 422 for an unrelated invisible name would look green while proving nothing
+about the U+0000 nested in the text array.
 
 Assertions pin the *shape* of each rejection, never the status alone.  A bare
 ``status_code == 422`` would pass for the wrong reason on every one of these
@@ -128,6 +125,11 @@ _RECORDED_HABIT_BODY = (
     rb'\udd80\udab5\udfcb\u00ce\u00e9\u00a3P\u0095\ud9ba\udf98\u00a0\ud932\udeea"], "'
     rb'start_date": "1766-02-05", "name": "\u008f", "milestone_notifications": true, '
     rb'"notification_frequency": "off"}'
+)
+
+_HABIT_BODY_WITH_VISIBLE_NAME = _RECORDED_HABIT_BODY.replace(
+    rb'"name": "\u008f"',
+    rb'"name": "Recorded fuzz habit"',
 )
 
 
@@ -276,7 +278,7 @@ async def test_a_nul_in_notification_days_is_refused_rather_than_written(
 
     resp = await async_client.post(
         _HABITS_URL,
-        content=_RECORDED_HABIT_BODY,
+        content=_HABIT_BODY_WITH_VISIBLE_NAME,
         headers={**_JSON_HEADERS, **headers},
     )
 
@@ -295,7 +297,7 @@ async def test_a_refused_nul_leaves_no_habit_behind(async_client: AsyncClient) -
 
     resp = await async_client.post(
         _HABITS_URL,
-        content=_RECORDED_HABIT_BODY,
+        content=_HABIT_BODY_WITH_VISIBLE_NAME,
         headers={**_JSON_HEADERS, **headers},
     )
     _assert_nothing_echoed(resp)
