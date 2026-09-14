@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 
 import type { Goal, Habit } from '../Habits.types';
 import { FULL_SWEEP_MS, MIN_SWEEP_MS, computeStarFillPlan, sweepDurationMs } from '../starFill';
@@ -83,16 +83,45 @@ describe('computeStarFillPlan — additive habits', () => {
     expect(computeStarFillPlan(withTodayUnits(2), 'clear', TZ)).toBeNull();
   });
 
-  it('normalizes per-week targets to their daily equivalent', () => {
+  it('fills toward the full weekly-period target', () => {
     const habit = makeHabit({
       goals: [
-        makeGoal('low', { target: 7, frequency_unit: 'per_week' }),
-        makeGoal('clear', { target: 14, frequency_unit: 'per_week' }),
-        makeGoal('stretch', { target: 21, frequency_unit: 'per_week' }),
+        makeGoal('low', { target: 1, frequency: 3, frequency_unit: 'per_week' }),
+        makeGoal('clear', { target: 2, frequency: 3, frequency_unit: 'per_week' }),
+        makeGoal('stretch', { target: 3, frequency: 3, frequency_unit: 'per_week' }),
       ],
     });
     const plan = computeStarFillPlan(habit, 'low', TZ);
-    expect(plan?.deltaUnits).toBeCloseTo(1, 5);
+    expect(plan?.deltaUnits).toBe(3);
+  });
+
+  it('subtracts units logged earlier in the current week from the fill delta', () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+    try {
+      const habit = makeHabit({
+        goals: [
+          makeGoal('low', { target: 1, frequency: 3, frequency_unit: 'per_week' }),
+          makeGoal('clear', { target: 2, frequency: 3, frequency_unit: 'per_week' }),
+          makeGoal('stretch', { target: 3, frequency: 3, frequency_unit: 'per_week' }),
+        ],
+        completions: [
+          {
+            id: 'monday',
+            timestamp: new Date('2000-01-01T00:00:00Z'),
+            local_day: '2026-03-09',
+            completed_units: 1,
+          },
+        ],
+      });
+
+      const plan = computeStarFillPlan(habit, 'low', TZ);
+      expect(plan?.deltaUnits).toBe(2);
+      expect(plan?.fromPercent).toBeCloseTo(11.11, 1);
+      expect(plan?.toPercent).toBeCloseTo(33.33, 1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

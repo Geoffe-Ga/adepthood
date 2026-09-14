@@ -179,9 +179,9 @@ export const isGoalAchieved = (
   habit: Habit,
   tz: string = DEFAULT_TIMEZONE,
 ): boolean => {
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, goal, tz);
   const targetValue = getGoalTarget(goal);
-  return goal.is_additive ? todayProgress >= targetValue : todayProgress <= targetValue;
+  return goal.is_additive ? periodProgress >= targetValue : periodProgress <= targetValue;
 };
 
 /**
@@ -229,22 +229,55 @@ export const getMarkerPositions = (
   };
 };
 
-const DAYS_PER_WEEK = 7;
-/** Average days per month (365.25 / 12) for daily-equivalent normalization. */
-const APPROX_DAYS_PER_MONTH = 30.437;
+export type HabitPeriodKind = 'day' | 'week' | 'month';
+
+/** Calendar bucket used by period-aware habit scoring. */
+export interface HabitPeriod {
+  kind: HabitPeriodKind;
+  key: (dayKey: string) => string;
+}
+
+const DAY_PERIOD: HabitPeriod = {
+  kind: 'day',
+  key: (dayKey) => dayKey,
+};
+
+const MONTH_PERIOD: HabitPeriod = {
+  kind: 'month',
+  key: (dayKey) => dayKey.slice(0, 7),
+};
+
+const DAYS_IN_WEEK = 7;
+const ISO_MONDAY_OFFSET = 6;
+
+/** Resolve a calendar day to the Monday that starts its ISO week. */
+const isoWeekKey = (dayKey: string): string => {
+  // Noon UTC keeps the parsed calendar day clear of every DST boundary. The
+  // value is calendar-only: account timezone conversion already happened in
+  // ``completionDayKey`` / ``todayInUserTZ`` before this helper sees it.
+  const weekday = new Date(`${dayKey}T12:00:00Z`).getUTCDay();
+  const daysSinceMonday = (weekday + ISO_MONDAY_OFFSET) % DAYS_IN_WEEK;
+  return addDaysInTZ(dayKey, -daysSinceMonday, DEFAULT_TIMEZONE);
+};
+
+const WEEK_PERIOD: HabitPeriod = {
+  kind: 'week',
+  key: isoWeekKey,
+};
+
+/**
+ * Period a goal is scored over. Weekly periods start Monday; monthly periods
+ * are calendar months. Daily and per-session goals retain day scoring.
+ */
+export const periodOf = (goal: Pick<Goal, 'frequency_unit'>): HabitPeriod => {
+  if (goal.frequency_unit === 'per_week') return WEEK_PERIOD;
+  if (goal.frequency_unit === 'per_month') return MONTH_PERIOD;
+  return DAY_PERIOD;
+};
 
 export const getGoalTarget = (goal: Goal): number => {
   if (!goal) return 0;
-  if (goal.frequency_unit === 'per_day') {
-    return goal.target;
-  }
-  if (goal.frequency_unit === 'per_week') {
-    return (goal.target / DAYS_PER_WEEK) * goal.frequency;
-  }
-  if (goal.frequency_unit === 'per_month') {
-    return (goal.target / APPROX_DAYS_PER_MONTH) * goal.frequency;
-  }
-  return goal.target;
+  return periodOf(goal).kind === 'day' ? goal.target : goal.target * goal.frequency;
 };
 
 /** Resolve the durable calendar day, falling back only for legacy cached rows. */
@@ -252,6 +285,29 @@ export const completionDayKey = (
   completion: Pick<Completion, 'local_day' | 'timestamp'>,
   tz: string = DEFAULT_TIMEZONE,
 ): string => completion.local_day ?? dayKeyInTZ(completion.timestamp, tz);
+
+/**
+ * Sum signed completion units in the goal's current account-local period.
+ * Canonical ``local_day`` wins over the audit timestamp; only legacy cached
+ * rows without it are converted through the account timezone. The result is
+ * floored at zero, matching the server's visible day-total contract.
+ */
+export const unitsInCurrentPeriod = (
+  habit: Habit,
+  goal: Pick<Goal, 'frequency_unit'>,
+  tz: string = DEFAULT_TIMEZONE,
+): number => {
+  if (!habit.completions || habit.completions.length === 0) return 0;
+  const period = periodOf(goal);
+  const currentPeriodKey = period.key(todayInUserTZ(tz));
+  let total = 0;
+  for (const completion of habit.completions) {
+    if (period.key(completionDayKey(completion, tz)) === currentPeriodKey) {
+      total += completion.completed_units;
+    }
+  }
+  return Math.max(0, total);
+};
 
 /**
  * Sum completion units in the user's current calendar day, floored at zero.
@@ -337,11 +393,11 @@ export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTi
     return { currentGoal: habit.goals[0]!, nextGoal: null, completedAllGoals: false };
   }
 
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
   const isSubtractive = isSubtractiveHabit(habit);
   return isSubtractive
-    ? resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
-    : resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
+    ? resolveSubtractiveTier(periodProgress, lowGoal, clearGoal, stretchGoal)
+    : resolveAdditiveTier(periodProgress, lowGoal, clearGoal, stretchGoal);
 };
 
 /** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
@@ -350,19 +406,19 @@ export const getProgressPercentage = (
   currentGoal: Goal,
   tz: string = DEFAULT_TIMEZONE,
 ): number => {
-  const todayProgress = calculateTodaysProgress(habit, tz);
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
   const stretchTarget = getGoalTarget(stretchGoal);
 
   if (!isSubtractiveHabit(habit)) {
     if (stretchTarget <= 0) return 100;
-    return clampPercentage((todayProgress / stretchTarget) * 100);
+    return clampPercentage((periodProgress / stretchTarget) * 100);
   }
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? currentGoal;
   const range = getGoalTarget(lowGoal) - stretchTarget;
-  if (range <= 0) return todayProgress <= stretchTarget ? 100 : 0;
-  return clampPercentage(100 - ((todayProgress - stretchTarget) / range) * 100);
+  if (range <= 0) return periodProgress <= stretchTarget ? 100 : 0;
+  return clampPercentage(100 - ((periodProgress - stretchTarget) / range) * 100);
 };
 
 /**
@@ -385,15 +441,15 @@ export const getProgressBarColor = (
 
   if (!clearGoal) return stageColor;
 
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, clearGoal, tz);
 
   if (!isSubtractiveHabit(habit)) {
-    return todayProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
+    return periodProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
   }
 
   // Subtractive: victory when staying at or under stretch target
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
-  if (stretchGoal && todayProgress <= getGoalTarget(stretchGoal)) {
+  if (stretchGoal && periodProgress <= getGoalTarget(stretchGoal)) {
     return brightenColor(stageColor);
   }
 
@@ -401,8 +457,6 @@ export const getProgressBarColor = (
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DAYS_IN_WEEK = 7;
-
 const emptyStats = (): HabitStatsData => ({
   values: new Array(DAYS_IN_WEEK).fill(0) as number[],
   completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
@@ -467,6 +521,24 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
   return spanDays > 0 ? totalUniqueDays / spanDays : 0;
 };
 
+const AVERAGE_DAYS_PER_MONTH = 30.437;
+
+/**
+ * Preserve the existing consecutive-day threshold until #2819 deliberately
+ * moves streaks and stats to completed cadence periods on both client and
+ * server. Reusing the new period target here would create a hybrid contract:
+ * consecutive days scored against a weekly/monthly allowance.
+ */
+const dayBasedStreakThreshold = (goal: Goal): number => {
+  if (goal.frequency_unit === 'per_week') {
+    return (goal.target / DAYS_IN_WEEK) * goal.frequency;
+  }
+  if (goal.frequency_unit === 'per_month') {
+    return (goal.target / AVERAGE_DAYS_PER_MONTH) * goal.frequency;
+  }
+  return goal.target;
+};
+
 /**
  * Subtractive habits (e.g. "abstain from sugar") count *no-log* days as
  * abstention successes, so the additive helper — which requires a row
@@ -489,7 +561,7 @@ const subtractiveStreakInputs = (
   if (nonAdditive.length === 0) return null;
   const thresholdGoal = habit.goals.find((g) => g.tier === 'clear') ?? nonAdditive[0]!;
   return {
-    clearThreshold: getGoalTarget(thresholdGoal),
+    clearThreshold: dayBasedStreakThreshold(thresholdGoal),
     startDate: dayKeyInTZ(habit.start_date, tz),
   };
 };

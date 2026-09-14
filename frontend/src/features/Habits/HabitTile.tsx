@@ -27,7 +27,9 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   isGoalAchieved,
-  calculateTodaysProgress,
+  periodOf,
+  type HabitPeriodKind,
+  unitsInCurrentPeriod,
 } from './HabitUtils';
 import { useStarFill, type StarFillControls } from './hooks/useStarFill';
 import { longPressGestureStyle } from './longPressGestureStyle';
@@ -41,6 +43,12 @@ import {
 /** A tile that is not wired to log units keeps the star as a tooltip-only touch target. */
 const NOOP_LOG_UNIT: NonNullable<HabitTileProps['onLogUnit']> = () => {};
 
+const ACHIEVED_COPY: Record<HabitPeriodKind, string> = {
+  day: 'Achieved Today',
+  week: 'Achieved This Week',
+  month: 'Achieved This Month',
+};
+
 /** Marker star size: tracks the bar's nominal thickness (spacing(2)) so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
 
@@ -49,11 +57,9 @@ const formatAmount = (value: number): string => String(Math.round(value * 100) /
 
 const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
-  const progress = calculateTodaysProgress(habit, tz);
-  // Divide by the daily-normalized target the "met" star and bar use
-  // (getGoalTarget), not the raw weekly/monthly goal.target — otherwise a
-  // per_week/per_month goal whose star is filled still shows a sub-100%
-  // fraction because numerator (today) and denominator (week/month) mixed scales.
+  const progress = unitsInCurrentPeriod(habit, goal, tz);
+  // The tooltip reads from the same account-local period and target as the
+  // marker, bar, and achievement state, so every surface shows one fraction.
   const target = getGoalTarget(goal);
   return `${label}: ${formatAmount(progress)}/${formatAmount(target)} ${goal.target_unit}`;
 };
@@ -479,6 +485,7 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
   const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, tz));
   const progressBarColor = getProgressBarColor(habit, tz, stageColor);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
+  const achievementPeriod = periodOf(stretchGoal ?? currentGoal).kind;
 
   const {
     low: lowMarker,
@@ -516,7 +523,7 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
     },
   ];
 
-  return { progressPercentage, progressBarColor, hasCompletedGoal, markers };
+  return { progressPercentage, progressBarColor, hasCompletedGoal, achievementPeriod, markers };
 };
 
 const LOCKED_BACKGROUND = '#e8e8e8';
@@ -720,14 +727,11 @@ const UnlockedTile = ({
   tz,
 }: UnlockedTileProps) => {
   const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
-  const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
-    habit,
-    tz,
-    stageColor,
-  );
+  const { progressPercentage, progressBarColor, hasCompletedGoal, achievementPeriod, markers } =
+    useHabitTileData(habit, tz, stageColor);
 
-  const streakText =
-    `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
+  const achievement = hasCompletedGoal ? ` — ${ACHIEVED_COPY[achievementPeriod]}!` : '';
+  const streakText = `${habit.streak} days${achievement}`.toUpperCase();
   const barHeight = Math.max(8, spacing(2, scale));
 
   return (
