@@ -294,7 +294,7 @@ POLICY: Mapping[str, TablePolicy] = {
     ),
     "vaultactivation": _erase(
         "user_id",
-        "The content-free private-vault provisioning handle. Its upstream job "
+        "The content-free managed-vault provisioning handle. Its upstream job "
         "is copied into a detached teardown receipt before this account link is erased.",
     ),
     "vaultpipelinefollowup": _erase(

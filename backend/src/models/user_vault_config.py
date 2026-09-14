@@ -38,7 +38,7 @@ where a user's writing goes.
 ``provisioned`` distinguishes Creek's internal one-time handoff from the legacy
 manual connection flow. It is not an encryption switch: the credential is
 always encrypted, and a provisioned connection additionally remains inert until
-its activation reaches ``ready`` after the user-held key ceremony.
+its activation reaches ``ready`` after Creek's authenticated provider-managed handoff.
 """
 
 from typing import TYPE_CHECKING

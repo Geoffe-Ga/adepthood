@@ -48,7 +48,6 @@ module.exports = {
     '^expo-web-browser$': '<rootDir>/src/__mocks__/expo-web-browser.js',
     '^expo-document-picker$': '<rootDir>/src/__mocks__/expo-document-picker.js',
     '^expo-file-system$': '<rootDir>/src/__mocks__/expo-file-system.js',
-    '^expo-crypto$': '<rootDir>/src/__mocks__/expo-crypto.js',
     '^expo-haptics$': '<rootDir>/src/__mocks__/expo-haptics.js',
     '^expo-screen-orientation$': '<rootDir>/src/__mocks__/expo-screen-orientation.js',
     '^expo-image-manipulator$': '<rootDir>/src/__mocks__/expo-image-manipulator.js',

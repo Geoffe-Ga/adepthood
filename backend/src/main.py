@@ -1004,7 +1004,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # before the first entry rather than at request rate.
     validate_creek_vault_url_config()
 
-    # A private vault is optional, so an incomplete pilot never takes down the
+    # A managed vault is optional, so an incomplete pilot never takes down the
     # journal. Say the exact operator state once and fail new activation closed.
     validate_managed_vault_rollout_config()
 

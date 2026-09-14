@@ -11,13 +11,8 @@ from pathlib import Path
 from typing import Annotated, Final, Literal, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from models.vault_activation import VaultActivationState
-from schemas.vault_activation import (
-    VaultKeyCeremonyChallenge,
-    VaultKeyCeremonySubmission,
-)
 from services.creek_vault_url import classify_vault_url
 
 PROVISIONING_URL_ENV_VAR: Final[str] = "CREEK_PROVISIONING_URL"
@@ -28,15 +23,13 @@ FAILURE_PROVIDER_UNAVAILABLE: Final[str] = "provider_unavailable"
 FAILURE_PROVIDER_REJECTED: Final[str] = "provider_rejected"
 FAILURE_MALFORMED_RESPONSE: Final[str] = "malformed_completion"
 
-_EXPECTED_CONTRACT_MAJOR: Final[str] = "1"
+_EXPECTED_CONTRACT_MAJOR: Final[str] = "2"
 _CONTRACT_HEADER: Final[str] = "Creek-Provisioning-Version"
-CEREMONY_REJECTION_CODES: Final[frozenset[str]] = frozenset(
+_REJECTION_CODES: Final[frozenset[str]] = frozenset(
     {
         "invalid_request",
         "job_unavailable",
         "invalid_transition",
-        "ceremony_conflict",
-        "ceremony_expired",
     }
 )
 _IDENTIFIER = Annotated[str, Field(min_length=1, max_length=200)]
@@ -56,7 +49,7 @@ _UPSTREAM_FAILURE = Literal[
     "handoff_failed",
     "internal_error",
 ]
-_ALL_STATES: Final[frozenset[str]] = frozenset(state.value for state in VaultActivationState)
+_UPSTREAM_CUSTODY = Literal["provider_managed", "wrapped_artifact_only"]
 
 
 class ProvisioningUnavailableError(RuntimeError):
@@ -68,7 +61,7 @@ class ProvisioningRejectedError(RuntimeError):
 
     def __init__(self, code: str = FAILURE_PROVIDER_REJECTED) -> None:
         """Retain only one allowlisted stable code, never Creek's raw body."""
-        safe_code = code if code in CEREMONY_REJECTION_CODES else FAILURE_PROVIDER_REJECTED
+        safe_code = code if code in _REJECTION_CODES else FAILURE_PROVIDER_REJECTED
         super().__init__(safe_code)
         self.code = safe_code
 
@@ -84,6 +77,7 @@ class CreekProvisioningJob:
     retryable: bool
     failure_reason: str | None
     attested_confidential: bool | None
+    custody_mode: str | None = None
 
 
 class CreekProvisioningClient(Protocol):
@@ -105,19 +99,9 @@ class CreekProvisioningClient(Protocol):
     async def delete(self, job_id: str) -> CreekProvisioningJob:
         """Idempotently request upstream teardown."""
 
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        """Fetch one public challenge for an awaiting job."""
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        """Relay one strictly validated ciphertext-only completion."""
-
 
 class _CreekJobWire(BaseModel):
-    """Strict parser for the current Creek v1 public job response."""
+    """Strict parser for the current Creek provisioning-v2 job response."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -130,6 +114,7 @@ class _CreekJobWire(BaseModel):
     created_at: datetime
     updated_at: datetime
     attested_confidential: bool | None
+    custody_mode: _UPSTREAM_CUSTODY | None
     status_url: _STATUS_URL
 
     @field_validator("created_at", "updated_at")
@@ -139,6 +124,15 @@ class _CreekJobWire(BaseModel):
         if value.tzinfo is None:
             raise ValueError("provisioning timestamp must be timezone-aware")
         return value
+
+    @model_validator(mode="after")
+    def _custody_matches_claims(self) -> _CreekJobWire:
+        """Reject missing or overstated custody before it reaches local state."""
+        if self.state == "ready" and self.custody_mode is None:
+            raise ValueError("ready provisioning response must declare custody_mode")
+        if self.custody_mode is not None and self.attested_confidential is not False:
+            raise ValueError("ordinary Fly custody modes are not confidential compute")
+        return self
 
 
 def _stable_rejection_code(response: httpx.Response) -> str:
@@ -150,13 +144,13 @@ def _stable_rejection_code(response: httpx.Response) -> str:
     if not isinstance(payload, dict):
         return FAILURE_PROVIDER_REJECTED
     code = payload.get("code")
-    if not isinstance(code, str) or code not in CEREMONY_REJECTION_CODES:
+    if not isinstance(code, str) or code not in _REJECTION_CODES:
         return FAILURE_PROVIDER_REJECTED
     return code
 
 
 class HttpCreekProvisioningClient:
-    """Bearer-authenticated Creek v1 transport with secret-free failures."""
+    """Bearer-authenticated Creek v2 transport with secret-free failures."""
 
     def __init__(self, base_url: str, token: str, client: httpx.AsyncClient) -> None:
         """Bind one requester bearer to the shared bounded transport."""
@@ -200,29 +194,6 @@ class HttpCreekProvisioningClient:
             expected_status=202,
         )
 
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        response = await self._send(
-            "GET",
-            f"/control/v1/jobs/{job_id}/key-ceremony",
-            expected_status=200,
-        )
-        try:
-            return VaultKeyCeremonyChallenge.model_validate(response.json())
-        except (ValueError, ValidationError):
-            raise ProvisioningUnavailableError("provisioning response malformed") from None
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        return await self._request(
-            "PUT",
-            f"/control/v1/jobs/{job_id}/key-ceremony",
-            json=submission.model_dump(mode="json"),
-            expected_status=200,
-        )
-
     async def _request(
         self,
         method: str,
@@ -241,8 +212,6 @@ class HttpCreekProvisioningClient:
             wire = _CreekJobWire.model_validate(response.json())
         except (ValueError, ValidationError):
             raise ProvisioningUnavailableError("provisioning response malformed") from None
-        if wire.state not in _ALL_STATES:
-            raise ProvisioningUnavailableError("provisioning response malformed")
         return CreekProvisioningJob(
             job_id=wire.job_id,
             activation_id=wire.activation_id,
@@ -251,6 +220,7 @@ class HttpCreekProvisioningClient:
             retryable=wire.retryable,
             failure_reason=wire.failure_reason,
             attested_confidential=wire.attested_confidential,
+            custody_mode=wire.custody_mode,
         )
 
     async def _send(
@@ -306,18 +276,6 @@ class _UnavailableProvisioningClient:
 
     async def delete(self, job_id: str) -> CreekProvisioningJob:
         del job_id
-        return self._raise()
-
-    async def key_ceremony(self, job_id: str) -> VaultKeyCeremonyChallenge:
-        del job_id
-        raise ProvisioningUnavailableError("provisioning unavailable")
-
-    async def complete_key_ceremony(
-        self,
-        job_id: str,
-        submission: VaultKeyCeremonySubmission,
-    ) -> CreekProvisioningJob:
-        del job_id, submission
         return self._raise()
 
 

@@ -25,9 +25,11 @@ ADR 0002, or ADR 0004, and is cited inline. What was missing was the
 place the codebase points at.
 
 **What the vault would cost on Day 1.** ADR 0002 Decision 1 ratified a
-persistent per-user VM; Decision 2 ratified a user-held key released
-into an attested TEE enclave, GPU confidential compute explicitly in
-scope. Epic #2228 reports that `creek-vault` ships no deployment
+persistent per-user VM; Decision 2 described a future user-held key released
+into an attested TEE enclave, GPU confidential compute explicitly in scope.
+ADR 0007 now records the honest launch boundary: ordinary Fly custody is
+provider-managed and operator-readable, while INTIMATE remains local. Epic
+#2228 reports that `creek-vault` ships no deployment
 tooling at all today — no Dockerfile, compose, Terraform, or Helm —
 and that creek-vault#757 shipped the crypto primitives but not the
 provisioning layer. That report is upstream's state, not something
@@ -109,7 +111,7 @@ this record carries the amendment and cross-references it, following
 ADR 0004's treatment of the same document ("**ADR 0002 stands
 unchanged in substance**").
 
-**Rejected — waiting for the confidential vault before any user gets
+**Rejected — waiting for the future confidential vault before any user gets
 an ontologized corpus.** The vault's provisioning layer does not
 exist upstream, so this is not a delay of weeks against a known date;
 it is deferring the product's central promise (NORTH-STAR §2, a corpus
@@ -173,13 +175,13 @@ rather than a runtime condition."
 is written down here as a decision with the specific strings named,
 rather than as an aspiration.
 
-The promise ADR 0002 converged on is one sentence
+The historical promise ADR 0002 converged on was one sentence
 (`0002-intimate-content-local-routing.md:27-30`): "your writing lives
 in your own private space that only you can open, and your intimate
 writing is never handed to an outside AI." The second clause stays
 exactly true under this ADR — Decision 2 is what keeps it true. The
-first clause is the one under pressure, and the shipped copy that
-carries it is:
+first clause was retired for ordinary managed Fly by ADR 0007; the shipped
+privacy-tier copy examined here is:
 
 - `frontend/src/features/Journal/PrivacyTierControl.tsx:40` —
   Personal: "Private to you; resonance may read it."
@@ -204,13 +206,14 @@ says something the code has stopped making true, and there is no
 version of "we'll fix the wording next sprint" that is honest about
 that interval.
 
-## Decision 4 — The confidential vault is not descoped; it becomes the upgrade
+## Decision 4 — Managed storage ships; confidential compute remains a future upgrade
 
-The vault remains exactly what ADR 0002 and ADR 0004 Decision 6
-describe. Against this floor it buys two distinct things, and #2228
-names both: it **extends ontologization to INTIMATE content**, and it
-**removes operator-readability entirely**. Both are real; neither
-blocks launch.
+ADR 0007 now distinguishes the two products. The optional ordinary Fly vault
+ships as provider-managed, operator-readable storage for OPEN and PERSONAL
+material. The future attested design in ADR 0002 and ADR 0004 Decision 6 would
+buy two additional things: it could extend ontologization to INTIMATE content
+and remove operator-readability. Neither future property blocks launch, and
+neither may be claimed for a ready managed Fly allocation.
 
 Nothing in this ADR advances, defers, or discharges any part of that
 build-out. The intimate-transit sub-decisions (ADR 0004 Decision 6
@@ -368,7 +371,7 @@ reasoning, including why per-user vault *instances* never needed the
 creek-side contract change that partitioning one shared vault still
 does.
 
-Nothing else in Decision 4 changes. The confidential vault is still
-the upgrade rather than the floor, INTIMATE still never enters the
-operator-side corpus, and the operator-readability of that corpus is
-unaffected by whose vault sits behind it.
+Nothing else in Decision 4 changes. Confidential compute is still a future
+upgrade rather than the floor, INTIMATE still never enters the operator-side
+corpus or ordinary managed Fly vault, and the operator-readability of that
+corpus is unaffected by whose vault sits behind it.

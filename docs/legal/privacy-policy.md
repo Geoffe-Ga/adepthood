@@ -79,15 +79,13 @@ operator configures, and a production server refuses to start without one, so
 there is no version of this service that quietly stores your writing in the
 clear.
 
-**If you connect your own vault**, Adepthood stores the address you gave it
-and the key that opens it, and uses them only to send your own entries to
-your own vault. Once stored, the key is never sent back out — no screen and
-no API response will show it to you or to anyone else — and it is deleted
-along with everything else when you delete your account. The same caveat
-below applies to it as to your writing: it is encrypted with the operator's
-key, so it is protected against a stolen disk and not against the operator.
-If you have not connected a vault, none of this applies to you and nothing of
-yours leaves for one.
+**If you connect your own vault or activate a managed one**, Adepthood stores
+the address and access credential and uses them only to send your own entries
+to that vault. Once stored, the credential is never returned by a screen or API
+and is deleted with your account. The same caveat below applies to it as to
+your writing: it is encrypted with the operator's key, so it is protected
+against a stolen disk and not against the operator. If you use no vault, none
+of this applies to you and nothing of yours leaves for one.
 
 That protection is real and it is narrow, so here is its shape. The keys
 belong to the operator, not to you. Encryption at rest defends against
@@ -147,13 +145,12 @@ on who receives your data says how many.
 - An Intimate entry is **never replicated to a Creek Vault**. The write
   path stops before it opens a connection.
 
-There is one exception, and it is the reason this section exists rather
-than a one-line promise. A **document you upload** through "Bring in your
-writing" *is* forwarded to your Creek Vault at whatever tier you picked,
-Intimate included — see "Who else receives your data" below for what a
-vault is and why that is a different thing from sending it to an AI. That upload path calls no
-language model at any tier. If you have not connected a vault, that upload
-has nowhere to go and the screen tells you so.
+A **document you upload** through "Bring in your writing" follows the same
+Intimate boundary. An Intimate document is refused before a vault or language
+model is contacted. At Public or Personal, it may be forwarded to your Creek
+Vault; that upload path itself calls no language model. If you have not
+connected a vault, it can instead enter Adepthood's corpus only under the
+separate consent described below.
 
 A document has one other destination, and it is not a vault: your own
 corpus here. That route is the next section's subject, it is governed by
@@ -247,20 +244,24 @@ returned by Adepthood.
 **Your Creek Vault**, only if one is configured. A vault is a corpus of
 your own writing on infrastructure the operator arranges, reached over
 ordinary HTTPS. It receives non-Intimate entry bodies as they are written,
-and documents you upload at any tier. Every request declares a tier
+and non-Intimate documents you upload. Every request declares a tier
 ceiling, so the vault is told what it is allowed to do with what it was
 sent.
 
-Three things are worth knowing about a vault. It is **optional** — with
+Four things are worth knowing about a vault. It is **optional** — with
 none configured, none of this happens and the app is otherwise unchanged.
-It belongs to **one named account per deployment**: the server binds a
-vault to a single user, and every other account falls back to a local
-no-vault path, so nobody's writing reaches somebody else's corpus. And a
-copy already sent is **not withdrawn** — deleting an entry in the app, or
-re-marking it Intimate afterwards, drops Adepthood's handle to it but does
-not reach into the vault to remove it, because no such command exists yet.
-Deleting your Adepthood account does not purge a vault either; [Your
-data](../your-data.md) explains what to run instead.
+Each connection or allocation is **bound to one named account**: another
+account cannot read or write through it, so nobody's writing reaches somebody
+else's corpus. An ordinary Fly vault activated by Adepthood is
+**provider-managed and operator-readable**: Fly and privileged Adepthood or
+Creek operators can access its stored bytes and restart it without you. It is
+not confidential compute, there is no user-held recovery key, and Intimate
+journal entries are never replicated to it. Finally, deleting or re-marking a
+mirrored journal page withdraws its content-free stable identity before
+Adepthood reports completion. Deleting an account requests teardown of a
+provisioned allocation; a manually connected vault still requires its owner to
+perform any account-wide purge. [Your data](../your-data.md) explains both
+cases.
 
 **Gumroad**, for purchases. It receives what you type into its own
 checkout, which Adepthood never sees; Adepthood sends it a licence key to

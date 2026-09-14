@@ -49,7 +49,6 @@ import {
   uiFlagsSchema,
   vaultConnectionResponseSchema,
   vaultActivationResponseSchema,
-  vaultKeyCeremonyChallengeSchema,
   documentImportSchema,
   voiceReadinessSchema,
   wheelBalanceSchema,
@@ -96,7 +95,6 @@ import {
   type TranscribePageT,
   type VaultConnectionT,
   type VaultActivationT,
-  type VaultKeyCeremonyChallengeT,
   type DocumentImportT,
   type WheelBalanceT,
 } from './schemas';
@@ -3708,47 +3706,10 @@ export const vault = {
 
 /** Secret-free state returned by Adepthood's Creek activation proxy. */
 export type VaultActivation = VaultActivationT;
-export type VaultKeyCeremonyChallenge = VaultKeyCeremonyChallengeT;
-
-type VaultWrappedCiphertext = { nonce: string; ciphertext: string };
-
-/** Ciphertext-only artifact produced by the client-held key ceremony. */
-export interface VaultWrappedKeyArtifact {
-  version: 2;
-  kdf: {
-    algorithm: 'argon2id';
-    salt: string;
-    time_cost: 3;
-    lanes: 4;
-    memory_kib: 65_536;
-  };
-  passphrase_wrapped: VaultWrappedCiphertext;
-  recovery_wrapped: VaultWrappedCiphertext;
-  binding: {
-    protocol_version: '1.0.0';
-    activation_id: string;
-    ceremony_id: string;
-    server_nonce: string;
-    client_nonce: string;
-  };
-}
-
-/** The only completion body the browser-to-Creek proxy accepts. */
-export interface VaultKeyCeremonySubmission {
-  protocol_version: '1.0.0';
-  ceremony_id: string;
-  server_nonce: string;
-  recovery_saved: true;
-  wrapped_artifact: VaultWrappedKeyArtifact;
-  attestation: null;
-  key_release: null;
-}
 
 const activationSchema = vaultActivationResponseSchema as unknown as z.ZodType<VaultActivation>;
-const ceremonyChallengeSchema =
-  vaultKeyCeremonyChallengeSchema as unknown as z.ZodType<VaultKeyCeremonyChallenge>;
 
-/** Explicit, resumable Creek allocation and client-held key-ceremony operations. */
+/** Explicit, resumable provider-managed Creek allocation operations. */
 export const vaultActivation = {
   status(token?: string): Promise<VaultActivation> {
     return request<VaultActivation>('/vault/activation', { token, schema: activationSchema });
@@ -3764,22 +3725,6 @@ export const vaultActivation = {
   retry(token?: string): Promise<VaultActivation> {
     return request<VaultActivation>('/vault/activation/retry', {
       method: 'POST',
-      token,
-      schema: activationSchema,
-      retry: false,
-    });
-  },
-  keyCeremony(token?: string): Promise<VaultKeyCeremonyChallenge> {
-    return request<VaultKeyCeremonyChallenge>('/vault/activation/key-ceremony', {
-      token,
-      schema: ceremonyChallengeSchema,
-      retry: false,
-    });
-  },
-  completeCeremony(payload: VaultKeyCeremonySubmission, token?: string): Promise<VaultActivation> {
-    return request<VaultActivation>('/vault/activation/key-ceremony', {
-      method: 'PUT',
-      body: payload,
       token,
       schema: activationSchema,
       retry: false,

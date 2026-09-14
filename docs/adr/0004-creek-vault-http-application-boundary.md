@@ -287,6 +287,9 @@ creek-vault#757 (Creek's confidential-compute epic). Today's shipped
 behavior for journal entries remains ADR 0002 / #895's skip-only mode:
 an `intimate` classification short-circuits before any vault call at
 all, not even a handshake (`services/creek_vault_write.py:17-24`).
+ADR 0007 further records that ordinary Fly activation is explicitly
+`provider_managed`, operator-readable, and not confidential compute; none of
+the future properties below may be inferred from a ready managed allocation.
 
 - **(a) Transit topology — ciphertext only.** Intimate content may
   cross the seam through the operator's backend, but only as

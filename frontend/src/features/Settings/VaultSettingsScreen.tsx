@@ -1,5 +1,5 @@
 /**
- * ``VaultSettingsScreen`` — "Your private vault", reached from the Privacy
+ * ``VaultSettingsScreen`` — "Your Creek vault", reached from the Privacy
  * group in Settings, and the only place a person can attach a space of their
  * own to their account.
  *
@@ -711,18 +711,19 @@ const ManagedActivationOffer = ({
 }): React.JSX.Element => (
   <View style={styles.activationOffer} testID="managed-vault-offer">
     <Text style={styles.formHeading}>
-      {continuing ? 'Continue private vault setup' : 'Let Adepthood create one'}
+      {continuing ? 'Continue managed vault setup' : 'Let Adepthood create one'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Start an optional Creek vault with a recovery key that only you receive. Setup happens after
+      Start an optional, provider-managed Creek vault. Fly and privileged Adepthood or Creek
+      operators can access its stored bytes; Intimate writing stays local. Setup happens after
       signup, and your journal remains available throughout.
     </Text>
     <Button
-      label={continuing ? 'Continue setup' : 'Create a private vault'}
+      label={continuing ? 'Continue setup' : 'Create a managed vault'}
       onPress={onOpen}
       testID="open-vault-activation"
       accessibilityLabel={
-        continuing ? 'Continue private vault setup' : 'Create an optional private vault'
+        continuing ? 'Continue managed vault setup' : 'Create an optional managed vault'
       }
     />
   </View>

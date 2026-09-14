@@ -58,7 +58,9 @@ with the reason for each, so the file can be trusted about what it does contain.
 ### If you use a Creek Vault
 
 The export covers your Adepthood data. Your vault holds its own copy and
-exports from its own side; nothing here reaches into it.
+exports from its own side; nothing here reaches into it. An ordinary managed
+Fly vault is provider-managed and operator-readable, not confidential compute:
+Fly and privileged Adepthood or Creek operators can access its stored bytes.
 
 ### That an export happened is recorded
 
@@ -158,16 +160,17 @@ cleared off them.
 
 ### If you use a Creek Vault
 
-Deleting your Adepthood account **does not run an account-wide vault purge**.
-Adepthood automatically withdraws an individual mirrored journal page when you
-make it Intimate or delete that page, but Creek's published contract has no
-account-wide purge verb. Account deletion therefore cannot promise to erase
-other vault sources or journal copies whose per-page withdrawal was never
-completed.
+For a vault provisioned by Adepthood, deleting your account submits an
+account-scoped teardown request before the local account is erased. Adepthood
+then keeps a content-free receipt and retries until Creek confirms the billable
+allocation is deleted. The receipt never preserves a vault credential or any
+writing.
 
-Run `creek purge` against your own vault to erase everything it holds. The
-deletion confirmation screen repeats this if a vault is configured, and an
-unreachable vault never delays or blocks the deletion of your Adepthood data.
+For a vault you connected manually, Adepthood has no allocation handle and
+cannot run an account-wide purge. Run `creek purge` against that vault to erase
+everything it holds. An unreachable vault never delays or blocks deletion of
+your Adepthood data; the deletion receipt states whether managed teardown is
+pending, confirmed, or manual action remains.
 
 ## For maintainers
 

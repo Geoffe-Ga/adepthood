@@ -3,13 +3,12 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 const CONTRACT_HEADER = 'Creek-Provisioning-Version';
-const CONTRACT_VERSION = '1.0.0';
+const CONTRACT_VERSION = '2.0.0';
 const READY_PREFIX = 'FAKE_CREEK_READY port=';
 const LOOPBACK_HOST = '127.0.0.1';
 const REQUESTER_FILE = process.env.FAKE_CREEK_REQUESTER_AUTH_FILE;
 const HANDOFF_FILE = process.env.FAKE_CREEK_HANDOFF_AUTH_FILE;
 const CALLBACK_FILE = process.env.FAKE_CREEK_CALLBACK_FILE;
-const SERVER_NONCE = 'AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM';
 const CLIENT_VAULT_URL = 'https://1.1.1.1';
 const CLIENT_CREDENTIAL = 'e2e-provisioned-vault-credential'; // pragma: allowlist secret
 const jobs = new Map();
@@ -47,6 +46,7 @@ function jobResponse(job) {
     created_at: job.createdAt,
     updated_at: new Date().toISOString(),
     attested_confidential: false,
+    custody_mode: job.state === 'ready' ? 'provider_managed' : null,
     status_url: `/control/v1/jobs/${job.jobId}`,
   };
 }
@@ -55,30 +55,6 @@ async function readJson(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
-
-function containsForbiddenSecret(value) {
-  if (Array.isArray(value)) return value.some(containsForbiddenSecret);
-  if (value === null || typeof value !== 'object') return false;
-  return Object.entries(value).some(
-    ([key, child]) =>
-      ['passphrase', 'recovery_code', 'recoveryCode'].includes(key) ||
-      containsForbiddenSecret(child),
-  );
-}
-
-function ceremonyMatches(job, body) {
-  const binding = body?.wrapped_artifact?.binding;
-  return (
-    body?.protocol_version === CONTRACT_VERSION &&
-    body?.ceremony_id === job.ceremonyId &&
-    body?.server_nonce === SERVER_NONCE &&
-    body?.recovery_saved === true &&
-    binding?.activation_id === job.activationId &&
-    binding?.ceremony_id === job.ceremonyId &&
-    binding?.server_nonce === SERVER_NONCE &&
-    !containsForbiddenSecret(body)
-  );
 }
 
 async function deliverHandoff(job) {
@@ -107,7 +83,6 @@ async function activate(request, response) {
     jobId: `job-${randomUUID()}`,
     activationId: body.activation_id,
     consumerIdentity: body.consumer_identity,
-    ceremonyId: `ceremony-${randomUUID()}`,
     state: 'pending',
     attempts: 1,
     createdAt: now,
@@ -124,25 +99,13 @@ function findJob(pathname) {
 async function handleJob(request, response, pathname) {
   const job = findJob(pathname);
   if (!job) return send(response, 404, { code: 'job_unavailable' });
-  if (request.method === 'GET' && pathname.endsWith('/key-ceremony')) {
-    return send(response, 200, {
-      protocol_version: CONTRACT_VERSION,
-      job_id: job.jobId,
-      activation_id: job.activationId,
-      ceremony_id: job.ceremonyId,
-      server_nonce: SERVER_NONCE,
-      expires_at: new Date(Date.now() + 60_000).toISOString(),
-    });
-  }
-  if (request.method === 'PUT' && pathname.endsWith('/key-ceremony')) {
-    const body = await readJson(request);
-    if (!ceremonyMatches(job, body)) return send(response, 400, { code: 'invalid_request' });
-    job.state = 'ready';
-    await deliverHandoff(job);
-    return send(response, 200, jobResponse(job));
-  }
   if (request.method === 'GET') {
-    if (job.state === 'pending') job.state = 'awaiting_key_ceremony';
+    if (job.state === 'pending') {
+      job.state = 'provisioning';
+    } else if (job.state === 'provisioning') {
+      await deliverHandoff(job);
+      job.state = 'ready';
+    }
     return send(response, 200, jobResponse(job));
   }
   return send(response, 405, { code: 'invalid_request' });

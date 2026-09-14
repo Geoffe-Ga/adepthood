@@ -34,12 +34,12 @@ before that decision is ever needed.
 **Intimate content is deliberately not sent here.** An entry classified
 ``intimate`` short-circuits to :attr:`VaultWriteStatus.SKIPPED_INTIMATE` before
 any vault call -- not even a handshake. This is a considered deferral, not a
-permanent prohibition: the intimate-transit path recorded in Decision 6 of
-``docs/adr/0004-creek-vault-http-application-boundary.md`` -- (a) ciphertext
-under a user-held key the operator cannot decrypt, (b) writes only against an
-attested enclave -- is entirely unshipped. Until it exists, routing intimate
-bodies through this plaintext ingest surface would violate the writer's chosen
-depth, so the safe answer is to withhold them here until that channel lands.
+permanent prohibition: the future intimate-transit path recorded in Decision 6
+of ``docs/adr/0004-creek-vault-http-application-boundary.md`` remains entirely
+unshipped. An ordinary managed Fly vault is provider-managed and
+operator-readable; it is not an attested enclave. Until a real confidential
+contract exists, routing intimate bodies through this plaintext ingest surface
+would violate the writer's chosen depth, so the safe answer is to withhold them.
 """
 
 from __future__ import annotations

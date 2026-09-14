@@ -309,7 +309,7 @@ async def _provisioned_connection_is_ready(
     session: AsyncSession,
     user_id: int,
 ) -> bool:
-    """Keep a handed-off credential inert until Creek completes the key ceremony."""
+    """Keep a handed-off credential inert until Creek reports its allocation ready."""
     activation = await load_vault_activation(session, user_id)
     return activation is not None and activation.state == VaultActivationState.READY.value
 

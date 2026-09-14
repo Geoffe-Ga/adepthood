@@ -201,12 +201,12 @@ const RootStack = (): React.JSX.Element => (
     <Stack.Screen
       name="VaultSettings"
       component={VaultSettingsScreen}
-      options={{ title: 'Private vault' }}
+      options={{ title: 'Managed vault' }}
     />
     <Stack.Screen
       name="VaultActivation"
       component={PrivateVaultActivationScreen}
-      options={{ title: 'Create private vault' }}
+      options={{ title: 'Create managed vault' }}
     />
     <Stack.Screen
       name="SharePreview"

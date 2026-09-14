@@ -57,12 +57,12 @@ VAULT_GUIDANCE_CONFIGURED = (
     "`creek purge` against your vault to erase everything else it holds."
 )
 VAULT_GUIDANCE_TEARDOWN_PENDING = (
-    "Your private vault deletion has been requested. Adepthood will keep "
+    "Your managed vault deletion has been requested. Adepthood will keep "
     "reconciling the content-free cleanup receipt until Creek confirms that no "
     "billable resource remains."
 )
 VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
-    "Creek confirmed that the provisioned private-vault allocation was deleted."
+    "Creek confirmed that the provisioned managed-vault allocation was deleted."
 )
 
 

@@ -476,13 +476,16 @@ describe('the external Creek boundary stays protocol-shaped and secret hostile',
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('requires the version header and rejects raw recovery or passphrase fields', () => {
+  it('requires contract 2.0 provider custody and exposes no ceremony route or secret fields', () => {
     const fake = read(FAKE_CREEK, 'The activation journey needs a protocol-shaped Creek fake.');
 
     expect(fake).toContain("const CONTRACT_HEADER = 'Creek-Provisioning-Version'");
-    expect(fake).toContain("const CONTRACT_VERSION = '1.0.0'");
-    expect(fake).toContain("['passphrase', 'recovery_code', 'recoveryCode']");
+    expect(fake).toContain("const CONTRACT_VERSION = '2.0.0'");
+    expect(fake).toContain("custody_mode: job.state === 'ready' ? 'provider_managed' : null");
     expect(fake).toContain('/internal/vault-provisioning/completions');
+    expect(fake).not.toContain('/key-ceremony');
+    expect(fake).not.toContain('passphrase_wrapped');
+    expect(fake).not.toContain('recovery_wrapped');
   });
 });
 

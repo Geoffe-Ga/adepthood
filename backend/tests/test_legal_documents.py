@@ -73,6 +73,7 @@ from domain.resonance import PRIOR_DRAFT_LIMIT
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
+from models.vault_activation import VaultCustodyMode
 from routers.journal import delete_journal_entry
 from sentry import scrub_event
 from services import frequency_classification, journal_encryption
@@ -95,6 +96,9 @@ _LEGAL_DIR = _REPO_ROOT / "docs" / "legal"
 _PRIVACY_POLICY = _LEGAL_DIR / "privacy-policy.md"
 _TERMS_OF_SERVICE = _LEGAL_DIR / "terms-of-service.md"
 _YOUR_DATA = _REPO_ROOT / "docs" / "your-data.md"
+_MANAGED_VAULT_PILOT = _REPO_ROOT / "docs" / "managed-vault-pilot.md"
+_MANAGED_VAULT_ADR = _REPO_ROOT / "docs" / "adr" / "0007-demand-provisioned-confidential-vaults.md"
+_FULL_STACK_QA = _REPO_ROOT / "docs" / "qa" / "full-stack-qa-runbook.md"
 _LEGAL_LINKS = _REPO_ROOT / "frontend" / "src" / "features" / "Settings" / "legalLinks.ts"
 
 # The in-app rows address the documents through the repository's public web
@@ -510,6 +514,39 @@ def test_the_policy_claims_no_confidentiality_the_code_lacks() -> None:
 
     for claim in _FORBIDDEN_CLAIMS:
         assert claim not in text, f"privacy policy overclaims: {claim!r}"
+
+
+def test_the_policy_names_managed_vault_custody_and_intimate_exclusion() -> None:
+    """The legal promise follows the closed launch mode and both egress guards."""
+    policy = _prose(_PRIVACY_POLICY)
+
+    assert VaultCustodyMode.PROVIDER_MANAGED.value == "provider_managed"
+    assert "provider-managed and operator-readable" in policy
+    assert "fly and privileged adepthood or creek operators can access its stored bytes" in policy
+    assert "there is no user-held recovery key" in policy
+    assert "an intimate document is refused before a vault" in policy
+    assert "non-intimate documents you upload" in policy
+    assert "documents you upload at any tier" not in policy
+    assert "intimate included" not in policy
+
+
+def test_operator_and_qa_docs_name_only_the_reachable_managed_vault_recovery() -> None:
+    """Rollback and native QA cannot prescribe the retired ceremony surface."""
+    pilot = _prose(_MANAGED_VAULT_PILOT)
+    adr = _prose(_MANAGED_VAULT_ADR)
+    qa = _prose(_FULL_STACK_QA)
+
+    assert "finish its key ceremony" not in pilot
+    assert "key ceremony, export" not in adr
+    assert "native export and recovery-key save" not in qa
+
+    assert "authenticated handoff" in pilot
+    assert "provider-managed custody" in pilot
+    assert "status polling, idempotent retry, authenticated handoff" in adr
+    assert "export, revocation, and deletion remain reachable" in adr
+    assert "activated managed vaults" in adr
+    assert "activated private vaults" not in adr
+    assert "native export invokes the system share sheet" in qa
 
 
 def test_the_terms_do_not_promise_a_service_level() -> None:

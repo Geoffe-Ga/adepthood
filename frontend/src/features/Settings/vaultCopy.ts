@@ -1,5 +1,5 @@
 /**
- * Copy for the "Your private vault" Settings surface.
+ * Copy for the "Your Creek vault" Settings surface.
  *
  * A private vault is an optional depth, not a missing piece. Adepthood commits
  * every entry to its own store before a vault is ever contacted, replication is
@@ -12,39 +12,38 @@
  * host or routing vocabulary; no loss, risk or obligation framing; and no
  * durability claim the write path does not make.
  *
- * The module is two decks under one set of guards. The promise deck describes a
- * vault to somebody who may never want one; the form deck asks a person for one
- * they already run, and is allowed to spell a transport for exactly as long as
- * a field nobody can fill in would be worse. This surface also owns its own
+ * The module is two decks under one set of guards. The promise deck distinguishes
+ * a vault somebody runs from one Adepthood manages; the form deck asks a person
+ * for one they already run, and is allowed to spell a transport for exactly as
+ * long as a field nobody can fill in would be worse. This surface also owns its own
  * refusal sentences rather than routing them through
  * ``src/api/errorMessages.ts``: all seven are swept by the copy guards here,
  * and a second home for them is a second place for them to drift.
  */
 
 /** Hub row label. Names the destination without implying an action is pending. */
-export const VAULT_ROW_LABEL = 'Private vault';
+export const VAULT_ROW_LABEL = 'Creek vault';
 
 /**
  * Hub row description. States the offer and the floor together, so a user who
  * never opens the screen still learns that declining costs them nothing.
  */
 export const VAULT_ROW_DESCRIPTION =
-  'An optional copy of what you write, in a space you run yourself. Adepthood is complete without one.';
+  'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.';
 
 /** Header eyebrow. Sets the register before the title: this is a choice. */
 export const VAULT_EYEBROW = 'Optional';
 
 /** Screen and navigation title. Descriptive, not an instruction to connect. */
-export const VAULT_TITLE = 'Your private vault';
+export const VAULT_TITLE = 'Your Creek vault';
 
 /**
- * The one promise. It says ownership and choice in a single claim, and the
- * "as you choose" is load-bearing rather than a hedge: an entry marked Public
- * is shareable with the Sangha, so a flat "stays private" would be false for a
- * tier the writer themselves picked. Sovereignty is the promise the app keeps
- * at every setting, with or without a vault.
+ * The one promise. It says ownership and makes the choice specifically about
+ * replication, without implying operator blindness or blanket secrecy that
+ * neither Adepthood nor a provider-managed vault can promise.
  */
-export const VAULT_PROMISE = 'Your writing is yours, and it stays as private as you choose.';
+export const VAULT_PROMISE =
+  'Your writing is yours; you choose whether Adepthood sends a copy to a vault.';
 
 /**
  * What a vault is. Says "sends a copy of each entry" rather than "a copy of
@@ -54,14 +53,14 @@ export const VAULT_PROMISE = 'Your writing is yours, and it stays as private as 
  * happens, so it describes an addition and never a transfer.
  */
 export const VAULT_WHAT_IT_IS =
-  'A private vault is a space you run yourself. When one is connected, Adepthood sends a copy of each entry there as you write — into a place you hold.';
+  'A vault holds an account-scoped copy of what you write. You can connect one you run or ask Adepthood to manage one. A managed vault is readable by privileged operators, and neither kind receives Intimate entries.';
 
 /**
  * The floor. Declining is a complete way to use Adepthood, so this says so
  * plainly and bounds what a vault changes: it adds a copy, and nothing else.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds a copy in your own space; nothing else changes.';
+  'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; nothing else changes.';
 
 /**
  * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is

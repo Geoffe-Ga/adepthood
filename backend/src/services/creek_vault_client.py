@@ -72,11 +72,11 @@ URL, because no HTTP adapter is built at all.
 :class:`HttpCreekVaultClient` speaks request/response JSON over a shared,
 credential-free pooled connection (:class:`_VaultHttpPool`), building its
 authorization header per call so the pooled connection never holds the key. This
-seam does not itself encrypt the entry *body*: the end-to-end, ciphertext-only
-intimate-transit rule of Decision 6 in
-``docs/adr/0004-creek-vault-http-application-boundary.md`` (a user-held key the
-operator cannot decrypt) is enforced where the body is assembled, in the write
-path built on this seam -- out of scope here, not forgotten.
+seam does not itself encrypt the entry *body*. Ordinary managed Fly vaults use
+provider-managed custody and remain operator-readable, while the unshipped
+attested intimate-transit design is a separate future contract. The shipped
+write path therefore excludes INTIMATE content rather than implying this HTTP
+adapter provides confidential compute.
 
 Every attempt made through either adapter is counted exactly once by
 :mod:`services.creek_vault_telemetry`, which is the only place an operator can

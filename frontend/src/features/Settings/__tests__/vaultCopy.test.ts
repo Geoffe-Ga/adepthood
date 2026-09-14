@@ -159,13 +159,13 @@ describe('vaultCopy — export surface', () => {
 // ---------------------------------------------------------------------------
 
 describe('vaultCopy — the promise deck, verbatim', () => {
-  it('VAULT_ROW_LABEL reads "Private vault"', () => {
-    expect(VAULT_ROW_LABEL).toBe('Private vault');
+  it('VAULT_ROW_LABEL reads "Creek vault"', () => {
+    expect(VAULT_ROW_LABEL).toBe('Creek vault');
   });
 
   it('VAULT_ROW_DESCRIPTION calls the vault optional and the app complete', () => {
     expect(VAULT_ROW_DESCRIPTION).toBe(
-      'An optional copy of what you write, in a space you run yourself. Adepthood is complete without one.',
+      'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.',
     );
   });
 
@@ -173,29 +173,30 @@ describe('vaultCopy — the promise deck, verbatim', () => {
     expect(vaultCopy.VAULT_EYEBROW).toBe('Optional');
   });
 
-  it('VAULT_TITLE reads "Your private vault"', () => {
-    expect(vaultCopy.VAULT_TITLE).toBe('Your private vault');
+  it('VAULT_TITLE reads "Your Creek vault"', () => {
+    expect(vaultCopy.VAULT_TITLE).toBe('Your Creek vault');
   });
 
   it('VAULT_PROMISE is the one promise the surface makes', () => {
-    expect(VAULT_PROMISE).toBe('Your writing is yours, and it stays as private as you choose.');
+    expect(VAULT_PROMISE).toBe(
+      'Your writing is yours; you choose whether Adepthood sends a copy to a vault.',
+    );
   });
 
-  it('VAULT_PROMISE defers to the writer rather than claiming blanket secrecy', () => {
-    // An entry marked Public is shareable with the Sangha, so a flat "stays
-    // private" would be false for a tier the writer picked themselves.
-    expect(VAULT_PROMISE).toMatch(/as you choose/iu);
+  it('VAULT_PROMISE makes the choice about replication without claiming blanket secrecy', () => {
+    expect(VAULT_PROMISE).toMatch(/choose whether/iu);
+    expect(VAULT_PROMISE).not.toMatch(/private|secret|only you/iu);
   });
 
   it('VAULT_WHAT_IT_IS describes a vault in plain, non-technical terms', () => {
     expect(vaultCopy.VAULT_WHAT_IT_IS).toBe(
-      'A private vault is a space you run yourself. When one is connected, Adepthood sends a copy of each entry there as you write — into a place you hold.',
+      'A vault holds an account-scoped copy of what you write. You can connect one you run or ask Adepthood to manage one. A managed vault is readable by privileged operators, and neither kind receives Intimate entries.',
     );
   });
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds a copy in your own space; nothing else changes.',
+      'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; nothing else changes.',
     );
   });
 

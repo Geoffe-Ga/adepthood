@@ -44,7 +44,12 @@ from .user_depth_preferences import UserDepthPreferences
 from .user_practice import UserPractice
 from .user_ui_flags import UserUiFlags
 from .user_vault_config import UserVaultConfig
-from .vault_activation import VaultActivation, VaultActivationState, VaultTeardownReceipt
+from .vault_activation import (
+    VaultActivation,
+    VaultActivationState,
+    VaultCustodyMode,
+    VaultTeardownReceipt,
+)
 from .vault_pipeline_follow_up import VaultPipelineFollowUp
 from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from .wallet_audit import WalletAudit
@@ -97,6 +102,7 @@ __all__ = [
     "UserVaultConfig",
     "VaultActivation",
     "VaultActivationState",
+    "VaultCustodyMode",
     "VaultPipelineFollowUp",
     "VaultPipelineOutcome",
     "VaultPipelineRun",

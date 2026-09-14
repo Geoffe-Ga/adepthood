@@ -15,9 +15,9 @@ from sqlmodel import col, select
 from models.vault_activation import (
     VaultActivation,
     VaultActivationState,
+    VaultCustodyMode,
     VaultTeardownReceipt,
 )
-from schemas.vault_activation import VaultKeyCeremonyChallenge, VaultKeyCeremonySubmission
 from services.creek_provisioning_client import (
     FAILURE_MALFORMED_RESPONSE,
     FAILURE_PROVIDER_REJECTED,
@@ -33,8 +33,13 @@ _ACTIVE_STATES: Final[frozenset[str]] = frozenset(
         VaultActivationState.SUBMITTING.value,
         VaultActivationState.PENDING.value,
         VaultActivationState.PROVISIONING.value,
-        VaultActivationState.AWAITING_KEY_CEREMONY.value,
         VaultActivationState.AWAITING_HANDOFF.value,
+    }
+)
+_KNOWN_CUSTODY_MODES: Final[frozenset[str]] = frozenset(
+    {
+        VaultCustodyMode.PROVIDER_MANAGED.value,
+        VaultCustodyMode.WRAPPED_ARTIFACT_ONLY.value,
     }
 )
 
@@ -92,23 +97,56 @@ def _mark_local_failure(
 
 def _apply_job(activation: VaultActivation, job: CreekProvisioningJob) -> None:
     """Apply only a response bound to this durable activation."""
-    job_id_matches = activation.creek_job_id is None or job.job_id == activation.creek_job_id
-    if job.activation_id != activation.activation_id or not job_id_matches:
+    if not _job_matches_activation(activation, job):
         _mark_local_failure(activation, FAILURE_MALFORMED_RESPONSE, retryable=True)
         return
     activation.creek_job_id = job.job_id
+    if _job_has_malformed_custody(job):
+        _mark_local_failure(activation, FAILURE_MALFORMED_RESPONSE, retryable=True)
+        return
+    activation.custody_mode = job.custody_mode
+    activation.attested_confidential = job.attested_confidential
+    if job.state == "awaiting_key_ceremony":
+        _reject_legacy_ceremony(activation, job)
+        return
     if _job_awaits_handoff(activation, job):
         activation.state = VaultActivationState.AWAITING_HANDOFF.value
         activation.retryable = False
         activation.failure_reason = None
-        activation.attested_confidential = job.attested_confidential
         activation.updated_at = datetime.now(UTC)
         return
     activation.state = job.state
     activation.retryable = job.retryable
     activation.failure_reason = job.failure_reason
-    activation.attested_confidential = job.attested_confidential
     activation.updated_at = datetime.now(UTC)
+
+
+def _job_matches_activation(
+    activation: VaultActivation,
+    job: CreekProvisioningJob,
+) -> bool:
+    """Bind Creek's response to both durable identities before applying it."""
+    job_id_matches = activation.creek_job_id is None or job.job_id == activation.creek_job_id
+    return job.activation_id == activation.activation_id and job_id_matches
+
+
+def _job_has_malformed_custody(job: CreekProvisioningJob) -> bool:
+    """Reject custody combinations that could overstate managed-vault privacy."""
+    return (
+        job.custody_mode not in _KNOWN_CUSTODY_MODES | {None}
+        or (job.state == VaultActivationState.READY.value and job.custody_mode is None)
+        or (job.custody_mode is not None and job.attested_confidential is not False)
+    )
+
+
+def _reject_legacy_ceremony(
+    activation: VaultActivation,
+    job: CreekProvisioningJob,
+) -> None:
+    """Terminalize a legacy contract without implying current ceremony support."""
+    activation.custody_mode = job.custody_mode or VaultCustodyMode.WRAPPED_ARTIFACT_ONLY.value
+    activation.attested_confidential = False
+    _mark_local_failure(activation, FAILURE_PROVIDER_REJECTED, retryable=False)
 
 
 def _job_awaits_handoff(
@@ -134,6 +172,10 @@ async def _store_job(
     except ProvisioningRejectedError:
         _mark_local_failure(activation, FAILURE_PROVIDER_REJECTED, retryable=False)
     else:
+        # Creek completes its authenticated credential handoff before publishing
+        # ``ready``.  Reload the row after the network boundary so a concurrent
+        # handoff transaction is visible before we decide whether to expose ready.
+        await session.refresh(activation)
         _apply_job(activation, job)
     session.add(activation)
     await session.commit()
@@ -195,41 +237,6 @@ async def retry_vault_activation(
             return await client.retry(activation.creek_job_id or "")
 
     return await _store_job(session, activation, operation)
-
-
-async def fetch_vault_key_ceremony(
-    session: AsyncSession,
-    activation: VaultActivation,
-    client: CreekProvisioningClient,
-) -> VaultKeyCeremonyChallenge:
-    """Fetch and bind one public challenge with no database transaction held."""
-    job_id = activation.creek_job_id
-    if job_id is None:
-        raise ProvisioningRejectedError("invalid_transition")
-    await session.commit()
-    challenge = await client.key_ceremony(job_id)
-    if challenge.job_id != job_id or challenge.activation_id != activation.activation_id:
-        raise ProvisioningUnavailableError("provisioning response malformed")
-    return challenge
-
-
-async def complete_vault_key_ceremony(
-    session: AsyncSession,
-    activation: VaultActivation,
-    submission: VaultKeyCeremonySubmission,
-    client: CreekProvisioningClient,
-) -> VaultActivation:
-    """Relay ciphertext outside the transaction and durably apply Creek's job state."""
-    job_id = activation.creek_job_id
-    if job_id is None:
-        raise ProvisioningRejectedError("invalid_transition")
-    await session.commit()
-    job = await client.complete_key_ceremony(job_id, submission)
-    _apply_job(activation, job)
-    session.add(activation)
-    await session.commit()
-    await session.refresh(activation)
-    return activation
 
 
 async def request_vault_teardown(
