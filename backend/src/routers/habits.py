@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
@@ -50,6 +51,48 @@ _MAX_HABITS_PER_USER = 100
 # the full history via its own slim query.
 _COMPLETIONS_WINDOW_DAYS = 90
 
+# Non-control members of Unicode's Default_Ignorable_Code_Point property.
+# Most format controls are already covered by the general-category check in
+# ``_has_visible_habit_name``. These ranges close the less obvious holes:
+# combining joiners and variation selectors, Hangul fillers, musical controls,
+# shorthand controls, and the reserved default-ignorable portion of plane 14.
+# They are a visibility test only. A variation selector beside a visible emoji
+# remains part of the canonical name and is not stripped from user text.
+_DEFAULT_IGNORABLE_RANGES = (
+    (0x034F, 0x034F),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFFA0, 0xFFA0),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+_NON_VISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Cn"})
+
+
+def _is_default_ignorable(character: str) -> bool:
+    """Return whether Unicode classifies ``character`` as default-ignorable."""
+    codepoint = ord(character)
+    return any(start <= codepoint <= end for start, end in _DEFAULT_IGNORABLE_RANGES)
+
+
+def _is_visible_habit_character(character: str) -> bool:
+    """Return whether one character can visibly label a habit."""
+    category = unicodedata.category(character)
+    return (
+        not character.isspace()
+        and category not in _NON_VISIBLE_CATEGORIES
+        and not _is_default_ignorable(character)
+    )
+
+
+def _has_visible_habit_name(name: str) -> bool:
+    """Return whether ``name`` contains a user-visible Unicode character."""
+    return any(_is_visible_habit_character(character) for character in name)
+
 
 def _sanitize_habit_name(name: str) -> str:
     """Return the canonical visible habit name or a stable HTTP 422.
@@ -64,7 +107,7 @@ def _sanitize_habit_name(name: str) -> str:
         sanitized = sanitize_user_text(name, max_len=HABIT_NAME_MAX_LENGTH)
     except TextTooLongError as exc:
         raise unprocessable("habit_name_too_long") from exc
-    if not sanitized:
+    if not sanitized or not _has_visible_habit_name(sanitized):
         raise unprocessable("habit_name_empty")
     return sanitized
 

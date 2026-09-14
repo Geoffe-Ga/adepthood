@@ -85,7 +85,7 @@ describe('habits journey against a live server', () => {
   it('refuses an invisible habit name without creating a habit or default goals', async () => {
     const failure = await rejection(
       habits.create({
-        name: ' \u200b\u0000\t\n ',
+        name: ' \u200b\u00ad\u061c\u0000\t\n ',
         icon: HABIT_ICON,
         start_date: today,
         energy_cost: ENERGY_COST,

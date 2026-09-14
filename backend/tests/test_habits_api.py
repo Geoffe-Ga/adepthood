@@ -140,6 +140,13 @@ async def test_create_habit(async_client: AsyncClient) -> None:
         ("unicode-spaces", "\u00a0\u2007\u202f"),
         ("tabs-and-newlines", "\t\n\r"),
         ("controls", "\x00\x07\x1b\x7f"),
+        ("c1-control", "\x8f"),
+        ("soft-hyphen", "\u00ad"),
+        ("arabic-letter-mark", "\u061c"),
+        ("mongolian-vowel-separator", "\u180e"),
+        ("combining-grapheme-joiner", "\u034f"),
+        ("variation-selector", "\ufe0f"),
+        ("hangul-filler", "\u3164"),
         ("zero-width", "\u200b\u200c\u2060\ufeff"),
     ],
 )
@@ -193,6 +200,13 @@ async def test_update_rejects_sanitized_empty_name_without_mutation(
         "\u00a0\u2007\u202f",
         "\t\n\r",
         "\x00\x07\x1b\x7f",
+        "\x8f",
+        "\u00ad",
+        "\u061c",
+        "\u180e",
+        "\u034f",
+        "\ufe0f",
+        "\u3164",
         "\u200b\u200c\u2060\ufeff",
     )
     for name in invisible_names:
@@ -231,11 +245,11 @@ async def test_create_canonicalizes_name_without_flattening_interior_whitespace(
 ) -> None:
     """Outer/invisible noise is removed while Unicode and interior spacing survive."""
     headers = await _signup(async_client, "canonical-name")
-    expected_name = "Café  道 Practice"
+    expected_name = "Café  道 Practice \u2764\ufe0f"
 
     response = await async_client.post(
         "/habits/",
-        json=sample_payload(name=" \tCafe\u0301  道\u200b Practice\n "),
+        json=sample_payload(name=" \tCafe\u0301  道\u200b Practice \u2764\ufe0f\n "),
         headers=headers,
     )
 
