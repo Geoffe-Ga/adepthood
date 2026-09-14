@@ -488,25 +488,34 @@ describe('JournalEntryScreen', () => {
       .spyOn(rn, 'useWindowDimensions')
       .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
     mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
+    let view: ReturnType<typeof renderScreen> | null = null;
     try {
-      const view = renderScreen({ entryId: 7 });
+      const rendered = renderScreen({ entryId: 7 });
+      view = rendered;
       await waitFor(() =>
-        expect(view.getByTestId('journal-body-input').props.value).toContain('rivers'),
+        expect(rendered.getByTestId('journal-body-input').props.value).toContain('rivers'),
       );
-      const margin = within(view.getByTestId('journal-margin-column'));
+      const margin = within(rendered.getByTestId('journal-margin-column'));
       if (inMargin) {
-        expect(margin.getByTestId('get-resonance-button')).toBeTruthy();
-        expect(hostWrapperStyle(view.getByTestId('get-resonance-button')).alignItems).toBe(
+        // Loaded text and the effect that settles an existing entry as idle are
+        // separate React commits. Wait for the user-visible state, not merely
+        // the earlier body hydration commit.
+        await waitFor(() => expect(margin.getByTestId('get-resonance-button')).toBeTruthy());
+        expect(hostWrapperStyle(rendered.getByTestId('get-resonance-button')).alignItems).toBe(
           'center',
         );
       } else {
         expect(margin.queryByTestId('get-resonance-button')).toBeNull();
-        expect(hostWrapperStyle(view.getByTestId('get-resonance-button')).position).toBe(
-          'absolute',
+        await waitFor(() =>
+          expect(hostWrapperStyle(rendered.getByTestId('get-resonance-button')).position).toBe(
+            'absolute',
+          ),
         );
       }
-      view.unmount();
     } finally {
+      // Never restore the hook-bearing real implementation while this render
+      // is still mounted, even when an assertion fails.
+      view?.unmount();
       spy.mockRestore();
     }
   });
