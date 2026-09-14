@@ -37,6 +37,10 @@ from services.creek_provisioning_client import (
     get_creek_provisioning_client,
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.managed_vault_rollout import (
+    MANAGED_VAULT_ENABLED_ENV_VAR,
+    MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Generator
@@ -162,7 +166,16 @@ def _encrypted_handoff(
     monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
     token_file = tmp_path / "handoff-token"
     token_file.write_text(_HANDOFF_TOKEN, encoding="utf-8")
+    control_token_file = tmp_path / "control-token"
+    control_token_file.write_text("control-test-token-" + "t" * 48, encoding="utf-8")
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(token_file))
+    monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control_token_file))
+    monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(
+        MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+        ",".join(str(i) for i in range(1, 101)),
+    )
     journal_encryption.reset_cache()
     yield
     journal_encryption.reset_cache()
@@ -314,6 +327,7 @@ async def test_activation_is_idempotent_secret_free_and_releases_the_transaction
     assert first == {
         "active": True,
         "state": "pending",
+        "new_activation_available": True,
         "retryable": False,
         "failure_reason": None,
         "credential_received": False,
@@ -326,6 +340,98 @@ async def test_activation_is_idempotent_secret_free_and_releases_the_transaction
     assert [call[0] for call in creek_client.calls] == ["activate", "activate"]
     assert _CREDENTIAL not in str(first)
     assert _VAULT_URL not in str(first)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rollout_case",
+    [("false", "1"), ("true", "99999")],
+    ids=("emergency-disabled", "account-ineligible"),
+)
+async def test_unavailable_rollout_refuses_new_activation_without_an_oracle(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+    rollout_case: tuple[str, str],
+) -> None:
+    """Disabled and ineligible accounts receive one identical, side-effect-free answer."""
+    enabled, pilot_ids = rollout_case
+    headers, _, _ = await _signup(async_client, f"rollout-{enabled}-{pilot_ids}")
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, enabled)
+    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, pilot_ids)
+
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    activation_response = await async_client.post("/vault/activation", headers=headers)
+
+    assert status_response.status_code == HTTPStatus.OK
+    assert status_response.json() == {
+        "active": False,
+        "state": "inactive",
+        "new_activation_available": False,
+        "retryable": False,
+        "failure_reason": None,
+        "credential_received": False,
+        "attested_confidential": None,
+    }
+    assert activation_response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert activation_response.json() == {"detail": "managed_vault_activation_unavailable"}
+    assert creek_client.calls == []
+    assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_emergency_disable_preserves_existing_status_and_upstream_retry(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The kill switch blocks only new resources, never recovery of an allocated one."""
+    headers, _, _ = await _signup(async_client, "rollout-existing")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    job = creek_client.jobs[activation.activation_id]
+    creek_client.jobs[activation.activation_id] = replace(
+        job,
+        state="failed",
+        retryable=True,
+        failure_reason="provider_unavailable",
+    )
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    assert status_response.json()["state"] == "failed"
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "false")
+
+    retry_response = await async_client.post("/vault/activation/retry", headers=headers)
+
+    assert retry_response.status_code == HTTPStatus.ACCEPTED
+    assert retry_response.json()["state"] == "pending"
+    assert retry_response.json()["new_activation_available"] is False
+    assert any(call[0] == "retry" for call in creek_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_emergency_disable_preserves_idempotent_retry_after_lost_response(
+    async_client: AsyncClient,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A durable activation may already own resources when its first response was lost."""
+    headers, _, _ = await _signup(async_client, "rollout-unallocated-retry")
+    creek_client.fail_activate = True
+    failed = await _activate(async_client, headers)
+    assert failed["retryable"] is True
+    creek_client.fail_activate = False
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "false")
+
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    retry_response = await async_client.post("/vault/activation/retry", headers=headers)
+
+    assert status_response.json()["retryable"] is True
+    assert retry_response.status_code == HTTPStatus.ACCEPTED
+    assert retry_response.json()["state"] == "pending"
+    assert retry_response.json()["new_activation_available"] is False
+    assert [call[0] for call in creek_client.calls].count("activate") == 2
 
 
 @pytest.mark.asyncio
@@ -630,6 +736,38 @@ async def test_startup_recovery_polls_a_durable_inflight_job(
     activation = (await db_session.execute(select(VaultActivation))).scalar_one()
     assert activation.state == "provisioning"
     assert ("status", job.job_id) in creek_client.calls
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_preserves_admitted_idempotency_after_emergency_disable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A submitting row may represent a lost response and resumes by stable identity."""
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "false")
+    _, user_id, _ = await _signup(async_client, "lifespan-disabled")
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id="activation-disabled",
+            consumer_identity="adepthood-user-disabled",
+            state="submitting",
+        )
+    )
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def same_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    await resume_vault_activations(same_session, creek_client)
+
+    assert creek_client.calls == [("activate", "activation-disabled:adepthood-user-disabled")]
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    assert activation.state == "pending"
+    assert activation.creek_job_id is not None
 
 
 @pytest.mark.asyncio
@@ -1078,6 +1216,7 @@ def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> Non
     assert set(properties) == {
         "active",
         "state",
+        "new_activation_available",
         "retryable",
         "failure_reason",
         "credential_received",

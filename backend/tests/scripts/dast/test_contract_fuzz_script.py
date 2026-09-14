@@ -29,6 +29,7 @@ import os
 import re
 import stat
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ from main import app
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT = _BACKEND_ROOT / "scripts" / "dast" / "contract_fuzz.sh"
+_CONFIG = _BACKEND_ROOT / "scripts" / "dast" / "schemathesis.toml"
 
 _HTTP_METHODS = ("get", "put", "post", "delete", "patch")
 
@@ -75,6 +77,8 @@ _REQUIRED_CHECKS = (
 )
 
 _EXPECTED_PHASES = "examples,fuzzing"
+_MANAGED_ACTIVATION_OPERATION = "POST /vault/activation"
+_EXPECTED_SERVER_ERROR_STATUSES = ["2xx", "3xx", "4xx", "503"]
 
 # The one filter flag this gate is allowed to use. Every other member of
 # schemathesis's ``--exclude-*`` / ``--include-*`` family selects a *class* of
@@ -341,9 +345,37 @@ def test_the_script_is_executable() -> None:
 
 def test_the_live_document_is_what_gets_fuzzed(fuzz_run: FuzzRun) -> None:
     """A checked-in spec can drift away from the app; a live one cannot."""
-    assert fuzz_run.argv[:2] == ["run", f"{_BASE_URL}/openapi.json"], fuzz_run.argv
+    assert fuzz_run.argv[:4] == [
+        "--config-file",
+        str(_CONFIG),
+        "run",
+        f"{_BASE_URL}/openapi.json",
+    ], fuzz_run.argv
     assert fuzz_run.value_for("--url") == _BASE_URL
     assert not any("openapi.json" in token and "$" in token for token in fuzz_run.argv)
+
+
+def test_the_only_check_override_is_the_managed_activation_503() -> None:
+    """One intentional 503 is allowed without excusing the operation or all 5xx."""
+    assert _CONFIG.is_file(), f"{_CONFIG} does not exist"
+    document = tomllib.loads(_CONFIG.read_text(encoding="utf-8"))
+    assert document == {
+        "operations": [
+            {
+                "include-name": _MANAGED_ACTIVATION_OPERATION,
+                "checks": {
+                    "not_a_server_error": {"expected-statuses": _EXPECTED_SERVER_ERROR_STATUSES}
+                },
+            }
+        ]
+    }
+
+
+def test_the_managed_activation_stays_in_the_fuzz_run(fuzz_run: FuzzRun, script_text: str) -> None:
+    """The scoped 503 rule must not become an exclusion from the other checks."""
+    assert _MANAGED_ACTIVATION_OPERATION in live_operation_labels()
+    assert _MANAGED_ACTIVATION_OPERATION not in excluded_operations(script_text)
+    assert _MANAGED_ACTIVATION_OPERATION not in fuzz_run.values_for(_ALLOWED_FILTER_FLAG)
 
 
 def test_the_enabled_checks_are_exactly_the_named_ones(fuzz_run: FuzzRun) -> None:

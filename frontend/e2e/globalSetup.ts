@@ -443,6 +443,10 @@ function serverEnvironment(
     CREEK_PROVISIONING_URL: `http://127.0.0.1:${creek.port}`,
     CREEK_PROVISIONING_AUTH_FILE: creek.requesterFile,
     CREEK_PROVISIONING_HANDOFF_AUTH_FILE: creek.handoffFile,
+    CREEK_MANAGED_VAULT_ACTIVATION_ENABLED: 'true',
+    CREEK_MANAGED_VAULT_PILOT_USER_IDS: Array.from({ length: 100 }, (_, index) =>
+      String(index + 1),
+    ).join(','),
     EMAIL_BACKEND,
     EMAIL_CAPTURE_FILE: mail.captureFile,
     APP_BASE_URL: mail.webBaseUrl,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, NoReturn
+from typing import Annotated, NoReturn, TypeGuard
 
 from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ from services.creek_provisioning_client import (
     ProvisioningUnavailableError,
     get_creek_provisioning_client,
 )
+from services.managed_vault_rollout import managed_vault_activation_is_available
 
 router = build_router(
     prefix="/vault",
@@ -41,6 +42,7 @@ router = build_router(
 _INACTIVE_RESPONSE = VaultActivationResponse(
     active=False,
     state="inactive",
+    new_activation_available=False,
     retryable=False,
     failure_reason=None,
     credential_received=False,
@@ -55,12 +57,19 @@ _POLLABLE_STATES = {
 }
 
 
-def _to_response(activation: VaultActivation | None) -> VaultActivationResponse:
+def _to_response(
+    activation: VaultActivation | None,
+    *,
+    new_activation_available: bool,
+) -> VaultActivationResponse:
     if activation is None:
-        return _INACTIVE_RESPONSE.model_copy()
+        return _INACTIVE_RESPONSE.model_copy(
+            update={"new_activation_available": new_activation_available}
+        )
     return VaultActivationResponse(
         active=True,
         state=activation.state,
+        new_activation_available=new_activation_available,
         retryable=activation.retryable,
         failure_reason=activation.failure_reason,
         credential_received=activation.credential_received_at is not None,
@@ -73,6 +82,23 @@ def _raise_ceremony_error(error: Exception) -> NoReturn:
     if isinstance(error, ProvisioningRejectedError) and error.code in CEREMONY_REJECTION_CODES:
         raise conflict(error.code) from None
     raise service_unavailable("vault_provisioning_unavailable") from None
+
+
+async def _closed_rollout_response(
+    session: AsyncSession,
+    activation: VaultActivation | None,
+) -> VaultActivationResponse:
+    """Replay an admitted activation; refuse only a brand-new identity."""
+    if activation is None:
+        raise service_unavailable("managed_vault_activation_unavailable")
+    await session.commit()
+    return _to_response(activation, new_activation_available=False)
+
+
+def _should_poll(
+    activation: VaultActivation | None,
+) -> TypeGuard[VaultActivation]:
+    return activation is not None and activation.state in _POLLABLE_STATES
 
 
 async def _load_ceremony_activation(
@@ -101,8 +127,12 @@ async def activate_private_vault(
     client: Annotated[CreekProvisioningClient, Depends(get_creek_provisioning_client)],
 ) -> VaultActivationResponse:
     """Explicitly create or replay this account's one durable Creek activation."""
+    existing = await load_vault_activation(session, user_id)
+    available = managed_vault_activation_is_available(user_id)
+    if not available:
+        return await _closed_rollout_response(session, existing)
     activation = await submit_vault_activation(session, user_id, client)
-    return _to_response(activation)
+    return _to_response(activation, new_activation_available=available)
 
 
 @router.get("/activation", response_model=VaultActivationResponse)
@@ -113,9 +143,13 @@ async def get_private_vault_activation(
 ) -> VaultActivationResponse:
     """Return stable progress, polling Creek outside the request transaction."""
     activation = await load_vault_activation(session, user_id)
-    if activation is not None and activation.state in _POLLABLE_STATES:
+    available = managed_vault_activation_is_available(user_id)
+    if _should_poll(activation):
         activation = await poll_vault_activation(session, activation, client)
-    return _to_response(activation)
+    return _to_response(
+        activation,
+        new_activation_available=available,
+    )
 
 
 @router.post(
@@ -134,8 +168,9 @@ async def retry_private_vault_activation(
         raise conflict("vault_activation_not_retryable")
     if not activation.retryable:
         raise conflict("vault_activation_not_retryable")
+    available = managed_vault_activation_is_available(user_id)
     activation = await retry_vault_activation(session, activation, client)
-    return _to_response(activation)
+    return _to_response(activation, new_activation_available=available)
 
 
 @router.get(
@@ -180,4 +215,7 @@ async def complete_private_vault_key_ceremony(
         )
     except (ProvisioningRejectedError, ProvisioningUnavailableError) as error:
         _raise_ceremony_error(error)
-    return _to_response(activation)
+    return _to_response(
+        activation,
+        new_activation_available=managed_vault_activation_is_available(user_id),
+    )
