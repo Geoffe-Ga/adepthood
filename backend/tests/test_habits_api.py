@@ -132,6 +132,127 @@ async def test_create_habit(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "name"),
+    [
+        ("empty", ""),
+        ("spaces", "   "),
+        ("unicode-spaces", "\u00a0\u2007\u202f"),
+        ("tabs-and-newlines", "\t\n\r"),
+        ("controls", "\x00\x07\x1b\x7f"),
+        ("zero-width", "\u200b\u200c\u2060\ufeff"),
+    ],
+)
+async def test_create_rejects_sanitized_empty_name_without_rows(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    case: str,
+    name: str,
+) -> None:
+    """An invisible habit name cannot create either the habit or its goals."""
+    headers, user_id = await _signup_with_user_id(async_client, f"empty-name-{case}")
+
+    response = await async_client.post(
+        "/habits/",
+        json=sample_payload(name=name),
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json() == {"detail": "habit_name_empty"}
+    habit_count = await db_session.scalar(
+        select(func.count()).select_from(Habit).where(Habit.user_id == user_id)
+    )
+    goal_count = await db_session.scalar(
+        select(func.count())
+        .select_from(Goal)
+        .join(Habit, col(Goal.habit_id) == col(Habit.id))
+        .where(Habit.user_id == user_id)
+    )
+    assert habit_count == 0
+    assert goal_count == 0
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_sanitized_empty_name_without_mutation(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Every invisible rename is refused while the durable row stays intact."""
+    headers, user_id = await _signup_with_user_id(async_client, "empty-rename")
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Keep Me"),
+        headers=headers,
+    )
+    habit_id = created.json()["id"]
+
+    invisible_names = (
+        "",
+        "   ",
+        "\u00a0\u2007\u202f",
+        "\t\n\r",
+        "\x00\x07\x1b\x7f",
+        "\u200b\u200c\u2060\ufeff",
+    )
+    for name in invisible_names:
+        response = await async_client.put(
+            f"/habits/{habit_id}",
+            json=sample_payload(
+                name=name,
+                energy_cost=99,
+                energy_return=98,
+                stage="red",
+                revealed=True,
+            ),
+            headers=headers,
+        )
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+        assert response.json() == {"detail": "habit_name_empty"}
+
+    habit = await db_session.get(Habit, habit_id)
+    assert habit is not None
+    assert habit.user_id == user_id
+    assert habit.name == "Keep Me"
+    assert habit.energy_cost == 1
+    assert habit.energy_return == 2
+    assert habit.stage == "aptitude"
+    assert habit.revealed is False
+    goal_count = await db_session.scalar(
+        select(func.count()).select_from(Goal).where(Goal.habit_id == habit_id)
+    )
+    assert goal_count == 3
+
+
+@pytest.mark.asyncio
+async def test_create_canonicalizes_name_without_flattening_interior_whitespace(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Outer/invisible noise is removed while Unicode and interior spacing survive."""
+    headers = await _signup(async_client, "canonical-name")
+    expected_name = "Café  道 Practice"
+
+    response = await async_client.post(
+        "/habits/",
+        json=sample_payload(name=" \tCafe\u0301  道\u200b Practice\n "),
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["name"] == expected_name
+    habit = await db_session.get(Habit, body["id"])
+    assert habit is not None
+    assert habit.name == expected_name
+    assert {goal["title"] for goal in body["goals"]} == {
+        f"Low goal for {expected_name}",
+        f"Clear goal for {expected_name}",
+        f"Stretch goal for {expected_name}",
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_habits_sorted(async_client: AsyncClient) -> None:
     headers = await _signup(async_client)
     await async_client.post(
@@ -184,10 +305,12 @@ async def test_update_habit(async_client: AsyncClient) -> None:
     create_resp = await async_client.post("/habits/", json=sample_payload(), headers=headers)
     habit_id = create_resp.json()["id"]
     resp = await async_client.put(
-        f"/habits/{habit_id}", json=sample_payload(name="Updated"), headers=headers
+        f"/habits/{habit_id}",
+        json=sample_payload(name=" \tUpdated  道\u200b\n "),
+        headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["name"] == "Updated"
+    assert resp.json()["name"] == "Updated  道"
 
 
 @pytest.mark.asyncio
@@ -528,7 +651,7 @@ async def test_duplicate_habit_name_rejected(async_client: AsyncClient) -> None:
     assert first.status_code == HTTPStatus.OK
 
     duplicate = await async_client.post(
-        "/habits/", json=sample_payload(name=" run  "), headers=headers
+        "/habits/", json=sample_payload(name=" \u200brun  "), headers=headers
     )
     assert duplicate.status_code == HTTPStatus.CONFLICT
     assert duplicate.json()["detail"] == "duplicate_habit_name"
@@ -656,7 +779,7 @@ async def test_update_habit_rename_collision_returns_409(async_client: AsyncClie
     # Try to rename "Walk" -> "Run", which collides with the first habit.
     rename = await async_client.put(
         f"/habits/{second_id}",
-        json=sample_payload(name="run"),  # case-insensitive collision
+        json=sample_payload(name=" \u200brun  "),
         headers=headers,
     )
     assert rename.status_code == HTTPStatus.CONFLICT

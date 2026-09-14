@@ -4,7 +4,7 @@ import { describe, afterAll, expect, it } from '@jest/globals';
 
 import { freshLicenseKey } from './licenseKey';
 
-import { auth, goalCompletions, habits, setTokenGetter } from '@/api';
+import { ApiError, auth, goalCompletions, habits, setTokenGetter } from '@/api';
 import type { ApiGoal, ApiHabitWithGoals } from '@/api';
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
@@ -13,6 +13,7 @@ const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
 const LICENSE_KEY = freshLicenseKey();
 const ISO_DATE_LENGTH = 10;
+const HTTP_UNPROCESSABLE_CONTENT = 422;
 
 const ENERGY_COST = 2;
 const ENERGY_RETURN = 5;
@@ -23,7 +24,8 @@ const CLEAR_TIER = 'clear';
 const EXPECTED_TIERS = ['clear', 'low', 'stretch'];
 
 const email = `e2e-habits-${randomUUID()}${EMAIL_DOMAIN}`;
-const habitName = `E2E Habit ${randomUUID()}`;
+// Non-ASCII is deliberate: canonicalization must not flatten visible Unicode.
+const habitName = `E2E Hábito 道 ${randomUUID()}`;
 // The account's timezone is UTC, so the server's "today" is this calendar day.
 const today = new Date().toISOString().slice(0, ISO_DATE_LENGTH);
 
@@ -44,6 +46,16 @@ function goalForTier(goals: readonly ApiGoal[], tier: string): ApiGoal {
     );
   }
   return match;
+}
+
+/** Resolve with the request's error, and fail if an expected refusal resolves. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error;
+  }
+  throw new Error('expected the request to reject, but it resolved');
 }
 
 describe('habits journey against a live server', () => {
@@ -70,9 +82,26 @@ describe('habits journey against a live server', () => {
     setTokenGetter(() => sessionToken);
   });
 
+  it('refuses an invisible habit name without creating a habit or default goals', async () => {
+    const failure = await rejection(
+      habits.create({
+        name: ' \u200b\u0000\t\n ',
+        icon: HABIT_ICON,
+        start_date: today,
+        energy_cost: ENERGY_COST,
+        energy_return: ENERGY_RETURN,
+      }),
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(HTTP_UNPROCESSABLE_CONTENT);
+    expect((failure as ApiError).detail).toBe('habit_name_empty');
+    expect(await habits.listAll()).toEqual([]);
+  });
+
   it('creates a habit and echoes back every field it was given', async () => {
     const created = await habits.create({
-      name: habitName,
+      name: `  ${habitName}\u200b  `,
       icon: HABIT_ICON,
       start_date: today,
       energy_cost: ENERGY_COST,
