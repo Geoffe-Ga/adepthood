@@ -18,7 +18,7 @@ from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
 from domain.habit_stats import compute_habit_stats
 from error_responses import build_router
-from errors import conflict, forbidden, not_found
+from errors import conflict, forbidden, not_found, unprocessable
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -27,10 +27,11 @@ from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.goal import Goal as GoalSchema
 from schemas.goal import GoalUnitsUpdate
+from schemas.habit import HABIT_NAME_MAX_LENGTH, HabitCreate, HabitWithGoals
 from schemas.habit import Habit as HabitSchema
-from schemas.habit import HabitCreate, HabitWithGoals
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
+from security import TextTooLongError, sanitize_user_text
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
 from services.streaks import compute_habit_streak, subtractive_context_for_goals
 
@@ -48,6 +49,24 @@ _MAX_HABITS_PER_USER = 100
 # Streaks are NOT bounded by this window — ``_populate_streaks_for`` reads
 # the full history via its own slim query.
 _COMPLETIONS_WINDOW_DAYS = 90
+
+
+def _sanitize_habit_name(name: str) -> str:
+    """Return the canonical visible habit name or a stable HTTP 422.
+
+    The request schema deliberately leaves the empty-string decision to this
+    domain boundary: whitespace, control characters, and zero-width format
+    characters can all make a non-empty wire value empty only after the shared
+    sanitizer runs. Keeping create and update on this one path also means the
+    value compared for uniqueness is exactly the value persisted and returned.
+    """
+    try:
+        sanitized = sanitize_user_text(name, max_len=HABIT_NAME_MAX_LENGTH)
+    except TextTooLongError as exc:
+        raise unprocessable("habit_name_too_long") from exc
+    if not sanitized:
+        raise unprocessable("habit_name_empty")
+    return sanitized
 
 
 def _recent_completions_cutoff() -> datetime:
@@ -148,7 +167,7 @@ async def _ensure_under_quota(session: AsyncSession, current_user: int) -> None:
 
 async def _ensure_unique_name(session: AsyncSession, current_user: int, name: str) -> None:
     """Raise 409 if the caller already owns a habit with the same normalized name."""
-    candidate_name = name.strip().lower()
+    candidate_name = name.lower()
     duplicate = await session.scalar(
         select(Habit.id).where(
             Habit.user_id == current_user,
@@ -207,10 +226,11 @@ async def create_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
-    """Create a habit + three default goals; 409 over-quota or duplicate name."""
+    """Create a habit + defaults; 422 invisible name, 409 quota/duplicate."""
+    canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
     await _ensure_under_quota(session, current_user)
-    await _ensure_unique_name(session, current_user, payload.name)
-    habit = Habit(user_id=current_user, **payload.model_dump())
+    await _ensure_unique_name(session, current_user, canonical_payload.name)
+    habit = Habit(user_id=current_user, **canonical_payload.model_dump())
     new_id = await _persist_habit_with_default_goals(session, habit)
     refreshed = await _refetch_with_goals(session, new_id, current_user)
     # Recompute the streak like the list/detail paths so POST mirrors GET instead
@@ -285,11 +305,12 @@ async def update_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace an existing habit's fields; 409 on rename collision."""
+    """Replace a habit; 422 invisible name, 409 on rename collision."""
+    canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
     # A manual accept or decline consumes the same one-shot invitation. Without
     # this, an early unlock followed by a re-lock would reopen at eligibility.
-    _consume_auto_reveal_on_manual_change(habit, payload)
-    for key, value in payload.model_dump().items():
+    _consume_auto_reveal_on_manual_change(habit, canonical_payload)
+    for key, value in canonical_payload.model_dump().items():
         setattr(habit, key, value)
     session.add(habit)
     try:

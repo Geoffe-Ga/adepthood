@@ -12698,7 +12698,7 @@
         ]
       },
       "post": {
-        "description": "Create a habit + three default goals; 409 over-quota or duplicate name.",
+        "description": "Create a habit + defaults; 422 invisible name, 409 quota/duplicate.",
         "operationId": "create_habit_habits__post",
         "parameters": [
           {
@@ -13049,7 +13049,7 @@
         ]
       },
       "put": {
-        "description": "Replace an existing habit's fields; 409 on rename collision.",
+        "description": "Replace a habit; 422 invisible name, 409 on rename collision.",
         "operationId": "update_habit_habits__habit_id__put",
         "parameters": [
           {
