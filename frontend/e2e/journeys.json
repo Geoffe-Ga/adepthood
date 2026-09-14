@@ -211,7 +211,7 @@
   },
   {
     "id": "journal.write-list-read-back",
-    "description": "A user writes a journal entry, finds it in the list, and reads the body back unchanged.",
+    "description": "A user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],

@@ -4,18 +4,29 @@ import { describe, afterAll, expect, it } from '@jest/globals';
 
 import { freshLicenseKey } from './licenseKey';
 
-import { auth, journal, setTokenGetter } from '@/api';
+import { ApiError, auth, journal, setTokenGetter } from '@/api';
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
 const EMAIL_DOMAIN = '@example.com';
 const PASSWORD = 'correct horse battery staple'; // pragma: allowlist secret
 const TIMEZONE = 'UTC';
 const LICENSE_KEY = freshLicenseKey();
+const HTTP_UNPROCESSABLE_CONTENT = 422;
 
 const email = `e2e-journal-${randomUUID()}${EMAIL_DOMAIN}`;
 // Non-ASCII on purpose: a UTF-8 mishandling anywhere on the wire (request
 // encoding, column collation, response encoding) breaks the round-trip below.
 const body = `Reflexión sobre la vela 灯 y el río — ${randomUUID()}`;
+
+/** Resolve with the request's error, and fail if an expected refusal resolves. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error: unknown) {
+    return error;
+  }
+  throw new Error('expected the request to reject, but it resolved');
+}
 
 describe('journal journey against a live server', () => {
   let sessionToken: string | null = null;
@@ -37,6 +48,18 @@ describe('journal journey against a live server', () => {
 
     sessionToken = response.token;
     setTokenGetter(() => sessionToken);
+  });
+
+  it('refuses a body that sanitizes to empty without creating a page', async () => {
+    const failure = await rejection(journal.create({ message: ' \u200b\u0000\t\n ' }));
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(HTTP_UNPROCESSABLE_CONTENT);
+    expect((failure as ApiError).detail).toBe('journal_message_empty');
+
+    const page = await journal.list();
+    expect(page.total).toBe(0);
+    expect(page.items).toEqual([]);
   });
 
   it('creates an entry and returns it fully materialised', async () => {

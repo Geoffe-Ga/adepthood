@@ -69,6 +69,7 @@ from domain.frequencies import Frequency
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
 from models.journal_entry import JournalClassification, JournalEntry
+from security import sanitize_user_text
 from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
 
 # How many pieces of the reader's own writing may accompany their entry to the
@@ -139,6 +140,9 @@ async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: 
     reach the cloud even as *prior context* for a newer non-intimate entry's
     pass. The classification is read off the persisted row (never client-supplied
     at resonance time), mirroring the per-entry privacy floor in ``run_resonance``.
+    Legacy rows are run through today's exact text boundary again: sanitized-empty
+    bodies disappear, while non-empty bodies become the same canonical prose a
+    current write would have persisted.
     """
     result = await session.execute(
         select(JournalEntry.message)
@@ -151,7 +155,7 @@ async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: 
         .order_by(col(JournalEntry.id).desc())
         .limit(GROUNDING_LIMIT)
     )
-    return list(result.scalars().all())
+    return [sanitized for body in result.scalars().all() if (sanitized := sanitize_user_text(body))]
 
 
 async def gather_grounding(

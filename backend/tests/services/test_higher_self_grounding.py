@@ -266,6 +266,22 @@ async def test_an_empty_corpus_falls_back_to_the_recency_window(
 
 
 @pytest.mark.asyncio
+async def test_legacy_empty_entries_are_not_reflection_grounding(
+    db_session: AsyncSession,
+) -> None:
+    """Legacy context is re-sanitized, and an empty row is never sent to reflection."""
+    await _write_entry(db_session, "  yesterday I went to the river  ", entry_id=1)
+    await _write_entry(db_session, "", entry_id=2)
+
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert grounding.source is GroundingSource.RECENT_ENTRIES
+    assert grounding.bodies == ("yesterday I went to the river",)
+
+
+@pytest.mark.asyncio
 async def test_an_account_with_neither_grounds_on_nothing_rather_than_failing(
     db_session: AsyncSession,
 ) -> None:

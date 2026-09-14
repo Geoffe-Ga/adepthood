@@ -34,8 +34,8 @@ async def _signup(client: AsyncClient, username: str = "essay") -> tuple[dict[st
     return {"Authorization": f"Bearer {payload['token']}"}, int(payload["user_id"])
 
 
-async def _seed_marginalia(session: AsyncSession, user_id: int) -> int:
-    entry = JournalEntry(sender="user", user_id=user_id, message=_BODY)
+async def _seed_marginalia(session: AsyncSession, user_id: int, *, body: str = _BODY) -> int:
+    entry = JournalEntry(sender="user", user_id=user_id, message=body)
     session.add(entry)
     await session.flush()
     note = Marginalia(
@@ -73,6 +73,23 @@ class _CountingLLM:
             prompt_tokens=0,
             completion_tokens=0,
         )
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_entry_refuses_essay_expansion_before_provider_contact(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-fix empty parent cannot become input to a later expanded reflection."""
+    headers, user_id = await _signup(async_client, "legacy_empty_essay")
+    marg_id = await _seed_marginalia(db_session, user_id, body="")
+    fake = _CountingLLM("This must never be generated.")
+    monkeypatch.setattr(marginalia_service, "generate_response", fake)
+
+    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json() == {"detail": "journal_message_empty"}
+    assert fake.calls == 0
 
 
 @pytest.mark.asyncio
