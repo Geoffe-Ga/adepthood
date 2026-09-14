@@ -50,3 +50,17 @@ idempotency and hard fleet cap.
 An upstream capacity refusal remains an explicit failed activation. Do not
 expand Adepthood's cohort to work around Creek's fleet cap; reconcile or raise
 the authoritative Creek limit deliberately, with billing approval.
+
+## Final deployed proof
+
+The fake-Creek E2E lane proves the application seam but cannot authorize a live
+pilot. After Creek-Vault #1806 is deployed and provider/billing authorization is
+explicit, follow [`docs/qa/managed-vault-pilot-proof.md`](qa/managed-vault-pilot-proof.md).
+It defines the disposable lifecycle, required teardown, sanitized pending
+template, and fail-closed evidence validator for Adepthood #2871. The dated
+schema-v2 record embeds the exact versioned `managed_vault_pilot_prerequisite`
+block emitted by Creek's offline evidence reducer; operators must not copy its
+individual facts by hand or substitute a mutable artifact reference. Until that
+record passes independent review, keep managed activation limited to the
+approved pilot allowlist—or disabled—and do not describe the deployed lifecycle
+as proven.
