@@ -152,7 +152,7 @@ xfail_strict = true
 markers = [
   "real_license_gate: exercise the real Gumroad signup license gate instead of the default test stub-open fixture",
   "integration: run against a live Postgres 16 whose schema is built by `alembic upgrade head` rather than the SQLite approximation; skipped when TEST_POSTGRES_URL is unset, and hard-failed instead of skipped when INTEGRATION_LANE_REQUIRE_POSTGRES is truthy",
-  "live: reconcile configuration against a real provider API (paid credential, network). Never runs by default -- arm it with LIVE_MODEL_CHECK=1 plus ANTHROPIC_API_KEY, as `.github/workflows/live-model-check.yml` does on a weekly schedule. Provider unreachable skips (no verdict); a missing/rejected credential hard-fails, so the lane can never go silently blind",
+  "live: opt-in checks against a real provider API (paid credential, network). Never runs by default. The scheduled catalogue reconciliation uses LIVE_MODEL_CHECK=1 plus ANTHROPIC_API_KEY; the unscheduled resonance-yield measurement uses LIVE_RESONANCE_CHECK=1 plus BOTMASON_PROVIDER and LLM_API_KEY. Provider unreachable skips (no verdict); missing/rejected credentials hard-fail, so neither lane can go silently blind",
 ]
 
 [tool.coverage.run]
