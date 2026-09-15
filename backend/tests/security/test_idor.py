@@ -44,6 +44,7 @@ from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.promoted_quote import PromotedQuote
 from models.prompt_dismissal import PromptDismissal
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
@@ -1406,3 +1407,86 @@ async def test_idor_prompt_set_aside_ignores_a_user_id_the_request_supplies(
 
     assert spoofed.status_code == HTTPStatus.OK, spoofed.text
     assert await _dismissal_owners(db_session) == [bob_id]
+
+
+async def _seed_reflection_source(
+    session: AsyncSession, user_id: int, message: str, moment: datetime, **overrides: object
+) -> JournalEntry:
+    """Persist one finished, user-authored journal entry for the sources feed."""
+    defaults: dict[str, object] = {"sender": "user", "status": "finished", "timestamp": moment}
+    defaults.update(overrides)
+    entry = JournalEntry(user_id=user_id, message=message, **defaults)
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+@pytest.mark.asyncio
+async def test_idor_reflection_sources_never_serve_another_users_material(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``GET /reflections/sources`` is owner-scoped on all four of its queries.
+
+    The endpoint takes no ``*_id`` parameter — only ``level`` and ``scope_key`` —
+    so there is no id to authorize with the ``resolve_owned_*`` helpers; ownership
+    is carried instead by the ``user_id`` predicate on each of the entry query,
+    the child-reflection query, the batch re-scope, and the promoted-quote
+    grouping.  This asserts all four at once: Bob's entry, Bob's scoped
+    reflection and Bob's quote on Alice's own entry are all absent from Alice's
+    feed, while Alice's control entry is present — so "excluded" can never be
+    satisfied by an empty feed.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_reflection_sources")
+    bob_headers, bob_id = await _signup(async_client, "bob_reflection_sources")
+    assert bob_headers  # Bob exists only to own the material Alice must not see.
+    anchor = (datetime.now(UTC) - timedelta(days=8)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    for owner in (alice_id, bob_id):
+        db_session.add(
+            StageProgress(
+                user_id=owner,
+                current_stage=1,
+                completed_stages=[],
+                stage_started_at=anchor,
+                program_started_at=anchor,
+            )
+        )
+    await db_session.commit()
+
+    mine = await _seed_reflection_source(
+        db_session, alice_id, "Alice's own morning", anchor + timedelta(days=1)
+    )
+    await _seed_reflection_source(
+        db_session, bob_id, "Bob's own morning", anchor + timedelta(days=1)
+    )
+    await _seed_reflection_source(
+        db_session,
+        bob_id,
+        "Bob's week in review",
+        anchor + timedelta(days=6),
+        reflection_level="week",
+        reflection_scope_key="c1:w1",
+    )
+    db_session.add(
+        PromotedQuote(
+            user_id=bob_id,
+            source_entry_id=mine.id,
+            anchor_start=0,
+            anchor_end=5,
+            anchor_text="Alice",
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c1:w1"},
+        headers=alice_headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    items = resp.json()["items"]
+    assert [item["body"] for item in items] == ["Alice's own morning"]
+    assert items[0]["promoted_quotes"] == []

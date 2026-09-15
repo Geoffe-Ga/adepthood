@@ -1244,8 +1244,24 @@ export const reflectionSourceItemSchema = z.object({
 /** ``GET /reflections/due`` envelope: the due window, or ``null`` when nothing is due. */
 export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.nullable() });
 
-/** ``GET /reflections/sources`` envelope: the chronological source feed. */
+/**
+ * ``GET /reflections/sources`` envelope: the chronological source feed, plus the
+ * half-open ``[window_start, window_end)`` calendar period the server actually
+ * filtered on (local midnights in the caller's own timezone, end exclusive) and
+ * an echo of the scope it answered for. The period is published so the composer
+ * can NAME the review period instead of re-deriving it from the scope key and
+ * drifting out of step with the feed.
+ *
+ * Every one of those four is tolerated rather than required: a server that has
+ * not shipped them yet, a caller with no program anchor (both bounds null), or a
+ * bound that will not parse must all still yield a readable feed — the period
+ * label simply does not appear. The feed is the thing the writer came for.
+ */
 export const reflectionSourcesResponseSchema = z.object({
+  level: reflectionLevelSchema.optional().catch(undefined),
+  scope_key: z.string().optional().catch(undefined),
+  window_start: isoDateTime.nullish().catch(null),
+  window_end: isoDateTime.nullish().catch(null),
   items: z.array(reflectionSourceItemSchema),
 });
 

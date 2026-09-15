@@ -75,3 +75,45 @@ export function sourceAttribution(item: ReflectionSourceItem): string {
   const title = item.title?.trim();
   return title ? title : formatSourceDate(item.timestamp);
 }
+
+/**
+ * The date shown ALONGSIDE a source's row header, so a titled source still says
+ * when it was written and the reader can see the feed matches the review period.
+ * Deliberately separate from {@link sourceAttribution}, which also composes the
+ * attribution line written into a saved reflection body — changing that would
+ * rewrite journal text, not just what is on screen. '' when unparseable.
+ */
+export function sourceDateLabel(item: ReflectionSourceItem): string {
+  return formatSourceDate(item.timestamp);
+}
+
+/** The half-open calendar period a review covers, exactly as the server declared it. */
+export interface ReviewWindow {
+  /** First instant of the review's first day. */
+  start: string;
+  /** EXCLUSIVE: the first instant of the day AFTER the review's last day. */
+  end: string;
+}
+
+/** One day, in milliseconds — the step back from an exclusive end to an inclusive one. */
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The review period label, e.g. "Jun 1 – Jun 7, 2026".
+ *
+ * Built only from the two instants the SERVER declared it filtered on: ``start``
+ * inclusive and ``end`` EXCLUSIVE, so the last day shown is the day before
+ * ``end``. Nothing here reads the scope key or the program constants — a label
+ * derived on the client could disagree with the feed beside it, which is the
+ * whole defect this closes. Returns '' when either bound is missing or
+ * unparseable, and the caller then shows no label.
+ */
+export function formatReviewPeriod(start: string, end: string): string {
+  const from = new Date(start);
+  const exclusiveTo = new Date(end);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(exclusiveTo.getTime())) return '';
+  const to = new Date(exclusiveTo.getTime() - ONE_DAY_MS);
+  if (to.getTime() < from.getTime()) return '';
+  const fromLabel = from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${fromLabel} – ${formatSourceDate(to.toISOString())}`;
+}

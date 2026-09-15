@@ -1970,8 +1970,21 @@ export interface ReflectionDueResponse {
   due: ReflectionDue | null;
 }
 
-/** ``GET /reflections/sources`` result: the chronological rereadable-source feed. */
+/**
+ * ``GET /reflections/sources`` result: the chronological rereadable-source feed
+ * and the calendar period it was drawn from.
+ *
+ * ``window_start`` / ``window_end`` are the half-open bounds the server filtered
+ * on, END EXCLUSIVE — the first instant of the day after the review's last day.
+ * They are null for a caller with no program anchor, and undefined against a
+ * server that predates them; either way the composer shows no period rather
+ * than a guess of its own.
+ */
 export interface ReflectionSourcesResponse {
+  level?: ReflectionLevel;
+  scope_key?: string;
+  window_start?: string | null;
+  window_end?: string | null;
   items: ReflectionSourceItem[];
 }
 

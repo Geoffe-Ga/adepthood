@@ -135,8 +135,17 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/MorningPagesTip.tsx::label',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',
+  // The review period beneath the Sources heading: a label naming the dates the
+  // feed was drawn from. Nothing tappable -- the panel's own affordances are the
+  // Done link, the pending quotes, and the rows.
+  'features/Journal/ReflectionSourcesPanel.tsx::headingPeriod',
   'features/Journal/ReflectionSourcesPanel.tsx::levelLabel',
   'features/Journal/ReflectionSourcesPanel.tsx::promoteHint',
+  // A source row's date, printed beside its title. It sits inside the row's own
+  // tappable header (as rowExcerpt already does) but is not itself an
+  // affordance: the whole header is the target, and its accessible name is the
+  // row's attribution, not this date.
+  'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
   'features/Journal/ResonanceEssayModal.tsx::kind',
   // Audited: the one line explaining what the prioritise step does. Static

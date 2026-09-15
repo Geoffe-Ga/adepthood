@@ -44,13 +44,26 @@ class ReflectionSourceItem(BaseModel):
 
 
 class ReflectionSourcesResponse(BaseModel):
-    """The ordered source material feeding one reflection.
+    """The ordered source material feeding one reflection, and the period it covers.
+
+    ``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds
+    the server actually filtered on — local midnights in the caller's own
+    timezone, with the END EXCLUSIVE (the first instant of the day after the
+    span's final day). They are published so the client can name the review
+    period without re-deriving it from the scope key and drifting out of step
+    with the feed (issue #2886). Both are ``None`` for a caller with no program
+    progress, who has no anchor and so no window; the client then shows no
+    period rather than a guessed one.
 
     Deliberately unpaginated: a single tier's feed is at most a few dozen
     items, so the whole set is returned in one call. Pagination can be layered
     on later if a wider layer's feed ever grows past a comfortable page.
     """
 
+    level: str
+    scope_key: str
+    window_start: datetime | None
+    window_end: datetime | None
     items: list[ReflectionSourceItem]
 
 

@@ -1139,6 +1139,33 @@ function useLocalEntryState(
   };
 }
 
+/**
+ * Keep the composed reflection's scope in step with the route that named it.
+ *
+ * ``useLocalEntryState`` seeds the scope from the route params ONCE, in a
+ * ``useState`` initializer, while ``currentEntryId`` is read live from params on
+ * every render — an asymmetry that leaves the Sources panel showing one review
+ * while the save payload carries another the moment a caller navigates to this
+ * screen with different params instead of pushing a fresh instance. Re-seeding
+ * on a params change closes that.
+ *
+ * A LOADED entry still wins: ``useApplyLoadedEntry`` writes the scope stored on
+ * the entry itself, and this effect does not re-run for it because the route
+ * params it watches have not changed. Reopening a saved review by id therefore
+ * shows that review's own scope, not whichever one the route last named.
+ */
+function useRouteScopeSync(
+  state: MutableEntryState,
+  routeReflectionLevel: ReflectionLevel | undefined,
+  routeReflectionScopeKey: string | undefined,
+): void {
+  const { setReflectionLevel, setReflectionScopeKey } = state;
+  useEffect(() => {
+    setReflectionLevel(routeReflectionLevel);
+    setReflectionScopeKey(routeReflectionScopeKey);
+  }, [routeReflectionLevel, routeReflectionScopeKey, setReflectionLevel, setReflectionScopeKey]);
+}
+
 /** Stable load applicator, separated so the state owner remains reviewably small. */
 function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
   const {
@@ -1203,6 +1230,7 @@ function useEntryState(
     initialReflectionLevel,
     initialReflectionScopeKey,
   );
+  useRouteScopeSync(state, initialReflectionLevel, initialReflectionScopeKey);
   const applyLoadedEntry = useApplyLoadedEntry(state);
   const { setLoadError } = state;
 
@@ -2969,6 +2997,7 @@ function ReflectionComposer({
       {reflection.sourcesOpen ? (
         <ReflectionSourcesPanel
           items={reflection.sources}
+          window={reflection.window}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}
           onClose={reflection.closeSources}

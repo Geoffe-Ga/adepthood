@@ -26,7 +26,12 @@ import {
 
 import { excerpt } from './excerpt';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
-import { sourceAttribution } from './reflectionCopy';
+import {
+  formatReviewPeriod,
+  sourceAttribution,
+  sourceDateLabel,
+  type ReviewWindow,
+} from './reflectionCopy';
 
 import type { PromoteQuoteSpan, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 import {
@@ -61,6 +66,14 @@ const PROMOTE_FAILURE_HINT =
 
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
+  /**
+   * The period this review covers, as the server reported it on the sources
+   * response. Absent when the server declared none (a caller with no program
+   * anchor, or an older server), in which case no period is shown — never a
+   * period the client worked out for itself, which could disagree with the feed
+   * printed beneath it.
+   */
+  window?: ReviewWindow;
   /**
    * Fold a pending quote into the reflection body. Resolves ``true`` when it was
    * marked included (keep the dim), ``false``/reject to revert the dim. May
@@ -260,6 +273,9 @@ function SourceRow({
           <Text style={styles.levelLabel}>{levelLabel(item.reflection_level)}</Text>
         ) : null}
         <Text style={styles.rowTitle}>{sourceAttribution(item)}</Text>
+        <Text style={styles.rowDate} testID={`source-date-${item.id}`}>
+          {sourceDateLabel(item)}
+        </Text>
         {expanded ? null : (
           <Text style={styles.rowExcerpt} numberOfLines={2}>
             {excerpt(item.body, EXCERPT_MAX)}
@@ -429,8 +445,30 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
 }
 
 /** The panel's inner content, shared by the sheet and pane containers. */
+/**
+ * The panel's heading and, when the server declared one, the period the review
+ * covers. Rendered from ``window`` alone — see {@link formatReviewPeriod}.
+ */
+function SourcesHeading({ window: reviewWindow }: { window?: ReviewWindow }): React.JSX.Element {
+  const period =
+    reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end);
+  return (
+    <View style={styles.heading}>
+      <Text style={styles.headingTitle} accessibilityRole="header">
+        Sources
+      </Text>
+      {period === '' ? null : (
+        <Text style={styles.headingPeriod} testID="reflection-sources-period">
+          {period}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function SourcesContent({
   items,
+  window: reviewWindow,
   onInsertQuote,
   onPromoteSpan,
   onClose,
@@ -456,6 +494,7 @@ function SourcesContent({
           <Text style={styles.actionLink}>Done</Text>
         </TouchableOpacity>
       )}
+      <SourcesHeading window={reviewWindow} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
       <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} />
     </ScrollView>
@@ -560,6 +599,23 @@ const styles = StyleSheet.create({
     borderLeftWidth: STRIPE_WIDTH,
     borderLeftColor: accent.strong,
     paddingLeft: SPACING.md,
+  },
+  heading: {
+    paddingBottom: spacing(1),
+  },
+  headingTitle: {
+    ...editorialType.note,
+    color: ink.primary,
+    fontWeight: '600',
+  },
+  headingPeriod: {
+    ...editorialType.caption,
+    color: ink.soft,
+    paddingTop: spacing(0.25),
+  },
+  rowDate: {
+    ...editorialType.caption,
+    color: ink.soft,
   },
   levelLabel: {
     ...editorialType.caption,

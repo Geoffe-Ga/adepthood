@@ -5104,7 +5104,7 @@
         "type": "object"
       },
       "ReflectionSourcesResponse": {
-        "description": "The ordered source material feeding one reflection.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
+        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). Both are ``None`` for a caller with no program\nprogress, who has no anchor and so no window; the client then shows no\nperiod rather than a guessed one.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
         "properties": {
           "items": {
             "items": {
@@ -5112,9 +5112,45 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "scope_key": {
+            "title": "Scope Key",
+            "type": "string"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
           }
         },
         "required": [
+          "level",
+          "scope_key",
+          "window_start",
+          "window_end",
           "items"
         ],
         "title": "ReflectionSourcesResponse",

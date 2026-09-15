@@ -296,6 +296,24 @@ def _parse_key(key: str) -> tuple[ReflectionLevel, int]:
     return (level, index)
 
 
+def scope_cycle(key: str) -> int:
+    """The cycle number a ``c<cycle>:<token>`` key belongs to.
+
+    :func:`_parse_key` deliberately discards the prefix — scope and hierarchy
+    are cycle-agnostic — but a caller that owns a program ANCHOR is not: an
+    anchor belongs to exactly one cycle, so windowing a ``c1:`` key against the
+    current cycle's anchor serves the wrong period's entries (issue #2886).
+    This is the one accessor that reads the prefix back off the key; the
+    hierarchy itself stays cycle-free.
+
+    Raises ValueError for a malformed key, exactly as :func:`scope_weeks` does.
+    """
+    match = _KEY_PATTERN.match(key)
+    if match is None:
+        raise ValueError(f"malformed reflection key: {key!r}")
+    return int(match.group(1))
+
+
 def _span_for(level: ReflectionLevel, index: int) -> tuple[int, int]:
     """Return the inclusive (start, end) week span for a (level, index) pair."""
     if level is ReflectionLevel.WEEK:
