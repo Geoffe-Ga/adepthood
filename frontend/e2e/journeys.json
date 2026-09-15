@@ -94,11 +94,11 @@
   },
   {
     "id": "habits.set-a-weekly-cadence",
-    "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, and GoalModal.starLongPress.test.tsx for the drag-confirm copy.",
+    "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, GoalModal.starLongPress.test.tsx for the drag-confirm copy and the long-press-fill arbitration, and \u2014 after #2884 \u2014 GoalModal.markerDrag.test.tsx for the value a marker drop actually saves, backed by markerDrag.test.ts for the drag geometry and HabitUtils.test.ts for the percent-to-target inverse. The drag writes PUT /goals/{goal_id} through the goals client, a different seam from the units batch PUT this journey's editor half uses; both are still mocked in the component lane, which is what 2814 tracks.",
     "crosses": {
       "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
-      "client": ["habits"],
-      "routes": ["PUT /habits/{habit_id}/goals/units"],
+      "client": ["habits", "goals"],
+      "routes": ["PUT /habits/{habit_id}/goals/units", "PUT /goals/{goal_id}"],
       "tables": ["goal"]
     },
     "status": "uncovered",

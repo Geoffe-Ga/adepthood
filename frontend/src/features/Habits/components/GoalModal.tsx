@@ -8,10 +8,14 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  PanResponder,
   StyleSheet,
 } from 'react-native';
-import type { GestureResponderHandlers, LayoutChangeEvent, TextStyle } from 'react-native';
+import type {
+  GestureResponderHandlers,
+  LayoutChangeEvent,
+  PanResponderInstance,
+  TextStyle,
+} from 'react-native';
 
 import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import { Button } from '../../../components/Button';
@@ -34,14 +38,13 @@ import {
   getMarkerPositions,
   getProgressBarColor,
   getProgressPercentage,
-  clampPercentage,
   getTierColor,
-  getGoalTarget,
   isGoalAchieved,
   completionDayKey,
+  targetForMarkerPercent,
 } from '../HabitUtils';
 import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
-import { createMarkerGesture } from '../markerGesture';
+import { createMarkerPanResponder, type DraggableTier, type MarkerDragPort } from '../markerDrag';
 import { STAR_LONG_PRESS_MS } from '../starFill';
 import {
   TierMarkerOverlay,
@@ -949,21 +952,24 @@ interface PendingGoalEdit {
 }
 
 /**
- * Build the pending goal-edit confirmation for a marker drop, or ``null`` when
- * the drop is a no-op. Rendered via ``ConfirmDialog`` rather than ``Alert.alert``
+ * Build the pending goal-edit confirmation for a marker drop, or ``null``
+ * when the drop cannot express a target: a missing tier, an id-less habit, a
+ * degenerate goal set, or a subtractive low marker, which the bar pins at 0%
+ * by construction. Rendered via ``ConfirmDialog`` rather than ``Alert.alert``
  * because the latter is a no-op on React Native Web mobile (#786).
  */
 const buildPendingGoalEdit = (
-  tier: 'low' | 'clear',
+  tier: DraggableTier,
   percent: number,
   tiers: ReturnType<typeof useGoalTiers>,
   habitId: number | undefined,
 ): PendingGoalEdit | null => {
-  const goal = tier === 'low' ? tiers.lowGoal : tiers.clearGoal;
-  if (!goal || habitId == null) return null;
-  const stretchTarget = tiers.stretchGoal ? getGoalTarget(tiers.stretchGoal) : goal.target;
-  const newTarget = Math.max(1, Math.round((percent / 100) * stretchTarget));
-  const tierLabel = tier === 'low' ? 'Low Grit' : 'Clear Goal';
+  const { lowGoal, clearGoal, stretchGoal } = tiers;
+  if (habitId == null || !lowGoal || !clearGoal || !stretchGoal) return null;
+  const newTarget = targetForMarkerPercent(percent, tier, lowGoal, clearGoal, stretchGoal);
+  if (newTarget === null) return null;
+  const goal = tier === 'low' ? lowGoal : clearGoal;
+  const tierLabel = TIER_LABELS[tier];
   return {
     tier,
     goal,
@@ -981,55 +987,18 @@ function useGoalTiers(habit: GoalModalProps['habit']) {
   return { lowGoal, clearGoal, stretchGoal, markers };
 }
 
-function useMarkerPanResponders(
-  tiers: ReturnType<typeof useGoalTiers>,
-  barWidth: React.MutableRefObject<number>,
-  lowMarker: number,
-  setLowMarker: (_v: number) => void,
-  clearMarker: number,
-  setClearMarker: (_v: number) => void,
-  setTooltip: (_v: null | 'low' | 'clear' | 'stretch') => void,
-  onConfirm: (_tier: 'low' | 'clear', _pct: number) => void,
-  starFill: React.MutableRefObject<StarFillControls>,
-) {
-  const dragTo = (tier: 'low' | 'clear', dx: number) => {
-    const init = tier === 'low' ? tiers.markers.low : tiers.markers.clear;
-    const pct = (((init / 100) * barWidth.current + dx) / barWidth.current) * 100;
-    if (tier === 'low') setLowMarker(Math.min(clampPercentage(pct), clearMarker - 5));
-    else setClearMarker(Math.max(clampPercentage(pct), lowMarker + 5));
-  };
-
-  const createPanResponder = (tier: 'low' | 'clear') => {
-    // The machine arbitrates the marker's two gestures: a held press becomes
-    // a fill-to-star (routed through the ref so the once-created responder
-    // always reaches the current hook instance), movement becomes the drag.
-    const gesture = createMarkerGesture({
-      onFillStart: () => starFill.current.begin(tier),
-      onFillRelease: () => starFill.current.release(),
-      onDragMove: (dx) => dragTo(tier, dx),
-      onDragRelease: () => onConfirm(tier, tier === 'low' ? lowMarker : clearMarker),
-    });
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        setTooltip(tier);
-        gesture.grant();
-      },
-      onPanResponderMove: (_, g) => gesture.move(g.dx),
-      onPanResponderRelease: () => {
-        setTooltip(null);
-        gesture.release();
-      },
-      onPanResponderTerminate: () => {
-        setTooltip(null);
-        gesture.terminate();
-      },
-    });
-  };
-
-  const lowPan = useRef(createPanResponder('low')).current;
-  const clearPan = useRef(createPanResponder('clear')).current;
-  return { lowPan, clearPan };
+/**
+ * The two marker pan responders, built once per mount. `useRef(create(...))`
+ * would evaluate its argument on every render and discard the result, so the
+ * lazy `??=` is what actually keeps one responder — and one gesture machine —
+ * per marker; recreating either would tear down an in-flight hold.
+ */
+function useMarkerPanResponders(port: React.MutableRefObject<MarkerDragPort>) {
+  const lowPan = useRef<PanResponderInstance | null>(null);
+  const clearPan = useRef<PanResponderInstance | null>(null);
+  lowPan.current ??= createMarkerPanResponder('low', port);
+  clearPan.current ??= createMarkerPanResponder('clear', port);
+  return { lowPan: lowPan.current, clearPan: clearPan.current };
 }
 
 function useGoalConfirm(
@@ -1040,9 +1009,13 @@ function useGoalConfirm(
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
 ) {
   const [pending, setPending] = useState<PendingGoalEdit | null>(null);
-  const onConfirm = (tier: 'low' | 'clear', percent: number) => {
+  const onConfirm = (tier: DraggableTier, percent: number) => {
     const edit = buildPendingGoalEdit(tier, percent, tiers, habitId);
+    // A drop the goal set cannot express leaves the star parked nowhere, so
+    // put it back rather than ending the gesture in silence.
     if (edit) setPending(edit);
+    else if (tier === 'low') setLowMarker(tiers.markers.low);
+    else setClearMarker(tiers.markers.clear);
   };
   const cancelPending = () => {
     if (pending?.tier === 'low') setLowMarker(tiers.markers.low);
@@ -1056,6 +1029,21 @@ function useGoalConfirm(
   };
   return { onConfirm, pending, cancelPending, applyPending };
 }
+
+/**
+ * Re-point the marker responders at the current render. The port is read only
+ * from gesture callbacks — user-input driven, so always after a commit has
+ * flushed passive effects — which is why a dependency-free effect plus the
+ * `useRef` initialiser cover every moment a gesture can begin. This is the
+ * same guarantee `starFillRef` already relies on.
+ */
+const useMarkerDragPort = (build: () => MarkerDragPort): React.MutableRefObject<MarkerDragPort> => {
+  const port = useRef<MarkerDragPort>(build());
+  useEffect(() => {
+    port.current = build();
+  });
+  return port;
+};
 
 const useGoalMarkers = (
   habit: GoalModalProps['habit'],
@@ -1084,17 +1072,16 @@ const useGoalMarkers = (
     setClearMarker,
     onUpdateGoal,
   );
-  const { lowPan, clearPan } = useMarkerPanResponders(
-    tiers,
+  const port = useMarkerDragPort(() => ({
     barWidth,
-    lowMarker,
-    setLowMarker,
-    clearMarker,
-    setClearMarker,
-    setTooltip,
-    onConfirm,
     starFill,
-  );
+    percent: { low: lowMarker, clear: clearMarker },
+    canonical: { low: tiers.markers.low, clear: tiers.markers.clear },
+    setPercent: (tier, pct) => (tier === 'low' ? setLowMarker(pct) : setClearMarker(pct)),
+    setTooltip,
+    confirm: onConfirm,
+  }));
+  const { lowPan, clearPan } = useMarkerPanResponders(port);
 
   return {
     ...tiers,

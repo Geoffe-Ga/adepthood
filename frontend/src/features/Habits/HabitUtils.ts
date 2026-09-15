@@ -247,6 +247,66 @@ export const getGoalTarget = (goal: Goal): number => {
   return goal.target;
 };
 
+const DAYS_PER_PERIOD: Record<string, number> = {
+  per_week: DAYS_PER_WEEK,
+  per_month: APPROX_DAYS_PER_MONTH,
+};
+
+/** Smallest target a marker drop may propose; an empty goal is not a goal. */
+const MIN_GOAL_TARGET = 1;
+
+/**
+ * Exact inverse of {@link getGoalTarget}: turn a daily-equivalent back into
+ * the goal's own raw units. `null` when the cadence has no frequency to
+ * divide by, which no real goal has but a malformed row can.
+ */
+const rawTargetFor = (goal: Goal, dailyEquivalent: number): number | null => {
+  const days = DAYS_PER_PERIOD[goal.frequency_unit];
+  if (days === undefined) return dailyEquivalent;
+  if (goal.frequency <= 0) return null;
+  return (dailyEquivalent * days) / goal.frequency;
+};
+
+/** Round a raw target to whole units, never below {@link MIN_GOAL_TARGET}. */
+const roundedTarget = (raw: number | null): number | null =>
+  raw === null ? null : Math.max(MIN_GOAL_TARGET, Math.round(raw));
+
+/**
+ * Inverse of {@link getMarkerPositions} for one draggable tier: the raw
+ * target a marker dropped at `percent` should be saved with.
+ *
+ * Marker positions live in daily-equivalent space while `goal.target` is raw,
+ * so a per_week or per_month habit needs the round trip through
+ * {@link rawTargetFor} — reading the percentage straight against the stretch
+ * target saves the wrong number in every non-daily cadence.
+ *
+ * Returns `null` when the position carries no target to invert: a degenerate
+ * goal set, or a subtractive low marker, which {@link getMarkerPositions}
+ * pins at 0% by construction regardless of its target.
+ */
+export const targetForMarkerPercent = (
+  percent: number,
+  tier: 'low' | 'clear',
+  lowGoal: Goal,
+  clearGoal: Goal,
+  stretchGoal: Goal,
+): number | null => {
+  const goal = tier === 'low' ? lowGoal : clearGoal;
+  const fraction = clampPercentage(percent) / 100;
+
+  if (goalsAreSubtractive([lowGoal, clearGoal, stretchGoal])) {
+    if (tier === 'low') return null;
+    const lowTarget = getGoalTarget(lowGoal);
+    const range = lowTarget - getGoalTarget(stretchGoal);
+    if (range <= 0) return null;
+    return roundedTarget(rawTargetFor(goal, lowTarget - fraction * range));
+  }
+
+  const stretchTarget = getGoalTarget(stretchGoal);
+  if (stretchTarget <= 0) return null;
+  return roundedTarget(rawTargetFor(goal, fraction * stretchTarget));
+};
+
 /** Resolve the durable calendar day, falling back only for legacy cached rows. */
 export const completionDayKey = (
   completion: Pick<Completion, 'local_day' | 'timestamp'>,

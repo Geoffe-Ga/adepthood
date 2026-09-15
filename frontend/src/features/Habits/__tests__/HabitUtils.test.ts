@@ -9,6 +9,7 @@ import {
   getMarkerPositions,
   getGoalTier,
   getGoalTarget,
+  targetForMarkerPercent,
   getTierColor,
   calculateNetEnergy,
   calculateTodaysProgress,
@@ -1543,5 +1544,137 @@ describe('buildPagedHabits', () => {
     expect(result.habits.map((h: Habit) => h.id)).toEqual([21, 23]);
     expect(result.flatIndices).toEqual([20, 22]);
     expect(result.colorIndices).toEqual([-11, -12]);
+  });
+});
+
+describe('targetForMarkerPercent', () => {
+  const goalAt = (tier: Goal['tier'], overrides: Partial<Goal> = {}): Goal => ({
+    id: tier === 'low' ? 1 : tier === 'clear' ? 2 : 3,
+    tier,
+    title: `${tier} goal`,
+    target: 1,
+    target_unit: 'units',
+    frequency: 1,
+    frequency_unit: 'per_day',
+    is_additive: true,
+    ...overrides,
+  });
+
+  const weekly = (target: number, tier: Goal['tier']): Goal =>
+    goalAt(tier, { target, target_unit: 'sessions', frequency: 3, frequency_unit: 'per_week' });
+
+  const subtractive = (target: number, tier: Goal['tier']): Goal =>
+    goalAt(tier, { target, is_additive: false });
+
+  test('inverts a per_day additive bar back to the raw target', () => {
+    const low = goalAt('low', { target: 2 });
+    const clear = goalAt('clear', { target: 6 });
+    const stretch = goalAt('stretch', { target: 8 });
+
+    expect(targetForMarkerPercent(50, 'low', low, clear, stretch)).toBe(4);
+    expect(targetForMarkerPercent(60, 'clear', low, clear, stretch)).toBe(5);
+  });
+
+  test('round-trips a per_week habit in its own raw units, not daily-equivalents', () => {
+    // getGoalTarget normalizes per_week to a daily-equivalent, but goal.target
+    // is raw; dropping on the stretch star must save the stretch star's RAW 4.
+    const low = weekly(1, 'low');
+    const clear = weekly(2, 'clear');
+    const stretch = weekly(4, 'stretch');
+
+    expect(targetForMarkerPercent(100, 'clear', low, clear, stretch)).toBe(4);
+    expect(targetForMarkerPercent(25, 'low', low, clear, stretch)).toBe(1);
+  });
+
+  test('inverts a subtractive bar, whose clear marker runs from low down to stretch', () => {
+    const low = subtractive(25, 'low');
+    const clear = subtractive(6, 'clear');
+    const stretch = subtractive(0, 'stretch');
+
+    expect(targetForMarkerPercent(51, 'clear', low, clear, stretch)).toBe(12);
+  });
+
+  test('refuses a drop that cannot express a target', () => {
+    const low = subtractive(25, 'low');
+    const clear = subtractive(6, 'clear');
+    const stretch = subtractive(0, 'stretch');
+
+    // A subtractive bar pins its low marker at 0% by construction, so the
+    // position carries no target to invert.
+    expect(targetForMarkerPercent(40, 'low', low, clear, stretch)).toBeNull();
+    // A zero-width subtractive range, and a non-positive additive stretch.
+    expect(targetForMarkerPercent(50, 'clear', low, clear, subtractive(25, 'stretch'))).toBeNull();
+    expect(
+      targetForMarkerPercent(
+        50,
+        'clear',
+        goalAt('low'),
+        goalAt('clear'),
+        goalAt('stretch', { target: 0 }),
+      ),
+    ).toBeNull();
+    // A cadence with no frequency cannot be scaled back to raw units.
+    expect(
+      targetForMarkerPercent(50, 'low', weekly(1, 'low'), weekly(2, 'clear'), {
+        ...weekly(4, 'stretch'),
+        frequency: 0,
+      }),
+    ).toBeNull();
+  });
+
+  test('floors at one unit rather than proposing an empty goal', () => {
+    const low = goalAt('low', { target: 2 });
+    const clear = goalAt('clear', { target: 6 });
+    const stretch = goalAt('stretch', { target: 8 });
+
+    expect(targetForMarkerPercent(0, 'low', low, clear, stretch)).toBe(1);
+  });
+
+  test('is the inverse of getMarkerPositions for well-formed goal sets', () => {
+    // Precondition: getMarkerPositions is not injective where it clamps
+    // (lowTarget > stretchTarget) or returns its {0,50,100} sentinel for a
+    // degenerate set (HabitUtils.ts:210, 225); the inverse returns null
+    // there by design, so the property is scoped to sets it can invert.
+    const fixtures: Array<{
+      low: Goal;
+      clear: Goal;
+      stretch: Goal;
+      tiers: Array<'low' | 'clear'>;
+    }> = [
+      {
+        low: goalAt('low', { target: 2 }),
+        clear: goalAt('clear', { target: 6 }),
+        stretch: goalAt('stretch', { target: 8 }),
+        tiers: ['low', 'clear'],
+      },
+      {
+        low: weekly(1, 'low'),
+        clear: weekly(2, 'clear'),
+        stretch: weekly(4, 'stretch'),
+        tiers: ['low', 'clear'],
+      },
+      {
+        low: goalAt('low', { target: 10, frequency: 2, frequency_unit: 'per_month' }),
+        clear: goalAt('clear', { target: 20, frequency: 2, frequency_unit: 'per_month' }),
+        stretch: goalAt('stretch', { target: 40, frequency: 2, frequency_unit: 'per_month' }),
+        tiers: ['low', 'clear'],
+      },
+      {
+        low: subtractive(25, 'low'),
+        clear: subtractive(6, 'clear'),
+        stretch: subtractive(0, 'stretch'),
+        tiers: ['clear'],
+      },
+    ];
+
+    for (const { low, clear, stretch, tiers } of fixtures) {
+      const positions = getMarkerPositions(low, clear, stretch);
+      for (const tier of tiers) {
+        const goal = tier === 'low' ? low : clear;
+        expect(targetForMarkerPercent(positions[tier], tier, low, clear, stretch)).toBe(
+          goal.target,
+        );
+      }
+    }
   });
 });
