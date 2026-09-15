@@ -88,6 +88,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockAuth.refresh.mockReset();
   jest.useFakeTimers();
   mockLoadToken.mockResolvedValue(null);
   mockIsTokenExpired.mockReturnValue(false);
@@ -622,6 +623,34 @@ describe('AuthContext', () => {
       expect(mockClearToken).not.toHaveBeenCalled();
     });
 
+    it('hydrates the stored timezone before authenticating a resumed session', async () => {
+      mockLoadToken.mockResolvedValue('valid-jwt');
+      mockIsTokenExpired.mockReturnValue(false);
+      let resolveRefresh!: (value: { token: string; user_id: number; timezone: string }) => void;
+      mockAuth.refresh.mockReturnValue(
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledWith('valid-jwt'));
+      expect(result.current.authStatus).toBe('loading');
+
+      await act(async () => {
+        resolveRefresh({
+          token: 'refreshed-jwt',
+          user_id: 1,
+          timezone: 'America/Los_Angeles',
+        });
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(result.current.token).toBe('refreshed-jwt');
+      expect(result.current.userTimezone).toBe('America/Los_Angeles');
+    });
+
     it('resolves to anonymous when loadToken itself rejects on bootstrap', async () => {
       mockLoadToken.mockRejectedValueOnce(new Error('storage unavailable'));
       const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -823,10 +852,13 @@ describe('AuthContext', () => {
       ).decodeJwtPayload.mockReturnValue({
         exp: nowSec + 600,
       });
-      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+      mockAuth.refresh
+        .mockRejectedValueOnce(new Error('bootstrap unavailable'))
+        .mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
 
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
+      mockAuth.refresh.mockClear();
 
       // Not yet past the buffer → no refresh.
       expect(mockAuth.refresh).not.toHaveBeenCalled();
@@ -858,10 +890,13 @@ describe('AuthContext', () => {
         exp: nowSec + 60 * (DAY_MS / 1000),
         iat: nowSec,
       });
-      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+      mockAuth.refresh
+        .mockRejectedValueOnce(new Error('bootstrap unavailable'))
+        .mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
 
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('long-lived-jwt'));
+      mockAuth.refresh.mockClear();
 
       await act(async () => {
         jest.advanceTimersByTime(SETTIMEOUT_CEILING_MS + 1000);
@@ -899,13 +934,16 @@ describe('AuthContext', () => {
 
     it('survives a logout that fires while a token refresh is in flight', async () => {
       mockLoadToken.mockResolvedValue('existing-jwt');
+      mockShouldRefreshToken.mockReturnValue(true);
       let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
-      mockAuth.refresh.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
-          }),
-      );
+      mockAuth.refresh
+        .mockRejectedValueOnce(new Error('bootstrap unavailable'))
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveRefresh = resolve;
+            }),
+        );
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
 
@@ -1004,12 +1042,14 @@ describe('AuthContext', () => {
       // login token is not, so no second refresh races the assertion.
       mockShouldRefreshToken.mockImplementation((t: string) => t === 'existing-jwt');
       let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
-      mockAuth.refresh.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveRefresh = resolve;
-          }),
-      );
+      mockAuth.refresh
+        .mockRejectedValueOnce(new Error('bootstrap unavailable'))
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveRefresh = resolve;
+            }),
+        );
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
 

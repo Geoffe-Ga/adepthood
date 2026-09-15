@@ -506,6 +506,16 @@ async function bootstrapStoredToken(mutators: AuthMutators): Promise<void> {
     // A cold start resumes an existing session, so point the device-local
     // caches at the account that owns them before anything reads one.
     await scopeResumedSession(stored);
+    try {
+      // The token alone does not contain the user's stored IANA timezone.
+      // Refresh before authenticating so day-scoped surfaces never render
+      // against the UTC placeholder during a resumed session (#2847).
+      await applyAuthResponse(await authApi.refresh(stored), mutators);
+      return;
+    } catch {
+      // Preserve the existing offline-resume behavior when the refresh cannot
+      // reach the server; the proactive refresh will retry later.
+    }
     mutators.setToken(stored);
     mutators.setAuthStatus('authenticated');
     return;
