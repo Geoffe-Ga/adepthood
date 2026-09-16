@@ -67,6 +67,10 @@ jest.mock('../../../storage/habitStorage', () => ({
 
 jest.mock('react-native', () => ({
   Alert: { alert: jest.fn() },
+  // The habit hooks re-read on the way back into the foreground, and the
+  // shared day-boundary owner reaches AppState to notice it (#2847). Same
+  // reason as ``select`` below: a stub missing a real API is a gap in the stub.
+  AppState: { addEventListener: () => ({ remove: () => undefined }) },
   // ``select`` as well as ``OS``: these suites replace ``react-native``
   // wholesale, and the navigation context the habit hooks now read goes
   // through it. A stub missing a real API is a gap in the stub.

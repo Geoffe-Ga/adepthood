@@ -18,7 +18,7 @@ import { NavigationContainer, createNavigationContainerRef } from '@react-naviga
 import { render, renderHook, act } from '@testing-library/react-native';
 import React from 'react';
 import { AppState, Text } from 'react-native';
-import type { NativeEventSubscription } from 'react-native';
+import type { AppStateStatus, NativeEventSubscription } from 'react-native';
 
 /** The zone `useAuth` is hydrated with for the test in flight. */
 let mockHydratedTimezone = 'UTC';
@@ -111,14 +111,28 @@ const goTo = (screen: keyof TabList): void => {
   });
 };
 
+/** The `AppState` handler the shared day-boundary owner registers, once armed. */
+let appStateHandler: ((_status: AppStateStatus) => void) | null = null;
+
+const sendAppState = (status: AppStateStatus): void => {
+  act(() => {
+    appStateHandler?.(status);
+  });
+};
+
 describe('useHabitsSummary refresh', () => {
   beforeEach(() => {
     mockHydratedTimezone = 'UTC';
     mockLoadHabits.mockClear();
     useHabitStore.setState({ loading: false, habits: [], habitsById: {}, habitOrder: [] });
-    jest
-      .spyOn(AppState, 'addEventListener')
-      .mockImplementation(() => ({ remove: () => undefined }) as NativeEventSubscription);
+    appStateHandler = null;
+    jest.spyOn(AppState, 'addEventListener').mockImplementation(((
+      _event: string,
+      handler: (_status: AppStateStatus) => void,
+    ) => {
+      appStateHandler = handler;
+      return { remove: () => undefined } as NativeEventSubscription;
+    }) as typeof AppState.addEventListener);
     jest.useFakeTimers();
   });
 
@@ -156,6 +170,43 @@ describe('useHabitsSummary refresh', () => {
 
       goTo('Elsewhere');
       goTo('Shelf');
+
+      expect(mockLoadHabits.mock.calls).toEqual([['Asia/Tokyo'], ['Asia/Tokyo']]);
+    });
+  });
+
+  /**
+   * #2847 hole 2, on the shelf: the app came back but the data did not.
+   *
+   * The boundary owner already re-renders this hook on the way in, so the
+   * count re-buckets; what it could not do is notice a check-in the server
+   * learned while the app was away.
+   */
+  describe('coming back from the background', () => {
+    it('reads habits again when the app returns to the foreground', () => {
+      mockHydratedTimezone = WEST_TZ;
+      mountShelfInNavigator();
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+
+      sendAppState('active');
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not read on the way out', () => {
+      mockHydratedTimezone = WEST_TZ;
+      mountShelfInNavigator();
+
+      sendAppState('background');
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads with the auth-hydrated zone', () => {
+      mockHydratedTimezone = EAST_TZ;
+      mountShelfInNavigator();
+
+      sendAppState('active');
 
       expect(mockLoadHabits.mock.calls).toEqual([['Asia/Tokyo'], ['Asia/Tokyo']]);
     });
