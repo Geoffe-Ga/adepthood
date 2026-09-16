@@ -17,6 +17,7 @@ from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
+from domain.dates import ensure_aware
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import (
@@ -275,15 +276,52 @@ _FIRST_STAGE = 1
 _FIRST_CYCLE_COMPLETED: tuple[int, ...] = ()
 
 
+def _padded_anchors(existing: StageProgress) -> list[str | None]:
+    """The row's retained anchors, left-padded with ``None`` to one per past cycle.
+
+    ``past_cycle_anchors`` holds one element per cycle already left behind, so a
+    row that looped before #2894 shipped is short by exactly the number of
+    anchors that were destroyed. Padding to ``cycle_number - 1`` before the new
+    anchor is appended is what makes "element ``i`` is cycle ``i + 1``'s start"
+    true BY CONSTRUCTION rather than by convention, and each pad records an
+    anchor that is unknown and not recoverable — never one that was guessed.
+    """
+    retained = list(existing.past_cycle_anchors or [])
+    missing = max(0, existing.cycle_number - 1 - len(retained))
+    return [None] * missing + retained
+
+
+def _retained_anchors(existing: StageProgress) -> list[str | None]:
+    """``existing``'s past-cycle anchors extended with the OUTGOING cycle's own.
+
+    Reads ``cycle_number`` BEFORE the loop bumps it, so the appended anchor lands
+    at the index of the cycle it actually belongs to. ``ensure_aware`` normalizes
+    the read — SQLite hands a ``DateTime(timezone=True)`` column back naive — so
+    the stored string always carries its UTC offset.
+    """
+    anchor = ensure_aware(resolve_program_anchor(existing))
+    return [*_padded_anchors(existing), anchor.isoformat()]
+
+
 def _loop_to_next_cycle(existing: StageProgress) -> StageProgressRecord:
     """Mutate a completed-cycle row in place for the next loop, returning its record.
 
-    Resets the calendar anchors (``stage_started_at`` + ``program_started_at``)
-    to now so the fresh cycle restarts its schedule instead of instantly
-    re-unlocking every stage, bumps ``cycle_number``, and clears
-    ``completed_stages`` back to stage 1. No engagement data is touched.
+    Retains the OUTGOING cycle's calendar anchor on ``past_cycle_anchors``
+    first (issue #2894), then resets the calendar anchors (``stage_started_at``
+    + ``program_started_at``) to now so the fresh cycle restarts its schedule
+    instead of instantly re-unlocking every stage, bumps ``cycle_number``, and
+    clears ``completed_stages`` back to stage 1. No engagement data is touched.
+
+    Order is load-bearing twice over. The retention reads the pre-bump
+    ``cycle_number``, so appending after the bump would file every anchor one
+    cycle late. And the retention is a REBIND, never an in-place ``.append``:
+    SQLAlchemy does not track mutation of a plain JSON column, so an append is
+    silently discarded by the caller's commit. Both writes ride that one commit
+    and the same ``FOR UPDATE`` row lock, so there is no instant in which the
+    cycle advanced and its anchor did not survive.
     """
     now = datetime.now(UTC)
+    existing.past_cycle_anchors = _retained_anchors(existing)
     existing.cycle_number += 1
     existing.current_stage = _FIRST_STAGE
     existing.completed_stages = list(_FIRST_CYCLE_COMPLETED)
@@ -310,6 +348,11 @@ async def begin_again(
     clears while ``cycle_number`` increments, all carried on the single
     existing row. The Stage-10 ``all_stages_completed`` advance signal is left
     intact — this is a separate, opt-in path, not a replacement for it.
+
+    The outgoing cycle's ``program_started_at`` is retained on
+    ``past_cycle_anchors`` in the same commit (issue #2894), so a review written
+    during that cycle can still be windowed against the calendar it was written
+    about instead of losing its period forever.
 
     Journal, habit streaks, goal completions, practice sessions, and energy are
     all untouched: the carry-over is automatic and there is no penalty. A user
