@@ -154,6 +154,14 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/WritingSessionOffer.tsx::help',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
+  // Metadata inside a card whose whole surface is the tap target (the anchor
+  // line above them carries the interactive face), exactly as the reflection
+  // sources rows above.
+  'features/Journal/VoiceDraftsShelf.styles.ts::cardDate',
+  'features/Journal/VoiceDraftsShelf.styles.ts::cardExcerpt',
+  // A date in the letter's modal header; the close control beside it is the
+  // tappable thing and carries the action face.
+  'features/Journal/VoiceDraftsShelf.styles.ts::letterDate',
   // Audited: the eyebrow naming what the band is about, read and never
   // itself tapped. The band's two tap targets are the CTA, which sits at
   // editorialType.action, and the ReflectionDismiss control — matching the

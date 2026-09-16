@@ -824,6 +824,37 @@ export const marginaliaSchema = z.object({
 });
 
 /**
+ * One expanded letter on the Voice Drafts shelf (mirrors the backend
+ * ``VoiceDraftResponse``).
+ *
+ * ``essay`` and ``essay_generated_at`` are required and non-nullable here,
+ * unlike on :const:`marginaliaSchema`, because the listing selects only rows
+ * that have both and a database CHECK keeps the pair set together. Restating
+ * that at the edge is the point: a null arriving on this route is contract
+ * drift, and the shelf should say so loudly rather than render an empty
+ * reading card. The note's own key is ``marginalia_id`` so a draft in hand can
+ * address the margin note — and through it the page — it grew from.
+ */
+export const voiceDraftSchema = z.object({
+  marginalia_id: z.number().int(),
+  journal_entry_id: z.number().int(),
+  kind: marginaliaKindSchema,
+  anchor_text: z.string(),
+  essay: z.string(),
+  essay_generated_at: z.string(),
+});
+
+/** One page of the Voice Drafts shelf: ``{ items, total, has_more }``. */
+export const voiceDraftListSchema = z.object({
+  items: z.array(voiceDraftSchema),
+  total: z.number().int().nonnegative(),
+  has_more: z.boolean(),
+});
+
+export type VoiceDraftT = z.infer<typeof voiceDraftSchema>;
+export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
+
+/**
  * The four non-clinical care routings (mirrors ``domain.care.CareKind``):
  * crisis ``hotline`` / ``text_line``, a trusted ``human``, and clinical
  * ``professional`` support. Anything else is a contract drift and is rejected

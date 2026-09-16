@@ -242,6 +242,23 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('JournalPhotograph');
   });
 
+  it('opens the Voice Drafts shelf from the drawer and closes the drawer behind it', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-voice-drafts')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-voice-drafts'));
+    });
+
+    // A plain push, with no readiness lookup and nothing to resolve first: the
+    // shelf is a place, not a decision.
+    expect(mockNavigate).toHaveBeenCalledWith('VoiceDrafts');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
   it('keeps Your corpus in the drawer and routes an undecided account to consent', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());

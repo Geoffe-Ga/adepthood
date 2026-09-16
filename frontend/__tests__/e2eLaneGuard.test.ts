@@ -108,6 +108,7 @@ const EXPECTED_JOURNEYS = [
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
   'vault-connection.e2e.test.ts',
+  'voice-drafts-shelf.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];
 const ONLY_MODULE_ALIAS = ['^@/(.*)$'];

@@ -1156,5 +1156,21 @@
     },
     "status": "uncovered",
     "issue": 2771
+  },
+  {
+    "id": "journal.voice-drafts-shelf",
+    "description": "A writer opens the shelf of letters their margin notes grew into. GET /journal/voice-drafts shipped in #2606 with no client, no screen and no call site at all, so the route was served and unreachable; this is the PR that makes the crossing exist and therefore the PR that declares it. The spec drives the shelf the way the screen does: a fresh account's shelf answers 200 with an empty page (the first-run state the screen renders is built on that, not on an error), a margin note is generated and then heard out at length through the real resonance and essay routes, and the expansion those routes wrote turns up on the listing carrying its whole letter, its anchor text and its parent entry id -- which is what lets the screen open a draft with no second request and walk back to the page it was written in the margin of. The window the client asks for is exercised past the end of the shelf, where an empty page with has_more false is what retires the screen's Older letters row. A cold login sees the same shelf, an unauthenticated read is refused 401, and a neighbouring account gets an empty shelf rather than a stranger's prose. The expansion is generated rather than fixtured on purpose: the listing selects exactly the rows the essay path writes, so a fixture would prove the listing reads a table rather than that the two routes agree about what an expanded note is. What no spec here asserts is the product stance -- no badge, no count, no nudge -- because that is a claim about what the screen does NOT render; it is pinned in VoiceDraftsShelfScreen.test.tsx and JournalDrawer.test.tsx instead, where the rendered tree can be read.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/VoiceDraftsShelfScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "resonance", "voiceDrafts"],
+      "routes": [
+        "GET /journal/voice-drafts",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["journalentry", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/voice-drafts-shelf.e2e.test.ts"
   }
 ]
