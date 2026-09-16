@@ -29,6 +29,9 @@ export type DraggableTier = 'low' | 'clear';
  */
 export const MARKER_MIN_GAP_PCT = 5;
 
+/** The far end of the bar; the ceiling `clampPercentage` clamps to. */
+const MAX_PERCENT = 100;
+
 /** Where a gesture started: the bar it runs on, its own percent, its neighbour's. */
 export interface MarkerDragAnchor {
   /** Measured width of the goal bar in pixels; 0 until `onLayout` has fired. */
@@ -50,10 +53,37 @@ export interface MarkerDragController {
 }
 
 /** The travel a tier may occupy: the bar, minus the gap its neighbour reserves. */
-const boundsFor = (tier: DraggableTier, anchor: MarkerDragAnchor): { min: number; max: number } =>
-  tier === 'low'
-    ? { min: 0, max: clampPercentage(anchor.neighbourPercent - MARKER_MIN_GAP_PCT) }
-    : { min: clampPercentage(anchor.neighbourPercent + MARKER_MIN_GAP_PCT), max: 100 };
+/**
+ * The travel available to `tier`, bounded by its neighbour.
+ *
+ * `MARKER_MIN_GAP_PCT` keeps the two stars from overlapping ON SCREEN. It must
+ * never make a reachable TARGET unreachable, which is what a bare subtraction
+ * does on a crowded bar: goals low 1 / clear 3 / stretch 100 put the clear star
+ * at 3%, so `3 - 5` bar-clamps to 0, the ceiling lands on the floor, and the
+ * window collapses to a single point. Every drop then saves the same value
+ * however far the star was dragged -- the "saves 1 whatever you do" symptom of
+ * #2884, reached by geometry rather than by a stale closure. The mirror case
+ * traps the clear star against 100.
+ *
+ * So the gap applies only where the bar has room for it. Where it does not, the
+ * bound falls back to the neighbour's own position: the stars may touch, but
+ * every value between them stays reachable. Both edges are still bar-clamped,
+ * so `min <= max` continues to hold for every neighbour position and the
+ * codomain is provably within [0, 100].
+ */
+const boundsFor = (tier: DraggableTier, anchor: MarkerDragAnchor): { min: number; max: number } => {
+  const neighbour = clampPercentage(anchor.neighbourPercent);
+  return tier === 'low'
+    ? {
+        min: 0,
+        max: neighbour > MARKER_MIN_GAP_PCT ? neighbour - MARKER_MIN_GAP_PCT : neighbour,
+      }
+    : {
+        min:
+          neighbour < MAX_PERCENT - MARKER_MIN_GAP_PCT ? neighbour + MARKER_MIN_GAP_PCT : neighbour,
+        max: MAX_PERCENT,
+      };
+};
 
 /**
  * Clamp a raw percent into the tier's travel. Both window edges are
