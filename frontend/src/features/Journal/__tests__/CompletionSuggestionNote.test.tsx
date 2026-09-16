@@ -19,6 +19,8 @@ function suggestion(overrides: Partial<CompletionSuggestion> = {}): CompletionSu
     anchor_start: 0,
     anchor_end: 9,
     anchor_text: 'Daily run',
+    completed_units: null,
+    completed_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '',

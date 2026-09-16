@@ -18,10 +18,18 @@ back into prose.
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pytest
 
-from domain.detection import DetectionCandidate, build_detection_prompt, detect_completions
+from domain.dates import MAX_BACKFILL_DAYS
+from domain.detection import (
+    DetectionCandidate,
+    build_detection_prompt,
+    detect_completions,
+    render_candidate_line,
+)
+from domain.detection_facts import DetectionClock
 from domain.resonance import (
     ANCHOR_TEXT_MAX,
     ESSAY_TASK_INSTRUCTION,
@@ -35,7 +43,7 @@ from domain.resonance import (
 )
 from services.botmason import STUB_MODEL_NAME, STUB_PROVIDER_NAME, generate_response
 from services.marginalia import BotmasonResonanceLLM
-from services.stub_completions import canned_completion
+from services.stub_completions import _CANDIDATE_LINE, canned_completion
 
 ENTRY = "The willow bent all night and did not break. I slept badly and woke grateful."
 CLOSING_SENTENCE = "I slept badly and woke grateful."
@@ -66,6 +74,123 @@ def test_a_prompt_naming_the_shape_but_carrying_no_entry_gets_prose() -> None:
     assert canned_completion(f"what does {MARGINALIA_JSON_SHAPE} mean?") is None
 
 
+_CLOCK = DetectionClock(
+    entry_day=date(2026, 9, 12), today=date(2026, 9, 12), max_backfill_days=MAX_BACKFILL_DAYS
+)
+
+
+def test_the_stub_still_finds_a_candidate_whose_prompt_line_carries_its_unit() -> None:
+    """A unit on the candidate line must not make the stub blind to the candidate.
+
+    ``POST /habits/`` seeds ``target_unit="units"`` on every default goal, so
+    once the renderer shows the unit EVERY habit line carries one. A stub whose
+    parser still expects the bare shape answers ``{"hits": []}`` for all of
+    them -- with the whole backend suite green and the browser journey dead.
+    """
+    prompt = build_detection_prompt(
+        "I completed Morning walk before breakfast.",
+        [
+            DetectionCandidate(
+                index=0,
+                target_type="habit",
+                target_id=7,
+                name="Morning walk",
+                target_unit="units",
+            )
+        ],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion)["hits"] == [{"index": 0, "quote": "completed Morning walk"}]
+
+
+def test_the_renderer_and_the_stubs_parser_agree_on_both_line_shapes() -> None:
+    """Round-trip: whatever the renderer emits, the stub's own regex reads back.
+
+    The parser is written independently of the renderer on purpose -- the
+    stub's job is to prove an outsider can read the wire format -- so this is
+    the only thing holding the two in step.
+    """
+    with_unit = _CANDIDATE_LINE.fullmatch(
+        render_candidate_line(
+            DetectionCandidate(
+                index=0, target_type="habit", target_id=7, name="Drink water", target_unit="oz"
+            )
+        )
+    )
+    assert with_unit is not None
+    assert with_unit.group("name") == "Drink water"
+    assert with_unit.group("unit") == "oz"
+
+    without_unit = _CANDIDATE_LINE.fullmatch(
+        render_candidate_line(
+            DetectionCandidate(index=3, target_type="practice", target_id=9, name="Meditation")
+        )
+    )
+    assert without_unit is not None
+    assert without_unit.group("index") == "3"
+    assert without_unit.group("name") == "Meditation"
+    assert without_unit.group("unit") is None
+
+
+def test_the_stub_reports_a_stated_quantity_and_day() -> None:
+    """When the attesting sentence carries them, the stub passes them through."""
+    prompt = build_detection_prompt(
+        "I completed Drink water: 64 oz yesterday.",
+        [
+            DetectionCandidate(
+                index=0,
+                target_type="habit",
+                target_id=7,
+                name="Drink water",
+                target_unit="oz",
+            )
+        ],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion)["hits"] == [
+        {
+            "index": 0,
+            "quote": "completed Drink water",
+            "amount": 64.0,
+            "unit": "oz",
+            "when": "yesterday",
+        }
+    ]
+
+
+def test_the_stub_reads_facts_from_the_attesting_sentence_only() -> None:
+    """A quantity in a NEIGHBOURING sentence is not this hit's amount.
+
+    The entry says the writer drank 64 oz of something else and then that they
+    completed the walk. Reading the whole body would attach the 64 to the walk
+    -- a fact the writer never stated about it, and one the accept path would
+    log against their goal.
+    """
+    prompt = build_detection_prompt(
+        "I drank 64 oz of water first. Then I completed Morning walk.",
+        [
+            DetectionCandidate(
+                index=0,
+                target_type="habit",
+                target_id=7,
+                name="Morning walk",
+                target_unit="units",
+            )
+        ],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion)["hits"] == [{"index": 0, "quote": "completed Morning walk"}]
+
+
 def test_canned_completion_detects_an_explicitly_completed_candidate() -> None:
     """The default provider makes the habit-offer journey runnable without a network."""
     prompt = build_detection_prompt(
@@ -86,7 +211,9 @@ async def test_detection_over_the_stub_resolves_the_candidate_and_quote() -> Non
         DetectionCandidate(index=0, target_type="habit", target_id=7, name="Morning walk")
     ]
 
-    hits = await detect_completions(body, candidates=candidates, llm=BotmasonResonanceLLM(None))
+    hits = await detect_completions(
+        body, candidates=candidates, llm=BotmasonResonanceLLM(None), clock=_CLOCK
+    )
 
     assert len(hits) == 1
     assert hits[0].target_id == 7

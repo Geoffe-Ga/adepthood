@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import cast
 
 from fastapi import HTTPException, status
@@ -21,7 +21,13 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.dates import day_bounds_in_tz, today_in_tz
+from domain.dates import (
+    MAX_BACKFILL_DAYS,
+    DayWindow,
+    day_bounds_in_tz,
+    day_window_verdict,
+    today_in_tz,
+)
 from domain.streaks import is_scheduled_on
 from errors import bad_request
 from models.goal import Goal
@@ -49,10 +55,13 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_THRESHOLDS = [1, 3, 7, 14, 30]
 
-# A completion may be backfilled at most this many days into the past.
-# Beyond this window a user could manufacture an arbitrarily long streak
-# by logging one consecutive past day at a time.
-_MAX_BACKFILL_DAYS = 30
+# Refusal detail per non-``ok`` window verdict.  A mapping rather than a
+# branch chain so the predicate (``domain.dates.day_window_verdict``) owns
+# the day math and this module owns only the HTTP remedy.
+_WINDOW_REFUSALS: dict[DayWindow, str] = {
+    "future": "completion_date_in_future",
+    "too_old": "completion_date_too_old",
+}
 
 
 @dataclass(frozen=True)
@@ -262,14 +271,14 @@ def _resolve_target_day(completed_on: date | None, user_timezone: str) -> date:
     """Return the calendar day to log against.
 
     Defaults to the user's today when ``completed_on`` is omitted. Rejects a
-    future date, and a backfill older than ``_MAX_BACKFILL_DAYS`` days.
+    future date, and a backfill older than ``MAX_BACKFILL_DAYS`` days.
     """
     today = today_in_tz(user_timezone)
     target_day = completed_on or today
-    if target_day > today:
-        raise bad_request("completion_date_in_future")
-    if target_day < today - timedelta(days=_MAX_BACKFILL_DAYS):
-        raise bad_request("completion_date_too_old")
+    verdict = day_window_verdict(target_day, today=today, max_backfill_days=MAX_BACKFILL_DAYS)
+    refusal = _WINDOW_REFUSALS.get(verdict)
+    if refusal is not None:
+        raise bad_request(refusal)
     return target_day
 
 
@@ -550,11 +559,16 @@ class CheckInCommand:
 _DEFAULT_CHECK_IN_COMMAND = CheckInCommand()
 
 
-async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckInResult:
+async def current_check_in(
+    session: AsyncSession, ctx: CheckInContext, on_day: date | None = None
+) -> CheckInResult:
     """Current streak for an already-recorded goal, WITHOUT writing a row.
 
     Used for the idempotent no-op view (e.g. re-accepting an already-accepted
-    suggestion) so it never logs a fresh completion.
+    suggestion) so it never logs a fresh completion. ``on_day`` selects which
+    day's ``day_units`` to report and defaults to the user's today; a caller
+    replaying a completion that was logged against a *past* day must pass that
+    day, or the view reports a day the completion was never on.
     """
     goal_id = cast("int", ctx.goal.id)
     subtractive = await _subtractive_context_for_goal(session, ctx.habit)
@@ -565,7 +579,7 @@ async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckI
             cast("int", ctx.habit.id),
             ctx.user_id,
             ctx.user_timezone,
-            today_in_tz(ctx.user_timezone),
+            on_day or today_in_tz(ctx.user_timezone),
             subtractive,
         ),
     )

@@ -31,7 +31,14 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultPipelineClient,
 )
+from domain.dates import (
+    MAX_BACKFILL_DAYS,
+    day_window_verdict,
+    to_user_date_bucket,
+    today_in_tz,
+)
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
+from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
@@ -106,7 +113,12 @@ from services.botmason import (
     credit_exhausted_error,
     resolve_chat_api_key,
 )
-from services.checkin import CheckInContext, current_check_in, record_goal_completion
+from services.checkin import (
+    CheckInCommand,
+    CheckInContext,
+    current_check_in,
+    record_goal_completion,
+)
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import (
@@ -1027,6 +1039,17 @@ def _suggestion_from_hit(
         anchor_start=hit.anchor_start,
         anchor_end=hit.anchor_end,
         anchor_text=hit.anchor_text,
+        # Habit-only, satisfying ``ck_completion_suggestion_facts_habit_only``.
+        # This guard is load-bearing, not belt-and-braces. Only the AMOUNT is
+        # self-limiting: ``normalise_unit`` refuses every practice amount
+        # because a practice tracks no unit. The DAY is resolved without
+        # consulting the unit at all, so detection really does hand a practice
+        # hit a ``completed_on`` -- which the CHECK would reject inside
+        # ``_persist_settle_commit``, turning a best-effort extra into a 500 on
+        # the writer's reflection. ``_accept_pending_practice`` backdates
+        # nothing, so dropping the day here loses nothing real.
+        completed_units=hit.completed_units if is_habit else None,
+        completed_on=hit.completed_on if is_habit else None,
         status=SuggestionStatus.PENDING,
     )
 
@@ -1037,10 +1060,52 @@ class _DetectionAttempt:
     checked: bool
 
 
+@dataclass(frozen=True, slots=True)
+class DetectionInputs:
+    """The candidates one detection pass may offer, plus the days it resolves against.
+
+    Bundled rather than passed as two arguments for the same reason
+    ``_ReflectionClients`` exists three hundred lines below: the handler
+    signatures in this module are already at their argument budget, and a
+    sixth parameter on any of them fails lint. The clock *replaces* the
+    ``candidates`` parameter everywhere it travels, so nothing grows.
+    """
+
+    candidates: Sequence[DetectionCandidate]
+    clock: DetectionClock
+
+
+def _log_detection_checked(
+    hits: Sequence[CompletionDetected], *, user_id: int, entry_id: int
+) -> None:
+    """Record that a real detection round trip happened, and what it yielded.
+
+    Ids and counts only — never a quote, a unit word, a ``when`` phrase or any
+    body text. Journal writing is encrypted at rest precisely so it never
+    reaches an operator's log file, and a detected fact is a direct quotation
+    of it.
+
+    Emitted only after a provider actually answered, never on the
+    empty-candidate short-circuit, so ``hits_with_units`` over ``hits`` stays a
+    meaningful ratio — and it is the only operational signal that the unit
+    alias table is too narrow for what people really write.
+    """
+    logger.info(
+        "journal_detection_checked",
+        extra={
+            "user_id": user_id,
+            "entry_id": entry_id,
+            "hits": len(hits),
+            "hits_with_units": sum(1 for hit in hits if hit.completed_units is not None),
+            "hits_with_day": sum(1 for hit in hits if hit.completed_on is not None),
+        },
+    )
+
+
 async def _detect_hits_with_status(
     message: str,
     *,
-    candidates: Sequence[DetectionCandidate],
+    inputs: DetectionInputs,
     llm: BotmasonResonanceLLM,
     user_id: int,
     entry_id: int,
@@ -1056,11 +1121,11 @@ async def _detect_hits_with_status(
     is permanent where a dropped socket is transient, and the account is the
     only thing an operator can act on.
     """
-    if not candidates:
+    if not inputs.candidates:
         return _DetectionAttempt(hits=[], checked=True)
     try:
-        return _DetectionAttempt(
-            hits=await detect_completions(message, candidates=candidates, llm=llm), checked=True
+        hits = await detect_completions(
+            message, candidates=inputs.candidates, llm=llm, clock=inputs.clock
         )
     except LLMCreditExhaustedError as exc:
         logger.warning(
@@ -1071,21 +1136,8 @@ async def _detect_hits_with_status(
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
         return _DetectionAttempt(hits=[], checked=False)
-
-
-async def _detect_hits(
-    message: str,
-    *,
-    candidates: Sequence[DetectionCandidate],
-    llm: BotmasonResonanceLLM,
-    user_id: int,
-    entry_id: int,
-) -> list[CompletionDetected]:
-    """Compatibility wrapper for the combined resonance pass."""
-    attempt = await _detect_hits_with_status(
-        message, candidates=candidates, llm=llm, user_id=user_id, entry_id=entry_id
-    )
-    return attempt.hits
+    _log_detection_checked(hits, user_id=user_id, entry_id=entry_id)
+    return _DetectionAttempt(hits=hits, checked=True)
 
 
 def _stage_suggestions(
@@ -1696,7 +1748,7 @@ async def run_resonance(
     prior_letters = await _prior_letter_essays(
         session, user_id=current_user, exclude_entry_id=entry_id
     )
-    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
+    detection = await _detection_inputs(session, entry=entry)
     llm = BotmasonResonanceLLM(byok_key)
     # Any deduction is durable and every read the dials depend on is in hand:
     # release the pooled connection before the first provider round trip.
@@ -1729,8 +1781,8 @@ async def run_resonance(
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    hits = await _detect_hits(
-        message, candidates=candidates, llm=llm, user_id=current_user, entry_id=entry_id
+    attempt = await _detect_hits_with_status(
+        message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
     )
     settled = await _persist_settle_commit(
         session,
@@ -1739,7 +1791,7 @@ async def run_resonance(
             user_id=current_user,
             spent=spent,
             anchored=anchored,
-            hits=hits,
+            hits=attempt.hits,
             llm=llm,
         ),
     )
@@ -1907,12 +1959,37 @@ async def _unoffered_candidates(
     ]
 
 
+async def _detection_inputs(session: AsyncSession, *, entry: JournalEntry) -> DetectionInputs:
+    """Everything one detection pass needs from the database, read in one place.
+
+    Both routes call this before their deliberate pre-dial commit, so the
+    timezone read lands on the correct side of the connection release by
+    construction rather than by a reviewer noticing.
+
+    The entry's day comes from ``to_user_date_bucket``, never bare
+    ``to_user_date``: the latter refuses naive datetimes, and SQLite hands
+    back exactly those for a timezone-aware column.
+    """
+    candidates = await _unoffered_candidates(
+        session, entry_id=cast("int", entry.id), user_id=entry.user_id
+    )
+    user_tz = await get_user_timezone(session, entry.user_id)
+    return DetectionInputs(
+        candidates=candidates,
+        clock=DetectionClock(
+            entry_day=to_user_date_bucket(entry.timestamp, user_tz),
+            today=today_in_tz(user_tz),
+            max_backfill_days=MAX_BACKFILL_DAYS,
+        ),
+    )
+
+
 async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
     message: str,
-    candidates: Sequence[DetectionCandidate],
+    inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset."""
@@ -1921,7 +1998,7 @@ async def _detect_fresh_suggestions(
     await session.commit()
     attempt = await _detect_hits_with_status(
         message,
-        candidates=candidates,
+        inputs=inputs,
         llm=llm,
         user_id=entry.user_id,
         entry_id=cast("int", entry.id),
@@ -1963,8 +2040,8 @@ async def detect_entry_suggestions(
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
-    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
-    if not candidates:
+    inputs = await _detection_inputs(session, entry=entry)
+    if not inputs.candidates:
         # There is nothing new to send and therefore no reason to require a key,
         # expose the journal body, or pay for a known-no-op provider call. An
         # empty candidate set is a completed check, not a provider failure.
@@ -1974,7 +2051,7 @@ async def detect_entry_suggestions(
         session,
         entry=entry,
         message=message,
-        candidates=candidates,
+        inputs=inputs,
         api_key_header=x_llm_api_key,
     )
 
@@ -2010,16 +2087,90 @@ def _suggestion_response(suggestion: CompletionSuggestion) -> CompletionSuggesti
     return CompletionSuggestionResponse.model_validate(suggestion, from_attributes=True)
 
 
+def _in_window_day(
+    suggestion: CompletionSuggestion, user_tz: str, as_of: date | None = None
+) -> date | None:
+    """The suggested day if it was loggable on ``as_of``, else ``None`` (meaning today).
+
+    A suggestion may be detected on one day and accepted much later, so the
+    day it carries can fall outside the backfill window by the time it is
+    used -- or ahead of today, once a user moves their timezone westward.
+    Either way the accept must succeed: a writer offered a check-off cannot be
+    refused it over a date they never typed.
+
+    This is a *pre-check*, deliberately not a caught ``HTTPException``.
+    Wrapping ``record_goal_completion`` in ``try/except`` would swallow every
+    other refusal on that path too. Returning ``None`` *is* the fallback --
+    ``_resolve_target_day(None, tz)`` already means "the user's today" -- so
+    there is no second copy of that rule here.
+
+    ``as_of`` defaults to the user's today, which is what the accept itself
+    wants. A *replay* must pass the day the accept happened instead: the
+    window slides, so a day that was inside it then can be outside it now, and
+    answering against today would report a day the completion was never on.
+
+    Logs ids and the verdict enum only; never the date, which is derived from
+    journal content.
+    """
+    completed_on = suggestion.completed_on
+    if completed_on is None:
+        return None
+    verdict = day_window_verdict(
+        completed_on,
+        today=as_of or today_in_tz(user_tz),
+        max_backfill_days=MAX_BACKFILL_DAYS,
+    )
+    if verdict == "ok":
+        return completed_on
+    logger.info(
+        "suggestion_day_out_of_window",
+        extra={"suggestion_id": suggestion.id, "verdict": verdict},
+    )
+    return None
+
+
+# Operation-key namespace for a habit accept. One suggestion is one logical
+# accept, so the row id is the whole identity. Parallel to the practice
+# branch's ``accept-suggestion:practice:{id}``; the two never collide.
+_ACCEPT_HABIT_OPERATION_PREFIX = "accept-suggestion:goal:"
+
+
 async def _accept_pending_habit(
     session: AsyncSession,
     suggestion: CompletionSuggestion,
     current_user: int,
     user_tz: str,
 ) -> AcceptSuggestionResponse:
-    """Log today's completion for a pending habit suggestion and flip it to accepted."""
+    """Log a pending habit suggestion's completion and flip it to accepted.
+
+    Logs the amount and the user-local day detection extracted from the
+    attesting span when it found them, falling back to the goal's target on
+    today when it did not. An amount lands as a signed *delta* on that day,
+    matching ``POST /goal_completions/``: a day that already has a row
+    accumulates rather than being replaced.
+
+    That delta is claimed under an operation key derived from the suggestion,
+    because one suggestion is one logical accept however many times it is
+    asked for. Nothing else de-duplicates it: the natural-key no-op inside
+    ``record_goal_completion`` stands down as soon as ``completed_units`` is
+    non-null, the status guard is read before the flip rather than under it,
+    and the habit lock orders concurrent accepts without collapsing them.
+    Mirrors the practice branch, which has always keyed its own write.
+    """
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    check_in = await record_goal_completion(session, ctx)
+    # Nothing of this request is staged yet, and nothing may be: a replayed
+    # claim rolls the session back before returning, which would discard it.
+    # Keep every write on this path after this call.
+    check_in = await record_goal_completion(
+        session,
+        ctx,
+        CheckInCommand(
+            completed_on=_in_window_day(suggestion, user_tz),
+            completed_units=suggestion.completed_units,
+            idempotency_key=f"{_ACCEPT_HABIT_OPERATION_PREFIX}{suggestion.id}",
+        ),
+    )
     suggestion.status = SuggestionStatus.ACCEPTED
     suggestion.accepted_at = datetime.now(UTC)
     session.add(suggestion)
@@ -2094,6 +2245,21 @@ async def _accept_pending_practice(
     return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
 
 
+def _logged_day(suggestion: CompletionSuggestion, user_tz: str) -> date | None:
+    """The day the accept actually logged against, re-derived for a replay.
+
+    Reproduces the accept's own window decision by asking it again as of the
+    day the accept happened (``accepted_at``), which is exactly what "today"
+    meant in that request. Falls back to the live reading for a suggestion
+    with no ``accepted_at`` -- which the status guard means we never reach,
+    but which keeps this total.
+    """
+    accepted_at = suggestion.accepted_at
+    if accepted_at is None:
+        return _in_window_day(suggestion, user_tz)
+    return _in_window_day(suggestion, user_tz, to_user_date_bucket(accepted_at, user_tz))
+
+
 async def _already_accepted_response(
     session: AsyncSession, suggestion: CompletionSuggestion, current_user: int, user_tz: str
 ) -> AcceptSuggestionResponse:
@@ -2105,7 +2271,10 @@ async def _already_accepted_response(
         return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    check_in = await current_check_in(session, ctx)
+    # The same day resolution the accept used, asked as of the day the accept
+    # happened, so the replay reports the day that was actually logged rather
+    # than today's (empty) total.
+    check_in = await current_check_in(session, ctx, _logged_day(suggestion, user_tz))
     return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
 
 

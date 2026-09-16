@@ -217,6 +217,49 @@ async def test_include_practices_adds_active_practices(db_session: AsyncSession)
 
 
 @pytest.mark.asyncio
+async def test_a_habits_unit_reaches_the_candidate_and_a_practices_stays_none(
+    db_session: AsyncSession,
+) -> None:
+    """The representative goal's unit travels; a practice tracks none.
+
+    That asymmetry is not cosmetic: ``normalise_unit`` returns ``None`` for a
+    ``target_unit`` of ``None``, which is exactly what makes a practice
+    structurally incapable of carrying a detected amount.
+    """
+    user_id = await _user(db_session)
+    await _habit(db_session, user_id, "Drink water", tiers=("clear",))
+    await _active_practice(db_session, user_id, "Morning sit")
+
+    candidates = await gather_candidates(db_session, user_id, include_practices=True)
+
+    habit = next(c for c in candidates if c.target_type == "habit")
+    practice = next(c for c in candidates if c.target_type == "practice")
+    assert habit.target_unit == "x"  # what ``_habit`` seeds on its goals
+    assert practice.target_unit is None
+
+
+@pytest.mark.asyncio
+async def test_the_unit_comes_from_the_representative_goal_not_the_first_row(
+    db_session: AsyncSession,
+) -> None:
+    """A tiered habit reports the CLEAR tier's unit, matching its target_id."""
+    user_id = await _user(db_session)
+    habit = await _habit(db_session, user_id, "Run", tiers=("low", "clear", "stretch"))
+    clear_id = await _goal_id(db_session, habit.id or 0, "clear")
+    # Only the CLEAR tier is re-denominated, so a helper reading the first row
+    # (the LOW tier, still "x") reports a unit that does not match target_id.
+    clear_goal = await db_session.get(Goal, clear_id)
+    assert clear_goal is not None
+    clear_goal.target_unit = "miles"
+    await db_session.commit()
+
+    candidates = await gather_candidates(db_session, user_id)
+
+    assert candidates[0].target_id == clear_id
+    assert candidates[0].target_unit == "miles"
+
+
+@pytest.mark.asyncio
 async def test_no_n_plus_one(db_session: AsyncSession) -> None:
     user_id = await _user(db_session)
     for i in range(5):

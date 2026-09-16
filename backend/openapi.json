@@ -637,6 +637,29 @@
             "title": "Anchor Text",
             "type": "string"
           },
+          "completed_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed On"
+          },
+          "completed_units": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed Units"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -698,6 +721,8 @@
           "anchor_start",
           "anchor_end",
           "anchor_text",
+          "completed_units",
+          "completed_on",
           "status",
           "accepted_at",
           "created_at",

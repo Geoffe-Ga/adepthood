@@ -279,6 +279,93 @@ async def test_practice_target_without_user_practice_is_rejected(db_session: Asy
         await db_session.commit()
 
 
+@pytest.mark.asyncio
+async def test_completed_units_and_completed_on_round_trip(db_session: AsyncSession) -> None:
+    """The two fact columns persist and read back as a float and a date."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    goal_id = await _goal(db_session, user_id)
+    db_session.add(
+        _habit_suggestion(
+            entry_id, user_id, goal_id, completed_units=64.0, completed_on=date(2026, 9, 11)
+        ),
+    )
+    await db_session.commit()
+
+    row = (await db_session.execute(select(CompletionSuggestion))).scalars().one()
+    assert row.completed_units == 64.0
+    assert row.completed_on == date(2026, 9, 11)
+
+
+@pytest.mark.asyncio
+async def test_facts_default_to_null(db_session: AsyncSession) -> None:
+    """A suggestion with no detected facts leaves both columns NULL."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    goal_id = await _goal(db_session, user_id)
+    db_session.add(_habit_suggestion(entry_id, user_id, goal_id))
+    await db_session.commit()
+
+    row = (await db_session.execute(select(CompletionSuggestion))).scalars().one()
+    assert row.completed_units is None
+    assert row.completed_on is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("units", [0.0, -1.0])
+async def test_non_positive_completed_units_is_rejected(
+    db_session: AsyncSession, units: float
+) -> None:
+    """``completed_units`` is NULL or strictly positive (CHECK constraint).
+
+    The column is a detection output, never a user-supplied correction: a
+    subtractive delta arrives through ``POST /goal_completions/``, not through
+    a suggestion. The CHECK is a backstop the detection factory must never
+    reach -- it fires inside the resonance settle commit if it ever does.
+    """
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    goal_id = await _goal(db_session, user_id)
+    db_session.add(_habit_suggestion(entry_id, user_id, goal_id, completed_units=units))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("completed_units", "completed_on"),
+    [(1.0, None), (None, date(2026, 9, 11))],
+)
+async def test_practice_target_cannot_carry_facts(
+    db_session: AsyncSession, completed_units: float | None, completed_on: date | None
+) -> None:
+    """Facts are habit-only by CHECK, not merely by convention.
+
+    ``_accept_pending_practice`` backdates nothing and reads neither column,
+    so a practice suggestion carrying one would be a value captured and
+    silently ignored.
+    """
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    up_id = await _user_practice(db_session, user_id)
+    db_session.add(
+        CompletionSuggestion(
+            journal_entry_id=entry_id,
+            user_id=user_id,
+            target_type=CompletionTargetType.PRACTICE,
+            user_practice_id=up_id,
+            label="Meditation",
+            anchor_start=0,
+            anchor_end=10,
+            anchor_text="meditation",
+            completed_units=completed_units,
+            completed_on=completed_on,
+        ),
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
 def test_enum_values() -> None:
     """The enum value sets match the contract."""
     assert {t.value for t in CompletionTargetType} == {"habit", "practice"}

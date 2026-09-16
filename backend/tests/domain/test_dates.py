@@ -21,8 +21,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from domain.dates import (
+    MAX_BACKFILL_DAYS,
     compute_next_reset,
     day_bounds_in_tz,
+    day_window_verdict,
     ensure_aware,
     now_in_tz,
     to_user_date,
@@ -271,3 +273,38 @@ class TestComputeNextReset:
         """A naive datetime is interpreted as UTC rather than crashing later."""
         result = compute_next_reset(datetime(2026, 6, 15, 12, 0, 0))  # noqa: DTZ001
         assert result == datetime(2026, 7, 1, tzinfo=UTC)
+
+
+class TestDayWindowVerdict:
+    """``day_window_verdict`` classifies a day against the backfill window.
+
+    The predicate is the single owner of the "how far back may a
+    completion be logged?" rule, shared by the check-in service (which
+    turns a non-``ok`` verdict into a 400) and by completion detection
+    (which turns one into a dropped fact).
+    """
+
+    @pytest.mark.parametrize(
+        ("offset_days", "expected"),
+        [
+            (0, "ok"),
+            (-1, "ok"),
+            (-MAX_BACKFILL_DAYS, "ok"),
+            (-MAX_BACKFILL_DAYS - 1, "too_old"),
+            (1, "future"),
+        ],
+    )
+    def test_classifies_future_ok_and_too_old(self, offset_days: int, expected: str) -> None:
+        today = date(2026, 9, 15)
+        verdict = day_window_verdict(
+            today + timedelta(days=offset_days),
+            today=today,
+            max_backfill_days=MAX_BACKFILL_DAYS,
+        )
+        assert verdict == expected
+
+    def test_window_honours_a_caller_supplied_width(self) -> None:
+        """The width is a parameter, not a hidden read of the module constant."""
+        today = date(2026, 9, 15)
+        assert day_window_verdict(date(2026, 9, 13), today=today, max_backfill_days=1) == "too_old"
+        assert day_window_verdict(date(2026, 9, 14), today=today, max_backfill_days=1) == "ok"

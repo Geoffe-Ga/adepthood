@@ -34,9 +34,15 @@ from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from models.completion_suggestion import (
+    CompletionSuggestion,
+    CompletionTargetType,
+    SuggestionStatus,
+)
 from models.corpus_invitation_state import CorpusInvitationState
 from models.course_stage import CourseStage
 from models.goal import Goal
+from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
@@ -1490,3 +1496,110 @@ async def test_idor_reflection_sources_never_serve_another_users_material(
     items = resp.json()["items"]
     assert [item["body"] for item in items] == ["Alice's own morning"]
     assert items[0]["promoted_quotes"] == []
+
+
+async def _seed_cross_tenant_suggestion(
+    session: AsyncSession,
+    *,
+    entry_id: int,
+    owner_id: int,
+    goal_id: int,
+) -> int:
+    """Seed Bob a suggestion whose ``goal_id`` points at Alice's goal.
+
+    Not reachable through the API — detection only ever proposes the caller's
+    own goals — so it is written directly, which is exactly the state a bug in
+    the resolver would have to survive.
+    """
+    suggestion = CompletionSuggestion(
+        journal_entry_id=entry_id,
+        user_id=owner_id,
+        target_type=CompletionTargetType.HABIT,
+        goal_id=goal_id,
+        label="went for a run",
+        anchor_start=0,
+        anchor_end=10,
+        anchor_text="went for a",
+        completed_units=5.0,
+        completed_on=date(2026, 9, 11),
+    )
+    session.add(suggestion)
+    await session.commit()
+    await session.refresh(suggestion)
+    assert suggestion.id is not None
+    return suggestion.id
+
+
+async def _seed_goal_for(session: AsyncSession, user_id: int) -> int:
+    """Seed one habit + clear-tier goal owned by ``user_id``; return the goal id."""
+    habit = Habit(
+        name="Run",
+        icon="🏃",
+        start_date=date(2025, 1, 1),
+        energy_cost=10,
+        energy_return=20,
+        user_id=user_id,
+    )
+    session.add(habit)
+    await session.commit()
+    await session.refresh(habit)
+    goal = Goal(
+        habit_id=habit.id,
+        title="Daily run",
+        tier="clear",
+        target=5.0,
+        target_unit="units",
+        frequency=1.0,
+        frequency_unit="per_day",
+        is_additive=True,
+    )
+    session.add(goal)
+    await session.commit()
+    await session.refresh(goal)
+    assert goal.id is not None
+    return goal.id
+
+
+@pytest.mark.asyncio
+async def test_accepting_a_suggestion_pointing_at_another_tenants_goal_404s_and_writes_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Accepting across tenants is a 404 AND leaves no ``goalcompletion`` row.
+
+    Neither ``completed_units`` nor ``completed_on`` enters a request schema —
+    both are server-set by detection — so the ownership boundary itself is
+    unchanged. The case is asserted anyway because the accept path now *writes
+    more* than it used to: a 404 that still logged units against Alice's goal
+    would be the bug this test exists for, and only the second half can see it.
+    """
+    _, alice_id = await _signup(async_client, "suggestion_accept_alice")
+    bob_headers, bob_id = await _signup(async_client, "suggestion_accept_bob")
+    alice_goal_id = await _seed_goal_for(db_session, alice_id)
+
+    entry = await async_client.post(
+        "/journal/", json={"message": _JOURNAL_PROBE_MESSAGE}, headers=bob_headers
+    )
+    assert entry.status_code == HTTPStatus.CREATED
+    suggestion_id = await _seed_cross_tenant_suggestion(
+        db_session,
+        entry_id=int(entry.json()["id"]),
+        owner_id=bob_id,
+        goal_id=alice_goal_id,
+    )
+
+    resp = await async_client.post(
+        f"/journal/suggestions/{suggestion_id}/accept", headers=bob_headers
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    db_session.expire_all()
+    completions = (
+        (await db_session.execute(select(GoalCompletion).execution_options(populate_existing=True)))
+        .scalars()
+        .all()
+    )
+    assert list(completions) == []
+    # The suggestion is untouched: no status flip smuggled past the refusal.
+    refreshed = await db_session.get(CompletionSuggestion, suggestion_id)
+    assert refreshed is not None
+    assert refreshed.status == SuggestionStatus.PENDING
