@@ -109,8 +109,19 @@ export interface ReviewWindow {
   end: string;
 }
 
-/** One day, in milliseconds — the step back from an exclusive end to an inclusive one. */
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * Half a day, in milliseconds — the step back from an EXCLUSIVE local-midnight
+ * end to a point INSIDE the last day the review actually covers.
+ *
+ * A full 24-hour step is wrong across a daylight-saving boundary. When that last
+ * day is a 23-hour spring-forward day, 24 hours overshoots it and lands an hour
+ * before its own midnight, so the label reads a day short. Any step strictly
+ * between 0 and 23 hours stays inside the day whichever way the clock moved, so
+ * midday is the anchor that is safe in both directions. The backend windows this
+ * period on real local midnights (``program_week_bounds``); this keeps the label
+ * agreeing with it (#2892 review).
+ */
+const HALF_DAY_MS = 12 * 60 * 60 * 1000;
 
 /**
  * The review period label, e.g. "Jun 1 – Jun 7, 2026".
@@ -126,7 +137,7 @@ export function formatReviewPeriod(start: string, end: string, timeZone?: string
   const from = new Date(start);
   const exclusiveTo = new Date(end);
   if (Number.isNaN(from.getTime()) || Number.isNaN(exclusiveTo.getTime())) return '';
-  const to = new Date(exclusiveTo.getTime() - ONE_DAY_MS);
+  const to = new Date(exclusiveTo.getTime() - HALF_DAY_MS);
   if (to.getTime() < from.getTime()) return '';
   const fromLabel = from.toLocaleDateString(undefined, {
     month: 'short',

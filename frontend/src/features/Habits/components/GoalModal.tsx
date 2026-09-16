@@ -1031,17 +1031,14 @@ function useGoalConfirm(
 }
 
 /**
- * Re-point the marker responders at the current render. The port is read only
- * from gesture callbacks — user-input driven, so always after a commit has
- * flushed passive effects — which is why a dependency-free effect plus the
- * `useRef` initialiser cover every moment a gesture can begin. This is the
- * same guarantee `starFillRef` already relies on.
- */
-/**
- * The live port the once-built responders read through. `useRef(build())` would
- * evaluate `build` on every render and discard the result, so the lazy `??=`
- * mirrors {@link useMarkerPanResponders}: one object built at mount, re-pointed
- * by the effect after every commit.
+ * The live port the once-built responders read through, re-pointed at each render.
+ *
+ * `useRef(build())` would evaluate `build` on every render and discard the result,
+ * so the lazy `??=` mirrors {@link useMarkerPanResponders}: one object built at
+ * mount. The port is read only from gesture callbacks — user-input driven, so
+ * always after a commit has flushed passive effects — which is why a
+ * dependency-free effect plus the initialiser cover every moment a gesture can
+ * begin. This is the same guarantee `starFillRef` already relies on.
  */
 const useMarkerDragPort = (build: () => MarkerDragPort): React.MutableRefObject<MarkerDragPort> => {
   const port = useRef<MarkerDragPort | null>(null);
