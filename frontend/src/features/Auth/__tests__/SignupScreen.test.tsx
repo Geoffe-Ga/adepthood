@@ -37,6 +37,7 @@ const { _mockSignup: mockSignup } = require('@/context/AuthContext') as any;
 
 import SignupScreen from '../SignupScreen';
 
+import { FIELD_VALIDATION_MESSAGE, UNREACHABLE_MESSAGE } from '@/api/errorMessages';
 import { GUMROAD_HELP_URL } from '@/config';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
@@ -212,14 +213,17 @@ describe('SignupScreen', () => {
     expect(screen.queryByText('password_too_short')).toBeNull();
   });
 
-  it('falls back to a connection-hint message when the error is unrecognised', async () => {
+  // Renamed from "when the error is unrecognised" and tightened to the exact
+  // transport copy: the old title generalised a real fetch failure into a rule
+  // that let a classified server status wear connectivity wording too.
+  it('keeps connectivity copy for a genuine transport failure', async () => {
     mockSignup.mockRejectedValue(new TypeError('Network request failed'));
     const screen = render(<SignupScreen navigation={mockNavigation} />);
 
     fillForm(screen, { email: 'user@test.com', licenseKey: VALID_LICENSE_KEY });
     submit(screen);
 
-    expect(await screen.findByText(/Check your connection/i)).toBeTruthy();
+    expect(await screen.findByText(UNREACHABLE_MESSAGE)).toBeTruthy();
   });
 
   it('trims whitespace from the email before submitting (BUG-AUTH-010)', async () => {
@@ -369,11 +373,15 @@ describe('SignupScreen license error routing', () => {
     expect(screen.queryByTestId(INLINE_ERROR_ID)).toBeNull();
   });
 
-  it('shows a readable banner for a Pydantic 422 without leaking field names', async () => {
+  // Strengthened: this used to assert only that *a* banner existed, so it passed
+  // while the banner read "Check your connection" for a 422 the server had
+  // classified. It now pins the field-validation copy itself.
+  it('shows field-validation copy for a Pydantic 422 without leaking field names', async () => {
     const screen = await submitWithRejection('String should have at most 128 characters', 422);
 
     const banner = await screen.findByTestId(BANNER_ID);
-    expect(banner).toBeTruthy();
+    expect(banner).toHaveTextContent(FIELD_VALIDATION_MESSAGE);
+    expect(screen.queryByText(/Check your connection/i)).toBeNull();
     expect(screen.queryByText(/license_/)).toBeNull();
     expect(screen.queryByTestId(INLINE_ERROR_ID)).toBeNull();
   });
@@ -388,6 +396,9 @@ describe('SignupScreen license error routing', () => {
 
     const banner = await screen.findByTestId(BANNER_ID);
     expect(banner).not.toHaveTextContent('[object Object]');
+    // Strengthened alongside the case above: "not [object Object]" was true of
+    // the connection-failure copy too, so it accepted the misattribution.
+    expect(banner).toHaveTextContent(FIELD_VALIDATION_MESSAGE);
     expect(screen.queryByText(/license_key/)).toBeNull();
   });
 
@@ -496,5 +507,93 @@ describe('SignupScreen license key help link', () => {
 
     await waitFor(() => expect(mockOpenExternalUrl).toHaveBeenCalledTimes(1));
     expect(screen.getByLabelText(LICENSE_LABEL).props.value).toBe(VALID_LICENSE_KEY);
+  });
+});
+
+describe('SignupScreen required email', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('refuses a blank email even when the password and license key are valid', async () => {
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    fillForm(screen, { email: '', licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+
+    expect(mockSignup).not.toHaveBeenCalled();
+    const banner = await screen.findByTestId(BANNER_ID);
+    expect(banner).toHaveTextContent('Enter your email to continue.');
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
+  });
+
+  it('refuses a whitespace-only email', async () => {
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    fillForm(screen, { email: '   ', licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+
+    expect(mockSignup).not.toHaveBeenCalled();
+    expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent('Enter your email to continue.');
+  });
+
+  // Rewritten: the previous version swapped one filled address for another, so
+  // the retraction's trigger never moved and the effect it named never ran --
+  // it stayed green with the guard's take-back removed. This drives the real
+  // sequence a user hits: the guard fires, the form then writes a verdict of its
+  // own over it, and filling the originally-flagged field must retract neither
+  // the verdict nor leave the email still advertising itself as required.
+  it('keeps the password verdict, and drops the email hint, once the email is filled', async () => {
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    // 1. Blank email with an otherwise valid form: the shared guard speaks.
+    fillForm(screen, { email: '', licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+    expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent('Enter your email to continue.');
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
+
+    // 2. The form's own password verdict takes the banner over. The email is
+    //    still '' and will still block the next submit, so its hint stays: a
+    //    flag describes the control, not whose message is in the banner.
+    fireEvent.changeText(screen.getByPlaceholderText('Confirm Password'), 'different'); // pragma: allowlist secret
+    submit(screen);
+    await screen.findByText(/passwords don't match/i);
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
+
+    // 3. Filling the flagged field drops its hint -- and must not retract the
+    //    verdict, which belongs to the form rather than to the guard.
+    fireEvent.changeText(screen.getByPlaceholderText('Email'), 'other@test.com');
+
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBeUndefined();
+    expect(screen.getByTestId(BANNER_ID)).toHaveTextContent(/passwords don't match/i);
+    expect(mockSignup).not.toHaveBeenCalled();
+  });
+
+  it('submits on Enter from the license key field', async () => {
+    mockSignup.mockResolvedValue(undefined);
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    fillForm(screen, { licenseKey: VALID_LICENSE_KEY });
+    fireEvent(screen.getByLabelText(LICENSE_LABEL), 'submitEditing');
+
+    await waitFor(() =>
+      expect(mockSignup).toHaveBeenCalledWith('new@test.com', PASSWORD, VALID_LICENSE_KEY),
+    );
+  });
+});
+
+describe('SignupScreen fallback copy', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockSignup.mockRejectedValue(new Error('something the client cannot classify'));
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    fillForm(screen, { licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+
+    expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent(
+      "We couldn't create your account. Give it a moment, then try again.",
+    );
+    expect(screen.queryByText(/connection/i)).toBeNull();
   });
 });

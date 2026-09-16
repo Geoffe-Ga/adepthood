@@ -25,6 +25,7 @@ jest.mock('@/context/AuthContext', () => ({
 }));
 
 jest.mock('@/api/errorMessages', () => ({
+  FIELD_VALIDATION_MESSAGE: "Some of what you entered doesn't look right.",
   formatApiError: (_err: unknown, { fallback }: { fallback: string }) =>
     (_err as { message?: string })?.message ?? fallback,
 }));
@@ -174,5 +175,69 @@ describe('ReauthSheet', () => {
     await waitFor(() =>
       expect(getByTestId('reauth-dismiss').props.accessibilityState?.disabled).toBe(false),
     );
+  });
+});
+
+describe('ReauthSheet required fields', () => {
+  const ERROR_ID = 'reauth-error';
+
+  it('blocks a blank sign-back-in without calling login', async () => {
+    const { getByTestId, findByTestId } = render(<ReauthSheet />);
+
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner).toHaveTextContent('Enter your email and password to continue.');
+    expect(getByTestId('reauth-email').props.accessibilityHint).toBe('Required.');
+  });
+
+  it('blocks when only the password is missing', async () => {
+    const { getByTestId, findByTestId } = render(<ReauthSheet />);
+
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent('Enter your password to continue.');
+  });
+
+  it('blocks when only the email is missing', async () => {
+    const { getByTestId, findByTestId } = render(<ReauthSheet />);
+
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent('Enter your email to continue.');
+  });
+
+  it('submits on Enter from the password field once both fields are filled', async () => {
+    const { getByTestId } = render(<ReauthSheet />);
+
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent(getByTestId('reauth-password'), 'submitEditing');
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('a@b.co', 'pw')); // pragma: allowlist secret
+  });
+});
+
+describe('ReauthSheet fallback copy', () => {
+  it('never blames the connection for a failure it cannot classify', async () => {
+    // This suite stubs formatApiError to hand back ``err.message ?? fallback``,
+    // so a rejection with no message is the way to reach the fallback itself.
+    mockLogin.mockRejectedValueOnce({});
+    const { getByTestId, findByTestId, queryByText } = render(<ReauthSheet />);
+
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    expect(await findByTestId('reauth-error')).toHaveTextContent(
+      "We couldn't sign you back in. Wait a moment, then try once more.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
   });
 });

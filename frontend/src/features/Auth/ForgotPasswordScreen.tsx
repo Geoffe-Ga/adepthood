@@ -4,14 +4,22 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { AuthErrorBanner } from './components/AuthErrorBanner';
 import { EmailField } from './components/EmailField';
+import { REQUIRED_FIELD_HINT } from './requiredFieldValidation';
 import { useAuthSubmit } from './useAuthSubmit';
 
 import { auth as authApi } from '@/api';
 import { Button } from '@/components/Button';
 
-const FORGOT_FALLBACK =
-  "We couldn't reach the server. Check your connection, then try again in a moment.";
+/** The one field this screen refuses to send empty. */
+const EMAIL_FIELD = 'email';
+
+// Names no cause: a blank field, a 422 and a 500 all used to arrive here wearing
+// "check your connection" on a healthy network. The transport layer diagnoses a
+// real outage from its own evidence; this string covers only what nothing else
+// could classify.
+const FORGOT_FALLBACK = "We couldn't send that reset link. Give it a moment, then try again.";
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -20,15 +28,25 @@ interface Props {
 interface ForgotFieldsProps {
   email: string;
   setEmail: (_v: string) => void;
+  missing: ReadonlySet<string>;
+  onSubmit: () => void;
 }
 
-function ForgotFields({ email, setEmail }: ForgotFieldsProps): React.JSX.Element {
+function ForgotFields({
+  email,
+  setEmail,
+  missing,
+  onSubmit,
+}: ForgotFieldsProps): React.JSX.Element {
   return (
     <EmailField
       accessibilityLabel="Email"
+      accessibilityHint={missing.has(EMAIL_FIELD) ? REQUIRED_FIELD_HINT : undefined}
       style={styles.inputSpacing}
       value={email}
       onChangeText={setEmail}
+      returnKeyType="go"
+      onSubmitEditing={onSubmit}
     />
   );
 }
@@ -97,12 +115,19 @@ function SuccessNotice({ onBackToLogin }: { onBackToLogin: () => void }): React.
 export default function ForgotPasswordScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const { submitting, error, run } = useAuthSubmit(
+  // ``/auth/password-reset/request`` is limited to three per hour, counted by
+  // the middleware BEFORE FastAPI parses the body -- so three blank taps used to
+  // spend the user's whole recovery budget on requests the server was always
+  // going to refuse. The guard is what keeps those three for real attempts.
+  const { submitting, error, run, missing } = useAuthSubmit(
     async () => {
       await authApi.requestPasswordReset({ email: canonicalizeEmail(email) });
       setSubmitted(true);
     },
-    { fallback: FORGOT_FALLBACK },
+    {
+      fallback: FORGOT_FALLBACK,
+      required: [{ label: EMAIL_FIELD, submitted: canonicalizeEmail(email) }],
+    },
   );
 
   if (submitted) {
@@ -120,8 +145,8 @@ export default function ForgotPasswordScreen({ navigation }: Props) {
       <Text style={styles.subtitle}>
         Enter your account email and we&apos;ll send a link to set a new password.
       </Text>
-      <ForgotFields email={email} setEmail={setEmail} />
-      {error && <Text style={styles.error}>{error}</Text>}
+      <ForgotFields email={email} setEmail={setEmail} missing={missing} onSubmit={run} />
+      <AuthErrorBanner message={error} testID="forgot-error" />
       <ForgotActions
         submitting={submitting}
         onSubmit={run}
