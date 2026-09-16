@@ -4,9 +4,11 @@ import { Text, TouchableOpacity } from 'react-native';
 import { authStyles as styles } from './auth.styles';
 import { AuthBrandBand } from './AuthBrandBand';
 import { AuthScreenContainer } from './AuthScreenContainer';
+import { AuthErrorBanner } from './components/AuthErrorBanner';
 import { EmailField } from './components/EmailField';
 import { LicenseKeyField } from './components/LicenseKeyField';
 import { PasswordField } from './components/PasswordField';
+import { REQUIRED_FIELD_HINT } from './requiredFieldValidation';
 import { SocialAuthButtons } from './SocialAuthButtons';
 import { useSignupForm } from './useSignupForm';
 import type { SignupForm } from './useSignupForm';
@@ -14,6 +16,9 @@ import type { SignupForm } from './useSignupForm';
 import { Button } from '@/components/Button';
 import { GUMROAD_HELP_URL } from '@/config';
 import { openExternalUrl } from '@/utils/openExternalUrl';
+
+/** The field the guard names; the message quotes it back to the user. */
+const EMAIL_FIELD = 'email';
 
 interface Props {
   navigation: { navigate: (_screen: string) => void };
@@ -35,6 +40,7 @@ function SignupFields({ form, onPressHelp }: SignupFieldsProps): React.JSX.Eleme
     <>
       <EmailField
         accessibilityLabel="Email"
+        accessibilityHint={form.missing.has(EMAIL_FIELD) ? REQUIRED_FIELD_HINT : undefined}
         style={styles.inputSpacing}
         value={form.email}
         onChangeText={form.setEmail}
@@ -57,6 +63,8 @@ function SignupFields({ form, onPressHelp }: SignupFieldsProps): React.JSX.Eleme
         onPressHelp={onPressHelp}
         value={form.licenseKey}
         onChangeText={form.setLicenseKey}
+        returnKeyType="go"
+        onSubmitEditing={form.handleSignup}
       />
     </>
   );
@@ -109,11 +117,7 @@ export default function SignupScreen({ navigation, route }: Props) {
       <Text style={styles.title}>Begin</Text>
       <Text style={styles.lead}>Create your account and start the practice.</Text>
       <SignupFields form={form} onPressHelp={handlePressHelp} />
-      {form.error && (
-        <Text style={styles.error} testID="signup-error">
-          {form.error}
-        </Text>
-      )}
+      <AuthErrorBanner message={form.error} testID="signup-error" />
       <SignupActions
         onSignup={form.handleSignup}
         onNavigateLogin={() => navigation.navigate('Login')}

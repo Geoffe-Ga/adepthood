@@ -266,6 +266,17 @@ describe('formatApiError', () => {
     );
   });
 
+  // Deliberately beside the 400 case above rather than replacing it: the auth
+  // screens narrow 422 for themselves with a ``statusOverrides`` entry, and this
+  // is the pin that the narrowing lives in that hook and never leaked into the
+  // shared chain, where twenty other consumers still rely on their own fallback.
+  it('still prefers the caller fallback over the 422 status default', () => {
+    const err = new ApiError(422, 'some_new_unmapped_code');
+    expect(formatApiError(err, { fallback: 'Could not save practice.' })).toBe(
+      'Could not save practice.',
+    );
+  });
+
   it('uses status override when provided', () => {
     const err = new ApiError(404, 'some_unmapped_code');
     expect(

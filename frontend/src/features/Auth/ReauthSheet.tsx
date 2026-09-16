@@ -11,8 +11,10 @@ import {
 
 import { authStyles } from './auth.styles';
 import { canonicalizeEmail } from './canonicalizeEmail';
+import { AuthErrorBanner } from './components/AuthErrorBanner';
 import { EmailField } from './components/EmailField';
 import { PasswordField } from './components/PasswordField';
+import { REQUIRED_FIELD_HINT } from './requiredFieldValidation';
 import { useAuthSubmit } from './useAuthSubmit';
 
 import { Button } from '@/components/Button';
@@ -29,14 +31,21 @@ import {
 
 const TYPE = typeRamp(0);
 
-const REAUTH_FALLBACK =
-  "We couldn't sign you back in. Check your connection, then try again in a moment.";
+/** Field labels the guard names back to the user. */
+const EMAIL_FIELD = 'email';
+const PASSWORD_FIELD = 'password'; // pragma: allowlist secret -- a field label, not a credential
+
+// Names no cause, for the same reason as the other auth surfaces: the transport
+// layer owns the connectivity diagnosis, and a status the server classified now
+// outranks this string.
+const REAUTH_FALLBACK = "We couldn't sign you back in. Wait a moment, then try once more.";
 
 interface ReauthFormProps {
   email: string;
   password: string;
   error: string | null;
   submitting: boolean;
+  missing: ReadonlySet<string>;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
   onSubmit: () => void;
@@ -78,7 +87,7 @@ function ReauthActions({
 }
 
 function ReauthForm(props: ReauthFormProps): React.JSX.Element {
-  const { email, password, error, submitting } = props;
+  const { email, password, error, submitting, missing } = props;
   const { onEmailChange, onPasswordChange, onSubmit, onDismiss } = props;
   return (
     <View style={localStyles.card}>
@@ -88,6 +97,7 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
       </Text>
       <EmailField
         accessibilityLabel="Email"
+        accessibilityHint={missing.has(EMAIL_FIELD) ? REQUIRED_FIELD_HINT : undefined}
         style={authStyles.inputSpacing}
         value={email}
         onChangeText={onEmailChange}
@@ -95,12 +105,15 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
       />
       <PasswordField
         accessibilityLabel="Password"
+        accessibilityHint={missing.has(PASSWORD_FIELD) ? REQUIRED_FIELD_HINT : undefined}
         style={authStyles.inputSpacing}
         value={password}
         onChangeText={onPasswordChange}
         testID="reauth-password"
+        returnKeyType="go"
+        onSubmitEditing={onSubmit}
       />
-      {error ? <Text style={authStyles.error}>{error}</Text> : null}
+      <AuthErrorBanner message={error} testID="reauth-error" />
       <ReauthActions submitting={submitting} onSubmit={onSubmit} onDismiss={onDismiss} />
     </View>
   );
@@ -116,9 +129,16 @@ export function ReauthSheet(): React.JSX.Element {
   const { login, dismissReauth } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { submitting, error, run } = useAuthSubmit(
+  // Declared as the values that will be SENT: the email canonicalized, the
+  // password raw, so a password that really is whitespace still gets the
+  // server's non-enumerating answer rather than this client's guess.
+  const required = [
+    { label: EMAIL_FIELD, submitted: canonicalizeEmail(email) },
+    { label: PASSWORD_FIELD, submitted: password },
+  ];
+  const { submitting, error, run, missing } = useAuthSubmit(
     () => login(canonicalizeEmail(email), password),
-    { fallback: REAUTH_FALLBACK },
+    { fallback: REAUTH_FALLBACK, required },
   );
 
   const handleDismiss = useCallback(() => {
@@ -146,6 +166,7 @@ export function ReauthSheet(): React.JSX.Element {
           password={password}
           error={error}
           submitting={submitting}
+          missing={missing}
           onEmailChange={setEmail}
           onPasswordChange={setPassword}
           onSubmit={run}
