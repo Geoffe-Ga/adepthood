@@ -74,37 +74,71 @@ function authErrorMessage(err: unknown, cfg: AuthSubmitConfig): string {
   });
 }
 
+/** What the guard is currently claiming about the form. */
+interface GuardClaim {
+  /** Labels it flagged whose controls still advertise themselves; null when none. */
+  readonly flagged: ReadonlySet<string> | null;
+  /** Whether the words in the banner are the guard's own. */
+  readonly ownsBanner: boolean;
+}
+
+/** Shared because it is never mutated in place -- every transition replaces it. */
+const NO_CLAIM: GuardClaim = Object.freeze({ flagged: null, ownsBanner: false });
+
 /**
- * Retract a guard message once the user addresses a field it named.
+ * Withdraw exactly as much of the guard's verdict as the user has earned.
  *
- * The trigger is a field the guard flagged now holding a value -- not a change
- * of any kind to any field. Those are different events, and only one of them is
- * good news. An earlier version keyed on "which fields are currently blank",
- * which moves in both directions: clearing a filled field to retype it read as
- * an edit worth retracting on, so the banner and the field hints vanished at the
- * moment the form became *more* invalid, not less.
+ * Two rules, and the code says both of them.
  *
- * ``guardedRef`` holds the exact labels the guard flagged, or ``null`` when the
- * banner belongs to someone else -- a server's answer, or a screen's own
- * verdict. Retraction is impossible in that state, by construction rather than
- * by a rule someone has to remember.
+ * **Only satisfaction retracts, and only what it satisfies.** The trigger is a
+ * flagged field now holding a value -- not a change of any kind to any field,
+ * and not a change to some other field. Filling one of two blanks is partial
+ * progress: the flag on that control goes, the flag on the other stays, and the
+ * banner re-derives to name what is *still* missing. Clearing a filled field
+ * leaves the form more invalid, so nothing is withdrawn at all.
+ *
+ * **The flags outlive the banner.** A flag says "this control is empty and will
+ * block the next submit", which stays true under a server's answer or a screen's
+ * own verdict -- so the flags keep narrowing underneath either. What it may not
+ * do is outlive the emptiness it describes. The banner is different: it is
+ * rewritten here only while the claim's ``ownsBanner`` says the words in it are
+ * the guard's, so no retraction can ever speak over someone else's message.
  */
 function useRetractOnEdit(
   required: readonly RequiredField[],
-  guardedRef: RefObject<ReadonlySet<string> | null>,
+  claimRef: RefObject<GuardClaim>,
   setMissing: Dispatch<SetStateAction<ReadonlySet<string>>>,
   setError: Dispatch<SetStateAction<string | null>>,
 ): void {
-  const flagged = guardedRef.current;
-  const addressed =
-    flagged !== null &&
-    required.some((field) => flagged.has(field.label) && field.submitted.length > 0);
+  const { flagged } = claimRef.current;
+  const stillMissing =
+    flagged === null
+      ? []
+      : required
+          .filter((field) => flagged.has(field.label) && field.submitted.length === 0)
+          .map((field) => field.label);
+  const satisfiedSome = flagged !== null && stillMissing.length < flagged.size;
+  const stillMissingKey = stillMissing.join('|');
+
+  // The list itself travels by ref, the way ``cfgRef`` carries the config: the
+  // key is what decides whether this render's list differs from the last one,
+  // and the ref hands the effect the array that key was derived from.
+  const pendingRef = useRef<readonly string[]>(stillMissing);
+  pendingRef.current = stillMissing;
+
   useEffect(() => {
-    if (!addressed) return;
-    guardedRef.current = null;
-    setMissing(NO_MISSING_FIELDS);
-    setError(null);
-  }, [addressed, guardedRef, setMissing, setError]);
+    if (!satisfiedSome) return;
+    const pending = pendingRef.current;
+    const { ownsBanner } = claimRef.current;
+    const remaining = pending.length === 0 ? null : new Set(pending);
+    claimRef.current = { flagged: remaining, ownsBanner: ownsBanner && remaining !== null };
+    setMissing(remaining ?? NO_MISSING_FIELDS);
+    if (ownsBanner) {
+      // ``requiredFieldMessage`` answers null for an empty list, which is the
+      // same "no banner" the screens already render for a null error.
+      setError(requiredFieldMessage(pending));
+    }
+  }, [satisfiedSome, stillMissingKey, claimRef, setMissing, setError]);
 }
 
 export function useAuthSubmit(
@@ -119,19 +153,15 @@ export function useAuthSubmit(
   cfgRef.current = { fn, fallback, required, statusOverrides };
 
   const inFlightRef = useRef(false);
-  // The labels the guard flagged, or null when the banner holds anything else.
-  // Non-null is the only state in which a retraction is possible at all.
-  const guardedRef = useRef<ReadonlySet<string> | null>(null);
+  const claimRef = useRef<GuardClaim>(NO_CLAIM);
 
   // A caller writing the banner itself -- ``useSignupForm``'s password verdict,
-  // ``ResetPasswordScreen``'s pair check -- takes the banner back from the
-  // guard. The per-field flags go with it: they exist to explain the guard's
-  // message, and a control still announcing "Required" under a message about
-  // something else is telling a screen-reader user a field is empty when they
-  // have already filled it.
+  // ``ResetPasswordScreen``'s pair check -- takes the banner, and only the
+  // banner. The per-field flags stay: they describe controls that are still
+  // empty and will still refuse the next submit, which is true no matter whose
+  // message is on screen. They narrow on their own as the user fills them.
   const setError = useCallback<Dispatch<SetStateAction<string | null>>>((value) => {
-    guardedRef.current = null;
-    setMissing(NO_MISSING_FIELDS);
+    claimRef.current = { ...claimRef.current, ownsBanner: false };
     setErrorState(value);
   }, []);
 
@@ -146,12 +176,12 @@ export function useAuthSubmit(
       // never flickers a busy button, and a repeat press re-sets the identical
       // string, which React bails out of rather than re-rendering.
       const flagged: ReadonlySet<string> = new Set(blocked);
-      guardedRef.current = flagged;
+      claimRef.current = { flagged, ownsBanner: true };
       setMissing(flagged);
       setErrorState(requiredFieldMessage(blocked));
       return;
     }
-    guardedRef.current = null;
+    claimRef.current = NO_CLAIM;
     setMissing(NO_MISSING_FIELDS);
     inFlightRef.current = true;
     setErrorState(null);
@@ -167,7 +197,7 @@ export function useAuthSubmit(
     }
   }, []);
 
-  useRetractOnEdit(required, guardedRef, setMissing, setErrorState);
+  useRetractOnEdit(required, claimRef, setMissing, setErrorState);
 
   return { submitting, error, setError, run, missing };
 }

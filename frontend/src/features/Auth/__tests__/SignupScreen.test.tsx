@@ -551,15 +551,19 @@ describe('SignupScreen required email', () => {
     expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent('Enter your email to continue.');
     expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
 
-    // 2. The form's own password verdict takes the banner over.
+    // 2. The form's own password verdict takes the banner over. The email is
+    //    still '' and will still block the next submit, so its hint stays: a
+    //    flag describes the control, not whose message is in the banner.
     fireEvent.changeText(screen.getByPlaceholderText('Confirm Password'), 'different'); // pragma: allowlist secret
     submit(screen);
     await screen.findByText(/passwords don't match/i);
-    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBeUndefined();
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
 
-    // 3. Filling the field the guard had flagged must not retract that verdict.
+    // 3. Filling the flagged field drops its hint -- and must not retract the
+    //    verdict, which belongs to the form rather than to the guard.
     fireEvent.changeText(screen.getByPlaceholderText('Email'), 'other@test.com');
 
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBeUndefined();
     expect(screen.getByTestId(BANNER_ID)).toHaveTextContent(/passwords don't match/i);
     expect(mockSignup).not.toHaveBeenCalled();
   });

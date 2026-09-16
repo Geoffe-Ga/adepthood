@@ -226,6 +226,13 @@ describe('useAuthSubmit required-field guard', () => {
   // This drives the machinery first (the guard fires and is retracted, proving
   // the effect is live), and only then checks that a server error survives the
   // one edit that DOES move the trigger: emptying the field again.
+  //
+  // Honest about its own reach: this is a SCENARIO guard, not a discriminating
+  // one. It reads the same green against several plausible mutants, because by
+  // the time the server answers the guard no longer owns the banner. The tests
+  // that discriminate the ownership rule are "keeps a screen's own error while
+  // the flags narrow underneath it" and "keeps the guard message when a
+  // different field is emptied"; this one pins the user-visible sequence.
   it('leaves a server error alone when a field is emptied', async () => {
     const fn = jest.fn(() => Promise.reject(new Error('server said no')));
     const { result, rerender } = renderHook(
@@ -290,17 +297,21 @@ describe('useAuthSubmit required-field guard', () => {
     expect([...result.current.missing]).toEqual([PASSWORD]);
   });
 
-  // F2: once a screen writes the banner itself, the per-field flags it drives
-  // must go with it -- otherwise a control keeps announcing "Required" while
-  // holding a value the user has since typed.
-  it('drops the missing-field flags when the screen writes its own error', async () => {
+  // Rewritten: the first version cleared the flags the instant a screen wrote
+  // the banner, which is the wrong half of the rule. A flag says "this control
+  // is empty and will block the next submit"; that is still true under someone
+  // else's message, and dropping it hides a real obstacle from a screen-reader
+  // user. What must not happen is a flag OUTLIVING the emptiness it describes.
+  it('keeps a flag on a still-blank field under a screen error, and drops it on fill', () => {
     const fn = jest.fn(() => Promise.resolve());
-    const { result } = renderHook(() =>
-      useAuthSubmit(fn, { fallback: FALLBACK, required: BLANK_EMAIL }),
+    const { result, rerender } = renderHook(
+      ({ email }: { email: string }) =>
+        useAuthSubmit(fn, { fallback: FALLBACK, required: [{ label: EMAIL, submitted: email }] }),
+      { initialProps: { email: '' } },
     );
 
-    await act(async () => {
-      await result.current.run();
+    act(() => {
+      void result.current.run();
     });
     expect([...result.current.missing]).toEqual([EMAIL]);
 
@@ -308,8 +319,80 @@ describe('useAuthSubmit required-field guard', () => {
       result.current.setError('Those passwords do not match.');
     });
 
+    // The email is still '' -- the flag is describing something true.
     expect(result.current.error).toBe('Those passwords do not match.');
+    expect([...result.current.missing]).toEqual([EMAIL]);
+
+    act(() => {
+      rerender({ email: 'user@test.com' });
+    });
+
+    // Now it is no longer true, so it goes -- and the screen keeps its banner.
     expect([...result.current.missing]).toEqual([]);
+    expect(result.current.error).toBe('Those passwords do not match.');
+  });
+
+  // R3-F1: satisfying one of two flagged fields is partial progress. The banner
+  // must narrow to what is STILL missing rather than disappearing, and the other
+  // control must keep advertising itself.
+  it('narrows the message to what is still missing when one of two fields is filled', () => {
+    const fn = jest.fn(() => Promise.resolve());
+    const { result, rerender } = renderHook(
+      ({ email }: { email: string }) =>
+        useAuthSubmit(fn, {
+          fallback: FALLBACK,
+          required: [
+            { label: EMAIL, submitted: email },
+            { label: PASSWORD, submitted: '' },
+          ],
+        }),
+      { initialProps: { email: '' } },
+    );
+
+    act(() => {
+      void result.current.run();
+    });
+    expect(result.current.error).toBe('Enter your email and password to continue.');
+    expect([...result.current.missing]).toEqual([EMAIL, PASSWORD]);
+
+    act(() => {
+      rerender({ email: 'user@test.com' });
+    });
+
+    expect(result.current.error).toBe('Enter your password to continue.');
+    expect([...result.current.missing]).toEqual([PASSWORD]);
+  });
+
+  // The discriminating pin on banner ownership: the flags narrow underneath a
+  // screen's own message, and the narrowing must not rewrite that message.
+  it("keeps a screen's own error while the flags narrow underneath it", () => {
+    const fn = jest.fn(() => Promise.resolve());
+    const { result, rerender } = renderHook(
+      ({ email }: { email: string }) =>
+        useAuthSubmit(fn, {
+          fallback: FALLBACK,
+          required: [
+            { label: EMAIL, submitted: email },
+            { label: PASSWORD, submitted: '' },
+          ],
+        }),
+      { initialProps: { email: '' } },
+    );
+
+    act(() => {
+      void result.current.run();
+    });
+    act(() => {
+      result.current.setError('Those passwords do not match.');
+    });
+    expect([...result.current.missing]).toEqual([EMAIL, PASSWORD]);
+
+    act(() => {
+      rerender({ email: 'user@test.com' });
+    });
+
+    expect([...result.current.missing]).toEqual([PASSWORD]);
+    expect(result.current.error).toBe('Those passwords do not match.');
   });
 
   it('renders field-validation copy for a 422 rather than the screen fallback', async () => {

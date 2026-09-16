@@ -284,6 +284,30 @@ describe('LoginScreen required fields (#2821)', () => {
     expect(getByText('Enter your password to continue.')).toBeTruthy();
   });
 
+  // R3-F1: satisfying ONE of two flagged fields is partial progress. The banner
+  // must narrow to what is still missing rather than vanishing, and the control
+  // that is still empty must keep advertising itself. Vanishing here told the
+  // user the form was fixed when a second submit would refuse it again.
+  it('narrows to the field still missing when only one of two is filled', async () => {
+    const { getByPlaceholderText, getByText, getByTestId, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.press(getByText('Log In'));
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      'Enter your email and password to continue.',
+    );
+    expect(hintOf(getByPlaceholderText('Email'))).toBe('Required.');
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+
+    expect(getByTestId(ERROR_ID)).toHaveTextContent('Enter your password to continue.');
+    expect(hintOf(getByPlaceholderText('Email'))).toBeUndefined();
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+    expect(mockLogin).not.toHaveBeenCalled();
+  });
+
   it('retracts the message as soon as the offending field is edited', async () => {
     const { getByPlaceholderText, getByText, findByTestId, queryByTestId } = render(
       <LoginScreen navigation={mockNavigation} />,
