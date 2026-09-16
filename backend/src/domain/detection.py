@@ -56,7 +56,8 @@ class DetectionCandidate:
     # The unit this target's goal is denominated in ("oz", "minutes", "units"),
     # or ``None`` for a practice, which tracks none. It is shown to the model so
     # a stated amount can be checked against what the goal actually counts, and
-    # it is what makes a practice structurally incapable of carrying an amount.
+    # it is what makes a practice structurally incapable of carrying an AMOUNT
+    # (the day is decided without the unit, so the router drops that one).
     # Defaulted so every existing construction and test keeps compiling.
     target_unit: str | None = None
 

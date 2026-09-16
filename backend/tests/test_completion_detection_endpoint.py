@@ -20,7 +20,9 @@ from models.goal import Goal
 from models.habit import Habit
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
+from models.practice import Practice
 from models.user import User
+from models.user_practice import UserPractice
 from services import marginalia as marginalia_service
 from services.botmason import (
     STUB_MODEL_NAME,
@@ -31,6 +33,11 @@ from services.botmason import (
 
 _BODY = "I meditated by the river and the willow bent without breaking."
 _NOTE = {"kind": "theme", "quote": "the willow bent without breaking", "note": "It holds."}
+
+# Far enough back that the entry's own "yesterday" cannot be mistaken for the
+# clock's, and well inside the backfill window so the clamp is not what is
+# being measured.
+_BACKDATE_DAYS = 5
 
 
 async def _signup(client: AsyncClient, username: str = "det") -> dict[str, str]:
@@ -770,3 +777,110 @@ async def test_a_default_seeded_habit_is_still_found_over_the_real_stub_provider
     body = resp.json()
     assert body["checked"] is True
     assert [item["anchor_text"] for item in body["items"]] == ["completed Morning walk"]
+
+
+@pytest.mark.asyncio
+async def test_a_backdated_entrys_yesterday_is_the_day_before_that_entry(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clock's ``entry_day`` must come from the ENTRY, not from now.
+
+    This is the whole point of the day feature: a writer catching up on a week
+    means the day their entry describes, not the day they typed it. The two
+    coincide for every same-day entry, so only a backdated one can tell the
+    wiring in ``_detection_inputs`` from a hard-coded ``today``.
+    """
+    _fake(
+        monkeypatch,
+        hits=[
+            {
+                "index": 0,
+                "quote": "I meditated",
+                "amount": 3,
+                "unit": "times",
+                "when": "yesterday",
+            }
+        ],
+    )
+    headers = await _signup(async_client, "backdated")
+    await _seed_habit_with_unit(
+        db_session, await _user_id(db_session, "backdated"), name="Meditation", target_unit="units"
+    )
+    entry_day = today_in_tz("UTC") - timedelta(days=_BACKDATE_DAYS)
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "I meditated by the river.", "entry_date": entry_day.isoformat()},
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.CREATED
+    entry_id = int(created.json()["id"])
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    completed_on = resp.json()["items"][0]["completed_on"]
+    assert completed_on == (entry_day - timedelta(days=1)).isoformat()
+    # Stated as its own assertion so the failure names the confusion directly.
+    assert completed_on != (today_in_tz("UTC") - timedelta(days=1)).isoformat()
+    assert await _stored_facts(db_session) == [(3.0, entry_day - timedelta(days=1))]
+
+
+@pytest.mark.asyncio
+async def test_a_practice_hit_never_carries_a_day_and_never_500s(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A practice hit stating a day is stored without one, not rejected by the DB.
+
+    ``normalise_unit`` refuses every practice amount because a practice tracks
+    no unit -- but the DAY is resolved without consulting the unit at all, so
+    detection really does hand a practice hit a ``completed_on``. The
+    ``is_habit`` guard in ``_suggestion_from_hit`` is the only thing between
+    that value and ``ck_completion_suggestion_facts_habit_only``, which would
+    raise inside the settle commit and turn a best-effort extra into a 500 on
+    the writer's reflection.
+    """
+    _fake(
+        monkeypatch,
+        hits=[
+            {
+                "index": 0,
+                "quote": "I meditated",
+                "amount": 20,
+                "unit": "minutes",
+                "when": "yesterday",
+            }
+        ],
+    )
+    headers = await _signup(async_client, "practicefacts")
+    user_id = await _user_id(db_session, "practicefacts")
+    practice = Practice(
+        stage_number=1,
+        name="Meditation",
+        description="A sit.",
+        instructions="Sit and breathe.",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    db_session.add(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
+    db_session.add(
+        UserPractice(
+            user_id=user_id,
+            practice_id=practice.id,
+            stage_number=1,
+            start_date=date(2025, 1, 1),
+        )
+    )
+    await db_session.commit()
+    entry_id = await _create_entry(async_client, headers, body="I meditated by the river.")
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK  # never 500
+    item = resp.json()["items"][0]
+    assert item["target_type"] == "practice"
+    assert item["completed_units"] is None
+    assert item["completed_on"] is None
+    assert await _stored_facts(db_session) == [(None, None)]

@@ -122,9 +122,11 @@ def normalise_unit(written: str, target_unit: str | None) -> str | None:
     """The canonical unit both tokens denominate, or ``None`` if they disagree.
 
     Case-insensitive and allowlist-only on both sides. ``None`` for a
-    ``target_unit`` of ``None`` is what makes practices structurally
-    fact-free: a practice candidate tracks no unit, so no amount the model
-    states about one can ever be believed.
+    ``target_unit`` of ``None`` is what makes a practice structurally
+    AMOUNT-free: a practice tracks no unit, so no amount the model states
+    about one can ever be believed. It says nothing about the day, which
+    :func:`resolve_when` decides without consulting the unit -- dropping that
+    is the router's job, under the habit-only CHECK.
     """
     if target_unit is None:
         return None

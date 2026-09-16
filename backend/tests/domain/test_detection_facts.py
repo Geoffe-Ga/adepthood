@@ -78,7 +78,11 @@ class TestNormaliseUnit:
         assert normalise_unit(written, tracked) is None
 
     def test_a_target_unit_of_none_is_none(self) -> None:
-        """What makes practices structurally fact-free: they track no unit."""
+        """What makes a practice structurally AMOUNT-free: it tracks no unit.
+
+        Not day-free: :func:`resolve_when` never consults the unit, which is
+        why the router drops a practice hit's day explicitly.
+        """
         assert normalise_unit("minutes", None) is None
 
 

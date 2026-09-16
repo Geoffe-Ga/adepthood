@@ -100,11 +100,17 @@ def _facts_positive_check() -> CheckConstraint:
 def _facts_habit_only_check() -> CheckConstraint:
     """Only a habit suggestion may carry facts.
 
-    Practice candidates carry no ``target_unit``, so the resolver attaches no
-    amount to a practice hit, and ``_accept_pending_practice`` backdates
-    nothing and reads neither column. A fact on a practice row would be a
-    value captured and then ignored. Reversal path, when practice sessions
-    become backdatable: relax this one CHECK in one migration.
+    ``_accept_pending_practice`` backdates nothing and reads neither column,
+    so a fact on a practice row would be a value captured and then ignored.
+
+    Only the AMOUNT is self-limiting: a practice candidate tracks no unit, so
+    ``normalise_unit`` refuses every amount stated about one. The DAY is not --
+    it is resolved without consulting the unit -- so detection does hand a
+    practice hit a ``completed_on``, and the router drops it explicitly. This
+    CHECK is what keeps that drop from being optional.
+
+    Reversal path, when practice sessions become backdatable: relax this one
+    CHECK in one migration.
     """
     return CheckConstraint(
         "target_type = 'habit' OR (completed_units IS NULL AND completed_on IS NULL)",

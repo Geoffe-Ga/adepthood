@@ -4446,9 +4446,34 @@ def test_completion_suggestion_facts_migration_round_trip_on_sqlite(
     assert written["completed_units"] == 64.0
     assert str(written["completed_on"]) == "2026-09-11"
 
-    # The positivity CHECK bites in the database, not only in the ORM.
+    # Both CHECKs bite in the database, not only in the ORM. Asserting the
+    # names above proves only that something with those names exists; a CHECK
+    # whose predicate was dropped in the rebuild would pass that and nothing
+    # else in this suite would notice.
     with pytest.raises(IntegrityError):
         _execute_on(db_url, "UPDATE completionsuggestion SET completed_units = 0 WHERE id = 1", {})
+    with pytest.raises(IntegrityError):
+        _execute_on(db_url, "UPDATE completionsuggestion SET completed_units = -1 WHERE id = 1", {})
+    _execute_on(
+        db_url,
+        "INSERT INTO completionsuggestion"
+        " (id, journal_entry_id, user_id, target_type, user_practice_id, label,"
+        "  anchor_start, anchor_end, anchor_text, status, created_at, updated_at)"
+        " VALUES (2, 1, 1, 'practice', 1, :label, 0, 4, :anchor, 'pending',"
+        "         '2026-09-01 00:00:00', '2026-09-01 00:00:00')",
+        {"label": _SUGGESTION_LABEL_CIPHERTEXT, "anchor": _SUGGESTION_ANCHOR_CIPHERTEXT},
+    )
+    # Statements spelled out rather than built from a loop variable: a literal
+    # is what the CHECK is being asked about, and it keeps the SQL out of an
+    # f-string.
+    with pytest.raises(IntegrityError):
+        _execute_on(
+            db_url,
+            "UPDATE completionsuggestion SET completed_on = '2026-09-11' WHERE id = 2",
+            {},
+        )
+    with pytest.raises(IntegrityError):
+        _execute_on(db_url, "UPDATE completionsuggestion SET completed_units = 5 WHERE id = 2", {})
 
     command.downgrade(cfg, _SUGGESTION_FACTS_BASE_REVISION)
     cols_after = _columns_of(db_url, _SUGGESTION_TABLE)

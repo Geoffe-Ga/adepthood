@@ -164,6 +164,33 @@ def test_the_stub_reports_a_stated_quantity_and_day() -> None:
     ]
 
 
+def test_the_stub_reads_facts_from_the_attesting_sentence_only() -> None:
+    """A quantity in a NEIGHBOURING sentence is not this hit's amount.
+
+    The entry says the writer drank 64 oz of something else and then that they
+    completed the walk. Reading the whole body would attach the 64 to the walk
+    -- a fact the writer never stated about it, and one the accept path would
+    log against their goal.
+    """
+    prompt = build_detection_prompt(
+        "I drank 64 oz of water first. Then I completed Morning walk.",
+        [
+            DetectionCandidate(
+                index=0,
+                target_type="habit",
+                target_id=7,
+                name="Morning walk",
+                target_unit="units",
+            )
+        ],
+    )
+
+    completion = canned_completion(prompt)
+
+    assert completion is not None
+    assert json.loads(completion)["hits"] == [{"index": 0, "quote": "completed Morning walk"}]
+
+
 def test_canned_completion_detects_an_explicitly_completed_candidate() -> None:
     """The default provider makes the habit-offer journey runnable without a network."""
     prompt = build_detection_prompt(
