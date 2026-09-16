@@ -32,6 +32,7 @@ import type {
   PromoteQuoteSpan,
   PromotedQuote,
   PromotedQuoteSummary,
+  ReflectionAnchorStatus,
   ReflectionLevel,
   ReflectionSourceItem,
   ReflectionSourcesResponse,
@@ -62,6 +63,13 @@ export interface UseReflectionModeResult {
    * client derived, which could disagree with the feed beneath it.
    */
   window: ReviewWindow | undefined;
+  /**
+   * Why the server drew that window, when it said. ``'unrecorded'`` names a past
+   * cycle whose anchor beginning again destroyed, so its period cannot be
+   * rebuilt; the panel says so rather than implying the weeks were empty.
+   * Undefined against a server that predates the field.
+   */
+  anchorStatus: ReflectionAnchorStatus | undefined;
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
   /**
@@ -138,6 +146,7 @@ interface SourcesFeed {
   sources: ReflectionSourceItem[];
   setSources: Dispatch<SetStateAction<ReflectionSourceItem[]>>;
   window: ReviewWindow | undefined;
+  anchorStatus: ReflectionAnchorStatus | undefined;
 }
 
 /**
@@ -158,9 +167,11 @@ function useSourcesFeed(
 ): SourcesFeed {
   const [sources, setSources] = useState<ReflectionSourceItem[]>([]);
   const [window, setWindow] = useState<ReviewWindow | undefined>(undefined);
+  const [anchorStatus, setAnchorStatus] = useState<ReflectionAnchorStatus | undefined>(undefined);
   useEffect(() => {
     setSources([]);
     setWindow(undefined);
+    setAnchorStatus(undefined);
     if (reflectionLevel == null || reflectionScopeKey == null) return undefined;
     let alive = true;
     void reflections
@@ -169,6 +180,7 @@ function useSourcesFeed(
         if (!alive) return;
         setSources(result.items);
         setWindow(declaredWindow(result));
+        setAnchorStatus(result.anchor_status);
       })
       .catch(() => {
         // The composer works without the feed; a fetch failure just hides it.
@@ -177,7 +189,7 @@ function useSourcesFeed(
       alive = false;
     };
   }, [reflectionLevel, reflectionScopeKey]);
-  return { sources, setSources, window };
+  return { sources, setSources, window, anchorStatus };
 }
 
 /**
@@ -309,7 +321,10 @@ export function useReflectionMode({
   flush,
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
-  const { sources, setSources, window } = useSourcesFeed(reflectionLevel, reflectionScopeKey);
+  const { sources, setSources, window, anchorStatus } = useSourcesFeed(
+    reflectionLevel,
+    reflectionScopeKey,
+  );
   const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
     bodyRef,
     onChangeBody,
@@ -321,6 +336,7 @@ export function useReflectionMode({
     active,
     sources,
     window,
+    anchorStatus,
     inclusionHint,
     foldingIn,
     onBodySelectionChange,

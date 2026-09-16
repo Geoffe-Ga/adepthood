@@ -33,7 +33,12 @@ import {
   type ReviewWindow,
 } from './reflectionCopy';
 
-import type { PromoteQuoteSpan, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type {
+  PromoteQuoteSpan,
+  PromotedQuoteSummary,
+  ReflectionAnchorStatus,
+  ReflectionSourceItem,
+} from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -64,8 +69,32 @@ const INCLUDED_ROW_OPACITY = 0.5;
 const PROMOTE_FAILURE_HINT =
   'That selection didn’t quite take — you can try again whenever you like.';
 
+/** The period is known and simply held nothing. A plain, unalarming fact. */
+const EMPTY_FEED_COPY = 'Nothing was written in this period.';
+
+/**
+ * The period itself is gone. Beginning again used to overwrite the calendar
+ * anchor of the cycle being left behind, so for a lap closed before that was
+ * fixed there is no way to know which days this review covered. The copy is
+ * careful to separate the two losses: the writing is safe, only the mapping
+ * from this review back to its week is not, and no date is invented to paper
+ * over it.
+ */
+const UNRECORDED_PERIOD_COPY =
+  'The dates this review covered cannot be reconstructed — that was lost when you began ' +
+  'again. Everything you wrote then is still in your journal, just not gathered here.';
+
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
+  /**
+   * Why the server drew the window it drew, when it is worth saying. Only
+   * ``'unrecorded'`` changes what the reader sees: it names a past cycle whose
+   * calendar anchor was destroyed by beginning again, whose period therefore
+   * cannot be rebuilt. Every other value — and ``undefined``, from a server that
+   * predates the field — leaves an empty feed reading as the ordinary "nothing
+   * was written then", which is the safer thing to say when unsure.
+   */
+  anchorStatus?: ReflectionAnchorStatus;
   /**
    * The period this review covers, as the server reported it on the sources
    * response. Absent when the server declared none (a caller with no program
@@ -484,10 +513,35 @@ function SourcesHeading({
   );
 }
 
+/**
+ * What stands where the feed would be when there is no feed.
+ *
+ * Two different silences, told apart on purpose. "Nothing was written in this
+ * period" is a fact about the reader's own week. "These dates cannot be
+ * reconstructed" is a fact about the app, and collapsing the second into the
+ * first would quietly tell someone they wrote nothing during a stretch they may
+ * well have written through every day of.
+ */
+function EmptyFeed({ anchorStatus }: { anchorStatus?: ReflectionAnchorStatus }): React.JSX.Element {
+  if (anchorStatus === 'unrecorded') {
+    return (
+      <Text style={styles.emptyCopy} testID="reflection-sources-unrecorded">
+        {UNRECORDED_PERIOD_COPY}
+      </Text>
+    );
+  }
+  return (
+    <Text style={styles.emptyCopy} testID="reflection-sources-empty">
+      {EMPTY_FEED_COPY}
+    </Text>
+  );
+}
+
 function SourcesContent({
   items,
   window: reviewWindow,
   timeZone,
+  anchorStatus,
   onInsertQuote,
   onPromoteSpan,
   onClose,
@@ -515,7 +569,11 @@ function SourcesContent({
       )}
       <SourcesHeading window={reviewWindow} timeZone={timeZone} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
-      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
+      {feed.length === 0 ? (
+        <EmptyFeed anchorStatus={anchorStatus} />
+      ) : (
+        <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
+      )}
     </ScrollView>
   );
 }
@@ -631,6 +689,11 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: ink.soft,
     paddingTop: spacing(0.25),
+  },
+  emptyCopy: {
+    ...editorialType.note,
+    color: ink.soft,
+    paddingTop: spacing(1),
   },
   rowDate: {
     ...editorialType.caption,

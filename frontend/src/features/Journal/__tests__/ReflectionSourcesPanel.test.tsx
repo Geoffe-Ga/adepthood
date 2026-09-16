@@ -340,6 +340,53 @@ describe('ReflectionSourcesPanel -- dim reconciles with a failed fold-in', () =>
   });
 });
 
+describe('ReflectionSourcesPanel -- the two empty feeds', () => {
+  it('says nothing was written when the period is known and simply held no entries', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[]}
+        onInsertQuote={jest.fn()}
+        window={{ start: '2026-06-01T04:00:00Z', end: '2026-06-08T04:00:00Z' }}
+        anchorStatus="recorded"
+      />,
+    );
+    expect(getByTestId('reflection-sources-empty').props.children).toMatch(/Nothing was written/i);
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
+  });
+
+  it('falls back to the plain empty copy when the server named no anchor status', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[]} onInsertQuote={jest.fn()} />,
+    );
+    expect(getByTestId('reflection-sources-empty').props.children).toMatch(/Nothing was written/i);
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
+  });
+
+  it('says the period cannot be reconstructed when that cycle lost its anchor', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[]} onInsertQuote={jest.fn()} anchorStatus="unrecorded" />,
+    );
+    const copy = getByTestId('reflection-sources-unrecorded').props.children;
+    expect(copy).toMatch(/cannot be reconstructed/i);
+    // Warm and specific: it must say the writing itself is safe, and it must not
+    // pretend the period was simply empty.
+    expect(copy).toMatch(/still in your journal/i);
+    expect(queryByTestId('reflection-sources-empty')).toBeNull();
+  });
+
+  it('shows no empty copy at all once the feed has something in it', () => {
+    const { queryByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[item({ id: 3 })]}
+        onInsertQuote={jest.fn()}
+        anchorStatus="unrecorded"
+      />,
+    );
+    expect(queryByTestId('reflection-sources-empty')).toBeNull();
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
+  });
+});
+
 describe('ReflectionSourcesPanel -- the review period', () => {
   const window = { start: '2026-06-01T04:00:00Z', end: '2026-06-08T04:00:00Z' };
 
@@ -393,6 +440,23 @@ describe('ReflectionSourcesPanel -- the review period', () => {
     );
     expect(getByTestId('entry-source-7')).toBeTruthy();
     expect(queryByTestId('reflection-sources-period')).toBeNull();
+  });
+
+  it('names a clamped past-cycle period correctly, because both bounds are midnights', () => {
+    // A cycle abandoned mid-week: the server clamped the end to the LOCAL
+    // midnight of the loop day (2026-06-04), so the label must read through
+    // Jun 3. A raw-instant clamp would have handed over a mid-morning bound and
+    // the HALF_DAY_MS step back would name the wrong final day.
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[item()]}
+        onInsertQuote={jest.fn()}
+        window={{ start: '2026-06-01T00:00:00Z', end: '2026-06-04T00:00:00Z' }}
+        timeZone="UTC"
+        anchorStatus="recorded"
+      />,
+    );
+    expect(getByTestId('reflection-sources-period').props.children).toMatch(/Jun 1.*Jun 3, 2026/);
   });
 
   it("keeps a source's date visible even when it has a title", () => {

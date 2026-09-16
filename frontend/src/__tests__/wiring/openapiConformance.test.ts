@@ -137,6 +137,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
   },
 
   // --- No counterpart on the wire -----------------------------------------
+  anchorStatusSchema: {
+    component: null,
+    reason:
+      'ReflectionSourcesResponse types anchor_status as a bare string; the client narrows it to the four causes the server actually sends so a drifted value is caught at the boundary instead of silently reading as the ordinary empty feed.',
+  },
   careKindSchema: {
     component: null,
     reason:
@@ -215,6 +220,8 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
         'Optional so the panel degrades to no period label rather than failing the whole feed: the window is also null for a caller with no program anchor, and an unparseable bound is caught to null for the same reason. The material the writer came to reread matters more than the dates above it.',
       window_end:
         'Optional for the same reason as window_start; the pair is read together or not at all.',
+      anchor_status:
+        'Optional so a feed from a server that predates the field still validates, and so a value outside the enum is caught to undefined rather than failing the whole feed. Undefined reads as the ordinary empty feed, which is the safer thing to say when the reason for a missing window is unknown.',
     },
   },
 };
