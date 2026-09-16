@@ -4,6 +4,7 @@ import React from 'react';
 
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
+import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
@@ -51,6 +52,8 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
+  /** The shelf of expanded margin notes. No params: it is a place, not a query. */
+  VoiceDrafts: undefined;
   JournalPhotograph:
     | {
         /**
@@ -147,6 +150,11 @@ const JournalScreens = (): React.JSX.Element => (
       name="JournalPhotograph"
       component={JournalPhotographScreen}
       options={{ title: 'Photograph journal' }}
+    />
+    <Stack.Screen
+      name="VoiceDrafts"
+      component={VoiceDraftsShelfScreen}
+      options={{ title: 'Voice drafts' }}
     />
   </>
 );

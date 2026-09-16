@@ -3017,6 +3017,7 @@ interface EntryScreenDrawer {
   onSelectEntry: (_id: number) => void;
   onNewEntry: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  onOpenVoiceDrafts: () => void;
 }
 
 /**
@@ -3041,7 +3042,13 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
     (destination: CorpusDestination) => navigation.navigate(destination),
     [navigation],
   );
-  return { drawer, onSelectEntry, onNewEntry, onOpenCorpus };
+  // The shelf sits beside the entry rather than above it, so it navigates in
+  // place like the corpus door: pushing would stack a second Journal history.
+  const onOpenVoiceDrafts = useCallback(() => {
+    navigation.navigate('VoiceDrafts');
+    drawer.close();
+  }, [navigation, drawer]);
+  return { drawer, onSelectEntry, onNewEntry, onOpenCorpus, onOpenVoiceDrafts };
 }
 
 /** A modal owned by this entry must never outlive the route's foreground turn. */
@@ -3128,6 +3135,7 @@ function EntryOverlays({
         onSelectEntry={entryDrawer.onSelectEntry}
         onNewEntry={entryDrawer.onNewEntry}
         onOpenCorpus={entryDrawer.onOpenCorpus}
+        onOpenVoiceDrafts={entryDrawer.onOpenVoiceDrafts}
       />
     </>
   );

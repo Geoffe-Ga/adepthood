@@ -721,6 +721,7 @@ interface ShelfNav {
   openPrompt: (_prompt: StagePromptDetail) => void;
   openWithPrompt: () => void;
   openCorpus: (_destination: CorpusDestination) => void;
+  openVoiceDrafts: () => void;
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
@@ -741,6 +742,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     (destination: CorpusDestination) => navigation.navigate(destination),
     [navigation],
   );
+  const openVoiceDrafts = useCallback(() => navigation.navigate('VoiceDrafts'), [navigation]);
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
@@ -771,6 +773,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     openPrompt,
     openWithPrompt,
     openCorpus,
+    openVoiceDrafts,
   };
 }
 
@@ -788,6 +791,7 @@ interface ShelfDrawer {
   onNewEntry: () => void;
   onPhotograph: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  onOpenVoiceDrafts: () => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -809,7 +813,18 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openPhotograph();
     drawer.close();
   }, [nav, drawer]);
-  return { drawer, onSelectEntry, onNewEntry, onPhotograph, onOpenCorpus: nav.openCorpus };
+  const onOpenVoiceDrafts = useCallback(() => {
+    nav.openVoiceDrafts();
+    drawer.close();
+  }, [nav, drawer]);
+  return {
+    drawer,
+    onSelectEntry,
+    onNewEntry,
+    onPhotograph,
+    onOpenCorpus: nav.openCorpus,
+    onOpenVoiceDrafts,
+  };
 }
 
 /** A shelf row's renderer, bound to the callbacks and clock the screen holds. */
@@ -934,6 +949,7 @@ function JournalShelfScreen(): React.JSX.Element {
         onNewEntry={shelfDrawer.onNewEntry}
         onPhotograph={shelfDrawer.onPhotograph}
         onOpenCorpus={shelfDrawer.onOpenCorpus}
+        onOpenVoiceDrafts={shelfDrawer.onOpenVoiceDrafts}
       />
       <DeleteEntryDialog
         visible={deletion.pending !== null}

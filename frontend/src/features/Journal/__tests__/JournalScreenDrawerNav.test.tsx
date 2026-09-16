@@ -58,6 +58,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVoiceDrafts={jest.fn()}
       />,
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
@@ -81,6 +82,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVoiceDrafts={jest.fn()}
       />,
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
@@ -96,6 +98,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVoiceDrafts={jest.fn()}
       />,
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
@@ -115,6 +118,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVoiceDrafts={jest.fn()}
       />,
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));

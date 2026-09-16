@@ -87,6 +87,7 @@ function renderDrawer(props: Partial<DrawerHarnessProps> = {}) {
       onRowPress={jest.fn()}
       onNewEntry={jest.fn()}
       onOpenCorpus={jest.fn()}
+      onOpenVoiceDrafts={jest.fn()}
       corpusOpenState="idle"
       onLoadMore={jest.fn()}
       onRetry={jest.fn()}
@@ -262,6 +263,7 @@ function Harness(): React.JSX.Element {
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
           onOpenCorpus={() => undefined}
+          onOpenVoiceDrafts={() => undefined}
           corpusOpenState="idle"
           onLoadMore={loadMore}
           onRetry={retry}

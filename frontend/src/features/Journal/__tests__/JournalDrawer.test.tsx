@@ -7,7 +7,7 @@
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Camera, Library, SquarePen } from 'lucide-react-native';
+import { Camera, Library, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
@@ -66,13 +66,22 @@ interface DrawerHarness {
   onNewEntry?: () => void;
   onPhotograph?: () => void;
   onOpenCorpus?: () => void;
+  onOpenVoiceDrafts?: () => void;
   corpusOpenState?: 'idle' | 'pending' | 'error';
 }
 
+/** The harness's row callbacks: whatever the case supplied, else a fresh spy. */
+function drawerCallbacks(props: Partial<DrawerHarness>) {
+  return {
+    onRowPress: props.onRowPress ?? jest.fn(),
+    onNewEntry: props.onNewEntry ?? jest.fn(),
+    onOpenCorpus: props.onOpenCorpus ?? jest.fn(),
+    onOpenVoiceDrafts: props.onOpenVoiceDrafts ?? jest.fn(),
+  };
+}
+
 function renderDrawer(props: Partial<DrawerHarness> = {}) {
-  const onRowPress = props.onRowPress ?? jest.fn();
-  const onNewEntry = props.onNewEntry ?? jest.fn();
-  const onOpenCorpus = props.onOpenCorpus ?? jest.fn();
+  const { onRowPress, onNewEntry, onOpenCorpus, onOpenVoiceDrafts } = drawerCallbacks(props);
   const onLoadMore = jest.fn();
   const onRetry = jest.fn();
   const onConfirmBodySearch = jest.fn();
@@ -88,6 +97,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onNewEntry={onNewEntry}
       onPhotograph={props.onPhotograph}
       onOpenCorpus={onOpenCorpus}
+      onOpenVoiceDrafts={onOpenVoiceDrafts}
       corpusOpenState={props.corpusOpenState ?? 'idle'}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
@@ -99,6 +109,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
     onRowPress,
     onNewEntry,
     onOpenCorpus,
+    onOpenVoiceDrafts,
     onLoadMore,
     onRetry,
     onConfirmBodySearch,
@@ -271,6 +282,25 @@ describe('JournalDrawer (presentational)', () => {
     expect(onOpenCorpus).toHaveBeenCalledTimes(1);
   });
 
+  it('offers Voice drafts as a door, never as a count', () => {
+    // The shelf is retrieval, not an invitation (NORTH-STAR §3/§6): the row
+    // names the place and says nothing about how much is in it, because the
+    // drawer is where a badge would go if one were ever going to appear.
+    const onOpenVoiceDrafts = jest.fn();
+    const { getByRole, getByTestId } = renderDrawer({ items: [], onOpenVoiceDrafts });
+
+    const row = getByRole('button', { name: 'Voice drafts' });
+    expect(row).toBeTruthy();
+    fireEvent.press(getByTestId('journal-drawer-voice-drafts'));
+    expect(onOpenVoiceDrafts).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the Voice drafts row the same muted leading icon as its neighbours', () => {
+    const { getByTestId } = renderDrawer({ items: [] });
+    const icon = getByTestId('journal-drawer-voice-drafts').findByType(ScrollText);
+    expect(icon.props.color).toBe(ink.muted);
+  });
+
   it('fires onPhotograph when the Photograph row is pressed', () => {
     const onPhotograph = jest.fn();
     const { getByTestId } = renderDrawer({ items: [], onPhotograph });
@@ -301,6 +331,7 @@ function Harness(): React.JSX.Element {
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
           onOpenCorpus={() => undefined}
+          onOpenVoiceDrafts={() => undefined}
           corpusOpenState="idle"
           onLoadMore={loadMore}
           onRetry={retry}
