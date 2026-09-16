@@ -223,3 +223,21 @@ describe('ReauthSheet required fields', () => {
     await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('a@b.co', 'pw')); // pragma: allowlist secret
   });
 });
+
+describe('ReauthSheet fallback copy', () => {
+  it('never blames the connection for a failure it cannot classify', async () => {
+    // This suite stubs formatApiError to hand back ``err.message ?? fallback``,
+    // so a rejection with no message is the way to reach the fallback itself.
+    mockLogin.mockRejectedValueOnce({});
+    const { getByTestId, findByTestId, queryByText } = render(<ReauthSheet />);
+
+    fireEvent.changeText(getByTestId('reauth-email'), 'a@b.co');
+    fireEvent.changeText(getByTestId('reauth-password'), 'pw'); // pragma: allowlist secret
+    fireEvent.press(getByTestId('reauth-submit'));
+
+    expect(await findByTestId('reauth-error')).toHaveTextContent(
+      "We couldn't sign you back in. Wait a moment, then try once more.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
+  });
+});

@@ -220,24 +220,96 @@ describe('useAuthSubmit required-field guard', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves a server error alone when a field is edited', async () => {
+  // Rewritten: the previous version edited one filled address for another, so
+  // nothing about the retraction's trigger ever changed and the effect it
+  // claimed to pin never ran -- it stayed green with the gate removed entirely.
+  // This drives the machinery first (the guard fires and is retracted, proving
+  // the effect is live), and only then checks that a server error survives the
+  // one edit that DOES move the trigger: emptying the field again.
+  it('leaves a server error alone when a field is emptied', async () => {
     const fn = jest.fn(() => Promise.reject(new Error('server said no')));
     const { result, rerender } = renderHook(
       ({ email }: { email: string }) =>
         useAuthSubmit(fn, { fallback: FALLBACK, required: [{ label: EMAIL, submitted: email }] }),
+      { initialProps: { email: '' } },
+    );
+
+    // 1. The guard fires and is retracted, so the effect is demonstrably live.
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).toBe('Enter your email to continue.');
+    act(() => {
+      rerender({ email: 'user@test.com' });
+    });
+    expect(result.current.error).toBeNull();
+
+    // 2. A real call fails and the server's copy lands in the same banner.
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).toBe(FALLBACK);
+
+    // 3. The user clears the field to retype it. That is the edit the old
+    //    signature reacted to, and the server's answer must survive it.
+    act(() => {
+      rerender({ email: '' });
+    });
+
+    expect(result.current.error).toBe(FALLBACK);
+    expect([...result.current.missing]).toEqual([]);
+  });
+
+  // F1: the retraction must fire on a field being ADDRESSED, never on one being
+  // emptied. Emptying a filled field leaves the form more invalid, not less.
+  it('keeps the guard message when a different field is emptied', async () => {
+    const fn = jest.fn(() => Promise.resolve());
+    const { result, rerender } = renderHook(
+      ({ email }: { email: string }) =>
+        useAuthSubmit(fn, {
+          fallback: FALLBACK,
+          required: [
+            { label: EMAIL, submitted: email },
+            { label: PASSWORD, submitted: '' },
+          ],
+        }),
       { initialProps: { email: 'user@test.com' } },
     );
 
     await act(async () => {
       await result.current.run();
     });
-    expect(result.current.error).toBe(FALLBACK);
+    expect(result.current.error).toBe('Enter your password to continue.');
+    expect([...result.current.missing]).toEqual([PASSWORD]);
 
     act(() => {
-      rerender({ email: 'user2@test.com' });
+      rerender({ email: '' });
     });
 
-    expect(result.current.error).toBe(FALLBACK);
+    expect(result.current.error).toBe('Enter your password to continue.');
+    expect([...result.current.missing]).toEqual([PASSWORD]);
+  });
+
+  // F2: once a screen writes the banner itself, the per-field flags it drives
+  // must go with it -- otherwise a control keeps announcing "Required" while
+  // holding a value the user has since typed.
+  it('drops the missing-field flags when the screen writes its own error', async () => {
+    const fn = jest.fn(() => Promise.resolve());
+    const { result } = renderHook(() =>
+      useAuthSubmit(fn, { fallback: FALLBACK, required: BLANK_EMAIL }),
+    );
+
+    await act(async () => {
+      await result.current.run();
+    });
+    expect([...result.current.missing]).toEqual([EMAIL]);
+
+    act(() => {
+      result.current.setError('Those passwords do not match.');
+    });
+
+    expect(result.current.error).toBe('Those passwords do not match.');
+    expect([...result.current.missing]).toEqual([]);
   });
 
   it('renders field-validation copy for a 422 rather than the screen fallback', async () => {

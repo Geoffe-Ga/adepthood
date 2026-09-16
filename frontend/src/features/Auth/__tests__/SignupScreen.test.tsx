@@ -536,23 +536,32 @@ describe('SignupScreen required email', () => {
     expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent('Enter your email to continue.');
   });
 
-  // The password verdict is the form's own, not the guard's, so editing an
-  // unrelated field must not retract it.
-  it('keeps the password verdict when the email is edited', async () => {
+  // Rewritten: the previous version swapped one filled address for another, so
+  // the retraction's trigger never moved and the effect it named never ran --
+  // it stayed green with the guard's take-back removed. This drives the real
+  // sequence a user hits: the guard fires, the form then writes a verdict of its
+  // own over it, and filling the originally-flagged field must retract neither
+  // the verdict nor leave the email still advertising itself as required.
+  it('keeps the password verdict, and drops the email hint, once the email is filled', async () => {
     const screen = render(<SignupScreen navigation={mockNavigation} />);
 
-    fillForm(screen, {
-      email: 'user@test.com',
-      password: PASSWORD,
-      confirmPassword: 'different', // pragma: allowlist secret
-      licenseKey: VALID_LICENSE_KEY,
-    });
+    // 1. Blank email with an otherwise valid form: the shared guard speaks.
+    fillForm(screen, { email: '', licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+    expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent('Enter your email to continue.');
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
+
+    // 2. The form's own password verdict takes the banner over.
+    fireEvent.changeText(screen.getByPlaceholderText('Confirm Password'), 'different'); // pragma: allowlist secret
     submit(screen);
     await screen.findByText(/passwords don't match/i);
+    expect(screen.getByPlaceholderText('Email').props.accessibilityHint).toBeUndefined();
 
+    // 3. Filling the field the guard had flagged must not retract that verdict.
     fireEvent.changeText(screen.getByPlaceholderText('Email'), 'other@test.com');
 
     expect(screen.getByTestId(BANNER_ID)).toHaveTextContent(/passwords don't match/i);
+    expect(mockSignup).not.toHaveBeenCalled();
   });
 
   it('submits on Enter from the license key field', async () => {
@@ -565,5 +574,22 @@ describe('SignupScreen required email', () => {
     await waitFor(() =>
       expect(mockSignup).toHaveBeenCalledWith('new@test.com', PASSWORD, VALID_LICENSE_KEY),
     );
+  });
+});
+
+describe('SignupScreen fallback copy', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockSignup.mockRejectedValue(new Error('something the client cannot classify'));
+    const screen = render(<SignupScreen navigation={mockNavigation} />);
+
+    fillForm(screen, { licenseKey: VALID_LICENSE_KEY });
+    submit(screen);
+
+    expect(await screen.findByTestId(BANNER_ID)).toHaveTextContent(
+      "We couldn't create your account. Give it a moment, then try again.",
+    );
+    expect(screen.queryByText(/connection/i)).toBeNull();
   });
 });

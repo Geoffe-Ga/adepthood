@@ -75,27 +75,36 @@ function authErrorMessage(err: unknown, cfg: AuthSubmitConfig): string {
 }
 
 /**
- * Retract a guard message once the user addresses the field it named.
+ * Retract a guard message once the user addresses a field it named.
  *
- * Keyed on which fields are *currently* blank, so editing an offending field
- * clears the banner and editing anything else leaves it alone, and gated on
- * ``guardedRef`` so it can only ever retract a message the guard itself wrote.
+ * The trigger is a field the guard flagged now holding a value -- not a change
+ * of any kind to any field. Those are different events, and only one of them is
+ * good news. An earlier version keyed on "which fields are currently blank",
+ * which moves in both directions: clearing a filled field to retype it read as
+ * an edit worth retracting on, so the banner and the field hints vanished at the
+ * moment the form became *more* invalid, not less.
+ *
+ * ``guardedRef`` holds the exact labels the guard flagged, or ``null`` when the
+ * banner belongs to someone else -- a server's answer, or a screen's own
+ * verdict. Retraction is impossible in that state, by construction rather than
+ * by a rule someone has to remember.
  */
 function useRetractOnEdit(
   required: readonly RequiredField[],
-  guardedRef: RefObject<boolean>,
+  guardedRef: RefObject<ReadonlySet<string> | null>,
   setMissing: Dispatch<SetStateAction<ReadonlySet<string>>>,
   setError: Dispatch<SetStateAction<string | null>>,
 ): void {
-  const signature = required
-    .map((field) => (field.submitted.length === 0 ? field.label : ''))
-    .join('|');
+  const flagged = guardedRef.current;
+  const addressed =
+    flagged !== null &&
+    required.some((field) => flagged.has(field.label) && field.submitted.length > 0);
   useEffect(() => {
-    if (!guardedRef.current) return;
-    guardedRef.current = false;
+    if (!addressed) return;
+    guardedRef.current = null;
     setMissing(NO_MISSING_FIELDS);
     setError(null);
-  }, [signature, guardedRef, setMissing, setError]);
+  }, [addressed, guardedRef, setMissing, setError]);
 }
 
 export function useAuthSubmit(
@@ -110,15 +119,19 @@ export function useAuthSubmit(
   cfgRef.current = { fn, fallback, required, statusOverrides };
 
   const inFlightRef = useRef(false);
-  // True only while the banner holds a message this guard wrote, so the
-  // retraction below can never swallow a server error or a screen's own copy.
-  const guardedRef = useRef(false);
+  // The labels the guard flagged, or null when the banner holds anything else.
+  // Non-null is the only state in which a retraction is possible at all.
+  const guardedRef = useRef<ReadonlySet<string> | null>(null);
 
   // A caller writing the banner itself -- ``useSignupForm``'s password verdict,
   // ``ResetPasswordScreen``'s pair check -- takes the banner back from the
-  // guard, so editing an unrelated field can no longer retract their message.
+  // guard. The per-field flags go with it: they exist to explain the guard's
+  // message, and a control still announcing "Required" under a message about
+  // something else is telling a screen-reader user a field is empty when they
+  // have already filled it.
   const setError = useCallback<Dispatch<SetStateAction<string | null>>>((value) => {
-    guardedRef.current = false;
+    guardedRef.current = null;
+    setMissing(NO_MISSING_FIELDS);
     setErrorState(value);
   }, []);
 
@@ -132,12 +145,13 @@ export function useAuthSubmit(
       // Before the in-flight flag and before ``setSubmitting``: a refused submit
       // never flickers a busy button, and a repeat press re-sets the identical
       // string, which React bails out of rather than re-rendering.
-      guardedRef.current = true;
-      setMissing(new Set(blocked));
+      const flagged: ReadonlySet<string> = new Set(blocked);
+      guardedRef.current = flagged;
+      setMissing(flagged);
       setErrorState(requiredFieldMessage(blocked));
       return;
     }
-    guardedRef.current = false;
+    guardedRef.current = null;
     setMissing(NO_MISSING_FIELDS);
     inFlightRef.current = true;
     setErrorState(null);

@@ -181,3 +181,20 @@ describe('ForgotPasswordScreen required email (#2822)', () => {
     expect(queryByText(/Check your connection/i)).toBeNull();
   });
 });
+
+describe('ForgotPasswordScreen fallback copy', () => {
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockRequest.mockRejectedValueOnce(new Error('something the client cannot classify'));
+    const { getByLabelText, getByText, findByTestId, queryByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
+    fireEvent.press(getByText('Send Reset Link'));
+
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      "We couldn't send that reset link. Give it a moment, then try again.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
+  });
+});

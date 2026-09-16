@@ -29,6 +29,11 @@ import { UNREACHABLE_MESSAGE } from '@/api/errorMessages';
 
 const SOCIAL_SECTION_ID = 'social-auth-section';
 const ERROR_ID = 'login-error';
+
+/** The accessibility hint a control is currently advertising, if any. */
+function hintOf(input: { props: { accessibilityHint?: string } }): string | undefined {
+  return input.props.accessibilityHint;
+}
 const VALID_EMAIL = 'user@test.com';
 const VALID_PASSWORD = 'password123'; // pragma: allowlist secret
 
@@ -260,6 +265,25 @@ describe('LoginScreen required fields (#2821)', () => {
     expect(getByPlaceholderText('Password').props.accessibilityHint).toBeUndefined();
   });
 
+  // F1: the banner names what is still missing. Clearing a *filled* field to
+  // retype it leaves the form more invalid, not less, so neither the banner nor
+  // the control's hint may disappear on that keystroke.
+  it('keeps the message when a different field is cleared to be retyped', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.press(getByText('Log In'));
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner).toHaveTextContent('Enter your password to continue.');
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '');
+
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+    expect(getByText('Enter your password to continue.')).toBeTruthy();
+  });
+
   it('retracts the message as soon as the offending field is edited', async () => {
     const { getByPlaceholderText, getByText, findByTestId, queryByTestId } = render(
       <LoginScreen navigation={mockNavigation} />,
@@ -308,5 +332,28 @@ describe('LoginScreen required fields (#2821)', () => {
     fireEvent.press(getByText('Log In'));
 
     await waitFor(() => expect(mockLogin).toHaveBeenCalledWith(VALID_EMAIL, '        '));
+  });
+});
+
+// F5: the four auth fallbacks used to diagnose a cause they could not know, and
+// that is the whole defect this suite exists to hold shut. Pin the exact copy so
+// a revert to "Check your connection" cannot pass.
+describe('LoginScreen fallback copy', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockLogin.mockRejectedValue(new Error('something the client cannot classify'));
+    const { getByPlaceholderText, getByText, findByTestId, queryByText } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+    fireEvent.press(getByText('Log In'));
+
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      "We couldn't sign you in. Give it a moment, then try again.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
   });
 });
