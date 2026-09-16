@@ -8,6 +8,7 @@ import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
+import { clearUserTimezone, saveUserTimezone } from '@/storage/authStorage';
 import {
   loadDroppedCheckIns,
   loadHabits,
@@ -77,6 +78,12 @@ jest.mock('@/utils/token', () => ({
 const mockAuthApi = authApi as jest.Mocked<typeof authApi>;
 const mockLlmStorage = llmKeyStorage as jest.Mocked<typeof llmKeyStorage>;
 const mockNotificationStorage = notificationStorage as jest.Mocked<typeof notificationStorage>;
+// The cached zone is the one wiped artefact this file mocked without ever
+// asserting (#2901). It is also the only one that is NOT namespaced per
+// account -- `USER_TIMEZONE_KEY` is written unscoped -- so the per-account
+// scoping that backstops every clear above does not backstop this one.
+const mockClearUserTimezone = clearUserTimezone as jest.MockedFunction<typeof clearUserTimezone>;
+const mockSaveUserTimezone = saveUserTimezone as jest.MockedFunction<typeof saveUserTimezone>;
 
 const USER_A = 1;
 const USER_B = 2;
@@ -188,6 +195,7 @@ describe('an account switch with no explicit logout', () => {
     expect(await loadDroppedCheckIns()).toEqual([]);
     expect(mockLlmStorage.clearLlmApiKey).toHaveBeenCalled();
     expect(mockNotificationStorage.clearAllNotificationData).toHaveBeenCalled();
+    expect(mockClearUserTimezone).toHaveBeenCalled();
 
     await act(async () => {
       await resonance.essay(1);
@@ -217,6 +225,40 @@ describe('an account switch with no explicit logout', () => {
 
     expect(result.current.auth.authStatus).toBe('authenticated');
     expect(habitsVisibleWhenAuthenticated).toBeNull();
+  });
+
+  test('drops the outgoing user\u2019s cached zone before the incoming user\u2019s is cached', async () => {
+    // Deliberately NOT folded into 'wipes before the incoming session is
+    // authenticated': that test pins ordering against observed real-storage
+    // state, which works only because `habitStorage` is real here. `authStorage`
+    // is fully mocked, so the zone's ordering has to be read off the mocks'
+    // invocation order instead. Folding the two would produce a test that looks
+    // like it pins this and pins nothing.
+    mockAuthApi.login
+      .mockResolvedValueOnce({ token: 'token-a', user_id: USER_A, timezone: 'America/Denver' })
+      .mockResolvedValueOnce({ token: 'token-b', user_id: USER_B, timezone: 'Pacific/Auckland' });
+    const result = await mountSignedOut();
+
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    // A device carrying no owner stamp always wipes, so discount the arrival:
+    // what this pins is the SECOND sign-in.
+    mockClearUserTimezone.mockClear();
+    mockSaveUserTimezone.mockClear();
+
+    await act(async () => {
+      await result.current.auth.login('b@test.com', 'password123');
+    });
+
+    expect(mockClearUserTimezone).toHaveBeenCalled();
+    expect(mockSaveUserTimezone).toHaveBeenCalledWith('Pacific/Auckland');
+    const [clearedAt = 0] = mockClearUserTimezone.mock.invocationCallOrder;
+    const [cachedAt = 0] = mockSaveUserTimezone.mock.invocationCallOrder;
+    // The zone lives in a single unscoped device key, so if B's zone were
+    // cached first the wipe would take it straight back out again and the next
+    // cold start would read A's calendar.
+    expect(clearedAt).toBeLessThan(cachedAt);
   });
 
   test('a password reset that lands on a different account wipes the same way', async () => {
@@ -261,6 +303,7 @@ describe('re-authenticating as the same user', () => {
     // what this test is about is whether the SECOND one wipes.
     mockLlmStorage.clearLlmApiKey.mockClear();
     mockNotificationStorage.clearAllNotificationData.mockClear();
+    mockClearUserTimezone.mockClear();
 
     await act(async () => {
       await result.current.auth.login('a@test.com', 'password123');
@@ -270,6 +313,9 @@ describe('re-authenticating as the same user', () => {
     expect(await loadHabits()).toHaveLength(1);
     expect(mockLlmStorage.clearLlmApiKey).not.toHaveBeenCalled();
     expect(mockNotificationStorage.clearAllNotificationData).not.toHaveBeenCalled();
+    // Without this half the new guard is one-sided: a refactor that wiped on
+    // every login, not only on a change of owner, would pass it.
+    expect(mockClearUserTimezone).not.toHaveBeenCalled();
   });
 });
 

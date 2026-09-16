@@ -7,8 +7,10 @@ import React from 'react';
 import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
-import { clearDroppedCheckIns } from '@/storage/habitStorage';
+import { clearUserTimezone } from '@/storage/authStorage';
+import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
+import { clearAllNotificationData } from '@/storage/notificationStorage';
 import { setActiveUser } from '@/storage/userScope';
 
 // Reproduces the BYOK leak end-to-end: mount the real AuthProvider +
@@ -66,6 +68,18 @@ jest.mock('@/utils/token', () => ({
 
 const mockAuthApi = authApi as jest.Mocked<typeof authApi>;
 const mockLlmStorage = llmKeyStorage as jest.Mocked<typeof llmKeyStorage>;
+// Four of this file's six wipe targets were mocked and never asserted (#2901).
+// A mock with no expectation is indistinguishable from an absent clear, which
+// is exactly the shape these suites exist to rule out, so all four are held
+// below rather than only the cached zone the ticket named.
+const mockClearUserTimezone = clearUserTimezone as jest.MockedFunction<typeof clearUserTimezone>;
+const mockClearHabits = clearHabits as jest.MockedFunction<typeof clearHabits>;
+const mockClearPendingCheckIns = clearPendingCheckIns as jest.MockedFunction<
+  typeof clearPendingCheckIns
+>;
+const mockClearAllNotificationData = clearAllNotificationData as jest.MockedFunction<
+  typeof clearAllNotificationData
+>;
 
 function okResponse(): Response {
   return { ok: true, status: 200, json: () => Promise.resolve({}) } as unknown as Response;
@@ -137,6 +151,10 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     });
     expect(lastLlmHeader()).toBeUndefined();
     expect(mockLlmStorage.clearLlmApiKey).toHaveBeenCalled();
+    expect(mockClearUserTimezone).toHaveBeenCalled();
+    expect(mockClearHabits).toHaveBeenCalled();
+    expect(mockClearPendingCheckIns).toHaveBeenCalled();
+    expect(mockClearAllNotificationData).toHaveBeenCalled();
   });
 
   test('dismissReauth wipes the key', async () => {
@@ -165,6 +183,9 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
       await resonance.essay(1);
     });
     expect(lastLlmHeader()).toBeUndefined();
+    // The second tear-down door. It reaches the same wipe through
+    // `tearDownSession`, and until now exercised it for no target at all.
+    expect(mockClearUserTimezone).toHaveBeenCalled();
   });
 
   test('a forced reauth alone (no dismiss) retains the key by design', async () => {
