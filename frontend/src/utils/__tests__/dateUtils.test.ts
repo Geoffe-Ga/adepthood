@@ -3,6 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   DEFAULT_TIMEZONE,
   addDaysInTZ,
+  classifyDayAgainstToday,
   dayKeyInTZ,
   dayKeyToInstant,
   detectDeviceTimezone,
@@ -409,5 +410,33 @@ describe('formatTimeInTZ', () => {
 
   it('pins the en-US clock so the label and its assertions agree everywhere', () => {
     expect(formatTimeInTZ(new Date('2026-09-08T00:05:00Z'), 'UTC')).toMatch(/^12:05\s?AM$/);
+  });
+});
+
+describe('classifyDayAgainstToday', () => {
+  it('names the day itself', () => {
+    expect(classifyDayAgainstToday('2026-09-12', '2026-09-12', 'America/Chicago')).toBe('today');
+  });
+
+  it('names the day before', () => {
+    expect(classifyDayAgainstToday('2026-09-11', '2026-09-12', 'America/Chicago')).toBe(
+      'yesterday',
+    );
+  });
+
+  it('leaves every other day to the caller to render', () => {
+    expect(classifyDayAgainstToday('2026-09-10', '2026-09-12', 'America/Chicago')).toBe('other');
+    expect(classifyDayAgainstToday('2026-09-13', '2026-09-12', 'America/Chicago')).toBe('other');
+  });
+
+  it('finds yesterday across a month boundary', () => {
+    expect(classifyDayAgainstToday('2026-08-31', '2026-09-01', 'UTC')).toBe('yesterday');
+  });
+
+  it('finds yesterday across a DST shoulder, where wall-clock math would not', () => {
+    // US DST ends 2026-11-01; the local day before is still exactly one key back.
+    expect(classifyDayAgainstToday('2026-10-31', '2026-11-01', 'America/Los_Angeles')).toBe(
+      'yesterday',
+    );
   });
 });

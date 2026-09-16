@@ -93,6 +93,38 @@ describe('useHabitStore', () => {
     expect(selectHabitById(undefined)(state)).toBeUndefined();
   });
 
+  it('selectGoalUnitById returns the server-backed goal unit, or null', () => {
+    const { useHabitStore, selectGoalUnitById } = require('../useHabitStore');
+    const goal = {
+      id: 42,
+      title: 'Water',
+      tier: 'clear' as const,
+      target: 64,
+      target_unit: 'oz',
+      frequency: 1,
+      frequency_unit: 'day',
+      is_additive: true,
+    };
+    const owner = makeHabit({ id: 9, goals: [goal] });
+    act(() => useHabitStore.getState().setHabits([owner]));
+
+    const state = useHabitStore.getState();
+    expect(selectGoalUnitById(42)(state)).toBe('oz');
+    expect(selectGoalUnitById(99)(state)).toBeNull();
+    expect(selectGoalUnitById(null)(state)).toBeNull();
+    expect(selectGoalUnitById(undefined)(state)).toBeNull();
+  });
+
+  it('selectGoalUnitById hands back the same closure for the same id', () => {
+    // BUG-FE-STATE-002: a fresh closure per call re-subscribes Zustand on every
+    // render, and every accept rebuilds `state.habits` wholesale, so a churning
+    // selector identity re-renders the whole margin rather than one card.
+    const { selectGoalUnitById } = require('../useHabitStore');
+    expect(selectGoalUnitById(42)).toBe(selectGoalUnitById(42));
+    expect(selectGoalUnitById(null)).toBe(selectGoalUnitById(undefined));
+    expect(selectGoalUnitById(42)).not.toBe(selectGoalUnitById(43));
+  });
+
   it('setHabits updates habits array', () => {
     const { useHabitStore } = require('../useHabitStore');
     const habit = makeHabit();

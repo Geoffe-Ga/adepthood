@@ -5,6 +5,12 @@ import React from 'react';
 
 // Every other JournalEntryScreen test resolves completionSuggestions.list empty; these pin the pending-card render and the dismissed-suggestion filter.
 import type { AcceptSuggestionResult, CompletionSuggestion, JournalMessage } from '@/api';
+// The real store and the real day math: the card reads its unit out of one and
+// its "today" out of the other, and a stub of either would pass a lookup that
+// happily returned another row's unit.
+import type { Habit } from '@/features/Habits/Habits.types';
+import { useHabitStore } from '@/store/useHabitStore';
+import { addDaysInTZ, todayInUserTZ } from '@/utils/dateUtils';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -81,6 +87,33 @@ jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
+/** A server-backed habit whose goal 3 tracks ounces -- the unit the card names. */
+function waterHabit(overrides: Partial<Habit> = {}): Habit {
+  return {
+    id: 11,
+    stage: 'Beige',
+    name: 'Drink water',
+    icon: '\u{1F4A7}',
+    streak: 0,
+    energy_cost: 1,
+    energy_return: 1,
+    start_date: new Date('2026-01-01T00:00:00Z'),
+    goals: [
+      {
+        id: 3,
+        title: 'Water',
+        tier: 'clear' as const,
+        target: 64,
+        target_unit: 'oz',
+        frequency: 1,
+        frequency_unit: 'day',
+        is_additive: true,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   return {
     id: 7,
@@ -141,6 +174,7 @@ beforeEach(() => {
   mockGenerate.mockReset();
   mockDetect.mockReset();
   mockDetect.mockResolvedValue({ items: [], checked: true });
+  useHabitStore.getState().setHabits([]);
 });
 
 function acceptResult(overrides: Partial<CompletionSuggestion> = {}): AcceptSuggestionResult {
@@ -220,6 +254,94 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
     // store only agrees with the card if the accept refreshes it — on the
     // auth-hydrated zone, or "today" is wrong near midnight.
     await waitFor(() => expect(mockLoadHabits).toHaveBeenCalledWith(mockUserTz));
+  });
+
+  it('names the amount and the day the accept will log, in the goal\u2019s own unit', async () => {
+    // The unit is not on the suggestion; it is read out of the habit store by
+    // goal_id. Seeding the REAL store is the point -- a lookup that accepted a
+    // demo or client-minted row would pass a stubbed one just as happily.
+    useHabitStore.getState().setHabits([waterHabit()]);
+    const yesterday = addDaysInTZ(todayInUserTZ(mockUserTz), -1, mockUserTz);
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({
+      items: [
+        suggestionRow({
+          label: 'drank 64 oz of water',
+          completed_units: 64,
+          completed_on: yesterday,
+        }),
+      ],
+    });
+
+    const view = renderScreen({ entryId: 7 });
+
+    const accept = await view.findByTestId('suggestion-90-accept');
+    expect(accept.props.accessibilityLabel).toBe(
+      'Check off drank 64 oz of water, 64 oz, yesterday',
+    );
+    expect(view.getByText(/64 oz \u00b7 yesterday\. Log it\?/u)).toBeTruthy();
+  });
+
+  it('asks for the goal\u2019s unit once when the store is cold, and the day is the AUTH zone\u2019s', async () => {
+    // Nothing on this route hydrates the habit store, so without the warm-up
+    // the card would read "64" with no unit after a cold open.
+    const yesterday = addDaysInTZ(todayInUserTZ(mockUserTz), -1, mockUserTz);
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({
+      items: [suggestionRow({ completed_units: 64, completed_on: yesterday })],
+    });
+
+    const view = renderScreen({ entryId: 7 });
+
+    await view.findByTestId('suggestion-90');
+    await waitFor(() => expect(mockLoadHabits).toHaveBeenCalledWith(mockUserTz));
+    expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the day in the signed-in person\u2019s zone, not the device\u2019s', async () => {
+    // 03:00 UTC is still the previous evening in Chicago, so the two zones
+    // disagree about what "today" is. Jest pins the device zone to UTC, so a
+    // card reading the device clock would say "yesterday" here. Frozen rather
+    // than left to the wall clock: the two zones only disagree for six hours a
+    // day, and a guard that can only fail at 1am is not a guard.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-09-12T03:00:00Z'));
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7 }));
+      mockCompletionList.mockResolvedValue({
+        items: [suggestionRow({ completed_units: 64, completed_on: '2026-09-11' })],
+      });
+
+      const view = renderScreen({ entryId: 7 });
+
+      await view.findByTestId('suggestion-90');
+      expect(view.getByText(/64 \u00b7 today\. Log it\?/u)).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('spends no round trip warming a habit store that is already hydrated', async () => {
+    useHabitStore.getState().setHabits([waterHabit()]);
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items: [suggestionRow()] });
+
+    const view = renderScreen({ entryId: 7 });
+
+    await view.findByTestId('suggestion-90');
+    expect(mockLoadHabits).not.toHaveBeenCalled();
+  });
+
+  it('does not warm the habit store for a practice-only offer', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({
+      items: [suggestionRow({ target_type: 'practice', goal_id: null, user_practice_id: 4 })],
+    });
+
+    const view = renderScreen({ entryId: 7 });
+
+    await view.findByTestId('suggestion-90');
+    expect(mockLoadHabits).not.toHaveBeenCalled();
   });
 
   it('clears a stale accept error once a later accept succeeds', async () => {

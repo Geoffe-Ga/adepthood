@@ -138,6 +138,38 @@ export const addDaysInTZ = (dayKey: string, days: number, _tz: string): string =
   return shifted.toISOString().slice(0, 10);
 };
 
+/** How a day key relates to the user's today, for the two names a reader prefers. */
+export type DayRelation = 'today' | 'yesterday' | 'other';
+
+/**
+ * Name `dayKey` relative to `todayKey`: `'today'`, `'yesterday'`, or `'other'`.
+ *
+ * Two shipped screens already make this distinction by hand before choosing
+ * between a word and a date — the habit log stepper's `formatLogDateLabel` and
+ * the practice sheet's `dayLabel` — and a third is about to, so the
+ * classification lives here once. Only the *classification*: what `'other'`
+ * renders as is each caller's own presentation decision, and the two existing
+ * ones do not currently agree on it.
+ *
+ * Pure key comparison; no `Intl` and no clock read. The `tz` argument is
+ * threaded to `addDaysInTZ` for API stability, which is why it is required
+ * here even though a calendar day is a calendar day in every zone.
+ *
+ * @param dayKey - The day being named, `YYYY-MM-DD`.
+ * @param todayKey - The user's today, `YYYY-MM-DD`.
+ * @param tz - The user's IANA timezone.
+ * @returns Which of the three the day is.
+ */
+export const classifyDayAgainstToday = (
+  dayKey: string,
+  todayKey: string,
+  tz: string,
+): DayRelation => {
+  if (dayKey === todayKey) return 'today';
+  if (dayKey === addDaysInTZ(todayKey, -1, tz)) return 'yesterday';
+  return 'other';
+};
+
 /** Wall-clock hour used to anchor a day-key instant clear of DST shoulders. */
 const NOON_HOUR = 12;
 

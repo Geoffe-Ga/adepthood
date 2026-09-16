@@ -15,6 +15,7 @@ import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 
 import { usePressScale } from './motion';
 import { paperMarginCard } from './noteCards';
+import { FACT_SEPARATOR } from './suggestionFacts';
 
 import type { CheckInResult, CompletionSuggestion } from '@/api';
 import {
@@ -29,6 +30,12 @@ import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const QUESTION_PREFIX = 'You wrote about ';
 const QUESTION_SUFFIX = '. Check it off?';
+/**
+ * How the question ends once the card can say what OK will log. The writer is
+ * consenting to a specific amount on a specific day, so "Log it?" is the
+ * honest verb; the fact-free branch keeps "Check it off?" verbatim.
+ */
+const FACTS_SUFFIX = '. Log it?';
 const OK_LABEL = 'OK';
 const DISMISS_LABEL = 'Not now';
 const CHECKING_LABEL = 'Checking…';
@@ -45,9 +52,27 @@ export interface CompletionSuggestionNoteProps {
   suggestion: CompletionSuggestion;
   /** The check-in returned when this suggestion was accepted (for the streak). */
   checkIn: CheckInResult | null;
+  /**
+   * What the accept will log, already formatted — e.g. `"64 oz · yesterday"`.
+   * Pre-formatted rather than derived here on purpose: building it needs the
+   * goal's unit from the habit store and the user's own today, and this card
+   * stays presentational (no `useAuth`, no store subscription, no clock), which
+   * is what lets its tests render it bare with no provider. `null` when the
+   * server extracted nothing, which restores the original copy exactly.
+   */
+  facts?: string | null;
   onAccept: (_id: number) => void | Promise<void>;
   onDismiss: (_id: number) => void | Promise<void>;
 }
+
+/**
+ * The facts as a screen reader should hear them.
+ *
+ * The middle dot is a visual separator; announced, it is either silence or the
+ * word "dot" depending on the reader, so the spoken label uses commas.
+ */
+const spokenFacts = (facts: string | null | undefined): string =>
+  facts ? `, ${facts.split(FACT_SEPARATOR).join(', ')}` : '';
 
 /** The settled confirmation shown once a suggestion is accepted.
  *
@@ -58,17 +83,23 @@ function AcceptedCard({
   id,
   targetType,
   checkIn,
+  facts,
 }: {
   id: number;
   targetType: CompletionSuggestion['target_type'];
   checkIn: CheckInResult | null;
+  facts?: string | null;
 }): React.JSX.Element {
   const streak = targetType === 'practice' ? null : streakLabel(checkIn);
   const label = targetType === 'practice' ? LOGGED_LABEL : CHECKED_LABEL;
+  // A practice carries no facts by construction (the backend CHECK
+  // `ck_completion_suggestion_facts_habit_only` keeps both fields null), so the
+  // settled practice copy needs no branch of its own here.
   return (
     <View style={styles.card} testID={`suggestion-${id}`}>
       <Text style={styles.checked} testID={`suggestion-${id}-checked`}>
         {label}
+        {facts === null || facts === undefined ? '' : `${FACT_SEPARATOR}${facts}`}
         {streak ? <Text style={styles.streak}>{`  ${streak}`}</Text> : null}
       </Text>
     </View>
@@ -78,12 +109,14 @@ function AcceptedCard({
 /** OK / Not now buttons; OK shows "Checking…" + disables both while in-flight. */
 function SuggestionActions({
   suggestion,
+  facts,
   accepting,
   onAccept,
   onDismiss,
   press,
 }: {
   suggestion: CompletionSuggestion;
+  facts?: string | null;
   accepting: boolean;
   onAccept: () => void;
   onDismiss: () => void;
@@ -98,7 +131,7 @@ function SuggestionActions({
         onPressOut={press.onPressOut}
         disabled={accepting}
         accessibilityRole="button"
-        accessibilityLabel={`Check off ${suggestion.label}`}
+        accessibilityLabel={`Check off ${suggestion.label}${spokenFacts(facts)}`}
         accessibilityState={{ disabled: accepting }}
         testID={`suggestion-${suggestion.id}-accept`}
       >
@@ -122,6 +155,7 @@ function SuggestionActions({
 /** The pending question with OK / Not now (and the in-flight "Checking…"). */
 function PendingCard({
   suggestion,
+  facts,
   onAccept,
   onDismiss,
 }: Omit<CompletionSuggestionNoteProps, 'checkIn'>): React.JSX.Element {
@@ -144,10 +178,13 @@ function PendingCard({
         <Text style={styles.question}>
           {QUESTION_PREFIX}
           <Text style={styles.label}>{suggestion.label}</Text>
-          {QUESTION_SUFFIX}
+          {facts === null || facts === undefined
+            ? QUESTION_SUFFIX
+            : `${FACT_SEPARATOR}${facts}${FACTS_SUFFIX}`}
         </Text>
         <SuggestionActions
           suggestion={suggestion}
+          facts={facts}
           accepting={accepting}
           onAccept={handleAccept}
           onDismiss={() => onDismiss(suggestion.id)}
@@ -161,16 +198,24 @@ function PendingCard({
 function CompletionSuggestionNote({
   suggestion,
   checkIn,
+  facts = null,
   onAccept,
   onDismiss,
 }: CompletionSuggestionNoteProps): React.JSX.Element | null {
   if (suggestion.status === 'dismissed') return null;
   if (suggestion.status === 'accepted') {
     return (
-      <AcceptedCard id={suggestion.id} targetType={suggestion.target_type} checkIn={checkIn} />
+      <AcceptedCard
+        id={suggestion.id}
+        targetType={suggestion.target_type}
+        checkIn={checkIn}
+        facts={facts}
+      />
     );
   }
-  return <PendingCard suggestion={suggestion} onAccept={onAccept} onDismiss={onDismiss} />;
+  return (
+    <PendingCard suggestion={suggestion} facts={facts} onAccept={onAccept} onDismiss={onDismiss} />
+  );
 }
 
 const styles = StyleSheet.create({
