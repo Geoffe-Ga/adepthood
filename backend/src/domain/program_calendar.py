@@ -133,5 +133,10 @@ def resolve_program_anchor(progress: StageProgress) -> datetime:
     legacy rows that pre-date the column fall back to the per-stage
     ``stage_started_at`` — conservative (later) for anyone past stage 1,
     which only makes the time gate stricter, never looser.
+
+    This answers for the CURRENT cycle only: ``begin-again`` re-stamps the
+    column for each new lap. A PAST cycle's anchor lives on
+    ``StageProgress.past_cycle_anchors`` and is resolved through
+    :mod:`domain.cycle_calendar` (issue #2894).
     """
     return progress.program_started_at or progress.stage_started_at

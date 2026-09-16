@@ -30,7 +30,12 @@ from domain.dates import to_user_date
 from domain.reflection_hierarchy import ReflectionLevel, scope_weeks
 from models.journal_entry import EntryStatus, JournalTag
 from models.user import User
-from tests.test_reflections_api import _seed_entry, _seed_progress, _signup
+from tests.test_reflections_api import (
+    _seed_entry,
+    _seed_looped_progress,
+    _seed_progress,
+    _signup,
+)
 
 _PACIFIC = "America/Los_Angeles"
 _EASTERN = "America/New_York"
@@ -385,8 +390,11 @@ async def test_a_past_cycle_scope_never_serves_the_current_cycles_entries(
     ``begin-again`` re-stamps ``program_started_at``, so windowing a ``c1:``
     key against the current anchor served cycle two's dailies under cycle
     one's heading — the most literal form of "the wrong time period".  A
-    surviving child review from that cycle still stands in, so reopening an
-    old review is not broken, it just shows no raw dailies.
+    past-cycle scope is now windowed on THAT cycle's own retained anchor
+    (issue #2894) and so serves that cycle's dailies and never this one's;
+    the row seeded here retained none, so its cycle-1 feed is empty.  A
+    surviving child review from that cycle still stands in either way,
+    because reflections match by exact key rather than by window.
     """
     anchor = (datetime.now(UTC) - timedelta(days=30)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -412,6 +420,152 @@ async def test_a_past_cycle_scope_never_serves_the_current_cycles_entries(
     assert await _bodies(async_client, headers, ReflectionLevel.STAGE, "c1:s1") == [
         "cycle one, week one, in review"
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_past_cycle_scope_serves_that_cycles_own_dailies(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A retained cycle-1 anchor re-opens cycle 1's own week, with its own entries.
+
+    This is the whole point of #2894: the corpus was never lost, only the map
+    from a past review to the days it was written about.  With that map back,
+    reopening ``c1:w1`` shows cycle one's dailies — and the unlock guard stops
+    403-ing a week the user demonstrably already lived through.
+    """
+    cycle_two_anchor = (datetime.now(UTC) - timedelta(days=30)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    cycle_one_anchor = cycle_two_anchor - timedelta(days=370)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_looped_progress(
+        db_session,
+        user_id,
+        anchor=cycle_two_anchor,
+        cycle_number=2,
+        past_cycle_anchors=[cycle_one_anchor.isoformat()],
+    )
+    await _seed_entry(
+        db_session, user_id, "cycle1-week1", timestamp=cycle_one_anchor + timedelta(days=2, hours=9)
+    )
+    await _seed_entry(
+        db_session, user_id, "cycle2-week1", timestamp=cycle_two_anchor + timedelta(days=1, hours=9)
+    )
+    # Deep into cycle one: week 30 is reachable ONLY if the row is labelled off
+    # cycle one's anchor.  Labelled off the live anchor it would floor to week 1
+    # (``elapsed_days`` clamps at zero) and vanish from this feed entirely.
+    await _seed_entry(
+        db_session,
+        user_id,
+        "cycle1-week30",
+        timestamp=cycle_one_anchor + timedelta(days=29 * 7 + 2, hours=9),
+    )
+
+    assert await _bodies(async_client, headers, ReflectionLevel.WEEK, "c1:w1") == ["cycle1-week1"]
+    assert "cycle2-week1" not in await _bodies(async_client, headers, ReflectionLevel.WEEK, "c1:w1")
+    assert await _bodies(async_client, headers, ReflectionLevel.WEEK, "c1:w30") == ["cycle1-week30"]
+    # Stage 10 spans weeks 31-36, which the cycle-1 calendar reached long ago:
+    # the guard must read the SCOPE's cycle, not the caller's current week.
+    payload = await _sources(async_client, headers, ReflectionLevel.STAGE, "c1:s10")
+    assert payload["anchor_status"] == "recorded"
+
+
+@pytest.mark.asyncio
+async def test_a_past_cycle_window_stops_at_the_loop_point(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A cycle abandoned early ends at the loop DAY's local midnight, not weeks later.
+
+    ``begin-again`` unlocks the moment the final stage is reached, which can be
+    long before week 36 arrives.  Two things follow, and both are asserted here.
+    The week the loop fell in ends at that day's LOCAL MIDNIGHT — the same
+    instant the next cycle's week 1 opens — so the entry written at 08:00 that
+    morning belongs to ``c2:w1`` and to nothing in cycle one.  Clamping at the
+    raw loop instant instead would put it in both.  And a week cycle one never
+    reached windows to nothing rather than reaching forward into cycle two.
+    """
+    tz = _PACIFIC
+    cycle_two_anchor = (datetime.now(UTC) - timedelta(days=20)).replace(
+        hour=16, minute=0, second=0, microsecond=0
+    )
+    # Cycle one ran 80 days — into week 12, mid-week — and then the user looped.
+    cycle_one_anchor = cycle_two_anchor - timedelta(days=80)
+    headers, user_id = await _signup(async_client, db_session)
+    await _set_timezone(db_session, user_id, tz)
+    await _seed_looped_progress(
+        db_session,
+        user_id,
+        anchor=cycle_two_anchor,
+        cycle_number=2,
+        past_cycle_anchors=[cycle_one_anchor.isoformat()],
+    )
+    # 08:00 Pacific on the loop day — after local midnight, before the loop instant.
+    loop_local_date = to_user_date(tz, cycle_two_anchor)
+    morning = datetime.combine(loop_local_date, time(8, 0), tzinfo=ZoneInfo(tz)).astimezone(UTC)
+    await _seed_entry(db_session, user_id, "cycle2-morning", timestamp=morning)
+
+    loop_week = await _sources(async_client, headers, ReflectionLevel.WEEK, "c1:w12")
+    current = await _sources(async_client, headers, ReflectionLevel.WEEK, "c2:w1")
+
+    loop_week_end = _parse(str(loop_week["window_end"]))
+    local_midnight = datetime.combine(loop_local_date, time.min, tzinfo=ZoneInfo(tz)).astimezone(
+        UTC
+    )
+    assert loop_week_end == local_midnight, "the clamp must land on a LOCAL MIDNIGHT"
+    assert loop_week_end == _parse(str(current["window_start"])), (
+        "the cycles must abut at one shared instant, never overlap"
+    )
+    assert _parse(str(loop_week["window_start"])) < loop_week_end
+    loop_week_items = loop_week["items"]
+    assert isinstance(loop_week_items, list)
+    assert [item["body"] for item in loop_week_items] == [], (
+        "the loop morning belongs to the NEW cycle only"
+    )
+    assert "cycle2-morning" in await _bodies(async_client, headers, ReflectionLevel.WEEK, "c2:w1")
+
+    # A week cycle one never reached windows to nothing, rather than reaching
+    # forward past the loop into cycle two.
+    unreached = await _sources(async_client, headers, ReflectionLevel.WEEK, "c1:w36")
+    assert _parse(str(unreached["window_start"])) == _parse(str(unreached["window_end"]))
+    assert unreached["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_unrecorded_past_cycle_is_declared_unreconstructable(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An anchor destroyed before #2894 is reported as unknown, never guessed.
+
+    The row looped once already, so cycle 1 happened — but its anchor is gone
+    and nothing can restore it.  The response says which of the four causes
+    applies so the client can tell "nothing was written then" apart from "we
+    cannot rebuild that period".
+    """
+    cycle_two_anchor = (datetime.now(UTC) - timedelta(days=30)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_looped_progress(
+        db_session,
+        user_id,
+        anchor=cycle_two_anchor,
+        cycle_number=2,
+        past_cycle_anchors=[None],
+    )
+    await _seed_entry(
+        db_session, user_id, "cycle2-week1", timestamp=cycle_two_anchor + timedelta(days=1, hours=9)
+    )
+
+    payload = await _sources(async_client, headers, ReflectionLevel.WEEK, "c1:w1")
+
+    assert payload["items"] == []
+    assert payload["window_start"] is None
+    assert payload["window_end"] is None
+    assert payload["anchor_status"] == "unrecorded"
+    # The live cycle is unaffected and still names a real window.
+    live = await _sources(async_client, headers, ReflectionLevel.WEEK, "c2:w1")
+    assert live["anchor_status"] == "recorded"
+    assert live["window_start"] is not None
 
 
 @pytest.mark.asyncio
