@@ -187,6 +187,16 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
 });
 
 /**
+ * What a 422 means to a reader: the server read the request and something in it
+ * was wrong, which is never a connectivity story. Exported so a surface that
+ * needs to reach this classification through an override -- the auth screens,
+ * whose own fallbacks would otherwise out-rank it -- names the same copy rather
+ * than re-typing it.
+ */
+export const FIELD_VALIDATION_MESSAGE =
+  "Some of what you entered doesn't look right. Review the highlighted fields and try again.";
+
+/**
  * Fallback copy when the server returns an unrecognised ``detail`` string.
  * Keyed by HTTP status so a generic 404 still feels different from a
  * generic 500 — each code leads the user to a different remedy.
@@ -198,7 +208,7 @@ const STATUS_FALLBACKS: Readonly<Record<number, string>> = Object.freeze({
   403: NO_ACCESS,
   404: `We couldn't find what you were looking for. ${PULL_TO_REFRESH}`,
   409: 'That conflicts with something we already have. Refresh and try again.',
-  422: "Some of what you entered doesn't look right. Review the highlighted fields and try again.",
+  422: FIELD_VALIDATION_MESSAGE,
   429: "You're going a bit fast for us. Slow down and try again in a moment.",
   500: 'Something went wrong on our end. Give it a moment and try again — if it keeps happening, let us know.',
   502: PROVIDER_TROUBLE,

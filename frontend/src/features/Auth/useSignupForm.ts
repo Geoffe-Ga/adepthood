@@ -8,8 +8,13 @@ import { useAuthSubmit } from './useAuthSubmit';
 
 import { useAuth } from '@/context/AuthContext';
 
-const SIGNUP_FALLBACK =
-  "We couldn't create your account. Check your connection, then try again in a moment.";
+/** The field the license and password validators never looked at. */
+const EMAIL_FIELD = 'email';
+
+// Names no cause: this screen already calls two validators and still let a blank
+// email through to a 422 dressed as an outage. The transport layer keeps the
+// connectivity diagnosis; a classified status now outranks this string.
+const SIGNUP_FALLBACK = "We couldn't create your account. Give it a moment, then try again.";
 
 /** Everything the signup form renders and drives. */
 export interface SignupForm {
@@ -27,6 +32,8 @@ export interface SignupForm {
   error: string | null;
   submitting: boolean;
   handleSignup: () => void;
+  /** Labels of the fields the required-field guard refused to send. */
+  missing: ReadonlySet<string>;
 }
 
 /**
@@ -53,7 +60,11 @@ export function useSignupForm(initialLicenseKey = ''): SignupForm {
   const [licenseKey, setKey] = useState(initialLicenseKey);
   const [licenseError, setLicenseError] = useState<string | null>(null);
 
-  const { submitting, error, setError, run } = useAuthSubmit(
+  // ``handleSignup`` below validates the password pair and the license key and
+  // has never checked the email; declaring it here is what closes that gap, and
+  // what stops the next field being forgotten the same way.
+  const required = [{ label: EMAIL_FIELD, submitted: canonicalizeEmail(email) }];
+  const { submitting, error, setError, run, missing } = useAuthSubmit(
     async () => {
       setLicenseError(null);
       try {
@@ -66,7 +77,7 @@ export function useSignupForm(initialLicenseKey = ''): SignupForm {
         setLicenseError(inline);
       }
     },
-    { fallback: SIGNUP_FALLBACK },
+    { fallback: SIGNUP_FALLBACK, required },
   );
 
   // Editing the key retracts the verdict on it — a stale "we couldn't verify
@@ -98,5 +109,6 @@ export function useSignupForm(initialLicenseKey = ''): SignupForm {
     error,
     submitting,
     handleSignup,
+    missing,
   };
 }

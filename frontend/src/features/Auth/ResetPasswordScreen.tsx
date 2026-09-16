@@ -3,6 +3,7 @@ import { Text, TouchableOpacity } from 'react-native';
 
 import { authStyles as styles } from './auth.styles';
 import { AuthScreenContainer } from './AuthScreenContainer';
+import { AuthErrorBanner } from './components/AuthErrorBanner';
 import { PasswordField } from './components/PasswordField';
 import { validatePasswordPair } from './passwordValidation';
 import { MIN_TOKEN_LENGTH } from './resetToken';
@@ -28,6 +29,7 @@ interface ResetFieldsProps {
   setPassword: (_v: string) => void;
   confirmPassword: string;
   setConfirmPassword: (_v: string) => void;
+  onSubmit: () => void;
 }
 
 function ResetFields({
@@ -35,6 +37,7 @@ function ResetFields({
   setPassword,
   confirmPassword,
   setConfirmPassword,
+  onSubmit,
 }: ResetFieldsProps): React.JSX.Element {
   return (
     <>
@@ -53,6 +56,8 @@ function ResetFields({
         value={confirmPassword}
         onChangeText={setConfirmPassword}
         textContentType="newPassword"
+        returnKeyType="go"
+        onSubmitEditing={onSubmit}
       />
     </>
   );
@@ -126,7 +131,15 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
       // swap the AuthStack for RootStack.  No explicit navigation
       // call is needed here.
     },
-    { fallback: RESET_FALLBACK },
+    {
+      fallback: RESET_FALLBACK,
+      // Nothing for the shared guard to check: ``handleSubmit`` below returns
+      // early on ``validatePasswordPair``, which rejects '' at the 8-character
+      // floor (passwordValidation.ts), and the token is gated above against
+      // MIN_TOKEN_LENGTH before this form renders at all. Declared explicitly
+      // rather than omitted so a reviewer can see the reasoning.
+      required: [],
+    },
   );
 
   if (!token || token.length < MIN_TOKEN_LENGTH) {
@@ -151,8 +164,9 @@ export default function ResetPasswordScreen({ navigation, route }: Props) {
         setPassword={setPassword}
         confirmPassword={confirmPassword}
         setConfirmPassword={setConfirmPassword}
+        onSubmit={handleSubmit}
       />
-      {error && <Text style={styles.error}>{error}</Text>}
+      <AuthErrorBanner message={error} testID="reset-error" />
       <ResetActions
         submitting={submitting}
         onSubmit={handleSubmit}

@@ -18,8 +18,19 @@ never produce a naive datetime.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# A completion may be backfilled at most this many days into the past.
+# Beyond this window a user could manufacture an arbitrarily long streak
+# by logging one consecutive past day at a time.
+MAX_BACKFILL_DAYS = 30
+
+# Verdict of :func:`day_window_verdict`.  ``"ok"`` means the day may be
+# logged against; the other two name *why* it may not, so each caller can
+# pick its own remedy (the check-in service raises a distinct 400 per
+# verdict; completion detection drops the fact).
+DayWindow = Literal["ok", "future", "too_old"]
 
 # IANA fallback when a user row predates the ``User.timezone`` column or
 # carries an unknown / corrupt value.  ``"UTC"`` is always present in
@@ -183,3 +194,19 @@ def to_user_date_bucket(ts: datetime | str, user_or_tz: _HasTimezone | str | Non
     """
     parsed = ts if isinstance(ts, datetime) else datetime.fromisoformat(ts)
     return to_user_date(user_or_tz, ensure_aware(parsed))
+
+
+def day_window_verdict(day: date, *, today: date, max_backfill_days: int) -> DayWindow:
+    """Classify ``day`` against the backfill window ending at ``today``.
+
+    The single owner of "how far back may a completion be logged?".
+    Returns ``"future"`` for anything after ``today``, ``"too_old"`` for
+    anything more than ``max_backfill_days`` before it, and ``"ok"``
+    otherwise — both endpoints inclusive.  Callers supply both ``today``
+    and the width so this stays pure day math with no clock read.
+    """
+    if day > today:
+        return "future"
+    if day < today - timedelta(days=max_backfill_days):
+        return "too_old"
+    return "ok"

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
+from domain.constants import DAYS_PER_WEEK
 from domain.dates import ensure_aware, to_user_date
 from domain.program_calendar import (
     calendar_week,
@@ -64,9 +65,6 @@ from schemas.reflection import (
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
-
-# Seven days to a program week; the window math is a multiple of this.
-_DAYS_PER_WEEK = 7
 
 # A user with no StageProgress row has not started the program, so the calendar
 # unlock check treats them as sitting in week 1.
@@ -245,7 +243,7 @@ def _entry_ref_from(anchor: datetime, row: JournalEntry, tz: str) -> EntryRef:
     own zone, matching the local-midnight bounds :func:`program_week_bounds`
     draws — the two used to be computed from different clocks.
     """
-    week = elapsed_days(anchor, row.timestamp, tz=tz) // _DAYS_PER_WEEK + 1
+    week = elapsed_days(anchor, row.timestamp, tz=tz) // DAYS_PER_WEEK + 1
     return EntryRef(
         id=cast("int", row.id), week=week, date=to_user_date(tz, ensure_aware(row.timestamp))
     )

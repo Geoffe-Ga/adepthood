@@ -16,7 +16,10 @@ const { _mockRequestPasswordReset: mockRequest } = require('@/api') as any;
 
 import ForgotPasswordScreen from '../ForgotPasswordScreen';
 
+import { FIELD_VALIDATION_MESSAGE, UNREACHABLE_MESSAGE } from '@/api/errorMessages';
+
 const navigation = { navigate: jest.fn() };
+const ERROR_ID = 'forgot-error';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -70,14 +73,17 @@ describe('ForgotPasswordScreen', () => {
     ).toBeTruthy();
   });
 
-  it('surfaces a friendly error when the request fails entirely', async () => {
+  // Renamed from "when the request fails entirely" and tightened to the exact
+  // transport copy. After the 422 narrowing this is the negative control: it is
+  // the only guard that the real offline path on this screen still says so.
+  it('keeps connectivity copy when the request never reaches the server', async () => {
     mockRequest.mockRejectedValueOnce(new TypeError('Network request failed'));
     const { getByLabelText, getByText, findByText } = render(
       <ForgotPasswordScreen navigation={navigation} />,
     );
     fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
     fireEvent.press(getByText('Send Reset Link'));
-    expect(await findByText(/Check your connection/i)).toBeTruthy();
+    expect(await findByText(UNREACHABLE_MESSAGE)).toBeTruthy();
   });
 
   it('routes back to login from the success view', async () => {
@@ -96,5 +102,99 @@ describe('ForgotPasswordScreen', () => {
     const { getByText } = render(<ForgotPasswordScreen navigation={navigation} />);
     fireEvent.press(getByText('Log In'));
     expect(navigation.navigate).toHaveBeenCalledWith('Login');
+  });
+});
+
+describe('ForgotPasswordScreen required email (#2822)', () => {
+  it('blocks a blank email and spends no reset-request budget', async () => {
+    const { getByText, findByTestId, queryByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.press(getByText('Send Reset Link'));
+
+    // "the API client was not called" IS the zero-rate-limit-budget assertion:
+    // SlowAPIMiddleware counts the request before the body is ever validated,
+    // and this route allows three per hour.
+    expect(mockRequest).not.toHaveBeenCalled();
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('polite');
+    expect(banner).toHaveTextContent('Enter your email to continue.');
+    expect(queryByText(/Check your connection/i)).toBeNull();
+  });
+
+  it('treats a whitespace-only email as blank', async () => {
+    const { getByLabelText, getByText, findByTestId } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.changeText(getByLabelText('Email'), '   ');
+    fireEvent.press(getByText('Send Reset Link'));
+
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent('Enter your email to continue.');
+    expect(getByLabelText('Email').props.accessibilityHint).toBe('Required.');
+  });
+
+  it('retracts the message once an address is typed', async () => {
+    const { getByLabelText, getByText, findByTestId, queryByTestId } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.press(getByText('Send Reset Link'));
+    await findByTestId(ERROR_ID);
+
+    fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
+
+    expect(queryByTestId(ERROR_ID)).toBeNull();
+  });
+
+  it('submits on Enter exactly as the button does', async () => {
+    mockRequest.mockResolvedValueOnce({ message: 'ok' });
+    const { getByLabelText, findByTestId, findByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+    const field = getByLabelText('Email');
+
+    fireEvent(field, 'submitEditing');
+    expect(mockRequest).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toBeTruthy();
+
+    fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
+    fireEvent(getByLabelText('Email'), 'submitEditing');
+
+    await waitFor(() => expect(mockRequest).toHaveBeenCalledWith({ email: 'foo@example.com' }));
+    expect(await findByText('Check your inbox')).toBeTruthy();
+  });
+
+  it('renders field-validation copy for a server 422 rather than a connection story', async () => {
+    mockRequest.mockRejectedValueOnce({ detail: 'some_unmapped_code', status: 422 });
+    const { getByLabelText, getByText, findByTestId, queryByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.changeText(getByLabelText('Email'), 'not-an-email@');
+    fireEvent.press(getByText('Send Reset Link'));
+
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(FIELD_VALIDATION_MESSAGE);
+    expect(queryByText(/Check your connection/i)).toBeNull();
+  });
+});
+
+describe('ForgotPasswordScreen fallback copy', () => {
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockRequest.mockRejectedValueOnce(new Error('something the client cannot classify'));
+    const { getByLabelText, getByText, findByTestId, queryByText } = render(
+      <ForgotPasswordScreen navigation={navigation} />,
+    );
+
+    fireEvent.changeText(getByLabelText('Email'), 'foo@example.com');
+    fireEvent.press(getByText('Send Reset Link'));
+
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      "We couldn't send that reset link. Give it a moment, then try again.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
   });
 });

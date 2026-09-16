@@ -55,7 +55,15 @@ _DETECTION_BLOCK = re.compile(
     r"Candidates:\n(?P<candidates>.*?)\n\nEntry:\n(?P<body>.*)",
     re.DOTALL,
 )
-_CANDIDATE_LINE = re.compile(r"^(?P<index>\d+)\. (?P<name>.+) \((?:habit|practice)\)$")
+# Both shapes ``domain.detection.render_candidate_line`` emits: bare, and with
+# the goal's tracked unit after a comma. Independently written rather than
+# shared with the renderer, because the stub's whole job is to prove an
+# outsider can parse the wire format; a round-trip test pins the pair.
+_CANDIDATE_LINE = re.compile(
+    r"^(?P<index>\d+)\. (?P<name>.+) \((?:habit|practice)(?:, (?P<unit>[^()]*))?\)$"
+)
+#: A quantity the writer stated: a number followed by a word.
+_QUANTITY = re.compile(r"\b(?P<amount>\d+(?:\.\d+)?)\s+(?P<unit>[A-Za-z]+)\b")
 _COMPLETION_VERBS = ("did", "completed", "finished", "practiced")
 _MAX_DETECTION_HITS = 5
 
@@ -131,9 +139,38 @@ def _marginalia_completion(body: str) -> str:
     return json.dumps({"notes": notes})
 
 
+def _attesting_sentence(body: str, at: int) -> str:
+    """The sentence of ``body`` containing offset ``at``, else the whole body.
+
+    Facts are read from the attesting sentence rather than the whole entry so
+    a number stated about something else cannot be attached to this hit.
+    """
+    for sentence in _SENTENCE.finditer(body):
+        if sentence.start() <= at < sentence.end():
+            return sentence.group(0)
+    return body
+
+
+def _stated_facts(sentence: str) -> dict[str, float | str]:
+    """The amount/unit and relative day the sentence states, if any.
+
+    Conservative by design: no key at all unless the sentence really carries
+    one, so the stub never invents a fact, and the exact-dict assertions on
+    quantity-free sentences stay exact.
+    """
+    facts: dict[str, float | str] = {}
+    quantity = _QUANTITY.search(sentence)
+    if quantity is not None:
+        facts["amount"] = float(quantity.group("amount"))
+        facts["unit"] = quantity.group("unit")
+    if "yesterday" in sentence.lower():
+        facts["when"] = "yesterday"
+    return facts
+
+
 def _detection_completion(candidates_block: str, body: str) -> str:
     """Return conservative, verbatim hits for explicitly completed candidates."""
-    hits: list[dict[str, int | str]] = []
+    hits: list[dict[str, float | int | str]] = []
     for line in candidates_block.splitlines():
         candidate = _CANDIDATE_LINE.fullmatch(line)
         if candidate is None:
@@ -146,7 +183,13 @@ def _detection_completion(candidates_block: str, body: str) -> str:
         match = attestation.search(body)
         if match is None:
             continue
-        hits.append({"index": int(candidate.group("index")), "quote": match.group(0)})
+        hits.append(
+            {
+                "index": int(candidate.group("index")),
+                "quote": match.group(0),
+                **_stated_facts(_attesting_sentence(body, match.start())),
+            }
+        )
         if len(hits) == _MAX_DETECTION_HITS:
             break
     return json.dumps({"hits": hits})

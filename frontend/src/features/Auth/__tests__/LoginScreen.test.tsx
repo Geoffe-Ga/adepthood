@@ -25,7 +25,17 @@ const { _mockLogin: mockLogin } = require('@/context/AuthContext') as any;
 
 import LoginScreen from '../LoginScreen';
 
+import { UNREACHABLE_MESSAGE } from '@/api/errorMessages';
+
 const SOCIAL_SECTION_ID = 'social-auth-section';
+const ERROR_ID = 'login-error';
+
+/** The accessibility hint a control is currently advertising, if any. */
+function hintOf(input: { props: { accessibilityHint?: string } }): string | undefined {
+  return input.props.accessibilityHint;
+}
+const VALID_EMAIL = 'user@test.com';
+const VALID_PASSWORD = 'password123'; // pragma: allowlist secret
 
 /** Rendered testIDs in tree order, so "below" is a real assertion. */
 function testIdOrder(node: unknown, ids: string[] = []): string[] {
@@ -102,17 +112,22 @@ describe('LoginScreen', () => {
     expect(queryByText('invalid_credentials')).toBeNull();
   });
 
-  it('falls back to a connection-hint message when the error is unrecognised', async () => {
+  // Renamed from "when the error is unrecognised": the old title generalised a
+  // genuine transport failure into "anything we don't recognise is the network",
+  // which is exactly the belief that let a server's 422 wear connectivity copy.
+  // The body always described a real fetch failure; the assertion is tightened
+  // to the exact transport copy so it can never again pass on a status error.
+  it('keeps connectivity copy for a genuine transport failure', async () => {
     mockLogin.mockRejectedValue(new TypeError('Network request failed'));
     const { getByPlaceholderText, getByText, findByText } = render(
       <LoginScreen navigation={mockNavigation} />,
     );
 
-    fireEvent.changeText(getByPlaceholderText('Email'), 'user@test.com');
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
     fireEvent.changeText(getByPlaceholderText('Password'), 'whatever');
     fireEvent.press(getByText('Log In'));
 
-    expect(await findByText(/Check your connection/i)).toBeTruthy();
+    expect(await findByText(UNREACHABLE_MESSAGE)).toBeTruthy();
   });
 
   it('trims whitespace from the email before submitting (BUG-AUTH-010)', async () => {
@@ -171,5 +186,198 @@ describe('LoginScreen', () => {
 
     expect(ids).toContain('login-submit');
     expect(ids.indexOf(SOCIAL_SECTION_ID)).toBeGreaterThan(ids.indexOf('login-submit'));
+  });
+});
+
+describe('LoginScreen required fields (#2821)', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('blocks submission and names both missing fields instead of blaming the connection', async () => {
+    mockLogin.mockResolvedValue(undefined);
+    const { getByText, findByTestId, queryByText } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.press(getByText('Log In'));
+
+    // Asserted first because it is synchronous: the guard returns before the
+    // async path, so there is no pending call to wait for.
+    expect(mockLogin).not.toHaveBeenCalled();
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(banner.props.accessibilityLiveRegion).toBe('polite');
+    expect(banner).toHaveTextContent(/email/i);
+    expect(banner).toHaveTextContent(/password/i);
+    expect(queryByText(/Check your connection/i)).toBeNull();
+  });
+
+  it('names only the email when the password is filled', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+    fireEvent.press(getByText('Log In'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner).toHaveTextContent('Enter your email to continue.');
+  });
+
+  it('names only the password when the email is filled', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.press(getByText('Log In'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner).toHaveTextContent('Enter your password to continue.');
+  });
+
+  it('treats a whitespace-only email as missing', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '   ');
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+    fireEvent.press(getByText('Log In'));
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent('Enter your email to continue.');
+  });
+
+  // A screen reader user who swipes from the banner to the control must hear
+  // that this is the field in question -- the banner alone leaves them counting.
+  it('marks the blank input with a required hint', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+    fireEvent.press(getByText('Log In'));
+    await findByTestId(ERROR_ID);
+
+    expect(getByPlaceholderText('Email').props.accessibilityHint).toBe('Required.');
+    expect(getByPlaceholderText('Password').props.accessibilityHint).toBeUndefined();
+  });
+
+  // F1: the banner names what is still missing. Clearing a *filled* field to
+  // retype it leaves the form more invalid, not less, so neither the banner nor
+  // the control's hint may disappear on that keystroke.
+  it('keeps the message when a different field is cleared to be retyped', async () => {
+    const { getByPlaceholderText, getByText, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.press(getByText('Log In'));
+    const banner = await findByTestId(ERROR_ID);
+    expect(banner).toHaveTextContent('Enter your password to continue.');
+
+    fireEvent.changeText(getByPlaceholderText('Email'), '');
+
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+    expect(getByText('Enter your password to continue.')).toBeTruthy();
+  });
+
+  // R3-F1: satisfying ONE of two flagged fields is partial progress. The banner
+  // must narrow to what is still missing rather than vanishing, and the control
+  // that is still empty must keep advertising itself. Vanishing here told the
+  // user the form was fixed when a second submit would refuse it again.
+  it('narrows to the field still missing when only one of two is filled', async () => {
+    const { getByPlaceholderText, getByText, getByTestId, findByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.press(getByText('Log In'));
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      'Enter your email and password to continue.',
+    );
+    expect(hintOf(getByPlaceholderText('Email'))).toBe('Required.');
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+
+    expect(getByTestId(ERROR_ID)).toHaveTextContent('Enter your password to continue.');
+    expect(hintOf(getByPlaceholderText('Email'))).toBeUndefined();
+    expect(hintOf(getByPlaceholderText('Password'))).toBe('Required.');
+    expect(mockLogin).not.toHaveBeenCalled();
+  });
+
+  it('retracts the message as soon as the offending field is edited', async () => {
+    const { getByPlaceholderText, getByText, findByTestId, queryByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.press(getByText('Log In'));
+    await findByTestId(ERROR_ID);
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+
+    expect(queryByTestId(ERROR_ID)).toBeNull();
+  });
+
+  it('submits on Enter exactly as the button does', async () => {
+    mockLogin.mockResolvedValue(undefined);
+    const { getByPlaceholderText, findByTestId, queryByTestId } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+    const password = getByPlaceholderText('Password');
+
+    fireEvent(password, 'submitEditing');
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(await findByTestId(ERROR_ID)).toBeTruthy();
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.changeText(password, VALID_PASSWORD);
+    fireEvent(getByPlaceholderText('Password'), 'submitEditing');
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledTimes(1));
+    expect(mockLogin).toHaveBeenCalledWith(VALID_EMAIL, VALID_PASSWORD);
+    expect(queryByTestId(ERROR_ID)).toBeNull();
+  });
+
+  // The guard measures the password exactly as it will be sent. An account whose
+  // password is eight spaces is creatable and loggable-in today, so a trimmed
+  // guard would lock that user out of this client for good while telling them to
+  // type the password they are holding. The server answers; the client does not.
+  it('still submits an all-whitespace password so the server answers, not the client', async () => {
+    mockLogin.mockResolvedValue(undefined);
+    const { getByPlaceholderText, getByText } = render(<LoginScreen navigation={mockNavigation} />);
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.changeText(getByPlaceholderText('Password'), '        ');
+    fireEvent.press(getByText('Log In'));
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith(VALID_EMAIL, '        '));
+  });
+});
+
+// F5: the four auth fallbacks used to diagnose a cause they could not know, and
+// that is the whole defect this suite exists to hold shut. Pin the exact copy so
+// a revert to "Check your connection" cannot pass.
+describe('LoginScreen fallback copy', () => {
+  const mockNavigation = { navigate: jest.fn() };
+
+  it('never blames the connection for a failure it cannot classify', async () => {
+    mockLogin.mockRejectedValue(new Error('something the client cannot classify'));
+    const { getByPlaceholderText, getByText, findByTestId, queryByText } = render(
+      <LoginScreen navigation={mockNavigation} />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText('Email'), VALID_EMAIL);
+    fireEvent.changeText(getByPlaceholderText('Password'), VALID_PASSWORD);
+    fireEvent.press(getByText('Log In'));
+
+    expect(await findByTestId(ERROR_ID)).toHaveTextContent(
+      "We couldn't sign you in. Give it a moment, then try again.",
+    );
+    expect(queryByText(/connection/i)).toBeNull();
   });
 });
