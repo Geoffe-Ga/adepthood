@@ -37,6 +37,9 @@ jest.mock('@/storage/authStorage', () => ({
   markLogoutPending: jest.fn(() => Promise.resolve()),
   isLogoutPending: jest.fn(() => Promise.resolve(false)),
   clearLogoutPending: jest.fn(() => Promise.resolve()),
+  saveUserTimezone: jest.fn(() => Promise.resolve()),
+  loadUserTimezone: jest.fn(() => Promise.resolve('UTC')),
+  clearUserTimezone: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('@/utils/token', () => ({

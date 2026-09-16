@@ -11,12 +11,13 @@
  * counts as a return — by fiat, and so could not tell a correct hook from one
  * that fetches twice on every cold open.
  */
-import { jest, describe, expect, it, beforeEach } from '@jest/globals';
+import { jest, describe, expect, it, beforeEach, afterEach } from '@jest/globals';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { render, renderHook, act } from '@testing-library/react-native';
 import React from 'react';
-import { Text } from 'react-native';
+import { AppState, Text } from 'react-native';
+import type { AppStateStatus, NativeEventSubscription } from 'react-native';
 
 import { useBootstrapHabits } from '../useHabits';
 
@@ -71,10 +72,34 @@ const goTo = (screen: keyof TabList): void => {
   });
 };
 
+/** The `AppState` handler the shared day-boundary owner registers, once armed. */
+let appStateHandler: ((_status: AppStateStatus) => void) | null = null;
+
+const captureAppState = (): void => {
+  appStateHandler = null;
+  jest.spyOn(AppState, 'addEventListener').mockImplementation(((
+    _event: string,
+    handler: (_status: AppStateStatus) => void,
+  ) => {
+    appStateHandler = handler;
+    return { remove: () => undefined } as NativeEventSubscription;
+  }) as typeof AppState.addEventListener);
+};
+
+const sendAppState = (status: AppStateStatus): void => {
+  act(() => {
+    appStateHandler?.(status);
+  });
+};
+
 describe('useBootstrapHabits on focus', () => {
   beforeEach(() => {
     hydratedTimezone = WEST_TZ;
     mockLoadHabits.mockClear();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('reads habits once on the visit that mounts the tab', () => {
@@ -139,6 +164,78 @@ describe('useBootstrapHabits on focus', () => {
     // would have re-read the UTC default here and re-bucketed the shelf into
     // the wrong calendar day.
     expect(mockLoadHabits.mock.calls).toEqual([['UTC'], ['Asia/Tokyo'], ['Asia/Tokyo']]);
+  });
+
+  /**
+   * #2847 hole 2: the tab the user never left.
+   *
+   * `useDayKey` already re-renders on the way back in, so the day *displayed*
+   * moves; nothing re-read the server. A user who left the app on the Habits
+   * tab overnight came back to yesterday's streak and to any check-in accepted
+   * from the journal or another device still invisible, until they happened to
+   * switch tabs. Foregrounding is a return as much as a navigation focus is.
+   */
+  describe('coming back from the background on the same tab', () => {
+    it('reads habits again when the app returns to the foreground', () => {
+      captureAppState();
+      mountTabs();
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+
+      sendAppState('active');
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not read on the way out', () => {
+      captureAppState();
+      mountTabs();
+
+      sendAppState('background');
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads with the auth-hydrated zone, not the mount-time one', () => {
+      captureAppState();
+      hydratedTimezone = 'UTC';
+      mountTabs();
+      act(() => {
+        rehydrateZone(EAST_TZ);
+      });
+
+      sendAppState('active');
+
+      expect(mockLoadHabits.mock.calls).toEqual([['UTC'], ['Asia/Tokyo'], ['Asia/Tokyo']]);
+    });
+
+    it('reads once when a foreground and a return to the tab name the same moment', () => {
+      // Foregrounding onto a tab the user had navigated away from fires the
+      // day boundary now and the navigation focus a beat later. Two reads of
+      // the same list for one return is a wasted round trip and a second
+      // render for an identical answer; the boundary defers, because a blurred
+      // tab has nothing to show anyone yet.
+      captureAppState();
+      mountTabs();
+      goTo('Elsewhere');
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        appStateHandler?.('active');
+        navigationRef.navigate('Habits');
+      });
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not read for a tab the user is not even looking at', () => {
+      captureAppState();
+      mountTabs();
+      goTo('Elsewhere');
+
+      sendAppState('active');
+
+      expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('still loads on mount when there is no navigator at all', () => {

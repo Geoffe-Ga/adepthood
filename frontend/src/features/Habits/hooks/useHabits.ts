@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react';
 
 import { useToast } from '../../../components/ToastProvider';
 import { useAuth } from '../../../context/AuthContext';
-import { useRefetchOnFocus } from '../../../hooks/useRefetchOnFocus';
+import { useRefetchOnReturn } from '../../../hooks/useRefetchOnReturn';
 import { useHabitStore } from '../../../store/useHabitStore';
 import type { UseHabitsReturn } from '../Habits.types';
 import { habitManager } from '../services/habitManager';
@@ -21,7 +21,9 @@ export const useBootstrapHabits = (userTimezone: string): void => {
   // The tab stays mounted once visited, so the effect above is the only read
   // the screen would ever do: a check-in accepted from the journal, or a day
   // that turned over elsewhere, stayed invisible until a restart (#2764).
-  useRefetchOnFocus(
+  // Returning to the tab is one way back in; foregrounding the app on the tab
+  // the user never left is the other, and only the first was covered (#2847).
+  useRefetchOnReturn(
     useCallback(() => {
       void habitManager.loadHabits(userTimezone);
     }, [userTimezone]),

@@ -151,3 +151,66 @@ describe('authStorage logout-pending marker (BUG-FE-STATE-001)', () => {
     expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(LOGOUT_PENDING_KEY);
   });
 });
+
+/**
+ * #2847: the zone a resumed session has to come back with.
+ *
+ * The JWT carries no ``timezone`` claim, so a cold start that only reads the
+ * token knows the user's credential but not their calendar. This slot is the
+ * last zone the *server* confirmed, cached beside the token — never a
+ * device-clock guess.
+ */
+describe('authStorage user timezone (#2847)', () => {
+  const USER_TIMEZONE_KEY = '@adepthood/user_timezone';
+
+  test('saveUserTimezone records the server-confirmed zone', async () => {
+    const { saveUserTimezone } = loadAuthStorage();
+    await saveUserTimezone('America/Los_Angeles');
+    expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(USER_TIMEZONE_KEY, 'America/Los_Angeles');
+  });
+
+  test('loadUserTimezone returns null when nothing was ever stored', async () => {
+    const { loadUserTimezone } = loadAuthStorage();
+    mockAsyncStorage.getItem.mockResolvedValueOnce(null);
+    expect(await loadUserTimezone()).toBeNull();
+  });
+
+  test('loadUserTimezone returns the stored zone', async () => {
+    const { loadUserTimezone } = loadAuthStorage();
+    mockAsyncStorage.getItem.mockResolvedValueOnce('America/Los_Angeles');
+    expect(await loadUserTimezone()).toBe('America/Los_Angeles');
+  });
+
+  test('loadUserTimezone treats a blank value as absent', async () => {
+    // An empty string is not a zone; returning it would make every "today"
+    // fall back to the runtime's own calendar, which is the one source #261
+    // forbids.
+    const { loadUserTimezone } = loadAuthStorage();
+    mockAsyncStorage.getItem.mockResolvedValueOnce('   ');
+    expect(await loadUserTimezone()).toBeNull();
+  });
+
+  test('loadUserTimezone swallows storage errors as absent', async () => {
+    const { loadUserTimezone } = loadAuthStorage();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('boom'));
+    expect(await loadUserTimezone()).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test('saveUserTimezone never rejects: a failed cache must not break a sign-in', async () => {
+    const { saveUserTimezone } = loadAuthStorage();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockAsyncStorage.setItem.mockRejectedValueOnce(new Error('disk full'));
+    await expect(saveUserTimezone('Europe/Berlin')).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test('clearUserTimezone removes the cached zone', async () => {
+    const { clearUserTimezone } = loadAuthStorage();
+    await clearUserTimezone();
+    expect(mockAsyncStorage.removeItem).toHaveBeenCalledWith(USER_TIMEZONE_KEY);
+  });
+});

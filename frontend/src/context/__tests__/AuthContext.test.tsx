@@ -34,6 +34,9 @@ jest.mock('@/storage/authStorage', () => ({
   markLogoutPending: jest.fn(() => Promise.resolve()),
   isLogoutPending: jest.fn(() => Promise.resolve(false)),
   clearLogoutPending: jest.fn(() => Promise.resolve()),
+  saveUserTimezone: jest.fn(() => Promise.resolve()),
+  loadUserTimezone: jest.fn(() => Promise.resolve(null)),
+  clearUserTimezone: jest.fn(() => Promise.resolve()),
 }));
 
 // Mock token utilities
@@ -62,6 +65,9 @@ import {
   markLogoutPending,
   isLogoutPending,
   clearLogoutPending,
+  saveUserTimezone,
+  loadUserTimezone,
+  clearUserTimezone,
 } from '@/storage/authStorage';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 import type * as tokenModule from '@/utils/token';
@@ -73,6 +79,9 @@ const mockClearToken = clearToken as jest.MockedFunction<typeof clearToken>;
 const mockMarkLogoutPending = markLogoutPending as jest.MockedFunction<typeof markLogoutPending>;
 const mockIsLogoutPending = isLogoutPending as jest.MockedFunction<typeof isLogoutPending>;
 const mockClearLogoutPending = clearLogoutPending as jest.MockedFunction<typeof clearLogoutPending>;
+const mockSaveUserTimezone = saveUserTimezone as jest.MockedFunction<typeof saveUserTimezone>;
+const mockLoadUserTimezone = loadUserTimezone as jest.MockedFunction<typeof loadUserTimezone>;
+const mockClearUserTimezone = clearUserTimezone as jest.MockedFunction<typeof clearUserTimezone>;
 const mockSetTokenGetter = setTokenGetter as jest.MockedFunction<typeof setTokenGetter>;
 const mockSetOnTokenRefreshed = setOnTokenRefreshed as jest.MockedFunction<
   typeof setOnTokenRefreshed
@@ -93,6 +102,12 @@ beforeEach(() => {
   mockIsTokenExpired.mockReturnValue(false);
   mockShouldRefreshToken.mockReturnValue(false);
   mockIsLogoutPending.mockResolvedValue(false);
+  // A device that has signed in even once has the server's zone cached, which
+  // is the ordinary resume: no backfill, and every assertion below that reads
+  // ``'UTC'`` reads the zone this device was actually told. The tests that
+  // exercise the backfill set this to ``null`` — a session stored before the
+  // cache existed — explicitly.
+  mockLoadUserTimezone.mockResolvedValue('UTC');
 });
 
 afterEach(() => {
@@ -682,17 +697,24 @@ describe('AuthContext', () => {
     });
 
     it('propagates server timezone from refresh response to userTimezone', async () => {
-      // The refresh callback receives both the new token and the
-      // server's stored IANA zone, so a cold-start → proactive-refresh
-      // sequence keeps ``userTimezone`` aligned with the authenticated
-      // user instead of leaving it at the ``"UTC"`` default until the
-      // user manually re-authenticates.
+      // The refresh callback receives both the new token and the server's
+      // stored IANA zone, so a zone corrected on another device reaches this
+      // one at its next refresh rather than waiting for a re-login.
+      //
+      // This test used to assert that ``userTimezone`` read ``'UTC'`` after
+      // bootstrap and only became real at the refresh. That was the bug
+      // (#2847), pinned: a resumed session ran every "today" in the app on
+      // UTC until something refreshed the token. The resumed zone is now
+      // asserted below to be the one the device already had on record, and
+      // the refresh's job here is narrowed to what it actually is — moving
+      // an already-correct zone to a newer one.
       mockLoadToken.mockResolvedValue('old-jwt');
+      mockLoadUserTimezone.mockResolvedValue('America/Denver');
       mockSaveToken.mockResolvedValue(undefined);
 
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('old-jwt'));
-      expect(result.current.userTimezone).toBe('UTC');
+      expect(result.current.userTimezone).toBe('America/Denver');
 
       const refreshed = mockSetOnTokenRefreshed.mock.calls.at(-1)?.[0];
       expect(typeof refreshed).toBe('function');
@@ -703,6 +725,9 @@ describe('AuthContext', () => {
 
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
       expect(result.current.userTimezone).toBe('America/Los_Angeles');
+      // ...and the new zone replaces the cached one, so the *next* cold start
+      // resumes on it rather than on the zone it superseded.
+      expect(mockSaveUserTimezone).toHaveBeenCalledWith('America/Los_Angeles');
     });
 
     it('falls back to UTC when refresh response omits timezone', async () => {
@@ -775,6 +800,206 @@ describe('AuthContext', () => {
       });
 
       await waitFor(() => expect(result.current.token).toBeNull());
+    });
+  });
+
+  /**
+   * #2847 -- the calendar a resumed session comes back with.
+   *
+   * Cold start with a stored token used to set the token and flip to
+   * ``authenticated`` without touching ``userTimezone``, so every "today" in
+   * the app -- a habit's done state, its streak chip, the journal shelf's
+   * done-count -- was computed in UTC. The server mints 30-day tokens renewed
+   * at their half-life, so the wrong calendar could hold for up to fifteen
+   * days, not the hour the report assumed. West of UTC that buckets
+   * yesterday's evening completion into today, and the only remedy a user
+   * could find was to log out and back in.
+   *
+   * The zone is read back from the device, not guessed from it: the value
+   * cached here is the one the *server* last confirmed, so the #261 rule that
+   * the stored zone is the only source still holds.
+   */
+  describe('resumed session carries its own calendar (#2847)', () => {
+    it('resumes on the stored zone rather than the UTC default', async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue('America/Los_Angeles');
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(result.current.userTimezone).toBe('America/Los_Angeles');
+    });
+
+    it('never paints an authenticated render on UTC when a zone is on record', async () => {
+      // The assertion that matters is not the settled value but that no render
+      // in between was authenticated *and* on UTC: one such render is one
+      // habit tile painted "ACHIEVED TODAY!" on the wrong day.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue('America/Los_Angeles');
+
+      const seen: Array<{ status: string; tz: string }> = [];
+      const { result } = renderHook(
+        () => {
+          const ctx = useAuth();
+          seen.push({ status: ctx.authStatus, tz: ctx.userTimezone });
+          return ctx;
+        },
+        { wrapper },
+      );
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(seen.filter((r) => r.status === 'authenticated' && r.tz === 'UTC')).toEqual([]);
+    });
+
+    it('does not ask the network for a zone the device already has', async () => {
+      // One AsyncStorage read, no round trip: /auth/refresh is rate-limited to
+      // one call a minute and rotates the token, so it is the wrong thing to
+      // spend on every cold start.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue('America/Los_Angeles');
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(mockAuth.refresh).not.toHaveBeenCalled();
+    });
+
+    it('records the zone a login returns so the next cold start can resume on it', async () => {
+      mockAuth.login.mockResolvedValue({
+        token: 'login-jwt',
+        user_id: 7,
+        timezone: 'Europe/Berlin',
+      });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      await act(async () => {
+        await result.current.login('a@b.com', 'pw');
+      });
+
+      expect(result.current.userTimezone).toBe('Europe/Berlin');
+      expect(mockSaveUserTimezone).toHaveBeenCalledWith('Europe/Berlin');
+    });
+
+    it('records a zone corrected through the context setter', async () => {
+      // PUT /users/me/timezone echoes the stored zone back and the caller
+      // pushes it here. Without persisting it, the correction would survive
+      // only until the next cold start read back the zone it replaced.
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('anonymous'));
+
+      act(() => {
+        result.current.setUserTimezone('Pacific/Auckland');
+      });
+
+      expect(result.current.userTimezone).toBe('Pacific/Auckland');
+      expect(mockSaveUserTimezone).toHaveBeenCalledWith('Pacific/Auckland');
+    });
+
+    it('backfills the zone over the wire for a session stored before the cache existed', async () => {
+      // An install upgraded mid-session holds a token but no cached zone.
+      // That is the reporter's own population, so it cannot be left to wait
+      // for the token's half-life.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue(null);
+      mockSaveToken.mockResolvedValue(undefined);
+      mockAuth.refresh.mockResolvedValue({
+        token: 'fresh-jwt',
+        user_id: 7,
+        timezone: 'America/Los_Angeles',
+      });
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.userTimezone).toBe('America/Los_Angeles'));
+      expect(mockAuth.refresh).toHaveBeenCalledWith('stored-jwt');
+      expect(result.current.token).toBe('fresh-jwt');
+      expect(mockSaveUserTimezone).toHaveBeenCalledWith('America/Los_Angeles');
+    });
+
+    it('leaves the backfill to the proactive refresh when the token is already due', async () => {
+      // Two refreshes for one token would be one 429: /auth/refresh allows a
+      // single call a minute, and the proactive path already fires the moment
+      // a due token lands in state. The refresh is left in flight on purpose,
+      // so the token cannot rotate out from under the count and both callers
+      // are still aimed at the same credential when it is taken.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue(null);
+      mockShouldRefreshToken.mockReturnValue(true);
+      mockSaveToken.mockResolvedValue(undefined);
+      mockAuth.refresh.mockImplementation(() => new Promise(() => undefined));
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockAuth.refresh.mock.calls.filter(([t]) => t === 'stored-jwt')).toHaveLength(1);
+    });
+
+    it('stays authenticated when the backfill cannot reach the server', async () => {
+      // Offline resume must still reach the user's data. The zone falls back
+      // to the pre-#2847 default rather than to the device's own clock.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue(null);
+      mockAuth.refresh.mockRejectedValue(new Error('offline'));
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(result.current.token).toBe('stored-jwt');
+      expect(result.current.userTimezone).toBe('UTC');
+    });
+
+    it('drops a backfill that a session teardown won the race against', async () => {
+      // The BUG-FRONTEND-INFRA-012 identity guard, reached from the new
+      // caller: a backfill that resolves after the session it was issued for
+      // ended must not resurrect it.
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue(null);
+      mockSaveToken.mockResolvedValue(undefined);
+      let resolveRefresh:
+        ((_r: { token: string; user_id: number; timezone: string }) => void) | null = null;
+      mockAuth.refresh.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+      expect(result.current.token).toBeNull();
+
+      await act(async () => {
+        resolveRefresh?.({ token: 'fresh-jwt', user_id: 7, timezone: 'America/Los_Angeles' });
+      });
+
+      expect(result.current.token).toBeNull();
+      expect(result.current.authStatus).toBe('anonymous');
+      expect(result.current.userTimezone).toBe('UTC');
+    });
+
+    it('clears the cached zone on logout so the next user does not inherit it', async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue('America/Los_Angeles');
+
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(mockClearUserTimezone).toHaveBeenCalled();
+      expect(result.current.userTimezone).toBe('UTC');
     });
   });
 

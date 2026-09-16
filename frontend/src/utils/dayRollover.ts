@@ -20,7 +20,7 @@
  * Nothing here touches stored data. A completion's timestamp is a fact about
  * when it happened; only the display of "today" moves.
  */
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import type { AppStateStatus, NativeEventSubscription } from 'react-native';
 
@@ -161,4 +161,30 @@ export const useDayKey = (tz: string): string => {
   useEffect(() => registerZone(tz), [tz]);
   const readDayKey = useCallback(() => todayInUserTZ(tz), [tz]);
   return useSyncExternalStore(subscribeToDayRollover, readDayKey);
+};
+
+/**
+ * Run `refetch` whenever the day boundary arrives — midnight, or the app
+ * returning to the foreground.
+ *
+ * {@link useDayKey} re-derives what a mounted screen *shows*; this re-reads
+ * what it shows it from. They are different failures. A user who left the app
+ * on the Habits tab overnight got the re-render — "today" moved — but the
+ * store still held yesterday's streak, and a check-in accepted from the
+ * journal or another device while the app was away stayed invisible until they
+ * happened to switch tabs (#2847). Navigation focus does not fire for an app
+ * merely foregrounded on the screen it was left on, so nothing else covers it.
+ *
+ * Subscribes to the same single owner as `useDayKey` rather than adding an
+ * `AppState` listener of its own: one timeout and one listener for the app,
+ * however many surfaces are watching.
+ *
+ * @param refetch - What to re-read. Need not be memoised; the most recently
+ *   rendered one always runs, so a caller can close over live values such as
+ *   the auth-hydrated timezone without re-subscribing.
+ */
+export const useRefetchOnDayBoundary = (refetch: () => void): void => {
+  const latest = useRef(refetch);
+  latest.current = refetch;
+  useEffect(() => subscribeToDayRollover(() => latest.current()), []);
 };
