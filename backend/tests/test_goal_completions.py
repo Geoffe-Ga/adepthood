@@ -13,12 +13,16 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
-from domain.dates import today_in_tz
+from domain.dates import MAX_BACKFILL_DAYS, today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.goal_completion_idempotency import GoalCompletionSpend
 from models.habit import Habit
 from services.streaks import compute_consecutive_streak
+
+# The shipped backfill window, spelled as a literal on purpose: see
+# ``test_backfill_window_is_exactly_thirty_days_wide``.
+_SHIPPED_BACKFILL_WINDOW_DAYS = 30
 
 
 async def _signup(client: AsyncClient, username: str = "goaluser") -> tuple[dict[str, str], int]:
@@ -1132,6 +1136,40 @@ async def test_backfill_beyond_lookback_window_is_rejected(
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert resp.json()["detail"] == "completion_date_too_old"
+
+
+@pytest.mark.asyncio
+async def test_backfill_window_is_exactly_thirty_days_wide(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The oldest accepted day is exactly 30 days back, not one fewer.
+
+    The sibling rejection test above uses a 31-day offset, so it stays green
+    for any window narrower than 31 and pins nothing at the boundary. This
+    one pins both halves: the shipped width is a product contract, and the
+    service honours it exactly. The literal is deliberate -- deriving the
+    offsets from ``MAX_BACKFILL_DAYS`` would move with any narrowing and
+    assert nothing about what users were promised.
+    """
+    assert MAX_BACKFILL_DAYS == _SHIPPED_BACKFILL_WINDOW_DAYS
+    headers, user_id = await _signup(async_client, "boundary_backfiller")
+    goal = await _seed_goal(db_session, user_id)
+    oldest_ok = today_in_tz("UTC") - timedelta(days=_SHIPPED_BACKFILL_WINDOW_DAYS)
+
+    accepted = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": oldest_ok.isoformat()},
+        headers=headers,
+    )
+    assert accepted.status_code == HTTPStatus.OK
+
+    refused = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": (oldest_ok - timedelta(days=1)).isoformat()},
+        headers=headers,
+    )
+    assert refused.status_code == HTTPStatus.BAD_REQUEST
+    assert refused.json()["detail"] == "completion_date_too_old"
 
 
 @pytest.mark.asyncio
