@@ -31,8 +31,14 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultPipelineClient,
 )
-from domain.dates import MAX_BACKFILL_DAYS, day_window_verdict, today_in_tz
+from domain.dates import (
+    MAX_BACKFILL_DAYS,
+    day_window_verdict,
+    to_user_date_bucket,
+    today_in_tz,
+)
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
+from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
@@ -1033,6 +1039,11 @@ def _suggestion_from_hit(
         anchor_start=hit.anchor_start,
         anchor_end=hit.anchor_end,
         anchor_text=hit.anchor_text,
+        # Habit-only, satisfying ``ck_completion_suggestion_facts_habit_only``:
+        # a practice candidate carries no ``target_unit``, so the resolver
+        # never attaches facts to one, and the accept path would ignore them.
+        completed_units=hit.completed_units if is_habit else None,
+        completed_on=hit.completed_on if is_habit else None,
         status=SuggestionStatus.PENDING,
     )
 
@@ -1043,10 +1054,52 @@ class _DetectionAttempt:
     checked: bool
 
 
+@dataclass(frozen=True, slots=True)
+class DetectionInputs:
+    """The candidates one detection pass may offer, plus the days it resolves against.
+
+    Bundled rather than passed as two arguments for the same reason
+    ``_ReflectionClients`` exists three hundred lines below: the handler
+    signatures in this module are already at their argument budget, and a
+    sixth parameter on any of them fails lint. The clock *replaces* the
+    ``candidates`` parameter everywhere it travels, so nothing grows.
+    """
+
+    candidates: Sequence[DetectionCandidate]
+    clock: DetectionClock
+
+
+def _log_detection_checked(
+    hits: Sequence[CompletionDetected], *, user_id: int, entry_id: int
+) -> None:
+    """Record that a real detection round trip happened, and what it yielded.
+
+    Ids and counts only — never a quote, a unit word, a ``when`` phrase or any
+    body text. Journal writing is encrypted at rest precisely so it never
+    reaches an operator's log file, and a detected fact is a direct quotation
+    of it.
+
+    Emitted only after a provider actually answered, never on the
+    empty-candidate short-circuit, so ``hits_with_units`` over ``hits`` stays a
+    meaningful ratio — and it is the only operational signal that the unit
+    alias table is too narrow for what people really write.
+    """
+    logger.info(
+        "journal_detection_checked",
+        extra={
+            "user_id": user_id,
+            "entry_id": entry_id,
+            "hits": len(hits),
+            "hits_with_units": sum(1 for hit in hits if hit.completed_units is not None),
+            "hits_with_day": sum(1 for hit in hits if hit.completed_on is not None),
+        },
+    )
+
+
 async def _detect_hits_with_status(
     message: str,
     *,
-    candidates: Sequence[DetectionCandidate],
+    inputs: DetectionInputs,
     llm: BotmasonResonanceLLM,
     user_id: int,
     entry_id: int,
@@ -1062,11 +1115,11 @@ async def _detect_hits_with_status(
     is permanent where a dropped socket is transient, and the account is the
     only thing an operator can act on.
     """
-    if not candidates:
+    if not inputs.candidates:
         return _DetectionAttempt(hits=[], checked=True)
     try:
-        return _DetectionAttempt(
-            hits=await detect_completions(message, candidates=candidates, llm=llm), checked=True
+        hits = await detect_completions(
+            message, candidates=inputs.candidates, llm=llm, clock=inputs.clock
         )
     except LLMCreditExhaustedError as exc:
         logger.warning(
@@ -1077,21 +1130,8 @@ async def _detect_hits_with_status(
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
         return _DetectionAttempt(hits=[], checked=False)
-
-
-async def _detect_hits(
-    message: str,
-    *,
-    candidates: Sequence[DetectionCandidate],
-    llm: BotmasonResonanceLLM,
-    user_id: int,
-    entry_id: int,
-) -> list[CompletionDetected]:
-    """Compatibility wrapper for the combined resonance pass."""
-    attempt = await _detect_hits_with_status(
-        message, candidates=candidates, llm=llm, user_id=user_id, entry_id=entry_id
-    )
-    return attempt.hits
+    _log_detection_checked(hits, user_id=user_id, entry_id=entry_id)
+    return _DetectionAttempt(hits=hits, checked=True)
 
 
 def _stage_suggestions(
@@ -1702,7 +1742,7 @@ async def run_resonance(
     prior_letters = await _prior_letter_essays(
         session, user_id=current_user, exclude_entry_id=entry_id
     )
-    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
+    detection = await _detection_inputs(session, entry=entry)
     llm = BotmasonResonanceLLM(byok_key)
     # Any deduction is durable and every read the dials depend on is in hand:
     # release the pooled connection before the first provider round trip.
@@ -1735,8 +1775,8 @@ async def run_resonance(
     if anchored is None:
         # The reflection failed but the entry is flagged: surface care regardless.
         return await _care_only_response(session, current_user, cast("CareResponse", care))
-    hits = await _detect_hits(
-        message, candidates=candidates, llm=llm, user_id=current_user, entry_id=entry_id
+    attempt = await _detect_hits_with_status(
+        message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
     )
     settled = await _persist_settle_commit(
         session,
@@ -1745,7 +1785,7 @@ async def run_resonance(
             user_id=current_user,
             spent=spent,
             anchored=anchored,
-            hits=hits,
+            hits=attempt.hits,
             llm=llm,
         ),
     )
@@ -1913,12 +1953,37 @@ async def _unoffered_candidates(
     ]
 
 
+async def _detection_inputs(session: AsyncSession, *, entry: JournalEntry) -> DetectionInputs:
+    """Everything one detection pass needs from the database, read in one place.
+
+    Both routes call this before their deliberate pre-dial commit, so the
+    timezone read lands on the correct side of the connection release by
+    construction rather than by a reviewer noticing.
+
+    The entry's day comes from ``to_user_date_bucket``, never bare
+    ``to_user_date``: the latter refuses naive datetimes, and SQLite hands
+    back exactly those for a timezone-aware column.
+    """
+    candidates = await _unoffered_candidates(
+        session, entry_id=cast("int", entry.id), user_id=entry.user_id
+    )
+    user_tz = await get_user_timezone(session, entry.user_id)
+    return DetectionInputs(
+        candidates=candidates,
+        clock=DetectionClock(
+            entry_day=to_user_date_bucket(entry.timestamp, user_tz),
+            today=today_in_tz(user_tz),
+            max_backfill_days=MAX_BACKFILL_DAYS,
+        ),
+    )
+
+
 async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
     message: str,
-    candidates: Sequence[DetectionCandidate],
+    inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset."""
@@ -1927,7 +1992,7 @@ async def _detect_fresh_suggestions(
     await session.commit()
     attempt = await _detect_hits_with_status(
         message,
-        candidates=candidates,
+        inputs=inputs,
         llm=llm,
         user_id=entry.user_id,
         entry_id=cast("int", entry.id),
@@ -1969,8 +2034,8 @@ async def detect_entry_suggestions(
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
-    candidates = await _unoffered_candidates(session, entry_id=entry_id, user_id=current_user)
-    if not candidates:
+    inputs = await _detection_inputs(session, entry=entry)
+    if not inputs.candidates:
         # There is nothing new to send and therefore no reason to require a key,
         # expose the journal body, or pay for a known-no-op provider call. An
         # empty candidate set is a completed check, not a provider failure.
@@ -1980,7 +2045,7 @@ async def detect_entry_suggestions(
         session,
         entry=entry,
         message=message,
-        candidates=candidates,
+        inputs=inputs,
         api_key_header=x_llm_api_key,
     )
 

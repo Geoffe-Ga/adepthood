@@ -61,6 +61,9 @@ def _habit_candidates(habits: list[Habit]) -> list[DetectionCandidate]:
                 target_type=_HABIT_TARGET,
                 target_id=goal.id,
                 name=habit.name,
+                # The representative goal's unit, shown to the model so a
+                # stated amount can be checked against what this habit counts.
+                target_unit=goal.target_unit,
             ),
         )
     return candidates
