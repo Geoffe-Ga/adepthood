@@ -10,7 +10,7 @@ import { useCallback, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { countDoneToday, unlockedHabits } from '@/features/Habits/habitCounts';
 import { habitManager } from '@/features/Habits/services/habitManager';
-import { useRefetchOnFocus } from '@/hooks/useRefetchOnFocus';
+import { useRefetchOnReturn } from '@/hooks/useRefetchOnReturn';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useDayKey } from '@/utils/dayRollover';
 
@@ -31,8 +31,9 @@ export function useHabitsSummary(): HabitsSummary {
   }, [userTimezone]);
   // The shelf stays mounted once visited, so without this the read above is
   // the only one it ever does (#2764) — the same treatment entries and the
-  // weekly prompt got in #2358.
-  useRefetchOnFocus(
+  // weekly prompt got in #2358. Foregrounding the app onto the shelf counts as
+  // a return too, which #2764 missed (#2847).
+  useRefetchOnReturn(
     useCallback(() => {
       void habitManager.loadHabits(userTimezone);
     }, [userTimezone]),

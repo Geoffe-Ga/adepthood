@@ -11,7 +11,7 @@ under test itself.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -19,14 +19,13 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.reflection_hierarchy import ReflectionLevel, due_reflection, scope_weeks
+from domain.reflection_hierarchy import due_reflection, scope_weeks
 from models.journal_entry import EntryStatus, JournalEntry, JournalTag
 from models.promoted_quote import PromotedQuote
 from models.stage_progress import StageProgress
 from models.user import User
 
 _DAYS_PER_WEEK = 7
-_WINDOW_TOLERANCE = timedelta(seconds=5)
 
 
 async def _signup(
@@ -85,22 +84,10 @@ async def _seed_entry(
     return entry
 
 
-def _window_bounds(anchor: datetime, level: ReflectionLevel, key: str) -> tuple[datetime, datetime]:
-    """Reconstruct the expected (window_start, window_end) from the same anchor arithmetic."""
-    weeks = scope_weeks(level, key)
-    start_week = weeks.start
-    end_week = weeks.stop - 1
-    window_start = anchor + timedelta(days=(start_week - 1) * _DAYS_PER_WEEK)
-    window_end = anchor + timedelta(days=end_week * _DAYS_PER_WEEK)
-    return window_start, window_end
-
-
-def _close(actual_iso: str, expected: datetime) -> bool:
-    """True if the ISO timestamp ``actual_iso`` is within tolerance of ``expected``."""
+def _aware(actual_iso: str) -> datetime:
+    """Parse a window bound off the wire as a tz-aware instant."""
     actual = datetime.fromisoformat(actual_iso)
-    if actual.tzinfo is None:
-        actual = actual.replace(tzinfo=UTC)
-    return abs(actual - expected) <= _WINDOW_TOLERANCE
+    return actual if actual.tzinfo is not None else actual.replace(tzinfo=UTC)
 
 
 # ── GET /reflections/due ─────────────────────────────────────────────────
@@ -158,9 +145,16 @@ async def test_due_on_week_boundary_returns_week_scope(
     assert due["scope_key"] == expected.key
     assert due["existing_entry_id"] is None
 
-    window_start, window_end = _window_bounds(anchor, expected.level, expected.key)
-    assert _close(due["window_start"], window_start)
-    assert _close(due["window_end"], window_end)
+    # The window is a CALENDAR span, not an offset from the signup clock: it opens
+    # at midnight of the anchor's own day in the caller's zone (UTC here) and runs
+    # exactly seven days per program week, end-exclusive. Asserted as a semantic
+    # rather than by replaying the router's arithmetic, so a window computed from
+    # the wrong clock cannot satisfy it.
+    weeks = scope_weeks(expected.level, expected.key)
+    window_start = _aware(due["window_start"])
+    window_end = _aware(due["window_end"])
+    assert window_start == datetime.combine(anchor.date(), time.min, tzinfo=UTC)
+    assert window_end - window_start == timedelta(days=_DAYS_PER_WEEK * len(weeks))
 
 
 @pytest.mark.asyncio
@@ -333,13 +327,22 @@ async def test_sources_week_scope_returns_daily_entries_chronologically(
 async def test_sources_excludes_bot_deleted_foreign_and_out_of_window_entries(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Bot, soft-deleted, foreign, and out-of-window entries never appear."""
+    """Bot, soft-deleted, foreign, and out-of-window entries never appear.
+
+    Each exclusion is paired with a control the feed MUST keep, at the same
+    instant where that matters: an assertion that the feed is empty passes for
+    any reason at all, including a query that returns nothing, which is how the
+    window predicates went unguarded for so long.
+    """
     now = datetime.now(UTC)
     anchor = now - timedelta(days=8)
     headers, user_id = await _signup(async_client, db_session)
     _other_headers, other_id = await _signup(async_client, db_session, username="bob")
     await _seed_progress(db_session, user_id, anchor=anchor)
 
+    await _seed_entry(
+        db_session, user_id, "Kept body", timestamp=anchor + timedelta(days=1, hours=1)
+    )
     await _seed_entry(
         db_session, user_id, "Bot reply", sender="bot", timestamp=anchor + timedelta(days=1)
     )
@@ -355,6 +358,9 @@ async def test_sources_excludes_bot_deleted_foreign_and_out_of_window_entries(
     await _seed_entry(
         db_session, user_id, "Outside the window", timestamp=anchor + timedelta(days=30)
     )
+    await _seed_entry(
+        db_session, user_id, "Before the program began", timestamp=anchor - timedelta(days=2)
+    )
 
     resp = await async_client.get(
         "/reflections/sources",
@@ -362,14 +368,18 @@ async def test_sources_excludes_bot_deleted_foreign_and_out_of_window_entries(
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["items"] == []
+    assert [item["body"] for item in resp.json()["items"]] == ["Kept body"]
 
 
 @pytest.mark.asyncio
 async def test_sources_excludes_draft_status_entries(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A draft (unfinished) entry inside the window is not yet a source."""
+    """A draft (unfinished) entry inside the window is not yet a source.
+
+    Paired with a finished control at the same hour so "excluded" can never be
+    satisfied by "the query returned nothing".
+    """
     now = datetime.now(UTC)
     anchor = now - timedelta(days=8)
     headers, user_id = await _signup(async_client, db_session)
@@ -381,6 +391,9 @@ async def test_sources_excludes_draft_status_entries(
         status=EntryStatus.DRAFT,
         timestamp=anchor + timedelta(days=1),
     )
+    await _seed_entry(
+        db_session, user_id, "Finished alongside it", timestamp=anchor + timedelta(days=1)
+    )
 
     resp = await async_client.get(
         "/reflections/sources",
@@ -388,7 +401,7 @@ async def test_sources_excludes_draft_status_entries(
         headers=headers,
     )
     assert resp.status_code == HTTPStatus.OK
-    assert resp.json()["items"] == []
+    assert [item["body"] for item in resp.json()["items"]] == ["Finished alongside it"]
 
 
 @pytest.mark.asyncio

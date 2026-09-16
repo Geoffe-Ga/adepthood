@@ -49,6 +49,36 @@ test('a saved promoted quote can be folded into a reopened reflection', async ({
   await expect(pendingQuote).toContainText('I walked');
   await pendingQuote.click();
 
+  // The panel names the period this review covers, and it names the period the
+  // SERVER filtered the feed on -- not one the client worked out from the scope
+  // key. Proven by deriving the expected label in the page from the window the
+  // sources endpoint declares: change that window and the label must follow.
+  const declared = await page.request.get(
+    `${backendUrl()}/reflections/sources?level=week&scope_key=c1%3Aw1`,
+    { headers },
+  );
+  const { window_start: windowStart, window_end: windowEnd } = (await declared.json()) as {
+    window_start: string;
+    window_end: string;
+  };
+  const expectedPeriod = await page.evaluate(
+    ({ start, end }: { start: string; end: string }) => {
+      const from = new Date(start);
+      const to = new Date(new Date(end).getTime() - 24 * 60 * 60 * 1000);
+      const fromLabel = from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const toLabel = to.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      return `${fromLabel} \u2013 ${toLabel}`;
+    },
+    { start: windowStart, end: windowEnd },
+  );
+  await expect(page.locator('[data-testid="reflection-sources-period"]:visible')).toHaveText(
+    expectedPeriod,
+  );
+
   await expect(page.getByRole('textbox', { name: 'Entry body' }).last()).toHaveValue(/> I walked/u);
   await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
   const folded = await page.request.get(`${backendUrl()}/journal/${sourceId}/promotions`, {

@@ -123,3 +123,71 @@ describe('reflections.sources', () => {
     expect(result.items[1]).toMatchObject({ kind: 'reflection', reflection_level: 'week' });
   });
 });
+
+describe('reflections.sources -- the declared window', () => {
+  it('parses the level, scope key and half-open window the server filtered on', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        {
+          level: 'week',
+          scope_key: 'c1:w14',
+          window_start: '2026-06-01T04:00:00Z',
+          window_end: '2026-06-08T04:00:00Z',
+          items: [],
+        },
+        200,
+      ),
+    );
+
+    const result = await reflections.sources('week', 'c1:w14', 'tok');
+
+    expect(result.level).toBe('week');
+    expect(result.scope_key).toBe('c1:w14');
+    expect(result.window_start).toBe('2026-06-01T04:00:00Z');
+    expect(result.window_end).toBe('2026-06-08T04:00:00Z');
+  });
+
+  it('carries a null window through for a caller with no program anchor', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        { level: 'week', scope_key: 'c1:w1', window_start: null, window_end: null, items: [] },
+        200,
+      ),
+    );
+
+    const result = await reflections.sources('week', 'c1:w1', 'tok');
+
+    expect(result.window_start ?? null).toBeNull();
+    expect(result.items).toEqual([]);
+  });
+
+  it('keeps the feed when the declared window is malformed', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        {
+          level: 'week',
+          scope_key: 'c1:w1',
+          window_start: 'not-a-date',
+          window_end: '2026-06-08T04:00:00Z',
+          items: [
+            {
+              kind: 'entry',
+              id: 5,
+              title: null,
+              timestamp: '2026-06-02T08:00:00Z',
+              body: 'Still readable.',
+              reflection_level: null,
+              promoted_quotes: [],
+            },
+          ],
+        },
+        200,
+      ),
+    );
+
+    const result = await reflections.sources('week', 'c1:w1', 'tok');
+
+    expect(result.items).toHaveLength(1);
+    expect(result.window_start ?? null).toBeNull();
+  });
+});

@@ -206,6 +206,17 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
       mode: 'Optional so sessions logged before the practice-mode column shipped still validate; a session with no mode renders as a plain timed sit.',
     },
   },
+  reflectionSourcesResponseSchema: {
+    lax: {
+      level:
+        'Optional so a feed captured before the sources response echoed its scope still validates; the composer already knows which level it asked for and only uses the echo to confirm it.',
+      scope_key: 'Optional for the same reason as level, and used the same way.',
+      window_start:
+        'Optional so the panel degrades to no period label rather than failing the whole feed: the window is also null for a caller with no program anchor, and an unparseable bound is caught to null for the same reason. The material the writer came to reread matters more than the dates above it.',
+      window_end:
+        'Optional for the same reason as window_start; the pair is read together or not at all.',
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -339,3 +339,70 @@ describe('ReflectionSourcesPanel -- dim reconciles with a failed fold-in', () =>
     });
   });
 });
+
+describe('ReflectionSourcesPanel -- the review period', () => {
+  const window = { start: '2026-06-01T04:00:00Z', end: '2026-06-08T04:00:00Z' };
+
+  it('shows the review period beside a Sources heading', () => {
+    const { getByText, getByTestId } = render(
+      <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} window={window} />,
+    );
+    const heading = getByText('Sources');
+    expect(heading.props.accessibilityRole).toBe('header');
+    expect(getByTestId('reflection-sources-period').props.children).toMatch(/Jun 1.*Jun 7, 2026/);
+  });
+
+  it('shows the period in both the narrow sheet and the wide pane', () => {
+    const rn = require('react-native');
+    for (const width of [400, 1280]) {
+      const spy = jest
+        .spyOn(rn, 'useWindowDimensions')
+        .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+      try {
+        const { getByTestId } = render(
+          <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} window={window} />,
+        );
+        expect(getByTestId('reflection-sources-period')).toBeTruthy();
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  it('reads the period from the server window, never from the scope key', () => {
+    const first = render(
+      <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} window={window} />,
+    );
+    const firstLabel = first.getByTestId('reflection-sources-period').props.children;
+    const second = render(
+      <ReflectionSourcesPanel
+        items={[item()]}
+        onInsertQuote={jest.fn()}
+        window={{ start: '2026-09-07T04:00:00Z', end: '2026-09-14T04:00:00Z' }}
+      />,
+    );
+    expect(second.getByTestId('reflection-sources-period').props.children).not.toEqual(firstLabel);
+    expect(second.getByTestId('reflection-sources-period').props.children).toMatch(
+      /Sep 7.*Sep 13, 2026/,
+    );
+  });
+
+  it('renders the feed with no period label when the server declared no window', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[item({ id: 7 })]} onInsertQuote={jest.fn()} />,
+    );
+    expect(getByTestId('entry-source-7')).toBeTruthy();
+    expect(queryByTestId('reflection-sources-period')).toBeNull();
+  });
+
+  it("keeps a source's date visible even when it has a title", () => {
+    const { getByText, getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[item({ id: 4, title: 'Entry title', timestamp: '2026-06-01T12:00:00Z' })]}
+        onInsertQuote={jest.fn()}
+      />,
+    );
+    expect(getByText('Entry title')).toBeTruthy();
+    expect(getByTestId('source-date-4').props.children).toMatch(/Jun 1, 2026/);
+  });
+});

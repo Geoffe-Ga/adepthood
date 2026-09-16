@@ -26,7 +26,12 @@ import {
 
 import { excerpt } from './excerpt';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
-import { sourceAttribution } from './reflectionCopy';
+import {
+  formatReviewPeriod,
+  sourceAttribution,
+  sourceDateLabel,
+  type ReviewWindow,
+} from './reflectionCopy';
 
 import type { PromoteQuoteSpan, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 import {
@@ -61,6 +66,21 @@ const PROMOTE_FAILURE_HINT =
 
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
+  /**
+   * The period this review covers, as the server reported it on the sources
+   * response. Absent when the server declared none (a caller with no program
+   * anchor, or an older server), in which case no period is shown — never a
+   * period the client worked out for itself, which could disagree with the feed
+   * printed beneath it.
+   */
+  window?: ReviewWindow;
+  /**
+   * The account's IANA zone, used for every date this panel PRINTS. The server
+   * windowed the feed on this zone, so formatting in the device's instead can
+   * show a day boundary the feed below disagrees with. Absent falls back to the
+   * device zone.
+   */
+  timeZone?: string;
   /**
    * Fold a pending quote into the reflection body. Resolves ``true`` when it was
    * marked included (keep the dim), ``false``/reject to revert the dim. May
@@ -239,9 +259,11 @@ function SourceRow({
   expanded,
   onToggle,
   controls,
+  timeZone,
 }: {
   item: ReflectionSourceItem;
   expanded: boolean;
+  timeZone?: string;
   onToggle: () => void;
   controls: RowPromoteControls;
 }): React.JSX.Element {
@@ -260,6 +282,9 @@ function SourceRow({
           <Text style={styles.levelLabel}>{levelLabel(item.reflection_level)}</Text>
         ) : null}
         <Text style={styles.rowTitle}>{sourceAttribution(item)}</Text>
+        <Text style={styles.rowDate} testID={`source-date-${item.id}`}>
+          {sourceDateLabel(item, timeZone)}
+        </Text>
         {expanded ? null : (
           <Text style={styles.rowExcerpt} numberOfLines={2}>
             {excerpt(item.body, EXCERPT_MAX)}
@@ -362,9 +387,11 @@ function buildControls(
 function SourceFeed({
   feed,
   onPromoteSpan,
+  timeZone,
 }: {
   feed: ReflectionSourceItem[];
   onPromoteSpan?: PromoteSpanHandler;
+  timeZone?: string;
 }): React.JSX.Element {
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const toggle = useCallback((key: string) => {
@@ -383,6 +410,7 @@ function SourceFeed({
             expanded={expandedKeys.has(key)}
             onToggle={() => toggle(key)}
             controls={buildControls(item, key, canPromote, selection)}
+            timeZone={timeZone}
           />
         );
       })}
@@ -429,8 +457,37 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
 }
 
 /** The panel's inner content, shared by the sheet and pane containers. */
+/**
+ * The panel's heading and, when the server declared one, the period the review
+ * covers. Rendered from ``window`` alone — see {@link formatReviewPeriod}.
+ */
+function SourcesHeading({
+  window: reviewWindow,
+  timeZone,
+}: {
+  window?: ReviewWindow;
+  timeZone?: string;
+}): React.JSX.Element {
+  const period =
+    reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end, timeZone);
+  return (
+    <View style={styles.heading}>
+      <Text style={styles.headingTitle} accessibilityRole="header">
+        Sources
+      </Text>
+      {period === '' ? null : (
+        <Text style={styles.headingPeriod} testID="reflection-sources-period">
+          {period}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function SourcesContent({
   items,
+  window: reviewWindow,
+  timeZone,
   onInsertQuote,
   onPromoteSpan,
   onClose,
@@ -456,8 +513,9 @@ function SourcesContent({
           <Text style={styles.actionLink}>Done</Text>
         </TouchableOpacity>
       )}
+      <SourcesHeading window={reviewWindow} timeZone={timeZone} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
-      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} />
+      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
     </ScrollView>
   );
 }
@@ -560,6 +618,23 @@ const styles = StyleSheet.create({
     borderLeftWidth: STRIPE_WIDTH,
     borderLeftColor: accent.strong,
     paddingLeft: SPACING.md,
+  },
+  heading: {
+    paddingBottom: spacing(1),
+  },
+  headingTitle: {
+    ...editorialType.note,
+    color: ink.primary,
+    fontWeight: '600',
+  },
+  headingPeriod: {
+    ...editorialType.caption,
+    color: ink.soft,
+    paddingTop: spacing(0.25),
+  },
+  rowDate: {
+    ...editorialType.caption,
+    color: ink.soft,
   },
   levelLabel: {
     ...editorialType.caption,

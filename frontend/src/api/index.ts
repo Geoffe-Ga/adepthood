@@ -50,6 +50,7 @@ import {
   vaultConnectionResponseSchema,
   vaultActivationResponseSchema,
   documentImportSchema,
+  voiceDraftListSchema,
   voiceReadinessSchema,
   wheelBalanceSchema,
   type AccountDeletionReceiptT,
@@ -65,6 +66,8 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type VoiceDraftT,
+  type VoiceDraftListT,
   type VoiceReadinessT,
   type CompletionTargetTypeT,
   type DepthPreferencesT,
@@ -1631,6 +1634,22 @@ export interface MarginaliaListResponse {
   items: Marginalia[];
 }
 
+/**
+ * One expanded letter on the Voice Drafts shelf (mirrors the backend
+ * ``VoiceDraftResponse``). Unlike {@link Marginalia}, its ``essay`` is never
+ * null: the listing selects only expanded notes.
+ */
+export type VoiceDraft = VoiceDraftT;
+
+/** One page of the Voice Drafts shelf: ``{ items, total, has_more }``. */
+export type VoiceDraftListResponse = VoiceDraftListT;
+
+/** The page window a Voice Drafts read asks for; both ends have server bounds. */
+export interface VoiceDraftListParams {
+  limit?: number;
+  offset?: number;
+}
+
 export interface JournalListResponse {
   items: JournalMessage[];
   total: number;
@@ -1970,8 +1989,21 @@ export interface ReflectionDueResponse {
   due: ReflectionDue | null;
 }
 
-/** ``GET /reflections/sources`` result: the chronological rereadable-source feed. */
+/**
+ * ``GET /reflections/sources`` result: the chronological rereadable-source feed
+ * and the calendar period it was drawn from.
+ *
+ * ``window_start`` / ``window_end`` are the half-open bounds the server filtered
+ * on, END EXCLUSIVE — the first instant of the day after the review's last day.
+ * They are null for a caller with no program anchor, and undefined against a
+ * server that predates them; either way the composer shows no period rather
+ * than a guess of its own.
+ */
 export interface ReflectionSourcesResponse {
+  level?: ReflectionLevel;
+  scope_key?: string;
+  window_start?: string | null;
+  window_end?: string | null;
   items: ReflectionSourceItem[];
 }
 
@@ -2029,6 +2061,35 @@ export const resonance = {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+    });
+  },
+};
+
+/** The page size the shelf asks for when the caller names none; the server caps at 200. */
+const VOICE_DRAFTS_PAGE_SIZE = 20;
+
+/**
+ * The Voice Drafts shelf: every margin note this account has expanded into a
+ * letter, newest first.
+ *
+ * Retrieval, not an invitation — nothing here generates anything, and the
+ * wrapper deliberately offers no way to ask for a count on its own. The path
+ * carries no trailing slash because the router mounts ``/journal/voice-drafts``
+ * directly, and a slash would cost a 307 that downgrades https->http behind the
+ * proxy (#790). Validated at the edge so a drifted or unexpanded row raises
+ * ``ApiValidationError`` rather than rendering as an empty reading card.
+ */
+export const voiceDrafts = {
+  list(params: VoiceDraftListParams = {}, token?: string): Promise<VoiceDraftListResponse> {
+    const query = new URLSearchParams({
+      limit: String(params.limit ?? VOICE_DRAFTS_PAGE_SIZE),
+      offset: String(params.offset ?? 0),
+    });
+    // The literal `?` is written before the substitution so the route reads as
+    // `/journal/voice-drafts` and nothing interpolated can widen it.
+    return request<VoiceDraftListResponse>(`/journal/voice-drafts?${query.toString()}`, {
+      token,
+      schema: voiceDraftListSchema as unknown as z.ZodType<VoiceDraftListResponse>,
     });
   },
 };

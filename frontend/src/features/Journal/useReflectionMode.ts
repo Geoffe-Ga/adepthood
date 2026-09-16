@@ -25,7 +25,7 @@ import {
 } from 'react';
 import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
-import { formatBlockquote, sourceAttribution } from './reflectionCopy';
+import { formatBlockquote, sourceAttribution, type ReviewWindow } from './reflectionCopy';
 
 import { promotions, reflections } from '@/api';
 import type {
@@ -34,6 +34,7 @@ import type {
   PromotedQuoteSummary,
   ReflectionLevel,
   ReflectionSourceItem,
+  ReflectionSourcesResponse,
 } from '@/api';
 
 type SelectionEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
@@ -54,6 +55,13 @@ export interface UseReflectionModeResult {
   active: boolean;
   /** The rereadable entries + earlier reflections in scope. */
   sources: ReflectionSourceItem[];
+  /**
+   * The period the SERVER filtered the feed on, for the panel to name. Undefined
+   * while a scope is loading, when the fetch failed, and whenever the server
+   * declared no window — the panel then shows no period rather than one the
+   * client derived, which could disagree with the feed beneath it.
+   */
+  window: ReviewWindow | undefined;
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
   /**
@@ -119,19 +127,48 @@ function mergeCreatedQuote(
   );
 }
 
-/** Fetch the rereadable sources feed for a reflection scope (hidden on any error). */
+/** The period a response declared, or undefined when the server named none. */
+function declaredWindow(result: ReflectionSourcesResponse): ReviewWindow | undefined {
+  const start = result.window_start;
+  const end = result.window_end;
+  return start != null && end != null ? { start, end } : undefined;
+}
+
+interface SourcesFeed {
+  sources: ReflectionSourceItem[];
+  setSources: Dispatch<SetStateAction<ReflectionSourceItem[]>>;
+  window: ReviewWindow | undefined;
+}
+
+/**
+ * Fetch the rereadable sources feed, and the period it was drawn from, for the
+ * reflection scope currently on screen. Hidden on any error — the composer works
+ * without the feed.
+ *
+ * The feed and its period are cleared the INSTANT the scope changes, before the
+ * new fetch is even sent, and the effect's cleanup retires the request in flight
+ * for the scope being left. Both matter for the same reason: a slow or refused
+ * switch must leave an empty panel, never the previous review's material sitting
+ * under the new review's heading. A 403 ``scope_locked`` takes the ``.catch``
+ * path, so the clearing has to happen up front rather than in the success branch.
+ */
 function useSourcesFeed(
   reflectionLevel: ReflectionLevel | undefined,
   reflectionScopeKey: string | undefined,
-): [ReflectionSourceItem[], Dispatch<SetStateAction<ReflectionSourceItem[]>>] {
+): SourcesFeed {
   const [sources, setSources] = useState<ReflectionSourceItem[]>([]);
+  const [window, setWindow] = useState<ReviewWindow | undefined>(undefined);
   useEffect(() => {
+    setSources([]);
+    setWindow(undefined);
     if (reflectionLevel == null || reflectionScopeKey == null) return undefined;
     let alive = true;
     void reflections
       .sources(reflectionLevel, reflectionScopeKey)
       .then((result) => {
-        if (alive) setSources(result.items);
+        if (!alive) return;
+        setSources(result.items);
+        setWindow(declaredWindow(result));
       })
       .catch(() => {
         // The composer works without the feed; a fetch failure just hides it.
@@ -140,7 +177,7 @@ function useSourcesFeed(
       alive = false;
     };
   }, [reflectionLevel, reflectionScopeKey]);
-  return [sources, setSources];
+  return { sources, setSources, window };
 }
 
 /**
@@ -272,7 +309,7 @@ export function useReflectionMode({
   flush,
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
-  const [sources, setSources] = useSourcesFeed(reflectionLevel, reflectionScopeKey);
+  const { sources, setSources, window } = useSourcesFeed(reflectionLevel, reflectionScopeKey);
   const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
     bodyRef,
     onChangeBody,
@@ -283,6 +320,7 @@ export function useReflectionMode({
   return {
     active,
     sources,
+    window,
     inclusionHint,
     foldingIn,
     onBodySelectionChange,

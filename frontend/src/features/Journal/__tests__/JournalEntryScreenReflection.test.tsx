@@ -19,6 +19,7 @@ import type {
   PromotedQuoteSummary,
   ReflectionDue,
   ReflectionSourceItem,
+  ReflectionSourcesResponse,
 } from '@/api';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -38,7 +39,7 @@ const mockReflectionsDue = jest.fn() as jest.MockedFunction<
   () => Promise<{ due: ReflectionDue | null }>
 >;
 const mockReflectionsSources = jest.fn() as jest.MockedFunction<
-  (_level: string, _scopeKey: string) => Promise<{ items: ReflectionSourceItem[] }>
+  (_level: string, _scopeKey: string) => Promise<ReflectionSourcesResponse>
 >;
 const mockPromotionsCreate = jest.fn() as jest.MockedFunction<
   (_entryId: number, _span: { anchor_start: number; anchor_end: number }) => Promise<PromotedQuote>
@@ -125,8 +126,10 @@ jest.mock('../ReflectionSourcesPanel', () => {
     items,
     onInsertQuote,
     onPromoteSpan,
+    window: reviewWindow,
   }: {
     items: ReflectionSourceItem[];
+    window?: { start: string; end: string };
     onInsertQuote: (
       _q: PromotedQuoteSummary,
       _item: ReflectionSourceItem,
@@ -172,6 +175,10 @@ jest.mock('../ReflectionSourcesPanel', () => {
           </TouchableOpacity>
         )}
         <Text testID="stub-pending-ids">{pendingIds.join(',')}</Text>
+        <Text testID="stub-source-ids">{items.map((source) => source.id).join(',')}</Text>
+        <Text testID="stub-window">
+          {reviewWindow == null ? '' : `${reviewWindow.start}..${reviewWindow.end}`}
+        </Text>
       </>
     );
   };
@@ -674,5 +681,91 @@ describe('JournalEntryScreen -- weekly-prompt mode regression', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('JournalEntryScreen -- the scope the panel is showing', () => {
+  function rerenderWithParams(
+    screen: ReturnType<typeof renderScreen>,
+    params: Record<string, unknown>,
+  ): void {
+    const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+    screen.rerender(
+      <Screen
+        navigation={screen.navigation}
+        route={{ key: 'k', name: 'JournalEntry' as const, params }}
+      />,
+    );
+  }
+
+  it("refetches the sources feed when the route's reflection scope changes", async () => {
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    rerenderWithParams(screen, { reflectionLevel: 'week', reflectionScopeKey: 'c1:w1' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockReflectionsSources.mock.calls.map((call) => call[1])).toEqual(['c1:s1', 'c1:w1']);
+  });
+
+  it("clears the previous review's sources when the next scope's fetch fails", async () => {
+    mockReflectionsSources.mockResolvedValueOnce({ items: [mockStubSourceItem] });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+    expect(screen.getByTestId('stub-source-ids').props.children).toBe('1');
+
+    mockReflectionsSources.mockRejectedValueOnce(new Error('scope_locked'));
+    rerenderWithParams(screen, { reflectionLevel: 'week', reflectionScopeKey: 'c1:w1' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('stub-source-ids').props.children).toBe('');
+  });
+
+  it('lets a late response for the previous scope never populate the new one', async () => {
+    let settleFirst: (_value: { items: ReflectionSourceItem[] }) => void = () => {};
+    mockReflectionsSources.mockReturnValueOnce(
+      new Promise((resolve) => {
+        settleFirst = resolve;
+      }),
+    );
+    mockReflectionsSources.mockResolvedValueOnce({ items: [] });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    rerenderWithParams(screen, { reflectionLevel: 'week', reflectionScopeKey: 'c1:w1' });
+    await act(async () => {
+      settleFirst({ items: [mockStubSourceItem] });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('stub-source-ids').props.children).toBe('');
+  });
+
+  it('keeps the reflection period the server declared for the scope on screen', async () => {
+    mockReflectionsSources.mockResolvedValueOnce({
+      items: [],
+      level: 'stage',
+      scope_key: 'c1:s1',
+      window_start: '2026-06-01T04:00:00Z',
+      window_end: '2026-06-22T04:00:00Z',
+    });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    expect(screen.getByTestId('stub-window').props.children).toBe(
+      '2026-06-01T04:00:00Z..2026-06-22T04:00:00Z',
+    );
   });
 });

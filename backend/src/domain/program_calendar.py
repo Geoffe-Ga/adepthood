@@ -14,11 +14,11 @@ calendar.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from domain.constants import DAYS_PER_WEEK, STAGE_DURATIONS_DAYS, TOTAL_STAGES
-from domain.dates import ensure_aware, to_user_date
+from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date
 from domain.weekly_prompts import TOTAL_WEEKS
 
 if TYPE_CHECKING:
@@ -44,6 +44,35 @@ def elapsed_days(anchor: datetime, now: datetime, *, tz: str | None = None) -> i
     """
     delta = to_user_date(tz, ensure_aware(now)) - to_user_date(tz, ensure_aware(anchor))
     return max(0, delta.days)
+
+
+def program_week_bounds(
+    anchor: datetime, weeks: range, *, tz: str | None = None
+) -> tuple[datetime, datetime]:
+    """The half-open ``[start, end)`` window a span of program weeks covers.
+
+    ``weeks`` is the ``range(first, last + 1)`` a reflection scope spans.  Both
+    bounds are LOCAL MIDNIGHTS in ``tz`` (UTC when ``tz`` is None), derived from
+    the anchor's own local calendar date by whole-day arithmetic — the same
+    arithmetic :func:`elapsed_days` uses to decide which program week a
+    timestamp falls in.  That is the point: a query window and a week label
+    computed from two different clocks disagree at the edges, and entries fall
+    between them (issue #2886).
+
+    ``end`` is the first instant of the day AFTER the span's final day, so range
+    queries stay half-open: ``WHERE col >= start AND col < end``.  Because the
+    bounds step seven calendar days at a time rather than a fixed 168 hours, a
+    week spanning a daylight-saving transition is still seven local days — the
+    23- and 25-hour days :func:`domain.dates.day_bounds_in_tz` documents.  Both
+    bounds come back normalized to UTC (that helper's job), which SQLite's
+    lexical comparison of ISO strings requires.
+    """
+    anchor_date = to_user_date(tz, ensure_aware(anchor))
+    first_day = anchor_date + timedelta(days=(weeks.start - 1) * DAYS_PER_WEEK)
+    day_after_last = anchor_date + timedelta(days=(weeks.stop - 1) * DAYS_PER_WEEK)
+    start, _ = day_bounds_in_tz(tz, first_day)
+    end, _ = day_bounds_in_tz(tz, day_after_last)
+    return start, end
 
 
 def calendar_week(anchor: datetime, now: datetime | None = None, *, tz: str | None = None) -> int:

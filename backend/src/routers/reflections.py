@@ -7,15 +7,21 @@ Two read surfaces over the nested APTITUDE reflection calendar:
   claiming that scope.
 * ``GET /reflections/sources`` returns the ordered source material feeding a
   reflection at a given ``(level, scope_key)`` — child reflections standing in for
-  their spans, and the raw daily entries of every gap.
+  their spans, and the raw daily entries of every gap — alongside the calendar
+  window it filtered on, so the composer can name the period rather than guess it.
 
 All schedule math lives in :mod:`domain.reflection_hierarchy`; this router only
-turns program weeks into datetime windows and shuttles rows to and from it.
+turns program weeks into datetime windows and shuttles rows to and from it. Those
+windows come from one helper, :func:`domain.program_calendar.program_week_bounds`,
+counted in the caller's own timezone — a program week is seven LOCAL midnights,
+never an offset from whatever o'clock the user happened to sign up at.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, cast
 
 from fastapi import Depends, Query
@@ -23,7 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from domain.program_calendar import calendar_week, elapsed_days, resolve_program_anchor
+from domain.dates import ensure_aware, to_user_date
+from domain.program_calendar import (
+    calendar_week,
+    elapsed_days,
+    program_week_bounds,
+    resolve_program_anchor,
+)
 from domain.reflection_hierarchy import (
     EntryRef,
     ReflectionLevel,
@@ -32,6 +44,7 @@ from domain.reflection_hierarchy import (
     SourceKind,
     due_reflection,
     resolve_sources,
+    scope_cycle,
     scope_weeks,
 )
 from domain.stage_progress import get_user_progress
@@ -48,6 +61,9 @@ from schemas.reflection import (
     ReflectionSourceItem,
     ReflectionSourcesResponse,
 )
+from services.users import get_user_timezone
+
+logger = logging.getLogger(__name__)
 
 # Seven days to a program week; the window math is a multiple of this.
 _DAYS_PER_WEEK = 7
@@ -59,19 +75,18 @@ _UNSTARTED_USER_WEEK = 1
 router = build_router(prefix="/reflections", tags=["reflections"])
 
 
-def _due_window(anchor: datetime, level: ReflectionLevel, key: str) -> tuple[datetime, datetime]:
-    """Turn a due reflection's week span into its (start, end) datetime window.
+def _due_window(
+    anchor: datetime, level: ReflectionLevel, key: str, tz: str
+) -> tuple[datetime, datetime]:
+    """Turn a due reflection's week span into its half-open ``[start, end)`` window.
 
-    The span comes from :func:`scope_weeks`; the start is the first day of its
-    first week and the end is the last day of its final week, both offset off the
-    program anchor.
+    The span comes from :func:`scope_weeks` and the bounds from the one shared
+    :func:`program_week_bounds` helper, so the period this invitation promises
+    is byte-for-byte the period ``GET /reflections/sources`` filters on.
+    ``window_end`` is EXCLUSIVE — the first instant of the day after the span's
+    final day, not that final day itself.
     """
-    weeks = scope_weeks(level, key)
-    start_week = weeks.start
-    end_week = weeks.stop - 1
-    window_start = anchor + timedelta(days=(start_week - 1) * _DAYS_PER_WEEK)
-    window_end = anchor + timedelta(days=end_week * _DAYS_PER_WEEK)
-    return window_start, window_end
+    return program_week_bounds(anchor, scope_weeks(level, key), tz=tz)
 
 
 async def _existing_scope_entry_id(
@@ -111,7 +126,8 @@ async def get_due_reflection(
     due = due_reflection(anchor, cycle=progress.cycle_number)
     if due is None:
         return ReflectionDueResponse(due=None)
-    window_start, window_end = _due_window(anchor, due.level, due.key)
+    tz = await get_user_timezone(session, current_user)
+    window_start, window_end = _due_window(anchor, due.level, due.key, tz)
     existing_entry_id = await _existing_scope_entry_id(session, current_user, due.key)
     return ReflectionDueResponse(
         due=ReflectionDue(
@@ -136,14 +152,15 @@ def _validated_scope_weeks(level: ReflectionLevel, scope_key: str) -> range:
         raise unprocessable("invalid_scope") from exc
 
 
-def _guard_scope_unlocked(weeks: range, progress: StageProgress | None) -> None:
+def _guard_scope_unlocked(weeks: range, progress: StageProgress | None, tz: str) -> None:
     """Reject a scope whose first week the caller's calendar has not yet reached.
 
     An unstarted user sits in week 1, so only scopes opening at week 1 are
-    readable for them; everyone else is gated by their date-derived week.
+    readable for them; everyone else is gated by their date-derived week, counted
+    in their OWN zone so the gate lifts at their midnight rather than UTC's.
     """
     user_week = (
-        calendar_week(resolve_program_anchor(progress))
+        calendar_week(resolve_program_anchor(progress), tz=tz)
         if progress is not None
         else _UNSTARTED_USER_WEEK
     )
@@ -164,13 +181,33 @@ def _reflection_ref_from(row: JournalEntry) -> ReflectionRef:
     )
 
 
+def _parsed_reflection_ref(row: JournalEntry) -> ReflectionRef | None:
+    """Parse one stored reflection row, or None when its key is not this grammar's.
+
+    ``scope_weeks`` raises for any key the current grammar does not admit, and
+    this query loads EVERY scoped row the caller owns — so one stale or
+    part-migrated key used to 500 the whole feed. Skipping it degrades the one
+    row instead of the endpoint. The warning carries the key (grammar, not
+    journal content) so a bad row is findable without reading anyone's words.
+    """
+    try:
+        return _reflection_ref_from(row)
+    except ValueError:
+        logger.warning(
+            "reflection_scope_key_unparsed",
+            extra={"entry_id": row.id, "scope_key": row.reflection_scope_key},
+        )
+        return None
+
+
 async def _load_reflection_refs(
     session: AsyncSession, user_id: int, scope_key: str
 ) -> list[ReflectionRef]:
     """Load the caller's finished, live, scoped reflections other than the composing one.
 
     A reflection whose scope equals the requested one is excluded so it never
-    stands in for itself.
+    stands in for itself. Rows whose stored key the current grammar cannot parse
+    are skipped rather than crashing the feed.
     """
     result = await session.execute(
         select(JournalEntry).where(
@@ -182,7 +219,8 @@ async def _load_reflection_refs(
             col(JournalEntry.reflection_scope_key) != scope_key,
         )
     )
-    return [_reflection_ref_from(row) for row in result.scalars().all()]
+    parsed = (_parsed_reflection_ref(row) for row in result.scalars().all())
+    return [ref for ref in parsed if ref is not None]
 
 
 async def _inclusion_target_ids(session: AsyncSession, user_id: int) -> list[int]:
@@ -200,37 +238,107 @@ async def _inclusion_target_ids(session: AsyncSession, user_id: int) -> list[int
     return [cast("int", target_id) for target_id in result.scalars().all() if target_id is not None]
 
 
-def _entry_ref_from(anchor: datetime, row: JournalEntry) -> EntryRef:
-    """Build a domain :class:`EntryRef`, tagging the row with its program week."""
-    week = elapsed_days(anchor, row.timestamp) // _DAYS_PER_WEEK + 1
-    return EntryRef(id=cast("int", row.id), week=week, date=row.timestamp.date())
+def _entry_ref_from(anchor: datetime, row: JournalEntry, tz: str) -> EntryRef:
+    """Build a domain :class:`EntryRef`, tagging the row with its program week.
+
+    Both the week label and the within-week sort date are read in the caller's
+    own zone, matching the local-midnight bounds :func:`program_week_bounds`
+    draws — the two used to be computed from different clocks.
+    """
+    week = elapsed_days(anchor, row.timestamp, tz=tz) // _DAYS_PER_WEEK + 1
+    return EntryRef(
+        id=cast("int", row.id), week=week, date=to_user_date(tz, ensure_aware(row.timestamp))
+    )
+
+
+@dataclass(frozen=True)
+class _SourcesScope:
+    """Everything one ``GET /reflections/sources`` call needs to know about its scope.
+
+    Built once by :func:`_scope_for_request` so the window the feed filters on
+    and the window the response declares are the same pair of instants rather
+    than two derivations that happen to agree.
+    """
+
+    user_id: int
+    level: ReflectionLevel
+    scope_key: str
+    weeks: range
+    timezone: str
+    progress: StageProgress | None
+    window_start: datetime | None
+    window_end: datetime | None
+
+
+async def _scope_for_request(
+    session: AsyncSession, user_id: int, level: ReflectionLevel, scope_key: str
+) -> _SourcesScope:
+    """Validate the requested scope, resolve the caller's calendar, and bound the window.
+
+    Raises 422 ``invalid_scope`` for a key the grammar rejects and 403
+    ``scope_locked`` for a scope the caller's calendar has not reached. A caller
+    with no program progress has no anchor, so the window is left unset.
+    """
+    weeks = _validated_scope_weeks(level, scope_key)
+    tz = await get_user_timezone(session, user_id)
+    progress = await get_user_progress(session, user_id)
+    _guard_scope_unlocked(weeks, progress, tz)
+    window: tuple[datetime | None, datetime | None] = (None, None)
+    if progress is not None:
+        window = program_week_bounds(resolve_program_anchor(progress), weeks, tz=tz)
+    return _SourcesScope(
+        user_id=user_id,
+        level=level,
+        scope_key=scope_key,
+        weeks=weeks,
+        timezone=tz,
+        progress=progress,
+        window_start=window[0],
+        window_end=window[1],
+    )
 
 
 async def _load_entry_refs(
-    session: AsyncSession, user_id: int, anchor: datetime, weeks: range
+    session: AsyncSession, scope: _SourcesScope, anchor: datetime
 ) -> list[EntryRef]:
     """Load the caller's finished, live, scopeless daily entries inside the scope's window.
 
-    The half-open window runs from the first day of the span's first week up to
-    (but not including) the day after its final week. Entries already being
-    composed into a reflection are excluded.
+    The window is the half-open ``[start, end)`` pair the scope already carries —
+    local midnight of the span's first day up to local midnight of the day after
+    its last. Entries already being composed into a reflection are excluded.
     """
-    window_start = anchor + timedelta(days=(weeks.start - 1) * _DAYS_PER_WEEK)
-    window_end = anchor + timedelta(days=(weeks.stop - 1) * _DAYS_PER_WEEK)
-    excluded = await _inclusion_target_ids(session, user_id)
+    excluded = await _inclusion_target_ids(session, scope.user_id)
     query = select(JournalEntry).where(
-        JournalEntry.user_id == user_id,
+        JournalEntry.user_id == scope.user_id,
         col(JournalEntry.status) == EntryStatus.FINISHED,
         col(JournalEntry.deleted_at).is_(None),
         col(JournalEntry.sender) == "user",
         col(JournalEntry.reflection_scope_key).is_(None),
-        col(JournalEntry.timestamp) >= window_start,
-        col(JournalEntry.timestamp) < window_end,
+        col(JournalEntry.timestamp) >= scope.window_start,
+        col(JournalEntry.timestamp) < scope.window_end,
     )
     if excluded:
         query = query.where(col(JournalEntry.id).not_in(excluded))
     result = await session.execute(query)
-    return [_entry_ref_from(anchor, row) for row in result.scalars().all()]
+    return [_entry_ref_from(anchor, row, scope.timezone) for row in result.scalars().all()]
+
+
+async def _resolve_entry_refs(session: AsyncSession, scope: _SourcesScope) -> list[EntryRef]:
+    """The scope's raw dailies — none at all when the scope is not this cycle's.
+
+    ``POST /stages/begin-again`` re-stamps ``program_started_at``, so the only
+    anchor on record belongs to the CURRENT cycle. Windowing an older cycle's
+    key against it served this cycle's entries under the old review's heading
+    (issue #2886). A past-cycle scope therefore contributes no raw material;
+    its own child reviews, which are matched by exact key rather than by
+    window, still stand in, so reopening an old review is not broken.
+    """
+    progress = scope.progress
+    if progress is None or scope.window_start is None or scope.window_end is None:
+        return []
+    if scope_cycle(scope.scope_key) != progress.cycle_number:
+        return []
+    return await _load_entry_refs(session, scope, resolve_program_anchor(progress))
 
 
 async def _batch_entries(
@@ -311,6 +419,28 @@ def _to_source_item(
     )
 
 
+def _log_sources_resolved(scope: _SourcesScope, items: list[ReflectionSourceItem]) -> None:
+    """Record which scope, cycle and window produced which counts — never the words.
+
+    The endpoint returns raw journal bodies, so a diagnostic that made a wrong
+    window debuggable by quoting the feed would be a privacy regression. Titles,
+    bodies and quoted spans are all deliberately absent.
+    """
+    logger.info(
+        "sources_resolved",
+        extra={
+            "level": scope.level.value,
+            "scope_key": scope.scope_key,
+            "cycle": scope_cycle(scope.scope_key),
+            "window_start": scope.window_start,
+            "window_end": scope.window_end,
+            "timezone": scope.timezone,
+            "entry_count": sum(1 for item in items if item.reflection_level is None),
+            "reflection_count": sum(1 for item in items if item.reflection_level is not None),
+        },
+    )
+
+
 @router.get("/sources", response_model=ReflectionSourcesResponse)
 async def get_reflection_sources(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -327,14 +457,9 @@ async def get_reflection_sources(
     daily entries, yielding a chronological feed with each promoted quote flagged
     pending or included.
     """
-    weeks = _validated_scope_weeks(level, scope_key)
-    progress = await get_user_progress(session, current_user)
-    _guard_scope_unlocked(weeks, progress)
-    if progress is None:
-        return ReflectionSourcesResponse(items=[])
-    anchor = resolve_program_anchor(progress)
+    scope = await _scope_for_request(session, current_user, level, scope_key)
     reflection_refs = await _load_reflection_refs(session, current_user, scope_key)
-    entry_refs = await _load_entry_refs(session, current_user, anchor, weeks)
+    entry_refs = await _resolve_entry_refs(session, scope)
     resolved = resolve_sources(level, scope_key, existing=reflection_refs, entries=entry_refs)
     entries_by_id = await _batch_entries(session, current_user, resolved)
     quotes_by_entry = await _quotes_by_entry(session, current_user, resolved)
@@ -343,4 +468,11 @@ async def get_reflection_sources(
         for item in resolved
         if item.id in entries_by_id
     ]
-    return ReflectionSourcesResponse(items=items)
+    _log_sources_resolved(scope, items)
+    return ReflectionSourcesResponse(
+        level=level.value,
+        scope_key=scope_key,
+        window_start=scope.window_start,
+        window_end=scope.window_end,
+        items=items,
+    )

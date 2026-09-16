@@ -94,11 +94,11 @@
   },
   {
     "id": "habits.set-a-weekly-cadence",
-    "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, and GoalModal.starLongPress.test.tsx for the drag-confirm copy.",
+    "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, GoalModal.starLongPress.test.tsx for the drag-confirm copy and the long-press-fill arbitration, and \u2014 after #2884 \u2014 GoalModal.markerDrag.test.tsx for the value a marker drop actually saves, backed by markerDrag.test.ts for the drag geometry and HabitUtils.test.ts for the percent-to-target inverse. The drag writes PUT /goals/{goal_id} through the goals client, a different seam from the units batch PUT this journey's editor half uses; both are still mocked in the component lane, which is what 2814 tracks.",
     "crosses": {
       "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
-      "client": ["habits"],
-      "routes": ["PUT /habits/{habit_id}/goals/units"],
+      "client": ["habits", "goals"],
+      "routes": ["PUT /habits/{habit_id}/goals/units", "PUT /goals/{goal_id}"],
       "tables": ["goal"]
     },
     "status": "uncovered",
@@ -287,7 +287,7 @@
   },
   {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
-    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen; selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "promotions", "reflections"],
@@ -1147,14 +1147,30 @@
   },
   {
     "id": "habits.day-turns-over-on-a-mounted-screen",
-    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened. Uncovered because neither half is reachable from this lane: the rollover is clock-driven and crosses no wire at all -- that is the point of it, since only what is re-derived changes -- and the node environment cannot mount a screen to advance a clock against, the same constraint recorded on welcome.first-run-walkthrough-to-journal. The focus half does cross the wire but needs a real navigator the user can leave and return to. Jest pins both halves in process today, against a real NavigationContainer and against fake timers advanced past local midnight; covering this needs the browser lane, which can install a fake clock on the mounted app. See #2771.",
+    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened, and so does foregrounding the app onto the tab the user never left -- the half #2764's acceptance criteria missed, since navigation reports no focus for a screen that never lost it (#2847). The same journey covers what that day is measured against: a session resumed from a stored token west of UTC after 17:00 local -- when UTC has turned over and the user's day has not -- shows yesterday evening's completion as yesterday, because the resumed session carries the zone the server has on record instead of running on the UTC default until something refreshes a 30-day token at its half-life. That is the bug as reported: \"I just had to log out and log back in to get my habits to reset for today.\" Uncovered because none of it is reachable from this lane: the rollover is clock-driven and crosses no wire at all -- that is the point of it, since only what is re-derived changes -- and the node environment cannot mount a screen to advance a clock against, the same constraint recorded on welcome.first-run-walkthrough-to-journal. The focus and foreground halves do cross the wire but need a real navigator the user can leave and return to and an app that can be backgrounded; the resume half needs a token already on disk before the process starts. Jest pins every half in process today, against a real NavigationContainer, against fake timers advanced past local midnight, against a captured AppState transition, and -- for the resume -- in src/context/__tests__/ResumedSessionDayBoundary.test.tsx, which joins the real AuthProvider to the real useHabitsSummary at 08:00 in Los Angeles. Covering this needs the browser lane, which can install a fake clock on the mounted app and seed a token before launch. See #2771.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["habits"],
-      "routes": ["GET /habits/"],
-      "tables": ["habit", "goalcompletion"]
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/refresh", "GET /habits/"],
+      "tables": ["user", "habit", "goalcompletion"]
     },
     "status": "uncovered",
     "issue": 2771
+  },
+  {
+    "id": "journal.voice-drafts-shelf",
+    "description": "A writer opens the shelf of letters their margin notes grew into. GET /journal/voice-drafts shipped in #2606 with no client, no screen and no call site at all, so the route was served and unreachable; this is the PR that makes the crossing exist and therefore the PR that declares it. The spec drives the shelf the way the screen does: a fresh account's shelf answers 200 with an empty page (the first-run state the screen renders is built on that, not on an error), a margin note is generated and then heard out at length through the real resonance and essay routes, and the expansion those routes wrote turns up on the listing carrying its whole letter, its anchor text and its parent entry id -- which is what lets the screen open a draft with no second request and walk back to the page it was written in the margin of. The window the client asks for is exercised past the end of the shelf, where an empty page with has_more false is what retires the screen's Older letters row. A cold login sees the same shelf, an unauthenticated read is refused 401, and a neighbouring account gets an empty shelf rather than a stranger's prose. The expansion is generated rather than fixtured on purpose: the listing selects exactly the rows the essay path writes, so a fixture would prove the listing reads a table rather than that the two routes agree about what an expanded note is. What no spec here asserts is the product stance -- no badge, no count, no nudge -- because that is a claim about what the screen does NOT render; it is pinned in VoiceDraftsShelfScreen.test.tsx and JournalDrawer.test.tsx instead, where the rendered tree can be read.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/VoiceDraftsShelfScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "resonance", "voiceDrafts"],
+      "routes": [
+        "GET /journal/voice-drafts",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["journalentry", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/voice-drafts-shelf.e2e.test.ts"
   }
 ]

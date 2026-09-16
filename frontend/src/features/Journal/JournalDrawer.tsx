@@ -8,7 +8,7 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
-import { Camera, Library, SquarePen } from 'lucide-react-native';
+import { Camera, Library, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,6 +42,16 @@ const NEW_ENTRY_LABEL = 'New entry';
 const PHOTOGRAPH_LABEL = 'Photograph a page';
 /** Permanent door to the writing corpus behind reflections. */
 const CORPUS_LABEL = 'Your corpus';
+/**
+ * Permanent door to the shelf of expanded margin notes.
+ *
+ * A label and nothing else. The listing route hands back a ``total``, so a
+ * count or a badge would cost one line here — and this row is exactly where
+ * one would go. It stays a door: NORTH-STAR §3 ("you choose your depth") and
+ * §6 make invitations resonant and declinable, and a number beside a row is
+ * neither. The shelf is retrieval, reached because someone went looking.
+ */
+const VOICE_DRAFTS_LABEL = 'Voice drafts';
 const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
@@ -409,6 +419,8 @@ export interface JournalDrawerProps {
   onPhotograph?: () => void;
   /** Open the consent decision or corpus import surface, as readiness requires. */
   onOpenCorpus: () => void;
+  /** Open the Voice Drafts shelf. Carries no count — see ``VOICE_DRAFTS_LABEL``. */
+  onOpenVoiceDrafts: () => void;
   /** Status of the readiness lookup started by the corpus row. */
   corpusOpenState: CorpusOpenState;
   /** Fetch and append the next older page. */
@@ -468,11 +480,13 @@ function DrawerActions({
   onNewEntry,
   onPhotograph,
   onOpenCorpus,
+  onOpenVoiceDrafts,
   corpusOpenState,
 }: {
   onNewEntry: () => void;
   onPhotograph?: () => void;
   onOpenCorpus: () => void;
+  onOpenVoiceDrafts: () => void;
   corpusOpenState: CorpusOpenState;
 }): React.JSX.Element {
   return (
@@ -492,6 +506,12 @@ function DrawerActions({
         />
       ) : null}
       <CorpusDrawerAction state={corpusOpenState} onPress={onOpenCorpus} />
+      <DrawerItem
+        testID="journal-drawer-voice-drafts"
+        label={VOICE_DRAFTS_LABEL}
+        icon={<ScrollText color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
+        onPress={onOpenVoiceDrafts}
+      />
     </>
   );
 }
@@ -544,6 +564,7 @@ export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Elem
         onNewEntry={props.onNewEntry}
         onPhotograph={props.onPhotograph}
         onOpenCorpus={props.onOpenCorpus}
+        onOpenVoiceDrafts={props.onOpenVoiceDrafts}
         corpusOpenState={props.corpusOpenState}
       />
       <DrawerSearchField
@@ -591,6 +612,8 @@ export interface JournalScreenDrawerProps {
   onPhotograph?: () => void;
   /** Navigate through the corpus door once the shared readiness rule resolves it. */
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  /** Open the Voice Drafts shelf, closing the drawer behind it. */
+  onOpenVoiceDrafts: () => void;
 }
 
 type CorpusOpenState = 'idle' | 'pending' | 'error';
@@ -653,6 +676,7 @@ export function JournalScreenDrawer({
   onNewEntry,
   onPhotograph,
   onOpenCorpus,
+  onOpenVoiceDrafts,
 }: JournalScreenDrawerProps): React.JSX.Element {
   const { items, loading, error, hasMore, loadMore, retry, confirmBodySearch } =
     useJournalDrawerEntries(drawer.isOpen);
@@ -677,6 +701,7 @@ export function JournalScreenDrawer({
         onNewEntry={onNewEntry}
         onPhotograph={onPhotograph}
         onOpenCorpus={corpusAction.open}
+        onOpenVoiceDrafts={onOpenVoiceDrafts}
         corpusOpenState={corpusAction.state}
         onLoadMore={loadMore}
         onRetry={retry}

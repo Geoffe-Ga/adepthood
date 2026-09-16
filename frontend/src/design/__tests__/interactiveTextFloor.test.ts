@@ -135,8 +135,17 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/MorningPagesTip.tsx::label',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',
+  // The review period beneath the Sources heading: a label naming the dates the
+  // feed was drawn from. Nothing tappable -- the panel's own affordances are the
+  // Done link, the pending quotes, and the rows.
+  'features/Journal/ReflectionSourcesPanel.tsx::headingPeriod',
   'features/Journal/ReflectionSourcesPanel.tsx::levelLabel',
   'features/Journal/ReflectionSourcesPanel.tsx::promoteHint',
+  // A source row's date, printed beside its title. It sits inside the row's own
+  // tappable header (as rowExcerpt already does) but is not itself an
+  // affordance: the whole header is the target, and its accessible name is the
+  // row's attribution, not this date.
+  'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
   'features/Journal/ResonanceEssayModal.tsx::kind',
   // Audited: the one line explaining what the prioritise step does. Static
@@ -145,6 +154,14 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/WritingSessionOffer.tsx::help',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
+  // Metadata inside a card whose whole surface is the tap target (the anchor
+  // line above them carries the interactive face), exactly as the reflection
+  // sources rows above.
+  'features/Journal/VoiceDraftsShelf.styles.ts::cardDate',
+  'features/Journal/VoiceDraftsShelf.styles.ts::cardExcerpt',
+  // A date in the letter's modal header; the close control beside it is the
+  // tappable thing and carries the action face.
+  'features/Journal/VoiceDraftsShelf.styles.ts::letterDate',
   // Audited: the eyebrow naming what the band is about, read and never
   // itself tapped. The band's two tap targets are the CTA, which sits at
   // editorialType.action, and the ReflectionDismiss control — matching the
