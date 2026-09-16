@@ -682,6 +682,11 @@ export const completionSuggestionSchema = z.object({
   anchor_start: z.number().int(),
   anchor_end: z.number().int(),
   anchor_text: z.string(),
+  // Facts detection extracted from the attesting span: how much, and the
+  // user-local day (ISO `YYYY-MM-DD`). Both null when the writer stated
+  // neither, and always null for a practice target.
+  completed_units: z.number().nullable(),
+  completed_on: z.string().nullable(),
   status: suggestionStatusSchema,
   accepted_at: z.string().nullable(),
   created_at: z.string(),

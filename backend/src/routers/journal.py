@@ -31,6 +31,7 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultPipelineClient,
 )
+from domain.dates import MAX_BACKFILL_DAYS, day_window_verdict, today_in_tz
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.practice_resolution import effective_config
 from domain.reflection_hierarchy import ReflectionLevel
@@ -106,7 +107,12 @@ from services.botmason import (
     credit_exhausted_error,
     resolve_chat_api_key,
 )
-from services.checkin import CheckInContext, current_check_in, record_goal_completion
+from services.checkin import (
+    CheckInCommand,
+    CheckInContext,
+    current_check_in,
+    record_goal_completion,
+)
 from services.completion_candidates import gather_candidates
 from services.contraction import gather_contraction_aggregates
 from services.corpus_ingest import (
@@ -2010,16 +2016,63 @@ def _suggestion_response(suggestion: CompletionSuggestion) -> CompletionSuggesti
     return CompletionSuggestionResponse.model_validate(suggestion, from_attributes=True)
 
 
+def _in_window_day(suggestion: CompletionSuggestion, user_tz: str) -> date | None:
+    """The suggested day if it is still loggable, else ``None`` (meaning today).
+
+    A suggestion may be detected on one day and accepted much later, so the
+    day it carries can fall outside the backfill window by the time it is
+    used -- or ahead of today, once a user moves their timezone westward.
+    Either way the accept must succeed: a writer offered a check-off cannot be
+    refused it over a date they never typed.
+
+    This is a *pre-check*, deliberately not a caught ``HTTPException``.
+    Wrapping ``record_goal_completion`` in ``try/except`` would swallow every
+    other refusal on that path too. Returning ``None`` *is* the fallback --
+    ``_resolve_target_day(None, tz)`` already means "the user's today" -- so
+    there is no second copy of that rule here.
+
+    Logs ids and the verdict enum only; never the date, which is derived from
+    journal content.
+    """
+    completed_on = suggestion.completed_on
+    if completed_on is None:
+        return None
+    verdict = day_window_verdict(
+        completed_on, today=today_in_tz(user_tz), max_backfill_days=MAX_BACKFILL_DAYS
+    )
+    if verdict == "ok":
+        return completed_on
+    logger.info(
+        "suggestion_day_out_of_window",
+        extra={"suggestion_id": suggestion.id, "verdict": verdict},
+    )
+    return None
+
+
 async def _accept_pending_habit(
     session: AsyncSession,
     suggestion: CompletionSuggestion,
     current_user: int,
     user_tz: str,
 ) -> AcceptSuggestionResponse:
-    """Log today's completion for a pending habit suggestion and flip it to accepted."""
+    """Log a pending habit suggestion's completion and flip it to accepted.
+
+    Logs the amount and the user-local day detection extracted from the
+    attesting span when it found them, falling back to the goal's target on
+    today when it did not. An amount lands as a signed *delta* on that day,
+    matching ``POST /goal_completions/``: a day that already has a row
+    accumulates rather than being replaced.
+    """
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    check_in = await record_goal_completion(session, ctx)
+    check_in = await record_goal_completion(
+        session,
+        ctx,
+        CheckInCommand(
+            completed_on=_in_window_day(suggestion, user_tz),
+            completed_units=suggestion.completed_units,
+        ),
+    )
     suggestion.status = SuggestionStatus.ACCEPTED
     suggestion.accepted_at = datetime.now(UTC)
     session.add(suggestion)
@@ -2105,7 +2158,9 @@ async def _already_accepted_response(
         return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    check_in = await current_check_in(session, ctx)
+    # The same day resolution the accept used, so the replay reports the day
+    # that was actually logged rather than today's (empty) total.
+    check_in = await current_check_in(session, ctx, _in_window_day(suggestion, user_tz))
     return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
 
 

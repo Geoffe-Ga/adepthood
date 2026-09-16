@@ -559,11 +559,16 @@ class CheckInCommand:
 _DEFAULT_CHECK_IN_COMMAND = CheckInCommand()
 
 
-async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckInResult:
+async def current_check_in(
+    session: AsyncSession, ctx: CheckInContext, on_day: date | None = None
+) -> CheckInResult:
     """Current streak for an already-recorded goal, WITHOUT writing a row.
 
     Used for the idempotent no-op view (e.g. re-accepting an already-accepted
-    suggestion) so it never logs a fresh completion.
+    suggestion) so it never logs a fresh completion. ``on_day`` selects which
+    day's ``day_units`` to report and defaults to the user's today; a caller
+    replaying a completion that was logged against a *past* day must pass that
+    day, or the view reports a day the completion was never on.
     """
     goal_id = cast("int", ctx.goal.id)
     subtractive = await _subtractive_context_for_goal(session, ctx.habit)
@@ -574,7 +579,7 @@ async def current_check_in(session: AsyncSession, ctx: CheckInContext) -> CheckI
             cast("int", ctx.habit.id),
             ctx.user_id,
             ctx.user_timezone,
-            today_in_tz(ctx.user_timezone),
+            on_day or today_in_tz(ctx.user_timezone),
             subtractive,
         ),
     )

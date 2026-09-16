@@ -4293,3 +4293,182 @@ def test_corpus_invitation_migration_round_trip_on_sqlite(
 
     command.upgrade(cfg, _CORPUS_INVITATION_REVISION)
     assert _table_exists(db_url, _CORPUS_INVITATION_TABLE)
+
+
+# -- d4e7c9a1b830: completionsuggestion facts (amount + day) -----------------
+
+_SUGGESTION_FACTS_BASE_REVISION = "c5d9e1f3a7b2"  # pragma: allowlist secret
+_SUGGESTION_FACTS_REVISION = "d4e7c9a1b830"  # pragma: allowlist secret
+_SUGGESTION_TABLE = "completionsuggestion"
+
+# The two encrypted columns are rewritten wholesale by the batch table-rebuild
+# the CHECKs require, so the round-trip reads the stored bytes back rather than
+# trusting that the column still exists.
+_SUGGESTION_LABEL_CIPHERTEXT = "enc::v1::Z0FBQUFBQm1sYWJlbA=="
+_SUGGESTION_ANCHOR_CIPHERTEXT = "enc::v1::Z0FBQUFBQm1hbmNob3I="
+
+
+def _bootstrap_completion_suggestion_baseline(sync_url: str) -> None:
+    """Create ``completionsuggestion`` as it stands just before the facts revision.
+
+    FKs are omitted deliberately (SQLite does not enforce them here and the
+    migration touches none of them); every CHECK the row must satisfy is kept,
+    because the batch rebuild re-applies them and a dropped one would pass
+    unnoticed.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE completionsuggestion ("
+                " id INTEGER PRIMARY KEY,"
+                " journal_entry_id INTEGER NOT NULL,"
+                " user_id INTEGER NOT NULL,"
+                " target_type VARCHAR(20) NOT NULL,"
+                " goal_id INTEGER,"
+                " user_practice_id INTEGER,"
+                " label VARCHAR NOT NULL,"
+                " anchor_start INTEGER NOT NULL,"
+                " anchor_end INTEGER NOT NULL,"
+                " anchor_text VARCHAR NOT NULL,"
+                " status VARCHAR(20) NOT NULL,"
+                " accepted_at DATETIME,"
+                " created_at DATETIME NOT NULL,"
+                " updated_at DATETIME NOT NULL,"
+                " CONSTRAINT ck_completion_suggestion_target_type_valid"
+                "  CHECK (target_type IN ('habit', 'practice')),"
+                " CONSTRAINT ck_completion_suggestion_status_valid"
+                "  CHECK (status IN ('pending', 'accepted', 'dismissed')),"
+                " CONSTRAINT ck_completion_suggestion_anchor_start_nonneg"
+                "  CHECK (anchor_start >= 0),"
+                " CONSTRAINT ck_completion_suggestion_anchor_span_positive"
+                "  CHECK (anchor_end > anchor_start),"
+                " CONSTRAINT ck_completion_suggestion_target_fk_matches"
+                "  CHECK ((target_type = 'habit' AND goal_id IS NOT NULL"
+                "          AND user_practice_id IS NULL)"
+                "     OR (target_type = 'practice' AND user_practice_id IS NOT NULL"
+                "          AND goal_id IS NULL))"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO completionsuggestion"
+                " (id, journal_entry_id, user_id, target_type, goal_id, label,"
+                "  anchor_start, anchor_end, anchor_text, status, created_at, updated_at)"
+                " VALUES (1, 1, 1, 'habit', 1, :label, 0, 22, :anchor, 'pending',"
+                "         '2026-09-01 00:00:00', '2026-09-01 00:00:00')"
+            ),
+            {"label": _SUGGESTION_LABEL_CIPHERTEXT, "anchor": _SUGGESTION_ANCHOR_CIPHERTEXT},
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_suggestion_facts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the suggestion-facts migration."""
+    db_path = tmp_path / "suggestion_facts_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_completion_suggestion_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _SUGGESTION_FACTS_BASE_REVISION)
+    return cfg
+
+
+def _suggestion_row(db_url: str, suggestion_id: int) -> dict[str, Any]:
+    """Fetch one ``completionsuggestion`` row, ciphertext columns included."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT id, label, anchor_text, completed_units, completed_on"
+                        " FROM completionsuggestion WHERE id = :id"
+                    ),
+                    {"id": suggestion_id},
+                )
+                .mappings()
+                .first()
+            )
+            assert row is not None
+            return dict(row)
+    finally:
+        engine.dispose()
+
+
+def test_completion_suggestion_facts_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_suggestion_facts: Config,
+) -> None:
+    """Round-trip the facts migration: columns, live CHECK, ciphertext, downgrade.
+
+    The CHECKs force a batch table-rebuild, which copies every row through a
+    new table -- so the two ``EncryptedString`` columns are read back by value
+    rather than merely confirmed to exist.
+    """
+    cfg = alembic_sqlite_config_suggestion_facts
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _SUGGESTION_FACTS_REVISION)
+    cols = _columns_of(db_url, _SUGGESTION_TABLE)
+    assert {"completed_units", "completed_on"} <= cols
+    assert {
+        "ck_completion_suggestion_completed_units_positive",
+        "ck_completion_suggestion_facts_habit_only",
+    } <= _check_constraints_of(db_url, _SUGGESTION_TABLE)
+
+    # The pre-existing row survived the rebuild with its ciphertext intact and
+    # both new columns NULL -- the shipped behaviour for a factless suggestion.
+    survivor = _suggestion_row(db_url, suggestion_id=1)
+    assert survivor["label"] == _SUGGESTION_LABEL_CIPHERTEXT
+    assert survivor["anchor_text"] == _SUGGESTION_ANCHOR_CIPHERTEXT
+    assert survivor["completed_units"] is None
+    assert survivor["completed_on"] is None
+
+    _execute_on(
+        db_url,
+        "UPDATE completionsuggestion SET completed_units = 64.0,"
+        " completed_on = '2026-09-11' WHERE id = 1",
+        {},
+    )
+    written = _suggestion_row(db_url, suggestion_id=1)
+    assert written["completed_units"] == 64.0
+    assert str(written["completed_on"]) == "2026-09-11"
+
+    # The positivity CHECK bites in the database, not only in the ORM.
+    with pytest.raises(IntegrityError):
+        _execute_on(db_url, "UPDATE completionsuggestion SET completed_units = 0 WHERE id = 1", {})
+
+    command.downgrade(cfg, _SUGGESTION_FACTS_BASE_REVISION)
+    cols_after = _columns_of(db_url, _SUGGESTION_TABLE)
+    assert "completed_units" not in cols_after
+    assert "completed_on" not in cols_after
+    assert _suggestion_row_label(db_url, suggestion_id=1) == _SUGGESTION_LABEL_CIPHERTEXT
+
+    command.upgrade(cfg, _SUGGESTION_FACTS_REVISION)
+    assert {"completed_units", "completed_on"} <= _columns_of(db_url, _SUGGESTION_TABLE)
+
+
+def _suggestion_row_label(db_url: str, suggestion_id: int) -> str:
+    """Fetch only the ciphertext label (valid on both sides of the migration)."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            value = conn.execute(
+                text("SELECT label FROM completionsuggestion WHERE id = :id"),
+                {"id": suggestion_id},
+            ).scalar_one()
+            return str(value)
+    finally:
+        engine.dispose()

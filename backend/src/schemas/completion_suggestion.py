@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -27,6 +27,11 @@ class CompletionSuggestionResponse(BaseModel):
     anchor_start: int
     anchor_end: int
     anchor_text: str
+    # Facts detection extracted from the attesting span: how much, and on
+    # which user-local day. Both ``None`` when the writer stated neither, and
+    # always ``None`` for a practice target (habit-only by DB CHECK).
+    completed_units: float | None
+    completed_on: date | None
     status: SuggestionStatus
     accepted_at: datetime | None
     created_at: datetime

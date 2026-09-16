@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+import logging
+from datetime import date, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -11,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from domain.dates import MAX_BACKFILL_DAYS, today_in_tz
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -142,31 +144,42 @@ async def _seed_locked_user_practice(session: AsyncSession, user_id: int) -> int
 
 
 async def _seed_suggestion(
-    session: AsyncSession,
-    *,
-    entry_id: int,
-    user_id: int,
-    goal_id: int,
-    status: SuggestionStatus = SuggestionStatus.PENDING,
+    session: AsyncSession, *, entry_id: int, user_id: int, goal_id: int, **over: object
 ) -> int:
-    """Seed a pending (default) HABIT suggestion; return its id."""
-    suggestion = CompletionSuggestion(
-        journal_entry_id=entry_id,
-        user_id=user_id,
-        target_type=CompletionTargetType.HABIT,
-        goal_id=goal_id,
-        user_practice_id=None,
-        label="went for a run",
-        anchor_start=2,
-        anchor_end=22,
-        anchor_text="went for a run today",
-        status=status,
-    )
+    """Seed a pending (default) HABIT suggestion; return its id.
+
+    Overrides ride in ``**over`` rather than as named parameters, mirroring
+    ``test_completion_suggestion_model._habit_suggestion``: the row has more
+    optional columns than a helper may carry as arguments.
+    """
+    base: dict[str, object] = {
+        "journal_entry_id": entry_id,
+        "user_id": user_id,
+        "target_type": CompletionTargetType.HABIT,
+        "goal_id": goal_id,
+        "user_practice_id": None,
+        "label": "went for a run",
+        "anchor_start": 2,
+        "anchor_end": 22,
+        "anchor_text": "went for a run today",
+        "status": SuggestionStatus.PENDING,
+    }
+    base.update(over)
+    suggestion = CompletionSuggestion(**base)
     session.add(suggestion)
     await session.commit()
     await session.refresh(suggestion)
     assert suggestion.id is not None
     return suggestion.id
+
+
+async def _completion_row(session: AsyncSession, goal_id: int) -> GoalCompletion:
+    """The single GoalCompletion row for a goal (fails loudly if there are 0 or 2)."""
+    session.expire_all()
+    result = await session.execute(
+        select(GoalCompletion).where(col(GoalCompletion.goal_id) == goal_id)
+    )
+    return result.scalars().one()
 
 
 async def _completion_count(session: AsyncSession, goal_id: int) -> int:
@@ -204,10 +217,16 @@ async def test_accept_logs_completion_and_flips_to_accepted(
 async def test_accept_is_idempotent_per_goal_day(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A same-day manual check-in then accept does NOT double-count the completion."""
+    """A same-day manual check-in then an amount-less accept changes nothing.
+
+    Asserts the day's *units* as well as the row count. A row count alone
+    cannot see a doubled day: once a suggestion carries explicit units the
+    accept takes the explicit path, which accumulates into the existing row
+    rather than inserting a second one.
+    """
     headers = await _signup(async_client)
     user_id = await _user_id(db_session)
-    goal_id = await _seed_goal(db_session, user_id)
+    goal_id = await _seed_goal(db_session, user_id, target=5.0)
     entry_id = await _create_entry(async_client, headers)
     sug_id = await _seed_suggestion(db_session, entry_id=entry_id, user_id=user_id, goal_id=goal_id)
 
@@ -221,6 +240,141 @@ async def test_accept_is_idempotent_per_goal_day(
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["suggestion"]["status"] == "accepted"
     assert await _completion_count(db_session, goal_id) == 1  # not 2
+    row = await _completion_row(db_session, goal_id)
+    assert row.completed_units == 5.0  # the single target-sized log, not 10.0
+
+
+@pytest.mark.asyncio
+async def test_accept_with_units_on_a_day_already_logged_accumulates(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An accept carrying units adds to the day already logged; it does not replace it.
+
+    This is the shipped ``_apply_explicit_delta`` semantic, stated by value:
+    one row, its units summed, and ``units_adjusted`` rather than a streak code.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id, target=5.0)
+    entry_id = await _create_entry(async_client, headers)
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=3.0,
+    )
+
+    first = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal_id, "completed_units": 2.0},
+        headers=headers,
+    )
+    assert first.status_code == HTTPStatus.OK
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["check_in"]["reason_code"] == "units_adjusted"
+    assert resp.json()["check_in"]["day_units"] == 5.0
+    assert await _completion_count(db_session, goal_id) == 1
+    row = await _completion_row(db_session, goal_id)
+    assert row.completed_units == 5.0  # 2.0 accumulated with 3.0, not replaced
+
+
+@pytest.mark.asyncio
+async def test_accept_logs_the_suggested_amount_on_the_suggested_day(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2842: a suggestion carrying units + a day logs THAT amount on THAT day."""
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id, target=64.0)
+    entry_id = await _create_entry(async_client, headers)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=32.0,
+        completed_on=yesterday,
+    )
+
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["suggestion"]["completed_units"] == 32.0
+    assert resp.json()["suggestion"]["completed_on"] == yesterday.isoformat()
+    row = await _completion_row(db_session, goal_id)
+    assert row.completed_units == 32.0  # NOT the goal target of 64.0
+    assert row.local_day == yesterday  # NOT today
+
+
+@pytest.mark.asyncio
+async def test_accept_with_a_day_past_the_backfill_window_logs_today_and_still_returns_200(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A stale suggested day falls back to today rather than refusing the accept.
+
+    The guard is a pre-check, never a swallowed ``HTTPException``: without it
+    ``_resolve_target_day`` answers 400 ``completion_date_too_old`` and the
+    writer loses a check-off they can see no way to complete.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    too_old = today_in_tz("UTC") - timedelta(days=MAX_BACKFILL_DAYS + 15)
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=2.0,
+        completed_on=too_old,
+    )
+
+    with caplog.at_level(logging.INFO):
+        resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    row = await _completion_row(db_session, goal_id)
+    assert row.local_day == today_in_tz("UTC")
+    assert [r.message for r in caplog.records].count("suggestion_day_out_of_window") == 1
+    # The suggestion still reports what was detected; only the log day moved.
+    assert resp.json()["suggestion"]["completed_on"] == too_old.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_accept_with_a_future_day_logs_today_and_still_returns_200(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A suggested day after today falls back to today too.
+
+    Unreachable at detection time, but a user who moves their timezone
+    westward turns a day that was "today" into tomorrow.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    tomorrow = today_in_tz("UTC") + timedelta(days=1)
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=2.0,
+        completed_on=tomorrow,
+    )
+
+    with caplog.at_level(logging.INFO):
+        resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    row = await _completion_row(db_session, goal_id)
+    assert row.local_day == today_in_tz("UTC")
+    assert [r.message for r in caplog.records].count("suggestion_day_out_of_window") == 1
 
 
 @pytest.mark.asyncio
@@ -239,6 +393,39 @@ async def test_accept_already_accepted_is_noop(
 
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["suggestion"]["status"] == "accepted"
+    assert await _completion_count(db_session, goal_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_already_accepted_reports_the_day_that_was_logged(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Re-accepting a backdated suggestion reports *that* day's units, not today's.
+
+    Kept beside the plain no-op rather than folded into it so a regression in
+    the day resolution and a regression in the untouched amount-less path stay
+    distinguishable.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id, target=5.0)
+    entry_id = await _create_entry(async_client, headers)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=3.0,
+        completed_on=yesterday,
+    )
+
+    first = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    assert first.json()["check_in"]["day_units"] == 3.0
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["check_in"]["day_units"] == 3.0  # yesterday's, not today's 0.0
     assert await _completion_count(db_session, goal_id) == 1
 
 
