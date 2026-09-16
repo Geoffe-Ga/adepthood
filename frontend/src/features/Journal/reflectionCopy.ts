@@ -63,11 +63,25 @@ export function formatQuotePrefill(text: string, sourceTitle: string): string {
   return `${quotedLines.join('\n')}\n> — ${sourceTitle}\n\n`;
 }
 
-/** ``short`` month/day/year attribution date (e.g. "Jun 1, 2026"); '' if unparseable. */
-function formatSourceDate(timestamp: string): string {
+/**
+ * ``short`` month/day/year attribution date (e.g. "Jun 1, 2026"); '' if unparseable.
+ *
+ * ``timeZone`` is the IANA zone the date should READ in. Pass the account's own
+ * zone for anything shown beside the feed: the server windowed the feed on that
+ * zone, and formatting in the device's instead can print a day boundary the feed
+ * below it disagrees with -- the same two-clocks defect this module's window
+ * label exists to close, reintroduced on the display layer. Omitted, it falls
+ * back to the device zone, which is what the written-attribution path wants.
+ */
+function formatSourceDate(timestamp: string, timeZone?: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...(timeZone === undefined ? {} : { timeZone }),
+  });
 }
 
 /** The attribution shown beneath a folded quote: the source's title, else its date. */
@@ -83,8 +97,8 @@ export function sourceAttribution(item: ReflectionSourceItem): string {
  * attribution line written into a saved reflection body — changing that would
  * rewrite journal text, not just what is on screen. '' when unparseable.
  */
-export function sourceDateLabel(item: ReflectionSourceItem): string {
-  return formatSourceDate(item.timestamp);
+export function sourceDateLabel(item: ReflectionSourceItem, timeZone?: string): string {
+  return formatSourceDate(item.timestamp, timeZone);
 }
 
 /** The half-open calendar period a review covers, exactly as the server declared it. */
@@ -108,12 +122,16 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
  * whole defect this closes. Returns '' when either bound is missing or
  * unparseable, and the caller then shows no label.
  */
-export function formatReviewPeriod(start: string, end: string): string {
+export function formatReviewPeriod(start: string, end: string, timeZone?: string): string {
   const from = new Date(start);
   const exclusiveTo = new Date(end);
   if (Number.isNaN(from.getTime()) || Number.isNaN(exclusiveTo.getTime())) return '';
   const to = new Date(exclusiveTo.getTime() - ONE_DAY_MS);
   if (to.getTime() < from.getTime()) return '';
-  const fromLabel = from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${fromLabel} – ${formatSourceDate(to.toISOString())}`;
+  const fromLabel = from.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(timeZone === undefined ? {} : { timeZone }),
+  });
+  return `${fromLabel} – ${formatSourceDate(to.toISOString(), timeZone)}`;
 }

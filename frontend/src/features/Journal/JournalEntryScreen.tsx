@@ -2991,6 +2991,10 @@ function ReflectionComposer({
 }: {
   reflection: Controller['reflection'];
 }): React.JSX.Element | null {
+  // Read before the early return so the hook order is stable. The panel prints
+  // dates beside a feed the SERVER windowed on this zone; formatting them in the
+  // device's instead can show a day boundary the feed disagrees with.
+  const { userTimezone } = useAuth();
   if (!reflection.active) return null;
   return (
     <>
@@ -2998,6 +3002,7 @@ function ReflectionComposer({
         <ReflectionSourcesPanel
           items={reflection.sources}
           window={reflection.window}
+          timeZone={userTimezone}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}
           onClose={reflection.closeSources}

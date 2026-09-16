@@ -75,6 +75,13 @@ export interface ReflectionSourcesPanelProps {
    */
   window?: ReviewWindow;
   /**
+   * The account's IANA zone, used for every date this panel PRINTS. The server
+   * windowed the feed on this zone, so formatting in the device's instead can
+   * show a day boundary the feed below disagrees with. Absent falls back to the
+   * device zone.
+   */
+  timeZone?: string;
+  /**
    * Fold a pending quote into the reflection body. Resolves ``true`` when it was
    * marked included (keep the dim), ``false``/reject to revert the dim. May
    * return nothing, in which case no confirmation state is shown.
@@ -252,9 +259,11 @@ function SourceRow({
   expanded,
   onToggle,
   controls,
+  timeZone,
 }: {
   item: ReflectionSourceItem;
   expanded: boolean;
+  timeZone?: string;
   onToggle: () => void;
   controls: RowPromoteControls;
 }): React.JSX.Element {
@@ -274,7 +283,7 @@ function SourceRow({
         ) : null}
         <Text style={styles.rowTitle}>{sourceAttribution(item)}</Text>
         <Text style={styles.rowDate} testID={`source-date-${item.id}`}>
-          {sourceDateLabel(item)}
+          {sourceDateLabel(item, timeZone)}
         </Text>
         {expanded ? null : (
           <Text style={styles.rowExcerpt} numberOfLines={2}>
@@ -378,9 +387,11 @@ function buildControls(
 function SourceFeed({
   feed,
   onPromoteSpan,
+  timeZone,
 }: {
   feed: ReflectionSourceItem[];
   onPromoteSpan?: PromoteSpanHandler;
+  timeZone?: string;
 }): React.JSX.Element {
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const toggle = useCallback((key: string) => {
@@ -399,6 +410,7 @@ function SourceFeed({
             expanded={expandedKeys.has(key)}
             onToggle={() => toggle(key)}
             controls={buildControls(item, key, canPromote, selection)}
+            timeZone={timeZone}
           />
         );
       })}
@@ -449,9 +461,15 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
  * The panel's heading and, when the server declared one, the period the review
  * covers. Rendered from ``window`` alone — see {@link formatReviewPeriod}.
  */
-function SourcesHeading({ window: reviewWindow }: { window?: ReviewWindow }): React.JSX.Element {
+function SourcesHeading({
+  window: reviewWindow,
+  timeZone,
+}: {
+  window?: ReviewWindow;
+  timeZone?: string;
+}): React.JSX.Element {
   const period =
-    reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end);
+    reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end, timeZone);
   return (
     <View style={styles.heading}>
       <Text style={styles.headingTitle} accessibilityRole="header">
@@ -469,6 +487,7 @@ function SourcesHeading({ window: reviewWindow }: { window?: ReviewWindow }): Re
 function SourcesContent({
   items,
   window: reviewWindow,
+  timeZone,
   onInsertQuote,
   onPromoteSpan,
   onClose,
@@ -494,9 +513,9 @@ function SourcesContent({
           <Text style={styles.actionLink}>Done</Text>
         </TouchableOpacity>
       )}
-      <SourcesHeading window={reviewWindow} />
+      <SourcesHeading window={reviewWindow} timeZone={timeZone} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
-      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} />
+      <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
     </ScrollView>
   );
 }

@@ -1037,12 +1037,21 @@ function useGoalConfirm(
  * `useRef` initialiser cover every moment a gesture can begin. This is the
  * same guarantee `starFillRef` already relies on.
  */
+/**
+ * The live port the once-built responders read through. `useRef(build())` would
+ * evaluate `build` on every render and discard the result, so the lazy `??=`
+ * mirrors {@link useMarkerPanResponders}: one object built at mount, re-pointed
+ * by the effect after every commit.
+ */
 const useMarkerDragPort = (build: () => MarkerDragPort): React.MutableRefObject<MarkerDragPort> => {
-  const port = useRef<MarkerDragPort>(build());
+  const port = useRef<MarkerDragPort | null>(null);
+  port.current ??= build();
   useEffect(() => {
     port.current = build();
   });
-  return port;
+  // The `??=` above populates it before any consumer can read it; the nullable
+  // ref type exists only to express "not built yet" for that one statement.
+  return port as React.MutableRefObject<MarkerDragPort>;
 };
 
 const useGoalMarkers = (
