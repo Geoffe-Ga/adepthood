@@ -243,6 +243,11 @@ async def read_feedback_receipt(
     if report is None:
         raise not_found(_REPORT_NOT_FOUND)
     if report.user_id != current_user:
+        # A row that came back from a SELECT always carries its key; the ``or 0``
+        # satisfies the ``int | None`` the ORM declares and, if it were somehow
+        # reached, writes a sentinel into the audit rather than skipping the
+        # audit — a cross-tenant probe recorded against the wrong id is
+        # recoverable, one that was never recorded at all is not.
         log_ownership_denied("feedback_report", report.id or 0, current_user)
         raise not_found(_REPORT_NOT_FOUND)
     return report

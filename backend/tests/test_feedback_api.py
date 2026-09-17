@@ -542,3 +542,34 @@ async def test_a_submitted_report_stores_no_account_id_in_its_reference(
 
     stored = (await db_session.execute(select(FeedbackReport))).scalars().one()
     assert str(stored.user_id) not in public_id
+
+
+@pytest.mark.asyncio
+async def test_a_mint_that_always_collides_surfaces_rather_than_hanging(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry loop is bounded, so a database fault becomes a 500, not a hang.
+
+    An unbounded ``while`` here would be the worst available failure: a request
+    that never returns, holding a connection, under a bug that by construction
+    reproduces on every retry. The bound turns it into a 500 an operator can
+    see, through the application's own sanitising handler. Driven by forcing
+    every mint to return a reference already taken, which is the only way the
+    exhaustion branch is reachable at all.
+
+    The refusal body is asserted too: a 500 raised from this path must not
+    reproduce what the caller wrote, and the handler's sanitisation is what
+    keeps that true.
+    """
+    headers = await _signup(async_client, "feedback_mint_exhausted")
+    first = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    assert first.status_code == HTTPStatus.CREATED
+    taken = first.json()["public_id"]
+
+    monkeypatch.setattr("routers.feedback.mint_public_id", lambda: taken)
+
+    exhausted = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert exhausted.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert _PROSE not in exhausted.text
+    assert await _report_count(db_session) == 1
