@@ -47,6 +47,34 @@ const MIN_FREQUENCY_SEPARATION_HZ = 10;
 /** The Goertzel window: long enough to resolve 10 Hz, short enough to be strike, not tail. */
 const ANALYSIS_WINDOW_SECONDS = 0.3;
 
+/**
+ * Thresholds below are floors chosen from the measured spectra with roughly 2x
+ * headroom, not round numbers: the smallest overtone any bell actually carries is
+ * 0.0375 of its fundamental, the brightest any bell stays into its second half is
+ * 0.19 of its own opening brightness, and the weakest sustain and RMS measured
+ * are 0.19 and 0.17 of peak.
+ */
+const MIN_OVERTONE_FRACTION = 0.02;
+const MAX_LATE_BRIGHTNESS_FRACTION = 0.5;
+const MIN_SUSTAIN_FRACTION = 0.08;
+const MIN_RMS_FRACTION = 0.08;
+const SUSTAIN_WINDOW_FRACTION = 0.05;
+
+/** How far from a whole number a ratio has to sit before it is worth calling inharmonic. */
+const MIN_INHARMONIC_OFFSET = 0.1;
+/** And how decisively it must out-shout the harmonic slot it sits beside. */
+const INHARMONIC_DOMINANCE = 5;
+
+/**
+ * The four bells that claim to be struck metal clusters.
+ *
+ * `chime` and `waypoint` are deliberately NEAR-harmonic -- that is what makes them
+ * read as bright and light rather than as heavy metal -- so the inharmonicity
+ * assertion does not apply to them. They are held by the overtone and
+ * highs-die-first assertions instead, which cover every bell.
+ */
+const METAL_CLUSTER_KEYS = ['bowl', 'gong', 'open', 'close'] as const;
+
 const ASCII = (bytes: Uint8Array, from: number, to: number): string =>
   String.fromCodePoint(...bytes.slice(from, to));
 
@@ -81,9 +109,9 @@ function peakOf(samples: Int16Array, from = 0, to = samples.length): number {
  * present at a frequency, so a chime retuned onto the bowl's fundamental fails
  * here while every byte-comparison in the suite stays green.
  */
-function goertzelMagnitude(samples: Int16Array, frequencyHz: number): number {
+function goertzelMagnitude(samples: Int16Array, frequencyHz: number, startIndex = 0): number {
   const windowSize = Math.min(
-    samples.length,
+    samples.length - startIndex,
     Math.round(ANALYSIS_WINDOW_SECONDS * BELL_SAMPLE_RATE_HZ),
   );
   const omega = (2 * Math.PI * frequencyHz) / BELL_SAMPLE_RATE_HZ;
@@ -91,7 +119,7 @@ function goertzelMagnitude(samples: Int16Array, frequencyHz: number): number {
   let previous = 0;
   let beforePrevious = 0;
   for (let index = 0; index < windowSize; index += 1) {
-    const current = (samples[index] ?? 0) + coefficient * previous - beforePrevious;
+    const current = (samples[startIndex + index] ?? 0) + coefficient * previous - beforePrevious;
     beforePrevious = previous;
     previous = current;
   }
@@ -114,6 +142,19 @@ function dominantFundamental(key: BellSpecKey): number {
     }
   }
   return best;
+}
+
+function rmsOf(samples: Int16Array, from: number, to: number): number {
+  let total = 0;
+  for (let index = from; index < to; index += 1) {
+    const sample = samples[index] ?? 0;
+    total += sample * sample;
+  }
+  return Math.sqrt(total / (to - from));
+}
+
+function pcmFor(key: BellSpecKey): Int16Array {
+  return pcmFromWav(renderBellWav(BELL_TIMBRES[key]));
 }
 
 function silencedSpec(spec: TimbreSpec): TimbreSpec {
@@ -152,6 +193,85 @@ describe('renderBellWav', () => {
       expect(head).toBeGreaterThanOrEqual(STRIKE_DECAY_RATIO * tail);
       // A non-zero final sample is an audible click when playback stops.
       expect(Math.abs(samples[samples.length - 1] ?? 0)).toBeLessThan(TAIL_FRACTION * head);
+    }
+  });
+});
+
+describe('bell timbre', () => {
+  // A pure sine at the right fundamental passes spectral separation, non-silence
+  // and the strike envelope. The whole partial table can collapse to six sine
+  // tones with every one of those still green -- and "game-console tones" is the
+  // exact ground on which an earlier synthesis round was rejected. These three
+  // tests are what stand between this feature and that recurrence.
+
+  it('gives every bell overtones rather than a single sine', () => {
+    for (const key of ALL_KEYS) {
+      const samples = pcmFor(key);
+      const spec = BELL_TIMBRES[key];
+      const fundamental = goertzelMagnitude(samples, spec.fundamentalHz);
+      for (const partial of spec.partials.filter((candidate) => candidate.ratio !== 1)) {
+        const overtone = goertzelMagnitude(samples, spec.fundamentalHz * partial.ratio);
+        expect(overtone / fundamental).toBeGreaterThan(MIN_OVERTONE_FRACTION);
+      }
+    }
+  });
+
+  it('lets the highs die first, as struck metal does and a beep does not', () => {
+    // One decay rate shared by every partial is a beep that fades. A bell grows
+    // DARKER as it rings out, so its brightness relative to its own fundamental
+    // must fall between the strike and the second half of the sound.
+    for (const key of ALL_KEYS) {
+      const samples = pcmFor(key);
+      const spec = BELL_TIMBRES[key];
+      const highest = spec.partials[spec.partials.length - 1];
+      const highestHz = spec.fundamentalHz * (highest?.ratio ?? 1);
+      const late = Math.floor(samples.length / 2);
+      const earlyBrightness =
+        goertzelMagnitude(samples, highestHz) / goertzelMagnitude(samples, spec.fundamentalHz);
+      const lateBrightness =
+        goertzelMagnitude(samples, highestHz, late) /
+        goertzelMagnitude(samples, spec.fundamentalHz, late);
+      expect(lateBrightness).toBeLessThan(MAX_LATE_BRIGHTNESS_FRACTION * earlyBrightness);
+    }
+  });
+
+  it('puts its energy off the harmonic grid for the bells that claim to be metal', () => {
+    // The ratios come from the table; the energy is measured. A table snapped to
+    // whole-number ratios -- a harmonic stack, which is what a console beep is --
+    // moves the energy to the slot this asserts is the quieter of the two.
+    for (const key of METAL_CLUSTER_KEYS) {
+      const samples = pcmFor(key);
+      const spec = BELL_TIMBRES[key];
+      const inharmonic = spec.partials.filter(
+        (partial) =>
+          Math.abs(partial.ratio - Math.round(partial.ratio)) >= MIN_INHARMONIC_OFFSET &&
+          Math.round(partial.ratio) >= 2,
+      );
+      expect(inharmonic.length).toBeGreaterThan(0);
+      for (const partial of inharmonic) {
+        const atPartial = goertzelMagnitude(samples, spec.fundamentalHz * partial.ratio);
+        const atNearestHarmonic = goertzelMagnitude(
+          samples,
+          spec.fundamentalHz * Math.round(partial.ratio),
+        );
+        expect(atPartial).toBeGreaterThan(INHARMONIC_DOMINANCE * atNearestHarmonic);
+      }
+    }
+  });
+
+  it('rings for its whole length instead of clicking and stopping', () => {
+    // The strike assertion bounds the sound from above -- it must decay. Nothing
+    // bounded it from below, so a 40 ms click padded with silence satisfied
+    // non-silence AND the strike envelope AND spectral separation. A bell is the
+    // part between those two bounds.
+    for (const key of ALL_KEYS) {
+      const samples = pcmFor(key);
+      const overall = peakOf(samples);
+      const middle = Math.floor(samples.length / 2);
+      const halfWindow = Math.floor(samples.length * SUSTAIN_WINDOW_FRACTION);
+      const sustained = peakOf(samples, middle - halfWindow, middle + halfWindow);
+      expect(sustained).toBeGreaterThan(MIN_SUSTAIN_FRACTION * overall);
+      expect(rmsOf(samples, 0, samples.length)).toBeGreaterThan(MIN_RMS_FRACTION * overall);
     }
   });
 });

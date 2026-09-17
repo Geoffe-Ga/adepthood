@@ -2,8 +2,14 @@
 // bell rendered in-app as 16-bit mono PCM and handed to expo-audio as a
 // `data:audio/wav;base64,…` URI (interval_bell resolves per tone); no audio is
 // bundled. If a cue has no timbre, or its render comes back inaudible, the
-// adapter logs a single warning per sound and falls back to a no-op — one silent
-// cue must not break the practice session.
+// adapter logs a single warning per sound and falls back to a no-op — a cue that
+// cannot sound must not break the practice session.
+//
+// Note the blast radius deliberately: the six timbres are one static table
+// rendered together, so an inaudible render is a code defect rather than a
+// per-device condition, and it degrades ALL SIX bell cues (each warning once)
+// rather than one. Failing loudly and completely is the right answer to a
+// programming error; it is not per-cue isolation, and nothing here pretends it is.
 //
 // Before #1419 this file required six `bell-*.mp3` assets that were 0 bytes.
 // They resolved, constructed players, and played nothing, so `markFailed` was
@@ -36,8 +42,12 @@ type SoundKey =
  * (`configurator/defaults.ts`), `cuesForIntervalBell` opens, marks and closes a
  * session with the same cue kinds, so a bowl end bell would be byte-identical to
  * every interval strike of that session — and "was that an interval or the end?"
- * is the one discrimination a meditation timer owes its user. Reversing this is
- * an edit to the three values below.
+ * is the one discrimination a meditation timer owes its user.
+ *
+ * Reversing the decision means editing the three values below — all three, not
+ * one. Making boundary bells genuinely FOLLOW `config.bell_tone`, which is the
+ * likelier reading of the instruction, is not a table edit at all: it needs a
+ * `tone` on boundary cues, which `Cue` does not carry and all five builders emit.
  */
 const SOUND_TIMBRES: Record<SoundKey, BellSpecKey | null> = {
   start_bell: 'open',
