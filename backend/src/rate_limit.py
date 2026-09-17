@@ -3,11 +3,14 @@
 import os
 import time
 from collections.abc import Callable
+from http import HTTPStatus
+from math import ceil
 
-from limits import RateLimitItemPerHour, parse
+from limits import RateLimitItem, RateLimitItemPerHour, parse
 from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
 from slowapi import Limiter
+from starlette.responses import JSONResponse
 
 from client_ip import client_throttle_key
 
@@ -59,6 +62,7 @@ def resolve_default_rate_limit(raw: str | None) -> str:
 
 DEFAULT_RATE_LIMIT = resolve_default_rate_limit(os.getenv(RATE_LIMIT_OVERRIDE_ENV_VAR))
 
+
 # Rate limiter keyed by the trusted-proxy-resolved *throttle* key rather than a
 # forgeable header or a proxy every user shares: one customer, one budget. That
 # key groups an IPv6 client onto its delegated prefix, so rotating inside it
@@ -68,7 +72,49 @@ DEFAULT_RATE_LIMIT = resolve_default_rate_limit(os.getenv(RATE_LIMIT_OVERRIDE_EN
 # decoration time, which happens on import, after this line. Building the
 # limiter at import time is safe: both the trusted-proxy allowlist and the
 # prefix length are read per request.
-limiter = Limiter(key_func=client_throttle_key, default_limits=[DEFAULT_RATE_LIMIT])
+class _AppLimiter(Limiter):
+    """The application's limiter, publishing read access to what it registered.
+
+    ``slowapi`` keeps its route table, its exemption set and its request filters
+    in instance state and exposes no accessor for any of them, so a test that
+    wants to pin the declared limits has no honest way to read them. Subclassing
+    is that way: these three readers are ordinary protected access from inside
+    the class that owns the state, not a reach through a private name from
+    outside. They return copies, so nothing a caller does can disturb the
+    registrations they describe.
+
+    The exemption readers exist because of a coupling that is easy to miss.
+    ``@limiter.exempt`` and ``request_filter`` govern the *decorator* path only;
+    the ambient floor in this module deliberately consults neither, because
+    consulting them would mean resolving a request to a route -- the exact
+    coupling that made the floor unreachable for 141 of 144 routes (#2909). Both
+    registries are empty today and a test asserts it, so the day one fills is
+    the day someone has to decide what an exemption means for the floor.
+    """
+
+    def declared_route_limits(self) -> dict[str, tuple[str, ...]]:
+        """Return each decorated endpoint's declared limits, sorted, by name.
+
+        Returns:
+            Fully-qualified endpoint name to its declared limit strings, sorted
+            so a route declaring two axes compares independently of the
+            registration order those two are evaluated in.
+        """
+        return {
+            name: tuple(sorted(str(limit.limit) for limit in declared))
+            for name, declared in self._route_limits.items()
+        }
+
+    def exempt_route_names(self) -> frozenset[str]:
+        """Return the endpoint names registered with ``@limiter.exempt``."""
+        return frozenset(self._exempt_routes)
+
+    def request_filter_count(self) -> int:
+        """Return how many ``request_filter`` predicates are registered."""
+        return len(self._request_filters)
+
+
+limiter = _AppLimiter(key_func=client_throttle_key, default_limits=[DEFAULT_RATE_LIMIT])
 
 # Second-layer throttle for signup attempts that fail license verification:
 # distinct from the 3/minute signup limit above so a license brute-forcer is
@@ -86,9 +132,15 @@ _SWEEP_MIN_TRACKED = 64
 # greater than one -- at one, a store of live keys would rescan on every attempt.
 _SWEEP_GROWTH_FACTOR = 2
 
+# A 429 is a request to come back later, so the smallest honest answer is one
+# second. A computed wait can round to zero at the very end of a window, and
+# ``Retry-After: 0`` reads as "retry immediately" -- an invitation to the tight
+# loop the refusal exists to break.
+_MIN_RETRY_AFTER_SECONDS = 1
 
-class _InvalidLicenseThrottle:
-    """Hourly invalid-license counter over a self-bounding in-memory store.
+
+class _MovingWindowThrottle:
+    """A moving-window counter over a self-bounding in-memory store.
 
     The backing ``MemoryStorage`` empties an expired key's event list but never
     drops the key itself, so a long-lived process would keep one dict entry per
@@ -99,29 +151,40 @@ class _InvalidLicenseThrottle:
     on a completed sweep and never shrinks, so a burst's dead keys stay resident
     until traffic climbs back to that peak: the store is bounded, not minimal.
 
-    Eviction can never be premature, which matters because this throttle is a
-    security control: an attacker must not be able to clear their own counter by
-    provoking a sweep. A key's recorded last-attempt reading comes from the same
-    wall clock the ``limits`` moving window stamps its entries with, so it is at
-    or after the newest entry's arrival time; an age strictly greater than one
-    full expiry therefore proves every entry has already left the window. That
-    implication only holds while the clock is the one stamping those entries,
-    which is why the default is wall clock rather than a monotonic source.
+    Eviction can never be premature, which matters because both users of this
+    class are security controls: an attacker must not be able to clear their own
+    counter by provoking a sweep. A key's recorded last-attempt reading comes
+    from the same wall clock the ``limits`` moving window stamps its entries
+    with, so it is at or after the newest entry's arrival time; an age strictly
+    greater than one full expiry therefore proves every entry has already left
+    the window. That implication only holds while the clock is the one stamping
+    those entries, which is why the default is wall clock rather than a
+    monotonic source.
+
+    A bucket key is the tuple of string components ``limits`` namespaces its
+    store by, which is what lets one implementation serve both callers: the
+    invalid-license cap keys on the client alone, ``(client,)``, while the
+    ambient floor (#2909) keys on ``(client, path)``.
 
     Attributes:
         storage: Event store backing the moving window.
-        item: The hourly cap this throttle enforces.
-        last_attempt: Raw throttle key to the clock reading of its most recent
+        item: The cap this throttle enforces.
+        last_attempt: Bucket key to the clock reading of its most recent
             recorded attempt. Public, along with the rest, so this module's own
             unit tests can inspect the store without reaching through private
             names.
         sweep_at: Tracked-key count at which the next scan runs.
     """
 
-    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        item: RateLimitItem,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         """Build an empty throttle.
 
         Args:
+            item: The cap every bucket in this throttle is measured against.
             clock: Source of the current time, in seconds. In production it must
                 be the same wall clock the moving window stamps its entries
                 with, hence the ``time.time`` default; a deterministic clock
@@ -129,42 +192,56 @@ class _InvalidLicenseThrottle:
                 free to start at any origin.
         """
         self.storage = MemoryStorage()
-        self.item = RateLimitItemPerHour(INVALID_LICENSE_MAX_PER_HOUR)
-        self.last_attempt: dict[str, float] = {}
+        self.item = item
+        self.last_attempt: dict[tuple[str, ...], float] = {}
         self.sweep_at: int = _SWEEP_MIN_TRACKED
         self._limiter = MovingWindowRateLimiter(self.storage)
         self._clock = clock
 
-    def record(self, throttle_key: str) -> bool:
-        """Charge one attempt against ``throttle_key``.
+    def record(self, key: tuple[str, ...]) -> bool:
+        """Charge one attempt against ``key``.
 
         Args:
-            throttle_key: Grouped client key the attempt is charged to.
+            key: Bucket the attempt is charged to.
 
         Returns:
-            True while the client remains under the hourly cap, False once the
-            cap is spent.
+            True while the bucket remains under its cap, False once the cap is
+            spent.
         """
-        allowed = self._limiter.hit(self.item, throttle_key)
+        allowed = self._limiter.hit(self.item, *key)
         # Refreshed even when the attempt was denied, so retention follows the
         # last attempt rather than the first: a client still hammering after
         # spending its cap keeps its counter alive instead of ageing out of the
         # store while it is actively abusing us.
-        self.last_attempt[throttle_key] = self._clock()
+        self.last_attempt[key] = self._clock()
         self._sweep_if_crowded()
         return allowed
 
-    def exhausted(self, throttle_key: str) -> bool:
-        """Report whether ``throttle_key`` has already spent its hourly budget.
+    def exhausted(self, key: tuple[str, ...]) -> bool:
+        """Report whether ``key`` has already spent its budget.
 
         Args:
-            throttle_key: Grouped client key to peek at.
+            key: Bucket to peek at.
 
         Returns:
             True once the cap is spent. The peek consumes nothing and triggers
             no sweep, so asking costs the client nothing.
         """
-        return not self._limiter.test(self.item, throttle_key)
+        return not self._limiter.test(self.item, *key)
+
+    def retry_after(self, key: tuple[str, ...]) -> int:
+        """Return how many seconds ``key`` must wait, never less than one.
+
+        Args:
+            key: Bucket whose window is being read.
+
+        Returns:
+            Whole seconds until the oldest entry leaves the window, floored at
+            one: ``Retry-After: 0`` invites an immediate retry, which is the
+            opposite of what a 429 is asking for.
+        """
+        stats = self._limiter.get_window_stats(self.item, *key)
+        return max(_MIN_RETRY_AFTER_SECONDS, ceil(stats.reset_time - self._clock()))
 
     def reset(self) -> None:
         """Drop every counter and return the sweep mark to its floor."""
@@ -179,31 +256,112 @@ class _InvalidLicenseThrottle:
         now = self._clock()
         expiry = self.item.get_expiry()
         # Snapshot: the loop mutates the dict it is walking.
-        for throttle_key, last in list(self.last_attempt.items()):
+        for key, last in list(self.last_attempt.items()):
             # Strictly greater: the library's own membership test is inclusive
             # (an entry still occupies a slot while ``atime >= now - expiry``),
             # so an age of exactly one expiry can still be a live key. Past
             # that, every entry's arrival time falls below the bound, which
             # makes evicting a key the library would still count impossible.
             if now - last > expiry:
-                self._forget(throttle_key)
+                self._forget(key)
         self.sweep_at = max(_SWEEP_MIN_TRACKED, _SWEEP_GROWTH_FACTOR * len(self.last_attempt))
 
-    def _forget(self, throttle_key: str) -> None:
+    def _forget(self, key: tuple[str, ...]) -> None:
         """Drop one key from the tracking map and from the event store.
 
         Args:
-            throttle_key: Raw client key to evict. The store is keyed by the
-                item's namespaced form of it, so purging by the raw key would
-                silently leave the entry behind.
+            key: Bucket to evict. The store is keyed by the item's namespaced
+                form of it, so purging by the raw key would silently leave the
+                entry behind.
         """
-        del self.last_attempt[throttle_key]
-        storage_key = self.item.key_for(throttle_key)
+        del self.last_attempt[key]
+        storage_key = self.item.key_for(*key)
         # Serialise against the library's background sweeper, which truncates
         # this key's event list under this same lock after reading it; dropping
         # the key between those two steps would raise on that thread.
         with self.storage.locks[storage_key]:
             self.storage.clear(storage_key)
+
+
+class _InvalidLicenseThrottle:
+    """Hourly invalid-license counter, keyed on the grouped client alone.
+
+    Distinct from the 3/minute signup limit so a license brute-forcer is capped
+    per hour even if they pace themselves under the per-minute limit.
+
+    A forwarding wrapper rather than a subclass, so its whole surface stays
+    keyed on the raw client string while the shared window underneath is keyed
+    on identifier tuples. Retention, eviction safety and the sweep all live in
+    :class:`_MovingWindowThrottle`; nothing about them is restated here.
+
+    Attributes:
+        storage: Event store backing the moving window.
+        item: The hourly cap this throttle enforces.
+        last_attempt: Raw throttle key to the clock reading of its most recent
+            recorded attempt. Public, along with the rest, so this module's own
+            unit tests can inspect the store without reaching through private
+            names.
+        sweep_at: Tracked-key count at which the next scan runs.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        """Build an empty hourly counter.
+
+        Args:
+            clock: Source of the current time, in seconds. See
+                :class:`_MovingWindowThrottle`.
+        """
+        self._window = _MovingWindowThrottle(
+            RateLimitItemPerHour(INVALID_LICENSE_MAX_PER_HOUR), clock=clock
+        )
+
+    @property
+    def storage(self) -> MemoryStorage:
+        """Return the event store backing the moving window."""
+        return self._window.storage
+
+    @property
+    def item(self) -> RateLimitItem:
+        """Return the hourly cap this throttle enforces."""
+        return self._window.item
+
+    @property
+    def last_attempt(self) -> dict[str, float]:
+        """Return each tracked client key against its last recorded attempt."""
+        return {key: stamp for (key,), stamp in self._window.last_attempt.items()}
+
+    @property
+    def sweep_at(self) -> int:
+        """Return the tracked-key count at which the next scan runs."""
+        return self._window.sweep_at
+
+    def record(self, throttle_key: str) -> bool:
+        """Charge one attempt against ``throttle_key``.
+
+        Args:
+            throttle_key: Grouped client key the attempt is charged to.
+
+        Returns:
+            True while the client remains under the hourly cap, False once the
+            cap is spent.
+        """
+        return self._window.record((throttle_key,))
+
+    def exhausted(self, throttle_key: str) -> bool:
+        """Report whether ``throttle_key`` has already spent its hourly budget.
+
+        Args:
+            throttle_key: Grouped client key to peek at.
+
+        Returns:
+            True once the cap is spent. The peek consumes nothing and triggers
+            no sweep, so asking costs the client nothing.
+        """
+        return self._window.exhausted((throttle_key,))
+
+    def reset(self) -> None:
+        """Drop every counter and return the sweep mark to its floor."""
+        self._window.reset()
 
 
 _invalid_license_throttle = _InvalidLicenseThrottle()
@@ -241,3 +399,193 @@ def invalid_license_cap_exhausted(throttle_key: str) -> bool:
 def reset_invalid_license_attempts() -> None:
     """Clear every invalid-license counter (test isolation between cases)."""
     _invalid_license_throttle.reset()
+
+
+# ── The ambient floor: one limit, charged before anything is resolved ────
+#
+# #2909. The ambient ``default_limits`` above used to be applied by
+# ``slowapi.middleware.SlowAPIMiddleware``, which resolves a request to its
+# handler by walking ``app.routes`` for ``.endpoint``. Under FastAPI 0.141
+# ``app.routes`` holds ``_IncludedRouter`` wrappers that expose no
+# ``.endpoint``, so every route mounted through ``include_router`` resolved to
+# ``None`` -- and slowapi treats a handler-less request as *exempt*. The
+# mechanism failed open for 141 of the 144 mounted routes, and the whole test
+# suite stayed green because its one default-limit test used ``/health``, an
+# app-level route that still resolved.
+#
+# The 27 routes carrying ``@limiter.limit`` were no better off. That decorator
+# wraps the *endpoint*, so it fires only after routing, body parsing and
+# dependency resolution: an unauthenticated flood (401) or a malformed-body
+# flood (422) is refused upstream of it and charged to nothing at all.
+#
+# So the floor below does not resolve anything. It consults no ``app.routes``,
+# no ``scope["route"]``, no ``.endpoint``, no ``_route_limits``, and no
+# ``_IncludedRouter``. It charges one bucket per ``(client, path)`` and answers.
+# That is the invariant, and it is the whole fix: **this layer must never
+# consult route identity.** Route identity is not available to a middleware
+# under this stack, and a layer that needs it is a layer that fails open the
+# next time the framework changes how routes are stored.
+#
+# Version pins this was measured against, so the next upgrade knows what has to
+# be re-checked and what does not (``backend/requirements.txt``): fastapi
+# 0.141.1, starlette 1.6.0, slowapi 0.1.10. Nothing here depends on any of the
+# three: the floor needs a request object and a clock. What *does* depend on
+# them is the claim that slowapi's own middleware cannot do this job -- so an
+# upgrade may make that middleware work again, and must not be taken as a
+# reason to hand this invariant back to it.
+
+# Parsed once, from the same constant the decorated limits inherit, so an
+# override set for the DAST contract-fuzz job moves the floor with everything
+# else. ``resolve_default_rate_limit`` has already proven the string parses, so
+# this adds no new way to fail at import.
+AMBIENT_LIMIT_ITEM = parse(DEFAULT_RATE_LIMIT)
+
+# The bucket key's path component comes straight off the request line, which an
+# attacker controls: a 404 flood of random paths mints a fresh key per request,
+# and inside one window nothing has rolled off for the sweep to reclaim. Past
+# this many tracked buckets an unseen path is charged to its client's overflow
+# bucket instead of minting another. Comfortably above ``_SWEEP_MIN_TRACKED``
+# so ordinary sweeping still does the reclaiming; the ceiling is the backstop
+# for the case sweeping cannot reach, not the ordinary bound.
+_MAX_TRACKED_AMBIENT_KEYS = 4096
+
+# Stands in for the path in an overflow bucket. Begins with a character no URL
+# path can start with, so it can never collide with a real request path.
+_OVERFLOW_PATH_MARKER = "\x00overflow"
+
+# Index of the path inside an ambient bucket key, which is ``(client, path)``.
+_PATH_COMPONENT = 1
+
+
+class AmbientThrottle(_MovingWindowThrottle):
+    """The floor every request meets, keyed on ``(client key, request path)``.
+
+    Per path rather than per client, which preserves exactly the scope the
+    limiter already applied (``slowapi``'s default ``key_style="url"``) and
+    keeps one runaway screen from taking the whole API away from the client
+    running it -- including the health probes an operator would read to find out
+    why. The cost of that choice is recorded in the residuals: enumerating a
+    ``{param}`` route buys a fresh budget per id, which is why the ceiling below
+    exists and why a coarse per-client limit is the named follow-up.
+    """
+
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.time,
+        max_tracked: int = _MAX_TRACKED_AMBIENT_KEYS,
+    ) -> None:
+        """Build an empty ambient floor.
+
+        Args:
+            clock: Source of the current time, in seconds. See the base class.
+            max_tracked: Bucket count past which an unseen path is diverted to
+                its client's overflow bucket. Injectable so the saturation tests
+                do not have to drive the production ceiling to reach it.
+        """
+        super().__init__(AMBIENT_LIMIT_ITEM, clock=clock)
+        self._max_tracked = max_tracked
+
+    def charge(self, throttle_key: str, path: str) -> int | None:
+        """Charge one request against ``throttle_key``'s budget for ``path``.
+
+        Args:
+            throttle_key: Grouped client key the request is billed to.
+            path: Request path, taken raw rather than as a route template --
+                resolving a template would mean consulting route identity.
+
+        Returns:
+            None while the bucket is under the floor, or the whole seconds the
+            caller should wait once it is spent.
+        """
+        bucket = self._bucket_for(throttle_key, path)
+        if self.record(bucket):
+            return None
+        return self.retry_after(bucket)
+
+    def tracked_paths(self) -> frozenset[str]:
+        """Return the paths currently holding a bucket, across all clients."""
+        return frozenset(key[_PATH_COMPONENT] for key in self.last_attempt)
+
+    def _bucket_for(self, throttle_key: str, path: str) -> tuple[str, str]:
+        """Pick the bucket to bill, diverting unseen paths once saturated.
+
+        Three properties make the diversion safe. A bucket that already exists
+        is never diverted, so saturation cannot hand an established client a
+        counter somebody else is spending. The overflow bucket is keyed on the
+        client, so one tenant's flood cannot move another tenant's counter --
+        the ceiling bounds the *fan-out per client*, and the sweep goes on
+        bounding retention over time. And the degradation is fail-closed: an
+        attacker enumerating paths under saturation collapses their own traffic
+        onto one bucket and is pinned at the floor, rather than buying a fresh
+        budget per path.
+
+        Args:
+            throttle_key: Grouped client key the request is billed to.
+            path: Raw request path.
+
+        Returns:
+            The client's bucket for ``path``, or the client's overflow bucket
+            when ``path`` is unseen and the store is already at its ceiling.
+        """
+        bucket = (throttle_key, path)
+        if bucket in self.last_attempt or len(self.last_attempt) < self._max_tracked:
+            return bucket
+        return (throttle_key, _OVERFLOW_PATH_MARKER)
+
+
+_ambient_throttle = AmbientThrottle()
+
+
+def charge_ambient_limit(throttle_key: str, path: str) -> int | None:
+    """Charge one request against the ambient floor.
+
+    Args:
+        throttle_key: Grouped client key the request is billed to.
+        path: Raw request path.
+
+    Returns:
+        None when the request is admitted, or the ``Retry-After`` seconds to
+        answer with when it is refused.
+    """
+    return _ambient_throttle.charge(throttle_key, path)
+
+
+def reset_ambient_limit() -> None:
+    """Clear every ambient bucket (test isolation between cases)."""
+    _ambient_throttle.reset()
+
+
+def ambient_tracked_paths() -> frozenset[str]:
+    """Return the paths currently holding an ambient bucket."""
+    return _ambient_throttle.tracked_paths()
+
+
+def rate_limiting_enabled() -> bool:
+    """Report whether rate limiting is switched on.
+
+    ``limiter.enabled`` is the single kill switch for *both* layers, and this is
+    the one seam that reads it. ``backend/conftest.py``'s ``disable_rate_limit``
+    fixture and ``backend/tests/e2e/server.py`` both flip that flag and expect
+    everything to go quiet; a floor with a switch of its own would leave them
+    half-working and put the failures in unrelated suites.
+    """
+    return limiter.enabled
+
+
+def rate_limit_exceeded_response(retry_after: int) -> JSONResponse:
+    """Build the one 429 envelope this application answers with.
+
+    Args:
+        retry_after: Whole seconds to advertise in the ``Retry-After`` header.
+
+    Returns:
+        The refusal both layers send: the ambient floor returns it directly,
+        and :mod:`main`'s ``RateLimitExceeded`` handler returns it for the
+        decorated routes. One definition, because a client that learns to read
+        one shape of refusal has to be able to read the other.
+    """
+    return JSONResponse(
+        status_code=HTTPStatus.TOO_MANY_REQUESTS,
+        content={"detail": "rate_limit_exceeded"},
+        headers={"Retry-After": str(retry_after)},
+    )

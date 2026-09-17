@@ -17,6 +17,7 @@ from __future__ import annotations
 from middleware.canonical_host import CanonicalHostMiddleware
 from middleware.forwarded_proto import ForwardedProtoMiddleware
 from middleware.logging import RequestLoggingMiddleware
+from middleware.rate_limit import AmbientRateLimitMiddleware
 from middleware.security_headers import SecurityHeadersMiddleware
 from middleware.unhandled_exception import UnhandledExceptionMiddleware
 
@@ -27,6 +28,7 @@ from middleware.unhandled_exception import UnhandledExceptionMiddleware
 from observability import CorrelationIdMiddleware
 
 __all__ = [
+    "AmbientRateLimitMiddleware",
     "CanonicalHostMiddleware",
     "CorrelationIdMiddleware",
     "ForwardedProtoMiddleware",

@@ -24,9 +24,11 @@ Three pieces, in the order they matter:
 The common six are uniform rather than derived from what a router imports,
 because the mechanism that sends them is usually not the router's: 400 is the
 framework's own body-parse refusal on any operation taking a body, 401 comes
-from the auth dependency, and 429 from the global limiter -- those three are
-reachable everywhere. 403 and 404 come from ``dependencies.ownership`` and from
-admin checks, which is most operations but not literally all: a handful that
+from the auth dependency, and 429 from the ambient rate-limit floor -- those
+three are reachable everywhere, and since #2909 the third of those is true of
+every operation rather than only the three mounted on the application object.
+403 and 404 come from ``dependencies.ownership`` and from admin checks, which
+is most operations but not literally all: a handful that
 resolve no object and check no role cannot answer either, and declare them
 anyway rather than making every author judge the question. That is a deliberate
 over-declaration, and the one place this module trades precision for a contract

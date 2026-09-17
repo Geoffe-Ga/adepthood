@@ -22,8 +22,9 @@ The wiring is proved by *throttling*, not by reading a constant back. Printing
 value; it stays green if the very next line builds the limiter from
 ``FALLBACK_RATE_LIMIT`` instead, which would make this whole override inert
 while every test still passed. So the child process stands the limiter up behind
-``SlowAPIMiddleware`` exactly as ``main.py`` does, sets a deliberately tiny
-override, and asserts that requests past it are actually refused.
+``AmbientRateLimitMiddleware`` exactly as ``main.py`` does, on a route mounted
+through ``include_router`` exactly as every real route is, sets a deliberately
+tiny override, and asserts that requests past it are actually refused.
 """
 
 from __future__ import annotations
@@ -59,28 +60,38 @@ _THROTTLING_OVERRIDE_ALLOWANCE = 2
 _PROBE_REQUESTS = 4
 
 # Stands the shared limiter up the way ``main.py`` does -- ``app.state.limiter``
-# plus ``SlowAPIMiddleware``, which is what applies the *default* limits to a
-# route that declares none -- and spends more requests than the override allows.
-# A limiter built from anything but the resolved override answers 200 throughout
-# and turns the assertion below red.
+# plus the production ``AmbientRateLimitMiddleware``, which is what applies the
+# *default* limit to a route that declares none -- and spends more requests than
+# the override allows. A limiter built from anything but the resolved override
+# answers 200 throughout and turns the assertion below red.
+#
+# ``/probe`` is mounted through ``include_router`` rather than ``@app.get``
+# deliberately (#2909). An app-level route was the one shape the old
+# ``SlowAPIMiddleware`` could still resolve to a handler, so this payload proved
+# the override was wired for the 3 routes that already worked and said nothing
+# about the 141 that did not. It now mirrors how every real route is mounted.
 _ENFORCE_DEFAULT_LIMIT = f"""
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from starlette.testclient import TestClient
 
 import rate_limit
+from middleware import AmbientRateLimitMiddleware
+
+router = APIRouter()
+
+
+@router.get("/probe")
+def probe() -> dict[str, bool]:
+    return {{"ok": True}}
+
 
 app = FastAPI()
 app.state.limiter = rate_limit.limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
-
-
-@app.get("/probe")
-def probe() -> dict[str, bool]:
-    return {{"ok": True}}
+app.add_middleware(AmbientRateLimitMiddleware)
+app.include_router(router)
 
 
 with TestClient(app) as client:
