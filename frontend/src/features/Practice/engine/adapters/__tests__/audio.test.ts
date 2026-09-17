@@ -1,16 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createAudioPlayer } from 'expo-audio';
+import type { setAudioModeAsync } from 'expo-audio';
 
-import { createExpoAudioAdapter, createNoopAudioAdapter } from '../audio';
+import { bellSources, createExpoAudioAdapter, createNoopAudioAdapter } from '../audio';
+import { BELL_TIMBRES, SilentRenderError, renderBellSource } from '../bellSynth';
 
-// The exact bundled assets each interval_bell tone must resolve to. Requiring
-// the same module paths the adapter uses yields the identical cached asset
-// reference, so a swapped tone-to-asset mapping fails the identity checks below.
-const bowlAsset = require('../../../../../../assets/sounds/bell-bowl.mp3');
-const chimeAsset = require('../../../../../../assets/sounds/bell-chime.mp3');
-const gongAsset = require('../../../../../../assets/sounds/bell-gong.mp3');
+// The exact source each interval_bell tone must resolve to. Rendering the same
+// timbre the adapter renders yields the identical data URI, so a swapped
+// tone-to-timbre mapping fails the identity checks below.
+//
+// This replaces three `require('.../bell-*.mp3')` calls that asserted identity
+// against 0-byte modules -- an assertion that is equally true of silence, which
+// is exactly why the suite stayed green while every bell was inaudible (#1419).
+const bowlSource = renderBellSource(BELL_TIMBRES.bowl);
+const chimeSource = renderBellSource(BELL_TIMBRES.chime);
+const gongSource = renderBellSource(BELL_TIMBRES.gong);
 
 const mockedCreatePlayer = createAudioPlayer as jest.MockedFunction<typeof createAudioPlayer>;
+
+/** Every bell cue is rendered; `metronome_tick` alone has no timbre. */
+const BELL_CUE_COUNT = 6;
+const DATA_URI = /^data:audio\/wav;base64,/;
 
 describe('createNoopAudioAdapter', () => {
   it('returns an adapter that resolves play without throwing and supports dispose', () => {
@@ -49,7 +59,11 @@ describe('createExpoAudioAdapter', () => {
     warnSpy.mockRestore();
   });
 
-  it('warns once for the missing metronome_tick asset and degrades to no-op', async () => {
+  // metronome_tick is deliberately the ONLY cue without a timbre, so it stays the
+  // one cue that can reach markFailed. That is not a statement that the other six
+  // are healthy -- at HEAD they were six 0-byte files and warned about nothing.
+  // They are now audibility-checked at render time instead (SilentRenderError).
+  it('warns once for the timbre-less metronome_tick cue and degrades to no-op', async () => {
     const adapter = createExpoAudioAdapter();
     // Flush microtasks so the eager loaders settle.
     await new Promise((resolve) => setImmediate(resolve));
@@ -87,7 +101,7 @@ describe('createExpoAudioAdapter', () => {
     const adapter = createExpoAudioAdapter();
     await new Promise((resolve) => setImmediate(resolve));
 
-    // 1 warn from the decode failure + 1 from the missing metronome_tick asset.
+    // 1 warn from the decode failure + 1 from the timbre-less metronome_tick cue.
     expect(warnSpy).toHaveBeenCalledTimes(2);
     await adapter.play('start_bell');
     // First cue had its load fail → no replay.
@@ -121,30 +135,32 @@ describe('createExpoAudioAdapter', () => {
       return created;
     }
 
-    it('plays the chime asset for the chime tone and the gong asset for the gong tone', async () => {
+    it('plays the chime source for the chime tone and the gong source for the gong tone', async () => {
       const created = mockDistinctSoundsPerLoad();
       const adapter = createExpoAudioAdapter();
       await new Promise((resolve) => setImmediate(resolve));
 
       await adapter.play('interval_bell', 'chime');
       const chimeEntry = created.find((entry) => entry.play.mock.calls.length > 0);
-      expect(chimeEntry?.asset).toBe(chimeAsset);
+      expect(chimeEntry?.asset).toBe(chimeSource);
 
       await adapter.play('interval_bell', 'gong');
       const gongEntry = created.find(
         (entry) => entry !== chimeEntry && entry.play.mock.calls.length > 0,
       );
-      expect(gongEntry?.asset).toBe(gongAsset);
+      expect(gongEntry?.asset).toBe(gongSource);
+      // Two tones, two genuinely different sounds -- not two names for one.
+      expect(chimeSource).not.toBe(gongSource);
     });
 
-    it('defaults a toneless interval_bell play to the bowl asset', async () => {
+    it('defaults a toneless interval_bell play to the bowl source', async () => {
       const created = mockDistinctSoundsPerLoad();
       const adapter = createExpoAudioAdapter();
       await new Promise((resolve) => setImmediate(resolve));
 
       await adapter.play('interval_bell');
       const bowlEntry = created.find((entry) => entry.play.mock.calls.length > 0);
-      expect(bowlEntry?.asset).toBe(bowlAsset);
+      expect(bowlEntry?.asset).toBe(bowlSource);
     });
   });
 
@@ -153,8 +169,101 @@ describe('createExpoAudioAdapter', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     adapter.dispose?.();
-    // Six cues bundle real assets (start, halfway, bowl, chime, gong, end); metronome_tick was never loaded.
-    expect(removeMock).toHaveBeenCalledTimes(6);
+    // Six cues render a timbre (start, halfway, bowl, chime, gong, end);
+    // metronome_tick has none and was never loaded.
+    expect(removeMock).toHaveBeenCalledTimes(BELL_CUE_COUNT);
+  });
+
+  it('hands createAudioPlayer a synthesized data URI for every bell cue', async () => {
+    createExpoAudioAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(mockedCreatePlayer).toHaveBeenCalledTimes(BELL_CUE_COUNT);
+    expect(mockedCreatePlayer).toHaveBeenCalledWith(expect.stringMatching(DATA_URI));
+    for (const call of mockedCreatePlayer.mock.calls) {
+      expect(call[0]).toEqual(expect.stringMatching(DATA_URI));
+    }
+  });
+
+  it('synthesizes once per app session, not once per adapter', () => {
+    // Object identity on the RECORD. A `toBe` on two source strings is
+    // `Object.is` over primitives, which is true for two equal strings that were
+    // rendered independently -- so it could not detect a deleted memo at all.
+    expect(bellSources()).toBe(bellSources());
+  });
+
+  it('enables playback in silent mode once, however many adapters are built', async () => {
+    // `audioSessionConfigured` is module-level mutable state that outlives an
+    // `it()`, while `clearMocks` wipes the call record -- so this assertion is
+    // order-dependent unless the module is rebuilt here.
+    jest.resetModules();
+    const freshAudio = require('../audio') as {
+      createExpoAudioAdapter: typeof createExpoAudioAdapter;
+    };
+    const freshExpoAudio = require('expo-audio') as {
+      setAudioModeAsync: jest.MockedFunction<typeof setAudioModeAsync>;
+    };
+    const freshSetAudioMode = freshExpoAudio.setAudioModeAsync;
+
+    freshAudio.createExpoAudioAdapter();
+    freshAudio.createExpoAudioAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Without playsInSilentMode a meditation app is inaudible in exactly the
+    // device state its users are most likely to be in: ringer switch silent.
+    expect(freshSetAudioMode).toHaveBeenCalledTimes(1);
+    expect(freshSetAudioMode).toHaveBeenCalledWith(
+      expect.objectContaining({ playsInSilentMode: true }),
+    );
+  });
+
+  it('warns instead of going quiet when a bell renders silent', async () => {
+    // The hole #1419 fell through: a 0-byte mp3 resolved to a valid module and
+    // constructed a player without throwing, so `markFailed` was unreachable for
+    // all six bell cues and the app was silent in the room AND in the logs.
+    // Rendering is now the single place a playable source is born, and an
+    // inaudible one throws into the try that was always there.
+    jest.resetModules();
+    jest.doMock('../bellSynth', () => {
+      const actual = jest.requireActual('../bellSynth') as Record<string, unknown>;
+      return {
+        ...actual,
+        renderBellSource: () => {
+          throw new SilentRenderError(0);
+        },
+      };
+    });
+    const freshAudio = require('../audio') as {
+      createExpoAudioAdapter: typeof createExpoAudioAdapter;
+    };
+
+    const adapter = freshAudio.createExpoAudioAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const silentWarn = warnSpy.mock.calls.find((call) => call[1] instanceof SilentRenderError);
+    expect(silentWarn).toBeDefined();
+    expect(String(silentWarn?.[0])).toContain('falling back to silent');
+    await adapter.play('end_bell');
+    expect(playMock).not.toHaveBeenCalled();
+    jest.dontMock('../bellSynth');
+  });
+
+  it('warns rather than rejecting when the audio session cannot be configured', async () => {
+    jest.resetModules();
+    const freshExpoAudio = require('expo-audio') as {
+      setAudioModeAsync: jest.MockedFunction<typeof setAudioModeAsync>;
+    };
+    freshExpoAudio.setAudioModeAsync.mockRejectedValueOnce(new Error('no audio session'));
+    const freshAudio = require('../audio') as {
+      createExpoAudioAdapter: typeof createExpoAudioAdapter;
+    };
+
+    freshAudio.createExpoAudioAdapter();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // A bare `void` on a rejecting promise is an unhandled rejection, which RN
+    // surfaces as a redbox in dev -- over an optional convenience.
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('audio session'))).toBe(true);
   });
 
   it('marks a cue as failed if replayAsync rejects, suppressing further warns', async () => {

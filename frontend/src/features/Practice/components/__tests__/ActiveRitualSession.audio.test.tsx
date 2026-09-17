@@ -118,7 +118,12 @@ describe('ActiveRitualSession audio wiring', () => {
       fireEvent.press(getByTestId('ritual-start'));
     });
 
-    expect(createAudioPlayer).toHaveBeenCalled();
+    // Not merely "a player was constructed": that was true of six 0-byte mp3s
+    // for months, which is exactly why this test never caught #1419. The source
+    // string is the thing that carries sound.
+    expect(createAudioPlayer).toHaveBeenCalledWith(
+      expect.stringMatching(/^data:audio\/wav;base64,/),
+    );
   });
 
   it('disposes the injected audio adapter exactly once on unmount', () => {

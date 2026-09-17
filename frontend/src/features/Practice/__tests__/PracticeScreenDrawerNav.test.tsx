@@ -170,6 +170,10 @@ jest.mock('expo-audio', () => ({
     play: jest.fn(),
     remove: jest.fn(),
   })),
+  // The adapter asks for playback in silent mode once per app session. This
+  // factory replaces the module wholesale, so a missing key is a TypeError at
+  // adapter construction rather than a silently absent call.
+  setAudioModeAsync: jest.fn(() => Promise.resolve()),
 }));
 
 jest.mock('expo-keep-awake', () => ({
