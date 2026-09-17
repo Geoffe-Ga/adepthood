@@ -89,14 +89,11 @@ from domain.creek_vault import (
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services.account_egress_barrier import account_is_live, hold_account
+from services.advisory_lock_namespaces import CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE
 
 _LOGGER = logging.getLogger(__name__)
 
-# PostgreSQL's two-int advisory-lock namespace for per-user classification
-# scheduling.  It is deliberately unrelated to every other lock namespace in
-# the application; the second key is the account id, never content or a vault
-# identifier.
-_CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE = 0x41504450
 
 #: The outcomes that mean a classification pass actually put labels in the
 #: vault. ``ATTEMPTED`` is absent deliberately -- it records a call that was
@@ -429,7 +426,7 @@ async def _lock_classification_scheduler(session: AsyncSession, user_id: int) ->
     await session.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, :user_id)"),
         {
-            "namespace": _CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE,
+            "namespace": CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE,
             "user_id": user_id,
         },
     )
@@ -1530,29 +1527,51 @@ async def _reconcile_classification_chain(
         current = follow_up
 
 
+async def _climb_detached(session: AsyncSession, continuation: _Continuation) -> None:
+    """Reconcile one rung and climb successors on an already-barriered session."""
+    settled = await _reconcile_classification_chain(session, continuation)
+    if settled is None:
+        return
+    current, outcome = settled
+    if not _classification_allows_progress(current.stage, outcome):
+        return
+    trigger, remaining = await _continuation_scope(session, current)
+    for next_stage in remaining:
+        should_continue = await _continue_stage(
+            session,
+            current.client,
+            _StageContext(
+                current.user_id,
+                next_stage,
+                trigger,
+                resume_claim_id=current.resume_claim_id,
+            ),
+        )
+        if not should_continue:
+            return
+
+
 async def _continue_ladder_body(continuation: _Continuation) -> None:
-    """Reconcile one rung and climb successors, independent of lease plumbing."""
-    async with continuation.factory() as session:
-        settled = await _reconcile_classification_chain(session, continuation)
-        if settled is None:
+    """Reconcile one rung and climb successors, independent of lease plumbing.
+
+    This is the one egress path in the application that no request-scoped guard
+    can reach: it runs on a detached task, opens its own session, and dials Creek
+    after the request that scheduled it has already answered. So it takes the
+    per-account egress barrier itself, on that session, before its first dial,
+    and stands down entirely when the account is gone -- otherwise a deletion
+    receipt could be followed by this account's corpus being classified and
+    linked in a vault it no longer owns.
+
+    No deadlock is possible against a request holding the same barrier: nothing
+    in a request path awaits this task. The only callers of
+    :func:`wait_for_vault_pipeline_tasks` are tests, and each waits after its own
+    request has completed and released.
+    """
+    async with continuation.factory() as session, hold_account(session, continuation.user_id):
+        if not await account_is_live(session, continuation.user_id):
+            _LOGGER.info("creek vault pipeline stood down: the account no longer exists")
             return
-        current, outcome = settled
-        if not _classification_allows_progress(current.stage, outcome):
-            return
-        trigger, remaining = await _continuation_scope(session, current)
-        for next_stage in remaining:
-            should_continue = await _continue_stage(
-                session,
-                current.client,
-                _StageContext(
-                    current.user_id,
-                    next_stage,
-                    trigger,
-                    resume_claim_id=current.resume_claim_id,
-                ),
-            )
-            if not should_continue:
-                return
+        await _climb_detached(session, continuation)
 
 
 def _forget_background_task(key: _TaskKey, task: asyncio.Task[None]) -> None:

@@ -98,6 +98,7 @@ from schemas.corpus import (
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
 from services.corpus_import import (
@@ -181,9 +182,11 @@ async def put_corpus_consent(
     append-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,
     rather than onto a shape that also answers ``GET``.
     """
-    change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
-    await backfill_after_consent(session, user_id=user_id, change=change)
-    await session.commit()
+    async with hold_account(session, user_id):
+        await ensure_account_live(session, user_id)
+        change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+        await backfill_after_consent(session, user_id=user_id, change=change)
+        await session.commit()
     return _to_response(change.state)
 
 
@@ -370,24 +373,26 @@ async def import_corpus_document(
     afford, and never raises.
     """
     raw = guard_document_payload(payload.content_base64)
-    result = await import_document(
-        session,
-        vault_client,
-        UploadedDocument(
-            owner_user_id=user_id,
-            filename=payload.filename,
-            content_base64=payload.content_base64,
-            classification=payload.classification,
-            created_at=datetime.now(UTC),
-        ),
-        raw,
-    )
-    await session.commit()
-    if isinstance(result, VaultImportResult) and result.stored:
-        await drive_vault_pipeline(
+    async with hold_account(session, user_id):
+        await ensure_account_live(session, user_id)
+        result = await import_document(
             session,
             vault_client,
-            user_id=user_id,
-            trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+            UploadedDocument(
+                owner_user_id=user_id,
+                filename=payload.filename,
+                content_base64=payload.content_base64,
+                classification=payload.classification,
+                created_at=datetime.now(UTC),
+            ),
+            raw,
         )
+        await session.commit()
+        if isinstance(result, VaultImportResult) and result.stored:
+            await drive_vault_pipeline(
+                session,
+                vault_client,
+                user_id=user_id,
+                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+            )
     return _to_import_response(result)

@@ -106,6 +106,7 @@ from schemas.marginalia import (
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     LLMCreditExhaustedError,
@@ -489,7 +490,17 @@ async def create_journal_entry(
         raise
     await session.refresh(entry)
     entry_id = cast("int", entry.id)
-    async with journal_vault_mutations.hold(session, entry_id):
+    # Account barrier outermost, entry serializer innermost — the fixed nesting
+    # everywhere the two meet. Taken exactly once in this handler: the locks are
+    # not reentrant, so a second acquire anywhere below would hang every write.
+    async with (
+        hold_account(session, current_user),
+        journal_vault_mutations.hold(session, entry_id),
+    ):
+        # A concurrent ``DELETE /users/me`` that linearized first has already
+        # taken this account's writing with it, so there is nothing left to hand
+        # outward and no live caller to answer 201 to.
+        await ensure_account_live(session, current_user)
         # The row became visible before this lock because its id had to be
         # committed first. A concurrent delete or privacy PATCH may therefore
         # have completed while this request waited. Reload inside the critical
@@ -851,6 +862,11 @@ async def update_journal_entry(
     another user's entry all resolve to 404 (enumeration-safe). Editing the body
     re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
     refreshed.
+
+    The account barrier is taken on the re-ingesting branch alone. The other
+    branch changes a title or a status and dials nothing, so ordering it against
+    an erasure would buy no confidentiality and would put a lock on the cheapest
+    PATCH the client makes.
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
@@ -865,7 +881,12 @@ async def update_journal_entry(
         # mutation. A concurrent PUT therefore finishes before this privacy
         # transition withdraws it, or begins after and observes the intimate
         # row; it cannot land stale plaintext after a successful response.
-        async with journal_vault_mutations.hold(session, entry_id):
+        # Around it, the account barrier — outermost, as everywhere the two meet.
+        async with (
+            hold_account(session, current_user),
+            journal_vault_mutations.hold(session, entry_id),
+        ):
+            await ensure_account_live(session, current_user)
             entry, previous_classification = await _persist_entry_update(
                 entry_id,
                 payload,
@@ -1753,49 +1774,55 @@ async def run_resonance(
     # Any deduction is durable and every read the dials depend on is in hand:
     # release the pooled connection before the first provider round trip.
     await session.commit()
-    reflection_llm = await select_reflection_llm(
-        clients.vault_client,
-        body=message,
-        classification=entry.classification,
-        care_flagged=care is not None,
-        fallback=llm,
-    )
-    try:
-        anchored = await _resonance_pass_or_care(
-            message,
-            reflection_llm,
-            list(grounding.bodies),
-            _ResonancePassContext(
-                session=session,
-                care=care,
-                byok=byok_key is not None,
+    # The account barrier opens here rather than at the top of the handler: the
+    # deduction and every read the dials depend on are already committed, so the
+    # wait for it holds no pooled connection, and an erasure racing this pass
+    # waits only for the outbound half rather than for the wallet arithmetic.
+    async with hold_account(session, current_user):
+        await ensure_account_live(session, current_user)
+        reflection_llm = await select_reflection_llm(
+            clients.vault_client,
+            body=message,
+            classification=entry.classification,
+            care_flagged=care is not None,
+            fallback=llm,
+        )
+        try:
+            anchored = await _resonance_pass_or_care(
+                message,
+                reflection_llm,
+                list(grounding.bodies),
+                _ResonancePassContext(
+                    session=session,
+                    care=care,
+                    byok=byok_key is not None,
+                    user_id=current_user,
+                    spent=spent,
+                ),
+                prior_letters,
+            )
+        except CreekVaultCareEscalationError:
+            # The vault's care guard fired: answer with adepthood's own care
+            # surface instead of a reflection, and settle any committed charge.
+            return await _escalated_care_response(session, current_user, spent)
+        if anchored is None:
+            # The reflection failed but the entry is flagged: surface care anyway.
+            return await _care_only_response(session, current_user, cast("CareResponse", care))
+        attempt = await _detect_hits_with_status(
+            message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
+        )
+        settled = await _persist_settle_commit(
+            session,
+            _PassSettlementInput(
+                entry_id=entry_id,
                 user_id=current_user,
                 spent=spent,
+                anchored=anchored,
+                hits=attempt.hits,
+                llm=llm,
             ),
-            prior_letters,
         )
-    except CreekVaultCareEscalationError:
-        # The vault's care guard fired: answer with adepthood's own care surface
-        # instead of a reflection, and settle any committed charge.
-        return await _escalated_care_response(session, current_user, spent)
-    if anchored is None:
-        # The reflection failed but the entry is flagged: surface care regardless.
-        return await _care_only_response(session, current_user, cast("CareResponse", care))
-    attempt = await _detect_hits_with_status(
-        message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
-    )
-    settled = await _persist_settle_commit(
-        session,
-        _PassSettlementInput(
-            entry_id=entry_id,
-            user_id=current_user,
-            spent=spent,
-            anchored=anchored,
-            hits=attempt.hits,
-            llm=llm,
-        ),
-    )
-    await _refresh_persisted(session, settled.rows, settled.suggestions)
+        await _refresh_persisted(session, settled.rows, settled.suggestions)
     _log_resonance_outcome(
         anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
     )
@@ -2433,7 +2460,11 @@ async def _cache_and_mirror_essay(
     # it. The request transaction is committed before Creek I/O; PostgreSQL holds
     # the cross-worker lock on a non-pooled, dedicated connection rather than
     # consuming the application pool.
-    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+    async with (
+        hold_account(session, entry.user_id),
+        voice_draft_privacy.hold(session, cast("int", entry.id)),
+    ):
+        await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
         await session.commit()
         if entry.deleted_at is not None:
@@ -2559,7 +2590,11 @@ async def delete_journal_entry(
     # waiting for the cross-worker mutation lock so neither the wait nor Creek's
     # bounded DELETE occupies a pooled application connection.
     await session.commit()
-    async with journal_vault_mutations.hold(session, entry_id):
+    async with (
+        hold_account(session, current_user),
+        journal_vault_mutations.hold(session, entry_id),
+    ):
+        await ensure_account_live(session, current_user)
         current = await _load_user_entry(session, entry_id, current_user)
         if current is None or current.sender != "user":
             raise not_found("journal_entry")

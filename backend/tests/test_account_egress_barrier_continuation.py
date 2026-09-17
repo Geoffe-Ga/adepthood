@@ -208,6 +208,7 @@ async def test_no_pipeline_rung_is_climbed_after_the_deletion_response(
     )
     await asyncio.wait({deleting}, timeout=_OVERTAKE_PROBE_SECONDS)
     fake.release.set()
+    deleted = await asyncio.wait_for(deleting, timeout=_SETTLE_TIMEOUT_SECONDS)
     try:
         # Raw rather than exception-tolerant: a continuation that climbs an
         # erased account does not merely dial late, it also crashes writing the
@@ -224,5 +225,4 @@ async def test_no_pipeline_rung_is_climbed_after_the_deletion_response(
             f"a pipeline rung was climbed after the account-deletion response: {fake.order}"
         )
 
-    deleted = await asyncio.wait_for(deleting, timeout=_SETTLE_TIMEOUT_SECONDS)
     assert deleted.status_code == HTTPStatus.OK
