@@ -540,6 +540,18 @@
     "coveredBy": "frontend/e2e/practice-stats.browser.e2e.test.ts"
   },
   {
+    "id": "practice.meditation-timer-strikes-audible-bells",
+    "description": "A practitioner starts a meditation timer from the Practice screen and hears the session open, pass its halfway mark, and close, then logs the sitting. Uncovered, for two reasons rather than the usual one. The first is the familiar one: this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all (#2324). The second is specific and is the reason this entry exists at all -- audibility is not assertable anywhere in this repository. There is no frontend/ios and no frontend/android, so nothing here runs on a device, and the two surviving acceptance criteria of #1419 (\"a session audibly strikes start/half/end on device\" and \"bowl/chime/gong are three distinguishable sounds\") are owner sign-off items. What ships in their place are substitutes, and they are named as substitutes: a peak-amplitude assertion on the rendered PCM, and a Goertzel dominant-frequency separation between all six timbres, in bellSynth.test.ts. Those prove the bytes are not silence and not the same bell twice; they do not prove a human in a room hears a bell. The bug this journey was written against is exactly the gap between those two claims -- six 0-byte mp3s resolved to valid modules, constructed players without throwing, and played nothing, so the failure was invisible to the user and to the logs alike, and the component test that was meant to guard it asserted only that a player had been constructed.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/"],
+      "tables": ["practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 2908
+  },
+  {
     "id": "practice.adopt-custom-practice",
     "description": "A practitioner submits a custom practice and adopts it as one they can actually do.",
     "crosses": {

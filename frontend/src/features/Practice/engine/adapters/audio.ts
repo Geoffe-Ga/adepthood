@@ -1,14 +1,25 @@
 // Audio adapter implementations for the ritual engine. Each cue resolves to a
-// static asset bundled under `frontend/assets/sounds/` (interval_bell resolves
-// per tone). If an asset is missing at load time, the adapter logs a single
-// warning per sound and falls back to a no-op — a missing file must not break
-// the practice session.
+// bell rendered in-app as 16-bit mono PCM and handed to expo-audio as a
+// `data:audio/wav;base64,…` URI (interval_bell resolves per tone); no audio is
+// bundled. If a cue has no timbre, or its render comes back inaudible, the
+// adapter logs a single warning per sound and falls back to a no-op — a cue that
+// cannot sound must not break the practice session.
+//
+// Note the blast radius deliberately: the six timbres are one static table
+// rendered together, so an inaudible render is a code defect rather than a
+// per-device condition, and it degrades ALL SIX bell cues (each warning once)
+// rather than one. Failing loudly and completely is the right answer to a
+// programming error; it is not per-cue isolation, and nothing here pretends it is.
+//
+// Before #1419 this file required six `bell-*.mp3` assets that were 0 bytes.
+// They resolved, constructed players, and played nothing, so `markFailed` was
+// never reached and the failure was invisible in the logs as well as the room.
 
-import { createAudioPlayer } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 import type { AudioAdapter, CueKind, IntervalBellTone } from '../types';
 
-type SoundModule = number;
+import { BELL_TIMBRES, renderBellSource, type BellSpecKey } from './bellSynth';
 
 /** Default interval-bell tone applied when a play omits one; mirrors defaults.ts seeds. */
 const DEFAULT_BELL_TONE: IntervalBellTone = 'bowl';
@@ -20,17 +31,100 @@ type SoundKey =
   | 'interval_bell_chime'
   | 'interval_bell_gong';
 
-/** Static asset map. `null` means "best-effort load; warn-then-noop if missing". */
-const SOUND_ASSETS: Record<SoundKey, SoundModule | null> = {
-  start_bell: require('../../../../../assets/sounds/bell-start.mp3') as SoundModule,
-  halfway_bell: require('../../../../../assets/sounds/bell-half.mp3') as SoundModule,
-  end_bell: require('../../../../../assets/sounds/bell-end.mp3') as SoundModule,
-  interval_bell_bowl: require('../../../../../assets/sounds/bell-bowl.mp3') as SoundModule,
-  interval_bell_chime: require('../../../../../assets/sounds/bell-chime.mp3') as SoundModule,
-  interval_bell_gong: require('../../../../../assets/sounds/bell-gong.mp3') as SoundModule,
-  // metronome-tick.wav is not yet shipped; load is best-effort.
+/**
+ * Which timbre each cue rings. `null` means "no sound; warn once and no-op".
+ *
+ * The three boundary cues get their OWN timbres rather than following
+ * `config.bell_tone`, because `Cue.tone` is absent on boundary cues by design
+ * (`engine/types.ts`) and threading one on would change the cue shape across all
+ * five mode builders. `end_bell` in particular is deliberately not any
+ * selectable tone: under the shipped default `bell_tone: 'bowl'`
+ * (`configurator/defaults.ts`), `cuesForIntervalBell` opens, marks and closes a
+ * session with the same cue kinds, so a bowl end bell would be byte-identical to
+ * every interval strike of that session — and "was that an interval or the end?"
+ * is the one discrimination a meditation timer owes its user.
+ *
+ * Reversing the decision means editing the three values below — all three, not
+ * one. Making boundary bells genuinely FOLLOW `config.bell_tone`, which is the
+ * likelier reading of the instruction, is not a table edit at all: it needs a
+ * `tone` on boundary cues, which `Cue` does not carry and all five builders emit.
+ */
+const SOUND_TIMBRES: Record<SoundKey, BellSpecKey | null> = {
+  start_bell: 'open',
+  halfway_bell: 'waypoint',
+  end_bell: 'close',
+  interval_bell_bowl: 'bowl',
+  interval_bell_chime: 'chime',
+  interval_bell_gong: 'gong',
+  // The metronome is silent at HEAD and stays silent here: giving it a sound is
+  // a new user-facing behaviour at up to 4 Hz that #1419 never asked for. Keeping
+  // it timbre-less also keeps `markFailed` reachable from a real cue.
   metronome_tick: null,
 };
+
+let bellSourceCache: Record<BellSpecKey, string> | null = null;
+
+/**
+ * The six rendered bells, synthesized at most once per app session.
+ *
+ * Measured cold: ~85-95 ms for all six on optimized V8 (Node 22), producing
+ * 22.05 kHz mono PCM — 7.7 s of audio, 443 KB of base64. Under Jest's
+ * transformed, unoptimised runtime the same work takes ~450 ms, and neither
+ * number is a Hermes measurement; this repo has no `frontend/ios` or
+ * `frontend/android` to take one in.
+ *
+ * Deliberately NOT a module-level const. The import chain
+ * `BottomTabs → PracticeScreen → ActiveRitualSession → adapters/audio` is static
+ * and unconditional, so an eager const would pay that cost during bundle
+ * evaluation, at app boot, for every user — including users who never open
+ * Practice. Behind this accessor it is paid once, on the first adapter
+ * construction, which happens on Practice screen mount and therefore seconds
+ * before the `start_bell` at `atMs: 0`. Both construction sites
+ * (ActiveRitualSession and RandomIntervalBellView) share the one cache.
+ *
+ * If a device measurement ever makes that too slow, the levers in order are:
+ * shorten `close` (2400 ms is the longest), drop the lowest-gain partials, then
+ * halve the sample rate. Never re-introduce a silent table entry.
+ */
+export function bellSources(): Record<BellSpecKey, string> {
+  bellSourceCache ??= {
+    bowl: renderBellSource(BELL_TIMBRES.bowl),
+    chime: renderBellSource(BELL_TIMBRES.chime),
+    gong: renderBellSource(BELL_TIMBRES.gong),
+    open: renderBellSource(BELL_TIMBRES.open),
+    waypoint: renderBellSource(BELL_TIMBRES.waypoint),
+    close: renderBellSource(BELL_TIMBRES.close),
+  };
+  return bellSourceCache;
+}
+
+let audioSessionConfigured = false;
+
+/**
+ * Ask iOS to keep playing when the ringer switch is silent.
+ *
+ * expo-audio defaults `playsInSilentMode` to false, and nothing in this app ever
+ * called this — so even with correct bytes the bells stay inaudible in a
+ * meditation app's single most likely device state. `mixWithOthers` is
+ * deliberate: a bell should ring over whatever ambient audio the user chose
+ * rather than duck it. A no-op on web and Android.
+ *
+ * The `.catch` is load-bearing, not decoration: a bare `void` on a rejecting
+ * promise is an unhandled rejection, and this is an optional convenience that
+ * must never take the session down.
+ */
+function configureAudioSessionOnce(): void {
+  if (audioSessionConfigured) return;
+  audioSessionConfigured = true;
+  void setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'mixWithOthers' }).catch(
+    (err: unknown) => {
+      console.warn(
+        '[ritual-audio] audio session not configured; the ringer switch may mute the bells:',
+        err,
+      );
+    },
+  );
+}
 
 /**
  * Resolve a cue kind (and optional tone) to its internal sound-table key.
@@ -74,13 +168,14 @@ export function createNoopAudioAdapter(): AudioAdapter {
 }
 
 /**
- * expo-audio-backed adapter. Sound loading is fire-and-forget; if an asset
- * fails to load, that cue degrades to a no-op and a single warning is
- * emitted (subsequent plays do not re-warn).
+ * expo-audio-backed adapter. Sound loading is fire-and-forget; if a cue has no
+ * timbre, renders inaudible, or fails to construct a player, that cue degrades
+ * to a no-op and a single warning is emitted (subsequent plays do not re-warn).
  */
 export function createExpoAudioAdapter(): AudioAdapter {
+  configureAudioSessionOnce();
   const entries = new Map<SoundKey, SoundEntry>();
-  for (const key of Object.keys(SOUND_ASSETS) as SoundKey[]) {
+  for (const key of Object.keys(SOUND_TIMBRES) as SoundKey[]) {
     entries.set(key, makeEntry());
     void loadCue(key, entries);
   }
@@ -92,11 +187,11 @@ export function createExpoAudioAdapter(): AudioAdapter {
 }
 
 async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promise<void> {
-  const asset = SOUND_ASSETS[key];
+  const timbre = SOUND_TIMBRES[key];
   const entry = entries.get(key);
   if (!entry) return;
-  if (asset === null) {
-    markFailed(entry, key, 'asset not bundled');
+  if (timbre === null) {
+    markFailed(entry, key, 'no timbre is synthesized for this cue');
     return;
   }
   try {
@@ -104,7 +199,12 @@ async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
     // immediately and loads in the background, where expo-av returned a promise.
     // The enclosing function stays async so every call site keeps its contract;
     // only the await disappears.
-    entry.sound = createAudioPlayer(asset) as unknown as PlayableSound;
+    //
+    // A SilentRenderError from bellSources() lands in this same catch, so an
+    // inaudible render warns exactly the way a missing asset always should have.
+    // That is the hole #1419 fell through, closed at the only place a playable
+    // source is born.
+    entry.sound = createAudioPlayer(bellSources()[timbre]) as unknown as PlayableSound;
   } catch (err) {
     markFailed(entry, key, err);
   }

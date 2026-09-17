@@ -12,4 +12,9 @@ const createAudioPlayer = jest.fn(() => ({
   remove: jest.fn(),
 }));
 
-module.exports = { createAudioPlayer };
+// The adapter asks for playback in silent mode once per app session. iOS
+// defaults `playsInSilentMode` to false, so without this call a meditation bell
+// is inaudible whenever the ringer switch is off; it is a no-op on web.
+const setAudioModeAsync = jest.fn().mockResolvedValue(undefined);
+
+module.exports = { createAudioPlayer, setAudioModeAsync };
