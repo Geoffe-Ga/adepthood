@@ -870,6 +870,22 @@ def test_the_policy_discloses_the_prior_letters_the_code_actually_sends() -> Non
 # document.
 _FEEDBACK_SECTION_HEADING = "## beta feedback"
 
+# The one paragraph that enumerates the envelope, and the paragraph that follows
+# it. The search is scoped to the first of the two on purpose: the second names
+# the shapes a report may *never* carry -- "a stack trace, a request or response
+# body, a header map" -- so a whole-section substring search would be satisfied
+# by a forbidden field's own name appearing in the sentence that forbids it,
+# which is the opposite of what this test claims to check.
+_ENVELOPE_PARAGRAPH_OPENING = "**what the app attaches.**"
+_ENVELOPE_PARAGRAPH_CLOSING = "that list is an allowlist"
+
+
+def _envelope_paragraph(policy: str) -> str:
+    """The policy paragraph that enumerates the diagnostic envelope."""
+    start = policy.index(_ENVELOPE_PARAGRAPH_OPENING)
+    end = policy.index(_ENVELOPE_PARAGRAPH_CLOSING, start)
+    return policy[start:end]
+
 
 def test_the_policy_names_every_field_the_feedback_allowlist_admits() -> None:
     """The document lists exactly the envelope the code accepts, key for key.
@@ -879,10 +895,11 @@ def test_the_policy_names_every_field_the_feedback_allowlist_admits() -> None:
     rather than shipping a policy that quietly understates what is collected.
     """
     policy = _prose(_PRIVACY_POLICY)
-    section = policy[policy.index(_FEEDBACK_SECTION_HEADING) :]
+    assert _FEEDBACK_SECTION_HEADING in policy
+    paragraph = _envelope_paragraph(policy)
 
     for key in ALLOWED_CONTEXT_KEYS:
-        assert key.replace("_", " ") in section, f"the policy stopped naming {key}"
+        assert key.replace("_", " ") in paragraph, f"the policy stopped naming {key}"
 
 
 def test_the_policy_states_the_retention_window_the_code_enforces() -> None:
