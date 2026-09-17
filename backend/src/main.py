@@ -51,6 +51,7 @@ from routers.course import router as course_router
 from routers.data_export import router as data_export_router
 from routers.depth_preferences import router as depth_preferences_router
 from routers.energy import router as energy_router
+from routers.feedback import router as feedback_router
 from routers.goal_completions import router as goal_completion_router
 from routers.goal_groups import router as goal_groups_router
 from routers.goal_groups import seed_goal_group_templates
@@ -1185,6 +1186,7 @@ app.include_router(vault_config_router)
 app.include_router(vault_activation_router)
 app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)
+app.include_router(feedback_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can

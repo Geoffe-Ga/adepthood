@@ -26,8 +26,8 @@ You get two files.
   goals, groups and every check-in; your practices, sessions, recipes and tags;
   your course progress, prompt answers and reflections; your margin notes and
   promoted passages; your energy plans and return arcs; the depths you chose;
-  and the ontologized corpus — your own sentences, classified into the ten
-  frequencies.
+  every beta feedback report you filed, in full; and the ontologized corpus —
+  your own sentences, classified into the ten frequencies.
 - **`adepthood-journal-<date>.md`** — the journal alone, as Markdown, oldest
   first. This is the one to open if you want to *read* it.
 
@@ -129,6 +129,11 @@ Everything in the app that is yours:
 - Course progress, chapter completions and prompt answers.
 - Energy plans, return arcs, invitation history, depth preferences and
   interface state.
+- Every private beta report you filed — your words and the small diagnostic
+  envelope that travelled with them. Reports older than 180 days are also removed
+  when the operator runs the retention sweep, whether or not you delete your
+  account; that sweep is run by hand rather than on a timer, so deleting your
+  account is the only way to remove a report at a moment you choose.
 - Your account row itself — email, password hash, display name, wallet
   balances — and every linked Google or Apple sign-in.
 - The record of sign-in attempts made with your address, including the IP

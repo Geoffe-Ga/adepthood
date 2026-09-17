@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import date
 
@@ -12,6 +11,7 @@ from sqlmodel import col, select
 
 from errors import conflict
 from models.goal_completion_idempotency import GoalCompletionSpend
+from security.idempotency import hash_idem_key
 
 
 @dataclass(frozen=True)
@@ -24,8 +24,14 @@ class GoalCompletionIntent:
 
 
 def _hash_key(user_id: int, raw_key: str) -> str:
-    """Bound and namespace a caller's raw key without storing it."""
-    return hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
+    """Bound and namespace a caller's raw key without storing it.
+
+    A thin alias over :func:`security.idempotency.hash_idem_key`, which owns the
+    digest for every idempotency surface on this API. Kept as a module-private
+    name so this file's call sites read unchanged while the algorithm has one
+    author rather than two identical ones.
+    """
+    return hash_idem_key(user_id, raw_key)
 
 
 async def _recorded_spend(

@@ -26,6 +26,10 @@ const CALLER_ALLOWLIST: Record<string, string> = {
     'Called inside the API layer by listAll and the other Page-envelope readers; exported only for direct unit coverage of the pagination loop.',
   'habits.list':
     'Deliberately retained beside listAll as the request-machinery test vehicle and bare-array wire-contract guard, per its own docstring in src/api/index.ts.',
+  'feedback.receipt':
+    'Intake contract only (#2897): the reporter screen that resolves a public reference lands with #2899, and the journey ledger requires a route to be issuable from this module before it may be declared at all, so the wrapper precedes its caller by one issue rather than the journey going undeclared.',
+  'feedback.submit':
+    'Intake contract only (#2897): the reporter screen that files a report lands with #2899, and the journey ledger requires a route to be issuable from this module before it may be declared at all, so the wrapper precedes its caller by one issue rather than the journey going undeclared.',
   idempotencyKey:
     'Called inside the API layer to key suggestion-accept, invitation-dismiss and return-start; exported for unit coverage, and its caller-supplied seam on the habit check-in wrapper is still unadopted by any screen.',
 };

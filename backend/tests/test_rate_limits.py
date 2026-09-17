@@ -245,3 +245,120 @@ async def test_auth_login_limit_unchanged_at_5_per_minute(async_client: AsyncCli
 
     sixth = await async_client.post("/auth/login", json=login_payload)
     assert sixth.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+# ── Feedback intake: both axes ───────────────────────────────────────────
+
+_LIMIT_10 = 10
+
+_FEEDBACK_PAYLOAD: dict[str, object] = {
+    "category": "broken",
+    "impact": "blocked",
+    "summary": "The habit card vanished.",
+    "context": {
+        "screen": "journal.shelf",
+        "platform": "ios",
+        "app_build": "1.4.2",
+        "viewport_class": "compact",
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_post_feedback_limit_pinned_at_10_per_hour(async_client: AsyncClient) -> None:
+    """The per-account axis, pinned exactly.
+
+    An intake endpoint is the most articulate denial-of-service primitive an
+    application can offer -- every request writes a row carrying four
+    encrypted text columns -- so the budget is deliberately far below what a
+    person filing reports by hand would ever reach.
+    """
+    headers = await _signup(async_client, "feedback_rate_account")
+
+    async def send() -> Response:
+        return await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=headers)
+
+    await _assert_limit_pinned(send, _LIMIT_10)
+
+
+@pytest.mark.asyncio
+async def test_the_feedback_budget_follows_the_account_not_the_address(
+    async_client: AsyncClient,
+) -> None:
+    """A second account behind the same address still has its own budget.
+
+    This is what the per-user key function buys, and the assertion that proves
+    it is wired: under a naive IP-keyed limit two testers on one office network
+    would throttle each other out of reporting anything.
+    """
+    exhausted = await _signup(async_client, "feedback_rate_first")
+    for _ in range(_LIMIT_10 + 1):
+        await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=exhausted)
+    blocked = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=exhausted)
+    assert blocked.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await _signup(async_client, "feedback_rate_second")
+    admitted = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=neighbour)
+
+    assert admitted.status_code == HTTPStatus.CREATED
+
+
+@pytest.mark.asyncio
+async def test_the_feedback_address_budget_stops_a_third_account_on_one_address(
+    async_client: AsyncClient,
+) -> None:
+    """The per-address axis, pinned, and proven to bind independently of the account.
+
+    Two accounts spend the whole address budget between them; a third, whose own
+    account budget is untouched, is refused on its very first request. That is
+    the only shape that distinguishes the address axis from the account one --
+    and it is declared on the route rather than inherited, because the ambient
+    default the rest of this application relies on does not reach any route
+    mounted through ``include_router`` under FastAPI 0.141 (``slowapi`` resolves
+    a request to its handler by reading ``.endpoint`` off ``app.routes``, which
+    now holds ``_IncludedRouter`` wrappers that do not expose one).
+    """
+    for index in range(2):
+        headers = await _signup(async_client, f"feedback_addr_{index}")
+        for _ in range(_LIMIT_10):
+            spent = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=headers)
+            assert spent.status_code == HTTPStatus.CREATED
+
+    third = await _signup(async_client, "feedback_addr_third")
+    refused = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=third)
+
+    assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert refused.json()["detail"] == "rate_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_retry_does_not_spend_the_shared_address_budget(
+    async_client: AsyncClient,
+) -> None:
+    """One account's rejected retries must not lock out everybody behind its address.
+
+    ``slowapi`` evaluates a route's limits in registration order, and
+    ``__evaluate_limits`` calls ``hit()`` -- which *bills* the bucket -- on each
+    one until a limit refuses, then breaks. So whichever axis is evaluated first
+    is charged for every request, including the ones the second axis is about to
+    reject. Registered address-first, an account that has exhausted its own
+    budget goes on draining the budget it shares with everyone on that address,
+    and a client looping on a failed submit takes the whole office offline:
+    exactly the denial-of-service shape this endpoint is warned about.
+
+    So the account axis is registered first. Here one account spends its ten and
+    then retries ten more times in vain; a second account's first report must
+    still be accepted, because those ten refusals cost the shared axis nothing.
+    """
+    greedy = await _signup(async_client, "feedback_greedy")
+    for _ in range(_LIMIT_10):
+        spent = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=greedy)
+        assert spent.status_code == HTTPStatus.CREATED
+    for _ in range(_LIMIT_10):
+        refused = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=greedy)
+        assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await _signup(async_client, "feedback_neighbour")
+    admitted = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=neighbour)
+
+    assert admitted.status_code == HTTPStatus.CREATED

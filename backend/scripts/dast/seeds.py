@@ -246,6 +246,27 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             payload={"message": _SEED_NOTE, "tag": _HIERARCHICAL_REFLECTION},
             id_pointer=("id",),
         ),
+        # A feedback receipt is addressed by a minted public reference rather
+        # than by a row id, so the seed hands back ``public_id`` rather than
+        # ``id``. That is the whole reason the route is worth probing: the
+        # reference is the only handle on the report, and the matrix is what
+        # proves a second identity holding a real one is refused.
+        "public_id": SeedSpec(
+            create_method="POST",
+            create_path="/feedback/",
+            payload={
+                "category": "broken",
+                "impact": "blocked",
+                "summary": _SEED_NOTE,
+                "context": {
+                    "screen": "journal.shelf",
+                    "platform": "ios",
+                    "app_build": "1.0.0",
+                    "viewport_class": "compact",
+                },
+            },
+            id_pointer=("public_id",),
+        ),
         # The next two exist for the filtered listings, and each hands back the
         # id of the object the *filter* names rather than of the row it just
         # created. A listing scoped to the caller can only surface a session or
