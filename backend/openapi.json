@@ -1438,6 +1438,249 @@
         "title": "EntryStatus",
         "type": "string"
       },
+      "FeedbackCategory": {
+        "description": "What kind of report this is, in the tester's own framing.",
+        "enum": [
+          "broken",
+          "confusing",
+          "idea",
+          "praise"
+        ],
+        "title": "FeedbackCategory",
+        "type": "string"
+      },
+      "FeedbackCleanupResult": {
+        "description": "Outcome of a feedback retention sweep: rows deleted + the window used.\n\nA separate shape from :class:`EnergyPlanCleanupResult` rather than a shared\none: the two sweeps answer different questions and will drift apart the\nmoment either grows a field, and a rename of the energy result would break\na client that already reads it.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "older_than_days": {
+            "title": "Older Than Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "older_than_days"
+        ],
+        "title": "FeedbackCleanupResult",
+        "type": "object"
+      },
+      "FeedbackContext": {
+        "additionalProperties": false,
+        "description": "The approved diagnostic envelope. Seven fields, and no eighth.",
+        "properties": {
+          "app_build": {
+            "description": "The build identifier the client is running.",
+            "maxLength": 32,
+            "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]*$",
+            "title": "App Build",
+            "type": "string"
+          },
+          "control": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,3}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Originating control or stable error code.",
+            "title": "Control"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Client-generated correlation id for this session's telemetry.",
+            "title": "Correlation Id"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "BCP-47 language tag, language and optional region.",
+            "title": "Locale"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/FeedbackPlatform",
+            "description": "Which client the report came from."
+          },
+          "screen": {
+            "description": "Canonical dotted screen token, e.g. ``journal.shelf``.",
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,3}$",
+            "title": "Screen",
+            "type": "string"
+          },
+          "viewport_class": {
+            "$ref": "#/components/schemas/FeedbackViewportClass",
+            "description": "How much room the layout had."
+          }
+        },
+        "required": [
+          "screen",
+          "platform",
+          "app_build",
+          "viewport_class"
+        ],
+        "title": "FeedbackContext",
+        "type": "object"
+      },
+      "FeedbackCreate": {
+        "additionalProperties": false,
+        "description": "One submitted report: the account's words plus the approved envelope.\n\nCarries **no** idempotency field. The key arrives as the ``Idempotency-Key``\nheader, which is where the other three idempotent surfaces on this API take\nit; putting it in the body would have made feedback the odd one out and\nwould have shipped the key into the export archive alongside the prose.\n\nThe four prose fields declare ``repr=False`` so a traceback that stringifies\nthe parsed request model -- which happens well before the ORM object exists\n-- cannot reproduce what somebody wrote.",
+        "properties": {
+          "actual": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What happened instead.",
+            "title": "Actual"
+          },
+          "category": {
+            "$ref": "#/components/schemas/FeedbackCategory",
+            "description": "What kind of report this is."
+          },
+          "context": {
+            "$ref": "#/components/schemas/FeedbackContext",
+            "description": "The allowlisted diagnostic envelope."
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What they expected to happen.",
+            "title": "Expected"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/FeedbackImpact",
+            "description": "What the reported thing cost the reporter."
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the person was trying to do, or wants to be able to do.",
+            "title": "Intent"
+          },
+          "summary": {
+            "description": "One sentence naming the thing being reported.",
+            "maxLength": 280,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "impact",
+          "summary",
+          "context"
+        ],
+        "title": "FeedbackCreate",
+        "type": "object"
+      },
+      "FeedbackImpact": {
+        "description": "How much the thing being reported cost the person reporting it.",
+        "enum": [
+          "blocked",
+          "can_continue",
+          "cosmetic",
+          "not_applicable"
+        ],
+        "title": "FeedbackImpact",
+        "type": "string"
+      },
+      "FeedbackPlatform": {
+        "description": "Which client the report came from. A closed set, not a user-agent string.",
+        "enum": [
+          "android",
+          "ios",
+          "web"
+        ],
+        "title": "FeedbackPlatform",
+        "type": "string"
+      },
+      "FeedbackReceipt": {
+        "description": "What the reporter gets back: a reference, and how the report was filed.\n\nDeliberately thin. No prose (the account has its own copy of what it wrote,\nand echoing it back widens the number of places it exists), no ``user_id``\n(the base class refuses it), and no administrator identity or triage note --\nthose are out of scope for this issue and this DTO is the surface through\nwhich they would otherwise leak first.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/FeedbackCategory",
+            "description": "What kind of report this was filed as."
+          },
+          "created_at": {
+            "description": "When the report was recorded.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/FeedbackImpact",
+            "description": "The impact it was filed under."
+          },
+          "public_id": {
+            "description": "The human-readable public reference, e.g. ``FB-7K3M9Q2B``.",
+            "maxLength": 11,
+            "title": "Public Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_id",
+          "category",
+          "impact",
+          "created_at"
+        ],
+        "title": "FeedbackReceipt",
+        "type": "object"
+      },
+      "FeedbackViewportClass": {
+        "description": "How much room the layout had, in classes rather than pixel dimensions.\n\nBucketed deliberately: an exact viewport size is a fingerprinting surface\nand answers no triage question that the class does not.",
+        "enum": [
+          "compact",
+          "expanded",
+          "regular"
+        ],
+        "title": "FeedbackViewportClass",
+        "type": "string"
+      },
       "FrequencyResponse": {
         "description": "Banner payload for ``GET /user-practices/current/frequency``.\n\nStructured fields are exposed alongside ``banner_text`` so the client\ncan still render chips (color label, aspect badge) without parsing\nthe assembled English string. ``user_practice_id`` is ``None`` when\nthe user has not yet selected a practice for their current stage —\nthe response surfaces the seeded preset for that stage so the banner\ncan render before the first selection.",
         "properties": {
@@ -7716,6 +7959,118 @@
         ]
       }
     },
+    "/admin/maintenance/feedback-reports": {
+      "post": {
+        "description": "Delete private beta reports older than ``older_than_days``.\n\nThe integration point for the retention window the privacy policy states.\n``feedbackreport`` rows have no TTL and unkeyed submissions are not\ndeduplicated, so the table grows for as long as the beta runs without this.\nSafe to call from a cron via an admin token.",
+        "operationId": "cleanup_feedback_reports_admin_maintenance_feedback_reports_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "older_than_days",
+            "required": false,
+            "schema": {
+              "default": 180,
+              "maximum": 36500,
+              "minimum": 1,
+              "title": "Older Than Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackCleanupResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Cleanup Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/stage-progress/gaps": {
       "get": {
         "description": "Return ``stageprogress`` rows whose completed set is non-contiguous.\n\nRead-only: mirrors the audit migration's logging so operators can inspect\nflagged rows on a live database without trawling alembic logs.  Pair with\n:func:`repair_stage_progress` to rewrite a single row explicitly.\n\nThe gap filter is applied per row *after* the SELECT, so under\n``?paginate=true`` only ``limit`` ``StageProgress`` rows are materialised —\nnot the whole table. That path returns a :class:`StageProgressGapsPage`\nwhose fields (``scanned_total`` / ``has_more_rows``) name the row-scan\nsemantics explicitly, so a caller never mistakes them for a gap count. The\nbare path keeps the full-scan :class:`StageProgressGapsResponse` shape\n(``total`` = gaps found) for backward compatibility.",
@@ -11486,6 +11841,244 @@
         "summary": "Update Depth Preferences",
         "tags": [
           "depth-preferences"
+        ]
+      }
+    },
+    "/feedback/": {
+      "post": {
+        "description": "Record one beta report and return its public reference.\n\nA repeated tap carrying the same ``Idempotency-Key`` resolves to the report\nalready stored for this account under that key: one row, one reference. An\nunkeyed submission is always a new report -- two people describing two\ndifferent things must never be collapsed just because neither client sent a\nheader.",
+        "operationId": "submit_feedback_feedback__post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Submit Feedback",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/feedback/{public_id}/receipt": {
+      "get": {
+        "description": "Return the receipt for one of the caller's own reports.\n\nA reference that belongs to another account answers with the same refusal,\nbyte for byte, as one that was never issued. The collapse is deliberate and\nis the fourth such case in this application (goals, marginalia and journal\nentries are the others): the reference is the only handle on the resource,\nso a 403 here would confirm that a guessed reference is real -- which is\nprecisely the enumeration a 403 exists to make auditable elsewhere. The\naudit row is written regardless, so the distinction survives in the log.",
+        "operationId": "read_feedback_receipt_feedback__public_id__receipt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "maxLength": 11,
+              "pattern": "^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$",
+              "title": "Public Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Feedback Receipt",
+        "tags": [
+          "feedback"
         ]
       }
     },

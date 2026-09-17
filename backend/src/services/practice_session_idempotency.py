@@ -10,24 +10,19 @@ always carries a real ``session_id``. Cross-worker serialisation comes from the
 
 from __future__ import annotations
 
-import hashlib
-
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.practice_session_idempotency import PracticeSessionSpend
+from security.idempotency import hash_idem_key
 
-
-def hash_idem_key(user_id: int, raw_key: str) -> str:
-    """Return a stable SHA-256 hash of ``(user_id, raw_key)`` for the column value.
-
-    The raw client header is never stored. Hashing keeps the column width
-    bounded and one-way, and the ``user_id`` prefix keeps the hash space
-    disjoint across users so a crafted key cannot collide into another user's
-    namespace.
-    """
-    return hashlib.sha256(f"{user_id}:{raw_key}".encode()).hexdigest()
+# Re-exported so the two call sites below and this module's existing importers
+# keep one name for the digest. The implementation moved to
+# :mod:`security.idempotency`, which is owned by no feature, because a second
+# byte-identical copy lived in ``services.goal_completion_idempotency`` and a
+# third feature would have had to pick one of them to depend on.
+__all__ = ["hash_idem_key", "record_session", "recorded_session_id"]
 
 
 async def recorded_session_id(

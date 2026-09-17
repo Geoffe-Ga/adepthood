@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
 from models.completion_suggestion import CompletionSuggestion, CompletionTargetType
+from models.feedback import FeedbackReport
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalEntry
@@ -101,6 +102,23 @@ _PRACTICE_PROSE_COLUMNS: frozenset[str] = frozenset(
     }
 )
 
+# What a tester wrote about the beta. A fourth named set rather than a line
+# added to one above, for the reason the three already exist: each keeps a
+# distinct argument for why the column is ciphertext, and folding this in would
+# blur the one that matters here. This is not a copy of a journal entry, and it
+# is not prose written after a practice -- it is somebody describing their
+# experience of the product, to its authors, in confidence. Every other column
+# of ``feedbackreport`` is the allowlisted diagnostic envelope or the enum
+# states, none of which is writing, and all of which triage reads.
+_FEEDBACK_PROSE_COLUMNS: frozenset[str] = frozenset(
+    {
+        "feedbackreport.summary",
+        "feedbackreport.intent",
+        "feedbackreport.expected",
+        "feedbackreport.actual",
+    }
+)
+
 # Columns encrypted for a reason other than holding anyone's writing. They are
 # named here rather than folded into the sets above because the distinction is
 # the whole subject of this module: the argument for encrypting a person's prose
@@ -125,6 +143,10 @@ _PROMPT_RESPONSE = "The week I stopped pretending it was fine."
 _ANCHOR_START = 11
 _REFLECTION = "Twenty minutes in, the grief I had been outrunning sat down beside me."
 _INSIGHT = "It is not the silence I am afraid of, it is what it keeps saying."
+_FEEDBACK_SUMMARY = "The habit card vanished the moment I accepted the offer."
+_FEEDBACK_INTENT = "I was trying to log the sit I had just finished."
+_FEEDBACK_EXPECTED = "The card would stay on the shelf and show today as done."
+_FEEDBACK_ACTUAL = "The whole row went blank and I could not get it back."
 
 
 @pytest.fixture
@@ -238,6 +260,10 @@ _RAW_READS: dict[str, str] = {
     "completionsuggestion.label": "SELECT label FROM completionsuggestion",
     "practicesession.reflection": "SELECT reflection FROM practicesession",
     "practicesession.insight": "SELECT insight FROM practicesession",
+    "feedbackreport.summary": "SELECT summary FROM feedbackreport",
+    "feedbackreport.intent": "SELECT intent FROM feedbackreport",
+    "feedbackreport.expected": "SELECT expected FROM feedbackreport",
+    "feedbackreport.actual": "SELECT actual FROM feedbackreport",
 }
 
 
@@ -271,7 +297,10 @@ def test_the_pinned_inventory_is_exactly_what_the_schema_encrypts() -> None:
     """
     assert (
         _encrypted_columns()
-        == _JOURNAL_TEXT_COLUMNS | _PRACTICE_PROSE_COLUMNS | _OTHER_ENCRYPTED_COLUMNS
+        == _JOURNAL_TEXT_COLUMNS
+        | _PRACTICE_PROSE_COLUMNS
+        | _FEEDBACK_PROSE_COLUMNS
+        | _OTHER_ENCRYPTED_COLUMNS
     )
 
 
@@ -454,3 +483,77 @@ async def test_a_session_logged_without_prose_stores_null_not_ciphertext(
 
     assert await _raw(db_session, "practicesession.reflection") is None
     assert await _raw(db_session, "practicesession.insight") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_feedback_prose_is_ciphertext_in_the_raw_columns(
+    db_session: AsyncSession,
+) -> None:
+    """What a tester wrote about the product is stored the way their journal is.
+
+    A beta report is unusually disclosing -- it names what somebody was doing in
+    the app, what they expected of it, and how it failed them -- and it is
+    written in confidence to the people who built the thing. Nothing else in
+    this module reaches these columns, and the ORM read is identical whether the
+    bytes are ciphertext or prose, so the raw column is the only place the
+    difference shows.
+    """
+    user_id = await _user(db_session)
+    db_session.add(
+        FeedbackReport(
+            user_id=user_id,
+            public_id="FB-23456789",
+            category="broken",
+            impact="blocked",
+            platform="ios",
+            viewport_class="compact",
+            summary=_FEEDBACK_SUMMARY,
+            intent=_FEEDBACK_INTENT,
+            expected=_FEEDBACK_EXPECTED,
+            actual=_FEEDBACK_ACTUAL,
+            screen="habits.shelf",
+            app_build="1.4.2",
+        )
+    )
+    await db_session.commit()
+
+    for column, plaintext in (
+        ("feedbackreport.summary", _FEEDBACK_SUMMARY),
+        ("feedbackreport.intent", _FEEDBACK_INTENT),
+        ("feedbackreport.expected", _FEEDBACK_EXPECTED),
+        ("feedbackreport.actual", _FEEDBACK_ACTUAL),
+    ):
+        _assert_ciphertext_of(await _raw(db_session, column), plaintext, column)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_a_report_filed_without_the_optional_answers_stores_null(
+    db_session: AsyncSession,
+) -> None:
+    """Three of the four prose slots are optional; encryption must not fill them.
+
+    A one-line praise report leaves ``intent``, ``expected`` and ``actual``
+    unset, which is the common shape rather than the edge case. A NULL turned
+    into a ciphertext token would hand every such reporter three empty strings
+    back through their own export.
+    """
+    user_id = await _user(db_session)
+    db_session.add(
+        FeedbackReport(
+            user_id=user_id,
+            public_id="FB-34567892",
+            category="praise",
+            impact="not_applicable",
+            platform="web",
+            viewport_class="regular",
+            summary=_FEEDBACK_SUMMARY,
+            screen="course.reader",
+            app_build="1.4.2",
+        )
+    )
+    await db_session.commit()
+
+    for column in ("feedbackreport.intent", "feedbackreport.expected", "feedbackreport.actual"):
+        assert await _raw(db_session, column) is None, column

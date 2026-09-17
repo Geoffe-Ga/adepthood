@@ -432,3 +432,50 @@ async def test_each_download_declares_the_media_type_it_sends(
     assert resp.status_code == HTTPStatus.OK, resp.text
     sent = resp.headers["content-type"].split(";")[0].strip().lower()
     assert sent == expected_media_type
+
+
+_FEEDBACK_SUMMARY = "The habit card vanished the moment I accepted the offer."
+_FEEDBACK_INTENT = "I was trying to log the sit I had just finished."
+_FEEDBACK_IDEMPOTENCY_KEY = "export-round-trip-0001"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_a_submitted_beta_report_round_trips_into_the_archive_as_plaintext(
+    async_client: AsyncClient,
+) -> None:
+    """A report the account filed comes back out whole, and readable.
+
+    Encrypted at rest and decrypted on the way out, exactly like the journal.
+    The retry token the client sent is the one thing withheld -- it is transport
+    bookkeeping rather than something the account wrote, and a hashed digest in
+    an archive answers no question a person has about their own data.
+    """
+    headers, _ = await _signup(async_client, "feedback_exporter")
+    payload = {
+        "category": "broken",
+        "impact": "blocked",
+        "summary": _FEEDBACK_SUMMARY,
+        "intent": _FEEDBACK_INTENT,
+        "context": {
+            "screen": "habits.shelf",
+            "platform": "ios",
+            "app_build": "1.4.2",
+            "viewport_class": "compact",
+        },
+    }
+    filed = await async_client.post(
+        "/feedback/",
+        json=payload,
+        headers={**headers, "Idempotency-Key": _FEEDBACK_IDEMPOTENCY_KEY},
+    )
+    assert filed.status_code == HTTPStatus.CREATED
+
+    raw, document = await _export(async_client, headers)
+
+    reports = _records(document, "feedback_reports")
+    assert [report["summary"] for report in reports] == [_FEEDBACK_SUMMARY]
+    assert reports[0]["intent"] == _FEEDBACK_INTENT
+    assert reports[0]["public_id"] == filed.json()["public_id"]
+    assert "idem_key" not in reports[0]
+    assert "user_id" not in reports[0]
+    assert _CIPHERTEXT_MARKER not in raw

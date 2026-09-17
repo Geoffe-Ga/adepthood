@@ -4663,3 +4663,184 @@ def test_stageprogress_past_cycle_anchors_round_trip_on_sqlite(
     # Phase 3: re-upgrade reproduces the same record of what cannot be recovered.
     command.upgrade(cfg, _PAST_CYCLE_ANCHORS_REVISION)
     _assert_anchors_recorded_as_unknown(db_url)
+
+
+# -- #2897 feedbackreport migration round-trip -----------------------------
+
+_FEEDBACK_BASE_REVISION = "a1f7c2b9d604"  # pragma: allowlist secret
+_FEEDBACK_REVISION = "b4d2e7a9c1f3"  # pragma: allowlist secret
+
+_FEEDBACK_INSERT = (
+    "INSERT INTO feedbackreport ("
+    " user_id, public_id, category, impact, platform, viewport_class,"
+    " summary, screen, app_build, created_at"
+    ") VALUES (1, :public_id, :category, 'blocked', 'ios', 'compact',"
+    " 'A report.', 'journal.shelf', '1.4.2', CURRENT_TIMESTAMP)"
+)
+
+
+def _bootstrap_user_table(sync_url: str) -> None:
+    """Pre-create the one table ``feedbackreport``'s foreign key points at.
+
+    Running the whole chain is not an option on SQLite -- ``habit`` carries an
+    ARRAY column no SQLite dialect can render -- so the fixture stamps at the
+    parent revision and exercises this migration alone, which is also what makes
+    the round-trip a statement about *this* migration rather than about the
+    hundred before it.
+    """
+    bootstrap_engine = create_engine(sync_url)
+    with bootstrap_engine.begin() as conn:
+        conn.execute(text("CREATE TABLE user (id INTEGER PRIMARY KEY, email VARCHAR(255))"))
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'beta@example.com')"))
+    bootstrap_engine.dispose()
+
+
+def _insert_feedback_row(db_url: str, *, public_id: str, category: str = "broken") -> None:
+    """Insert one report through raw SQL, so the CHECKs are what is under test."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(_FEEDBACK_INSERT).bindparams(public_id=public_id, category=category))
+    finally:
+        engine.dispose()
+
+
+def _delete_feedback_rows(db_url: str) -> None:
+    """Clear the table so the refusing downgrade is allowed to proceed."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM feedbackreport"))
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_feedback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before the feedbackreport migration."""
+    db_path = tmp_path / "feedback_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_user_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _FEEDBACK_BASE_REVISION)
+    return cfg
+
+
+def test_feedback_reports_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_feedback: Config,
+) -> None:
+    """Upgrade creates a usable table; downgrade removes it; re-upgrade is idempotent."""
+    cfg = alembic_sqlite_config_feedback
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+    _insert_feedback_row(db_url, public_id="FB-23456789")
+    assert {
+        "id",
+        "user_id",
+        "public_id",
+        "category",
+        "impact",
+        "platform",
+        "viewport_class",
+        "summary",
+        "intent",
+        "expected",
+        "actual",
+        "screen",
+        "control",
+        "app_build",
+        "locale",
+        "correlation_id",
+        "idem_key",
+        "created_at",
+    } == _columns_of(db_url, "feedbackreport")
+
+    _delete_feedback_rows(db_url)
+    command.downgrade(cfg, _FEEDBACK_BASE_REVISION)
+    engine = create_engine(_sync_url(db_url))
+    try:
+        assert "feedbackreport" not in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+    _insert_feedback_row(db_url, public_id="FB-34567892")
+
+
+def test_feedback_reports_enum_checks_reject_a_value_outside_the_set(
+    alembic_sqlite_config_feedback: Config,
+) -> None:
+    """The CHECKs the migration installs are live, not decorative.
+
+    A value outside the enum is what the column CHECK exists to stop; without
+    this the migration could ship the constraint misspelled and nothing would
+    notice until a bad row was already stored.
+    """
+    cfg = alembic_sqlite_config_feedback
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+
+    with pytest.raises(IntegrityError):
+        _insert_feedback_row(db_url, public_id="FB-45678923", category="rant")
+
+
+def test_feedback_reports_check_text_pins_the_sorted_member_order(
+    alembic_sqlite_config_feedback: Config,
+) -> None:
+    """The DDL the migration writes matches the model's sorted rendering.
+
+    Sorted members are what keep ``alembic --autogenerate`` from reporting a
+    spurious diff between this table and ``models.feedback``; an unsorted
+    rewrite on either side would drift silently until a CI drift job caught it.
+    """
+    cfg = alembic_sqlite_config_feedback
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            ddl = conn.execute(
+                text("SELECT sql FROM sqlite_master WHERE name = 'feedbackreport'")
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert "category IN ('broken', 'confusing', 'idea', 'praise')" in ddl
+    assert "impact IN ('blocked', 'can_continue', 'cosmetic', 'not_applicable')" in ddl
+    assert "platform IN ('android', 'ios', 'web')" in ddl
+    assert "viewport_class IN ('compact', 'expanded', 'regular')" in ddl
+
+
+def test_feedback_reports_downgrade_refuses_with_existing_rows(
+    alembic_sqlite_config_feedback: Config,
+) -> None:
+    """The downgrade aborts while reports exist, rather than destroying prose.
+
+    Dropping this table erases sentences somebody wrote that exist nowhere else,
+    and no re-upgrade can bring them back. An operator who means it clears the
+    table first; the migration will not make that decision on their behalf.
+    """
+    cfg = alembic_sqlite_config_feedback
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+    _insert_feedback_row(db_url, public_id="FB-56789234")
+
+    with pytest.raises(RuntimeError, match="feedbackreport"):
+        command.downgrade(cfg, _FEEDBACK_BASE_REVISION)

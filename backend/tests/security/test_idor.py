@@ -11,8 +11,14 @@ Per the BUG-T7 remediation (prompt ``07-normalize-idor-ordering``):
 - Genuinely missing rows still 404 (sibling tests in each
   ``test_<resource>_api.py``).
 - Rows that exist but belong to another user 403, never 404 — EXCEPT the
-  enumeration-safe resources (goals, marginalia, and journal entries) which
-  deliberately collapse the cross-user branch to 404 on every method.
+  enumeration-safe resources (goals, marginalia, journal entries, and beta
+  feedback receipts) which deliberately collapse the cross-user branch to 404
+  on every method.  Feedback receipts are the fourth because their handle is a
+  minted public reference rather than a row id: a 403 on a real reference would
+  confirm that a guessed one names an existing report, which is exactly the
+  enumeration the 403 exists to make auditable elsewhere.  The audit row is
+  written either way, so the distinction survives where an attacker cannot read
+  it.
 - Course content is a shared catalog rather than a per-user resource;
   its enumeration oracle (BUG-COURSE-004) is closed by masking the
   locked branch as 404 instead.  That mask is asserted in
@@ -30,7 +36,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient, Response
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
@@ -41,6 +47,7 @@ from models.completion_suggestion import (
 )
 from models.corpus_invitation_state import CorpusInvitationState
 from models.course_stage import CourseStage
+from models.feedback import FeedbackReport
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -1066,6 +1073,62 @@ async def test_locked_content_indistinguishable_from_missing(
     assert mark_locked.status_code == HTTPStatus.NOT_FOUND
 
 
+# ── Beta feedback receipts: a reference is not an oracle ──────────────────
+
+# The report body both feedback cases file. Minimal on purpose: what is under
+# test is who may resolve the reference, not what the envelope may carry.
+_FEEDBACK_PAYLOAD: dict[str, object] = {
+    "category": "broken",
+    "impact": "blocked",
+    "summary": "The habit card vanished.",
+    "context": {
+        "screen": "journal.shelf",
+        "platform": "ios",
+        "app_build": "1.4.2",
+        "viewport_class": "compact",
+    },
+}
+
+# A reference that is well-formed and was never minted. The comparison target
+# for the cross-tenant refusal: the two answers must be identical bytes.
+_NEVER_ISSUED_REFERENCE = "FB-22222222"
+
+
+@pytest.mark.asyncio
+async def test_a_feedback_reference_tells_another_account_nothing_and_stores_nothing(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Bob learns nothing from Alice's reference, and his probe writes no row.
+
+    Both halves, per the repository's ownership playbook rule. The refusal is
+    compared byte for byte against a reference that was never issued, because a
+    difference of a single character -- a different detail token, a different
+    status -- is an oracle telling an attacker which guesses are real. The row
+    count is asserted afterwards because a read path that quietly created or
+    touched a row would be a second, quieter leak.
+    """
+    alice_headers, _ = await _signup(async_client, "feedback_idor_alice")
+    bob_headers, _ = await _signup(async_client, "feedback_idor_bob")
+    filed = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=alice_headers)
+    assert filed.status_code == HTTPStatus.CREATED
+    reference = filed.json()["public_id"]
+
+    with caplog.at_level(logging.WARNING):
+        cross = await async_client.get(f"/feedback/{reference}/receipt", headers=bob_headers)
+    absent = await async_client.get(
+        f"/feedback/{_NEVER_ISSUED_REFERENCE}/receipt", headers=bob_headers
+    )
+
+    assert cross.status_code == absent.status_code == HTTPStatus.NOT_FOUND
+    assert cross.content == absent.content
+    assert any(record.message == "resource_access_denied" for record in caplog.records)
+
+    surviving = (
+        await db_session.execute(select(func.count()).select_from(FeedbackReport))
+    ).scalar_one()
+    assert surviving == 1
+
+
 # ── No response DTO leaks user_id ─────────────────────────────────────────
 
 
@@ -1133,6 +1196,23 @@ async def test_no_user_id_in_owned_resource_responses(
             (await async_client.get(f"/practices/{practice.id}", headers=alice_headers)).json(),
         ),
     ]
+
+    feedback = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=alice_headers)
+    assert feedback.status_code == HTTPStatus.CREATED
+    feedback_reference = feedback.json()["public_id"]
+    probes.extend(
+        [
+            ("create_feedback", feedback.json()),
+            (
+                "get_feedback_receipt",
+                (
+                    await async_client.get(
+                        f"/feedback/{feedback_reference}/receipt", headers=alice_headers
+                    )
+                ).json(),
+            ),
+        ]
+    )
 
     for label, body in probes:
         assert "user_id" not in body, f"{label} response leaked user_id"
