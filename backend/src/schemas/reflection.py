@@ -12,6 +12,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from domain.cycle_calendar import CycleAnchorStatus
+
 
 class PromotedQuoteSummary(BaseModel):
     """A promoted quote as it rides along with its source entry in a tier feed.
@@ -57,7 +59,11 @@ class ReflectionSourcesResponse(BaseModel):
     shared instant instead of overlapping (issue #2894).
 
     Both bounds are ``None`` whenever no window could be drawn, and
-    ``anchor_status`` names which of the four causes applies:
+    ``anchor_status`` names which of the four causes applies. It is published as
+    the :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare
+    string so the four members reach the OpenAPI document: typed as ``str`` the
+    contract carried no enumeration at all, and renaming a member or adding a
+    fifth cause changed nothing a client could notice. The members are:
     ``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was
     destroyed by ``begin-again`` before #2894 and cannot be reconstructed),
     ``unstarted`` (the caller has not reached that cycle), or ``no_program``
@@ -74,7 +80,7 @@ class ReflectionSourcesResponse(BaseModel):
     scope_key: str
     window_start: datetime | None
     window_end: datetime | None
-    anchor_status: str
+    anchor_status: CycleAnchorStatus
     items: list[ReflectionSourceItem]
 
 

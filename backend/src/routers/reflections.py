@@ -511,6 +511,6 @@ async def get_reflection_sources(
         scope_key=scope_key,
         window_start=scope.window_start,
         window_end=scope.window_end,
-        anchor_status=scope.anchor_status.value,
+        anchor_status=scope.anchor_status,
         items=items,
     )

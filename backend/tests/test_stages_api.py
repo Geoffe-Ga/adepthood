@@ -825,9 +825,21 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A user already on cycle 2 at stage 10 advances to cycle_number 3."""
+    """A user already on cycle 2 at stage 10 advances to cycle_number 3.
+
+    This row is the shape the #2894 backfill leaves behind and the ONLY shape
+    that exercises the left-pad: ``cycle_number`` is 2 while ``past_cycle_anchors``
+    is still NULL, so cycle 1's anchor is one of the destroyed ones. Without the
+    pad the retained list would be one element short and every anchor would be
+    filed one cycle early -- cycle 1's slot would hold cycle TWO's anchor, so
+    reopening ``c1:w1`` would serve cycle two's days under cycle one's heading,
+    which is exactly the defect #2886 closed.
+    """
     headers, user_id = await _signup(async_client, "beginagain_cycle2")
-    await _seed_stage_10_progress(db_session, user_id, cycle_number=2)
+    progress = await _seed_stage_10_progress(db_session, user_id, cycle_number=2)
+    assert progress.past_cycle_anchors is None
+    assert progress.program_started_at is not None
+    cycle_two_anchor = ensure_aware(progress.program_started_at)
 
     resp = await async_client.post("/stages/begin-again", headers=headers)
 
@@ -836,3 +848,8 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
     assert data["cycle_number"] == 3
     assert data["current_stage"] == 1
     assert data["completed_stages"] == []
+    await db_session.refresh(progress)
+    # One slot per cycle left behind, and the OUTGOING anchor lands in cycle 2's
+    # slot rather than cycle 1's. The leading None is cycle 1's destroyed anchor,
+    # recorded as unknown -- never back-filled with a neighbour's value.
+    assert progress.past_cycle_anchors == [None, cycle_two_anchor.isoformat()]

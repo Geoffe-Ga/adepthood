@@ -1077,6 +1077,17 @@
         "title": "CourseProgressResponse",
         "type": "object"
       },
+      "CycleAnchorStatus": {
+        "description": "Why a scope does or does not have a calendar window — total, never null.\n\nThe four members are the four distinct causes, kept apart so a client can\nsay the true thing about each instead of collapsing them into one empty\nfeed:\n\n* ``RECORDED`` — the cycle's anchor is known and the window is real.\n* ``UNRECORDED`` — the cycle happened, but its anchor was destroyed by\n  begin-again before #2894 and is NOT recoverable. There is no history\n  table to restore it from, and every approximation available (the earliest\n  habit start date, the timestamps of surviving reviews) would fabricate a\n  window, so it is deliberately refused.\n* ``UNSTARTED`` — the caller has not reached that cycle yet.\n* ``NO_PROGRAM`` — the caller has no ``StageProgress`` row, so no calendar.",
+        "enum": [
+          "recorded",
+          "unrecorded",
+          "unstarted",
+          "no_program"
+        ],
+        "title": "CycleAnchorStatus",
+        "type": "string"
+      },
       "DepthPreferencesResponse": {
         "description": "The four ring toggles returned to the caller.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.",
         "properties": {
@@ -5129,11 +5140,10 @@
         "type": "object"
       },
       "ReflectionSourcesResponse": {
-        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). A scope naming an earlier cycle is measured\nfrom THAT cycle's own retained anchor and its end is clamped to the local\nmidnight of the day the user began again, so consecutive cycles abut at one\nshared instant instead of overlapping (issue #2894).\n\nBoth bounds are ``None`` whenever no window could be drawn, and\n``anchor_status`` names which of the four causes applies:\n``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was\ndestroyed by ``begin-again`` before #2894 and cannot be reconstructed),\n``unstarted`` (the caller has not reached that cycle), or ``no_program``\n(the caller has no program progress at all). The client needs the\ndistinction to tell \"nothing was written in this period\" apart from \"this\nperiod cannot be rebuilt\" — without it both read as one silent empty feed.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
+        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). A scope naming an earlier cycle is measured\nfrom THAT cycle's own retained anchor and its end is clamped to the local\nmidnight of the day the user began again, so consecutive cycles abut at one\nshared instant instead of overlapping (issue #2894).\n\nBoth bounds are ``None`` whenever no window could be drawn, and\n``anchor_status`` names which of the four causes applies. It is published as\nthe :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare\nstring so the four members reach the OpenAPI document: typed as ``str`` the\ncontract carried no enumeration at all, and renaming a member or adding a\nfifth cause changed nothing a client could notice. The members are:\n``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was\ndestroyed by ``begin-again`` before #2894 and cannot be reconstructed),\n``unstarted`` (the caller has not reached that cycle), or ``no_program``\n(the caller has no program progress at all). The client needs the\ndistinction to tell \"nothing was written in this period\" apart from \"this\nperiod cannot be rebuilt\" — without it both read as one silent empty feed.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
         "properties": {
           "anchor_status": {
-            "title": "Anchor Status",
-            "type": "string"
+            "$ref": "#/components/schemas/CycleAnchorStatus"
           },
           "items": {
             "items": {

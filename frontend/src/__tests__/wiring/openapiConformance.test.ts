@@ -85,6 +85,11 @@ interface SchemaVerdict {
  */
 const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
   // --- Renamed or narrowed counterparts -----------------------------------
+  anchorStatusSchema: {
+    component: 'CycleAnchorStatus',
+    reason:
+      'The client names the value by the field that carries it (anchor_status) while the server names it for the domain enum behind it; one enumeration, two vocabularies, which the name-based match cannot bridge.',
+  },
   acceptSuggestionResultSchema: {
     component: 'AcceptSuggestionResponse',
     reason:
@@ -137,11 +142,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
   },
 
   // --- No counterpart on the wire -----------------------------------------
-  anchorStatusSchema: {
-    component: null,
-    reason:
-      'ReflectionSourcesResponse types anchor_status as a bare string; the client narrows it to the four causes the server actually sends so a drifted value is caught at the boundary instead of silently reading as the ordinary empty feed.',
-  },
   careKindSchema: {
     component: null,
     reason:
@@ -221,7 +221,7 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
       window_end:
         'Optional for the same reason as window_start; the pair is read together or not at all.',
       anchor_status:
-        'Optional so a feed from a server that predates the field still validates, and so a value outside the enum is caught to undefined rather than failing the whole feed. Undefined reads as the ordinary empty feed, which is the safer thing to say when the reason for a missing window is unknown.',
+        'Optional so a feed from a server that predates the field still validates, and so a value outside the enum is caught to undefined rather than failing the whole feed. Undefined reads as the ordinary empty feed, which is the safer thing to say when the reason for a missing window is unknown. Only the OPTIONALITY is waived here: the member list itself is pinned against the wire, because anchorStatusSchema is compared to the CycleAnchorStatus component above.',
     },
   },
 };
@@ -424,7 +424,9 @@ function compareScalars(
   }
   const myMembers = enumMembers(zod);
   const theirMembers = enumMembers(component);
-  if (myMembers !== undefined && theirMembers !== undefined && myMembers !== theirMembers) {
+  if (theirMembers !== undefined && myMembers === undefined) {
+    findings.push(`${name}: document enumerates ${theirMembers}, Zod accepts any value`);
+  } else if (myMembers !== undefined && theirMembers !== undefined && myMembers !== theirMembers) {
     findings.push(`${name}: enum members differ — Zod ${myMembers}, document ${theirMembers}`);
   }
   return findings;

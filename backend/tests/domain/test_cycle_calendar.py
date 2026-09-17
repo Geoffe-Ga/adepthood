@@ -125,6 +125,28 @@ def test_resolve_cycle_window_reports_an_unrecoverable_anchor_as_unrecorded(
     assert status is CycleAnchorStatus.UNRECORDED
 
 
+def test_a_leading_unknown_does_not_shift_the_later_anchors_onto_earlier_cycles() -> None:
+    """Element ``i`` belongs to cycle ``i + 1``, even when earlier slots are unknown.
+
+    The shape the #2894 backfill leaves on a row that had already looped: cycle
+    1's anchor is gone, cycle 2's survives. If the write site ever stopped
+    left-padding, this list would be one element short and the same ISO string
+    would answer for cycle ONE -- serving cycle two's days under cycle one's
+    heading, which is the defect #2886 closed.
+    """
+    cycle_two_anchor = _CYCLE_ONE_ANCHOR + timedelta(days=260)
+    progress = _progress(cycle_number=3, past_cycle_anchors=[None, cycle_two_anchor.isoformat()])
+
+    first_window, first_status = resolve_cycle_window(progress, 1)
+    second_window, second_status = resolve_cycle_window(progress, 2)
+
+    assert first_window is None
+    assert first_status is CycleAnchorStatus.UNRECORDED
+    assert second_status is CycleAnchorStatus.RECORDED
+    assert second_window is not None
+    assert second_window.started_at == cycle_two_anchor
+
+
 def test_resolve_cycle_window_for_a_cycle_the_user_has_not_reached_is_unstarted() -> None:
     """A future cycle is not unknown — it has not happened, and says so."""
     progress = _progress(cycle_number=2, past_cycle_anchors=[_CYCLE_ONE_ANCHOR.isoformat()])
