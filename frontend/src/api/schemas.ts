@@ -685,8 +685,21 @@ export const completionSuggestionSchema = z.object({
   // Facts detection extracted from the attesting span: how much, and the
   // user-local day (ISO `YYYY-MM-DD`). Both null when the writer stated
   // neither, and always null for a practice target.
-  completed_units: z.number().nullable(),
-  completed_on: z.string().nullable(),
+  //
+  // Tightened to exactly what the database already guarantees, so a row shape
+  // the server cannot produce is caught here rather than rendered: the amount
+  // is strictly positive under CHECK
+  // `ck_completion_suggestion_completed_units_positive`
+  // (`backend/src/models/completion_suggestion.py:94-97`), and the day is a
+  // `date` column, so it serialises as `YYYY-MM-DD` with no time part. Keep
+  // both no narrower than that: `request()` turns a parse failure into an
+  // `ApiValidationError` (`api/index.ts`), which blanks the WHOLE suggestion
+  // list rather than the one offending row.
+  completed_units: z.number().positive().nullable(),
+  completed_on: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable(),
   status: suggestionStatusSchema,
   accepted_at: z.string().nullable(),
   created_at: z.string(),

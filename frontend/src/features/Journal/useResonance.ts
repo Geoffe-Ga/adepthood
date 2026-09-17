@@ -10,6 +10,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -35,6 +36,7 @@ import type {
 import { formatApiError } from '@/api/errorMessages';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
+import { useHabitStore } from '@/store/useHabitStore';
 
 const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
 const completionsCheckedAfterResonanceError = (reason: string): string =>
@@ -189,6 +191,31 @@ function useMarginError(): MarginErrorApi {
 }
 
 /** Owns suggestion state: load-on-open, merge, and accept/dismiss with guards. */
+/**
+ * Load the habit store once, if an offer needs it and nothing else filled it.
+ *
+ * A habit offer names the unit its accept will log in, and that unit lives only
+ * on the habit row -- the suggestion carries a `goal_id` and nothing else.
+ * Nothing on the entry route hydrates the habit store: the shelf's habits tile
+ * is depth-flag-gated and lives on another screen, so after a cold open the
+ * card would read "3" where it should read "3 units".
+ *
+ * Gated on an empty store, not on the offer appearing: a writer arriving from
+ * the Habits tab already has one, and refetching per entry open would spend a
+ * round trip to learn what is already in memory. Read through `getState` rather
+ * than a subscription so the check itself never re-renders the margin.
+ */
+function useWarmHabitsForOffers(suggestions: CompletionSuggestion[], userTimezone: string): void {
+  const warmedRef = useRef(false);
+  const needsUnits = suggestions.some((s) => s.target_type === 'habit');
+  useEffect(() => {
+    if (warmedRef.current || !needsUnits) return;
+    warmedRef.current = true;
+    if (useHabitStore.getState().habits.length > 0) return;
+    void habitManager.loadHabits(userTimezone);
+  }, [needsUnits, userTimezone]);
+}
+
 function useSuggestions(
   routeEntryId: number | null,
   marginError: MarginErrorApi,
@@ -201,6 +228,7 @@ function useSuggestions(
   const pendingIdsRef = useRef<Set<number>>(new Set());
 
   useHydrateOnOpen(routeEntryId, completionSuggestions.list, setSuggestions);
+  useWarmHabitsForOffers(suggestions, userTimezone);
 
   const mergeFromGenerate = useCallback((incoming: CompletionSuggestion[]) => {
     setSuggestions((prev) => mergeByIdSorted(prev, incoming));

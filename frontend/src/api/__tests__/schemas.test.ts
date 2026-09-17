@@ -2,6 +2,7 @@
 /* global describe, it, expect */
 import {
   apiGoalGroupSchema,
+  completionSuggestionSchema,
   contentItemSchema,
   goalCompletionSchema,
   goalSchema,
@@ -666,5 +667,60 @@ describe('releasedHabitSchema', () => {
 
   it('rejects a non-numeric habit_id', () => {
     expect(() => releasedHabitSchema.parse({ ...released, habit_id: '4' })).toThrow();
+  });
+});
+
+describe('completionSuggestionSchema', () => {
+  const baseSuggestion = {
+    id: 1,
+    journal_entry_id: 7,
+    target_type: 'habit',
+    goal_id: 3,
+    user_practice_id: null,
+    label: 'drank 64 oz of water',
+    anchor_start: 0,
+    anchor_end: 20,
+    anchor_text: 'drank 64 oz of water',
+    completed_units: null,
+    completed_on: null,
+    status: 'pending',
+    accepted_at: null,
+    created_at: '2026-09-12T00:00:00Z',
+    updated_at: '2026-09-12T00:00:00Z',
+  };
+
+  it('accepts the facts the server can actually produce', () => {
+    const parsed = completionSuggestionSchema.parse({
+      ...baseSuggestion,
+      completed_units: 1.5,
+      completed_on: '2026-09-11',
+    });
+    expect(parsed.completed_units).toBe(1.5);
+    expect(parsed.completed_on).toBe('2026-09-11');
+  });
+
+  it('accepts both facts absent, which is every practice suggestion', () => {
+    expect(completionSuggestionSchema.parse(baseSuggestion).completed_units).toBeNull();
+  });
+
+  it('rejects a zero amount, which the CHECK forbids', () => {
+    expect(() =>
+      completionSuggestionSchema.parse({ ...baseSuggestion, completed_units: 0 }),
+    ).toThrow();
+  });
+
+  it('rejects a negative amount, which the CHECK forbids', () => {
+    expect(() =>
+      completionSuggestionSchema.parse({ ...baseSuggestion, completed_units: -5 }),
+    ).toThrow();
+  });
+
+  it('rejects a timestamp where a calendar day belongs', () => {
+    expect(() =>
+      completionSuggestionSchema.parse({
+        ...baseSuggestion,
+        completed_on: '2026-09-11T00:00:00Z',
+      }),
+    ).toThrow();
   });
 });

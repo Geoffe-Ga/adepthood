@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { Habit } from '../features/Habits/Habits.types';
+import { findServerBackedGoalUnit } from '../features/Habits/services/goalLookup';
 
 import { createNormalizedById } from './normalizedCollection';
 import { registerStoreReset } from './registry';
@@ -112,6 +113,34 @@ export const selectHabitById = (
   if (cached === undefined) {
     cached = (state: HabitStoreState) => state.habitsById[id];
     habitByIdSelectorCache.set(id, cached);
+  }
+  return cached;
+};
+
+/**
+ * Factory for a "server-backed goal unit by goal id" selector.
+ *
+ * The journal's completion offer card names the unit its accept will log in,
+ * and the suggestion itself does not carry one — only a `goal_id`. Resolving
+ * it goes through `findServerBackedGoalUnit`, which refuses a demo tile's or an
+ * onboarding scaffold's goal of the same id rather than printing its unit.
+ *
+ * Cached on the same argument as `selectHabitById` and for the same reason
+ * (BUG-FE-STATE-002): every accept calls `habitManager.loadHabits`, which ends
+ * in `setHabits` and replaces `state.habits` wholesale, so a fresh closure per
+ * call would re-subscribe every card in the margin on every settle.
+ */
+const NULL_UNIT_SELECTOR = (_state: HabitStoreState): string | null => null;
+const goalUnitSelectorCache = new Map<number, (_state: HabitStoreState) => string | null>();
+
+export const selectGoalUnitById = (
+  goalId: number | null | undefined,
+): ((_state: HabitStoreState) => string | null) => {
+  if (goalId == null) return NULL_UNIT_SELECTOR;
+  let cached = goalUnitSelectorCache.get(goalId);
+  if (cached === undefined) {
+    cached = (state: HabitStoreState) => findServerBackedGoalUnit(state.habits, goalId);
+    goalUnitSelectorCache.set(goalId, cached);
   }
   return cached;
 };
