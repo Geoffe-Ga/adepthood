@@ -75,6 +75,7 @@ from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.feedback import FEEDBACK_RETENTION_DAYS
 from models.journal_entry import JournalClassification, JournalEntry
+from models.user import User
 from models.vault_activation import VaultCustodyMode
 from routers.journal import delete_journal_entry
 from schemas.feedback import ALLOWED_CONTEXT_KEYS
@@ -695,6 +696,8 @@ _CLASSIFIED_REPLY: Final[str] = json.dumps(
 # The account the deletion guard runs as. Any id; the promise is about
 # behaviour, not about whose row it is.
 _DELETING_ACCOUNT: Final[int] = 1
+# Nothing authenticates as this account; the row only has to exist.
+_NEVER_VERIFIED_HASH: Final[str] = "not-a-real-hash"  # pragma: allowlist secret
 
 
 def _section(document: Path, heading: str) -> str:
@@ -741,6 +744,16 @@ async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
         return SimpleNamespace(text=_CLASSIFIED_REPLY)
 
     monkeypatch.setattr(frequency_classification, "generate_response", classified)
+    # The handler takes this account's egress barrier and refuses an account
+    # that does not exist, so the row the fabricated id names has to be real.
+    db_session.add(
+        User(
+            id=_DELETING_ACCOUNT,
+            email="deleting-one-page@example.com",
+            password_hash=_NEVER_VERIFIED_HASH,
+        )
+    )
+    await db_session.commit()
     await set_consent(db_session, user_id=_DELETING_ACCOUNT, source=INGEST_SOURCE, granted=True)
     entry = JournalEntry(
         user_id=_DELETING_ACCOUNT,

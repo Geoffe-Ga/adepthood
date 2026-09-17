@@ -15773,7 +15773,7 @@
         ]
       },
       "patch": {
-        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.",
+        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.\n\nThe account barrier is taken on the re-ingesting branch alone. The other\nbranch changes a title or a status and dials nothing, so ordering it against\nan erasure would buy no confidentiality and would put a lock on the cheapest\nPATCH the client makes.",
         "operationId": "update_journal_entry_journal__entry_id__patch",
         "parameters": [
           {
@@ -24039,7 +24039,7 @@
     },
     "/users/me": {
       "delete": {
-        "description": "Erase the authenticated caller's account and personal data, irreversibly.\n\nThe subject is resolved from the JWT alone — there is no ``user_id`` in the\npath or the body — so this route cannot be pointed at anybody else. The\ncaller retypes their own email address as confirmation; a mismatch is a 400\nand touches nothing.\n\nThe response enumerates the tables erased, the ones that survive with the\naccount's name cleared off them, and what a user with a Creek Vault still\nhas to purge themselves. Nothing here calls the vault, so an unreachable\none cannot delay or block the erasure.",
+        "description": "Erase the authenticated caller's account and personal data, irreversibly.\n\nThe subject is resolved from the JWT alone — there is no ``user_id`` in the\npath or the body — so this route cannot be pointed at anybody else. The\ncaller retypes their own email address as confirmation; a mismatch is a 400\nand touches nothing.\n\nThe response enumerates the tables erased, the ones that survive with the\naccount's name cleared off them, and what a user with a Creek Vault still\nhas to purge themselves. Nothing here calls the vault, so an unreachable\none cannot delay or block the erasure — the barrier below waits on the\ndatabase and never on Creek, so that stays true of it too.\n\nErasure now also waits for this account's own in-flight outbound writes\n(:mod:`services.account_egress_barrier`), so no content is handed outward\nafter the receipt. It is taken with ``on_unavailable=\"proceed\"``: a lock\nconnection that will not open refuses *egress* everywhere else, and must\nnever refuse *this*, because erasure only ever reduces exposure.",
         "operationId": "delete_my_account_users_me_delete",
         "parameters": [
           {
