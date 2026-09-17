@@ -3801,3 +3801,79 @@ export const vaultActivation = {
     });
   },
 };
+
+// Private beta feedback (#2897 intake contract; #2899/#2900 build the reporter)
+
+/** What kind of report a tester is filing. Mirrors the published enum component. */
+export type FeedbackCategory = 'broken' | 'confusing' | 'idea' | 'praise';
+
+/** What the reported thing cost the person reporting it. */
+export type FeedbackImpact = 'blocked' | 'can_continue' | 'cosmetic' | 'not_applicable';
+
+/**
+ * The allowlisted diagnostic envelope — seven fields, and no eighth.
+ *
+ * The server publishes this component with `additionalProperties: false`, so an
+ * extra key is a 422 rather than a silently trimmed field. Nothing here is free
+ * text: `screen` and `control` are canonical dotted tokens, which is what makes
+ * a URL, a stack trace or a pasted log impossible to spell in them.
+ */
+export interface FeedbackContext {
+  screen: string;
+  control?: string;
+  platform: 'android' | 'ios' | 'web';
+  app_build: string;
+  viewport_class: 'compact' | 'expanded' | 'regular';
+  locale?: string;
+  correlation_id?: string;
+}
+
+/** One submitted report. Carries no idempotency field — that is a header. */
+export interface FeedbackCreate {
+  category: FeedbackCategory;
+  impact: FeedbackImpact;
+  summary: string;
+  intent?: string;
+  expected?: string;
+  actual?: string;
+  context: FeedbackContext;
+}
+
+/** What comes back: a public reference and how the report was filed. */
+export interface FeedbackReceipt {
+  public_id: string;
+  category: FeedbackCategory;
+  impact: FeedbackImpact;
+  created_at: string;
+}
+
+/**
+ * Submit a beta report, and read back the receipt for one.
+ *
+ * `submit` takes the idempotency key as a header rather than a body field,
+ * matching `POST /practice-sessions` and `POST /v1/goal-completions`: a retry
+ * under the same key resolves to the report already stored rather than filing a
+ * second one. Automatic retry is left on for exactly that reason — with a key
+ * present, a retried submit is safe by construction.
+ *
+ * No Zod schema yet: the reporter screen that would consume these lands with
+ * #2899, and a runtime validator declared ahead of its only caller would be an
+ * unexercised claim about a shape nothing yet reads.
+ */
+export const feedback = {
+  submit(
+    report: FeedbackCreate,
+    idempotencyKey?: string,
+    token?: string,
+  ): Promise<FeedbackReceipt> {
+    return request<FeedbackReceipt>('/feedback/', {
+      method: 'POST',
+      body: report,
+      token,
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+    });
+  },
+  receipt(publicId: string, token?: string): Promise<FeedbackReceipt> {
+    return request<FeedbackReceipt>(`/feedback/${publicId}/receipt`, { token });
+  },
+};

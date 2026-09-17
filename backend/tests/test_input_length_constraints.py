@@ -15,6 +15,15 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.feedback import (
+    FEEDBACK_ANSWER_MAX_LENGTH,
+    FEEDBACK_BUILD_MAX_LENGTH,
+    FEEDBACK_CONTROL_MAX_LENGTH,
+    FEEDBACK_LOCALE_MAX_LENGTH,
+    FEEDBACK_SCREEN_MAX_LENGTH,
+    FEEDBACK_SUMMARY_MAX_LENGTH,
+    PUBLIC_ID_MAX_LENGTH,
+)
 from models.practice import Practice
 from schemas.goal_group import (
     GOAL_GROUP_DESCRIPTION_MAX_LENGTH,
@@ -365,4 +374,99 @@ async def test_goal_group_source_over_max_length_returns_422(
     headers = await _signup(async_client)
     payload = _goal_group_payload(source="a" * (GOAL_GROUP_SOURCE_MAX_LENGTH + 1))
     resp = await async_client.post("/goal-groups/", json=payload, headers=headers)
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── Beta feedback: every bound is a named constant ────────────────────────
+
+
+def _feedback_payload(**context_overrides: str) -> dict[str, object]:
+    """A well-formed report, with the diagnostic envelope overridden."""
+    return {
+        "category": "broken",
+        "impact": "blocked",
+        "summary": "The habit card vanished.",
+        "context": {
+            "screen": "journal.shelf",
+            "platform": "ios",
+            "app_build": "1.4.2",
+            "viewport_class": "compact",
+            **context_overrides,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "bound"),
+    [
+        ("screen", FEEDBACK_SCREEN_MAX_LENGTH),
+        ("control", FEEDBACK_CONTROL_MAX_LENGTH),
+        ("app_build", FEEDBACK_BUILD_MAX_LENGTH),
+        ("locale", FEEDBACK_LOCALE_MAX_LENGTH),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_oversized_feedback_context_field_is_rejected(
+    async_client: AsyncClient, field: str, bound: int
+) -> None:
+    """Each envelope field is bounded, and the bound is the module's own constant.
+
+    Driven off the imported constants rather than off literals, so widening a
+    column without widening the request schema -- or the reverse -- fails here
+    rather than at the database.
+    """
+    headers = await _signup(async_client, f"feedback_len_{field}")
+    payload = _feedback_payload(**{field: "a" * (bound + 1)})
+
+    resp = await async_client.post("/feedback/", json=payload, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.parametrize(
+    ("field", "bound"),
+    [
+        ("summary", FEEDBACK_SUMMARY_MAX_LENGTH),
+        ("intent", FEEDBACK_ANSWER_MAX_LENGTH),
+        ("expected", FEEDBACK_ANSWER_MAX_LENGTH),
+        ("actual", FEEDBACK_ANSWER_MAX_LENGTH),
+    ],
+)
+@pytest.mark.asyncio
+async def test_oversized_feedback_prose_is_rejected(
+    async_client: AsyncClient, field: str, bound: int
+) -> None:
+    """The account's own words are bounded too, at their named constants."""
+    headers = await _signup(async_client, f"feedback_prose_{field}")
+    payload = _feedback_payload()
+    payload[field] = "x" * (bound + 1)
+
+    resp = await async_client.post("/feedback/", json=payload, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_an_empty_feedback_summary_is_rejected(async_client: AsyncClient) -> None:
+    """A whitespace-only summary normalises to nothing and records nothing."""
+    headers = await _signup(async_client, "feedback_blank")
+    payload = _feedback_payload()
+    payload["summary"] = "   \u200b  "
+
+    resp = await async_client.post("/feedback/", json=payload, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_public_reference_is_rejected_by_the_path_bound(
+    async_client: AsyncClient,
+) -> None:
+    """The receipt path parameter is bounded before any lookup happens."""
+    headers = await _signup(async_client, "feedback_ref_len")
+
+    resp = await async_client.get(
+        f"/feedback/FB-{'2' * PUBLIC_ID_MAX_LENGTH}/receipt", headers=headers
+    )
+
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY

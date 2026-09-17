@@ -554,3 +554,50 @@ async def test_deletion_logs_counts_and_never_content(
     assert len(audit) == 1
     assert audit[0].__dict__["user_id"] == user_id
     assert audit[0].__dict__["rows_erased"] >= 1
+
+
+_FEEDBACK_TABLE = "feedbackreport"
+
+
+@pytest.mark.asyncio
+async def test_delete_me_erases_the_accounts_beta_reports(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A report filed to the operator goes with the account that filed it.
+
+    Named explicitly rather than left to the schema-driven sweep in
+    ``test_account_deletion_policy.py``. That sweep proves no column pointing at
+    ``user`` still holds the id, which is the stronger and more general claim;
+    this one proves the specific thing a reporter would ask about, through the
+    same route they filed it with, so the promise the privacy policy makes about
+    beta feedback has a test with its name on it.
+    """
+    headers, user_id, email = await _signup(async_client, "beta_leaver")
+    filed = await async_client.post(
+        "/feedback/",
+        json={
+            "category": "confusing",
+            "impact": "can_continue",
+            "summary": "I could not tell which depth I had chosen.",
+            "context": {
+                "screen": "map.overview",
+                "platform": "web",
+                "app_build": "1.4.2",
+                "viewport_class": "regular",
+            },
+        },
+        headers=headers,
+    )
+    assert filed.status_code == HTTPStatus.CREATED
+    assert await _count(db_session, _FEEDBACK_TABLE, _USER_ID, user_id) == 1
+
+    resp = await async_client.request(
+        "DELETE",
+        "/users/me",
+        json={"confirm_email": email},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert await _count(db_session, _FEEDBACK_TABLE, _USER_ID, user_id) == 0

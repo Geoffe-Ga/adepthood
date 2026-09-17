@@ -46,6 +46,7 @@ from models.corpus_fragment import CorpusFragment
 from models.corpus_invitation_state import CorpusInvitationState
 from models.corpus_sweep import CorpusSweep
 from models.energy_plan import EnergyPlan
+from models.feedback import FeedbackReport
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.goal_group import GoalGroup
@@ -231,6 +232,16 @@ MANIFEST: Mapping[str, ExportRule] = {
     "entitlement": Omitted(
         "The course-access grant. An operational record of a purchase rather "
         "than something the account wrote; the receipt lives with the seller.",
+    ),
+    "feedbackreport": _include(
+        "feedback_reports",
+        FeedbackReport,
+        "Every private beta report the account filed: what it said was broken, "
+        "confusing, worth building or worth praising, in its own words. Writing "
+        "the account did about this product, which is still writing the account "
+        "did -- an archive that carried the journal but not this would be "
+        "answering a narrower question than the one a person asks.",
+        drop_columns=("idem_key",),
     ),
     "goal": Included(
         key="goals",

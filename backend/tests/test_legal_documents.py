@@ -68,13 +68,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
+from domain.data_export import MANIFEST, Included
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
+from models.feedback import FEEDBACK_RETENTION_DAYS
 from models.journal_entry import JournalClassification, JournalEntry
 from models.vault_activation import VaultCustodyMode
 from routers.journal import delete_journal_entry
+from schemas.feedback import ALLOWED_CONTEXT_KEYS
 from sentry import scrub_event
 from services import frequency_classification, journal_encryption
 from services.corpus_backfill import backfill_after_consent
@@ -119,6 +122,10 @@ _ENCRYPTED_COLUMNS = frozenset(
         "completionsuggestion.anchor_text",
         "completionsuggestion.label",
         "corpusfragment.content",
+        "feedbackreport.actual",
+        "feedbackreport.expected",
+        "feedbackreport.intent",
+        "feedbackreport.summary",
         "journalentry.message",
         "journalentry.title",
         "marginalia.anchor_text",
@@ -854,3 +861,48 @@ def test_the_policy_discloses_the_prior_letters_the_code_actually_sends() -> Non
     wrong = {word for count, word in _NUMBER_WORDS.items() if count != PRIOR_DRAFT_LIMIT}
     stale = sorted(word for word in wrong if f"at most {word}" in policy)
     assert not stale, f"the policy also claims 'at most {stale}', contradicting itself"
+
+
+# What the policy's beta-feedback section owes, read off the code rather than
+# transcribed. A policy sentence about an allowlist is only worth anything if
+# the allowlist it describes is the one the server enforces, and the way that
+# sentence goes stale is that somebody widens the allowlist and never opens this
+# document.
+_FEEDBACK_SECTION_HEADING = "## beta feedback"
+
+
+def test_the_policy_names_every_field_the_feedback_allowlist_admits() -> None:
+    """The document lists exactly the envelope the code accepts, key for key.
+
+    Read from ``ALLOWED_CONTEXT_KEYS`` so that adding an eighth field to the
+    envelope fails here -- in the document that promised there were seven --
+    rather than shipping a policy that quietly understates what is collected.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    section = policy[policy.index(_FEEDBACK_SECTION_HEADING) :]
+
+    for key in ALLOWED_CONTEXT_KEYS:
+        assert key.replace("_", " ") in section, f"the policy stopped naming {key}"
+
+
+def test_the_policy_states_the_retention_window_the_code_enforces() -> None:
+    """The number of days is the constant the sweeper runs on, not a transcription.
+
+    Changing the retention window without reopening the policy is the exact
+    drift this catches: the document tells a reporter how long their words are
+    held, and that sentence is a promise the code has to keep.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+
+    assert f"kept for **{FEEDBACK_RETENTION_DAYS} days**" in policy
+
+
+def test_the_policy_says_feedback_is_exported_and_erased() -> None:
+    """Both halves of the lifecycle, named where the reporter will look for them."""
+    policy = _prose(_PRIVACY_POLICY)
+    export_rule = MANIFEST["feedbackreport"]
+
+    assert isinstance(export_rule, Included)
+    assert export_rule.key in policy
+    assert "beta feedback reports" in policy
+    assert POLICY["feedbackreport"].disposition is Disposition.ERASE

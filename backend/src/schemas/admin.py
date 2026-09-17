@@ -161,6 +161,19 @@ class EnergyPlanCleanupResult(BaseModel):
     older_than_days: int
 
 
+class FeedbackCleanupResult(BaseModel):
+    """Outcome of a feedback retention sweep: rows deleted + the window used.
+
+    A separate shape from :class:`EnergyPlanCleanupResult` rather than a shared
+    one: the two sweeps answer different questions and will drift apart the
+    moment either grows a field, and a rename of the energy result would break
+    a client that already reads it.
+    """
+
+    deleted: int
+    older_than_days: int
+
+
 class EntitlementGrantRequest(BaseModel):
     """A manual entitlement grant, with the operator's reason.
 

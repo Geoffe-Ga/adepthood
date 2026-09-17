@@ -71,7 +71,8 @@ held in the corpus your reflections are drawn from**, **every margin note —
 including the sentence of yours it quotes back at you**, **the suggestions
 drawn from your entries**, and **your answers to the weekly prompts**. So is
 the writing you do away from the journal: **the reflection and the insight
-you write after sitting a practice**, which are not part of any entry and are
+you write after sitting a practice**, and **everything you write in a beta
+feedback report** — none of these is part of any entry, and all of them are
 protected for the same reason. One thing that is not your writing is
 encrypted alongside all of it: **the access key for a private vault, if you
 connect one**. They are encrypted with a key the
@@ -287,6 +288,51 @@ asks the operating system's push service for a token, which is kept on your
 device. The reminders themselves are scheduled locally — their text never
 leaves your phone, and no server holds your push token.
 
+## Beta feedback
+
+If you are in the private beta you can send a report about something that is
+broken, confusing, worth building, or worth saying thanks for. A report is the
+only place in this app where you are writing **to the people who build it**
+rather than to yourself, so it is worth being exact about what a report
+carries.
+
+**What you write.** A one-line summary, plus up to three longer answers: what
+you were trying to do, what you expected, and what happened instead. These are
+your words and they are treated as your writing everywhere else on this page —
+encrypted in the database, included in your export, erased with your account,
+and never reproduced in a log, an error report, or a crash trace.
+
+**What the app attaches.** Seven fields, and no eighth. The app may send: the
+**canonical screen** you were on, as a short internal name like
+`journal.shelf`; the **control** you used or the stable error code you saw; the
+**platform** — iOS, Android, or web; the **app build** you are running; a
+**viewport class** — compact, regular, or expanded, never your exact screen
+size; your **locale**, as a language and optional region; and a **correlation
+id**, a random identifier the app generates for a session's own telemetry.
+
+That list is an allowlist enforced by the server, not a filter applied
+afterwards. A report carrying any other field is refused outright, and nothing
+is stored. There is no mechanism here to send a log bundle, a stack trace, a
+request or response body, a header map, a web address with a query string, a
+vault address, or the contents of the screen — and no field these could be
+smuggled into: the screen and control names are restricted to short internal
+tokens, which a URL or a trace cannot be spelled as.
+
+**Who reads it.** The operator, for the purpose of fixing and improving the
+app. Reports are not shown to other users, not published, and not sold. If the
+report is about something on a screen, the operator sees the screen's name and
+your words about it — not the screen.
+
+**How long it is kept.** A report is kept for **180 days** and then deleted.
+You do not need to ask for that; it happens on a schedule.
+
+**Your copy, and getting rid of it.** Every report you have filed is in your
+export, in full, under `feedback_reports` — with one exception: the retry token
+the app sends so a double-tap cannot file the same report twice is dropped,
+because it is a transport detail and not something you wrote. Deleting your
+account deletes every report you filed, immediately, along with everything
+else.
+
 ## Links that leave the app
 
 Some places in Adepthood hand you to somebody else's website — the privacy
@@ -346,7 +392,8 @@ deactivation, no support path to recover any of it. Your session stops
 working on every device.
 
 Everything of yours goes — entries at every tier, margin notes, habits,
-goals, practices, course progress, sign-in records, the account row itself.
+goals, practices, course progress, beta feedback reports, sign-in records,
+the account row itself.
 
 Three things survive, each for a stated reason: a practice you contributed
 to the shared catalogue stays and stops naming you, because other people

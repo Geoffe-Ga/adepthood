@@ -144,6 +144,14 @@ POLICY: Mapping[str, TablePolicy] = {
         "The account's course access grant. The Gumroad sale that paid for it "
         "survives separately as the financial record.",
     ),
+    "feedbackreport": _erase(
+        "user_id",
+        "What the account wrote about its own experience of the beta, plus the "
+        "small diagnostic envelope naming the screen it was written from. The "
+        "words are the account's own writing and go with it; the envelope only "
+        "describes where those words were typed, so keeping it would leave a "
+        "record of somebody being somewhere, saying something no longer here.",
+    ),
     "goal": TablePolicy(
         disposition=Disposition.ERASE,
         rationale="Goals belong to a habit, and every habit belongs to one account.",

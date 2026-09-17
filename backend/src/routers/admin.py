@@ -25,6 +25,7 @@ from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from error_responses import build_router
 from errors import bad_request, not_found
 from models.entitlement import Entitlement
+from models.feedback import FEEDBACK_RETENTION_DAYS
 from models.gumroad_sale import GumroadSale
 from models.license_binding import LicenseBinding
 from models.llm_usage_log import LLMUsageLog
@@ -40,6 +41,7 @@ from schemas.admin import (
     EntitlementGrantRequest,
     EntitlementRevokeRequest,
     EntitlementSummary,
+    FeedbackCleanupResult,
     GumroadSaleSummary,
     LicenseBindingSummary,
     ModelUsageBreakdown,
@@ -54,6 +56,7 @@ from schemas.admin import (
 from schemas.pagination import count_query_total, page_has_more, paginate_query
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
+from services.feedback import delete_expired_feedback_reports
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -394,6 +397,32 @@ async def cleanup_energy_plans(
         extra={"admin_id": admin.id, "deleted": deleted, "older_than_days": older_than_days},
     )
     return EnergyPlanCleanupResult(deleted=deleted, older_than_days=older_than_days)
+
+
+@router.post("/maintenance/feedback-reports", response_model=FeedbackCleanupResult)
+async def cleanup_feedback_reports(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    admin: Annotated[User, Depends(require_admin)],
+    older_than_days: Annotated[
+        int, Query(ge=_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)
+    ] = FEEDBACK_RETENTION_DAYS,
+) -> FeedbackCleanupResult:
+    """Delete private beta reports older than ``older_than_days``.
+
+    The integration point for the retention window the privacy policy states.
+    ``feedbackreport`` rows have no TTL and unkeyed submissions are not
+    deduplicated, so the table grows for as long as the beta runs without this.
+    Safe to call from a cron via an admin token.
+    """
+    try:
+        deleted = await delete_expired_feedback_reports(session, older_than_days=older_than_days)
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
+    logger.info(
+        "feedbackreport_cleanup",
+        extra={"admin_id": admin.id, "deleted": deleted, "older_than_days": older_than_days},
+    )
+    return FeedbackCleanupResult(deleted=deleted, older_than_days=older_than_days)
 
 
 @dataclass(frozen=True)

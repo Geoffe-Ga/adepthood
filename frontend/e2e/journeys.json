@@ -82,7 +82,7 @@
   },
   {
     "id": "habits.log-unit-operation-selector",
-    "description": "A user opens a habit modal and leaves the operation on + to add the entered amount, taps once for set to make the selected day's total exact, or taps again for − to subtract the entered amount. Log Units remains the only commit action. The set operation derives the signed correction from that selected calendar day's existing completions before using the ordinary append-only completion route. Uncovered because the browser habit journey logs through its API-backed seam but does not yet open GoalModal; pinned meanwhile by GoalModal.test.tsx for the operation cycle, add/subtract qualification, exact higher and lower totals, selected past-day bucketing, and reset after commit.",
+    "description": "A user opens a habit modal and leaves the operation on + to add the entered amount, taps once for set to make the selected day's total exact, or taps again for \u2212 to subtract the entered amount. Log Units remains the only commit action. The set operation derives the signed correction from that selected calendar day's existing completions before using the ordinary append-only completion route. Uncovered because the browser habit journey logs through its API-backed seam but does not yet open GoalModal; pinned meanwhile by GoalModal.test.tsx for the operation cycle, add/subtract qualification, exact higher and lower totals, selected past-day bucketing, and reset after commit.",
     "crosses": {
       "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
       "client": ["goalCompletions"],
@@ -106,7 +106,7 @@
   },
   {
     "id": "habits.subtractive-no-log-streak",
-    "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS — ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
+    "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS \u2014 ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goals"],
@@ -1184,5 +1184,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/voice-drafts-shelf.e2e.test.ts"
+  },
+  {
+    "id": "feedback.report-from-settings-to-receipt",
+    "description": "A private-beta tester opens the feedback reporter from Settings, chooses a category and impact, writes what happened, and is handed a public reference such as FB-7K3M9Q2B that resolves to their own receipt and to nobody else's. Uncovered because #2897 ships the intake contract only -- the model, the migration, the allowlisted diagnostic envelope, the idempotency header, the export and deletion participation and the retention sweep -- and there is no reporter screen or API client to drive across the seam yet. The backend suites prove the contract in process: tests/test_feedback_api.py pins the 422 on an eighth context key with zero rows persisted, the concurrency test that two posts under one Idempotency-Key create one row, and the byte-identical 404 a cross-tenant reference gets. #2899 and #2900 build the reporter and the inbox; the spec belongs with them.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["feedback"],
+      "routes": ["POST /feedback/", "GET /feedback/{public_id}/receipt"],
+      "tables": ["feedbackreport"]
+    },
+    "status": "uncovered",
+    "issue": 2899
   }
 ]
