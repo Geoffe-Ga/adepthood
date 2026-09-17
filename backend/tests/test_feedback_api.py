@@ -560,30 +560,35 @@ def test_minted_references_are_non_sequential() -> None:
 
 
 @pytest.mark.asyncio
-async def test_two_accounts_filing_the_same_report_get_different_references(
-    async_client: AsyncClient,
-) -> None:
-    """The reference is minted, not derived from the content or the account.
+async def test_a_reference_is_minted_rather_than_derived(async_client: AsyncClient) -> None:
+    """Neither the account nor the words it wrote can be read back out of a reference.
 
     The test this replaces asserted that the caller's ``user_id`` did not appear
-    as a substring of their reference -- which the alphabet guarantees on its own,
-    because it excludes every digit below 2. It was true before the feature was
-    written and would have stayed true if the reference were ``FB-`` plus a hash
-    of the account.
+    as a substring of their reference -- which the alphabet guarantees on its
+    own, because it excludes every digit below 2. It was true before the feature
+    was written.
 
-    Identical prose from two accounts is the case that actually discriminates: a
-    content hash would collide, an account-derived reference would be a constant
-    per account, and a mint gives two unrelated values.
+    Two halves, because each kills a different wrong implementation and neither
+    kills both. *Same account, two different reports*: an account-derived
+    reference is a constant per account, so it collides here. *Two accounts,
+    byte-identical prose*: a content hash is a constant per body, so it collides
+    there. A mint gives four unrelated values.
     """
-    first_headers = await _signup(async_client, "feedback_same_words_one")
-    second_headers = await _signup(async_client, "feedback_same_words_two")
+    first_headers = await _signup(async_client, "feedback_minted_one")
+    second_headers = await _signup(async_client, "feedback_minted_two")
     payload = _payload()
 
-    first = await async_client.post("/feedback/", json=payload, headers=first_headers)
-    second = await async_client.post("/feedback/", json=payload, headers=second_headers)
+    same_account_first = await async_client.post("/feedback/", json=payload, headers=first_headers)
+    same_account_second = await async_client.post(
+        "/feedback/", json=_payload(summary="A wholly different sentence."), headers=first_headers
+    )
+    other_account = await async_client.post("/feedback/", json=payload, headers=second_headers)
 
-    assert first.status_code == second.status_code == HTTPStatus.CREATED
-    assert first.json()["public_id"] != second.json()["public_id"]
+    for response in (same_account_first, same_account_second, other_account):
+        assert response.status_code == HTTPStatus.CREATED
+
+    assert same_account_first.json()["public_id"] != same_account_second.json()["public_id"]
+    assert same_account_first.json()["public_id"] != other_account.json()["public_id"]
 
 
 @pytest.mark.asyncio

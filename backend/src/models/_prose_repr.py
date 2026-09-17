@@ -134,8 +134,11 @@ class ProseRedactingRepr:
     def __str__(self) -> str:
         """Render exactly as :meth:`__repr__`, so the two can never diverge.
 
-        Defined rather than inherited because the inherited one is the leak:
-        ``BaseModel.__str__`` renders its own view of the instance, and every
-        ``%s``, ``format()`` and f-string goes through it.
+        Belt-and-braces rather than the fix: with :meth:`__repr_args__` redacted
+        at source, the inherited ``BaseModel.__str__`` is already safe, and
+        removing this method leaves every rendering test green. It is kept
+        because it costs one line to make ``str`` and ``repr`` the same string,
+        and because the next person to touch this class should not have to know
+        which of the two hooks is the one carrying the redaction.
         """
         return self.__repr__()
