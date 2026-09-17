@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
@@ -23,10 +24,14 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
+from main import app
 from models.feedback import (
     FEEDBACK_SUMMARY_MAX_LENGTH,
+    PUBLIC_ID_ALPHABET,
     PUBLIC_ID_MAX_LENGTH,
+    PUBLIC_ID_PATTERN,
     FeedbackReport,
+    mint_public_id,
 )
 from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
 
@@ -48,7 +53,7 @@ async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
-def _context(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 - arbitrary probe values
+def _context(**overrides: object) -> dict[str, Any]:
     """A well-formed diagnostic envelope, with overrides applied."""
     return {
         "screen": "journal.shelf",
@@ -62,7 +67,7 @@ def _context(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 - arbitrary pr
     }
 
 
-def _payload(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 - arbitrary probe values
+def _payload(**overrides: object) -> dict[str, Any]:
     """A well-formed report body, with overrides applied."""
     return {
         "category": "broken",
@@ -430,8 +435,6 @@ async def test_the_published_context_component_forbids_additional_properties() -
     ``additionalProperties: false`` is what makes a generated client, a fuzzer
     and a reviewer all see the same rule the server enforces.
     """
-    from main import app  # noqa: PLC0415 - the document is built from the live app
-
     context = _components(app.openapi())["FeedbackContext"]
 
     assert context["additionalProperties"] is False
@@ -453,8 +456,6 @@ def test_the_allowlist_constant_equals_the_models_declared_field_set() -> None:
 @pytest.mark.asyncio
 async def test_the_report_enums_publish_as_named_components(enum_name: str) -> None:
     """A bare ``str`` on either side would erase the closed set from the contract."""
-    from main import app  # noqa: PLC0415 - the document is built from the live app
-
     components = _components(app.openapi())
 
     assert "enum" in components[enum_name]
@@ -463,8 +464,6 @@ async def test_the_report_enums_publish_as_named_components(enum_name: str) -> N
 @pytest.mark.asyncio
 async def test_both_the_request_and_the_receipt_reference_the_same_enum_components() -> None:
     """The closed set is published on the way in *and* on the way out."""
-    from main import app  # noqa: PLC0415 - the document is built from the live app
-
     components = _components(app.openapi())
     create = json.dumps(components["FeedbackCreate"])
     receipt = json.dumps(components["FeedbackReceipt"])
@@ -478,8 +477,6 @@ async def test_both_the_request_and_the_receipt_reference_the_same_enum_componen
 @pytest.mark.asyncio
 async def test_the_idempotency_key_is_a_header_parameter_and_not_a_body_field() -> None:
     """Where the three shipped idempotent surfaces put it, feedback puts it too."""
-    from main import app  # noqa: PLC0415 - the document is built from the live app
-
     document = app.openapi()
     operation = document["paths"]["/feedback/"]["post"]
     headers = {
@@ -496,9 +493,52 @@ async def test_the_idempotency_key_is_a_header_parameter_and_not_a_body_field() 
 @pytest.mark.asyncio
 async def test_every_status_the_module_can_send_is_declared(status_code: str) -> None:
     """A status a route answers with and does not declare is a contract it breaks."""
-    from main import app  # noqa: PLC0415 - the document is built from the live app
-
     document = app.openapi()
 
     assert status_code in document["paths"]["/feedback/"]["post"]["responses"]
     assert status_code in document["paths"]["/feedback/{public_id}/receipt"]["get"]["responses"]
+
+
+# ── The public reference ──────────────────────────────────────────────────
+
+# Characters a person reading a reference down a phone line, or typing one back
+# in, confuses with one another. None of them may be mintable.
+_AMBIGUOUS_CHARACTERS = "ILOU01"
+
+_MINTS_SAMPLED = 200
+
+
+def test_the_public_reference_alphabet_excludes_the_confusable_characters() -> None:
+    """A reference gets read aloud and typed back, so the lookalikes are not minted."""
+    assert not set(_AMBIGUOUS_CHARACTERS) & set(PUBLIC_ID_ALPHABET)
+
+
+def test_minted_references_are_non_sequential_and_carry_no_account_id() -> None:
+    """Two hundred mints are distinct, and none of them encodes anything.
+
+    A sequential reference would let anybody holding one enumerate every other
+    report by counting, which is the failure the owner check would then be the
+    only thing standing between an attacker and. Sampling rather than asserting
+    on one value, because a mint that returned a constant would pass a
+    single-value pattern check.
+    """
+    minted = {mint_public_id() for _ in range(_MINTS_SAMPLED)}
+
+    assert len(minted) == _MINTS_SAMPLED
+    for reference in minted:
+        assert re.fullmatch(PUBLIC_ID_PATTERN, reference), reference
+
+
+@pytest.mark.asyncio
+async def test_a_submitted_report_stores_no_account_id_in_its_reference(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The reference the server hands back does not spell the account it belongs to."""
+    headers = await _signup(async_client, "feedback_reference")
+
+    public_id = (await async_client.post("/feedback/", json=_payload(), headers=headers)).json()[
+        "public_id"
+    ]
+
+    stored = (await db_session.execute(select(FeedbackReport))).scalars().one()
+    assert str(stored.user_id) not in public_id
