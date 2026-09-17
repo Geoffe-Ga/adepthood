@@ -15,6 +15,8 @@ import json
 import logging
 import re
 from http import HTTPStatus
+from itertools import pairwise
+from statistics import mean
 from typing import Any
 from uuid import uuid4
 
@@ -28,8 +30,10 @@ from main import app
 from models.feedback import (
     FEEDBACK_SUMMARY_MAX_LENGTH,
     PUBLIC_ID_ALPHABET,
+    PUBLIC_ID_BODY_LENGTH,
     PUBLIC_ID_MAX_LENGTH,
     PUBLIC_ID_PATTERN,
+    PUBLIC_ID_PREFIX,
     FeedbackReport,
     mint_public_id,
 )
@@ -513,35 +517,73 @@ def test_the_public_reference_alphabet_excludes_the_confusable_characters() -> N
     assert not set(_AMBIGUOUS_CHARACTERS) & set(PUBLIC_ID_ALPHABET)
 
 
-def test_minted_references_are_non_sequential_and_carry_no_account_id() -> None:
-    """Two hundred mints are distinct, and none of them encodes anything.
+def test_minted_references_are_non_sequential() -> None:
+    """A counter would satisfy "all distinct, all well-formed"; it must not pass here.
 
-    A sequential reference would let anybody holding one enumerate every other
-    report by counting, which is the failure the owner check would then be the
-    only thing standing between an attacker and. Sampling rather than asserting
-    on one value, because a mint that returned a constant would pass a
-    single-value pattern check.
+    The first version of this test asserted that two hundred mints were distinct
+    and matched the pattern -- which a straight counter does perfectly, so it
+    proved nothing about the property in its own name. Two measurements separate
+    a counter from ``secrets`` by orders of magnitude rather than by a margin:
+
+    A counter varies its *last* character and essentially never its first, so the
+    number of distinct leading characters across the sample is 1 or 2. Drawing
+    200 characters uniformly from a 30-symbol alphabet leaves a symbol unseen
+    with probability ``(29/30) ** 200`` -- about one in nine hundred -- so the
+    expected count is very nearly all thirty and a floor of half the alphabet is
+    unreachable by chance.
+
+    And consecutive counter values differ in one position; consecutive random
+    values differ in about ``8 * 29/30`` of their eight. A floor at half the body
+    length sits far from both.
     """
-    minted = {mint_public_id() for _ in range(_MINTS_SAMPLED)}
+    minted = [mint_public_id() for _ in range(_MINTS_SAMPLED)]
+    bodies = [reference.removeprefix(PUBLIC_ID_PREFIX) for reference in minted]
 
-    assert len(minted) == _MINTS_SAMPLED
+    assert len(set(minted)) == _MINTS_SAMPLED
     for reference in minted:
         assert re.fullmatch(PUBLIC_ID_PATTERN, reference), reference
 
+    leading = {body[0] for body in bodies}
+    assert len(leading) >= len(PUBLIC_ID_ALPHABET) // 2, (
+        f"only {len(leading)} distinct leading characters in {_MINTS_SAMPLED} mints; "
+        "a sequential mint varies its last character, not its first"
+    )
+
+    drifts = [
+        sum(before != after for before, after in zip(first, second, strict=True))
+        for first, second in pairwise(bodies)
+    ]
+    assert mean(drifts) > PUBLIC_ID_BODY_LENGTH / 2, (
+        f"consecutive mints differ in {mean(drifts):.2f} of {PUBLIC_ID_BODY_LENGTH} "
+        "positions on average; a sequential mint differs in about one"
+    )
+
 
 @pytest.mark.asyncio
-async def test_a_submitted_report_stores_no_account_id_in_its_reference(
-    async_client: AsyncClient, db_session: AsyncSession
+async def test_two_accounts_filing_the_same_report_get_different_references(
+    async_client: AsyncClient,
 ) -> None:
-    """The reference the server hands back does not spell the account it belongs to."""
-    headers = await _signup(async_client, "feedback_reference")
+    """The reference is minted, not derived from the content or the account.
 
-    public_id = (await async_client.post("/feedback/", json=_payload(), headers=headers)).json()[
-        "public_id"
-    ]
+    The test this replaces asserted that the caller's ``user_id`` did not appear
+    as a substring of their reference -- which the alphabet guarantees on its own,
+    because it excludes every digit below 2. It was true before the feature was
+    written and would have stayed true if the reference were ``FB-`` plus a hash
+    of the account.
 
-    stored = (await db_session.execute(select(FeedbackReport))).scalars().one()
-    assert str(stored.user_id) not in public_id
+    Identical prose from two accounts is the case that actually discriminates: a
+    content hash would collide, an account-derived reference would be a constant
+    per account, and a mint gives two unrelated values.
+    """
+    first_headers = await _signup(async_client, "feedback_same_words_one")
+    second_headers = await _signup(async_client, "feedback_same_words_two")
+    payload = _payload()
+
+    first = await async_client.post("/feedback/", json=payload, headers=first_headers)
+    second = await async_client.post("/feedback/", json=payload, headers=second_headers)
+
+    assert first.status_code == second.status_code == HTTPStatus.CREATED
+    assert first.json()["public_id"] != second.json()["public_id"]
 
 
 @pytest.mark.asyncio

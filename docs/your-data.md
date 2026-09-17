@@ -130,8 +130,10 @@ Everything in the app that is yours:
 - Energy plans, return arcs, invitation history, depth preferences and
   interface state.
 - Every private beta report you filed — your words and the small diagnostic
-  envelope that travelled with them. A report is also deleted on its own
-  schedule 180 days after you file it, whether or not you delete your account.
+  envelope that travelled with them. Reports older than 180 days are also removed
+  when the operator runs the retention sweep, whether or not you delete your
+  account; that sweep is run by hand rather than on a timer, so deleting your
+  account is the only way to remove a report at a moment you choose.
 - Your account row itself — email, password hash, display name, wallet
   balances — and every linked Google or Apple sign-in.
 - The record of sign-in attempts made with your address, including the IP

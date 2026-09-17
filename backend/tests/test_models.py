@@ -13,6 +13,8 @@ fail when the underlying schema changes, not just the Python attribute.
 from __future__ import annotations
 
 import importlib
+import re
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -237,3 +239,60 @@ def test_no_runtime_side_effects_on_import() -> None:
         assert not hasattr(mod, attr), (
             f"Module unexpectedly defines runtime object '{attr}' at import time."
         )
+
+
+# Where the package lives, and where its modules do. Walked rather than listed,
+# because a list of modules is the thing that goes stale.
+_MODELS_PACKAGE = Path(cast("str", importlib.import_module("models").__file__)).parent
+
+# A ``table=True`` class declaration, as every model in this package spells one.
+_TABLE_CLASS = re.compile(r"^class\s+(\w+)\((?:[^)]*\b)?table\s*=\s*True", re.MULTILINE)
+
+
+def _declared_table_classes() -> dict[str, str]:
+    """Every ``table=True`` class in the package, mapped to the module declaring it."""
+    declared: dict[str, str] = {}
+    for path in sorted(_MODELS_PACKAGE.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        for name in _TABLE_CLASS.findall(path.read_text(encoding="utf-8")):
+            declared[name] = path.name
+    return declared
+
+
+def test_every_table_model_is_imported_by_the_package() -> None:
+    """``import models`` must register every table on ``SQLModel.metadata``.
+
+    Load-bearing well beyond tidiness, and it failed silently once.
+    ``migrations/env.py`` reaches the schema through exactly one statement --
+    ``import models`` -- and hands ``SQLModel.metadata`` to Alembic as
+    ``target_metadata``. A model the package never imports is therefore invisible
+    to ``alembic check``, the CI gate that proves a migration matches the models
+    it claims to create. The table still works at runtime, because the router
+    that uses it imports its module directly; what stops working is the gate, and
+    a gate that cannot fail is worse than no gate, because it gets deferred to.
+
+    Driven off the source text rather than off ``SQLModel.metadata``, on purpose:
+    reading the metadata would only report what some *other* import already
+    registered, which is the coincidence this test exists to stop depending on.
+    """
+    declared = _declared_table_classes()
+    assert declared, "found no table models; the scan matched nothing"
+
+    package = importlib.import_module("models")
+    missing = sorted(
+        f"{name} ({module})" for name, module in declared.items() if not hasattr(package, name)
+    )
+    assert missing == [], (
+        f"models/__init__.py does not import {missing}; alembic check cannot see them"
+    )
+
+
+def test_every_table_model_reaches_the_metadata_alembic_reflects() -> None:
+    """The consequence of the import, stated where a reader will look for it."""
+    package = importlib.import_module("models")
+    tables = SQLModel.metadata.tables
+
+    for name in _declared_table_classes():
+        model = cast("type[SQLModel]", getattr(package, name))
+        assert model.__tablename__ in tables, name

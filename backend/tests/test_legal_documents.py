@@ -321,7 +321,23 @@ def test_the_policy_names_the_prose_that_is_still_plaintext() -> None:
 
 # Spelled-out numbers, because the policy is written for a reader rather than a
 # machine and says "up to three", never "up to 3".
-_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+_NUMBER_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+}
+
+# The policy closes the list with an ordinal -- "and no eighth" -- so the count
+# assertion needs both forms of the same number rather than one of them bent to
+# fit. Kept beside the cardinals for the reason those are spelled out at all:
+# the document is written for a reader and never says "7".
+_ORDINAL_WORDS = {7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth"}
 
 
 def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
@@ -879,6 +895,13 @@ _FEEDBACK_SECTION_HEADING = "## beta feedback"
 _ENVELOPE_PARAGRAPH_OPENING = "**what the app attaches.**"
 _ENVELOPE_PARAGRAPH_CLOSING = "that list is an allowlist"
 
+# Each envelope field is named in **bold** in the enumerating paragraph. Matching
+# the emphasis rather than the bare words is what makes this a check on the
+# enumeration instead of on English: "screen", "control" and "platform" are
+# ordinary words the paragraph uses in prose for other reasons, so a substring
+# search for them is satisfied by text that enumerates nothing at all.
+_EMPHASISED = re.compile(r"\*\*(.+?)\*\*")
+
 
 def _envelope_paragraph(policy: str) -> str:
     """The policy paragraph that enumerates the diagnostic envelope."""
@@ -887,19 +910,51 @@ def _envelope_paragraph(policy: str) -> str:
     return policy[start:end]
 
 
-def test_the_policy_names_every_field_the_feedback_allowlist_admits() -> None:
-    """The document lists exactly the envelope the code accepts, key for key.
+def _enumerated_fields(paragraph: str) -> list[str]:
+    """The bolded field names the paragraph enumerates, minus its own lead-in."""
+    lead_in = _ENVELOPE_PARAGRAPH_OPENING.strip("*")
+    return [term for term in _EMPHASISED.findall(paragraph) if term != lead_in]
 
-    Read from ``ALLOWED_CONTEXT_KEYS`` so that adding an eighth field to the
-    envelope fails here -- in the document that promised there were seven --
-    rather than shipping a policy that quietly understates what is collected.
+
+def test_the_policy_enumerates_exactly_the_fields_the_allowlist_admits() -> None:
+    """The document's list and the code's allowlist are the same list, both ways.
+
+    Two claims, because the previous two versions of this test each passed for an
+    accidental reason. The first searched the whole section, and the sentence that
+    *forbids* a stack trace contains the words "stack trace", so a widened
+    allowlist did not move it. The second searched the enumerating paragraph for
+    each key as bare text, which ordinary English satisfies -- that paragraph says
+    "screen" and "control" whatever it enumerates -- and checked nothing in the
+    other direction at all, so removing a field from the code would have left the
+    document claiming it forever.
+
+    So: the count of bolded field names equals the size of the allowlist, and each
+    allowlisted key is named by exactly one of them. Adding a field to either side,
+    or removing one, breaks the count.
     """
-    policy = _prose(_PRIVACY_POLICY)
-    assert _FEEDBACK_SECTION_HEADING in policy
-    paragraph = _envelope_paragraph(policy)
+    paragraph = _envelope_paragraph(_prose(_PRIVACY_POLICY))
+    enumerated = _enumerated_fields(paragraph)
 
+    assert len(enumerated) == len(ALLOWED_CONTEXT_KEYS), (
+        f"the policy enumerates {enumerated}, the code allows {sorted(ALLOWED_CONTEXT_KEYS)}"
+    )
     for key in ALLOWED_CONTEXT_KEYS:
-        assert key.replace("_", " ") in paragraph, f"the policy stopped naming {key}"
+        spoken = key.replace("_", " ")
+        naming = [term for term in enumerated if spoken in term]
+        assert len(naming) == 1, f"the policy names {key} {len(naming)} times: {enumerated}"
+
+
+def test_the_policy_states_the_number_of_envelope_fields_the_code_allows() -> None:
+    """The closing count is read off the allowlist rather than transcribed.
+
+    The sentence a reader trusts most in that paragraph is the count, because it
+    is the one that says the list is closed. Widening the allowlist without
+    reopening the document makes that sentence a lie, and this is where it fails.
+    """
+    paragraph = _envelope_paragraph(_prose(_PRIVACY_POLICY))
+    allowed = len(ALLOWED_CONTEXT_KEYS)
+
+    assert f"{_NUMBER_WORDS[allowed]} fields, and no {_ORDINAL_WORDS[allowed + 1]}" in paragraph
 
 
 def test_the_policy_states_the_retention_window_the_code_enforces() -> None:
@@ -923,3 +978,18 @@ def test_the_policy_says_feedback_is_exported_and_erased() -> None:
     assert export_rule.key in policy
     assert "beta feedback reports" in policy
     assert POLICY["feedbackreport"].disposition is Disposition.ERASE
+
+
+def test_your_data_states_the_same_retention_window_the_code_enforces() -> None:
+    """The companion document carries the number too, and it is the same number.
+
+    ``docs/your-data.md`` is where the policy sends a reader who wants the longer
+    answer about deletion, so a retention window changed in the code and updated
+    in only one of the two documents leaves the other quietly wrong. The policy
+    half is pinned by
+    :func:`test_the_policy_states_the_retention_window_the_code_enforces`; this is
+    the other half.
+    """
+    your_data = _prose(_YOUR_DATA)
+
+    assert f"older than {FEEDBACK_RETENTION_DAYS} days" in your_data

@@ -11,6 +11,7 @@ from .corpus_sweep import CorpusSweep
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
+from .feedback import FeedbackReport
 from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_completion_idempotency import GoalCompletionSpend
@@ -66,6 +67,7 @@ __all__ = [
     "CourseStage",
     "EnergyPlan",
     "Entitlement",
+    "FeedbackReport",
     "Goal",
     "GoalCompletion",
     "GoalCompletionSpend",

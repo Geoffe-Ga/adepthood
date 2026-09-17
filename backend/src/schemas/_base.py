@@ -25,7 +25,7 @@ difference stays visible rather than being rounded up to "enforced".
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
@@ -38,12 +38,8 @@ class OwnedResourcePublic(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: ANN401 - Pydantic's own kwargs
-        """Keep cooperative subclass initialisation working under Pydantic."""
-        super().__init_subclass__(**kwargs)
-
     @classmethod
-    def __pydantic_init_subclass__(cls, **_kwargs: Any) -> None:  # noqa: ANN401 - as above
+    def __pydantic_init_subclass__(cls, **_kwargs: object) -> None:
         """Refuse a subclass that declares ``user_id``, before it can be returned.
 
         Pydantic calls this hook once the subclass's fields are built, which is

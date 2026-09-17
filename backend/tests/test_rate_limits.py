@@ -329,3 +329,36 @@ async def test_the_feedback_address_budget_stops_a_third_account_on_one_address(
 
     assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert refused.json()["detail"] == "rate_limit_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_retry_does_not_spend_the_shared_address_budget(
+    async_client: AsyncClient,
+) -> None:
+    """One account's rejected retries must not lock out everybody behind its address.
+
+    ``slowapi`` evaluates a route's limits in registration order, and
+    ``__evaluate_limits`` calls ``hit()`` -- which *bills* the bucket -- on each
+    one until a limit refuses, then breaks. So whichever axis is evaluated first
+    is charged for every request, including the ones the second axis is about to
+    reject. Registered address-first, an account that has exhausted its own
+    budget goes on draining the budget it shares with everyone on that address,
+    and a client looping on a failed submit takes the whole office offline:
+    exactly the denial-of-service shape this endpoint is warned about.
+
+    So the account axis is registered first. Here one account spends its ten and
+    then retries ten more times in vain; a second account's first report must
+    still be accepted, because those ten refusals cost the shared axis nothing.
+    """
+    greedy = await _signup(async_client, "feedback_greedy")
+    for _ in range(_LIMIT_10):
+        spent = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=greedy)
+        assert spent.status_code == HTTPStatus.CREATED
+    for _ in range(_LIMIT_10):
+        refused = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=greedy)
+        assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await _signup(async_client, "feedback_neighbour")
+    admitted = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=neighbour)
+
+    assert admitted.status_code == HTTPStatus.CREATED

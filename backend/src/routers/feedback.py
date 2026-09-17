@@ -177,8 +177,17 @@ def _to_report(payload: FeedbackCreate, user_id: int, hashed: str | None) -> Fee
 
 
 @router.post("/", response_model=FeedbackReceipt, status_code=status.HTTP_201_CREATED)
-@limiter.limit(_FEEDBACK_ACCOUNT_RATE_LIMIT, key_func=per_user_rate_limit_key)
+# The order of these two is load-bearing, not cosmetic. Decorators register
+# bottom-up, ``slowapi`` evaluates a route's limits in registration order, and
+# ``__evaluate_limits`` bills each bucket with ``hit()`` until one refuses and
+# then breaks -- so whichever axis is evaluated first is charged for requests the
+# second axis is about to reject. Account-first means an account that has spent
+# its own budget stops costing the budget it shares with everyone else on that
+# address; address-first would let one client's retry loop take a whole office
+# offline. ``test_a_refused_retry_does_not_spend_the_shared_address_budget``
+# fails if these two are ever swapped back.
 @limiter.limit(_FEEDBACK_ADDRESS_RATE_LIMIT)
+@limiter.limit(_FEEDBACK_ACCOUNT_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def submit_feedback(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: FeedbackCreate,

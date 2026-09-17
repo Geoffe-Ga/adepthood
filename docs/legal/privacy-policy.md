@@ -323,8 +323,11 @@ app. Reports are not shown to other users, not published, and not sold. If the
 report is about something on a screen, the operator sees the screen's name and
 your words about it — not the screen.
 
-**How long it is kept.** A report is kept for **180 days** and then deleted.
-You do not need to ask for that; it happens on a schedule.
+**How long it is kept.** A report is kept for **180 days**. Past that, it is
+deleted the next time the operator runs the maintenance sweep — there is no
+automatic timer, so the exact day depends on when that sweep is run. You do not
+have to ask for it, and deleting your account removes every report you have
+filed at a moment you choose.
 
 **Your copy, and getting rid of it.** Every report you have filed is in your
 export, in full, under `feedback_reports` — with one exception: the retry token

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
 
@@ -178,3 +179,62 @@ async def test_the_submission_log_line_names_the_envelope_and_not_the_words(
     assert submitted.__dict__["screen"] == "journal.shelf"
     assert submitted.__dict__["app_build"] == "1.4.2"
     assert submitted.__dict__["report_id"] is not None
+
+
+# Every channel that renders an object to text. ``repr`` is the one people think
+# of; the others are the ones that actually carry a leak, because
+# ``logger.debug("%s", row)`` and an f-string both go through ``__str__`` -- and
+# on a SQLModel class Pydantic's ``__str__`` builds itself from
+# ``__repr_args__`` rather than delegating to ``__repr__``, so a mixin that
+# overrides only ``__repr__`` leaves all of them printing the plaintext.
+_RENDERERS = (
+    ("repr", repr),
+    ("str", str),
+    ("format", format),
+    ("fstring", lambda value: f"{value}"),
+)
+_RENDERER_IDS = [name for name, _ in _RENDERERS]
+
+
+@pytest.mark.parametrize(("name", "render"), _RENDERERS, ids=_RENDERER_IDS)
+def test_no_rendering_channel_reproduces_the_submitted_prose(
+    name: str, render: Callable[[object], str]
+) -> None:
+    """The privacy policy this feature ships promises this of every channel, not one."""
+    assert _PROSE_SENTINEL not in render(_report()), name
+
+
+@pytest.mark.parametrize(("name", "render"), _RENDERERS, ids=_RENDERER_IDS)
+def test_every_rendering_channel_still_identifies_the_report(
+    name: str, render: Callable[[object], str]
+) -> None:
+    """The honesty half, per channel: none of them may render nothing."""
+    assert _PUBLIC_ID in render(_report()), name
+
+
+def test_percent_s_logging_of_a_report_does_not_reproduce_the_prose(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exact call the mixin's docstring names, driven through a real handler.
+
+    ``logger.debug("%s", row)`` is the channel the module claims to close, and
+    it is the one that renders through ``__str__``. Formatting the record is
+    what makes this a test of the rendered line rather than of the arguments
+    still held on it.
+    """
+    logger = logging.getLogger("tests.feedback_repr")
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        logger.debug("%s", _report())
+
+    assert caplog.records
+    assert all(_PROSE_SENTINEL not in record.getMessage() for record in caplog.records)
+
+
+def test_the_representation_hook_is_redacted_at_source() -> None:
+    """``__repr_args__`` is what ``__str__``, ``__pretty__`` and ``__rich_repr__`` read."""
+    rendered = {key: repr(value) for key, value in _report().__repr_args__()}
+
+    for column in ("summary", "intent", "expected", "actual"):
+        assert rendered[column] == REDACTED, column
+    assert rendered["public_id"] == f"'{_PUBLIC_ID}'"
