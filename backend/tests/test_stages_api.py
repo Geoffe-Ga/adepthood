@@ -13,6 +13,7 @@ from sqlmodel import col, select
 
 from curriculum import CANONICAL_PHASE_ORDER, CurriculumDataError, stage_curriculum
 from domain.constants import TOTAL_STAGES
+from domain.dates import ensure_aware
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
@@ -745,13 +746,100 @@ async def test_begin_again_requires_auth(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_begin_again_preserves_the_outgoing_cycles_anchor(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The cycle being left behind keeps its calendar anchor (issue #2894).
+
+    The loop re-stamps ``program_started_at`` so the FRESH cycle restarts its
+    schedule; before this fix that write was the only record of when the
+    outgoing cycle began, so every past-cycle review lost the window it was
+    written about. The outgoing anchor is now retained verbatim on
+    ``past_cycle_anchors`` in the same commit as the bump.
+    """
+    headers, user_id = await _signup(async_client, "beginagain_anchor")
+    progress = await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
+    cycle_one_anchor = datetime.now(UTC) - timedelta(days=300)
+    progress.program_started_at = cycle_one_anchor
+    progress.stage_started_at = cycle_one_anchor
+    db_session.add(progress)
+    await db_session.commit()
+
+    resp = await async_client.post("/stages/begin-again", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    await db_session.refresh(progress)
+    # The new cycle is re-anchored to now...
+    assert progress.program_started_at is not None
+    assert ensure_aware(progress.program_started_at) > cycle_one_anchor
+    # ...and cycle 1's own anchor survives the loop, to the microsecond.
+    assert progress.past_cycle_anchors == [cycle_one_anchor.isoformat()]
+
+
+@pytest.mark.asyncio
+async def test_a_second_loop_records_the_second_cycles_anchor_too(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Looping twice retains BOTH outgoing anchors, oldest first.
+
+    Element ``i`` is cycle ``i + 1``'s program start, so the list read between
+    the two loops is exactly what element 1 must hold afterwards. That equality
+    is what makes cycle k's END derivable as cycle k+1's recorded start, which
+    is why no separate ``ended_at`` is stored.
+    """
+    headers, user_id = await _signup(async_client, "beginagain_two_loops")
+    progress = await _seed_stage_10_progress(db_session, user_id, cycle_number=1)
+    cycle_one_anchor = datetime.now(UTC) - timedelta(days=300)
+    progress.program_started_at = cycle_one_anchor
+    progress.stage_started_at = cycle_one_anchor
+    db_session.add(progress)
+    await db_session.commit()
+
+    assert (await async_client.post("/stages/begin-again", headers=headers)).status_code == (
+        HTTPStatus.OK
+    )
+    await db_session.refresh(progress)
+    assert progress.program_started_at is not None
+    cycle_two_anchor = ensure_aware(progress.program_started_at)
+
+    # Re-complete the cycle so the second loop is permitted.
+    progress.current_stage = TOTAL_STAGES
+    db_session.add(progress)
+    await db_session.commit()
+    assert (await async_client.post("/stages/begin-again", headers=headers)).status_code == (
+        HTTPStatus.OK
+    )
+    await db_session.refresh(progress)
+
+    assert progress.cycle_number == 3
+    assert progress.past_cycle_anchors == [
+        cycle_one_anchor.isoformat(),
+        cycle_two_anchor.isoformat(),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_begin_again_second_loop_increments_to_cycle_3(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A user already on cycle 2 at stage 10 advances to cycle_number 3."""
+    """A user already on cycle 2 at stage 10 advances to cycle_number 3.
+
+    This row is the shape the #2894 backfill leaves behind and the ONLY shape
+    that exercises the left-pad: ``cycle_number`` is 2 while ``past_cycle_anchors``
+    is still NULL, so cycle 1's anchor is one of the destroyed ones. Without the
+    pad the retained list would be one element short and every anchor would be
+    filed one cycle early -- cycle 1's slot would hold cycle TWO's anchor, so
+    reopening ``c1:w1`` would serve cycle two's days under cycle one's heading,
+    which is exactly the defect #2886 closed.
+    """
     headers, user_id = await _signup(async_client, "beginagain_cycle2")
-    await _seed_stage_10_progress(db_session, user_id, cycle_number=2)
+    progress = await _seed_stage_10_progress(db_session, user_id, cycle_number=2)
+    assert progress.past_cycle_anchors is None
+    assert progress.program_started_at is not None
+    cycle_two_anchor = ensure_aware(progress.program_started_at)
 
     resp = await async_client.post("/stages/begin-again", headers=headers)
 
@@ -760,3 +848,8 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
     assert data["cycle_number"] == 3
     assert data["current_stage"] == 1
     assert data["completed_stages"] == []
+    await db_session.refresh(progress)
+    # One slot per cycle left behind, and the OUTGOING anchor lands in cycle 2's
+    # slot rather than cycle 1's. The leading None is cycle 1's destroyed anchor,
+    # recorded as unknown -- never back-filled with a neighbour's value.
+    assert progress.past_cycle_anchors == [None, cycle_two_anchor.isoformat()]

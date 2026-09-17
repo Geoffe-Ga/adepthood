@@ -50,10 +50,12 @@ export function backendUrl(): string {
  * Move an account's program anchor `daysAgo` days back, so the stage calendar
  * has genuinely moved on.
  *
- * `program_started_at` is only ever written as "now" and no request schema
- * accepts it, so this arrange has to go to the lane's own throwaway database
- * through `tests.e2e.program_anchor` -- the same out-of-band rewind the Map
- * journey uses. It stubs nothing on the request path: the only thing faked is
+ * `program_started_at` is only ever written as "now" (the model default and the
+ * begin-again reset, which retains the displaced value on `past_cycle_anchors`
+ * without ever moving the live anchor backwards) and no request schema accepts
+ * it, so this arrange has to go to the lane's own throwaway database through
+ * `tests.e2e.program_anchor` -- the same out-of-band rewind the Map journey
+ * uses. It stubs nothing on the request path: the only thing faked is
  * the passage of time, and it is faked in the database rather than anywhere the
  * spec then reads through.
  */

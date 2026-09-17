@@ -14,7 +14,7 @@ import ast
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from alembic import command
@@ -4497,3 +4497,169 @@ def _suggestion_row_label(db_url: str, suggestion_id: int) -> str:
             return str(value)
     finally:
         engine.dispose()
+
+
+# -- #2894 stageprogress.past_cycle_anchors migration round-trip --------------
+
+# Revision anchors for the past-cycle-anchors migration round-trip.
+_PAST_CYCLE_ANCHORS_BASE_REVISION = "d4e7c9a1b830"  # pragma: allowlist secret
+_PAST_CYCLE_ANCHORS_REVISION = "a1f7c2b9d604"  # pragma: allowlist secret
+_PAST_CYCLE_ANCHORS_COLUMN = "past_cycle_anchors"
+
+# The date the seeded habits start on. The ORIGINAL program_started_at backfill
+# (18c9d0e1f2a3) reconstructed anchors from MIN(habit.start_date); this
+# migration deliberately refuses to, and these rows exist so that refusal is
+# provable rather than vacuous — a backfill that guessed would write this date.
+_REFUSED_GUESS_DATE = "2024-01-15"
+
+
+def _bootstrap_past_cycle_anchors(sync_url: str) -> None:
+    """Pre-create head-shaped ``user`` / ``stageprogress`` / ``habit`` tables, seeded.
+
+    Three stageprogress rows, one per branch of the backfill: a row still on its
+    first cycle (nothing was ever destroyed), a row on cycle 2 (one anchor gone),
+    and a row on cycle 3 (two gone). Each has a habit whose ``start_date`` is the
+    value the old ``MIN(habit.start_date)`` reconstruction would have used, so a
+    backfill that guessed instead of recording unknown is caught by assertion
+    rather than by review.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE stageprogress ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL UNIQUE,"
+                " current_stage INTEGER NOT NULL,"
+                " completed_stages TEXT NOT NULL DEFAULT '[]',"
+                " stage_started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " program_started_at DATETIME,"
+                " cycle_number INTEGER NOT NULL DEFAULT 1,"
+                " highest_stage_reached INTEGER NOT NULL DEFAULT 1"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE TABLE habit ( id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,"
+                " start_date DATE NOT NULL)"
+            )
+        )
+        for uid, cycle in ((1, 1), (2, 2), (3, 3)):
+            conn.execute(
+                text("INSERT INTO user (id, email) VALUES (:id, :email)"),
+                {"id": uid, "email": f"anchors{uid}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO stageprogress"
+                    " (id, user_id, current_stage, completed_stages, cycle_number)"
+                    " VALUES (:id, :uid, 1, '[]', :cycle)"
+                ),
+                {"id": uid, "uid": uid, "cycle": cycle},
+            )
+            conn.execute(
+                text("INSERT INTO habit (id, user_id, start_date) VALUES (:id, :uid, :start_date)"),
+                {"id": uid, "uid": uid, "start_date": _REFUSED_GUESS_DATE},
+            )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_past_cycle_anchors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the #2894 migration."""
+    db_path = tmp_path / "past_cycle_anchors_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_past_cycle_anchors(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _PAST_CYCLE_ANCHORS_BASE_REVISION)
+    return cfg
+
+
+def _past_cycle_anchors_of(db_url: str, row_id: int) -> list[str | None] | None:
+    """Return one row's decoded ``past_cycle_anchors`` value (NULL stays None)."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            raw = conn.execute(
+                text("SELECT past_cycle_anchors FROM stageprogress WHERE id = :id"),
+                {"id": row_id},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+    if raw is None:
+        return None
+    decoded = json.loads(raw)
+    assert isinstance(decoded, list)
+    return cast("list[str | None]", decoded)
+
+
+def _assert_anchors_recorded_as_unknown(db_url: str) -> None:
+    """Every destroyed anchor is recorded as unknown — counted, never guessed."""
+    # Still on cycle 1: nothing was ever left behind, so there is nothing to record.
+    assert _past_cycle_anchors_of(db_url, 1) is None
+    # Looped once: exactly one anchor was destroyed.
+    assert _past_cycle_anchors_of(db_url, 2) == [None]
+    # Looped twice: two were.
+    assert _past_cycle_anchors_of(db_url, 3) == [None, None]
+    # And nothing resembling the MIN(habit.start_date) reconstruction was written.
+    for row_id in (1, 2, 3):
+        recorded = _past_cycle_anchors_of(db_url, row_id) or []
+        assert all(value is None for value in recorded)
+        assert not any(_REFUSED_GUESS_DATE in str(value) for value in recorded)
+
+
+def test_stageprogress_past_cycle_anchors_round_trip_on_sqlite(
+    alembic_sqlite_config_past_cycle_anchors: Config,
+) -> None:
+    """Round-trip the #2894 anchors column: add, backfill-as-unknown, drop, re-add.
+
+    The backfill records the NUMBER of anchors ``begin-again`` destroyed and
+    refuses to reconstruct any of them. ``MIN(habit.start_date)`` — the source
+    the original ``program_started_at`` backfill used, and still available here
+    because habits survive begin-again — would return a plausible-looking WRONG
+    date and re-create the wrong-period defect of #2886 under a new name.
+    """
+    cfg = alembic_sqlite_config_past_cycle_anchors
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade adds the nullable column and records the unknowns.
+    command.upgrade(cfg, _PAST_CYCLE_ANCHORS_REVISION)
+    assert _PAST_CYCLE_ANCHORS_COLUMN in _columns_of(db_url, "stageprogress")
+    _assert_anchors_recorded_as_unknown(db_url)
+
+    # Phase 2: downgrade drops the column and leaves every other one untouched.
+    command.downgrade(cfg, _PAST_CYCLE_ANCHORS_BASE_REVISION)
+    cols_after = _columns_of(db_url, "stageprogress")
+    assert _PAST_CYCLE_ANCHORS_COLUMN not in cols_after
+    assert {"id", "user_id", "current_stage", "cycle_number", "highest_stage_reached"} <= cols_after
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            surviving = [
+                (int(row[0]), int(row[1]))
+                for row in conn.execute(
+                    text("SELECT id, cycle_number FROM stageprogress ORDER BY id")
+                ).all()
+            ]
+    finally:
+        engine.dispose()
+    assert surviving == [(1, 1), (2, 2), (3, 3)]
+
+    # Phase 3: re-upgrade reproduces the same record of what cannot be recovered.
+    command.upgrade(cfg, _PAST_CYCLE_ANCHORS_REVISION)
+    _assert_anchors_recorded_as_unknown(db_url)

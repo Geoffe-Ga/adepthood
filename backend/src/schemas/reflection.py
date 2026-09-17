@@ -12,6 +12,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from domain.cycle_calendar import CycleAnchorStatus
+
 
 class PromotedQuoteSummary(BaseModel):
     """A promoted quote as it rides along with its source entry in a tier feed.
@@ -51,9 +53,23 @@ class ReflectionSourcesResponse(BaseModel):
     timezone, with the END EXCLUSIVE (the first instant of the day after the
     span's final day). They are published so the client can name the review
     period without re-deriving it from the scope key and drifting out of step
-    with the feed (issue #2886). Both are ``None`` for a caller with no program
-    progress, who has no anchor and so no window; the client then shows no
-    period rather than a guessed one.
+    with the feed (issue #2886). A scope naming an earlier cycle is measured
+    from THAT cycle's own retained anchor and its end is clamped to the local
+    midnight of the day the user began again, so consecutive cycles abut at one
+    shared instant instead of overlapping (issue #2894).
+
+    Both bounds are ``None`` whenever no window could be drawn, and
+    ``anchor_status`` names which of the four causes applies. It is published as
+    the :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare
+    string so the four members reach the OpenAPI document: typed as ``str`` the
+    contract carried no enumeration at all, and renaming a member or adding a
+    fifth cause changed nothing a client could notice. The members are:
+    ``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was
+    destroyed by ``begin-again`` before #2894 and cannot be reconstructed),
+    ``unstarted`` (the caller has not reached that cycle), or ``no_program``
+    (the caller has no program progress at all). The client needs the
+    distinction to tell "nothing was written in this period" apart from "this
+    period cannot be rebuilt" — without it both read as one silent empty feed.
 
     Deliberately unpaginated: a single tier's feed is at most a few dozen
     items, so the whole set is returned in one call. Pagination can be layered
@@ -64,6 +80,7 @@ class ReflectionSourcesResponse(BaseModel):
     scope_key: str
     window_start: datetime | None
     window_end: datetime | None
+    anchor_status: CycleAnchorStatus
     items: list[ReflectionSourceItem]
 
 

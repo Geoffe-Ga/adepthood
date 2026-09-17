@@ -305,6 +305,18 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.reopen-past-cycle-review-sees-its-own-sources",
+    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. Uncovered because driving it end to end needs a browser-lane arrange that completes a cycle and presses begin-again, and no begin-again journey exists yet; pinned meanwhile by test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py and ReflectionSourcesPanel.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["reflections"],
+      "routes": ["GET /reflections/sources"],
+      "tables": ["journalentry", "stageprogress"]
+    },
+    "status": "uncovered",
+    "issue": 2904
+  },
+  {
     "id": "journal.delete-entry",
     "description": "A writer deletes one page from the shelf, the server stops serving it, and another account cannot delete it for them.",
     "crosses": {

@@ -84,6 +84,7 @@ import {
   type StagePromptsResponseT,
   type PromotedQuoteT,
   type PromotedQuoteSummaryT,
+  type ReflectionAnchorStatusT,
   type ReflectionDueT,
   type ReflectionLevelT,
   type ReflectionSourceItemT,
@@ -1983,6 +1984,7 @@ export const promotions = {
 export type ReflectionLevel = ReflectionLevelT;
 export type ReflectionDue = ReflectionDueT;
 export type ReflectionSourceItem = ReflectionSourceItemT;
+export type ReflectionAnchorStatus = ReflectionAnchorStatusT;
 
 /** ``GET /reflections/due`` result: the due window, or ``null`` when nothing is due. */
 export interface ReflectionDueResponse {
@@ -1995,15 +1997,22 @@ export interface ReflectionDueResponse {
  *
  * ``window_start`` / ``window_end`` are the half-open bounds the server filtered
  * on, END EXCLUSIVE — the first instant of the day after the review's last day.
- * They are null for a caller with no program anchor, and undefined against a
+ * They are null whenever no window could be drawn, and undefined against a
  * server that predates them; either way the composer shows no period rather
  * than a guess of its own.
+ *
+ * ``anchor_status`` names which of four causes explains a bound-less response:
+ * ``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was
+ * destroyed by beginning again before the server retained them, and cannot be
+ * reconstructed), ``unstarted`` (the reader has not reached that cycle), or
+ * ``no_program``. It is undefined against a server that predates it.
  */
 export interface ReflectionSourcesResponse {
   level?: ReflectionLevel;
   scope_key?: string;
   window_start?: string | null;
   window_end?: string | null;
+  anchor_status?: ReflectionAnchorStatus;
   items: ReflectionSourceItem[];
 }
 

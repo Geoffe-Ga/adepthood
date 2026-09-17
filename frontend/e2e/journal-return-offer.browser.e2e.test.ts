@@ -34,9 +34,11 @@ import {
  *
  * Reaching the offer takes two arrangements, and only the first is out of band.
  * The Return is offered from Orange onward, and `program_started_at` is only
- * ever written as "now" -- no request schema accepts it -- so the account's
- * anchor is moved back through `tests.e2e.program_anchor` and then *read*
- * through `GET /stages`, which is what records that the person entered the
+ * ever written as "now" -- the model default and the begin-again reset, which
+ * only ever retains the displaced value for a past cycle, and no request schema
+ * accepts it -- so the account's anchor is moved back through
+ * `tests.e2e.program_anchor` and then *read* through `GET /stages`, which is
+ * what records that the person entered the
  * window the calendar opened. The contraction itself is arranged entirely over
  * the wire: a habit whose foundation has been quiet longer than the detection
  * window, and a finished page asked for its resonance.

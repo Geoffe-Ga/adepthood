@@ -3002,6 +3002,8 @@ function ReflectionComposer({
         <ReflectionSourcesPanel
           items={reflection.sources}
           window={reflection.window}
+          anchorStatus={reflection.anchorStatus}
+          feedStatus={reflection.feedStatus}
           timeZone={userTimezone}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}

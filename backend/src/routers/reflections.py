@@ -30,6 +30,7 @@ from sqlmodel import col, select
 
 from database import get_session
 from domain.constants import DAYS_PER_WEEK
+from domain.cycle_calendar import CycleAnchorStatus, cycle_week_bounds, resolve_cycle_window
 from domain.dates import ensure_aware, to_user_date
 from domain.program_calendar import (
     calendar_week,
@@ -150,19 +151,33 @@ def _validated_scope_weeks(level: ReflectionLevel, scope_key: str) -> range:
         raise unprocessable("invalid_scope") from exc
 
 
-def _guard_scope_unlocked(weeks: range, progress: StageProgress | None, tz: str) -> None:
-    """Reject a scope whose first week the caller's calendar has not yet reached.
+def _gate_week_for(progress: StageProgress | None, cycle: int, tz: str) -> int | None:
+    """The week a scope must open at or before, or None when no gate applies.
 
     An unstarted user sits in week 1, so only scopes opening at week 1 are
     readable for them; everyone else is gated by their date-derived week, counted
     in their OWN zone so the gate lifts at their midnight rather than UTC's.
+
+    A COMPLETED cycle is the one exception: the user demonstrably lived through
+    every week of it, so no week of it can be "not yet reached" (issue #2894).
+    The relaxation is deliberately narrow — it fires only for
+    ``cycle < progress.cycle_number``. The current cycle and any future one fall
+    through to exactly the comparison this guard always made, so a cycle-1 user
+    asking for ``c2:s2`` is still refused.
     """
-    user_week = (
-        calendar_week(resolve_program_anchor(progress), tz=tz)
-        if progress is not None
-        else _UNSTARTED_USER_WEEK
-    )
-    if weeks.start > user_week:
+    if progress is None:
+        return _UNSTARTED_USER_WEEK
+    if cycle < progress.cycle_number:
+        return None
+    return calendar_week(resolve_program_anchor(progress), tz=tz)
+
+
+def _guard_scope_unlocked(
+    weeks: range, progress: StageProgress | None, cycle: int, tz: str
+) -> None:
+    """Reject a scope whose first week the caller's calendar has not yet reached."""
+    gate_week = _gate_week_for(progress, cycle, tz)
+    if gate_week is not None and weeks.start > gate_week:
         raise forbidden("scope_locked")
 
 
@@ -263,7 +278,14 @@ class _SourcesScope:
     scope_key: str
     weeks: range
     timezone: str
-    progress: StageProgress | None
+    #: The anchor of the SCOPE's own cycle — not necessarily the caller's
+    #: current one. ``None`` whenever ``anchor_status`` names a reason there is
+    #: no window: the feed is then empty rather than windowed against a cycle
+    #: the key does not belong to (issue #2886).
+    anchor: datetime | None
+    #: Which of the four causes explains a missing window, so the client can say
+    #: the true thing instead of one indistinguishable empty feed (issue #2894).
+    anchor_status: CycleAnchorStatus
     window_start: datetime | None
     window_end: datetime | None
 
@@ -274,23 +296,28 @@ async def _scope_for_request(
     """Validate the requested scope, resolve the caller's calendar, and bound the window.
 
     Raises 422 ``invalid_scope`` for a key the grammar rejects and 403
-    ``scope_locked`` for a scope the caller's calendar has not reached. A caller
-    with no program progress has no anchor, so the window is left unset.
+    ``scope_locked`` for a scope the caller's calendar has not reached. The
+    window is drawn against the SCOPE's own cycle, so a past cycle is measured
+    from the anchor it was actually lived under and clamped at the loop point
+    (issue #2894); a cycle with no anchor on record is left unset and says why.
     """
     weeks = _validated_scope_weeks(level, scope_key)
     tz = await get_user_timezone(session, user_id)
     progress = await get_user_progress(session, user_id)
-    _guard_scope_unlocked(weeks, progress, tz)
+    cycle = scope_cycle(scope_key)
+    _guard_scope_unlocked(weeks, progress, cycle, tz)
+    cycle_window, anchor_status = resolve_cycle_window(progress, cycle)
     window: tuple[datetime | None, datetime | None] = (None, None)
-    if progress is not None:
-        window = program_week_bounds(resolve_program_anchor(progress), weeks, tz=tz)
+    if cycle_window is not None:
+        window = cycle_week_bounds(cycle_window, weeks, tz=tz)
     return _SourcesScope(
         user_id=user_id,
         level=level,
         scope_key=scope_key,
         weeks=weeks,
         timezone=tz,
-        progress=progress,
+        anchor=None if cycle_window is None else cycle_window.started_at,
+        anchor_status=anchor_status,
         window_start=window[0],
         window_end=window[1],
     )
@@ -322,21 +349,24 @@ async def _load_entry_refs(
 
 
 async def _resolve_entry_refs(session: AsyncSession, scope: _SourcesScope) -> list[EntryRef]:
-    """The scope's raw dailies — none at all when the scope is not this cycle's.
+    """The scope's raw dailies, read against the anchor of the scope's OWN cycle.
 
-    ``POST /stages/begin-again`` re-stamps ``program_started_at``, so the only
-    anchor on record belongs to the CURRENT cycle. Windowing an older cycle's
-    key against it served this cycle's entries under the old review's heading
-    (issue #2886). A past-cycle scope therefore contributes no raw material;
-    its own child reviews, which are matched by exact key rather than by
-    window, still stand in, so reopening an old review is not broken.
+    The lesson of issue #2886 stands unchanged: windowing one cycle's key
+    against another cycle's anchor serves the wrong period's entries under the
+    old review's heading. What changed is how it is honoured. ``begin-again``
+    now retains each outgoing cycle's ``program_started_at`` (issue #2894), so
+    :func:`domain.cycle_calendar.resolve_cycle_window` can hand back the scope's
+    own anchor and a window clamped at the instant that cycle closed — and the
+    same anchor labels each row's program week, so bounds and labels are read
+    from one clock rather than two.
+
+    A cycle with no anchor on record (destroyed before #2894, or never reached)
+    contributes no raw material at all rather than a guessed period; its own
+    child reviews, matched by exact key rather than by window, still stand in.
     """
-    progress = scope.progress
-    if progress is None or scope.window_start is None or scope.window_end is None:
+    if scope.anchor is None or scope.window_start is None or scope.window_end is None:
         return []
-    if scope_cycle(scope.scope_key) != progress.cycle_number:
-        return []
-    return await _load_entry_refs(session, scope, resolve_program_anchor(progress))
+    return await _load_entry_refs(session, scope, scope.anchor)
 
 
 async def _batch_entries(
@@ -430,6 +460,7 @@ def _log_sources_resolved(scope: _SourcesScope, items: list[ReflectionSourceItem
             "level": scope.level.value,
             "scope_key": scope.scope_key,
             "cycle": scope_cycle(scope.scope_key),
+            "anchor_status": scope.anchor_status.value,
             "window_start": scope.window_start,
             "window_end": scope.window_end,
             "timezone": scope.timezone,
@@ -450,10 +481,18 @@ async def get_reflection_sources(
 
     A malformed key, a level/token mismatch, or an out-of-range index is 422; a
     scope whose first week the caller has not yet reached is 403 ``scope_locked``.
+    Every week of a cycle the caller has already completed counts as reached.
     Otherwise the hierarchy is walked top-down: an existing child reflection
     stands in for its whole span, and every gap decomposes to that week's raw
     daily entries, yielding a chronological feed with each promoted quote flagged
     pending or included.
+
+    A scope naming an EARLIER cycle is windowed against that cycle's own
+    retained anchor and clamped at the instant it closed (issue #2894). When
+    that anchor is not on record — destroyed by ``begin-again`` before #2894
+    shipped, and not reconstructable — the feed comes back empty with no bounds
+    and ``anchor_status`` set to ``unrecorded``, so the client can say the
+    period cannot be rebuilt rather than implying nothing was written in it.
     """
     scope = await _scope_for_request(session, current_user, level, scope_key)
     reflection_refs = await _load_reflection_refs(session, current_user, scope_key)
@@ -472,5 +511,6 @@ async def get_reflection_sources(
         scope_key=scope_key,
         window_start=scope.window_start,
         window_end=scope.window_end,
+        anchor_status=scope.anchor_status,
         items=items,
     )
