@@ -95,12 +95,31 @@ export async function signUp(page: Page, prefix: string): Promise<string> {
   return email;
 }
 
-export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
+/**
+ * A signed-in session for `email`: its bearer token and the IANA zone the
+ * SERVER has on record for that account.
+ *
+ * The zone matters to any spec that asserts a calendar day. The backend
+ * resolves every user-local day in this zone -- `signUp` set it from the
+ * browser's own `detectDeviceTimezone()`, and nothing pins the browser's zone
+ * -- so a day key a spec builds in UTC is a different day for part of every
+ * day on any host that is not at UTC. `AuthResponse.timezone` is documented as
+ * always populated, so this is the one honest source for it.
+ */
+export async function sessionFor(
+  request: APIRequestContext,
+  email: string,
+): Promise<{ token: string; timezone: string }> {
   const login = await request.post(`${backendUrl()}/auth/login`, {
     data: { email, password: ACCOUNT_PHRASE },
   });
   if (!login.ok()) throw new Error(`seeding login failed with ${login.status()}`);
-  return ((await login.json()) as { token: string }).token;
+  const body = (await login.json()) as { token: string; timezone?: string };
+  return { token: body.token, timezone: body.timezone ?? 'UTC' };
+}
+
+export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
+  return (await sessionFor(request, email)).token;
 }
 
 export async function seedHabit(

@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 // Every other JournalEntryScreen test resolves completionSuggestions.list empty; these pin the pending-card render and the dismissed-suggestion filter.
@@ -280,6 +280,40 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
       'Check off drank 64 oz of water, 64 oz, yesterday',
     );
     expect(view.getByText(/64 oz \u00b7 yesterday\. Log it\?/u)).toBeTruthy();
+  });
+
+  it('picks up the unit when the store fills while the card is already on screen', async () => {
+    // The card SUBSCRIBES to the habit store; it does not read it once at
+    // mount. In production the store is empty when the offer first paints and
+    // the warm-up fills it a round trip later, so a non-reactive read would
+    // leave the writer consenting to "64" with no unit -- and every other test
+    // here seeds the store before render, so none of them can tell the two
+    // apart.
+    const yesterday = addDaysInTZ(todayInUserTZ(mockUserTz), -1, mockUserTz);
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({
+      items: [
+        suggestionRow({
+          label: 'drank 64 oz of water',
+          completed_units: 64,
+          completed_on: yesterday,
+        }),
+      ],
+    });
+
+    const view = renderScreen({ entryId: 7 });
+
+    await view.findByTestId('suggestion-90');
+    expect(view.getByText(/64 \u00b7 yesterday\. Log it\?/u)).toBeTruthy();
+
+    await act(async () => {
+      useHabitStore.getState().setHabits([waterHabit()]);
+    });
+
+    expect(view.getByText(/64 oz \u00b7 yesterday\. Log it\?/u)).toBeTruthy();
+    expect(view.getByTestId('suggestion-90-accept').props.accessibilityLabel).toBe(
+      'Check off drank 64 oz of water, 64 oz, yesterday',
+    );
   });
 
   it('asks for the goal\u2019s unit once when the store is cold, and the day is the AUTH zone\u2019s', async () => {
