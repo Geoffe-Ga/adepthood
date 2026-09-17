@@ -152,6 +152,16 @@ class VoiceDraftPrivacySerializer:
         """The PostgreSQL advisory-lock namespace this instance orders under."""
         return self._namespace
 
+    def retained_key_count(self) -> int:
+        """How many keys currently hold a live in-process lock.
+
+        Public because the "no unbounded key set" claim in this module's
+        docstring is otherwise unassertable: the map is weak, so an idle key
+        disappears on its own, and only a count taken from outside can show
+        that it did.
+        """
+        return len(self._local_locks)
+
     def _local_lock_for(self, key: int) -> asyncio.Lock:
         """Return one live lock per key without retaining idle keys."""
         lock = self._local_locks.get(key)

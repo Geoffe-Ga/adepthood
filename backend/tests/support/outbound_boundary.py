@@ -272,6 +272,53 @@ entrypoint.
 **23. services/botmason.py -> the provider SDK calls.** The language-model leaf
 behind ``generate_response``. No session parameter, holds nothing on its own.
 Listed so rows 2, 3 and 9 all trace to one place.
+
+The per-account egress barrier, and what it does *not* certify
+==============================================================
+
+Issue #2642 added :mod:`services.account_egress_barrier`, which orders each
+account's outbound writes against that account's own erasure. It is a different
+invariant from this census's -- when content may leave, rather than what is held
+while it does -- and the two meet at exactly one point: the barrier's liveness
+read commits, so taking it does not reintroduce a connection held across a dial.
+Every row above keeps its state.
+
+**Covered by the barrier**: ``POST /journal/`` (rows 14, 23),
+``PATCH /journal/{entry_id}`` and ``DELETE /journal/{entry_id}`` (row 19),
+``POST /journal/{entry_id}/resonance`` (rows 1, 2),
+``POST /journal/marginalia/{marginalia_id}/essay`` (row 3),
+``POST /corpus/import`` (rows 8, 20), ``PUT /corpus/consent/{source}``
+(row 18), the teardown side of ``DELETE /users/me``, and the detached pipeline
+continuation behind row 11.
+
+**Deliberately excluded, with the reason**:
+
+* ``POST /journal/transcribe-page`` (row 9) -- the bytes are caller-supplied in
+  the same request, nothing of the account is stored or re-sent, and there is no
+  row an erasure could orphan. Including it would also risk flipping row 9's
+  strict xfail to an unexpected pass, which is a separate decision about row 9
+  rather than a consequence of this one.
+* ``GET /stages/wheel`` (row 7) -- a read-only dial: ``select_wheel_balance``
+  *fetches* a wheel and transmits no stored adepthood content, so a call landing
+  after an erasure exposes nothing.
+* ``GET /invitations`` (row 4) -- a read-only dial for the same reason. Both are
+  parallel app-load fetches, and a per-account exclusive lock would serialize the
+  two hottest authenticated reads in the app for no confidentiality gain.
+
+**The classification rule**, stated once so a future boundary is decided without
+re-litigation: *take the barrier where a path transmits content adepthood has
+stored for this account; exclude paths that only read from the vault or that
+carry only bytes supplied in the same request.*
+
+**What this does not certify.** ``tests/security/test_egress_barrier_totality.py``
+walks the route table for ``get_creek_vault_client`` and requires every route it
+finds to be classified. That is a bound on **routes, not on egress**: the
+continuation above belongs to no route and is covered by its own test, and
+``PUT /corpus/consent/{source}`` egresses through a provider rather than a vault
+client and never appears in the walk at all. Route-level coverage does not imply
+egress coverage, and nothing here should be read as claiming it does -- the
+exhaustive static sweep this module names as separate work above is still
+separate work.
 """
 
 from __future__ import annotations

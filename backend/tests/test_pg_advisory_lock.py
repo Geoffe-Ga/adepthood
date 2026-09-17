@@ -16,17 +16,25 @@ import asyncio
 import hashlib
 import os
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from conftest import test_engine
+from models.user import User
 from routers.auth import (
     _ADVISORY_LOCK_KEY_BYTES,
     _acquire_email_lock_pg,
     _advisory_lock_key,
+)
+from services.account_egress_barrier import ensure_account_live, hold_account
+from services.advisory_lock_namespaces import (
+    ACCOUNT_EGRESS_LOCK_NAMESPACE,
+    REGISTERED_ADVISORY_NAMESPACES,
+    VOICE_DRAFT_LOCK_NAMESPACE,
+    duplicate_namespaces,
 )
 from services.voice_draft_privacy import VoiceDraftPrivacySerializer
 
@@ -128,6 +136,56 @@ async def test_voice_draft_serializer_uses_only_its_local_lock_on_sqlite(
     serializer = VoiceDraftPrivacySerializer()
 
     async with serializer.hold(db_session, 17):
+        assert not db_session.in_transaction()
+
+    advisory_calls = [s for s in sql_recorder.statements if re.search(r"pg_advisory", s)]
+    assert advisory_calls == []
+
+
+def test_every_advisory_namespace_is_pairwise_distinct() -> None:
+    """Two subsystems sharing a two-int namespace is a deadlock, not a clash.
+
+    Asserted here rather than raised at import time: a collision would otherwise
+    fail the boot of every process that imports the registry, which turns a test
+    failure into an outage. It is invisible on SQLite -- no advisory statement is
+    issued at all -- so nothing else in the default lane can see it.
+    """
+    assert duplicate_namespaces(REGISTERED_ADVISORY_NAMESPACES) == ()
+
+
+def test_the_duplicate_detector_names_a_real_collision() -> None:
+    """The detector is not vacuous: a planted collision names both owners."""
+    planted = {
+        "services.one": ACCOUNT_EGRESS_LOCK_NAMESPACE,
+        "services.two": ACCOUNT_EGRESS_LOCK_NAMESPACE,
+        "services.three": VOICE_DRAFT_LOCK_NAMESPACE,
+    }
+
+    assert duplicate_namespaces(planted) == ("services.one", "services.two")
+
+
+async def _seed_account(session: AsyncSession) -> int:
+    """Persist one account row and return its id, for the liveness read."""
+    account = User(email="advisory-lock@example.com", password_hash="not-a-real-hash")
+    session.add(account)
+    await session.commit()
+    return cast("int", account.id)
+
+
+@pytest.mark.asyncio
+async def test_account_barrier_short_circuits_on_sqlite_without_sql(
+    db_session: AsyncSession, sql_recorder: _StatementRecorder
+) -> None:
+    """The account barrier issues no advisory SQL on the default lane either.
+
+    And leaves the request session out of a transaction on the way out, so a
+    handler that dials Creek inside the hold is not holding a pooled connection
+    while it does.
+    """
+    user_id = await _seed_account(db_session)
+
+    async with hold_account(db_session, user_id):
+        await ensure_account_live(db_session, user_id)
         assert not db_session.in_transaction()
 
     advisory_calls = [s for s in sql_recorder.statements if re.search(r"pg_advisory", s)]
