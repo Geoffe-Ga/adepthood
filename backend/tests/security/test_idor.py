@@ -1498,6 +1498,105 @@ async def test_idor_reflection_sources_never_serve_another_users_material(
     assert items[0]["promoted_quotes"] == []
 
 
+@pytest.mark.asyncio
+async def test_idor_past_cycle_sources_never_cross_accounts(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A past-cycle scope reads only the CALLER's own retained anchor and entries.
+
+    Retaining per-cycle anchors (#2894) added a second anchor source to the
+    sources feed, so this extends the sibling test above onto that path. There
+    is still no ownership guard to write and no ``resolve_owned_*`` helper to
+    call: the anchors live on the caller's own ``stageprogress`` row, whose
+    ``user_id`` is UNIQUE and which is reached only through
+    ``get_user_progress(session, current_user)``. No request schema on this
+    endpoint carries an id of any kind, so there is no cross-tenant read path to
+    defend — the safety is structural rather than a check that could be
+    forgotten. What this pins is that the structure holds: Bob, whose own
+    cycle-1 anchor was destroyed, sees neither Alice's anchor nor Alice's
+    cycle-1 entries, and the read persists nothing.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_past_cycle")
+    bob_headers, bob_id = await _signup(async_client, "bob_past_cycle")
+    cycle_two_anchor = (datetime.now(UTC) - timedelta(days=30)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    alice_cycle_one = cycle_two_anchor - timedelta(days=370)
+    db_session.add(
+        StageProgress(
+            user_id=alice_id,
+            current_stage=1,
+            completed_stages=[],
+            stage_started_at=cycle_two_anchor,
+            program_started_at=cycle_two_anchor,
+            cycle_number=2,
+            past_cycle_anchors=[alice_cycle_one.isoformat()],
+        )
+    )
+    db_session.add(
+        StageProgress(
+            user_id=bob_id,
+            current_stage=1,
+            completed_stages=[],
+            stage_started_at=cycle_two_anchor,
+            program_started_at=cycle_two_anchor,
+            cycle_number=2,
+            past_cycle_anchors=[None],
+        )
+    )
+    await db_session.commit()
+
+    await _seed_reflection_source(
+        db_session, alice_id, "Alice cycle one, week one", alice_cycle_one + timedelta(days=2)
+    )
+    # A control inside BOB's OWN cycle-1 week-1 window, had his anchor survived:
+    # its absence is caused by his unrecorded anchor, not by an empty account.
+    await _seed_reflection_source(
+        db_session, bob_id, "Bob cycle one, week one", alice_cycle_one + timedelta(days=2)
+    )
+
+    alice_resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c1:w1"},
+        headers=alice_headers,
+    )
+    bob_resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c1:w1"},
+        headers=bob_headers,
+    )
+
+    # Alice's own past cycle resolves, and serves only her own material.
+    assert alice_resp.status_code == HTTPStatus.OK, alice_resp.text
+    alice_body = alice_resp.json()
+    assert alice_body["anchor_status"] == "recorded"
+    assert [item["body"] for item in alice_body["items"]] == ["Alice cycle one, week one"]
+
+    # Bob's is unrecorded — and Alice's anchor did not stand in for his.
+    assert bob_resp.status_code == HTTPStatus.OK, bob_resp.text
+    bob_body = bob_resp.json()
+    assert bob_body["anchor_status"] == "unrecorded"
+    assert bob_body["items"] == []
+    assert bob_body["window_start"] is None
+    assert bob_body["window_end"] is None
+
+    # Neither progress row was mutated or persisted by the read.
+    rows = (
+        (
+            await db_session.execute(
+                select(StageProgress).where(col(StageProgress.user_id).in_([alice_id, bob_id]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_user = {row.user_id: row for row in rows}
+    assert by_user[alice_id].past_cycle_anchors == [alice_cycle_one.isoformat()]
+    assert by_user[bob_id].past_cycle_anchors == [None]
+    assert by_user[alice_id].cycle_number == 2
+    assert by_user[bob_id].cycle_number == 2
+
+
 async def _seed_cross_tenant_suggestion(
     session: AsyncSession,
     *,

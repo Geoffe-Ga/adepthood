@@ -1077,6 +1077,17 @@
         "title": "CourseProgressResponse",
         "type": "object"
       },
+      "CycleAnchorStatus": {
+        "description": "Why a scope does or does not have a calendar window — total, never null.\n\nThe four members are the four distinct causes, kept apart so a client can\nsay the true thing about each instead of collapsing them into one empty\nfeed:\n\n* ``RECORDED`` — the cycle's anchor is known and the window is real.\n* ``UNRECORDED`` — the cycle happened, but its anchor was destroyed by\n  begin-again before #2894 and is NOT recoverable. There is no history\n  table to restore it from, and every approximation available (the earliest\n  habit start date, the timestamps of surviving reviews) would fabricate a\n  window, so it is deliberately refused.\n* ``UNSTARTED`` — the caller has not reached that cycle yet.\n* ``NO_PROGRAM`` — the caller has no ``StageProgress`` row, so no calendar.",
+        "enum": [
+          "recorded",
+          "unrecorded",
+          "unstarted",
+          "no_program"
+        ],
+        "title": "CycleAnchorStatus",
+        "type": "string"
+      },
       "DepthPreferencesResponse": {
         "description": "The four ring toggles returned to the caller.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.",
         "properties": {
@@ -5129,8 +5140,11 @@
         "type": "object"
       },
       "ReflectionSourcesResponse": {
-        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). Both are ``None`` for a caller with no program\nprogress, who has no anchor and so no window; the client then shows no\nperiod rather than a guessed one.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
+        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). A scope naming an earlier cycle is measured\nfrom THAT cycle's own retained anchor and its end is clamped to the local\nmidnight of the day the user began again, so consecutive cycles abut at one\nshared instant instead of overlapping (issue #2894).\n\nBoth bounds are ``None`` whenever no window could be drawn, and\n``anchor_status`` names which of the four causes applies. It is published as\nthe :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare\nstring so the four members reach the OpenAPI document: typed as ``str`` the\ncontract carried no enumeration at all, and renaming a member or adding a\nfifth cause changed nothing a client could notice. The members are:\n``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was\ndestroyed by ``begin-again`` before #2894 and cannot be reconstructed),\n``unstarted`` (the caller has not reached that cycle), or ``no_program``\n(the caller has no program progress at all). The client needs the\ndistinction to tell \"nothing was written in this period\" apart from \"this\nperiod cannot be rebuilt\" — without it both read as one silent empty feed.\n\nDeliberately unpaginated: a single tier's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
         "properties": {
+          "anchor_status": {
+            "$ref": "#/components/schemas/CycleAnchorStatus"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ReflectionSourceItem"
@@ -5176,6 +5190,7 @@
           "scope_key",
           "window_start",
           "window_end",
+          "anchor_status",
           "items"
         ],
         "title": "ReflectionSourcesResponse",
@@ -21388,7 +21403,7 @@
     },
     "/reflections/sources": {
       "get": {
-        "description": "Return the ordered source material feeding the reflection at ``(level, scope_key)``.\n\nA malformed key, a level/token mismatch, or an out-of-range index is 422; a\nscope whose first week the caller has not yet reached is 403 ``scope_locked``.\nOtherwise the hierarchy is walked top-down: an existing child reflection\nstands in for its whole span, and every gap decomposes to that week's raw\ndaily entries, yielding a chronological feed with each promoted quote flagged\npending or included.",
+        "description": "Return the ordered source material feeding the reflection at ``(level, scope_key)``.\n\nA malformed key, a level/token mismatch, or an out-of-range index is 422; a\nscope whose first week the caller has not yet reached is 403 ``scope_locked``.\nEvery week of a cycle the caller has already completed counts as reached.\nOtherwise the hierarchy is walked top-down: an existing child reflection\nstands in for its whole span, and every gap decomposes to that week's raw\ndaily entries, yielding a chronological feed with each promoted quote flagged\npending or included.\n\nA scope naming an EARLIER cycle is windowed against that cycle's own\nretained anchor and clamped at the instant it closed (issue #2894). When\nthat anchor is not on record — destroyed by ``begin-again`` before #2894\nshipped, and not reconstructable — the feed comes back empty with no bounds\nand ``anchor_status`` set to ``unrecorded``, so the client can say the\nperiod cannot be rebuilt rather than implying nothing was written in it.",
         "operationId": "get_reflection_sources_reflections_sources_get",
         "parameters": [
           {
@@ -21649,7 +21664,7 @@
     },
     "/stages/begin-again": {
       "post": {
-        "description": "Loop the caller's completed program back to stage 1 as a new cycle.\n\nAn explicit, user-driven restart offered only to someone who has reached\nthe final stage: ``current_stage`` resets to 1 and ``completed_stages``\nclears while ``cycle_number`` increments, all carried on the single\nexisting row. The Stage-10 ``all_stages_completed`` advance signal is left\nintact — this is a separate, opt-in path, not a replacement for it.\n\nJournal, habit streaks, goal completions, practice sessions, and energy are\nall untouched: the carry-over is automatic and there is no penalty. A user\nmid-cycle (``current_stage < TOTAL_STAGES``) is rejected with\n``cycle_not_complete``; a user with no progress row at all is rejected and\nno row is created as a side-effect. The row is read under ``FOR UPDATE`` so\na concurrent advance cannot interleave with the loop reset.",
+        "description": "Loop the caller's completed program back to stage 1 as a new cycle.\n\nAn explicit, user-driven restart offered only to someone who has reached\nthe final stage: ``current_stage`` resets to 1 and ``completed_stages``\nclears while ``cycle_number`` increments, all carried on the single\nexisting row. The Stage-10 ``all_stages_completed`` advance signal is left\nintact — this is a separate, opt-in path, not a replacement for it.\n\nThe outgoing cycle's ``program_started_at`` is retained on\n``past_cycle_anchors`` in the same commit (issue #2894), so a review written\nduring that cycle can still be windowed against the calendar it was written\nabout instead of losing its period forever.\n\nJournal, habit streaks, goal completions, practice sessions, and energy are\nall untouched: the carry-over is automatic and there is no penalty. A user\nmid-cycle (``current_stage < TOTAL_STAGES``) is rejected with\n``cycle_not_complete``; a user with no progress row at all is rejected and\nno row is created as a side-effect. The row is read under ``FOR UPDATE`` so\na concurrent advance cannot interleave with the loop reset.",
         "operationId": "begin_again_stages_begin_again_post",
         "parameters": [
           {

@@ -248,7 +248,9 @@ async def test_begin_again_re_anchors_the_calendar_so_the_next_lap_starts_over(
     """The reset moves the record and the anchor, or the two diverge forever.
 
     Without the anchor reset the very next read would re-record entry into
-    stage 10 and the second lap would be over before it began.
+    stage 10 and the second lap would be over before it began. The outgoing
+    cycle's anchor is retained rather than destroyed (issue #2894), which must
+    not soften this: the LIVE anchor still moves to now.
     """
     headers, user_id = await _signup(async_client, "loopback")
     progress = await _anchored_progress(

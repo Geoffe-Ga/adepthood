@@ -58,6 +58,111 @@ describe('CompletionSuggestionNote', () => {
     }
   });
 
+  it('pending without facts: renders today’s copy byte-for-byte', () => {
+    // No test pinned this string before the facts line existed, so the
+    // "unchanged when the server extracted nothing" half of #2843 had nothing
+    // holding it. The label is a nested <Text>, so a single getByText cannot
+    // match the whole sentence; flatten the card's text leaves instead.
+    const { getByTestId } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion()}
+        checkIn={null}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(flattenText(getByTestId('suggestion-7'))).toBe(
+      'You wrote about Daily run. Check it off?OKNot now',
+    );
+  });
+
+  it('pending with facts: states the amount and the day OK will log', () => {
+    const { getByTestId } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ label: 'drank 64 oz of water' })}
+        checkIn={null}
+        facts="64 oz · yesterday"
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(flattenText(getByTestId('suggestion-7'))).toBe(
+      'You wrote about drank 64 oz of water · 64 oz · yesterday. Log it?OKNot now',
+    );
+  });
+
+  it('accepted with facts: reads the facts before the streak', () => {
+    const { getByTestId } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted' })}
+        checkIn={checkIn(3)}
+        facts="64 oz · yesterday"
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(flattenText(getByTestId('suggestion-7-checked'))).toBe(
+      '✓ Checked off · 64 oz · yesterday  3-day streak',
+    );
+  });
+
+  it('accepted without facts: confirmation copy is unchanged', () => {
+    const { getByTestId } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted' })}
+        checkIn={checkIn(3)}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(flattenText(getByTestId('suggestion-7-checked'))).toBe('✓ Checked off  3-day streak');
+  });
+
+  it('accepted practice: renders no facts even when one is passed', () => {
+    // The backend CHECK ck_completion_suggestion_facts_habit_only keeps a
+    // practice's facts null; the card does not re-derive that rule, it simply
+    // never receives one. This pins the settled practice copy either way.
+    const { getByTestId } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted', target_type: 'practice' })}
+        checkIn={null}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(flattenText(getByTestId('suggestion-7-checked'))).toBe('✓ Logged');
+  });
+
+  it('accept button names the facts, comma-joined, and is unchanged without them', () => {
+    const withFacts = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ label: 'drank 64 oz of water' })}
+        checkIn={null}
+        facts="64 oz · yesterday"
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(withFacts.getByTestId('suggestion-7-accept').props.accessibilityLabel).toBe(
+      'Check off drank 64 oz of water, 64 oz, yesterday',
+    );
+
+    const bare = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion()}
+        checkIn={null}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(bare.getByTestId('suggestion-7-accept').props.accessibilityLabel).toBe(
+      'Check off Daily run',
+    );
+    expect(bare.getByTestId('suggestion-7-dismiss').props.accessibilityLabel).toBe(
+      'Dismiss the suggestion to check off Daily run',
+    );
+  });
+
   it('OK calls onAccept(id), shows "Checking…", and guards double-tap', async () => {
     let resolve: (() => void) | undefined;
     const onAccept = jest.fn(() => new Promise<void>((r) => (resolve = () => r())));
@@ -155,4 +260,13 @@ function StyleSheetMin(node: { props: { style: unknown } }): number {
   const { StyleSheet } = require('react-native');
   const flat = StyleSheet.flatten(node.props.style) as { minHeight?: number; minWidth?: number };
   return Math.min(flat.minHeight ?? 0, flat.minWidth ?? 0);
+}
+
+/** Every string leaf under `node`, concatenated — the card's copy as read. */
+function flattenText(node: { children: Array<unknown> }): string {
+  return node.children
+    .map((child) =>
+      typeof child === 'string' ? child : flattenText(child as { children: Array<unknown> }),
+    )
+    .join('');
 }

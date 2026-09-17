@@ -304,7 +304,10 @@ def scope_cycle(key: str) -> int:
     anchor belongs to exactly one cycle, so windowing a ``c1:`` key against the
     current cycle's anchor serves the wrong period's entries (issue #2886).
     This is the one accessor that reads the prefix back off the key; the
-    hierarchy itself stays cycle-free.
+    hierarchy itself stays cycle-free. What the caller does with the answer has
+    changed: it once drove a blanket refusal to serve any past cycle's raw
+    material, and now selects WHICH retained anchor to window against
+    (:mod:`domain.cycle_calendar`, issue #2894).
 
     Raises ValueError for a malformed key, exactly as :func:`scope_weeks` does.
     """
@@ -453,7 +456,10 @@ def resolve_sources(
     caller cannot silently decompose the wrong span. Reflections are matched by
     their full ``c{cycle}:`` key, so refs from another cycle never satisfy a
     lookup; entries carry no cycle of their own, so the caller must pass only the
-    entries belonging to this reflection's cycle.
+    entries belonging to this reflection's cycle. The router satisfies that by
+    windowing on the anchor of the KEY's own cycle, retained across begin-again
+    (issue #2894) and clamped at the instant that cycle closed, so the entries it
+    hands over cannot span two laps.
     """
     parsed_level, _ = _parse_key(key)
     if parsed_level is not level:

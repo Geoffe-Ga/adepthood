@@ -305,6 +305,18 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.reopen-past-cycle-review-sees-its-own-sources",
+    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. Uncovered because driving it end to end needs a browser-lane arrange that completes a cycle and presses begin-again, and no begin-again journey exists yet; pinned meanwhile by test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py and ReflectionSourcesPanel.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["reflections"],
+      "routes": ["GET /reflections/sources"],
+      "tables": ["journalentry", "stageprogress"]
+    },
+    "status": "uncovered",
+    "issue": 2904
+  },
+  {
     "id": "journal.delete-entry",
     "description": "A writer deletes one page from the shelf, the server stops serving it, and another account cannot delete it for them.",
     "crosses": {
@@ -405,7 +417,7 @@
   },
   {
     "id": "journal.short-entry-still-offers-habit-checkoff",
-    "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. Detection also records the amount and the user-local day when the entry states them, so the accept logs that amount on that day rather than the goal's target on today; an entry stating neither behaves exactly as before. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior.",
+    "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. Detection also records the amount and the user-local day when the entry states them, so the accept logs that amount on that day rather than the goal's target on today; an entry stating neither behaves exactly as before. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior. The card states those facts before the writer consents rather than only after: the spec asserts the pending offer reads the amount and the day it will log, that the accept button a screen reader announces names them too, and that the persisted goalcompletion row carries that amount on that day rather than the goal's target on today.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["completionSuggestions", "resonance"],
@@ -767,7 +779,7 @@
   },
   {
     "id": "auth.account-switch-purges-device-state",
-    "description": "A device that already holds one account's session is signed into by a second account without an explicit logout -- through the password-reset flow, or any path that reaches the login screen with a live cache on disk. The incoming user must see none of the previous user's habits, none of their check-in queue replayed under the new token, and none of their BYOK key on the resonance header. Uncovered because the leak is a row on the device rather than a row on the server: this lane drives HTTP against a live backend from Node, with no app process and therefore no AsyncStorage or SecureStore to seed, dirty, or read back, so a spec written against the wire could only assert that the backend scopes reads to its caller -- which it already did throughout, and which was never the failing half. Held meanwhile by src/context/__tests__/AccountSwitchWipe.integration.test.tsx, which drives the real AuthProvider and the real habitStorage against the in-memory AsyncStorage mock, plus the per-account namespacing tests in src/storage/__tests__/. The cold start behind that door is held by src/context/__tests__/ResumedSessionScope.integration.test.tsx, which pins the namespace a resumed session reads to the subject of the token it resumed rather than to a separately persisted stamp the two non-atomic sign-in writes can leave disagreeing.",
+    "description": "A device that already holds one account's session is signed into by a second account without an explicit logout -- through the password-reset flow, or any path that reaches the login screen with a live cache on disk. The incoming user must see none of the previous user's habits, none of their check-in queue replayed under the new token, and none of their BYOK key on the resonance header. Uncovered because the leak is a row on the device rather than a row on the server: this lane drives HTTP against a live backend from Node, with no app process and therefore no AsyncStorage or SecureStore to seed, dirty, or read back, so a spec written against the wire could only assert that the backend scopes reads to its caller -- which it already did throughout, and which was never the failing half. Held meanwhile by src/context/__tests__/AccountSwitchWipe.integration.test.tsx, which drives the real AuthProvider and the real habitStorage against the in-memory AsyncStorage mock, plus the per-account namespacing tests in src/storage/__tests__/. The cold start behind that door is held by src/context/__tests__/ResumedSessionScope.integration.test.tsx, which pins the namespace a resumed session reads to the subject of the token it resumed rather than to a separately persisted stamp the two non-atomic sign-in writes can leave disagreeing. What that meanwhile-guard holds now includes the device-cached timezone: the switch drops the outgoing account's zone, and drops it before the incoming account's is written to the same unscoped device key, so a failed write cannot leave the previous account's calendar driving the next one's day boundary.",
     "crosses": {
       "screen": "frontend/src/features/Auth/LoginScreen.tsx",
       "client": ["auth", "setTokenGetter", "habits"],

@@ -12,6 +12,7 @@ import type {
 } from '@/api';
 import { ApiError } from '@/api';
 import { UNREACHABLE_MESSAGE } from '@/api/errorMessages';
+import { useHabitStore } from '@/store/useHabitStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: Marginalia[] }>
@@ -584,5 +585,50 @@ describe('useResonance — suggestions', () => {
     });
     expect(result.current.suggestions.map((s: CompletionSuggestion) => s.id)).toEqual([1, 2]);
     expect(result.current.error).toBeTruthy();
+  });
+});
+
+describe('warming the habit store for an offer', () => {
+  it('warms once per mount, and not again when the writer edits their timezone', async () => {
+    // The zone is a dependency of the warm-up effect, so a profile edit re-runs
+    // it -- and `loadHabits` is stubbed here, so the store is STILL empty when
+    // it does. The empty-store gate therefore cannot stop a second round trip;
+    // only the once-per-mount ref can. Nothing else in the suite re-runs that
+    // effect, which is why `toHaveBeenCalledTimes(1)` on a single render passes
+    // with the ref deleted.
+    useHabitStore.getState().setHabits([]);
+    mockSugList.mockResolvedValue({ items: [suggestion({ target_type: 'habit' })] });
+    const flush = jest.fn(async () => 7);
+
+    const { rerender } = renderHook(
+      ({ tz }: { tz: string }) => useResonance({ routeEntryId: 7, flush, userTimezone: tz }),
+      { initialProps: { tz: 'America/Chicago' } },
+    );
+
+    await waitFor(() => expect(mockLoadHabits).toHaveBeenCalledTimes(1));
+    expect(mockLoadHabits).toHaveBeenCalledWith('America/Chicago');
+
+    // `rerender` flushes effects, so the count below is final, not merely
+    // not-yet-incremented.
+    await act(async () => {
+      rerender({ tz: 'Pacific/Auckland' });
+    });
+
+    expect(mockLoadHabits).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not warm the store for a practice-only offer', async () => {
+    useHabitStore.getState().setHabits([]);
+    mockSugList.mockResolvedValue({
+      items: [suggestion({ target_type: 'practice', goal_id: null, user_practice_id: 4 })],
+    });
+    const flush = jest.fn(async () => 7);
+
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush, userTimezone: TEST_TIMEZONE }),
+    );
+
+    await waitFor(() => expect(result.current.suggestions).toHaveLength(1));
+    expect(mockLoadHabits).not.toHaveBeenCalled();
   });
 });

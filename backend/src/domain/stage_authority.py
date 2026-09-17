@@ -38,7 +38,12 @@ widen access and may never revoke it.
 (``routers.stages.begin_again``) re-anchors ``program_started_at`` at the same
 moment it returns the record to stage 1; move one without the other and the
 second lap is over before it starts -- the next read would re-record entry into
-stage 10 from the stale anchor.
+stage 10 from the stale anchor. The OUTGOING cycle's anchor is not discarded by
+that reset, only displaced: it is retained on
+``StageProgress.past_cycle_anchors`` in the same commit (issue #2894), so a
+review written during that lap keeps the calendar it was written about. Nothing
+above changes -- every access decision here still asks where the user is NOW,
+which by construction is the current cycle.
 """
 
 from __future__ import annotations

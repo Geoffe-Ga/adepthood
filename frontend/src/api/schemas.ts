@@ -685,8 +685,21 @@ export const completionSuggestionSchema = z.object({
   // Facts detection extracted from the attesting span: how much, and the
   // user-local day (ISO `YYYY-MM-DD`). Both null when the writer stated
   // neither, and always null for a practice target.
-  completed_units: z.number().nullable(),
-  completed_on: z.string().nullable(),
+  //
+  // Tightened to exactly what the database already guarantees, so a row shape
+  // the server cannot produce is caught here rather than rendered: the amount
+  // is strictly positive under CHECK
+  // `ck_completion_suggestion_completed_units_positive`
+  // (`backend/src/models/completion_suggestion.py:94-97`), and the day is a
+  // `date` column, so it serialises as `YYYY-MM-DD` with no time part. Keep
+  // both no narrower than that: `request()` turns a parse failure into an
+  // `ApiValidationError` (`api/index.ts`), which blanks the WHOLE suggestion
+  // list rather than the one offending row.
+  completed_units: z.number().positive().nullable(),
+  completed_on: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable(),
   status: suggestionStatusSchema,
   accepted_at: z.string().nullable(),
   created_at: z.string(),
@@ -1281,6 +1294,14 @@ export const reflectionSourceItemSchema = z.object({
 export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.nullable() });
 
 /**
+ * Which of four causes explains the window a sources response declares, or does
+ * not. Only ``unrecorded`` is a loss: that cycle's calendar anchor was destroyed
+ * by beginning again before the server retained them (#2894) and cannot be
+ * reconstructed.
+ */
+export const anchorStatusSchema = z.enum(['recorded', 'unrecorded', 'unstarted', 'no_program']);
+
+/**
  * ``GET /reflections/sources`` envelope: the chronological source feed, plus the
  * half-open ``[window_start, window_end)`` calendar period the server actually
  * filtered on (local midnights in the caller's own timezone, end exclusive) and
@@ -1288,19 +1309,29 @@ export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.n
  * can NAME the review period instead of re-deriving it from the scope key and
  * drifting out of step with the feed.
  *
- * Every one of those four is tolerated rather than required: a server that has
+ * ``anchor_status`` names WHY a response carries no bounds, which the composer
+ * needs to tell "nothing was written in this period" apart from "this period
+ * cannot be rebuilt". A past cycle whose anchor ``begin-again`` destroyed before
+ * the server retained them is ``unrecorded`` and is not recoverable (#2894).
+ *
+ * Every one of those five is tolerated rather than required: a server that has
  * not shipped them yet, a caller with no program anchor (both bounds null), or a
  * bound that will not parse must all still yield a readable feed — the period
- * label simply does not appear. The feed is the thing the writer came for.
+ * label simply does not appear, and an ``anchor_status`` of ``undefined`` (an
+ * un-upgraded server, or a value outside the enum) reads as the ordinary empty
+ * feed rather than claiming anything was lost. The feed is the thing the writer
+ * came for.
  */
 export const reflectionSourcesResponseSchema = z.object({
   level: reflectionLevelSchema.optional().catch(undefined),
   scope_key: z.string().optional().catch(undefined),
   window_start: isoDateTime.nullish().catch(null),
   window_end: isoDateTime.nullish().catch(null),
+  anchor_status: anchorStatusSchema.optional().catch(undefined),
   items: z.array(reflectionSourceItemSchema),
 });
 
 export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
 export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
 export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;
+export type ReflectionAnchorStatusT = z.infer<typeof anchorStatusSchema>;

@@ -17,10 +17,13 @@ calendar laid over the 21x8 + 42x2 schedule decides which stage is on offer, and
 
 ``StageProgress.program_started_at`` can only ever be written as "now": the
 model's ``default_factory`` on insert, and the begin-again reset in
-``routers.stages``. No request schema accepts it. So no HTTP call can move the
-anchor backwards, and a freshly registered e2e account is pinned at calendar
-stage 1 for its first three weeks. A spec that signs up and then asserts
-``current_stage == 1`` before and after would pass while proving nothing.
+``routers.stages`` (which also retains the displaced value on
+``past_cycle_anchors``, issue #2894 -- a record of a PAST cycle, never a way to
+move the current anchor). No request schema accepts either field. So no HTTP
+call can move the anchor backwards, and a freshly registered e2e account is
+pinned at calendar stage 1 for its first three weeks. A spec that signs up and
+then asserts ``current_stage == 1`` before and after would pass while proving
+nothing.
 
 This module is therefore the *arrange* for that journey and nothing else. It
 moves the anchor directly in the lane's own throwaway Postgres so that the

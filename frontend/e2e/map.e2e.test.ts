@@ -19,10 +19,13 @@ import { STAGE_DURATIONS_DAYS } from '@/constants/program';
  * so this spec moves the anchor and then reads. It never posts.
  *
  * The arrange is therefore out of band. `program_started_at` is only ever
- * written as "now" and no request schema accepts it, so no HTTP call can carry
- * an account backwards into last month. The rewind runs against the lane's own
- * throwaway database through a backend module; only the assert goes through the
- * production client, which is the half this lane exists to exercise.
+ * written as "now" -- the model default, and the begin-again reset, which keeps
+ * the value it displaces on `past_cycle_anchors` as a record of a PAST cycle
+ * rather than a way to move the live one -- and no request schema accepts
+ * either field, so no HTTP call can carry an account backwards into last month.
+ * The rewind runs against the lane's own throwaway database through a backend
+ * module; only the assert goes through the production client, which is the half
+ * this lane exists to exercise.
  */
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.

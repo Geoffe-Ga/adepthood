@@ -50,10 +50,12 @@ export function backendUrl(): string {
  * Move an account's program anchor `daysAgo` days back, so the stage calendar
  * has genuinely moved on.
  *
- * `program_started_at` is only ever written as "now" and no request schema
- * accepts it, so this arrange has to go to the lane's own throwaway database
- * through `tests.e2e.program_anchor` -- the same out-of-band rewind the Map
- * journey uses. It stubs nothing on the request path: the only thing faked is
+ * `program_started_at` is only ever written as "now" (the model default and the
+ * begin-again reset, which retains the displaced value on `past_cycle_anchors`
+ * without ever moving the live anchor backwards) and no request schema accepts
+ * it, so this arrange has to go to the lane's own throwaway database through
+ * `tests.e2e.program_anchor` -- the same out-of-band rewind the Map journey
+ * uses. It stubs nothing on the request path: the only thing faked is
  * the passage of time, and it is faked in the database rather than anywhere the
  * spec then reads through.
  */
@@ -95,12 +97,31 @@ export async function signUp(page: Page, prefix: string): Promise<string> {
   return email;
 }
 
-export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
+/**
+ * A signed-in session for `email`: its bearer token and the IANA zone the
+ * SERVER has on record for that account.
+ *
+ * The zone matters to any spec that asserts a calendar day. The backend
+ * resolves every user-local day in this zone -- `signUp` set it from the
+ * browser's own `detectDeviceTimezone()`, and nothing pins the browser's zone
+ * -- so a day key a spec builds in UTC is a different day for part of every
+ * day on any host that is not at UTC. `AuthResponse.timezone` is documented as
+ * always populated, so this is the one honest source for it.
+ */
+export async function sessionFor(
+  request: APIRequestContext,
+  email: string,
+): Promise<{ token: string; timezone: string }> {
   const login = await request.post(`${backendUrl()}/auth/login`, {
     data: { email, password: ACCOUNT_PHRASE },
   });
   if (!login.ok()) throw new Error(`seeding login failed with ${login.status()}`);
-  return ((await login.json()) as { token: string }).token;
+  const body = (await login.json()) as { token: string; timezone?: string };
+  return { token: body.token, timezone: body.timezone ?? 'UTC' };
+}
+
+export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
+  return (await sessionFor(request, email)).token;
 }
 
 export async function seedHabit(

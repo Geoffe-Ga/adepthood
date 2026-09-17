@@ -48,6 +48,7 @@ import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
+import { describeSuggestionFacts } from './suggestionFacts';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
@@ -90,6 +91,8 @@ import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
+import { selectGoalUnitById, useHabitStore } from '@/store/useHabitStore';
+import { useDayKey } from '@/utils/dayRollover';
 
 /** Default idle delay before an edit is persisted. */
 const AUTOSAVE_DELAY_MS = 1500;
@@ -2178,6 +2181,8 @@ interface MarginStreamProps {
   notes: Marginalia[];
   suggestions: CompletionSuggestion[];
   acceptedCheckIns: Record<number, CheckInResult | null>;
+  /** The signed-in person's zone -- the clock the facts line is named against. */
+  userTimezone: string;
   onOpen: (_note: Marginalia) => void;
   onAccept: (_id: number) => void | Promise<void>;
   onDismiss: (_id: number) => void | Promise<void>;
@@ -2193,10 +2198,46 @@ function buildMarginItems(notes: Marginalia[], suggestions: CompletionSuggestion
   return items.sort((a, b) => a.anchor - b.anchor);
 }
 
+/**
+ * One offer card, joined to the two things it cannot read for itself.
+ *
+ * The card is presentational on purpose -- no auth, no store, no clock -- so
+ * the join lives here: the goal's unit comes from the habit store by
+ * `goal_id`, refusing any row this device minted, and "today" comes from the
+ * signed-in person's own zone rather than the device's, so a card pinned over
+ * midnight re-renders from "yesterday" to a date instead of quietly lying.
+ */
+function ConnectedSuggestionNote({
+  suggestion,
+  checkIn,
+  userTimezone,
+  onAccept,
+  onDismiss,
+}: {
+  suggestion: CompletionSuggestion;
+  checkIn: CheckInResult | null;
+  userTimezone: string;
+  onAccept: (_id: number) => void | Promise<void>;
+  onDismiss: (_id: number) => void | Promise<void>;
+}) {
+  const unit = useHabitStore(selectGoalUnitById(suggestion.goal_id));
+  const todayIso = useDayKey(userTimezone);
+  return (
+    <CompletionSuggestionNote
+      suggestion={suggestion}
+      checkIn={checkIn}
+      facts={describeSuggestionFacts(suggestion, unit, todayIso)}
+      onAccept={onAccept}
+      onDismiss={onDismiss}
+    />
+  );
+}
+
 function MarginStream({
   notes,
   suggestions,
   acceptedCheckIns,
+  userTimezone,
   onOpen,
   onAccept,
   onDismiss,
@@ -2208,9 +2249,10 @@ function MarginStream({
           {'note' in item ? (
             <MarginNote note={item.note} onOpen={onOpen} />
           ) : (
-            <CompletionSuggestionNote
+            <ConnectedSuggestionNote
               suggestion={item.suggestion}
               checkIn={acceptedCheckIns[item.suggestion.id] ?? null}
+              userTimezone={userTimezone}
               onAccept={onAccept}
               onDismiss={onDismiss}
             />
@@ -2543,7 +2585,11 @@ function useEntryEditGate(
  */
 function useEntryResonance(routeEntryId: number | null, flush: () => Promise<number | null>) {
   const { userTimezone } = useAuth();
-  return useResonance({ routeEntryId, flush, userTimezone });
+  // The zone is handed back as well as in: the margin's offer cards name the
+  // day their accept will log against, and that has to be the same clock this
+  // seam buckets by. Returned from the one read rather than taken from a
+  // second `useAuth()` further down the tree.
+  return { resonance: useResonance({ routeEntryId, flush, userTimezone }), userTimezone };
 }
 
 /** Everything the entry screen needs at the resonance seam, in one place. */
@@ -2565,7 +2611,7 @@ interface ResonanceSeamInput {
  * gate here rather than have to notice it among the controller's other seams.
  */
 function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
-  const resonance = useEntryResonance(routeEntryId, autosave.flush);
+  const { resonance, userTimezone } = useEntryResonance(routeEntryId, autosave.flush);
   const explainer = useResonanceExplainer(resonance.requestResonance);
   const gate = deriveResonanceGate({
     // A photograph-capture handoff (justSaved) offers resonance immediately,
@@ -2577,7 +2623,7 @@ function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: Re
     isPromptCompose: ctx.weekNumber != null,
     privateMessage: resonance.privateMessage,
   });
-  return { resonance, explainer, gate };
+  return { resonance, userTimezone, explainer, gate };
 }
 
 function useJournalEntryController(
@@ -2601,7 +2647,7 @@ function useJournalEntryController(
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
-  const { resonance, explainer, gate } = useResonanceSeam({
+  const { resonance, userTimezone, explainer, gate } = useResonanceSeam({
     routeEntryId,
     autosave,
     ctx,
@@ -2617,6 +2663,7 @@ function useJournalEntryController(
   return {
     autosave,
     resonance,
+    userTimezone,
     explainer,
     quote,
     ...gate,
@@ -2719,6 +2766,7 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
           notes={notes}
           suggestions={suggestions}
           acceptedCheckIns={ctl.resonance.acceptedCheckIns}
+          userTimezone={ctl.userTimezone}
           onOpen={ctl.modal.onOpenNote}
           onAccept={ctl.resonance.acceptSuggestion}
           onDismiss={ctl.resonance.dismissSuggestion}
@@ -3002,6 +3050,8 @@ function ReflectionComposer({
         <ReflectionSourcesPanel
           items={reflection.sources}
           window={reflection.window}
+          anchorStatus={reflection.anchorStatus}
+          feedStatus={reflection.feedStatus}
           timeZone={userTimezone}
           onInsertQuote={reflection.onInsertQuote}
           onPromoteSpan={reflection.onPromoteSpan}

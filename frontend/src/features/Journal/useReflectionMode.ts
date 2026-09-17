@@ -26,12 +26,14 @@ import {
 import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
 import { formatBlockquote, sourceAttribution, type ReviewWindow } from './reflectionCopy';
+import type { SourcesFeedStatus } from './ReflectionSourcesPanel';
 
 import { promotions, reflections } from '@/api';
 import type {
   PromoteQuoteSpan,
   PromotedQuote,
   PromotedQuoteSummary,
+  ReflectionAnchorStatus,
   ReflectionLevel,
   ReflectionSourceItem,
   ReflectionSourcesResponse,
@@ -62,6 +64,20 @@ export interface UseReflectionModeResult {
    * client derived, which could disagree with the feed beneath it.
    */
   window: ReviewWindow | undefined;
+  /**
+   * Why the server drew that window, when it said. ``'unrecorded'`` names a past
+   * cycle whose anchor beginning again destroyed, so its period cannot be
+   * rebuilt; the panel says so rather than implying the weeks were empty.
+   * Undefined against a server that predates the field.
+   */
+  anchorStatus: ReflectionAnchorStatus | undefined;
+  /**
+   * How far the sources request has got. The panel needs this SEPARATELY from
+   * ``anchorStatus``: a feed still in flight, or one whose request failed, knows
+   * nothing about the period, and an empty list in either case is the absence of
+   * an answer rather than the answer "nothing was written".
+   */
+  feedStatus: SourcesFeedStatus;
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
   /**
@@ -138,6 +154,8 @@ interface SourcesFeed {
   sources: ReflectionSourceItem[];
   setSources: Dispatch<SetStateAction<ReflectionSourceItem[]>>;
   window: ReviewWindow | undefined;
+  anchorStatus: ReflectionAnchorStatus | undefined;
+  feedStatus: SourcesFeedStatus;
 }
 
 /**
@@ -151,6 +169,12 @@ interface SourcesFeed {
  * switch must leave an empty panel, never the previous review's material sitting
  * under the new review's heading. A 403 ``scope_locked`` takes the ``.catch``
  * path, so the clearing has to happen up front rather than in the success branch.
+ *
+ * The emptiness that clearing produces is deliberately NOT silent any more. The
+ * feed reports whether it is still asking, has settled, or failed, because an
+ * empty list means three different things in those three cases and the panel
+ * has to say which. Hiding a failure behind "nothing was written in this period"
+ * tells the writer something false about their own journal.
  */
 function useSourcesFeed(
   reflectionLevel: ReflectionLevel | undefined,
@@ -158,10 +182,17 @@ function useSourcesFeed(
 ): SourcesFeed {
   const [sources, setSources] = useState<ReflectionSourceItem[]>([]);
   const [window, setWindow] = useState<ReviewWindow | undefined>(undefined);
+  const [anchorStatus, setAnchorStatus] = useState<ReflectionAnchorStatus | undefined>(undefined);
+  const [feedStatus, setFeedStatus] = useState<SourcesFeedStatus>('ready');
   useEffect(() => {
     setSources([]);
     setWindow(undefined);
-    if (reflectionLevel == null || reflectionScopeKey == null) return undefined;
+    setAnchorStatus(undefined);
+    if (reflectionLevel == null || reflectionScopeKey == null) {
+      setFeedStatus('ready');
+      return undefined;
+    }
+    setFeedStatus('loading');
     let alive = true;
     void reflections
       .sources(reflectionLevel, reflectionScopeKey)
@@ -169,15 +200,20 @@ function useSourcesFeed(
         if (!alive) return;
         setSources(result.items);
         setWindow(declaredWindow(result));
+        setAnchorStatus(result.anchor_status);
+        setFeedStatus('ready');
       })
       .catch(() => {
-        // The composer works without the feed; a fetch failure just hides it.
+        // The composer still works without the feed, but the panel must say the
+        // sources did not arrive rather than showing the empty-period copy.
+        if (!alive) return;
+        setFeedStatus('failed');
       });
     return () => {
       alive = false;
     };
   }, [reflectionLevel, reflectionScopeKey]);
-  return { sources, setSources, window };
+  return { sources, setSources, window, anchorStatus, feedStatus };
 }
 
 /**
@@ -309,7 +345,10 @@ export function useReflectionMode({
   flush,
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
-  const { sources, setSources, window } = useSourcesFeed(reflectionLevel, reflectionScopeKey);
+  const { sources, setSources, window, anchorStatus, feedStatus } = useSourcesFeed(
+    reflectionLevel,
+    reflectionScopeKey,
+  );
   const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
     bodyRef,
     onChangeBody,
@@ -321,6 +360,8 @@ export function useReflectionMode({
     active,
     sources,
     window,
+    anchorStatus,
+    feedStatus,
     inclusionHint,
     foldingIn,
     onBodySelectionChange,

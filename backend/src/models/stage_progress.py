@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Integer
+from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Integer
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -42,6 +42,24 @@ class StageProgress(SQLModel, table=True):
     )
     # Loop index for the 36-week arc; progression/loop logic lands in a later issue.
     cycle_number: int = Field(default=1, ge=1)
+    # Every EARLIER cycle's program-start anchor, oldest first (issue #2894).
+    # Three load-bearing facts:
+    #   (a) element ``i`` is cycle ``i + 1``'s ``program_started_at`` as an
+    #       ISO-8601 string, so ``len(...) == cycle_number - 1`` always — the
+    #       write site pads before appending so the index cannot drift;
+    #   (b) ``None`` at an index means that anchor was DESTROYED by begin-again
+    #       before #2894 and is NOT RECOVERABLE. It is recorded as unknown and
+    #       never guessed: every available approximation would fabricate a
+    #       window and re-create the wrong-period bug of #2886;
+    #   (c) cycle k's END is element ``k`` — or the live ``program_started_at``
+    #       for the newest past cycle — because ``_loop_to_next_cycle`` writes
+    #       ONE ``now`` to both the outgoing end and the incoming start. That is
+    #       why there is no separate ``ended_at`` column to drift out of step.
+    # Declared as JSON with no length to match the migration exactly (drift-free)
+    # and nullable so the write path is purely additive over existing rows.
+    past_cycle_anchors: list[str | None] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # Lifetime high-water mark: the highest stage ever reached by advancement.
     # Monotone — bumped on advance, never cleared by begin-again — so a Return
     # stays eligible from any current stage once Blue was ever passed.

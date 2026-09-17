@@ -71,6 +71,31 @@ async def _seed_progress(
     return progress
 
 
+async def _seed_looped_progress(
+    db_session: AsyncSession,
+    user_id: int,
+    *,
+    anchor: datetime,
+    cycle_number: int,
+    past_cycle_anchors: list[str | None],
+) -> StageProgress:
+    """Plant a row that has ALREADY looped, carrying the anchors it retained.
+
+    ``anchor`` is the CURRENT cycle's ``program_started_at``;
+    ``past_cycle_anchors`` is what ``begin-again`` kept of the earlier ones
+    (issue #2894): element ``i`` is cycle ``i + 1``'s program start as ISO-8601,
+    and ``None`` at an index is an anchor destroyed before that fix shipped and
+    not recoverable. Separate from :func:`_seed_progress` so the ordinary
+    single-cycle seeding stays a four-keyword call.
+    """
+    progress = await _seed_progress(db_session, user_id, anchor=anchor, cycle_number=cycle_number)
+    progress.past_cycle_anchors = past_cycle_anchors
+    db_session.add(progress)
+    await db_session.commit()
+    await db_session.refresh(progress)
+    return progress
+
+
 async def _seed_entry(
     db_session: AsyncSession, user_id: int, message: str, **overrides: object
 ) -> JournalEntry:
@@ -293,6 +318,65 @@ async def test_sources_locked_future_scope_returns_403(
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.json()["detail"] == "scope_locked"
+
+
+@pytest.mark.asyncio
+async def test_sources_locked_future_cycle_scope_returns_403(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A cycle the caller has not reached stays locked exactly as it always was.
+
+    Retaining past-cycle anchors (#2894) relaxes the unlock guard for cycles the
+    user has COMPLETED. The relaxation must not leak the other way: ``c2:s2``
+    for a cycle-1 user in week 1 is still a scope nobody has lived through, and
+    silently turning a 403 into a 200 on an access-control surface would be a
+    behaviour change nothing asked for.
+    """
+    now = datetime.now(UTC)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=now, cycle_number=1)
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "stage", "scope_key": "c2:s2"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "scope_locked"
+
+
+@pytest.mark.asyncio
+async def test_due_is_unchanged_by_per_cycle_anchors(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``GET /reflections/due`` still asks only where the user is NOW.
+
+    What comes due is a question about the CURRENT cycle, whose anchor #2894
+    leaves untouched. Seeding retained anchors for earlier cycles must therefore
+    change the payload in no way at all — asserted on the whole payload, so a
+    later refactor that resolved a past cycle's anchor here would be caught.
+    """
+    # Day 7 of a program week is when a reflection comes due.
+    anchor = datetime.now(UTC) - timedelta(days=_DAYS_PER_WEEK - 1)
+    cycle_one_anchor = anchor - timedelta(days=400)
+    bare_headers, bare_id = await _signup(async_client, db_session, "due_bare")
+    await _seed_progress(db_session, bare_id, anchor=anchor, cycle_number=2)
+    rich_headers, rich_id = await _signup(async_client, db_session, "due_rich")
+    await _seed_looped_progress(
+        db_session,
+        rich_id,
+        anchor=anchor,
+        cycle_number=2,
+        past_cycle_anchors=[cycle_one_anchor.isoformat()],
+    )
+
+    bare = await async_client.get("/reflections/due", headers=bare_headers)
+    rich = await async_client.get("/reflections/due", headers=rich_headers)
+
+    assert bare.status_code == HTTPStatus.OK
+    assert rich.status_code == HTTPStatus.OK
+    assert rich.json() == bare.json()
+    # And the seeding was not vacuous: something really was due for both.
+    assert bare.json()["due"] is not None
 
 
 @pytest.mark.asyncio

@@ -127,9 +127,13 @@ jest.mock('../ReflectionSourcesPanel', () => {
     onInsertQuote,
     onPromoteSpan,
     window: reviewWindow,
+    anchorStatus,
+    feedStatus,
   }: {
     items: ReflectionSourceItem[];
     window?: { start: string; end: string };
+    anchorStatus?: string;
+    feedStatus?: string;
     onInsertQuote: (
       _q: PromotedQuoteSummary,
       _item: ReflectionSourceItem,
@@ -179,6 +183,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
         <Text testID="stub-window">
           {reviewWindow == null ? '' : `${reviewWindow.start}..${reviewWindow.end}`}
         </Text>
+        <Text testID="stub-anchor-status">{anchorStatus ?? ''}</Text>
+        <Text testID="stub-feed-status">{feedStatus ?? ''}</Text>
       </>
     );
   };
@@ -767,5 +773,75 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
     expect(screen.getByTestId('stub-window').props.children).toBe(
       '2026-06-01T04:00:00Z..2026-06-22T04:00:00Z',
     );
+  });
+
+  it("hands the panel the server's anchor_status, so an unreconstructable period can say so", async () => {
+    mockReflectionsSources.mockResolvedValueOnce({
+      items: [],
+      level: 'stage',
+      scope_key: 'c1:s1',
+      window_start: null,
+      window_end: null,
+      anchor_status: 'unrecorded',
+    });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    expect(screen.getByTestId('stub-anchor-status').props.children).toBe('unrecorded');
+    expect(screen.getByTestId('stub-feed-status').props.children).toBe('ready');
+  });
+
+  it('tells the panel a settled feed is settled, so an empty one reads as genuinely empty', async () => {
+    mockReflectionsSources.mockResolvedValueOnce({
+      items: [],
+      level: 'stage',
+      scope_key: 'c1:s1',
+      window_start: '2026-06-01T04:00:00Z',
+      window_end: '2026-06-22T04:00:00Z',
+      anchor_status: 'recorded',
+    });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    expect(screen.getByTestId('stub-feed-status').props.children).toBe('ready');
+    expect(screen.getByTestId('stub-anchor-status').props.children).toBe('recorded');
+  });
+
+  it('tells the panel the feed FAILED rather than letting a refusal read as an empty period', async () => {
+    // A 403, a 500 and an offline device all land here. None of them is
+    // evidence that the writer wrote nothing.
+    mockReflectionsSources.mockRejectedValueOnce(new Error('offline'));
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    expect(screen.getByTestId('stub-feed-status').props.children).toBe('failed');
+    expect(screen.getByTestId('stub-source-ids').props.children).toBe('');
+  });
+
+  it('tells the panel the feed is still LOADING while the request is in flight', async () => {
+    let settle: ((_value: ReflectionSourcesResponse) => void) | undefined;
+    mockReflectionsSources.mockReturnValueOnce(
+      new Promise<ReflectionSourcesResponse>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+
+    expect(screen.getByTestId('stub-feed-status').props.children).toBe('loading');
+
+    await act(async () => {
+      settle?.({ items: [], anchor_status: 'recorded', window_start: null, window_end: null });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('stub-feed-status').props.children).toBe('ready');
   });
 });
