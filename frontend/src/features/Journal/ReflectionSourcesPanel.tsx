@@ -69,8 +69,20 @@ const INCLUDED_ROW_OPACITY = 0.5;
 const PROMOTE_FAILURE_HINT =
   'That selection didn’t quite take — you can try again whenever you like.';
 
-/** The period is known and simply held nothing. A plain, unalarming fact. */
+/** The period is known, the feed settled, and it simply held nothing. */
 const EMPTY_FEED_COPY = 'Nothing was written in this period.';
+
+/** Still asking. Says what is happening, and claims nothing about the period. */
+const LOADING_FEED_COPY = 'Gathering what you wrote then\u2026';
+
+/**
+ * The request did not land -- offline, a 500, a refused scope. The one thing
+ * this must not do is read as an answer: nothing came back, so nothing is known
+ * about what was written, and saying "nothing was written in this period" here
+ * would be a claim the reader has no way to check.
+ */
+const FAILED_FEED_COPY =
+  'These sources couldn\u2019t be loaded just now. Your writing is safe \u2014 close this and open it again whenever you like.';
 
 /**
  * The period itself is gone. Beginning again used to overwrite the calendar
@@ -84,8 +96,21 @@ const UNRECORDED_PERIOD_COPY =
   'The dates this review covered cannot be reconstructed — that was lost when you began ' +
   'again. Everything you wrote then is still in your journal, just not gathered here.';
 
+/**
+ * How far the sources request has got. Distinct from ``anchorStatus``, which
+ * only means anything once a response has actually arrived: a feed that is
+ * still in flight, or that failed, knows nothing about the period at all.
+ */
+export type SourcesFeedStatus = 'loading' | 'ready' | 'failed';
+
 export interface ReflectionSourcesPanelProps {
   items: ReflectionSourceItem[];
+  /**
+   * Whether the feed has settled. Defaults to ``'ready'`` for the callers that
+   * hand over an already-resolved list; the screen passes the live value, so an
+   * in-flight or failed fetch never renders as a period the writer left empty.
+   */
+  feedStatus?: SourcesFeedStatus;
   /**
    * Why the server drew the window it drew, when it is worth saying. Only
    * ``'unrecorded'`` changes what the reader sees: it names a past cycle whose
@@ -522,7 +547,31 @@ function SourcesHeading({
  * first would quietly tell someone they wrote nothing during a stretch they may
  * well have written through every day of.
  */
-function EmptyFeed({ anchorStatus }: { anchorStatus?: ReflectionAnchorStatus }): React.JSX.Element {
+function EmptyFeed({
+  anchorStatus,
+  feedStatus,
+}: {
+  anchorStatus?: ReflectionAnchorStatus;
+  feedStatus: SourcesFeedStatus;
+}): React.JSX.Element {
+  // The fetch's own state is asked FIRST and wins outright. ``anchorStatus``
+  // describes a period, and there is no period to describe until a response has
+  // arrived -- so an in-flight or failed feed must never fall through to copy
+  // that states something about what the writer wrote.
+  if (feedStatus === 'loading') {
+    return (
+      <Text style={styles.emptyCopy} testID="reflection-sources-loading">
+        {LOADING_FEED_COPY}
+      </Text>
+    );
+  }
+  if (feedStatus === 'failed') {
+    return (
+      <Text style={styles.emptyCopy} testID="reflection-sources-unavailable">
+        {FAILED_FEED_COPY}
+      </Text>
+    );
+  }
   if (anchorStatus === 'unrecorded') {
     return (
       <Text style={styles.emptyCopy} testID="reflection-sources-unrecorded">
@@ -542,6 +591,7 @@ function SourcesContent({
   window: reviewWindow,
   timeZone,
   anchorStatus,
+  feedStatus = 'ready',
   onInsertQuote,
   onPromoteSpan,
   onClose,
@@ -570,7 +620,7 @@ function SourcesContent({
       <SourcesHeading window={reviewWindow} timeZone={timeZone} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
       {feed.length === 0 ? (
-        <EmptyFeed anchorStatus={anchorStatus} />
+        <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
       ) : (
         <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
       )}

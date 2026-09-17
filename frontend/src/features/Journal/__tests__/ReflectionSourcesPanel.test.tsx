@@ -348,6 +348,7 @@ describe('ReflectionSourcesPanel -- the two empty feeds', () => {
         onInsertQuote={jest.fn()}
         window={{ start: '2026-06-01T04:00:00Z', end: '2026-06-08T04:00:00Z' }}
         anchorStatus="recorded"
+        feedStatus="ready"
       />,
     );
     expect(getByTestId('reflection-sources-empty').props.children).toMatch(/Nothing was written/i);
@@ -364,7 +365,12 @@ describe('ReflectionSourcesPanel -- the two empty feeds', () => {
 
   it('says the period cannot be reconstructed when that cycle lost its anchor', () => {
     const { getByTestId, queryByTestId } = render(
-      <ReflectionSourcesPanel items={[]} onInsertQuote={jest.fn()} anchorStatus="unrecorded" />,
+      <ReflectionSourcesPanel
+        items={[]}
+        onInsertQuote={jest.fn()}
+        anchorStatus="unrecorded"
+        feedStatus="ready"
+      />,
     );
     const copy = getByTestId('reflection-sources-unrecorded').props.children;
     expect(copy).toMatch(/cannot be reconstructed/i);
@@ -372,6 +378,41 @@ describe('ReflectionSourcesPanel -- the two empty feeds', () => {
     // pretend the period was simply empty.
     expect(copy).toMatch(/still in your journal/i);
     expect(queryByTestId('reflection-sources-empty')).toBeNull();
+  });
+
+  it('does not claim the period was empty while the feed is still loading', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[]} onInsertQuote={jest.fn()} feedStatus="loading" />,
+    );
+    expect(queryByTestId('reflection-sources-empty')).toBeNull();
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
+    expect(getByTestId('reflection-sources-loading')).toBeTruthy();
+  });
+
+  it('does not claim the period was empty when the feed FAILED to load', () => {
+    // Offline, a 500, or a 403: none of them is evidence about what was
+    // written. Saying "nothing was written" here is a lie the reader cannot
+    // check.
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[]} onInsertQuote={jest.fn()} feedStatus="failed" />,
+    );
+    const copy = getByTestId('reflection-sources-unavailable').props.children;
+    expect(copy).toMatch(/could(n.t| not) be loaded|didn.t load/i);
+    expect(queryByTestId('reflection-sources-empty')).toBeNull();
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
+  });
+
+  it('prefers the failure over the anchor status, which is unknown when nothing arrived', () => {
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[]}
+        onInsertQuote={jest.fn()}
+        feedStatus="failed"
+        anchorStatus="unrecorded"
+      />,
+    );
+    expect(getByTestId('reflection-sources-unavailable')).toBeTruthy();
+    expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
   });
 
   it('shows no empty copy at all once the feed has something in it', () => {
