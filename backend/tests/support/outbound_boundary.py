@@ -286,10 +286,29 @@ Every row above keeps its state.
 **Covered by the barrier**: ``POST /journal/`` (rows 14, 23),
 ``PATCH /journal/{entry_id}`` and ``DELETE /journal/{entry_id}`` (row 19),
 ``POST /journal/{entry_id}/resonance`` (rows 1, 2),
-``POST /journal/marginalia/{marginalia_id}/essay`` (row 3),
-``POST /corpus/import`` (rows 8, 20), ``PUT /corpus/consent/{source}``
-(row 18), the teardown side of ``DELETE /users/me``, and the detached pipeline
-continuation behind row 11.
+``POST /journal/{entry_id}/suggestions/detect`` (row 2's detection pass, and
+row 23 behind it), ``POST /journal/marginalia/{marginalia_id}/essay`` -- **both
+halves of row 3**, the ``_cache_essay -> generate_essay`` dial as well as the
+mirror that follows it -- ``POST /corpus/import`` (rows 8, 20),
+``PUT /corpus/consent/{source}`` (row 18), the teardown side of
+``DELETE /users/me``, and the detached pipeline continuation behind row 11.
+
+That list was wrong when it was first written here, in a way worth recording
+rather than quietly correcting. It named the essay route, and the barrier on
+that route wrapped only the Creek mirror: ``_cache_essay`` committed and dialled
+the cloud model with the stored entry body and every prior letter *before* the
+hold was taken. The completion-detection route was not named at all, because the
+site list was derived by walking the route table for ``get_creek_vault_client``
+and that route resolves no vault client. Both are fixed; the reason they are
+described here is that this census is one of the three places that claimed
+coverage it did not have, and a census that names a site it does not cover is
+worse than one that omits it.
+
+The list is now derived rather than typed: ``tests/support/egress_call_graph.py``
+finds the paths from the source and
+``tests/security/test_egress_barrier_totality.py`` fails the build when a route
+claimed as barriered reaches a dial that no ``hold_account`` encloses. This
+paragraph is prose *about* that derivation, not the derivation.
 
 **Deliberately excluded, with the reason**:
 

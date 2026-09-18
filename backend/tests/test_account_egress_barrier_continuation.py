@@ -18,15 +18,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
+from typing import cast
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CreekCapability,
+    CreekVaultPipelineClient,
     VaultClassificationPass,
     VaultLinkPass,
     VaultLinkStage,
@@ -35,7 +40,10 @@ from domain.creek_vault import (
     VaultPipelineStage,
 )
 from main import app
+from models.user import User
+from models.vault_pipeline_run import VaultPipelineOutcome
 from services import creek_vault_pipeline as pipeline
+from services.creek_vault_pipeline import VaultPipelineTrigger
 from tests.test_account_egress_barrier import (
     DELETION_RESPONSE,
     delete_account_recording_order,
@@ -226,3 +234,125 @@ async def test_no_pipeline_rung_is_climbed_after_the_deletion_response(
         )
 
     assert deleted.status_code == HTTPStatus.OK
+
+
+class _CountingPipelineClient(SequencedVaultClient):
+    """A pipeline-capable double that records every dial and answers instantly."""
+
+    def __init__(self) -> None:
+        """Advertise the pipeline capability and start with nothing dialled."""
+        super().__init__(
+            capabilities=frozenset({CreekCapability.JOURNAL, CreekCapability.PIPELINE})
+        )
+        self.dials: list[str] = []
+
+    async def classify_corpus(self) -> VaultClassificationPass:
+        """Record a classification pass that found nothing to classify."""
+        self.dials.append(CLASSIFY_SUBMISSION)
+        return _EMPTY_PASS
+
+    async def link_corpus(self, stage: VaultLinkStage, /) -> VaultLinkPass:
+        """Record a linker rung that found nothing to link."""
+        self.dials.append(stage.value)
+        return _empty_link(stage)
+
+    async def pipeline_job(self, job: VaultPipelineJob, /) -> VaultPipelineJob:
+        """Record a status read and answer that the job is still running."""
+        self.dials.append(FOREGROUND_POLL)
+        return job
+
+
+@pytest.mark.asyncio
+async def test_a_continuation_for_a_gone_account_never_starts_climbing(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ladder's admission read stops the climb, not just the first dial.
+
+    Asserting "no dial happened" would pass with this read deleted: the per-dial
+    ordering behind it raises ``_AccountErasedMidClimbError`` at the first rung
+    and the stand-down swallows it, so nothing reaches the wire either way. That
+    is precisely why the admission read was unasserted -- a sibling mechanism
+    covers its most visible consequence.
+
+    What it is actually for is that a ladder for an account that no longer exists
+    does no work at all: no run rows read or written, no barrier taken once per
+    rung, no stage budget spent on a corpus nobody owns. So this asserts the
+    climb is never *entered*, which is the only claim that distinguishes an
+    admission gate from a late refusal.
+    """
+    client = _CountingPipelineClient()
+    climbed: list[int] = []
+
+    async def _record_climb(_session: AsyncSession, continuation: object) -> None:
+        """Stand in for the climb, recording that it was entered at all."""
+        del continuation
+        climbed.append(1)
+
+    monkeypatch.setattr(pipeline, "_climb_or_stand_down", _record_climb)
+    erased_user_id = 987654321
+    continuation = pipeline._Continuation(  # noqa: SLF001 — the detached seam under test
+        factory=concurrent_session_factory,
+        client=cast("CreekVaultPipelineClient", client),
+        user_id=erased_user_id,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        pending=pipeline._RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),  # noqa: SLF001
+        stage=VaultPipelineStage.CLASSIFY,
+        remaining=(),
+    )
+
+    await pipeline._continue_ladder_body(continuation)  # noqa: SLF001
+
+    assert climbed == [], (
+        "a ladder for an account that does not exist was admitted and began "
+        "climbing; the stand-down read is not being consulted"
+    )
+    assert client.dials == [], (
+        f"a ladder for an account that does not exist still dialled Creek: {client.dials}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_accounts_database_fault_is_still_a_fault(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stand-down reads liveness; it does not swallow every database error.
+
+    ``_climb_or_stand_down`` turns a database failure into a stand-down only
+    when the account behind it has been erased -- the missing rows are then the
+    erasure sweep doing its job. For an account that is still there, the same
+    failure is a real fault and must propagate. Deleting that liveness read
+    leaves both cases silent, and silence is how a broken ladder looks exactly
+    like a finished one.
+    """
+    headers, _email = await signup(concurrent_async_client, "ladder_fault")
+    live_user_id = await _sole_user_id(concurrent_session_factory)
+    del headers
+
+    async def _explode(*_args: object, **_kwargs: object) -> None:
+        """Fail the way a dropped connection fails, mid-climb."""
+        raise SQLAlchemyError("the connection went away mid-climb")
+
+    monkeypatch.setattr(pipeline, "_climb_detached", _explode)
+    continuation = pipeline._Continuation(  # noqa: SLF001 — the detached seam under test
+        factory=concurrent_session_factory,
+        client=cast("CreekVaultPipelineClient", _CountingPipelineClient()),
+        user_id=live_user_id,
+        trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        pending=pipeline._RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),  # noqa: SLF001
+        stage=VaultPipelineStage.CLASSIFY,
+        remaining=(),
+    )
+
+    with pytest.raises(SQLAlchemyError):
+        await pipeline._continue_ladder_body(continuation)  # noqa: SLF001
+
+
+async def _sole_user_id(factory: async_sessionmaker[AsyncSession]) -> int:
+    """The id of the one account this test signed up."""
+    async with factory() as session:
+        found = (await session.execute(select(col(User.id)))).scalars().first()
+        assert found is not None, "the signup did not persist an account"
+        return int(found)
