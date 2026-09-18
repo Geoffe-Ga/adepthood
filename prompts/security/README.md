@@ -1,8 +1,10 @@
 # Security Audit v2 — Adepthood
 
 Second-pass security audit after all 14 original findings were addressed.
-12 of 14 are fully resolved. 2 remain open (sec-11 rate limiting, sec-03
-input constraints), plus 2 new findings discovered in this pass.
+13 of 14 are fully resolved. 1 remains open (sec-03 input constraints), plus
+2 new findings discovered in this pass. sec-11 closed with #2909, which
+finished what sec-16 started: the default limit existed but reached only the
+3 routes mounted on the application object.
 
 ## Resolved (sec-01 through sec-14)
 
@@ -18,24 +20,26 @@ input constraints), plus 2 new findings discovered in this pass.
 | sec-08 | HTTP fallback in API base URL | FIXED — HTTPS enforced in production |
 | sec-09 | No token refresh or expiration handling | FIXED — proactive refresh + retry-after-401 |
 | sec-10 | Unvalidated URLs before Linking.openURL | FIXED — `isValidUrl()` allowlist |
-| sec-11 | No rate limiting on data endpoints | PARTIALLY FIXED — see sec-16 |
+| sec-11 | No rate limiting on data endpoints | FIXED — ambient 60/minute floor on every request (#2909) |
 | sec-12 | GitHub Actions not pinned to commit SHAs | FIXED — all actions use full SHAs |
 | sec-13 | Undocumented pip-audit vulnerability exemption | FIXED — `--ignore-vuln` removed |
 | sec-14 | Dependency versions not pinned for production | FIXED — `requirements-lock.txt` + Dependabot |
 
-## Open Issues (sec-15 through sec-18)
+## Open Issues (sec-15, sec-17, sec-18)
+
+sec-16 is closed — see its file for what it delivered and what #2909 had to
+finish.
 
 | #  | Issue | Layer | Severity | Est. LoC |
 |----|-------|-------|----------|----------|
 | 15 | [Remaining unbounded string fields](sec-15-remaining-input-constraints.md) | Backend | MEDIUM | ~60 |
-| 16 | [No rate limiting on data endpoints](sec-16-data-endpoint-rate-limits.md) | Backend | MEDIUM | ~30 |
 | 17 | [Offering balance race condition](sec-17-offering-balance-race-condition.md) | Backend | HIGH | ~20 |
 | 18 | [Frontend nginx missing security headers](sec-18-nginx-security-headers.md) | Frontend | MEDIUM | ~15 |
 
 ## Dependency Graph
 
 ```
-All 4 issues are fully independent — no internal dependencies.
+All 3 open issues are fully independent — no internal dependencies.
 ```
 
 ## What Is Now Secure (cumulative)

@@ -14,16 +14,30 @@ instead of slipping through unnoticed.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
+from typing import cast
 
 import pytest
 from httpx import AsyncClient, Response
+from limits import parse
+from limits.storage import MemoryStorage
+from slowapi.errors import RateLimitExceeded
+from slowapi.wrappers import Limit
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
+from starlette.requests import Request
 
 from models.user import User
+from rate_limit import (
+    ambient_tracked_paths,
+    declared_limit_retry_after,
+    limiter,
+    reset_ambient_limit,
+)
+from tests.helpers.openapi_errors import route_index
 
 _LIMIT_3 = 3
 _LIMIT_5 = 5
@@ -98,17 +112,227 @@ def _get_site_resource_body(client: AsyncClient, headers: dict[str, str]) -> Awa
 # ── Default global limit ─────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/health", id="app-level-APIRoute"),
+        pytest.param("/practices/", id="include_router-mounted"),
+        pytest.param("/openapi.json", id="starlette-Route"),
+        pytest.param("/nope-404", id="no-route-at-all"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_default_rate_limit_pinned_at_60_per_minute(async_client: AsyncClient) -> None:
-    """A route with no ``@limiter.limit()`` override inherits the 60/minute default."""
+async def test_default_rate_limit_pinned_at_60_per_minute(
+    async_client: AsyncClient, path: str
+) -> None:
+    """Any request with no ``@limiter.limit()`` of its own meets the 60/minute floor.
+
+    Parametrized over the four shapes a request can have (#2909), because for
+    years this test asserted the claim in its own name while exercising only the
+    first of them. ``/health`` is mounted on the application object itself, and
+    it was the single shape ``SlowAPIMiddleware`` could still resolve to a
+    handler: every ``include_router`` route resolved to ``None`` and was treated
+    as exempt, and a request matching no route never had a handler to begin
+    with. This test was green for all of that. Its green is what made the gap
+    invisible, so the fix is not a new test beside it -- it is these four cases
+    in the place the claim was already being made.
+
+    The first two are the regression guards that must stay green; ``/health``'s
+    case is the original assertion, unchanged.
+    """
 
     async def send() -> Response:
-        return await async_client.get("/health")
+        return await async_client.get(path)
 
     await _assert_limit_pinned(send, _LIMIT_60)
 
 
+# The quick-log tile posts one check-in per tap, on one static path, with no
+# batching. A user counting reps at about a tap a second spends the ambient
+# allowance inside a minute, so that path declares a floor sized to its own
+# interaction. Pinned here rather than derived, so widening it is a deliberate
+# edit to a test rather than a number nobody looks at.
+_QUICK_LOG_PATH = "/goal_completions/"
+_QUICK_LOG_LIMIT = 180
+
+
+@pytest.mark.asyncio
+async def test_the_quick_log_path_is_floored_at_its_own_interaction_rate(
+    async_client: AsyncClient,
+) -> None:
+    """Quick Log Mode must survive a minute of tapping, and still have a ceiling.
+
+    ``HabitsScreen``'s quick-log tile calls ``logUnit`` on every tap, which is
+    one ``POST /goal_completions/`` per tap: no batching, no coalescing, one
+    static path. At roughly a tap a second -- counting reps, counting ounces --
+    the ambient 60/minute refuses from tap 61, the optimistic increment is
+    rolled back out of the store and the on-disk snapshot, and the user is told
+    they are sending a lot of requests for using the feature as designed.
+
+    A declared ``@limiter.limit`` cannot answer this: the floor is charged in
+    middleware, before routing, so a per-route limit can only ever tighten what
+    the floor already allowed. The allowance therefore belongs to the floor, is
+    named for the one path that needs it, and is still a cap -- asserted at both
+    boundaries so it can neither shrink back under the tapping rate nor quietly
+    become unlimited.
+    """
+
+    async def send() -> Response:
+        return await async_client.post(_QUICK_LOG_PATH, json={"goal_id": 1})
+
+    await _assert_limit_pinned(send, _QUICK_LOG_LIMIT)
+
+
 # ── Retry-After header ──────────────────────────────────────────────────
+
+
+# The two windows the declared limits use, and the two answers a refusal from
+# each of them may honestly advertise. Named so the assertions below read as
+# "its own window" rather than as two unexplained integers.
+_ONE_MINUTE_SECONDS = 60
+_ONE_HOUR_SECONDS = 3600
+
+_RESET_REQUEST_PATH = "/auth/password-reset/request"
+_RESET_REQUESTS_PER_HOUR = 3
+
+
+@pytest.mark.asyncio
+async def test_a_decorator_refusal_advertises_its_own_window(async_client: AsyncClient) -> None:
+    """A 429 must say when the bucket it refused actually admits again.
+
+    ``slowapi.errors.RateLimitExceeded`` carries ``limit`` and nothing else --
+    it has no ``retry_after`` attribute at all -- so the handler's
+    ``getattr(exc, "retry_after", 60)`` took its fallback on *every* decorator
+    refusal. ``POST /auth/password-reset/request`` declares ``3/hour``, and a
+    client told to come back in 60 seconds retries roughly 56 more times before
+    its window rolls off: precisely the tight loop ``_MIN_RETRY_AFTER_SECONDS``
+    exists to break, live on the other half of the system.
+
+    Both windows are asserted, in both directions, so a handler that answers one
+    hardcoded number cannot pass: an hourly limit must advertise more than a
+    minute, and a per-minute limit must not advertise an hour.
+    """
+    hourly = [
+        await async_client.post(_RESET_REQUEST_PATH, json={"email": "reset@example.com"})
+        for _ in range(_RESET_REQUESTS_PER_HOUR + 1)
+    ][-1]
+    assert hourly.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    hourly_wait = int(hourly.headers["retry-after"])
+    assert _ONE_MINUTE_SECONDS < hourly_wait <= _ONE_HOUR_SECONDS
+
+    per_minute = [
+        await async_client.post(
+            "/auth/login",
+            json={
+                "email": "nobody@example.com",
+                "password": "wrongpassword1",  # pragma: allowlist secret
+            },
+        )
+        for _ in range(_LIMIT_5 + 1)
+    ][-1]
+    assert per_minute.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    per_minute_wait = int(per_minute.headers["retry-after"])
+    assert 0 < per_minute_wait <= _ONE_MINUTE_SECONDS
+
+
+# How far into the hourly window the displaced refusal below is taken, and what
+# the bucket therefore has left. Fifty minutes in, ten to go: a number that
+# coincides with neither answer a constant-per-limit implementation can give --
+# one whole window (3600) or the flat minute this delta removed (60).
+_ELAPSED_INTO_THE_HOUR = 3000
+_REMAINING_OF_THE_HOUR = _ONE_HOUR_SECONDS - _ELAPSED_INTO_THE_HOUR
+
+
+def _age_the_declared_buckets(seconds: float) -> None:
+    """Move every bucket of the *decorated* layer ``seconds`` further into its window.
+
+    The declared limits run on a fixed window over ``limits``' in-memory store,
+    whose entire notion of when a bucket rolls over is the expiry stamp written
+    when that bucket was first hit. Rewinding those stamps is indistinguishable
+    from having sent the earlier requests ``seconds`` ago, and -- unlike an
+    injected clock -- it leaves the store and ``seconds_until_reset`` reading the
+    same ``time.time`` they read in production, so the derived answer cannot come
+    out right for the wrong reason.
+
+    The ambient floor keeps a store of its own and is deliberately untouched.
+
+    Args:
+        seconds: How much of each bucket's window to treat as already elapsed.
+    """
+    storage = cast("MemoryStorage", limiter.limiter.storage)
+    for key, expires_at in list(storage.expirations.items()):
+        storage.expirations[key] = expires_at - seconds
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_late_in_its_window_advertises_only_the_time_left(
+    async_client: AsyncClient,
+) -> None:
+    """The wait is *derived from* the refused bucket, not restated from its cap.
+
+    Every other Retry-After test here fills a bucket and is refused in the same
+    instant -- the one moment in the window where "the time this bucket has
+    left" and "one whole window of its cap" are the same number. So none of them
+    can see the difference, and replacing the whole derivation with the cap's
+    expiry passes them all: ``3/hour`` refused immediately really does have
+    3600 seconds left, and ``60 < wait <= 3600`` admits exactly 3600.
+
+    Here the three hourly requests are fifty minutes old by the time the fourth
+    is refused, so the only honest answer is the ten minutes that remain. The
+    two constant answers -- 3600 for the whole window, 60 for the fallback this
+    delta removed -- both fall outside the band asserted below, in opposite
+    directions.
+    """
+    payload = {"email": "displaced@example.com"}
+    for _ in range(_RESET_REQUESTS_PER_HOUR):
+        admitted = await async_client.post(_RESET_REQUEST_PATH, json=payload)
+        assert admitted.status_code != HTTPStatus.TOO_MANY_REQUESTS
+
+    _age_the_declared_buckets(_ELAPSED_INTO_THE_HOUR)
+
+    refused = await async_client.post(_RESET_REQUEST_PATH, json=payload)
+    assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    wait = int(refused.headers["retry-after"])
+    assert _REMAINING_OF_THE_HOUR - _ONE_MINUTE_SECONDS < wait <= _REMAINING_OF_THE_HOUR
+
+
+def test_the_declared_window_is_read_from_the_bucket_that_refused() -> None:
+    """The wait is the refused bucket's own reset, read through the limiter that owns it."""
+    item = parse("3/hour")
+    identifiers = ["2001:db8::/64", "routers.auth.request_password_reset"]
+    assert limiter.limiter.hit(item, *identifiers)
+
+    seconds = limiter.seconds_until_reset(item, identifiers)
+
+    assert 0 < seconds <= _ONE_HOUR_SECONDS
+
+
+def test_a_refusal_carrying_no_recorded_bucket_still_waits_a_whole_window() -> None:
+    """The last resort is one full window of the cap that refused, never a flat minute.
+
+    ``slowapi`` records the bucket on ``request.state`` immediately before it
+    raises, so this branch is not reachable through the application -- which is
+    exactly why it is asserted directly. A fallback nobody drives is a fallback
+    that quietly becomes wrong, and the one it replaces had been wrong since it
+    was written.
+    """
+    exc = RateLimitExceeded(
+        Limit(
+            parse("3/hour"),
+            lambda _request: "",
+            None,
+            per_method=False,
+            methods=None,
+            error_message=None,
+            exempt_when=None,
+            cost=1,
+            override_defaults=False,
+        )
+    )
+    bare = Request({"type": "http", "headers": [], "client": None})
+
+    assert declared_limit_retry_after(bare, exc) == _ONE_HOUR_SECONDS
 
 
 @pytest.mark.asyncio
@@ -311,12 +535,15 @@ async def test_the_feedback_address_budget_stops_a_third_account_on_one_address(
 
     Two accounts spend the whole address budget between them; a third, whose own
     account budget is untouched, is refused on its very first request. That is
-    the only shape that distinguishes the address axis from the account one --
-    and it is declared on the route rather than inherited, because the ambient
-    default the rest of this application relies on does not reach any route
-    mounted through ``include_router`` under FastAPI 0.141 (``slowapi`` resolves
-    a request to its handler by reading ``.endpoint`` off ``app.routes``, which
-    now holds ``_IncludedRouter`` wrappers that do not expose one).
+    the only shape that distinguishes the address axis from the account one.
+
+    The axis is declared on the route rather than inherited, and since #2909
+    that is a choice rather than a necessity: the ambient floor now does reach
+    this route, but inheriting 60/minute here would loosen this axis 180x, so
+    the two compose -- floor underneath, 20/hour ceiling on top. The whole case
+    spends 21 requests on ``/feedback/`` and 3 on ``/auth/signup``, both well
+    under the per-path floor, so nothing below is measuring the floor by
+    accident.
     """
     for index in range(2):
         headers = await _signup(async_client, f"feedback_addr_{index}")
@@ -349,6 +576,10 @@ async def test_a_refused_retry_does_not_spend_the_shared_address_budget(
     So the account axis is registered first. Here one account spends its ten and
     then retries ten more times in vain; a second account's first report must
     still be accepted, because those ten refusals cost the shared axis nothing.
+
+    Since #2909 an ambient 60/minute floor sits underneath both axes. It cannot
+    confuse this case: it is keyed per path, so a refused retry at ``/feedback/``
+    bills no other route, and the 21 requests here stay well under it.
     """
     greedy = await _signup(async_client, "feedback_greedy")
     for _ in range(_LIMIT_10):
@@ -362,3 +593,223 @@ async def test_a_refused_retry_does_not_spend_the_shared_address_budget(
     admitted = await async_client.post("/feedback/", json=_FEEDBACK_PAYLOAD, headers=neighbour)
 
     assert admitted.status_code == HTTPStatus.CREATED
+
+
+# ── The ambient floor reaches every request (#2909) ──────────────────────
+#
+# Until #2909 these tests were impossible to write against anything but
+# ``/health``: ``SlowAPIMiddleware`` resolved a request to its handler by
+# walking ``app.routes`` for ``.endpoint``, FastAPI 0.141 puts
+# ``_IncludedRouter`` wrappers there that expose none, and a handler-less
+# request was treated as *exempt*. The mechanism failed open for 141 of the
+# 144 mounted routes, and every one of the tests above stayed green while it
+# did. Each test below fails at HEAD~ with the unthrottled status named in its
+# docstring, which is what makes it coverage rather than decoration.
+
+_UNMATCHED_PATH = "/nope-404"
+_MALFORMED_JSON_BODY = b"{not json"
+_LOGIN_PROBE_REQUESTS = 8
+
+
+@pytest.mark.asyncio
+async def test_the_ambient_default_reaches_a_router_mounted_route(
+    async_client: AsyncClient,
+) -> None:
+    """A router-mounted, undecorated route is subject to the 60/minute floor.
+
+    ``GET /practices/`` declares no limit of its own and is mounted through
+    ``include_router``. Before #2909 it answered 401 seventy times over.
+    """
+
+    async def send() -> Response:
+        return await async_client.get("/practices/")
+
+    await _assert_limit_pinned(send, _LIMIT_60)
+
+
+@pytest.mark.asyncio
+async def test_an_unauthenticated_flood_at_a_decorated_route_is_still_throttled(
+    async_client: AsyncClient,
+) -> None:
+    """A decorated route's own limit cannot see a flood that never reaches it.
+
+    ``@limiter.limit`` wraps the *endpoint*, so it fires only after dependency
+    resolution: an unauthenticated flood is refused by ``get_current_user``
+    first and is charged to nothing. ``GET /journal/`` declares 30/minute and
+    answered 401 seventy times over before #2909. The ambient floor is what
+    gives it a bound, so this pins 60 rather than 30.
+    """
+
+    async def send() -> Response:
+        return await async_client.get("/journal/")
+
+    await _assert_limit_pinned(send, _LIMIT_60)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_body_flood_at_the_login_route_is_throttled(
+    async_client: AsyncClient,
+) -> None:
+    """A body the framework rejects is still a request somebody has to pay for.
+
+    ``POST /auth/login`` declares 5/minute, but a body Pydantic refuses never
+    reaches the decorated endpoint: the 422 is raised during request parsing.
+    This is the case no dependency-based design can cover either, because
+    dependencies resolve on the same side of that refusal.
+    """
+
+    async def send() -> Response:
+        return await async_client.post(
+            "/auth/login",
+            content=_MALFORMED_JSON_BODY,
+            headers={"Content-Type": "application/json"},
+        )
+
+    await _assert_limit_pinned(send, _LIMIT_60)
+
+
+@pytest.mark.asyncio
+async def test_a_flood_at_an_unmatched_path_is_throttled(async_client: AsyncClient) -> None:
+    """A path that matches no route is the cheapest flood to send and must cost.
+
+    Enforcement that needs a route to point at cannot bound a 404 storm; this
+    one answered 404 seventy times over before #2909.
+    """
+
+    async def send() -> Response:
+        return await async_client.get(_UNMATCHED_PATH)
+
+    await _assert_limit_pinned(send, _LIMIT_60)
+
+
+@pytest.mark.asyncio
+async def test_exhausting_one_path_does_not_lock_out_another(
+    async_client: AsyncClient,
+) -> None:
+    """The ambient bucket is per path, so no client can shut itself out of the API.
+
+    A floor charged per client alone would mean one runaway screen taking the
+    whole application away from that client -- including the health probes an
+    operator reads to find out why.
+    """
+    for _ in range(_LIMIT_60 + 1):
+        await async_client.get("/practices/")
+    spent = await async_client.get("/practices/")
+    assert spent.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await async_client.get("/course/site-resources")
+    assert neighbour.status_code == HTTPStatus.UNAUTHORIZED
+
+    probe = await async_client.get("/health/live")
+    assert probe.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
+    async_client: AsyncClient,
+) -> None:
+    """The floor never becomes the binding constraint for traffic that lands.
+
+    Every one of the 27 declared limits is tighter than 60/minute, so a
+    well-formed request stream meets its route's own limit long before the
+    ambient one. ``POST /auth/login`` declares 5/minute: the sixth request is
+    refused, not the sixty-first.
+    """
+    responses = [
+        await async_client.post(
+            "/auth/login",
+            json={
+                "email": "floor@example.com",
+                "password": "secret12345",  # pragma: allowlist secret
+            },
+        )
+        for _ in range(_LOGIN_PROBE_REQUESTS)
+    ]
+
+    assert responses[_LIMIT_5 - 1].status_code != HTTPStatus.TOO_MANY_REQUESTS
+    assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+# The 27 limits declared with ``@limiter.limit``, frozen. This table is the
+# ratchet for #2909: the ambient floor was added *underneath* these, and the
+# one way that change could do harm is by disturbing one of them. Reading it
+# back from the limiter proves the decorators registered what the source says,
+# which a grep over the router modules could not.
+_DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
+    "routers.admin.grant_entitlement": ("10 per 1 minute",),
+    "routers.admin.revoke_entitlement": ("10 per 1 minute",),
+    "routers.auth.apple_oauth_signin": ("5 per 1 minute",),
+    "routers.auth.cancel_password_reset": ("10 per 1 hour",),
+    "routers.auth.confirm_password_reset": ("5 per 1 hour",),
+    "routers.auth.google_oauth_signin": ("5 per 1 minute",),
+    "routers.auth.login": ("5 per 1 minute",),
+    "routers.auth.refresh_token": ("1 per 1 minute",),
+    "routers.auth.request_password_reset": ("3 per 1 hour",),
+    "routers.auth.signup": ("3 per 1 minute",),
+    "routers.botmason.add_balance": ("5 per 1 minute",),
+    "routers.corpus.import_corpus_document": ("20 per 1 minute",),
+    "routers.corpus.put_corpus_consent": ("5 per 1 minute",),
+    "routers.course.get_content_body": ("30 per 1 minute",),
+    "routers.course.get_site_resource_body": ("30 per 1 minute",),
+    "routers.course.get_stage_intro_body": ("30 per 1 minute",),
+    "routers.feedback.submit_feedback": ("10 per 1 hour", "20 per 1 hour"),
+    "routers.journal.detect_entry_suggestions": ("10 per 1 minute",),
+    "routers.journal.expand_marginalia_essay": ("10 per 1 minute",),
+    "routers.journal.list_journal_entries": ("30 per 1 minute",),
+    "routers.journal.list_voice_drafts": ("30 per 1 minute",),
+    "routers.journal.run_resonance": ("10 per 1 minute",),
+    "routers.practice_share.create_share_link": ("10 per 1 hour",),
+    "routers.practice_share.import_share_link": ("30 per 1 hour",),
+    "routers.practice_share.preview_share_link": ("30 per 1 hour",),
+    "routers.practices.submit_practice": ("5 per 1 minute",),
+    "routers.transcription.transcribe_page": ("20 per 1 minute",),
+}
+
+# One sentinel for every ``{param}`` segment. The coverage guard below only
+# needs the request to *arrive*; what it resolves to is irrelevant, because the
+# ambient floor is charged before any handler or dependency runs.
+_PATH_PARAM_SENTINEL = "1"
+_PATH_PARAM = re.compile(r"\{[^}]+\}")
+
+# 144 mounted ``APIRoute``s share 118 distinct paths. Pinned so a future router
+# that collapses the walk (the failure mode #2909 itself was) fails here rather
+# than quietly guarding fewer paths than it claims.
+_DISTINCT_MOUNTED_PATHS = 118
+
+
+def test_every_declared_route_limit_matches_the_frozen_table() -> None:
+    """The 27 declared limits are exactly what they were before the ambient floor.
+
+    Also a tripwire for the one regression the new layer could hide: slowapi's
+    ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
+    *decorator* path only. Both registries are empty today; if one ever fills,
+    the exemption would half-apply -- honoured by the decorators, ignored by the
+    ambient floor -- and this assertion is what says so out loud.
+    """
+    assert limiter.declared_route_limits() == _DECLARED_ROUTE_LIMITS
+    assert limiter.exempt_route_names() == frozenset()
+    assert limiter.request_filter_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_every_mounted_path_is_charged_to_the_ambient_budget(
+    async_client: AsyncClient,
+) -> None:
+    """Every distinct mounted path is charged, not merely the three app-level ones.
+
+    Deliberately iterates distinct *paths* with a reset between them rather than
+    routes: 144 routes share 118 paths, the ambient bucket is keyed per path,
+    and a per-route walk would see the second and third method on a shared path
+    charged to a bucket the first already spent.
+    """
+    by_path: dict[str, str] = {}
+    for method, path in route_index():
+        by_path.setdefault(path, method)
+
+    assert len(by_path) == _DISTINCT_MOUNTED_PATHS
+
+    for path, method in sorted(by_path.items()):
+        reset_ambient_limit()
+        concrete = _PATH_PARAM.sub(_PATH_PARAM_SENTINEL, path)
+        await async_client.request(method, concrete)
+        assert concrete in ambient_tracked_paths(), f"{method} {concrete} was not charged"

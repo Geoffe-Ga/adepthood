@@ -27,10 +27,12 @@ anyio task group whose cancellation semantics would be one more thing standing
 between an exception and its 500.
 
 *Directly inside CORS, outside rate limiting.*  Being below CORS is the point.
-Being above ``SlowAPIMiddleware`` means a panic in the rate limiter is covered
-too — and costs nothing, because slowapi answers its own ``RateLimitExceeded``
-with a 429 response rather than raising it upward, so a rate-limited request
-never reaches the ``except`` below.
+Being above ``AmbientRateLimitMiddleware`` means a panic in the rate limiter is
+covered too — and costs nothing, because that layer *builds* its 429 rather than
+raising one, so a rate-limited request never reaches the ``except`` below.  It
+has to build rather than raise for the mirror-image reason this module exists:
+an exception escaping a user middleware is served by ``ServerErrorMiddleware``,
+above every layer here, and would reach the client as an uncaught 500.
 
 *No re-raise.*  ``ServerErrorMiddleware`` re-raises so the ASGI server can log
 what it swallowed; here the exception is already logged with its traceback and

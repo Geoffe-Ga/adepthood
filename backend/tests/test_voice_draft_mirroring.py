@@ -33,6 +33,12 @@ from services.creek_vault_voice_drafts import voice_draft_external_id
 _BODY = "I walked by the river and the willow bent without breaking."
 _ESSAY = "A warm letter about beginnings."
 
+#: How long a competing mutation is given to overtake a dial that is being held
+#: open. Long enough that a request which *can* proceed will have, short enough
+#: that four of these do not lengthen the suite noticeably. Matched to the
+#: literal the two mirror-race tests below already used.
+_SERIALIZATION_PROBE_SECONDS = 0.05
+
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
     response = await client.post(
@@ -513,14 +519,34 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
-    patched = await concurrent_async_client.patch(
-        f"/journal/{entry_id}",
-        json={"classification": "intimate"},
-        headers=headers,
+    patch = asyncio.create_task(
+        concurrent_async_client.patch(
+            f"/journal/{entry_id}",
+            json={"classification": "intimate"},
+            headers=headers,
+        )
     )
-    finish_generation.set()
-    expanded = await expansion
 
+    # The account egress barrier (#2642) orders the *generation* dial, which
+    # carries this entry's body and every prior letter to a cloud model, against
+    # this account's own erasure. A privacy PATCH takes the same barrier, so it
+    # can no longer land in the middle of the dial -- it lands immediately after
+    # it, ahead of the mirror, because the barrier is released between the two
+    # dials and its waiters are served in order. The property this test exists
+    # for is unchanged and now holds by ordering rather than by luck: the entry
+    # is INTIMATE before the mirror reads it, so nothing is ever sent.
+    patch_was_serialized = False
+    try:
+        await asyncio.wait_for(asyncio.shield(patch), timeout=_SERIALIZATION_PROBE_SECONDS)
+    except TimeoutError:
+        patch_was_serialized = True
+    finally:
+        finish_generation.set()
+
+    expanded = await expansion
+    patched = await patch
+
+    assert patch_was_serialized, "the privacy PATCH overtook the in-flight generation"
     assert patched.status_code == HTTPStatus.OK
     assert expanded.status_code == HTTPStatus.OK
     assert expanded.json()["essay"] == _ESSAY
@@ -560,7 +586,7 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
 
     patch_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(patch), timeout=0.05)
+        await asyncio.wait_for(asyncio.shield(patch), timeout=_SERIALIZATION_PROBE_SECONDS)
     except TimeoutError:
         patch_was_serialized = True
     finally:
@@ -621,14 +647,28 @@ async def test_delete_during_generation_prevents_the_later_mirror(
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
-
-    deleted = await concurrent_async_client.delete(
-        f"/journal/{entry_id}",
-        headers=headers,
+    deletion = asyncio.create_task(
+        concurrent_async_client.delete(
+            f"/journal/{entry_id}",
+            headers=headers,
+        )
     )
-    finish_generation.set()
-    expanded = await expansion
 
+    # Serialized behind the generation dial for the same reason the privacy
+    # PATCH above is, and with the same consequence: the withdrawal completes
+    # between the two dials, so the mirror reads a deleted row and sends nothing.
+    delete_was_serialized = False
+    try:
+        await asyncio.wait_for(asyncio.shield(deletion), timeout=_SERIALIZATION_PROBE_SECONDS)
+    except TimeoutError:
+        delete_was_serialized = True
+    finally:
+        finish_generation.set()
+
+    expanded = await expansion
+    deleted = await deletion
+
+    assert delete_was_serialized, "the DELETE overtook the in-flight generation"
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert expanded.status_code == HTTPStatus.OK
     assert vault.upserts == []
@@ -666,7 +706,7 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
 
     delete_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(deletion), timeout=0.05)
+        await asyncio.wait_for(asyncio.shield(deletion), timeout=_SERIALIZATION_PROBE_SECONDS)
     except TimeoutError:
         delete_was_serialized = True
     finally:

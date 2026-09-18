@@ -98,6 +98,7 @@ from schemas.corpus import (
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
 from services.corpus_import import (
@@ -115,7 +116,16 @@ router = build_router(
     prefix="/corpus",
     tags=["corpus"],
     # ``guard_document_payload`` refuses an oversized import before it is decoded.
-    extra_statuses=(status.HTTP_413_CONTENT_TOO_LARGE,),
+    # 503 is the account egress barrier's: ``POST /import`` and
+    # ``PUT /consent/{source}`` both hand this account's stored writing outward,
+    # so both refuse rather than transmit unordered when the cross-worker lock
+    # connection cannot be opened. The refusal is raised inside
+    # ``services.account_egress_barrier``, not here, which is precisely why it
+    # went undeclared until a gate learned to read the service call.
+    extra_statuses=(
+        status.HTTP_413_CONTENT_TOO_LARGE,
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+    ),
 )
 
 
@@ -170,6 +180,19 @@ async def put_corpus_consent(
     alternative was a permission the account had given, paid for at a provider,
     and thrown away.
 
+    **The account barrier is held for the decision, never across the sweep.**
+    This route serves the revocation as well as the grant, and
+    ``DELETE /users/me`` takes the same exclusive hold: a hold spanning a sweep
+    bounded only by :data:`services.corpus_backfill.BACKFILL_ENTRY_CEILING`
+    provider calls would not merely delay those two, it would reorder them to
+    after every dial the sweep had left -- the two requests that mean *stop
+    sending my writing* made to wait out the sending, and the writing sent in
+    the meantime withheld by the code that predates the barrier. So the hold
+    here covers the liveness read and the decision, which dial nothing, and the
+    sweep takes it per entry in
+    :func:`services.corpus_backfill._offer_one`, re-reading this decision inside
+    each one. A stop then waits for the dial in flight and for nothing else.
+
     Rate-limited more tightly than ``POST /import`` despite carrying the
     smallest body in the API: a grant is the most expensive request here, since
     the sweep it authorises costs a provider call per entry it reaches, where
@@ -181,7 +204,10 @@ async def put_corpus_consent(
     append-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,
     rather than onto a shape that also answers ``GET``.
     """
-    change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+    async with hold_account(session, user_id):
+        await ensure_account_live(session, user_id)
+        change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
+        await session.commit()
     await backfill_after_consent(session, user_id=user_id, change=change)
     await session.commit()
     return _to_response(change.state)
@@ -370,24 +396,26 @@ async def import_corpus_document(
     afford, and never raises.
     """
     raw = guard_document_payload(payload.content_base64)
-    result = await import_document(
-        session,
-        vault_client,
-        UploadedDocument(
-            owner_user_id=user_id,
-            filename=payload.filename,
-            content_base64=payload.content_base64,
-            classification=payload.classification,
-            created_at=datetime.now(UTC),
-        ),
-        raw,
-    )
-    await session.commit()
-    if isinstance(result, VaultImportResult) and result.stored:
-        await drive_vault_pipeline(
+    async with hold_account(session, user_id):
+        await ensure_account_live(session, user_id)
+        result = await import_document(
             session,
             vault_client,
-            user_id=user_id,
-            trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+            UploadedDocument(
+                owner_user_id=user_id,
+                filename=payload.filename,
+                content_base64=payload.content_base64,
+                classification=payload.classification,
+                created_at=datetime.now(UTC),
+            ),
+            raw,
         )
+        await session.commit()
+        if isinstance(result, VaultImportResult) and result.stored:
+            await drive_vault_pipeline(
+                session,
+                vault_client,
+                user_id=user_id,
+                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+            )
     return _to_import_response(result)

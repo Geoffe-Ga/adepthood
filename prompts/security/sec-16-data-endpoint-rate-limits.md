@@ -1,5 +1,21 @@
 # sec-16: No rate limiting on data endpoints
 
+> **CLOSED.** Delivered as written -- `default_limits=["60/minute"]` on the
+> limiter, plus stricter per-endpoint limits -- and then found to be only half a
+> fix. The default was configured but never *reached* 141 of the 144 mounted
+> routes: `SlowAPIMiddleware` applies it by resolving a request to its handler
+> through `app.routes`, and under FastAPI 0.141 those are `_IncludedRouter`
+> wrappers exposing no `.endpoint`, so every `include_router` route was treated
+> as exempt. The `@limiter.limit()` decorators in task 2 below had the mirror
+> problem: they wrap the endpoint, so an unauthenticated or malformed flood is
+> refused upstream of them and charged to nothing.
+>
+> Its acceptance criteria are all met as of #2909, which replaced that
+> middleware with a first-party layer that resolves nothing. The lesson worth
+> keeping is in the acceptance criteria below: "All endpoints have a default
+> rate limit (60/minute)" was written as a configuration claim and was verified
+> as one, which is why it read green for as long as it did.
+
 **Labels:** `security`, `backend`, `priority-medium`
 **Severity:** MEDIUM
 **OWASP:** A04:2021 — Insecure Design

@@ -39,6 +39,7 @@ from services.account_deletion import (
     DeletionReceipt,
     delete_account,
 )
+from services.account_egress_barrier import hold_account
 from services.creek_provisioning import (
     load_vault_activation,
     request_vault_teardown,
@@ -151,21 +152,29 @@ async def delete_my_account(
     The response enumerates the tables erased, the ones that survive with the
     account's name cleared off them, and what a user with a Creek Vault still
     has to purge themselves. Nothing here calls the vault, so an unreachable
-    one cannot delay or block the erasure.
+    one cannot delay or block the erasure — the barrier below waits on the
+    database and never on Creek, so that stays true of it too.
+
+    Erasure now also waits for this account's own in-flight outbound writes
+    (:mod:`services.account_egress_barrier`), so no content is handed outward
+    after the receipt. It is taken with ``on_unavailable="proceed"``: a lock
+    connection that will not open refuses *egress* everywhere else, and must
+    never refuse *this*, because erasure only ever reduces exposure.
     """
     if not _confirms_own_address(payload.confirm_email, current_user.email):
         raise bad_request(_CONFIRMATION_MISMATCH)
     user_id = current_user.id
     if user_id is None:  # pragma: no cover - a persisted row always has an id
         raise bad_request("account_not_persisted")
-    vault_disposition = await _resolve_account_vault_disposition(
-        session,
-        user_id,
-        provisioning,
-    )
-    receipt = await delete_account(
-        session,
-        Account(user_id=user_id, email=current_user.email),
-        vault_disposition=vault_disposition,
-    )
+    async with hold_account(session, user_id, on_unavailable="proceed"):
+        vault_disposition = await _resolve_account_vault_disposition(
+            session,
+            user_id,
+            provisioning,
+        )
+        receipt = await delete_account(
+            session,
+            Account(user_id=user_id, email=current_user.email),
+            vault_disposition=vault_disposition,
+        )
     return _to_receipt(receipt)

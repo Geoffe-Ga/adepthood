@@ -13,7 +13,6 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +32,7 @@ from dependencies.creek_vault import resolve_creek_vault_client
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
+    AmbientRateLimitMiddleware,
     CanonicalHostMiddleware,
     CorrelationIdMiddleware,
     ForwardedProtoMiddleware,
@@ -41,7 +41,7 @@ from middleware import (
     UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
-from rate_limit import limiter
+from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -83,6 +83,7 @@ from seed_practices import seed_practices
 from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
 from services import app_links, email, journal_encryption
+from services.account_egress_barrier import load_egress_barrier_rollout, rollout_for
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -825,24 +826,31 @@ def validate_managed_vault_rollout_config() -> None:
     )
 
 
-def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
+def _rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
     The signature widens ``exc`` to :class:`Exception` so it conforms
     to FastAPI's ``add_exception_handler`` callable shape (without
     needing a ``# type: ignore``).  ``add_exception_handler`` only ever
     routes ``RateLimitExceeded`` instances here — the wider type is a
-    contract concession, not a runtime hazard.  ``getattr`` reads
-    ``retry_after`` so a generic ``Exception`` (impossible at runtime
-    given the dispatch table) still produces a sensible 60-second
-    fallback rather than crashing.
+    contract concession, not a runtime hazard.
+
+    The wait is computed by ``rate_limit.declared_limit_retry_after`` from the
+    bucket that actually refused, because ``RateLimitExceeded`` carries no
+    ``retry_after`` of its own to read: it defines ``limit`` and nothing else,
+    so the old ``getattr(exc, "retry_after", 60)`` here answered a flat minute
+    to every refusal, hourly limits included.
+
+    The envelope itself is built by ``rate_limit.rate_limit_exceeded_response``,
+    which is also what the ambient floor answers with, so the two layers cannot
+    drift apart (#2909). This handler serves the *decorator* path only: those
+    limits raise ``RateLimitExceeded`` from inside the router, where Starlette
+    can still route the exception to a handler. The floor is a middleware and
+    must never raise -- an exception escaping a user middleware is served by
+    ``ServerErrorMiddleware`` above the whole stack and reaches the client as a
+    500 -- so it builds this same response and returns it.
     """
-    retry_after = getattr(exc, "retry_after", 60)
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "rate_limit_exceeded"},
-        headers={"Retry-After": str(retry_after)},
-    )
+    return rate_limit_exceeded_response(declared_limit_retry_after(request, exc))
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:
@@ -881,6 +889,22 @@ async def _seed_startup_data(session: AsyncSession) -> None:
         except Exception:
             logger.exception("seed_failed seeder=%s", name, extra={"seeder": name})
             await session.rollback()
+
+
+def _log_egress_barrier_rollout() -> None:
+    """Report the per-account egress barrier's cross-worker state at boot.
+
+    The state alone distinguishes a barrier an operator switched off from one
+    that cannot reach the PostgreSQL it needs, and ``defects`` names the setting
+    or condition responsible. No setting value is read out: the loader reports
+    names only.
+    """
+    rollout = load_egress_barrier_rollout(database_engine.dialect.name)
+    logger.info(
+        "egress_barrier state=%s defects=%s",
+        rollout.state.value,
+        ",".join(rollout.defects) or "none",
+    )
 
 
 def _log_botmason_provider() -> None:
@@ -1035,6 +1059,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     _log_content_status()
     # Issue #402: make the active LLM provider observable at startup.
     _log_botmason_provider()
+    # Issue #2642: an operator has to be able to tell a *disabled* egress
+    # barrier from a *broken* one, and the difference is invisible from
+    # behaviour alone -- both order writes inside a worker and neither orders
+    # them across workers.
+    _log_egress_barrier_rollout()
 
     try:
         await resume_vault_pipeline_runs(async_session_factory, resolve_creek_vault_client)
@@ -1101,7 +1130,8 @@ install_exception_handlers(app)
 #            -> SecurityHeadersMiddleware  (CSP / HSTS / Referrer-Policy / etc.)
 #               -> CORSMiddleware  (preflight handling + ACAO / ACAC)
 #                  -> UnhandledExceptionMiddleware  (500 envelope, below CORS)
-#                     -> SlowAPIMiddleware  (rate-limit; innermost so 429s carry headers)
+#                     -> AmbientRateLimitMiddleware  (rate-limit floor; innermost
+#                        so 429s carry CORS and security headers)
 #                        -> route handler
 #
 # Putting CORS *inside* SecurityHeaders means preflight (BUG-APP-002) and
@@ -1113,9 +1143,18 @@ install_exception_handlers(app)
 # ``ServerErrorMiddleware``, which sits above every layer here, so its 500
 # never passes back through CORS and a browser reads it as a network failure
 # rather than a server error -- the app then tells the user they are offline
-# while this process is up and answering.  Sitting above SlowAPI costs
-# nothing (slowapi answers its own 429s rather than raising) and covers a
-# panic in the limiter too.
+# while this process is up and answering.  Sitting above the rate-limit layer
+# costs nothing (it builds and returns its own 429 rather than raising) and
+# covers a panic in the limiter too.
+#
+# The innermost slot used to hold ``SlowAPIMiddleware`` and now holds
+# ``AmbientRateLimitMiddleware`` (#2909). The slot is unchanged and the reason
+# for it is unchanged; what changed is that the layer no longer tries to resolve
+# the request to a route before enforcing. slowapi's did, ``app.routes`` holds
+# ``_IncludedRouter`` wrappers under FastAPI 0.141 that expose no ``.endpoint``,
+# and a handler it could not resolve was treated as exempt -- so the ambient
+# limit reached 3 of 144 mounted routes and the suite never noticed. See
+# ``middleware/rate_limit.py`` for the full account and the invariant.
 #
 # Forwarded-proto has to be outermost of all: Starlette's ``Router`` builds the
 # trailing-slash 307's ``Location`` from ``scope["scheme"]``, so the scheme has
@@ -1134,7 +1173,7 @@ install_exception_handlers(app)
 origins = get_cors_origins()
 _assert_credentials_safe(origins)
 
-app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(AmbientRateLimitMiddleware)
 app.add_middleware(UnhandledExceptionMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -1222,10 +1261,12 @@ async def _probe_db(session: AsyncSession, *, log_event: str, detail: str) -> No
         raise HTTPException(status_code=503, detail=detail) from exc
 
 
-# The probes answer under the global limiter like every other route, and the two
-# that touch the database answer 503 when it does not respond in time. Declared
-# here because these three are the only operations mounted on the application
-# itself rather than through the router factory, so nothing else would say so.
+# The probes answer under the ambient rate-limit floor like every other route,
+# and the two that touch the database answer 503 when it does not respond in
+# time. Declared here because these three are the only operations mounted on the
+# application itself rather than through the router factory, so nothing else
+# would say so. Until #2909 that distinction was load-bearing rather than
+# incidental: these three were the *only* routes the floor actually reached.
 _LIVENESS_RESPONSES = refusal_responses((status.HTTP_429_TOO_MANY_REQUESTS,))
 _DB_PROBE_RESPONSES = refusal_responses(
     (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -1263,7 +1304,14 @@ async def readiness(
     raises.
     """
     await _probe_db(session, log_event="readiness_check_failed", detail="not_ready")
-    return {"status": "ready", "database": "connected"}
+    return {
+        "status": "ready",
+        "database": "connected",
+        # Reported rather than gated: a barrier that cannot order across workers
+        # still orders inside each one, so it is a degraded deployment and not an
+        # unready pod. An operator reading a failing deploy reads the probe.
+        "egress_barrier": rollout_for(session).state.value,
+    }
 
 
 @app.get("/health", responses=_DB_PROBE_RESPONSES)

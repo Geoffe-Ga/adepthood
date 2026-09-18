@@ -40,6 +40,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineStage,
 )
+from models.user import User
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_pipeline as pipeline
@@ -65,6 +66,8 @@ from services.creek_vault_telemetry import (
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "test-key"  # pragma: allowlist secret
 _OWNER = 1
+# Never verified against: the ladder never authenticates, it only needs the row.
+_OWNER_PASSWORD_HASH = "not-a-real-hash"  # pragma: allowlist secret
 
 _BUNDLE = Path(__file__).parent / "fixtures" / "creek_v1"
 
@@ -345,6 +348,47 @@ async def _rows(session: AsyncSession) -> list[VaultPipelineRun]:
 async def _wait_for_background_pipeline() -> None:
     """Wait for the deliberately short-backoff continuation used by a test."""
     await pipeline.wait_for_vault_pipeline_tasks()
+
+
+async def _seed_owner(session: AsyncSession) -> None:
+    """Insert ``_OWNER``'s account row into whichever database ``session`` holds."""
+    session.add(
+        User(
+            id=_OWNER,
+            email=f"pipeline-owner-{_OWNER}@example.com",
+            password_hash=_OWNER_PASSWORD_HASH,
+        )
+    )
+    await session.commit()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _owner_account_exists(db_session: AsyncSession) -> None:
+    """Give ``_OWNER`` a real row, because the detached ladder checks for one.
+
+    :func:`services.creek_vault_pipeline._continue_ladder_body` stands down when
+    the account it would climb for no longer exists -- that is the guarantee
+    ``tests/test_account_egress_barrier_continuation.py`` pins. Every scenario
+    here is about a *live* account's ladder, so the row it drives has to be
+    there; without it these tests would exercise the stand-down path while
+    reading as if they exercised the climb.
+    """
+    await _seed_owner(db_session)
+
+
+@pytest_asyncio.fixture
+async def concurrent_session_factory(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> async_sessionmaker[AsyncSession]:
+    """The shared concurrency factory, with ``_OWNER``'s account already in it.
+
+    Shadows :func:`conftest.concurrent_session_factory` rather than seeding in
+    each test: the file-backed concurrency database is a second database, and
+    the autouse fixture above only reaches the in-memory one.
+    """
+    async with concurrent_session_factory() as session:
+        await _seed_owner(session)
+    return concurrent_session_factory
 
 
 @pytest_asyncio.fixture(autouse=True)

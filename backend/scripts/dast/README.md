@@ -471,6 +471,14 @@ namespaced on purpose: a bare `DEFAULT_RATE_LIMIT` is one another tool in the
 same environment may already own, and this knob both loosens a global limit and
 refuses to boot on an unparseable value.
 
+That paragraph only became *true* with #2909. Before it, the ambient default
+reached 3 of the 144 mounted routes, so a fuzz run against any router-mounted
+route met no limiter at all and the override was decorative for exactly the
+paths Schemathesis spends its budget on. Measured on a live instance, 200
+requests per path from one address: with the override at `6000/minute`, zero
+429s; with it unset, 60 admitted and 140 refused. The second half is what makes
+the first half worth asserting.
+
 The JUnit report is uploaded as a build artifact, and Schemathesis prints a
 reproduction `curl` for every finding — so the question of whether the bearer
 token lands in it is a real one. Checked against 4.25.2: it does not. The

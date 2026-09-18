@@ -106,6 +106,7 @@ from schemas.marginalia import (
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from services import journal_encryption
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     LLMCreditExhaustedError,
@@ -482,6 +483,15 @@ async def create_journal_entry(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
+        # This row has to exist before the barrier below can key the entry
+        # serializer on its id, so the commit above is the one statement in this
+        # handler that runs *outside* the ordering. On PostgreSQL
+        # ``journalentry.user_id`` is a real foreign key, so an erasure that
+        # linearized first turns this insert into a foreign-key violation rather
+        # than into a row the liveness read then refuses -- the same refusal,
+        # arriving through the database. Answer it the same way, before the
+        # scope-collision branch, because a violation is not a collision.
+        await ensure_account_live(session, current_user)
         # A partial unique index guards one live entry per (user, scope); only a
         # scoped write can trip it, so a scopeless collision is a real bug to raise.
         if data.get("reflection_scope_key") is not None:
@@ -489,7 +499,17 @@ async def create_journal_entry(
         raise
     await session.refresh(entry)
     entry_id = cast("int", entry.id)
-    async with journal_vault_mutations.hold(session, entry_id):
+    # Account barrier outermost, entry serializer innermost — the fixed nesting
+    # everywhere the two meet. Taken exactly once in this handler: the locks are
+    # not reentrant, so a second acquire anywhere below would hang every write.
+    async with (
+        hold_account(session, current_user),
+        journal_vault_mutations.hold(session, entry_id),
+    ):
+        # A concurrent ``DELETE /users/me`` that linearized first has already
+        # taken this account's writing with it, so there is nothing left to hand
+        # outward and no live caller to answer 201 to.
+        await ensure_account_live(session, current_user)
         # The row became visible before this lock because its id had to be
         # committed first. A concurrent delete or privacy PATCH may therefore
         # have completed while this request waited. Reload inside the critical
@@ -851,6 +871,11 @@ async def update_journal_entry(
     another user's entry all resolve to 404 (enumeration-safe). Editing the body
     re-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is
     refreshed.
+
+    The account barrier is taken on the re-ingesting branch alone. The other
+    branch changes a title or a status and dials nothing, so ordering it against
+    an erasure would buy no confidentiality and would put a lock on the cheapest
+    PATCH the client makes.
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
@@ -865,7 +890,12 @@ async def update_journal_entry(
         # mutation. A concurrent PUT therefore finishes before this privacy
         # transition withdraws it, or begins after and observes the intimate
         # row; it cannot land stale plaintext after a successful response.
-        async with journal_vault_mutations.hold(session, entry_id):
+        # Around it, the account barrier — outermost, as everywhere the two meet.
+        async with (
+            hold_account(session, current_user),
+            journal_vault_mutations.hold(session, entry_id),
+        ):
+            await ensure_account_live(session, current_user)
             entry, previous_classification = await _persist_entry_update(
                 entry_id,
                 payload,
@@ -1753,49 +1783,55 @@ async def run_resonance(
     # Any deduction is durable and every read the dials depend on is in hand:
     # release the pooled connection before the first provider round trip.
     await session.commit()
-    reflection_llm = await select_reflection_llm(
-        clients.vault_client,
-        body=message,
-        classification=entry.classification,
-        care_flagged=care is not None,
-        fallback=llm,
-    )
-    try:
-        anchored = await _resonance_pass_or_care(
-            message,
-            reflection_llm,
-            list(grounding.bodies),
-            _ResonancePassContext(
-                session=session,
-                care=care,
-                byok=byok_key is not None,
+    # The account barrier opens here rather than at the top of the handler: the
+    # deduction and every read the dials depend on are already committed, so the
+    # wait for it holds no pooled connection, and an erasure racing this pass
+    # waits only for the outbound half rather than for the wallet arithmetic.
+    async with hold_account(session, current_user):
+        await ensure_account_live(session, current_user)
+        reflection_llm = await select_reflection_llm(
+            clients.vault_client,
+            body=message,
+            classification=entry.classification,
+            care_flagged=care is not None,
+            fallback=llm,
+        )
+        try:
+            anchored = await _resonance_pass_or_care(
+                message,
+                reflection_llm,
+                list(grounding.bodies),
+                _ResonancePassContext(
+                    session=session,
+                    care=care,
+                    byok=byok_key is not None,
+                    user_id=current_user,
+                    spent=spent,
+                ),
+                prior_letters,
+            )
+        except CreekVaultCareEscalationError:
+            # The vault's care guard fired: answer with adepthood's own care
+            # surface instead of a reflection, and settle any committed charge.
+            return await _escalated_care_response(session, current_user, spent)
+        if anchored is None:
+            # The reflection failed but the entry is flagged: surface care anyway.
+            return await _care_only_response(session, current_user, cast("CareResponse", care))
+        attempt = await _detect_hits_with_status(
+            message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
+        )
+        settled = await _persist_settle_commit(
+            session,
+            _PassSettlementInput(
+                entry_id=entry_id,
                 user_id=current_user,
                 spent=spent,
+                anchored=anchored,
+                hits=attempt.hits,
+                llm=llm,
             ),
-            prior_letters,
         )
-    except CreekVaultCareEscalationError:
-        # The vault's care guard fired: answer with adepthood's own care surface
-        # instead of a reflection, and settle any committed charge.
-        return await _escalated_care_response(session, current_user, spent)
-    if anchored is None:
-        # The reflection failed but the entry is flagged: surface care regardless.
-        return await _care_only_response(session, current_user, cast("CareResponse", care))
-    attempt = await _detect_hits_with_status(
-        message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
-    )
-    settled = await _persist_settle_commit(
-        session,
-        _PassSettlementInput(
-            entry_id=entry_id,
-            user_id=current_user,
-            spent=spent,
-            anchored=anchored,
-            hits=attempt.hits,
-            llm=llm,
-        ),
-    )
-    await _refresh_persisted(session, settled.rows, settled.suggestions)
+        await _refresh_persisted(session, settled.rows, settled.suggestions)
     _log_resonance_outcome(
         anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
     )
@@ -1992,10 +2028,40 @@ async def _detect_fresh_suggestions(
     inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
-    """Dial without a transaction, then persist a concurrency-safe fresh subset."""
+    """Dial without a transaction, then persist a concurrency-safe fresh subset.
+
+    The dial carries ``message`` -- this account's *stored* entry body -- to a
+    cloud provider, which is the same egress the vault sites take the account
+    barrier for, by a different transport. Ordering it against erasure is
+    therefore the same rule, not a new one; the only reason this site went
+    unbarriered is that the route resolves no vault client and the site walk
+    looked for vault clients.
+
+    The barrier opens *after* the commit above and before the dial, so the wait
+    holds no pooled connection and an erasure racing this pass waits only for
+    the outbound half. The persistence stays inside it for the same reason the
+    liveness read exists at all: a suggestion row written for an account that
+    has already been erased is a ghost row nobody owns.
+    """
     api_key = resolve_chat_api_key(api_key_header)
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
+    async with hold_account(session, entry.user_id):
+        await ensure_account_live(session, entry.user_id)
+        return await _detect_and_persist(
+            session, entry=entry, message=message, inputs=inputs, llm=llm
+        )
+
+
+async def _detect_and_persist(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    message: str,
+    inputs: DetectionInputs,
+    llm: BotmasonResonanceLLM,
+) -> CompletionDetectionResponse:
+    """The dial and its persistence, both inside the caller's account barrier."""
     attempt = await _detect_hits_with_status(
         message,
         inputs=inputs,
@@ -2393,16 +2459,11 @@ async def expand_marginalia_essay(
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM,
     # so skip essay generation entirely and return the note (no essay) unchanged.
     # Decided from the *persisted* classification, before the LLM is constructed.
+    # Read again inside the barrier below, because this reading can go stale
+    # while the request waits for it — see ``_cache_and_mirror_essay``.
     if entry.classification == JournalClassification.INTIMATE:
         return note
-    message = _sanitize_message(entry.message)
-    return await _cache_and_mirror_essay(
-        session,
-        note=note,
-        entry=entry,
-        message=message,
-        clients=clients,
-    )
+    return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
 
 
 async def _cache_and_mirror_essay(
@@ -2410,7 +2471,6 @@ async def _cache_and_mirror_essay(
     *,
     note: Marginalia,
     entry: JournalEntry,
-    message: str,
     clients: _EssayClients,
 ) -> Marginalia:
     """Generate and cache the essay, then mirror it once if there is one.
@@ -2418,22 +2478,90 @@ async def _cache_and_mirror_essay(
     Split out of :func:`expand_marginalia_essay` so that route keeps only the
     authorization and privacy decisions; the mirror's ordering rationale is long
     enough on its own that interleaving the two made neither readable.
+
+    **This route makes two dials, and the barrier is taken once per dial rather
+    than once across both.** :func:`_cache_essay` hands the stored entry body
+    *and every prior letter essay on this account* to a cloud provider; the
+    mirror that follows sends the model's answer to Creek. Both are this
+    account's stored content leaving the process, so both must be ordered
+    against erasure -- but ordering them under *one* hold would also serialize
+    the window between them, and that window is load-bearing: a privacy PATCH or
+    a journal DELETE that lands while a slow model is still composing is exactly
+    what stops the mirror from happening at all. Holding across both would make
+    that mutation wait, let the mirror go out first, and leave the PATCH to
+    retract an intimate essay Creek had already seen. Two short holds keep the
+    erasure ordering and keep the entry-level race reachable.
+
+    An erasure that lands *in* the gap is refused by the second hold's own
+    liveness read, so nothing is lost by releasing: each dial is ordered, which
+    is the whole claim. It is the same per-dial reasoning the detached
+    ontologization ladder uses for the same reason.
+
+    **Both the tier and the body are read again inside the first hold**, and
+    liveness is not enough on its own. An exclusive barrier held across a dial
+    does not merely delay a competing mutation, it reorders it to *before* the
+    dial: ``PATCH /journal/{entry_id}`` carrying ``classification`` takes this
+    same hold, so a PATCH that queues first is guaranteed to complete in full --
+    setting INTIMATE, withdrawing the local entry, retracting the voice drafts,
+    withdrawing the remote copy -- and answer 200, after which a dial carrying a
+    reading taken before the wait would hand the now-intimate body to the cloud.
+    The rule is general and the caller's pre-hold check is the cheap half of it:
+    every piece of state a dial's legitimacy rests on is re-read under the same
+    ordering that stops the dial, or the hold is too narrow to go stale.
+
+    A row the writer has since deleted stops here for the same reason, which is
+    where that check belonged all along -- the mirror below could only decline to
+    send the letter *after* the cloud had already composed it from the body.
+
+    The commit below releases the pooled connection the route's two ownership
+    reads opened, so the wait for the barrier holds nothing.
     """
-    cached = await _cache_essay(session, note, message, clients.api_key)
+    await session.commit()
+    async with hold_account(session, entry.user_id):
+        await ensure_account_live(session, entry.user_id)
+        await session.refresh(entry)
+        await session.commit()
+        if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
+            return note
+        cached = await _cache_essay(
+            session, note, _sanitize_message(entry.message), clients.api_key
+        )
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
     # state the privacy floor returns -- and nothing is mirrored, because
     # mirroring a refusal would put it in the vault the cache refused it from.
-    if cached.essay is None:
+    essay = cached.essay
+    if essay is None:
         return cached
-    # Generation may outlive a concurrent privacy PATCH or journal DELETE.
-    # Serialize the final liveness/tier read and mirror: an already-completed
-    # deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
-    # and if this PUT linearized first, the competing mutation waits and retracts
-    # it. The request transaction is committed before Creek I/O; PostgreSQL holds
-    # the cross-worker lock on a non-pooled, dedicated connection rather than
-    # consuming the application pool.
-    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+    return await _mirror_cached_essay(
+        session, entry=entry, cached=cached, essay=essay, clients=clients
+    )
+
+
+async def _mirror_cached_essay(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    cached: Marginalia,
+    essay: str,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Mirror one generated essay, ordered against both erasure and the entry.
+
+    Generation may outlive a concurrent privacy PATCH or journal DELETE.
+    Serialize the final liveness/tier read and mirror: an already-completed
+    deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
+    and if this PUT linearized first, the competing mutation waits and retracts
+    it. The request transaction is committed before Creek I/O; PostgreSQL holds
+    the cross-worker lock on a non-pooled, dedicated connection rather than
+    consuming the application pool. Account outermost, entry innermost -- the
+    fixed nesting everywhere the two meet.
+    """
+    async with (
+        hold_account(session, entry.user_id),
+        voice_draft_privacy.hold(session, cast("int", entry.id)),
+    ):
+        await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
         await session.commit()
         if entry.deleted_at is not None:
@@ -2442,7 +2570,7 @@ async def _cache_and_mirror_essay(
             clients.vault_client,
             owner_user_id=entry.user_id,
             marginalia_id=cast("int", cached.id),
-            essay=cached.essay,
+            essay=essay,
             classification=entry.classification,
         )
     return cached
@@ -2559,7 +2687,11 @@ async def delete_journal_entry(
     # waiting for the cross-worker mutation lock so neither the wait nor Creek's
     # bounded DELETE occupies a pooled application connection.
     await session.commit()
-    async with journal_vault_mutations.hold(session, entry_id):
+    async with (
+        hold_account(session, current_user),
+        journal_vault_mutations.hold(session, entry_id),
+    ):
+        await ensure_account_live(session, current_user)
         current = await _load_user_entry(session, entry_id, current_user)
         if current is None or current.sender != "user":
             raise not_found("journal_entry")

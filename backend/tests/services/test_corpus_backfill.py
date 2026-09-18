@@ -48,6 +48,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import DateTime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
@@ -57,6 +58,7 @@ from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
+from models.user import User
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
 from services.botmason import LLMCreditExhaustedError, LLMProviderError
@@ -64,6 +66,25 @@ from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
 
 _OWNER = 1
+
+#: Nothing authenticates as the owner here; the row only has to exist.
+_NEVER_VERIFIED_HASH = "not-a-real-hash"  # pragma: allowlist secret
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _owner_exists(db_session: AsyncSession) -> None:
+    """Give the owner a real account row, because the sweep now reads liveness.
+
+    Every dial the sweep makes is inside this account's egress barrier, and the
+    first statement inside it refuses an account that no longer exists. These
+    tests drive a fabricated id, so without a row they would all exercise that
+    refusal rather than the sweep they are about.
+    """
+    db_session.add(
+        User(id=_OWNER, email="backfill-owner@example.com", password_hash=_NEVER_VERIFIED_HASH)
+    )
+    await db_session.commit()
+
 
 _FIRST = "I sat with the thing I have been avoiding."
 _SECOND = "This morning it was easier than yesterday."

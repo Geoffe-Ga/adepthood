@@ -16,10 +16,10 @@ import logging
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
-from slowapi.middleware import SlowAPIMiddleware
 
 from main import app
 from middleware import (
+    AmbientRateLimitMiddleware,
     CanonicalHostMiddleware,
     CorrelationIdMiddleware,
     ForwardedProtoMiddleware,
@@ -44,7 +44,15 @@ _OUTER_TO_INNER = [
     SecurityHeadersMiddleware.__name__,
     CORSMiddleware.__name__,
     UnhandledExceptionMiddleware.__name__,
-    SlowAPIMiddleware.__name__,
+    # #2909 replaced ``SlowAPIMiddleware`` here, in the same innermost slot and
+    # for the same reason -- a 429 has to pass back out through CORS and the
+    # security headers. What changed is that the layer no longer resolves the
+    # request to a route before enforcing: slowapi's did, and under FastAPI
+    # 0.141 that resolution returned ``None`` for every ``include_router``
+    # route, which slowapi treats as exempt. The ambient limit reached 3 of 144
+    # mounted routes and nothing here could tell, because this list only pins
+    # *where* a layer sits.
+    AmbientRateLimitMiddleware.__name__,
 ]
 
 
