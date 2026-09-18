@@ -2,7 +2,7 @@
 
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from http import HTTPStatus
 from math import ceil
 
@@ -10,9 +10,16 @@ from limits import RateLimitItem, RateLimitItemPerHour, parse
 from limits.storage import MemoryStorage
 from limits.strategies import MovingWindowRateLimiter
 from slowapi import Limiter
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from client_ip import client_throttle_key
+
+# A 429 is a request to come back later, so the smallest honest answer is one
+# second. A computed wait can round to zero at the very end of a window, and
+# ``Retry-After: 0`` reads as "retry immediately" -- an invitation to the tight
+# loop the refusal exists to break.
+_MIN_RETRY_AFTER_SECONDS = 1
 
 # Default rate limit applied to all endpoints that don't declare their own.
 # Auth endpoints override this with stricter per-route limits (3/min signup,
@@ -113,6 +120,24 @@ class _AppLimiter(Limiter):
         """Return how many ``request_filter`` predicates are registered."""
         return len(self._request_filters)
 
+    def seconds_until_reset(self, item: RateLimitItem, identifiers: Sequence[str]) -> int:
+        """Return whole seconds until one declared bucket admits again.
+
+        Args:
+            item: The cap that refused, as ``slowapi`` recorded it.
+            identifiers: The bucket's namespaced components, as ``slowapi``
+                assembled them -- the client key and the limit's scope.
+
+        Returns:
+            The wait to advertise, floored at one second. ``slowapi``'s own
+            strategy object is the only thing that knows when this bucket rolls
+            over, and it is instance state with no accessor, which is why this
+            reader lives inside the class that owns it rather than reaching in
+            from the exception handler.
+        """
+        stats = self.limiter.get_window_stats(item, *identifiers)
+        return max(_MIN_RETRY_AFTER_SECONDS, ceil(stats.reset_time - time.time()))
+
 
 limiter = _AppLimiter(key_func=client_throttle_key, default_limits=[DEFAULT_RATE_LIMIT])
 
@@ -131,12 +156,6 @@ _SWEEP_MIN_TRACKED = 64
 # clients does not pay a full scan on every recorded attempt. Must stay strictly
 # greater than one -- at one, a store of live keys would rescan on every attempt.
 _SWEEP_GROWTH_FACTOR = 2
-
-# A 429 is a request to come back later, so the smallest honest answer is one
-# second. A computed wait can round to zero at the very end of a window, and
-# ``Retry-After: 0`` reads as "retry immediately" -- an invitation to the tight
-# loop the refusal exists to break.
-_MIN_RETRY_AFTER_SECONDS = 1
 
 
 class _MovingWindowThrottle:
@@ -253,6 +272,19 @@ class _MovingWindowThrottle:
         """Evict fully rolled-off keys once the tracked set reaches the mark."""
         if len(self.last_attempt) < self.sweep_at:
             return
+        self.sweep()
+
+    def sweep(self) -> None:
+        """Evict every key whose window has fully rolled off, now.
+
+        Separate from :meth:`_sweep_if_crowded` because that one only ever fires
+        on a *growing* population: it schedules the next scan at a multiple of
+        the population that survived the last, so a store held at a fixed size
+        stops sweeping altogether and never reclaims anything again. A caller
+        that knows the store is at a bound -- :class:`AmbientThrottle` at its
+        per-client ceiling -- needs to ask for the scan rather than wait for a
+        growth that a ceiling has made impossible.
+        """
         now = self._clock()
         expiry = self.item.get_expiry()
         # Snapshot: the loop mutates the dict it is walking.
@@ -442,19 +474,74 @@ AMBIENT_LIMIT_ITEM = parse(DEFAULT_RATE_LIMIT)
 
 # The bucket key's path component comes straight off the request line, which an
 # attacker controls: a 404 flood of random paths mints a fresh key per request,
-# and inside one window nothing has rolled off for the sweep to reclaim. Past
-# this many tracked buckets an unseen path is charged to its client's overflow
-# bucket instead of minting another. Comfortably above ``_SWEEP_MIN_TRACKED``
-# so ordinary sweeping still does the reclaiming; the ceiling is the backstop
-# for the case sweeping cannot reach, not the ordinary bound.
-_MAX_TRACKED_AMBIENT_KEYS = 4096
+# and inside one window nothing has rolled off for the sweep to reclaim. So one
+# client's *fan-out* is capped -- past this many distinct paths of its own, an
+# unseen path is billed to that client's overflow bucket instead of minting
+# another key.
+#
+# Per client, and emphatically not a count of the whole store. A ceiling on the
+# global key count is reached by whoever floods first and then holds there, and
+# from that moment every *other* client's first request to any path it has not
+# already touched finds the store full and is diverted -- turning its 60/minute
+# per path into 60/minute across the entire API, health probes included. That
+# is the exact harm per-path keying exists to prevent, handed to an attacker as
+# a tool to use on everybody else. The unit a ceiling may bound is the unit the
+# attacker already owns.
+#
+# Sized well above the 118 distinct paths the API actually mounts, so no
+# legitimate client can approach it by using the product, and above the fan-out
+# a client can reach by enumerating ids on a handful of ``{param}`` routes
+# inside one window before the sweep starts reclaiming.
+_MAX_PATHS_PER_CLIENT = 512
 
 # Stands in for the path in an overflow bucket. Begins with a character no URL
 # path can start with, so it can never collide with a real request path.
 _OVERFLOW_PATH_MARKER = "\x00overflow"
 
-# Index of the path inside an ambient bucket key, which is ``(client, path)``.
+# Indices inside an ambient bucket key, which is ``(client, path)``.
+_CLIENT_COMPONENT = 0
 _PATH_COMPONENT = 1
+
+# Before any reclaim has been forced. Any clock reading is past it, so the first
+# client to reach its ceiling gets a scan rather than waiting out a window for
+# one.
+_NEVER_RECLAIMED = float("-inf")
+
+# The quick-log tile on the habits screen posts one check-in per tap, on this
+# one static path, with no batching or coalescing (``HabitsScreen.tsx`` ->
+# ``logUnit``). Counting reps or ounces at about a tap a second spends the
+# ambient allowance inside a minute and the user is refused for using the
+# feature exactly as designed, so this path declares a floor sized to its own
+# interaction: roughly three taps a second sustained for a full minute.
+#
+# It has to live here rather than in a ``@limiter.limit`` on the route. The
+# floor is charged in middleware, before routing, so a declared route limit can
+# only ever tighten what the floor already allowed -- it can never widen it.
+_QUICK_LOG_PATH = "/goal_completions/"
+_QUICK_LOG_BURST_LIMIT = "180/minute"
+
+# Paths whose legitimate interaction is burstier than the ambient default, with
+# the floor each is measured against instead. Exact paths only, no patterns: a
+# pattern is a place for a mistake to fail open, and this table exists to be
+# read and argued with. Every entry widens the floor for one path and nothing
+# else; see ``_throttle_for`` for what happens when the ambient floor is already
+# wider than an entry.
+_PATH_BURST_FLOORS: dict[str, RateLimitItem] = {
+    _QUICK_LOG_PATH: parse(_QUICK_LOG_BURST_LIMIT),
+}
+
+
+def _requests_per_second(item: RateLimitItem) -> float:
+    """Return ``item``'s allowance as a rate, so two windows can be compared.
+
+    Args:
+        item: Any parsed rate limit.
+
+    Returns:
+        Requests per second. The only honest way to ask which of ``60/minute``
+        and ``180/minute`` -- or ``6000/minute`` -- admits more.
+    """
+    return item.amount / item.get_expiry()
 
 
 class AmbientThrottle(_MovingWindowThrottle):
@@ -467,23 +554,36 @@ class AmbientThrottle(_MovingWindowThrottle):
     why. The cost of that choice is recorded in the residuals: enumerating a
     ``{param}`` route buys a fresh budget per id, which is why the ceiling below
     exists and why a coarse per-client limit is the named follow-up.
+
+    The ceiling bounds one client's fan-out and is reached independently by each
+    client, so saturating is something a client can only do to itself. Reaching
+    it is also a phase rather than a one-way door: the ordinary sweep only fires
+    on a growing population, so a client parked at its ceiling would never
+    sweep again and its diversion would be permanent, which is why hitting the
+    ceiling asks for a reclaim before it diverts.
     """
 
     def __init__(
         self,
+        item: RateLimitItem | None = None,
         clock: Callable[[], float] = time.time,
-        max_tracked: int = _MAX_TRACKED_AMBIENT_KEYS,
+        max_paths_per_client: int = _MAX_PATHS_PER_CLIENT,
     ) -> None:
         """Build an empty ambient floor.
 
         Args:
+            item: The cap every bucket here is measured against. Defaults to the
+                ambient floor; a burst path passes its own wider one.
             clock: Source of the current time, in seconds. See the base class.
-            max_tracked: Bucket count past which an unseen path is diverted to
-                its client's overflow bucket. Injectable so the saturation tests
-                do not have to drive the production ceiling to reach it.
+            max_paths_per_client: Distinct paths one client may hold buckets for
+                before an unseen path is diverted to its overflow bucket.
+                Injectable so the saturation tests do not have to drive the
+                production ceiling to reach it.
         """
-        super().__init__(AMBIENT_LIMIT_ITEM, clock=clock)
-        self._max_tracked = max_tracked
+        super().__init__(AMBIENT_LIMIT_ITEM if item is None else item, clock=clock)
+        self._max_paths_per_client = max_paths_per_client
+        self._paths_held: dict[str, int] = {}
+        self._reclaim_after = _NEVER_RECLAIMED
 
     def charge(self, throttle_key: str, path: str) -> int | None:
         """Charge one request against ``throttle_key``'s budget for ``path``.
@@ -506,18 +606,80 @@ class AmbientThrottle(_MovingWindowThrottle):
         """Return the paths currently holding a bucket, across all clients."""
         return frozenset(key[_PATH_COMPONENT] for key in self.last_attempt)
 
+    def record(self, key: tuple[str, ...]) -> bool:
+        """Charge one attempt against ``key``, keeping its client's fan-out count.
+
+        Args:
+            key: Bucket the attempt is charged to.
+
+        Returns:
+            True while the bucket remains under its cap.
+        """
+        client = key[_CLIENT_COMPONENT]
+        if key not in self.last_attempt:
+            self._paths_held[client] = self._paths_held.get(client, 0) + 1
+        return super().record(key)
+
+    def reset(self) -> None:
+        """Drop every counter, every fan-out count, and the reclaim schedule."""
+        super().reset()
+        self._paths_held.clear()
+        self._reclaim_after = _NEVER_RECLAIMED
+
+    def _forget(self, key: tuple[str, ...]) -> None:
+        """Evict one bucket and give its client back the fan-out it was holding.
+
+        Args:
+            key: Bucket to evict.
+        """
+        super()._forget(key)
+        client = key[_CLIENT_COMPONENT]
+        remaining = self._paths_held[client] - 1
+        if remaining:
+            self._paths_held[client] = remaining
+        else:
+            del self._paths_held[client]
+
+    def _has_room(self, throttle_key: str) -> bool:
+        """Report whether ``throttle_key`` may still mint a bucket of its own.
+
+        Args:
+            throttle_key: Grouped client key.
+
+        Returns:
+            True while this client holds fewer buckets than its ceiling.
+        """
+        return self._paths_held.get(throttle_key, 0) < self._max_paths_per_client
+
+    def _reclaim(self) -> None:
+        """Sweep on demand, at most once per window, for a client at its ceiling.
+
+        A ceiling stops the population growing, and the ordinary sweep only
+        fires on growth, so without this a client that reached its ceiling would
+        hold those buckets for the life of the process and every unseen path it
+        asked for afterwards would be diverted for ever. Rate-limited to once
+        per window because a sweep can only ever reclaim a key older than one
+        full expiry: asking more often scans the store for nothing, at the
+        request rate of whoever is saturating it.
+        """
+        now = self._clock()
+        if now < self._reclaim_after:
+            return
+        self.sweep()
+        self._reclaim_after = now + self.item.get_expiry()
+
     def _bucket_for(self, throttle_key: str, path: str) -> tuple[str, str]:
-        """Pick the bucket to bill, diverting unseen paths once saturated.
+        """Pick the bucket to bill, diverting unseen paths once this client saturates.
 
         Three properties make the diversion safe. A bucket that already exists
         is never diverted, so saturation cannot hand an established client a
-        counter somebody else is spending. The overflow bucket is keyed on the
-        client, so one tenant's flood cannot move another tenant's counter --
-        the ceiling bounds the *fan-out per client*, and the sweep goes on
-        bounding retention over time. And the degradation is fail-closed: an
-        attacker enumerating paths under saturation collapses their own traffic
-        onto one bucket and is pinned at the floor, rather than buying a fresh
-        budget per path.
+        counter somebody else is spending. The ceiling and the overflow bucket
+        are both keyed on the client, so one tenant's flood can neither move nor
+        narrow another tenant's counters -- the bound is on the fan-out of the
+        client that caused it. And the degradation is fail-closed: an attacker
+        enumerating paths under saturation collapses their own traffic onto one
+        bucket and is pinned at the floor, rather than buying a fresh budget per
+        path.
 
         Args:
             throttle_key: Grouped client key the request is billed to.
@@ -525,15 +687,62 @@ class AmbientThrottle(_MovingWindowThrottle):
 
         Returns:
             The client's bucket for ``path``, or the client's overflow bucket
-            when ``path`` is unseen and the store is already at its ceiling.
+            when ``path`` is unseen and this client is already at its ceiling
+            with nothing left to reclaim.
         """
         bucket = (throttle_key, path)
-        if bucket in self.last_attempt or len(self.last_attempt) < self._max_tracked:
+        if bucket in self.last_attempt or self._has_room(throttle_key):
+            return bucket
+        self._reclaim()
+        if self._has_room(throttle_key):
             return bucket
         return (throttle_key, _OVERFLOW_PATH_MARKER)
 
 
 _ambient_throttle = AmbientThrottle()
+
+# One throttle per burst path, rather than a per-bucket cap inside the ambient
+# store. Each holds a single path, so its key space is bounded by the client
+# population alone -- there is no attacker-controlled component in it at all --
+# and the ambient store keeps one cap for every bucket in it, which is what
+# makes its ceiling and its sweep mean one thing.
+_burst_throttles: dict[str, AmbientThrottle] = {
+    path: AmbientThrottle(item=floor) for path, floor in _PATH_BURST_FLOORS.items()
+}
+
+
+def _throttle_for(path: str) -> AmbientThrottle:
+    """Return the throttle that owns ``path``'s floor.
+
+    Args:
+        path: Raw request path.
+
+    Returns:
+        The burst throttle when ``path`` declares one *and* that declaration is
+        the wider of the two. ``ADEPTHOOD_DEFAULT_RATE_LIMIT`` moves the ambient
+        floor -- the DAST contract-fuzz job sets it to thousands per minute --
+        and a burst entry that simply replaced the ambient item would quietly
+        undo that override on exactly the paths it names. A per-path entry may
+        only ever widen.
+    """
+    burst = _burst_throttles.get(path)
+    if burst is None:
+        return _ambient_throttle
+    if _requests_per_second(burst.item) <= _requests_per_second(AMBIENT_LIMIT_ITEM):
+        return _ambient_throttle
+    return burst
+
+
+def floor_for_path(path: str) -> RateLimitItem:
+    """Return the cap the ambient floor measures ``path`` against.
+
+    Args:
+        path: Raw request path.
+
+    Returns:
+        ``path``'s declared burst floor, or the ambient one.
+    """
+    return _throttle_for(path).item
 
 
 def charge_ambient_limit(throttle_key: str, path: str) -> int | None:
@@ -547,17 +756,65 @@ def charge_ambient_limit(throttle_key: str, path: str) -> int | None:
         None when the request is admitted, or the ``Retry-After`` seconds to
         answer with when it is refused.
     """
-    return _ambient_throttle.charge(throttle_key, path)
+    return _throttle_for(path).charge(throttle_key, path)
 
 
 def reset_ambient_limit() -> None:
     """Clear every ambient bucket (test isolation between cases)."""
     _ambient_throttle.reset()
+    for throttle in _burst_throttles.values():
+        throttle.reset()
 
 
 def ambient_tracked_paths() -> frozenset[str]:
     """Return the paths currently holding an ambient bucket."""
-    return _ambient_throttle.tracked_paths()
+    tracked = _ambient_throttle.tracked_paths()
+    for throttle in _burst_throttles.values():
+        tracked |= throttle.tracked_paths()
+    return tracked
+
+
+def declared_limit_retry_after(request: Request, exc: Exception) -> int:
+    """Return the ``Retry-After`` seconds for a refusal from a declared limit.
+
+    Args:
+        request: The refused request. ``slowapi`` records the bucket it refused
+            on ``request.state.view_rate_limit`` immediately before raising.
+        exc: The ``RateLimitExceeded`` that was raised.
+
+    Returns:
+        Whole seconds until that exact bucket admits again.
+
+        ``slowapi.errors.RateLimitExceeded`` (0.1.10) defines ``limit`` and
+        nothing else -- there is no ``retry_after`` attribute on it at any point
+        -- so reading one off the exception took its fallback on *every*
+        decorator refusal. ``POST /auth/password-reset/request`` declares
+        ``3/hour`` and told a refused client to come back in sixty seconds, so
+        an obedient client retried some fifty-six more times before its window
+        rolled off: the tight loop the refusal exists to break, driven by the
+        refusal itself.
+    """
+    refused = getattr(request.state, "view_rate_limit", None)
+    if refused is None:
+        return _one_whole_window(exc)
+    item, identifiers = refused
+    return limiter.seconds_until_reset(item, identifiers)
+
+
+def _one_whole_window(exc: Exception) -> int:
+    """Return one full window of the cap that refused, as a last resort.
+
+    Args:
+        exc: The ``RateLimitExceeded`` that was raised.
+
+    Returns:
+        The refused cap's window length, or the ambient floor's if the exception
+        carries no cap either. Always safe if never tight: a client that waits a
+        whole window is certain to find its bucket open.
+    """
+    declared = getattr(exc, "limit", None)
+    item = getattr(declared, "limit", AMBIENT_LIMIT_ITEM)
+    return max(_MIN_RETRY_AFTER_SECONDS, int(item.get_expiry()))
 
 
 def rate_limiting_enabled() -> bool:

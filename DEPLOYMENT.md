@@ -1039,7 +1039,13 @@ single throttle bucket for all of its users -- against the 60/minute
 global default, 5/minute login, and 3/hour password reset.  The
 global default is charged *per request path*, so that bucket is one
 per path rather than one for the whole API: a shared site reaches it
-only when its users converge on the same endpoint.  That is
+only when its users converge on the same endpoint.  One further
+consequence of the grouping: a throttle key may hold buckets for at
+most 512 distinct paths at a time, and past that an unseen path is
+billed to a single overflow bucket until its older buckets age out.
+That ceiling bounds one key's fan-out so a flood cannot grow the
+store without limit, and it is far above what any one user reaches --
+but a whole office sharing one `/64` shares the ceiling too.  That is
 the same treatment those users would already get behind a NATted
 IPv4 address, but it is a change from per-address keying.  If such a
 site is your traffic and you see spurious `429`s, setting `128`

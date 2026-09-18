@@ -136,7 +136,92 @@ async def test_default_rate_limit_pinned_at_60_per_minute(
     await _assert_limit_pinned(send, _LIMIT_60)
 
 
+# The quick-log tile posts one check-in per tap, on one static path, with no
+# batching. A user counting reps at about a tap a second spends the ambient
+# allowance inside a minute, so that path declares a floor sized to its own
+# interaction. Pinned here rather than derived, so widening it is a deliberate
+# edit to a test rather than a number nobody looks at.
+_QUICK_LOG_PATH = "/goal_completions/"
+_QUICK_LOG_LIMIT = 180
+
+
+@pytest.mark.asyncio
+async def test_the_quick_log_path_is_floored_at_its_own_interaction_rate(
+    async_client: AsyncClient,
+) -> None:
+    """Quick Log Mode must survive a minute of tapping, and still have a ceiling.
+
+    ``HabitsScreen``'s quick-log tile calls ``logUnit`` on every tap, which is
+    one ``POST /goal_completions/`` per tap: no batching, no coalescing, one
+    static path. At roughly a tap a second -- counting reps, counting ounces --
+    the ambient 60/minute refuses from tap 61, the optimistic increment is
+    rolled back out of the store and the on-disk snapshot, and the user is told
+    they are sending a lot of requests for using the feature as designed.
+
+    A declared ``@limiter.limit`` cannot answer this: the floor is charged in
+    middleware, before routing, so a per-route limit can only ever tighten what
+    the floor already allowed. The allowance therefore belongs to the floor, is
+    named for the one path that needs it, and is still a cap -- asserted at both
+    boundaries so it can neither shrink back under the tapping rate nor quietly
+    become unlimited.
+    """
+
+    async def send() -> Response:
+        return await async_client.post(_QUICK_LOG_PATH, json={"goal_id": 1})
+
+    await _assert_limit_pinned(send, _QUICK_LOG_LIMIT)
+
+
 # ── Retry-After header ──────────────────────────────────────────────────
+
+
+# The two windows the declared limits use, and the two answers a refusal from
+# each of them may honestly advertise. Named so the assertions below read as
+# "its own window" rather than as two unexplained integers.
+_ONE_MINUTE_SECONDS = 60
+_ONE_HOUR_SECONDS = 3600
+
+_RESET_REQUEST_PATH = "/auth/password-reset/request"
+_RESET_REQUESTS_PER_HOUR = 3
+
+
+@pytest.mark.asyncio
+async def test_a_decorator_refusal_advertises_its_own_window(async_client: AsyncClient) -> None:
+    """A 429 must say when the bucket it refused actually admits again.
+
+    ``slowapi.errors.RateLimitExceeded`` carries ``limit`` and nothing else --
+    it has no ``retry_after`` attribute at all -- so the handler's
+    ``getattr(exc, "retry_after", 60)`` took its fallback on *every* decorator
+    refusal. ``POST /auth/password-reset/request`` declares ``3/hour``, and a
+    client told to come back in 60 seconds retries roughly 56 more times before
+    its window rolls off: precisely the tight loop ``_MIN_RETRY_AFTER_SECONDS``
+    exists to break, live on the other half of the system.
+
+    Both windows are asserted, in both directions, so a handler that answers one
+    hardcoded number cannot pass: an hourly limit must advertise more than a
+    minute, and a per-minute limit must not advertise an hour.
+    """
+    hourly = [
+        await async_client.post(_RESET_REQUEST_PATH, json={"email": "reset@example.com"})
+        for _ in range(_RESET_REQUESTS_PER_HOUR + 1)
+    ][-1]
+    assert hourly.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    hourly_wait = int(hourly.headers["retry-after"])
+    assert _ONE_MINUTE_SECONDS < hourly_wait <= _ONE_HOUR_SECONDS
+
+    per_minute = [
+        await async_client.post(
+            "/auth/login",
+            json={
+                "email": "nobody@example.com",
+                "password": "wrongpassword1",  # pragma: allowlist secret
+            },
+        )
+        for _ in range(_LIMIT_5 + 1)
+    ][-1]
+    assert per_minute.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    per_minute_wait = int(per_minute.headers["retry-after"])
+    assert 0 < per_minute_wait <= _ONE_MINUTE_SECONDS
 
 
 @pytest.mark.asyncio

@@ -41,7 +41,7 @@ from middleware import (
     UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
-from rate_limit import limiter, rate_limit_exceeded_response
+from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
 from routers.auth import router as auth_router
@@ -825,23 +825,20 @@ def validate_managed_vault_rollout_config() -> None:
     )
 
 
-# Only ever reached if a ``RateLimitExceeded`` arrives without one, which the
-# dispatch table makes impossible; one window of the default limit is the
-# sensible thing to advertise if it ever happens.
-_RATE_LIMIT_RETRY_AFTER_FALLBACK_SECONDS = 60
-
-
-def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
+def _rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a JSON 429 response with Retry-After header when rate limit is exceeded.
 
     The signature widens ``exc`` to :class:`Exception` so it conforms
     to FastAPI's ``add_exception_handler`` callable shape (without
     needing a ``# type: ignore``).  ``add_exception_handler`` only ever
     routes ``RateLimitExceeded`` instances here — the wider type is a
-    contract concession, not a runtime hazard.  ``getattr`` reads
-    ``retry_after`` so a generic ``Exception`` (impossible at runtime
-    given the dispatch table) still produces a sensible 60-second
-    fallback rather than crashing.
+    contract concession, not a runtime hazard.
+
+    The wait is computed by ``rate_limit.declared_limit_retry_after`` from the
+    bucket that actually refused, because ``RateLimitExceeded`` carries no
+    ``retry_after`` of its own to read: it defines ``limit`` and nothing else,
+    so the old ``getattr(exc, "retry_after", 60)`` here answered a flat minute
+    to every refusal, hourly limits included.
 
     The envelope itself is built by ``rate_limit.rate_limit_exceeded_response``,
     which is also what the ambient floor answers with, so the two layers cannot
@@ -852,8 +849,7 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
     ``ServerErrorMiddleware`` above the whole stack and reaches the client as a
     500 -- so it builds this same response and returns it.
     """
-    retry_after = getattr(exc, "retry_after", _RATE_LIMIT_RETRY_AFTER_FALLBACK_SECONDS)
-    return rate_limit_exceeded_response(retry_after)
+    return rate_limit_exceeded_response(declared_limit_retry_after(request, exc))
 
 
 async def _seed_startup_data(session: AsyncSession) -> None:

@@ -25,14 +25,18 @@ from starlette.testclient import TestClient
 
 from middleware import AmbientRateLimitMiddleware
 from rate_limit import (
-    _MAX_TRACKED_AMBIENT_KEYS,
+    _MAX_PATHS_PER_CLIENT,
     _MIN_RETRY_AFTER_SECONDS,
     _OVERFLOW_PATH_MARKER,
-    _SWEEP_MIN_TRACKED,
+    _PATH_BURST_FLOORS,
+    _PATH_COMPONENT,
+    AMBIENT_LIMIT_ITEM,
     DEFAULT_RATE_LIMIT,
     AmbientThrottle,
+    _requests_per_second,
     ambient_tracked_paths,
     charge_ambient_limit,
+    floor_for_path,
     limiter,
     rate_limit_exceeded_response,
     reset_ambient_limit,
@@ -42,9 +46,16 @@ _AMBIENT_ALLOWANCE = 60
 _OK = 200
 _TOO_MANY_REQUESTS = 429
 # Small enough that the saturation tests reach the ceiling in a few charges
-# instead of driving the production one. The production value is asserted
-# separately, against the property that actually matters about it.
+# instead of driving the production one. The production value is driven for
+# real by the cross-client test below, which is the property that matters.
 _CEILING_PROBE = 8
+
+# An ordinary client's shape while an attacker is saturating: a handful of
+# screens, several requests each, all comfortably inside one client's own
+# budget. 12 x 10 is deliberately twice the ambient allowance in total, so a
+# client wrongly collapsed onto a single bucket is refused half of it.
+_ORDINARY_PATHS = 12
+_ORDINARY_REQUESTS_PER_PATH = 10
 
 # Far enough past a 60-second window that its reset time is already behind us.
 _WELL_PAST_THE_WINDOW = 3600.0
@@ -140,16 +151,72 @@ def _fill_to_the_sweep_mark(throttle: AmbientThrottle, prefix: str) -> None:
         throttle.charge(_OTHER_CLIENT, f"{prefix}{index}")
 
 
-def test_the_production_ceiling_leaves_ordinary_sweeping_room_to_work() -> None:
-    """The ceiling is a backstop, not the ordinary bound.
+def test_one_clients_fan_out_cannot_narrow_another_clients_budget() -> None:
+    """Saturation by one address must not downgrade everyone else to one bucket.
 
-    Sweeping is what reclaims rolled-off buckets, and it first runs once the
-    store reaches ``_SWEEP_MIN_TRACKED``. A ceiling at or below that mark would
-    stop the store ever growing enough to sweep, so every request past it would
-    be diverted to an overflow bucket for ever -- the store would be bounded by
-    never reclaiming anything.
+    Driven against the production ceiling with the production constants, no
+    injection, because the thing being ruled out is a property of the shipped
+    numbers. What this replaces asserted ``ceiling > sweep floor`` -- two module
+    constants, no object under test -- and certified a behaviour it never
+    exercised. The behaviour it certified was false: the ceiling counted keys
+    across *all* clients, so one address opening enough buckets pinned the store
+    at the ceiling and every other client's first request to any path it had not
+    already touched was diverted to a single per-client overflow bucket. Its
+    60/minute *per path* silently became 60/minute across the whole API, health
+    probes included.
     """
-    assert _MAX_TRACKED_AMBIENT_KEYS > _SWEEP_MIN_TRACKED
+    throttle = AmbientThrottle()
+    for index in range(_MAX_PATHS_PER_CLIENT + _CEILING_PROBE):
+        throttle.charge(_CLIENT, f"/flood-{index}")
+
+    ordinary = [
+        throttle.charge(_OTHER_CLIENT, f"/screen-{screen}")
+        for screen in range(_ORDINARY_PATHS)
+        for _ in range(_ORDINARY_REQUESTS_PER_PATH)
+    ]
+
+    assert ordinary == [None] * (_ORDINARY_PATHS * _ORDINARY_REQUESTS_PER_PATH)
+    assert (_OTHER_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+    assert throttle.charge(_OTHER_CLIENT, "/health/live") is None
+
+
+def test_a_saturated_client_reclaims_its_buckets_after_a_full_window() -> None:
+    """Reaching the ceiling must be a phase, not a one-way door.
+
+    The ceiling stops an unseen path minting a key, and sweeping is what gives
+    the keys back once their windows roll off. Those two have to compose: a
+    client that saturated and then waited out a full window must find its own
+    per-path budgets again, and the buckets it abandoned must actually leave the
+    store. The sweep only ever ran on a *growing* population, so a store held at
+    its ceiling stopped sweeping altogether and the diversion became permanent.
+    """
+    now = [0.0]
+    throttle = AmbientThrottle(clock=lambda: now[0], max_paths_per_client=_CEILING_PROBE)
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_CLIENT, f"/flood-{index}")
+    throttle.charge(_CLIENT, "/diverted")
+    assert (_CLIENT, _OVERFLOW_PATH_MARKER) in throttle.last_attempt
+
+    now[0] = throttle.item.get_expiry() * 2 + 1
+    assert throttle.charge(_CLIENT, "/after-the-window") is None
+
+    assert (_CLIENT, "/after-the-window") in throttle.last_attempt
+    assert not [key for key in throttle.last_attempt if key[_PATH_COMPONENT].startswith("/flood-")]
+
+
+def test_the_burst_floor_can_only_widen_the_ambient_one() -> None:
+    """A path floor is an allowance for a known interaction, never a tightening.
+
+    The ambient item is what the ``ADEPTHOOD_DEFAULT_RATE_LIMIT`` override
+    moves, and the DAST contract-fuzz job widens it enormously. A per-path
+    allowance that simply replaced the ambient item would quietly *undo* that
+    override on exactly the paths it names, so the wider of the two wins.
+    """
+    for path, floor in _PATH_BURST_FLOORS.items():
+        assert floor_for_path(path) is floor
+        assert _requests_per_second(floor) > _requests_per_second(AMBIENT_LIMIT_ITEM)
+
+    assert floor_for_path(_PATH) is AMBIENT_LIMIT_ITEM
 
 
 def test_a_key_is_evicted_only_after_a_full_window() -> None:
@@ -186,10 +253,13 @@ def test_saturation_charges_the_per_client_overflow_bucket() -> None:
     an unbounded store would let a 404 flood of random paths grow it without
     limit inside a single window -- nothing has rolled off yet for the sweep to
     reclaim. Degradation has to be fail-closed (the flood pins its own sender at
-    the floor) and strictly per client (one tenant's saturation must not move
-    another tenant's counter).
+    the floor) and strictly per client: one tenant reaching its ceiling must
+    neither move another tenant's counter nor divert another tenant's traffic --
+    the second client here goes on minting its own per-path buckets until it
+    reaches a ceiling of its own, and gets an overflow bucket of its own when it
+    does.
     """
-    throttle = AmbientThrottle(max_tracked=_CEILING_PROBE)
+    throttle = AmbientThrottle(max_paths_per_client=_CEILING_PROBE)
 
     for index in range(_CEILING_PROBE):
         throttle.charge(_CLIENT, f"/flood-{index}")
@@ -201,20 +271,32 @@ def test_saturation_charges_the_per_client_overflow_bucket() -> None:
 
     mine = throttle.last_attempt[_CLIENT, _OVERFLOW_PATH_MARKER]
     throttle.charge(_OTHER_CLIENT, "/one-more")
+    assert (_OTHER_CLIENT, "/one-more") in throttle.last_attempt
+    assert (_OTHER_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+    assert throttle.last_attempt[_CLIENT, _OVERFLOW_PATH_MARKER] == mine
+
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_OTHER_CLIENT, f"/theirs-{index}")
+    throttle.charge(_OTHER_CLIENT, "/and-one-more")
     assert (_OTHER_CLIENT, _OVERFLOW_PATH_MARKER) in throttle.last_attempt
     assert throttle.last_attempt[_CLIENT, _OVERFLOW_PATH_MARKER] == mine
 
 
 def test_an_existing_bucket_survives_saturation() -> None:
-    """The ceiling diverts only *unseen* paths; a bucket already tracked keeps its own."""
-    throttle = AmbientThrottle(max_tracked=_CEILING_PROBE)
+    """The ceiling diverts only *unseen* paths; a bucket already tracked keeps its own.
+
+    Saturation is driven by the same client here, because the ceiling bounds one
+    client's fan-out: another client's flood is none of this client's business
+    and is the subject of its own test above.
+    """
+    throttle = AmbientThrottle(max_paths_per_client=_CEILING_PROBE)
     throttle.charge(_CLIENT, _PATH)
     for index in range(_CEILING_PROBE):
-        throttle.charge(_OTHER_CLIENT, f"/flood-{index}")
+        throttle.charge(_CLIENT, f"/flood-{index}")
 
     throttle.charge(_CLIENT, _PATH)
     assert (_CLIENT, _PATH) in throttle.last_attempt
-    assert (_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+    assert throttle.charge(_CLIENT, _PATH) is None
 
 
 def test_reset_clears_every_ambient_bucket() -> None:

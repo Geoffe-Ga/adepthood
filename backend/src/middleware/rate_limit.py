@@ -39,6 +39,13 @@ used it -- and the refusal is *built and returned*, never raised: an exception
 raised in a user middleware is served by Starlette's ``ServerErrorMiddleware``,
 above every layer here, and would reach the client as a 500.
 
+The limit itself is the application's ambient default, except for the handful
+of paths whose legitimate interaction is burstier than it -- those declare their
+own floor in ``rate_limit._PATH_BURST_FLOORS``, which may only ever widen. It
+has to be declared there rather than as a ``@limiter.limit`` on the route,
+because this layer is charged before routing: a declared route limit can only
+tighten what the floor already allowed.
+
 Three residuals, recorded here rather than left to be rediscovered:
 
 * The bucket is keyed on the raw path, so enumerating a ``{param}`` route buys a
