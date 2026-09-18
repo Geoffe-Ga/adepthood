@@ -59,17 +59,23 @@ router = build_router(prefix="/feedback", tags=["feedback"])
 # not reset it: a person filing beta reports by hand does not reach ten an hour,
 # and a client looping on a failed submit reaches ten in a second.
 #
-# The per-address budget is declared explicitly instead of being left to the
-# limiter's ambient ``default_limits``, and that is a deliberate departure from
-# how the rest of this application reads. Under FastAPI 0.141 ``app.routes``
-# holds ``_IncludedRouter`` wrappers, and ``slowapi``'s middleware resolves a
-# request to its handler by walking ``app.routes`` and reading ``.endpoint`` --
-# which those wrappers do not expose. Every route mounted through
-# ``include_router`` therefore resolves to ``None``, is treated as exempt, and
-# never sees a default limit at all. Verified by driving 70 unauthenticated
-# requests at an existing included route and observing no 429. An intake
-# endpoint that writes four encrypted text columns per request is not somewhere
-# to rely on an axis that has been measured to be absent, so it is stated here.
+# The per-address budget is declared explicitly rather than inherited, and it
+# stays that way. It was first written this way because the ambient
+# ``default_limits`` genuinely did not reach any route mounted through
+# ``include_router``: slowapi's middleware resolved a request to its handler by
+# reading ``.endpoint`` off ``app.routes``, FastAPI 0.141 puts
+# ``_IncludedRouter`` wrappers there that expose none, and a handler it could
+# not resolve was treated as exempt. #2909 closed that -- the floor is now
+# charged by ``AmbientRateLimitMiddleware`` before anything is resolved, so this
+# route does inherit one.
+#
+# Inheriting it *instead of* this line would be a 180x loosening of exactly the
+# axis that matters here: 60 requests per minute is 3600 an hour against a cap
+# of 20, on an endpoint that writes four encrypted text columns per request. So
+# the two compose rather than replace. The ambient floor is a floor -- it bounds
+# the traffic that never reaches this handler at all, such as an unauthenticated
+# or malformed flood, which no decorator on this function can see -- and the
+# 20/hour below is the ceiling for the traffic that does reach it.
 #
 # Twice the per-account figure, so two testers behind one office address can
 # both file a full budget and a third is refused, rather than the first tester

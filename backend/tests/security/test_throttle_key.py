@@ -40,7 +40,7 @@ from database import get_session
 from main import app
 from models.password_reset_token import PasswordResetToken
 from models.user import User
-from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
+from rate_limit import AMBIENT_LIMIT_ITEM, INVALID_LICENSE_MAX_PER_HOUR
 from routers.auth import _hash_password
 
 if TYPE_CHECKING:
@@ -123,6 +123,12 @@ _ALLOWLISTED_PRODUCT = "prod_alpha"
 _VERIFY_SEAM = "domain.entitlements.verify_license"
 _DETAIL_INVALID_LICENSE = "invalid_license"
 _DETAIL_THROTTLED = "too_many_license_attempts"
+
+# A router-mounted route that declares no ``@limiter.limit`` of its own, so the
+# only thing that can refuse it is the ambient floor (#2909) -- and unauthorised
+# so it is answered before any dependency or database work.
+_AMBIENT_PATH = "/practices/"
+_AMBIENT_ALLOWANCE = AMBIENT_LIMIT_ITEM.amount
 
 _RESET_PATH = "/auth/password-reset/request"
 _RESET_REQUESTS_PER_HOUR = 3
@@ -468,6 +474,44 @@ async def test_per_route_limiter_buckets_by_prefix_not_by_address(
 
     assert capped.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert neighbour.status_code == HTTPStatus.ACCEPTED
+
+
+async def _get_ambient_path(client: AsyncClient, forwarded: str) -> Response:
+    """Send one unauthenticated request to the undecorated, ambient-only route."""
+    return await client.get(_AMBIENT_PATH, headers={"X-Forwarded-For": forwarded})
+
+
+@pytest.mark.asyncio
+async def test_the_ambient_floor_buckets_by_prefix_not_by_address(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor must spend a *subscriber's* budget, not an address's.
+
+    The ambient floor is now the only enforcement reaching 141 of 144 routes, so
+    which of ``client_ip``'s two projections it keys on is the difference
+    between a floor and no floor at all for IPv6. ``client_throttle_key`` groups
+    a subscriber onto its delegated /64; ``resolve_client_ip`` answers the exact
+    address, which a residential subscriber rotates at will. Swapping one import
+    in ``middleware/rate_limit.py`` for the other leaves the enforcement line
+    untouched and every other test in the suite green, which is the same shape
+    of silent failure #2909 itself was -- so it gets a test that watches the
+    choice rather than the mechanism. The decorator layer has had this guard
+    since the split landed (``test_per_route_limiter_buckets_by_prefix_not_by_address``);
+    this is its counterpart for the layer that now carries the floor.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _PROXY_PEER)
+
+    async with _peer_client(db_session, (_PROXY_PEER, _PEER_PORT)) as client:
+        rotated = [
+            (await _get_ambient_path(client, _rotating_ipv6(attempt))).status_code
+            for attempt in range(_AMBIENT_ALLOWANCE + 1)
+        ]
+        neighbour = await _get_ambient_path(client, _IPV6_OTHER_CLIENT)
+
+    assert HTTPStatus.TOO_MANY_REQUESTS not in rotated[:_AMBIENT_ALLOWANCE]
+    assert rotated[_AMBIENT_ALLOWANCE] == HTTPStatus.TOO_MANY_REQUESTS
+    assert neighbour.status_code == HTTPStatus.UNAUTHORIZED
 
 
 async def _seed_registered_user(db_session: AsyncSession, email: str) -> None:

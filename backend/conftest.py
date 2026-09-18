@@ -46,7 +46,11 @@ import routers.auth as _auth_router  # noqa: E402
 from database import get_session  # noqa: E402
 from domain.entitlements import AptitudeLicenseCheck, LicenseOutcome  # noqa: E402
 from main import app  # noqa: E402
-from rate_limit import limiter, reset_invalid_license_attempts  # noqa: E402
+from rate_limit import (  # noqa: E402
+    limiter,
+    reset_ambient_limit,
+    reset_invalid_license_attempts,
+)
 from schemas.gumroad import GumroadPurchase  # noqa: E402
 
 # The default signup license gate stubbed into every test that does not opt into
@@ -250,15 +254,20 @@ def _reset_rate_limiter() -> Generator[None, None, None]:
 
     The second-layer invalid-license counter (``rate_limit``'s moving-window
     limiter for signup license failures) is cleared alongside for the same
-    reason: its hourly window would otherwise leak 429s across tests.
+    reason: its hourly window would otherwise leak 429s across tests. So is the
+    ambient floor (#2909), which keeps its own store: it is charged on *every*
+    request, so a suite that leaked it would hand the next suite a budget
+    already part-spent and fail somewhere unrelated to the leak.
     """
     limiter.enabled = True
     limiter.reset()
     reset_invalid_license_attempts()
+    reset_ambient_limit()
     yield
     limiter.enabled = True
     limiter.reset()
     reset_invalid_license_attempts()
+    reset_ambient_limit()
 
 
 @pytest.fixture(autouse=True)
