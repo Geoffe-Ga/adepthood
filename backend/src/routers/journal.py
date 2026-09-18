@@ -2459,16 +2459,11 @@ async def expand_marginalia_essay(
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM,
     # so skip essay generation entirely and return the note (no essay) unchanged.
     # Decided from the *persisted* classification, before the LLM is constructed.
+    # Read again inside the barrier below, because this reading can go stale
+    # while the request waits for it — see ``_cache_and_mirror_essay``.
     if entry.classification == JournalClassification.INTIMATE:
         return note
-    message = _sanitize_message(entry.message)
-    return await _cache_and_mirror_essay(
-        session,
-        note=note,
-        entry=entry,
-        message=message,
-        clients=clients,
-    )
+    return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
 
 
 async def _cache_and_mirror_essay(
@@ -2476,7 +2471,6 @@ async def _cache_and_mirror_essay(
     *,
     note: Marginalia,
     entry: JournalEntry,
-    message: str,
     clients: _EssayClients,
 ) -> Marginalia:
     """Generate and cache the essay, then mirror it once if there is one.
@@ -2503,13 +2497,35 @@ async def _cache_and_mirror_essay(
     is the whole claim. It is the same per-dial reasoning the detached
     ontologization ladder uses for the same reason.
 
+    **Both the tier and the body are read again inside the first hold**, and
+    liveness is not enough on its own. An exclusive barrier held across a dial
+    does not merely delay a competing mutation, it reorders it to *before* the
+    dial: ``PATCH /journal/{entry_id}`` carrying ``classification`` takes this
+    same hold, so a PATCH that queues first is guaranteed to complete in full --
+    setting INTIMATE, withdrawing the local entry, retracting the voice drafts,
+    withdrawing the remote copy -- and answer 200, after which a dial carrying a
+    reading taken before the wait would hand the now-intimate body to the cloud.
+    The rule is general and the caller's pre-hold check is the cheap half of it:
+    every piece of state a dial's legitimacy rests on is re-read under the same
+    ordering that stops the dial, or the hold is too narrow to go stale.
+
+    A row the writer has since deleted stops here for the same reason, which is
+    where that check belonged all along -- the mirror below could only decline to
+    send the letter *after* the cloud had already composed it from the body.
+
     The commit below releases the pooled connection the route's two ownership
     reads opened, so the wait for the barrier holds nothing.
     """
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
-        cached = await _cache_essay(session, note, message, clients.api_key)
+        await session.refresh(entry)
+        await session.commit()
+        if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
+            return note
+        cached = await _cache_essay(
+            session, note, _sanitize_message(entry.message), clients.api_key
+        )
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
     # state the privacy floor returns -- and nothing is mirrored, because

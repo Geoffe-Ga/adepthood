@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 
@@ -315,3 +318,95 @@ async def test_completion_detection_refuses_an_erased_account_with_the_uniform_4
     assert provider.bodies == [], (
         f"an erased account's writing was still transmitted: {provider.bodies}"
     )
+
+
+#: The barrier as every journal site spells it: two positional arguments, and a
+#: keyword this router never passes.
+_HoldAccount = Callable[[AsyncSession, int], AbstractAsyncContextManager[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class _BarrierDoor:
+    """Where one request is held at the barrier while another overtakes it.
+
+    Instance-local, like every double in this file: nothing here is module state,
+    so the result cannot depend on the order pytest runs the file in.
+    """
+
+    reached: asyncio.Event = field(default_factory=asyncio.Event)
+    opened: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def _pause_at_the_first_hold(real: _HoldAccount, door: _BarrierDoor) -> _HoldAccount:
+    """Wrap the barrier so the *first* acquisition waits, and later ones walk through.
+
+    Pausing at the door rather than inside the hold is what makes the competing
+    request provably win the barrier: it arrives while the holder is still
+    queuing for it, takes it uncontended, and finishes before the paused request
+    is let through.
+    """
+
+    @asynccontextmanager
+    async def _hold(session: AsyncSession, user_id: int) -> AsyncIterator[None]:
+        """Wait once at the door, then take the real barrier."""
+        if not door.reached.is_set():
+            door.reached.set()
+            await door.opened.wait()
+        async with real(session, user_id):
+            yield
+
+    return _hold
+
+
+@pytest.mark.asyncio
+async def test_the_essay_never_dials_a_body_the_patch_already_made_intimate(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The barrier must not reorder the essay's dial behind the PATCH that forbids it.
+
+    The route reads the INTIMATE privacy floor off the persisted row *before* it
+    waits for the barrier, and the hold that follows re-reads only whether the
+    *account* still exists. ``PATCH /journal/{entry_id}`` carrying
+    ``classification`` takes the same exclusive hold, so a PATCH that queues
+    first is not merely delayed by the barrier -- it is guaranteed to complete in
+    full, answer 200, and only then release the dial that hands the now-intimate
+    body to the cloud.
+
+    The pause is installed on the barrier's own door, so the PATCH provably wins
+    it rather than probably winning it: the first hold taken after the pause is
+    armed is the essay's, and the PATCH's own hold is the second and runs
+    straight through. The provider is released up front because the claim here is
+    that the dial does not happen -- a double that also blocked would turn the
+    defect into a twenty-second timeout instead of an assertion.
+    """
+    provider = PausedProvider("Dear friend, the willow.")
+    provider.release.set()
+    monkeypatch.setattr(marginalia_service, "generate_response", provider)
+    headers, email = await signup(concurrent_async_client, "essay_tier")
+    user_id = await _user_id(concurrent_session_factory, email)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    note_id = await _seed_marginalia(concurrent_session_factory, user_id, entry_id)
+    door = _BarrierDoor()
+    monkeypatch.setattr(
+        journal, "hold_account", _pause_at_the_first_hold(journal.hold_account, door)
+    )
+
+    expanding = asyncio.create_task(
+        concurrent_async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+    )
+    await asyncio.wait_for(door.reached.wait(), timeout=_SETTLE_TIMEOUT_SECONDS)
+    patched = await concurrent_async_client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+    assert patched.status_code == HTTPStatus.OK, patched.text
+    door.opened.set()
+    answered = await asyncio.wait_for(expanding, timeout=_SETTLE_TIMEOUT_SECONDS)
+
+    assert provider.bodies == [], (
+        f"a body the writer had already marked intimate -- in a PATCH that answered "
+        f"200 before this dial -- was handed to a cloud model anyway: {provider.bodies}"
+    )
+    assert answered.status_code == HTTPStatus.OK
+    assert answered.json()["essay"] is None, "an intimate entry came back with a cloud letter"
