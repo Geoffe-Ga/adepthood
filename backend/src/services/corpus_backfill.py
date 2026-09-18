@@ -138,8 +138,9 @@ from sqlmodel import col, select
 from models.corpus_fragment import RETRIEVABLE_TIERS, CorpusFragment
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalEntry
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import LLMCreditExhaustedError
-from services.corpus_consent import ConsentChange
+from services.corpus_consent import ConsentChange, load_consent
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
 
 logger = logging.getLogger(__name__)
@@ -346,8 +347,105 @@ def _log_sweep(user_id: int, outcome: BackfillOutcome) -> None:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Offer:
+    """What one barriered offer did, and whether the sweep may go on after it."""
+
+    considered: int = 0
+    stored: int = 0
+    stop: bool = False
+
+
+#: Nothing was offered and the sweep is over: the account is gone, the
+#: permission it ran under is gone, or the provider refused to bill.
+_STOPPED: Final = _Offer(stop=True)
+
+#: This row stopped being a candidate while the sweep waited for the barrier,
+#: so nothing was offered -- but the next row may still be one.
+_SKIPPED: Final = _Offer()
+
+
+async def _still_a_candidate(
+    session: AsyncSession, *, entry_id: int | None, user_id: int
+) -> JournalEntry | None:
+    """Re-read one row under the hold, against the predicate that selected it.
+
+    The batch was chosen before the barrier was taken, and an exclusive barrier
+    held across a dial reorders a competing mutation to *before* it rather than
+    merely delaying it. So every reason this row was a candidate can have stopped
+    being true while the sweep queued: a ``PATCH`` can have re-tiered it to
+    intimate, a ``DELETE`` can have withdrawn it, another writer can have
+    ontologized it already. :func:`_pending_conditions` is reused rather than
+    restated so the re-read cannot come to mean something different from the
+    selection.
+
+    ``populate_existing`` is what makes this a read rather than a formality: the
+    identity map still holds the instance loaded before the wait, and without it
+    the query would return that object with its stale body and stale tier intact.
+    """
+    result = await session.execute(
+        select(JournalEntry)
+        .where(col(JournalEntry.id) == entry_id, *_pending_conditions(user_id))
+        .execution_options(populate_existing=True)
+    )
+    return result.scalars().first()
+
+
+async def _consent_still_stands(session: AsyncSession, user_id: int) -> bool:
+    """Whether the permission this sweep runs under is still given.
+
+    Read inside the hold, every entry, because the route that grants is the route
+    that revokes: a revocation queued behind this sweep's barrier is a stop the
+    writer has asked for, and a sweep that read its permission once before the
+    first dial would go on transmitting past it.
+    """
+    return (await load_consent(session, user_id=user_id, source=INGEST_SOURCE)).granted
+
+
+async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int) -> _Offer:
+    """Offer one entry to the corpus writer, inside this account's egress barrier.
+
+    The barrier is taken **per entry, never across the sweep**, and that is the
+    whole ordering argument. A hold spanning up to
+    :data:`BACKFILL_ENTRY_CEILING` provider calls would reorder this account's own
+    ``DELETE /users/me`` and its own revocation to after every dial the sweep had
+    left -- the two operations that mean *stop sending my writing* made to wait
+    out the sending. Per dial, a stop waits only for the dial already in flight,
+    and the three reads below then observe it.
+
+    Everything the dial's legitimacy rests on is read here rather than before the
+    wait: that the account exists, that the permission still stands, and that the
+    row is still the kind of row this sweep may offer. The mark and the commit
+    stay inside the hold too, so a revocation's purge cannot land between the
+    fragment being written and the fragment becoming durable.
+
+    The commit below the docstring ends the transaction the sweep's own counting
+    and batching opened, so the *wait* for the barrier holds no pooled
+    connection -- the same discipline every other site takes this barrier under.
+    Nothing of the sweep's is lost to it: each offer commits its own outcome
+    inside the hold, and the only work outstanding here is a read.
+    """
+    await session.commit()
+    async with hold_account(session, user_id):
+        await ensure_account_live(session, user_id)
+        if not await _consent_still_stands(session, user_id):
+            return _STOPPED
+        current = await _still_a_candidate(session, entry_id=entry.id, user_id=user_id)
+        if current is None:
+            return _SKIPPED
+        try:
+            fragment = await ingest_journal_entry(
+                session, current, timeout_seconds=BACKFILL_ENTRY_SECONDS
+            )
+        except LLMCreditExhaustedError:
+            return _STOPPED
+        await _mark_attempted(session, current)
+        await session.commit()
+        return _Offer(considered=1, stored=int(fragment is not None))
+
+
 async def _offer_batch(
-    session: AsyncSession, *, candidates: list[JournalEntry], deadline: float
+    session: AsyncSession, *, user_id: int, candidates: list[JournalEntry], deadline: float
 ) -> tuple[int, int]:
     """Offer each candidate to the corpus writer; return what was reached and stored.
 
@@ -381,22 +479,19 @@ async def _offer_batch(
     this sweep from being lost to an exception on its way out. Nothing is logged
     here: the account and the provider were already named by the WARNING
     :mod:`services.corpus_ingest` wrote on the way past, and a second line from
-    the sweep would say less about more.
+    the sweep would say less about more. The same break serves a revoked
+    permission and an erased account, for the same reason: they are facts about
+    the sweep rather than about the entry, and :func:`_offer_one` reports all
+    three by asking it to stop.
     """
     considered = 0
     added = 0
     for entry in candidates:
-        try:
-            fragment = await ingest_journal_entry(
-                session, entry, timeout_seconds=BACKFILL_ENTRY_SECONDS
-            )
-        except LLMCreditExhaustedError:
+        offer = await _offer_one(session, entry=entry, user_id=user_id)
+        if offer.stop:
             break
-        considered += 1
-        await _mark_attempted(session, entry)
-        await session.commit()
-        if fragment is not None:
-            added += 1
+        considered += offer.considered
+        added += offer.stored
         if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
             break
     return considered, added
@@ -435,7 +530,10 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
         return _NOTHING_SWEPT
     candidates = await _pending_batch(session, user_id)
     considered, added = await _offer_batch(
-        session, candidates=candidates, deadline=time.monotonic() + BACKFILL_DEADLINE_SECONDS
+        session,
+        user_id=user_id,
+        candidates=candidates,
+        deadline=time.monotonic() + BACKFILL_DEADLINE_SECONDS,
     )
     outcome = BackfillOutcome(
         entries_considered=considered,

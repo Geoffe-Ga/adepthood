@@ -9928,6 +9928,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Corpus Consent",
@@ -9938,7 +9948,7 @@
     },
     "/corpus/consent/{source}": {
       "put": {
-        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller, because a decision is never\nonly the event: on a revocation it is the purge, and on a grant it is the\nsweep back over the writing the account already had, bounded and reported by\n:mod:`services.corpus_backfill`. Leaving any of it uncommitted would be a\npermission changed on screen and not in the database.\n\nA grant is no longer *one* transaction, and the commit here is the last of\nseveral rather than the only one. The sweep ends its transaction before\nevery classification so that no pooled connection is held across a provider\ncall -- see :func:`services.corpus_ingest._classify_and_record` -- which\nmakes the decision itself durable at the first entry. So a grant whose sweep\nis cut short by a client that stopped waiting leaves the permission recorded\nand whatever it reached ontologized, and the remainder waits for the next\nyes. That is a change of promise and the better half of the trade: the\nalternative was a permission the account had given, paid for at a provider,\nand thrown away.\n\nRate-limited more tightly than ``POST /import`` despite carrying the\nsmallest body in the API: a grant is the most expensive request here, since\nthe sweep it authorises costs a provider call per entry it reaches, where\nan import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.\n\nThe response is still the *state*. What the grant's sweep reached is a fact\nabout the sweep rather than about the decision -- a bounded sweep resumes\nunder a decision already standing -- so it goes where sweeps are kept, the\nappend-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,\nrather than onto a shape that also answers ``GET``.",
+        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller, because a decision is never\nonly the event: on a revocation it is the purge, and on a grant it is the\nsweep back over the writing the account already had, bounded and reported by\n:mod:`services.corpus_backfill`. Leaving any of it uncommitted would be a\npermission changed on screen and not in the database.\n\nA grant is no longer *one* transaction, and the commit here is the last of\nseveral rather than the only one. The sweep ends its transaction before\nevery classification so that no pooled connection is held across a provider\ncall -- see :func:`services.corpus_ingest._classify_and_record` -- which\nmakes the decision itself durable at the first entry. So a grant whose sweep\nis cut short by a client that stopped waiting leaves the permission recorded\nand whatever it reached ontologized, and the remainder waits for the next\nyes. That is a change of promise and the better half of the trade: the\nalternative was a permission the account had given, paid for at a provider,\nand thrown away.\n\n**The account barrier is held for the decision, never across the sweep.**\nThis route serves the revocation as well as the grant, and\n``DELETE /users/me`` takes the same exclusive hold: a hold spanning a sweep\nbounded only by :data:`services.corpus_backfill.BACKFILL_ENTRY_CEILING`\nprovider calls would not merely delay those two, it would reorder them to\nafter every dial the sweep had left -- the two requests that mean *stop\nsending my writing* made to wait out the sending, and the writing sent in\nthe meantime withheld by the code that predates the barrier. So the hold\nhere covers the liveness read and the decision, which dial nothing, and the\nsweep takes it per entry in\n:func:`services.corpus_backfill._offer_one`, re-reading this decision inside\neach one. A stop then waits for the dial in flight and for nothing else.\n\nRate-limited more tightly than ``POST /import`` despite carrying the\nsmallest body in the API: a grant is the most expensive request here, since\nthe sweep it authorises costs a provider call per entry it reaches, where\nan import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.\n\nThe response is still the *state*. What the grant's sweep reached is a fact\nabout the sweep rather than about the decision -- a bounded sweep resumes\nunder a decision already standing -- so it goes where sweeps are kept, the\nappend-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,\nrather than onto a shape that also answers ``GET``.",
         "operationId": "put_corpus_consent_corpus_consent__source__put",
         "parameters": [
           {
@@ -10056,6 +10066,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Put Corpus Consent",
@@ -10176,6 +10196,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Import Corpus Document",
@@ -10286,6 +10316,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Get Corpus Invitation",
@@ -10404,6 +10444,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Put Corpus Invitation",
@@ -10514,6 +10564,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Get Voice Readiness",
@@ -15773,7 +15833,7 @@
         ]
       },
       "patch": {
-        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.",
+        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.\n\nThe account barrier is taken on the re-ingesting branch alone. The other\nbranch changes a title or a status and dials nothing, so ordering it against\nan erasure would buy no confidentiality and would put a lock on the cheapest\nPATCH the client makes.",
         "operationId": "update_journal_entry_journal__entry_id__patch",
         "parameters": [
           {
@@ -24039,7 +24099,7 @@
     },
     "/users/me": {
       "delete": {
-        "description": "Erase the authenticated caller's account and personal data, irreversibly.\n\nThe subject is resolved from the JWT alone — there is no ``user_id`` in the\npath or the body — so this route cannot be pointed at anybody else. The\ncaller retypes their own email address as confirmation; a mismatch is a 400\nand touches nothing.\n\nThe response enumerates the tables erased, the ones that survive with the\naccount's name cleared off them, and what a user with a Creek Vault still\nhas to purge themselves. Nothing here calls the vault, so an unreachable\none cannot delay or block the erasure.",
+        "description": "Erase the authenticated caller's account and personal data, irreversibly.\n\nThe subject is resolved from the JWT alone — there is no ``user_id`` in the\npath or the body — so this route cannot be pointed at anybody else. The\ncaller retypes their own email address as confirmation; a mismatch is a 400\nand touches nothing.\n\nThe response enumerates the tables erased, the ones that survive with the\naccount's name cleared off them, and what a user with a Creek Vault still\nhas to purge themselves. Nothing here calls the vault, so an unreachable\none cannot delay or block the erasure — the barrier below waits on the\ndatabase and never on Creek, so that stays true of it too.\n\nErasure now also waits for this account's own in-flight outbound writes\n(:mod:`services.account_egress_barrier`), so no content is handed outward\nafter the receipt. It is taken with ``on_unavailable=\"proceed\"``: a lock\nconnection that will not open refuses *egress* everywhere else, and must\nnever refuse *this*, because erasure only ever reduces exposure.",
         "operationId": "delete_my_account_users_me_delete",
         "parameters": [
           {

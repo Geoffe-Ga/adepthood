@@ -18,6 +18,17 @@ this policy — but they are a second belt, not the mechanism.
 content-free Creek teardown receipt and asks the provisioning service with no
 database transaction held. This module then performs local erasure regardless
 of that answer; an unreachable vault cannot block the sweep.
+
+That third property was only ever true *of the sweep*, and it was read for
+longer than it should have been as a statement about the account. Nothing here
+dials outward, and nothing here used to order the sweep against a concurrent
+request that does: a journal write already inside ``ingest()`` could land after
+the receipt said "erased". The ordering is supplied by
+:mod:`services.account_egress_barrier`, taken by the route around both the
+disposition resolution and this sweep -- so erasure now waits for this account's
+in-flight outbound writes while still dialling nothing itself, and the barrier
+waits on the database rather than on Creek, which is what keeps the sentence
+above true of the barrier too.
 """
 
 from __future__ import annotations
@@ -247,6 +258,11 @@ async def delete_account(
     and what a user with a Creek Vault still has to do themselves. The same
     receipt is persisted as an :class:`~models.account_deletion_audit.AccountDeletionAudit`
     row — counts only, never content.
+
+    Calls nothing outside adepthood, and is called by
+    :func:`routers.users.delete_my_account` inside that account's egress
+    barrier, so a write that was already in flight finishes before this runs or
+    finds the account gone and sends nothing.
     """
     _require_total_policy()
     counts = await _sweep(session, account)

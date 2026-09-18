@@ -28,6 +28,7 @@ from domain.creek_vault import (
     VaultJournalWithdrawResult,
     VaultLinkPass,
     VaultLinkStage,
+    VaultPipelineJob,
 )
 
 _UNSERVED = "this vault double does not serve the batch pipeline"
@@ -46,10 +47,19 @@ class NoPipelineVaultDouble:
         """Raise: this double was not built to withdraw a journal entry."""
         raise CreekCapabilityUnsupportedError(_UNSERVED)
 
-    async def classify_corpus(self) -> VaultClassificationPass:
-        """Raise: this double was not built to run a classification pass."""
+    async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
+        """Raise: this double was not built to run a classification pass.
+
+        Typed at the seam's own union rather than at the narrower half this
+        base returns, so a subclass that *does* exercise the durable-job branch
+        can override it without widening a return type.
+        """
         raise CreekCapabilityUnsupportedError(_UNSERVED)
 
-    async def link_corpus(self, _stage: VaultLinkStage, /) -> VaultLinkPass:
-        """Raise: this double was not built to run a linker stage."""
+    async def link_corpus(self, _stage: VaultLinkStage, /) -> VaultLinkPass | VaultPipelineJob:
+        """Raise: this double was not built to run a linker stage.
+
+        Typed at the seam's own union, for the reason :meth:`classify_corpus`
+        is.
+        """
         raise CreekCapabilityUnsupportedError(_UNSERVED)

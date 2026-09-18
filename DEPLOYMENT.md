@@ -759,6 +759,88 @@ journal_encryption_enabled=True
 | `CREEK_PROVISIONING_URL` | For private-vault activation | *(empty)* | Creek's provisioning-control-plane base URL. It must use HTTPS except for loopback development. Empty or unusable configuration degrades activation to a retryable failure and never blocks signup or writing. |
 | `CREEK_PROVISIONING_AUTH_FILE` | With provisioning | *(empty)* | Path to a mounted file containing Adepthood's Creek service bearer. The bearer itself must not be stored in the environment. |
 | `CREEK_PROVISIONING_HANDOFF_AUTH_FILE` | With provisioning | *(empty)* | Path to a separately rotated mounted bearer used to authenticate Creek's one-time connection handoff callback. |
+| `ACCOUNT_EGRESS_BARRIER_CROSS_WORKER_ENABLED` | No | *(unset = on)* | Switch for the **cross-worker** half of the per-account egress barrier. Unset or `true` is on; `false` suppresses the PostgreSQL advisory statements and nothing else. Any other value is refused and reported as a defect rather than read as either answer. See "Per-account egress barrier" below — this is not a feature flag for the barrier itself, which cannot be turned off. |
+
+### Per-account egress barrier
+
+Every path that hands an account's *stored* content outward takes a per-account
+lock, and so does `DELETE /users/me`. Without it a deletion receipt could be
+followed by that account's plaintext reaching Creek — or a cloud language model
+— because neither destination can participate in the journal database's
+transaction.
+
+**Outward means both destinations.** The rule is *transport-neutral*: a path
+takes the barrier where it transmits content adepthood has stored for this
+account, whether the recipient is the account's Creek vault or the language
+model behind `services.botmason`. The eight routes it covers are
+
+| Route | Transmits |
+| --- | --- |
+| `POST /journal/` | vault ingest, and the corpus classifier |
+| `PATCH /journal/{entry_id}` | vault ingest / retraction, and the classifier |
+| `DELETE /journal/{entry_id}` | vault withdrawal |
+| `POST /journal/{entry_id}/resonance` | the reflection pass, vault or cloud |
+| `POST /journal/{entry_id}/suggestions/detect` | the entry body, to the cloud |
+| `POST /journal/marginalia/{marginalia_id}/essay` | the entry body **and every prior letter**, to the cloud; then the mirror to the vault |
+| `POST /corpus/import` | the uploaded document, to the vault and the classifier |
+| `PUT /corpus/consent/{source}` | the grant's backfill sweep, to the classifier |
+
+plus the detached ontologization continuation, which belongs to no route.
+`POST /journal/transcribe-page` is deliberately outside: its bytes are supplied
+by the caller in the same request, so there is nothing stored to leak and no row
+an erasure could orphan. `GET /stages/wheel` and `GET /invitations` resolve a
+vault client and only ever *read* from it.
+
+The list is derived from the source rather than maintained by hand —
+`backend/tests/support/egress_call_graph.py` finds the paths, and
+`backend/tests/security/test_egress_barrier_totality.py` fails the build both
+for a route nobody classified and for a route claimed as barriered whose dial
+no `hold_account` encloses.
+
+**Two halves, and only one of them is optional.**
+
+* *Inside a worker*: a weakly-held `asyncio.Lock` per account. Always taken.
+  There is no setting that removes it.
+* *Across workers*: a PostgreSQL session advisory lock in its own two-int
+  namespace. **PostgreSQL only.** On any other dialect the statements are not
+  issued, the deployment reports `incomplete`, and ordering holds within each
+  worker and nowhere else.
+
+**Readiness.** `GET /health/ready` carries an `egress_barrier` field —
+`ready`, `incomplete`, or `disabled` — and the same state is logged once at
+boot with the names of any defects (never their values). `disabled` is a choice
+somebody made; `incomplete` is a fault. The probe *reports* this and never gates
+on it: a degraded barrier is not an unready pod.
+
+**Deploy ordering — operational, not enforceable in code.** During a rolling
+deploy, workers running the previous build do not take this lock at all, so
+requests they serve are unordered against requests the new build serves. Nothing
+in the application can detect or prevent that; a worker cannot refuse traffic on
+behalf of a peer it cannot see. The deploy must therefore either complete
+quickly or, if a long mixed-version window is unavoidable and the resulting
+partial ordering is not wanted, run with
+`ACCOUNT_EGRESS_BARRIER_CROSS_WORKER_ENABLED=false` for the duration and clear
+it once every worker is on the new build.
+
+**Failure is asymmetric, on purpose.** If the dedicated lock connection cannot
+be opened at all, an egress site refuses with `503 egress_ordering_unavailable`
+and sends nothing, while `DELETE /users/me` proceeds and erases. Erasure only
+ever reduces exposure and must never be blocked by the ordering mechanism.
+
+**The background ladder takes it per dial.** The detached ontologization
+continuation orders each of its own outbound calls rather than holding the
+barrier for the whole climb. A climb is bounded only by a per-stage budget plus
+status polling, and a background task holding one account's barrier for that
+long would make that account's *own* next journal write, and its own deletion,
+wait out a ladder nobody asked about. The cost is one short acquisition per
+background dial instead of one per climb.
+
+**Pool pressure.** The barrier borrows no connection from the application pool —
+waiting for it must not be able to exhaust the pool it would then need — but it
+does open one short-lived `NullPool` connection per held region. A journal write
+holds **two** of them (the account barrier and the per-entry serializer) for the
+length of its Creek round trip. Budget PostgreSQL `max_connections` at
+`2 x concurrent egressing requests` *beyond* the application pool, not inside it.
 
 **Auto-injected by Railway (do not set manually):**
 

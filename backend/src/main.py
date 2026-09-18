@@ -83,6 +83,7 @@ from seed_practices import seed_practices
 from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
 from services import app_links, email, journal_encryption
+from services.account_egress_barrier import load_egress_barrier_rollout, rollout_for
 from services.botmason import get_provider
 from services.content_repository import (
     ContentRepositoryError,
@@ -890,6 +891,22 @@ async def _seed_startup_data(session: AsyncSession) -> None:
             await session.rollback()
 
 
+def _log_egress_barrier_rollout() -> None:
+    """Report the per-account egress barrier's cross-worker state at boot.
+
+    The state alone distinguishes a barrier an operator switched off from one
+    that cannot reach the PostgreSQL it needs, and ``defects`` names the setting
+    or condition responsible. No setting value is read out: the loader reports
+    names only.
+    """
+    rollout = load_egress_barrier_rollout(database_engine.dialect.name)
+    logger.info(
+        "egress_barrier state=%s defects=%s",
+        rollout.state.value,
+        ",".join(rollout.defects) or "none",
+    )
+
+
 def _log_botmason_provider() -> None:
     """Report the active LLM provider at boot (issue #402).
 
@@ -1042,6 +1059,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     _log_content_status()
     # Issue #402: make the active LLM provider observable at startup.
     _log_botmason_provider()
+    # Issue #2642: an operator has to be able to tell a *disabled* egress
+    # barrier from a *broken* one, and the difference is invisible from
+    # behaviour alone -- both order writes inside a worker and neither orders
+    # them across workers.
+    _log_egress_barrier_rollout()
 
     try:
         await resume_vault_pipeline_runs(async_session_factory, resolve_creek_vault_client)
@@ -1282,7 +1304,14 @@ async def readiness(
     raises.
     """
     await _probe_db(session, log_event="readiness_check_failed", detail="not_ready")
-    return {"status": "ready", "database": "connected"}
+    return {
+        "status": "ready",
+        "database": "connected",
+        # Reported rather than gated: a barrier that cannot order across workers
+        # still orders inside each one, so it is a degraded deployment and not an
+        # unready pod. An operator reading a failing deploy reads the probe.
+        "egress_barrier": rollout_for(session).state.value,
+    }
 
 
 @app.get("/health", responses=_DB_PROBE_RESPONSES)
