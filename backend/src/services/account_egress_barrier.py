@@ -8,23 +8,39 @@ entry: a journal write that is already inside ``ingest()`` and a
 that id, the receipt that says "erased" can be followed by this account's
 plaintext being handed to Creek -- measured, and the reason this module exists.
 
-**What takes the barrier.** Every path that transmits content adepthood has
-*stored for this account*: the journal write, update, delete, resonance and
-essay-mirror routes, ``POST /corpus/import``, ``PUT /corpus/consent/{source}``
-on the grant path, the teardown side of ``DELETE /users/me``, and -- the one no
-request-scoped guard can reach -- the detached pipeline continuation in
-:mod:`services.creek_vault_pipeline`, which opens its own session and dials
-Creek after the request that scheduled it has returned.
+**The rule, and it is transport-neutral.** *Take the barrier where a path
+transmits content adepthood has stored for this account; exclude paths that only
+read from a remote, or that carry only bytes supplied in the same request.*
+Nothing in that sentence mentions Creek, and that is the correction this module
+was shipped without: the first site list was produced by walking the route table
+for ``get_creek_vault_client``, which can only ever find *vault* egress, so two
+routes that hand the stored journal body to the cloud language model behind
+:mod:`services.botmason` -- ``POST /journal/{entry_id}/suggestions/detect`` and
+``POST /journal/marginalia/{marginalia_id}/essay`` -- were invisible to it, and
+went on transmitting plaintext after the erasure receipt while a docstring in
+this very module claimed the second one was covered.
+
+**What takes the barrier**, therefore: the journal write, update, delete,
+resonance, completion-detection and essay routes; ``POST /corpus/import``;
+``PUT /corpus/consent/{source}`` on the grant path; the teardown side of
+``DELETE /users/me``; and -- the one no request-scoped guard can reach -- the
+detached pipeline continuation in :mod:`services.creek_vault_pipeline`, which
+opens its own session and dials after the request that scheduled it returned.
 
 **What deliberately does not.** Paths that only *read* from the vault
 (``GET /stages/wheel``, ``GET /invitations``) and paths carrying only bytes
 supplied in the same request (``POST /journal/transcribe-page``). Neither can
 expose stored content after an erasure, and serializing the first two would cost
-the app's two hottest authenticated reads for no confidentiality gain. The rule,
-stated once so a future boundary is classified without re-litigation: *take the
-barrier where a path transmits content adepthood has stored for this account;
-exclude paths that only read from the vault or that carry only bytes supplied in
-the same request.*
+the app's two hottest authenticated reads for no confidentiality gain.
+
+**That list is not maintained by hand, and it is not trusted.** It is derived
+from the source by ``backend/tests/support/egress_call_graph.py`` -- a call
+graph for the model dials, plus the route table's own dependency walk for the
+vault ones -- and ``backend/tests/security/test_egress_barrier_totality.py``
+fails the build both for a transmitting route nobody classified *and* for a
+route claimed as barriered whose dial no ``hold_account`` encloses. A gate that
+can only check a name is how the essay route came to be listed as covered in
+three places at once while it was not.
 
 **The asymmetry.** When the cross-worker lock connection cannot be established
 at all, an egress site refuses (``on_unavailable="refuse"``) and

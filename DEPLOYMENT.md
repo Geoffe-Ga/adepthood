@@ -763,12 +763,39 @@ journal_encryption_enabled=True
 
 ### Per-account egress barrier
 
-Every path that hands an account's *stored* content outward — the journal write,
-update, delete, resonance and essay routes, `POST /corpus/import`, a consent
-grant's backfill, and the detached ontologization continuation — takes a
-per-account lock, and so does `DELETE /users/me`. Without it a deletion receipt
-could be followed by that account's plaintext reaching Creek, because the
-journal database and Creek cannot participate in one transaction.
+Every path that hands an account's *stored* content outward takes a per-account
+lock, and so does `DELETE /users/me`. Without it a deletion receipt could be
+followed by that account's plaintext reaching Creek — or a cloud language model
+— because neither destination can participate in the journal database's
+transaction.
+
+**Outward means both destinations.** The rule is *transport-neutral*: a path
+takes the barrier where it transmits content adepthood has stored for this
+account, whether the recipient is the account's Creek vault or the language
+model behind `services.botmason`. The eight routes it covers are
+
+| Route | Transmits |
+| --- | --- |
+| `POST /journal/` | vault ingest, and the corpus classifier |
+| `PATCH /journal/{entry_id}` | vault ingest / retraction, and the classifier |
+| `DELETE /journal/{entry_id}` | vault withdrawal |
+| `POST /journal/{entry_id}/resonance` | the reflection pass, vault or cloud |
+| `POST /journal/{entry_id}/suggestions/detect` | the entry body, to the cloud |
+| `POST /journal/marginalia/{marginalia_id}/essay` | the entry body **and every prior letter**, to the cloud; then the mirror to the vault |
+| `POST /corpus/import` | the uploaded document, to the vault and the classifier |
+| `PUT /corpus/consent/{source}` | the grant's backfill sweep, to the classifier |
+
+plus the detached ontologization continuation, which belongs to no route.
+`POST /journal/transcribe-page` is deliberately outside: its bytes are supplied
+by the caller in the same request, so there is nothing stored to leak and no row
+an erasure could orphan. `GET /stages/wheel` and `GET /invitations` resolve a
+vault client and only ever *read* from it.
+
+The list is derived from the source rather than maintained by hand —
+`backend/tests/support/egress_call_graph.py` finds the paths, and
+`backend/tests/security/test_egress_barrier_totality.py` fails the build both
+for a route nobody classified and for a route claimed as barriered whose dial
+no `hold_account` encloses.
 
 **Two halves, and only one of them is optional.**
 

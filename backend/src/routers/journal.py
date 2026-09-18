@@ -483,6 +483,15 @@ async def create_journal_entry(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
+        # This row has to exist before the barrier below can key the entry
+        # serializer on its id, so the commit above is the one statement in this
+        # handler that runs *outside* the ordering. On PostgreSQL
+        # ``journalentry.user_id`` is a real foreign key, so an erasure that
+        # linearized first turns this insert into a foreign-key violation rather
+        # than into a row the liveness read then refuses -- the same refusal,
+        # arriving through the database. Answer it the same way, before the
+        # scope-collision branch, because a violation is not a collision.
+        await ensure_account_live(session, current_user)
         # A partial unique index guards one live entry per (user, scope); only a
         # scoped write can trip it, so a scopeless collision is a real bug to raise.
         if data.get("reflection_scope_key") is not None:
@@ -2019,10 +2028,40 @@ async def _detect_fresh_suggestions(
     inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
-    """Dial without a transaction, then persist a concurrency-safe fresh subset."""
+    """Dial without a transaction, then persist a concurrency-safe fresh subset.
+
+    The dial carries ``message`` -- this account's *stored* entry body -- to a
+    cloud provider, which is the same egress the vault sites take the account
+    barrier for, by a different transport. Ordering it against erasure is
+    therefore the same rule, not a new one; the only reason this site went
+    unbarriered is that the route resolves no vault client and the site walk
+    looked for vault clients.
+
+    The barrier opens *after* the commit above and before the dial, so the wait
+    holds no pooled connection and an erasure racing this pass waits only for
+    the outbound half. The persistence stays inside it for the same reason the
+    liveness read exists at all: a suggestion row written for an account that
+    has already been erased is a ghost row nobody owns.
+    """
     api_key = resolve_chat_api_key(api_key_header)
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
+    async with hold_account(session, entry.user_id):
+        await ensure_account_live(session, entry.user_id)
+        return await _detect_and_persist(
+            session, entry=entry, message=message, inputs=inputs, llm=llm
+        )
+
+
+async def _detect_and_persist(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    message: str,
+    inputs: DetectionInputs,
+    llm: BotmasonResonanceLLM,
+) -> CompletionDetectionResponse:
+    """The dial and its persistence, both inside the caller's account barrier."""
     attempt = await _detect_hits_with_status(
         message,
         inputs=inputs,
@@ -2445,7 +2484,34 @@ async def _cache_and_mirror_essay(
     Split out of :func:`expand_marginalia_essay` so that route keeps only the
     authorization and privacy decisions; the mirror's ordering rationale is long
     enough on its own that interleaving the two made neither readable.
+
+    **The account barrier covers the generation, not only the mirror.**
+    :func:`_cache_essay` hands the stored entry body *and every prior letter
+    essay on this account* to a cloud provider; the mirror that follows sends
+    the model's answer to Creek. Both are this account's stored content leaving
+    the process, so both belong inside one hold -- and the barrier is taken
+    once, because neither lock is reentrant.
+
+    The commit below releases the pooled connection the route's two ownership
+    reads opened, so the wait for the barrier holds nothing.
     """
+    await session.commit()
+    async with hold_account(session, entry.user_id):
+        await ensure_account_live(session, entry.user_id)
+        return await _cache_and_mirror_under_barrier(
+            session, note=note, entry=entry, message=message, clients=clients
+        )
+
+
+async def _cache_and_mirror_under_barrier(
+    session: AsyncSession,
+    *,
+    note: Marginalia,
+    entry: JournalEntry,
+    message: str,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Generate, cache and mirror, with the caller's account barrier already held."""
     cached = await _cache_essay(session, note, message, clients.api_key)
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
@@ -2459,12 +2525,9 @@ async def _cache_and_mirror_essay(
     # and if this PUT linearized first, the competing mutation waits and retracts
     # it. The request transaction is committed before Creek I/O; PostgreSQL holds
     # the cross-worker lock on a non-pooled, dedicated connection rather than
-    # consuming the application pool.
-    async with (
-        hold_account(session, entry.user_id),
-        voice_draft_privacy.hold(session, cast("int", entry.id)),
-    ):
-        await ensure_account_live(session, entry.user_id)
+    # consuming the application pool. Entry-innermost, under the account barrier
+    # the caller already holds -- the fixed nesting everywhere the two meet.
+    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
         await session.refresh(entry)
         await session.commit()
         if entry.deleted_at is not None:
