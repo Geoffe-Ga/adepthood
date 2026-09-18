@@ -20,12 +20,21 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient, Response
+from limits import parse
+from slowapi.errors import RateLimitExceeded
+from slowapi.wrappers import Limit
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
+from starlette.requests import Request
 
 from models.user import User
-from rate_limit import ambient_tracked_paths, limiter, reset_ambient_limit
+from rate_limit import (
+    ambient_tracked_paths,
+    declared_limit_retry_after,
+    limiter,
+    reset_ambient_limit,
+)
 from tests.helpers.openapi_errors import route_index
 
 _LIMIT_3 = 3
@@ -222,6 +231,44 @@ async def test_a_decorator_refusal_advertises_its_own_window(async_client: Async
     assert per_minute.status_code == HTTPStatus.TOO_MANY_REQUESTS
     per_minute_wait = int(per_minute.headers["retry-after"])
     assert 0 < per_minute_wait <= _ONE_MINUTE_SECONDS
+
+
+def test_the_declared_window_is_read_from_the_bucket_that_refused() -> None:
+    """The wait is the refused bucket's own reset, read through the limiter that owns it."""
+    item = parse("3/hour")
+    identifiers = ["2001:db8::/64", "routers.auth.request_password_reset"]
+    assert limiter.limiter.hit(item, *identifiers)
+
+    seconds = limiter.seconds_until_reset(item, identifiers)
+
+    assert 0 < seconds <= _ONE_HOUR_SECONDS
+
+
+def test_a_refusal_carrying_no_recorded_bucket_still_waits_a_whole_window() -> None:
+    """The last resort is one full window of the cap that refused, never a flat minute.
+
+    ``slowapi`` records the bucket on ``request.state`` immediately before it
+    raises, so this branch is not reachable through the application -- which is
+    exactly why it is asserted directly. A fallback nobody drives is a fallback
+    that quietly becomes wrong, and the one it replaces had been wrong since it
+    was written.
+    """
+    exc = RateLimitExceeded(
+        Limit(
+            parse("3/hour"),
+            lambda _request: "",
+            None,
+            per_method=False,
+            methods=None,
+            error_message=None,
+            exempt_when=None,
+            cost=1,
+            override_defaults=False,
+        )
+    )
+    bare = Request({"type": "http", "headers": [], "client": None})
+
+    assert declared_limit_retry_after(bare, exc) == _ONE_HOUR_SECONDS
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from limits import parse
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -56,6 +57,10 @@ _CEILING_PROBE = 8
 # client wrongly collapsed onto a single bucket is refused half of it.
 _ORDINARY_PATHS = 12
 _ORDINARY_REQUESTS_PER_PATH = 10
+
+# What the DAST contract-fuzz job sets the ambient floor to, far above any
+# per-path burst allowance.
+_DAST_WIDE_OVERRIDE = "6000/minute"
 
 # Far enough past a 60-second window that its reset time is already behind us.
 _WELL_PAST_THE_WINDOW = 3600.0
@@ -217,6 +222,20 @@ def test_the_burst_floor_can_only_widen_the_ambient_one() -> None:
         assert _requests_per_second(floor) > _requests_per_second(AMBIENT_LIMIT_ITEM)
 
     assert floor_for_path(_PATH) is AMBIENT_LIMIT_ITEM
+
+
+def test_an_ambient_override_wider_than_a_burst_floor_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ADEPTHOOD_DEFAULT_RATE_LIMIT`` must keep moving every path, burst paths included.
+
+    The DAST contract-fuzz job widens the ambient floor to thousands per minute
+    so its budget is not spent collecting 429s. A per-path floor that simply
+    replaced the ambient item would undo that on exactly the paths it names, and
+    the fuzz run would go quiet on them with nothing to say why.
+    """
+    monkeypatch.setattr("rate_limit.AMBIENT_LIMIT_ITEM", parse(_DAST_WIDE_OVERRIDE))
+
+    for path in _PATH_BURST_FLOORS:
+        assert floor_for_path(path) is not _PATH_BURST_FLOORS[path]
 
 
 def test_a_key_is_evicted_only_after_a_full_window() -> None:
