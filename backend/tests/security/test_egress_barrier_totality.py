@@ -385,9 +385,11 @@ async def generate_response(body: str) -> str:
 """The barrier, under the name every call site spells it with."""
 
 
-def hold_account(session: object, user_id: int) -> object:
+def hold_account(
+    session: object, user_id: int, *, on_unavailable: str = "refuse"
+) -> object:
     """Order this account's egress."""
-    return session or user_id
+    return session or user_id or on_unavailable
 ''',
     "services.dialling": '''
 """One function that dials, reached three different ways."""
@@ -400,7 +402,7 @@ async def dials(body: str) -> str:
     return await generate_response(body)
 ''',
     "routers.fixture": '''
-"""Three handlers: barriered, bare, and falsely ordered."""
+"""Four handlers: barriered, bare, falsely ordered, and fail-open."""
 
 from services.account_egress_barrier import hold_account
 from services.creek_vault_pipeline import _ordered_dial
@@ -421,6 +423,12 @@ async def bare(body: str) -> str:
 async def detached_only(body: str) -> str:
     """Dial inside the indirection that orders nothing on a request path."""
     async with _ordered_dial():
+        return await dials(body)
+
+
+async def fail_open(session: object, user_id: int, body: str) -> str:
+    """Dial inside a hold that yields unordered when the lock cannot be taken."""
+    async with hold_account(session, user_id, on_unavailable="proceed"):
         return await dials(body)
 ''',
     "routers.qualified": '''
@@ -487,6 +495,41 @@ def test_the_walk_reports_nothing_when_a_hold_encloses_the_dial() -> None:
     useless in the opposite way.
     """
     assert _fixture_paths("barriered") == ()
+
+
+def test_a_fail_open_hold_orders_nothing_for_egress() -> None:
+    """``on_unavailable="proceed"`` is not a barrier, and must not be credited as one.
+
+    ``hold_account`` takes ``on_unavailable: Literal["refuse", "proceed"]``.
+    ``"refuse"`` fails closed -- an egress site refuses when the lock connection
+    cannot be opened. ``"proceed"`` yields *unordered*, which is correct for
+    exactly one caller, ``DELETE /users/me``, where erasure must never be
+    blocked and where nothing is transmitted. The walk matched the call name
+    alone, so an egress route that copied the erasure route's spelling would be
+    certified ``BARRIERED`` while degrading to unordered egress on a lock
+    failure -- the precise failure class this gate exists to catch.
+    """
+    assert _fixture_paths("fail_open") == (
+        ("routers.fixture.fail_open", "services.dialling.dials", _FIXTURE_LEAF),
+    ), "a hold that yields unordered on lock failure was accepted as an egress barrier"
+    assert _fixture_paths("fail_open", detached=True) == (
+        ("routers.fixture.fail_open", "services.dialling.dials", _FIXTURE_LEAF),
+    ), "the detached walk credits the same fail-open hold it must not credit"
+
+
+def test_a_fail_open_hold_is_not_a_lexical_barrier_either() -> None:
+    """The route-level claim check has to agree with the path walk.
+
+    :func:`takes_barrier_lexically` carries its own copy of the name match, and
+    it is what certifies the ``INDIRECT_BARRIER_HOLDERS`` entries and every
+    ``BARRIERED`` route's own body. Fixing only the walk would leave the second
+    reading of ``hold_account`` crediting exactly what the first now refuses.
+    """
+    graph = _fixture_graph()
+    assert takes_barrier_lexically(Site("routers.fixture", "barriered"), graph=graph)
+    assert not takes_barrier_lexically(Site("routers.fixture", "fail_open"), graph=graph), (
+        "a fail-open hold was read as this handler taking the barrier"
+    )
 
 
 def test_a_dial_reached_by_the_module_import_idiom_is_followed() -> None:

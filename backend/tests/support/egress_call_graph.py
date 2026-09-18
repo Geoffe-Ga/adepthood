@@ -73,6 +73,20 @@ _SRC_ROOT: Final = Path(__file__).resolve().parents[2] / "src"
 #: The barrier's context manager, by the name every call site spells it with.
 HOLD_ACCOUNT: Final = "hold_account"
 
+#: The keyword that decides what the barrier does when its lock connection
+#: cannot be opened, and the one value of it that keeps egress ordered.
+#:
+#: ``hold_account`` and ``VoiceDraftPrivacySerializer.hold`` take
+#: ``on_unavailable: Literal["refuse", "proceed"]``. ``"refuse"`` fails closed:
+#: the site raises rather than transmit unordered. ``"proceed"`` yields anyway,
+#: which is correct for exactly one caller -- ``DELETE /users/me``, where
+#: erasure must never be blocked and where nothing is transmitted (AC27) -- and
+#: is *not* a barrier for anything that dials. A hold spelled that way orders
+#: egress only while the lock happens to be reachable, so this module will not
+#: certify it.
+ON_UNAVAILABLE: Final = "on_unavailable"
+REFUSES_WHEN_UNAVAILABLE: Final = "refuse"
+
 #: Context managers that take the barrier on the caller's behalf, mapped to the
 #: function that actually takes it.
 #:
@@ -367,8 +381,31 @@ def source_graph() -> SourceGraph:
     return SourceGraph()
 
 
+def _fails_closed(call: ast.Call) -> bool:
+    """Whether this call refuses, rather than proceeds, when the lock is unavailable.
+
+    Fail-closed is the default, so a call that names the keyword at all has to
+    name it as the literal :data:`REFUSES_WHEN_UNAVAILABLE` to keep its
+    certification. Anything else -- ``"proceed"``, a variable, a ``**`` spread
+    that could carry either -- is unprovable from the source this module reads,
+    and a gate that cannot prove a barrier orders egress must not certify that
+    it does.
+    """
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            # ``**spread``: the keyword may or may not be in there.
+            return False
+        if keyword.arg != ON_UNAVAILABLE:
+            continue
+        return (
+            isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == REFUSES_WHEN_UNAVAILABLE
+        )
+    return True
+
+
 def _holds_account(item: ast.withitem, *, detached: bool = False) -> bool:
-    """Whether this ``with`` item establishes the account egress barrier.
+    """Whether this ``with`` item takes the account egress barrier at all.
 
     Directly always; through one of the indirections in
     :data:`INDIRECT_BARRIER_HOLDERS` **only on a detached walk**, and that
@@ -379,6 +416,12 @@ def _holds_account(item: ast.withitem, *, detached: bool = False) -> bool:
     thing that sets it. Crediting it on a request path let a handler reach the
     vault pipeline with no ``hold_account`` anywhere and be certified as
     barriered by a context manager that does nothing.
+
+    Taking the lock is not the same question as ordering egress: a
+    ``on_unavailable="proceed"`` hold still takes it when it can, and so still
+    participates in the lock ordering :func:`_inversions_at` reasons about.
+    :func:`_orders_egress` is the narrower question, and it is the one every
+    certification asks.
     """
     expression = item.context_expr
     if not isinstance(expression, ast.Call):
@@ -387,23 +430,37 @@ def _holds_account(item: ast.withitem, *, detached: bool = False) -> bool:
     return name == HOLD_ACCOUNT or (detached and name in INDIRECT_BARRIER_HOLDERS)
 
 
+def _orders_egress(item: ast.withitem, *, detached: bool = False) -> bool:
+    """Whether this ``with`` item orders egress for the region it opens.
+
+    :func:`_holds_account` and a fail-closed spelling, together. Separated
+    because the two questions come apart exactly once, at ``DELETE /users/me``,
+    and that one site is deliberately fail-open: erasure only ever reduces
+    exposure, so it must proceed when the lock connection will not open. Any
+    *egress* site spelled the same way would transmit unordered on that same
+    failure, which is the whole thing this walk exists to report.
+    """
+    if not _holds_account(item, detached=detached):
+        return False
+    expression = item.context_expr
+    return isinstance(expression, ast.Call) and _fails_closed(expression)
+
+
 def takes_barrier_lexically(site: Site, *, graph: SourceGraph | None = None) -> bool:
-    """Whether ``site``'s own body opens an ``async with hold_account(...)``.
+    """Whether ``site``'s own body opens an egress-ordering ``async with hold_account(...)``.
 
     Direct only -- no indirection is followed -- because this is the check that
     keeps :data:`INDIRECT_BARRIER_HOLDERS` honest, and a check that accepted the
-    indirection it is verifying would accept anything.
+    indirection it is verifying would accept anything. A fail-open spelling is
+    refused here for the same reason :func:`_orders_egress` refuses it: this is
+    the second reading of ``hold_account`` in the module, and two readings that
+    disagreed would leave the gate crediting through whichever one was laxer.
     """
     body = (graph if graph is not None else source_graph()).body_of(site)
     if body is None:
         return False
     return any(
-        isinstance(node, ast.AsyncWith)
-        and any(
-            isinstance(item.context_expr, ast.Call)
-            and _called_name(item.context_expr.func) == HOLD_ACCOUNT
-            for item in node.items
-        )
+        isinstance(node, ast.AsyncWith) and any(_orders_egress(item) for item in node.items)
         for node in ast.walk(body)
     )
 
@@ -436,16 +493,18 @@ def _is_egress_leaf(call: ast.Call) -> bool:
 
 
 def _unbarriered_calls(node: ast.AST, *, detached: bool = False) -> list[ast.Call]:
-    """Every call in ``node`` that is *not* inside an ``async with hold_account``.
+    """Every call in ``node`` that is *not* inside an egress-ordering ``hold_account``.
 
     Descent stops at a barriered region rather than recursing into it, because
     the barrier is held for the whole dynamic extent of its body: anything that
-    region reaches is covered, however deep.
+    region reaches is covered, however deep. What counts as barriered is
+    :func:`_orders_egress`, not the bare name -- a fail-open hold covers nothing
+    the moment the lock connection will not open.
     """
     found: list[ast.Call] = []
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.AsyncWith) and any(
-            _holds_account(item, detached=detached) for item in child.items
+            _orders_egress(item, detached=detached) for item in child.items
         ):
             # The items themselves still run outside the hold they establish.
             for item in child.items:
