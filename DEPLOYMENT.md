@@ -800,6 +800,14 @@ be opened at all, an egress site refuses with `503 egress_ordering_unavailable`
 and sends nothing, while `DELETE /users/me` proceeds and erases. Erasure only
 ever reduces exposure and must never be blocked by the ordering mechanism.
 
+**The background ladder takes it per dial.** The detached ontologization
+continuation orders each of its own outbound calls rather than holding the
+barrier for the whole climb. A climb is bounded only by a per-stage budget plus
+status polling, and a background task holding one account's barrier for that
+long would make that account's *own* next journal write, and its own deletion,
+wait out a ladder nobody asked about. The cost is one short acquisition per
+background dial instead of one per climb.
+
 **Pool pressure.** The barrier borrows no connection from the application pool —
 waiting for it must not be able to exhaust the pool it would then need — but it
 does open one short-lived `NullPool` connection per held region. A journal write

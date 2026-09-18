@@ -55,10 +55,13 @@ import asyncio
 import enum
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from functools import partial
+from typing import Final, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, func, or_, text, update
@@ -93,6 +96,74 @@ from services.account_egress_barrier import account_is_live, hold_account
 from services.advisory_lock_namespaces import CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE
 
 _LOGGER = logging.getLogger(__name__)
+
+#: Said in one place, because the detached ladder can reach the same verdict at
+#: two points: before it reconciles anything, and before each rung it would dial.
+_STOOD_DOWN_FOR_A_GONE_ACCOUNT: Final[str] = (
+    "creek vault pipeline stood down: the account no longer exists"
+)
+
+
+class _AccountErasedMidClimbError(Exception):
+    """The account vanished between two dials of its own detached ladder.
+
+    Raised by the ordering below and caught once, at the top of the detached
+    body. An exception rather than a return code because the dial sites it is
+    raised from are six frames below the only function that can decide to stop,
+    and every frame between them is shared with the request path.
+    """
+
+
+#: How the *detached* ladder orders each of its own dials against the erasure of
+#: the account it is climbing for. ``None`` -- the value on every request path --
+#: means the caller already holds that account's barrier for its whole region and
+#: must not take it again, because neither half of it is reentrant.
+#:
+#: A context variable rather than a parameter threaded through
+#: :func:`_reconcile_run`, :func:`_reconciliation_step`,
+#: :func:`_reconcile_existing_job`, :func:`_poll_until_terminal`,
+#: :func:`_poll_statuses` and :func:`_retry_once`: every one of those frames is
+#: shared with the request path, so a parameter would have to be spelled, and
+#: defaulted, in all of them to say one thing about the outermost caller.
+_DETACHED_DIAL: ContextVar[Callable[[], AbstractAsyncContextManager[None]] | None] = ContextVar(
+    "creek_vault_pipeline_detached_dial",
+    default=None,
+)
+
+
+@asynccontextmanager
+async def _order_one_detached_dial(
+    factory: async_sessionmaker[AsyncSession], user_id: int
+) -> AsyncIterator[None]:
+    """Hold this account's egress barrier across exactly one outbound dial.
+
+    On a session of its own, never the climb's. Status polling runs under
+    :data:`_JOB_RECONCILIATION_BUDGET_SECONDS`, and that clock can expire in the
+    middle of anything inside it: a cancellation landing on the liveness read
+    would otherwise leave the climb's own session mid-transaction and turn a
+    bounded poll into a corrupted one. The read commits before the dial, so the
+    extra session holds no pooled connection across it.
+
+    Per dial, never across the climb. A ladder is bounded only by
+    :data:`_BACKGROUND_STAGE_BUDGET_SECONDS` per stage and by
+    :data:`_JOB_RECONCILIATION_BUDGET_SECONDS` of status polling, and a
+    background task holding this account's barrier for that long would make the
+    account's *own* next journal write -- and its own deletion -- wait out a
+    ladder nobody asked it about. Per dial is all the ordering needs: an erasure
+    either wins the barrier before a dial, and the liveness read below stands the
+    climb down before it transmits, or after one, and that dial preceded the
+    receipt.
+    """
+    async with factory() as gate_session, hold_account(gate_session, user_id):
+        if not await account_is_live(gate_session, user_id):
+            raise _AccountErasedMidClimbError
+        yield
+
+
+def _ordered_dial() -> AbstractAsyncContextManager[None]:
+    """Order this dial when a detached ladder asked for it, and otherwise not."""
+    ordering = _DETACHED_DIAL.get()
+    return nullcontext() if ordering is None else ordering()
 
 
 #: The outcomes that mean a classification pass actually put labels in the
@@ -524,14 +595,16 @@ async def _perform(
     this runs and be amended after it.
     """
     if stage is VaultPipelineStage.CLASSIFY:
-        classification_result = await client.classify_corpus()
+        async with _ordered_dial():
+            classification_result = await client.classify_corpus()
         return (
             classification_result
             if isinstance(classification_result, VaultPipelineJob)
             else _counts_from_result(classification_result)
         )
     wire_stage = LINK_STAGE_BY_PIPELINE_STAGE[stage]
-    link_result = await client.link_corpus(wire_stage)
+    async with _ordered_dial():
+        link_result = await client.link_corpus(wire_stage)
     return (
         link_result
         if isinstance(link_result, VaultPipelineJob)
@@ -878,7 +951,8 @@ async def _poll_job_once(
 ) -> VaultClassificationPass | VaultLinkPass | VaultPipelineJob | None:
     """Make one status read; ``None`` means the vault is transiently absent."""
     try:
-        return await client.pipeline_job(job)
+        async with _ordered_dial():
+            return await client.pipeline_job(job)
     except (
         CreekCapabilityUnsupportedError,
         CreekVaultAuthError,
@@ -887,7 +961,8 @@ async def _poll_job_once(
     ):
         return _failed_job(job)
     except CreekVaultUnavailableError:
-        await client.handshake()
+        async with _ordered_dial():
+            await client.handshake()
         return None
 
 
@@ -1527,8 +1602,22 @@ async def _reconcile_classification_chain(
         current = follow_up
 
 
+async def _stands_down(session: AsyncSession, user_id: int) -> bool:
+    """Whether this account is gone, read under its own egress barrier.
+
+    Taken and released around the read alone. The answer is only ever acted on
+    by widening it -- an account found gone stays gone -- so nothing is lost by
+    releasing before the caller acts on a ``False``.
+    """
+    async with hold_account(session, user_id):
+        if await account_is_live(session, user_id):
+            return False
+    _LOGGER.info(_STOOD_DOWN_FOR_A_GONE_ACCOUNT)
+    return True
+
+
 async def _climb_detached(session: AsyncSession, continuation: _Continuation) -> None:
-    """Reconcile one rung and climb successors on an already-barriered session."""
+    """Reconcile one rung and climb successors, each dial ordered on the way."""
     settled = await _reconcile_classification_chain(session, continuation)
     if settled is None:
         return
@@ -1551,27 +1640,58 @@ async def _climb_detached(session: AsyncSession, continuation: _Continuation) ->
             return
 
 
+async def _climb_or_stand_down(session: AsyncSession, continuation: _Continuation) -> None:
+    """Climb, reading a vanished account's wreckage as a stand-down, not a fault.
+
+    Two shapes of the same event. The ordering below raises
+    :class:`_AccountErasedMidClimbError` when it catches the erasure *before* a
+    dial, which is the whole point of it. But an erasure that lands between a
+    dial and the row the result is written to leaves the row gone instead, and
+    the persist fails on its own -- so a database error is still a database
+    error here unless the account it was for has been erased underneath it, in
+    which case the missing rows are the sweep doing its job and the only correct
+    response is to stop climbing.
+    """
+    try:
+        await _climb_detached(session, continuation)
+    except _AccountErasedMidClimbError:
+        _LOGGER.info(_STOOD_DOWN_FOR_A_GONE_ACCOUNT)
+    except SQLAlchemyError:
+        await session.rollback()
+        if await account_is_live(session, continuation.user_id):
+            raise
+        _LOGGER.info(_STOOD_DOWN_FOR_A_GONE_ACCOUNT)
+
+
 async def _continue_ladder_body(continuation: _Continuation) -> None:
     """Reconcile one rung and climb successors, independent of lease plumbing.
 
     This is the one egress path in the application that no request-scoped guard
     can reach: it runs on a detached task, opens its own session, and dials Creek
-    after the request that scheduled it has already answered. So it takes the
-    per-account egress barrier itself, on that session, before its first dial,
-    and stands down entirely when the account is gone -- otherwise a deletion
-    receipt could be followed by this account's corpus being classified and
-    linked in a vault it no longer owns.
+    after the request that scheduled it has already answered. So it orders
+    itself, on that session -- once here, to refuse a ladder whose account is
+    already gone, and then around every dial the climb makes
+    (:func:`_order_one_detached_dial`) -- because otherwise a deletion receipt
+    could be followed by this account's corpus being classified and linked in a
+    vault it no longer owns.
 
-    No deadlock is possible against a request holding the same barrier: nothing
-    in a request path awaits this task. The only callers of
+    The ordering is installed for the whole climb but *held* only for one dial at
+    a time, so a background ladder never becomes the reason this account's own
+    writing waits. No deadlock is possible against a request holding the same
+    barrier: nothing in a request path awaits this task. The only callers of
     :func:`wait_for_vault_pipeline_tasks` are tests, and each waits after its own
     request has completed and released.
     """
-    async with continuation.factory() as session, hold_account(session, continuation.user_id):
-        if not await account_is_live(session, continuation.user_id):
-            _LOGGER.info("creek vault pipeline stood down: the account no longer exists")
+    async with continuation.factory() as session:
+        if await _stands_down(session, continuation.user_id):
             return
-        await _climb_detached(session, continuation)
+        token = _DETACHED_DIAL.set(
+            partial(_order_one_detached_dial, continuation.factory, continuation.user_id)
+        )
+        try:
+            await _climb_or_stand_down(session, continuation)
+        finally:
+            _DETACHED_DIAL.reset(token)
 
 
 def _forget_background_task(key: _TaskKey, task: asyncio.Task[None]) -> None:
