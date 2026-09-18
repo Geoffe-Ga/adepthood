@@ -58,6 +58,19 @@ _CEILING_PROBE = 8
 _ORDINARY_PATHS = 12
 _ORDINARY_REQUESTS_PER_PATH = 10
 
+# The production ceiling, written out rather than imported. A test that reads
+# ``_MAX_PATHS_PER_CLIENT`` to size its own flood moves with the constant and so
+# cannot fail for *any* value of it -- which is how a ceiling raised to a
+# million would slip through. This literal is the independent half of the pin:
+# 512 buckets per client is the whole per-client memory bound now that there is
+# no global cap, so changing it has to be a deliberate edit here as well.
+_CEILING_PATHS = 512
+
+# Far more requests than the probe ceiling counts paths, on one single path.
+# The point is that none of these charges may be counted against the fan-out at
+# all, so the number is a request count and deliberately not a path count.
+_REQUESTS_ON_ONE_PATH = _CEILING_PROBE * 8
+
 # What the DAST contract-fuzz job sets the ambient floor to, far above any
 # per-path burst allowance.
 _DAST_WIDE_OVERRIDE = "6000/minute"
@@ -183,6 +196,61 @@ def test_one_clients_fan_out_cannot_narrow_another_clients_budget() -> None:
     assert ordinary == [None] * (_ORDINARY_PATHS * _ORDINARY_REQUESTS_PER_PATH)
     assert (_OTHER_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
     assert throttle.charge(_OTHER_CLIENT, "/health/live") is None
+
+
+def test_the_ceiling_counts_distinct_paths_and_not_requests() -> None:
+    """Repeat traffic to one path must not spend the client's fan-out ceiling.
+
+    ``AmbientThrottle.record`` counts a path against its client only on the
+    charge that *mints* its bucket. That one condition is what makes the ceiling
+    mean "distinct paths"; drop it and count every charge instead, and the
+    ceiling silently becomes a request count that ordinary polling reaches in
+    seconds. From that moment every path the client has not already touched --
+    ``/health/live`` included -- is billed to one shared overflow bucket at the
+    ambient floor. For a NAT'd office or a single IPv6 /64 that is a site-wide
+    outage: the same harm the global cap caused, merely re-scoped per key.
+
+    No other ceiling test here can see it. They either stay far under budget or
+    drive distinct paths only, so none of them ever charges an already-held
+    bucket enough times to tell the two meanings apart. This one charges one
+    path many times its client's whole ceiling and then asks for a second path.
+    """
+    throttle = AmbientThrottle(max_paths_per_client=_CEILING_PROBE)
+
+    for _ in range(_REQUESTS_ON_ONE_PATH):
+        throttle.charge(_CLIENT, _PATH)
+
+    assert set(throttle.last_attempt) == {(_CLIENT, _PATH)}
+
+    assert throttle.charge(_CLIENT, _OTHER_PATH) is None
+    assert (_CLIENT, _OTHER_PATH) in throttle.last_attempt
+    assert (_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+
+
+def test_the_per_client_ceiling_holds_at_its_shipped_five_hundred_and_twelve() -> None:
+    """The ceiling is pinned upward, against a literal, not against itself.
+
+    ``test_one_clients_fan_out_cannot_narrow_another_clients_budget`` pins it
+    downward, but sizes its flood as ``_MAX_PATHS_PER_CLIENT + ...``, so the
+    flood grows with the constant and no value of it can fail. Raise the ceiling
+    to a million and that test still passes -- while one client key may then
+    hold a million buckets, several hundred megabytes of them. Since the global
+    cap was removed this ceiling is the only per-client memory bound there is.
+
+    So the bound is asserted here at its literal boundary, in both directions:
+    the 512th distinct path still mints a bucket of its own, and the 513th is
+    diverted. Neither assertion reads the constant under test.
+    """
+    throttle = AmbientThrottle()
+
+    for index in range(_CEILING_PATHS):
+        throttle.charge(_CLIENT, f"/fan-out-{index}")
+    assert (_CLIENT, f"/fan-out-{_CEILING_PATHS - 1}") in throttle.last_attempt
+    assert (_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+
+    throttle.charge(_CLIENT, f"/fan-out-{_CEILING_PATHS}")
+    assert (_CLIENT, f"/fan-out-{_CEILING_PATHS}") not in throttle.last_attempt
+    assert (_CLIENT, _OVERFLOW_PATH_MARKER) in throttle.last_attempt
 
 
 def test_a_saturated_client_reclaims_its_buckets_after_a_full_window() -> None:
@@ -318,10 +386,20 @@ def test_an_existing_bucket_survives_saturation() -> None:
     assert throttle.charge(_CLIENT, _PATH) is None
 
 
-def test_reset_clears_every_ambient_bucket() -> None:
-    """Isolation seam: ``conftest``'s autouse reset has to empty this store too."""
+def test_reset_clears_every_bucket_in_every_throttle() -> None:
+    """Isolation seam: ``conftest``'s autouse reset has to empty *all* the stores.
+
+    There is no longer one ambient store to clear. Every burst path owns a
+    throttle of its own, so a reset that reached only the ambient one would hand
+    the next test a burst bucket already part-spent, and the failure would land
+    somewhere with nothing to do with the leak. Charging one ordinary path and
+    every declared burst path is what makes "every bucket" executable -- this
+    test named that claim before the refactor and then stopped checking it.
+    """
     charge_ambient_limit(_CLIENT, _PATH)
-    assert ambient_tracked_paths() == frozenset({_PATH})
+    for burst_path in _PATH_BURST_FLOORS:
+        charge_ambient_limit(_CLIENT, burst_path)
+    assert ambient_tracked_paths() == frozenset({_PATH, *_PATH_BURST_FLOORS})
 
     reset_ambient_limit()
     assert ambient_tracked_paths() == frozenset()

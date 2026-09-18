@@ -17,10 +17,12 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
+from typing import cast
 
 import pytest
 from httpx import AsyncClient, Response
 from limits import parse
+from limits.storage import MemoryStorage
 from slowapi.errors import RateLimitExceeded
 from slowapi.wrappers import Limit
 from sqlalchemy import update
@@ -231,6 +233,68 @@ async def test_a_decorator_refusal_advertises_its_own_window(async_client: Async
     assert per_minute.status_code == HTTPStatus.TOO_MANY_REQUESTS
     per_minute_wait = int(per_minute.headers["retry-after"])
     assert 0 < per_minute_wait <= _ONE_MINUTE_SECONDS
+
+
+# How far into the hourly window the displaced refusal below is taken, and what
+# the bucket therefore has left. Fifty minutes in, ten to go: a number that
+# coincides with neither answer a constant-per-limit implementation can give --
+# one whole window (3600) or the flat minute this delta removed (60).
+_ELAPSED_INTO_THE_HOUR = 3000
+_REMAINING_OF_THE_HOUR = _ONE_HOUR_SECONDS - _ELAPSED_INTO_THE_HOUR
+
+
+def _age_the_declared_buckets(seconds: float) -> None:
+    """Move every bucket of the *decorated* layer ``seconds`` further into its window.
+
+    The declared limits run on a fixed window over ``limits``' in-memory store,
+    whose entire notion of when a bucket rolls over is the expiry stamp written
+    when that bucket was first hit. Rewinding those stamps is indistinguishable
+    from having sent the earlier requests ``seconds`` ago, and -- unlike an
+    injected clock -- it leaves the store and ``seconds_until_reset`` reading the
+    same ``time.time`` they read in production, so the derived answer cannot come
+    out right for the wrong reason.
+
+    The ambient floor keeps a store of its own and is deliberately untouched.
+
+    Args:
+        seconds: How much of each bucket's window to treat as already elapsed.
+    """
+    storage = cast("MemoryStorage", limiter.limiter.storage)
+    for key, expires_at in list(storage.expirations.items()):
+        storage.expirations[key] = expires_at - seconds
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_late_in_its_window_advertises_only_the_time_left(
+    async_client: AsyncClient,
+) -> None:
+    """The wait is *derived from* the refused bucket, not restated from its cap.
+
+    Every other Retry-After test here fills a bucket and is refused in the same
+    instant -- the one moment in the window where "the time this bucket has
+    left" and "one whole window of its cap" are the same number. So none of them
+    can see the difference, and replacing the whole derivation with the cap's
+    expiry passes them all: ``3/hour`` refused immediately really does have
+    3600 seconds left, and ``60 < wait <= 3600`` admits exactly 3600.
+
+    Here the three hourly requests are fifty minutes old by the time the fourth
+    is refused, so the only honest answer is the ten minutes that remain. The
+    two constant answers -- 3600 for the whole window, 60 for the fallback this
+    delta removed -- both fall outside the band asserted below, in opposite
+    directions.
+    """
+    payload = {"email": "displaced@example.com"}
+    for _ in range(_RESET_REQUESTS_PER_HOUR):
+        admitted = await async_client.post(_RESET_REQUEST_PATH, json=payload)
+        assert admitted.status_code != HTTPStatus.TOO_MANY_REQUESTS
+
+    _age_the_declared_buckets(_ELAPSED_INTO_THE_HOUR)
+
+    refused = await async_client.post(_RESET_REQUEST_PATH, json=payload)
+    assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    wait = int(refused.headers["retry-after"])
+    assert _REMAINING_OF_THE_HOUR - _ONE_MINUTE_SECONDS < wait <= _REMAINING_OF_THE_HOUR
 
 
 def test_the_declared_window_is_read_from_the_bucket_that_refused() -> None:
