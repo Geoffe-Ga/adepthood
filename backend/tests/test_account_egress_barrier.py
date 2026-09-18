@@ -17,6 +17,7 @@ parties can tell the difference.
 from __future__ import annotations
 
 import asyncio
+import base64
 import gc
 from http import HTTPStatus
 from types import SimpleNamespace
@@ -27,13 +28,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.creek_vault import get_creek_vault_client
-from domain.creek_vault import VaultIngestRequest, VaultIngestResult
+from domain.creek_vault import (
+    CreekCapability,
+    VaultIngestAction,
+    VaultIngestRequest,
+    VaultIngestResult,
+    VaultUploadRequest,
+    VaultUploadResult,
+)
 from main import app
 from routers import journal
+from services import account_egress_barrier as account_egress_barrier_module
 from services import voice_draft_privacy
 from services.account_egress_barrier import (
     ACCOUNT_EGRESS_BARRIER_ENABLED_ENV_VAR,
     NOT_POSTGRESQL_DEFECT,
+    EgressBarrierRollout,
     EgressBarrierState,
     account_egress_barrier,
     load_egress_barrier_rollout,
@@ -47,6 +57,10 @@ from services.voice_draft_privacy import (
 from tests.test_journal_vault_write import SequencedVaultClient
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
+
+#: The document ``POST /corpus/import`` carries. Content is irrelevant here --
+#: what matters is that a real upload would be dialled if nothing refused.
+_DOCUMENT_BASE64 = base64.b64encode(b"%PDF-1.7 one page of field notes").decode("ascii")
 
 #: Markers appended to the shared order list. Named once so an assertion and
 #: the double cannot drift apart on a typo.
@@ -288,6 +302,31 @@ async def test_idle_accounts_leave_no_retained_lock(db_session: AsyncSession) ->
     assert barrier.retained_key_count() == 0
 
 
+class UploadingVaultClient(SequencedVaultClient):
+    """A double that advertises upload, so ``POST /corpus/import`` really dials.
+
+    :class:`SequencedVaultClient` does not, and an import against it falls back
+    to local storage without touching the vault at all -- which would make
+    "nothing was dialled" true for a reason that has nothing to do with the
+    barrier.
+    """
+
+    def __init__(self) -> None:
+        """Advertise journal and upload, and start with nothing uploaded."""
+        super().__init__(capabilities=frozenset({CreekCapability.JOURNAL, CreekCapability.UPLOAD}))
+        self.upload_calls: list[VaultUploadRequest] = []
+
+    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
+        """Record the request and answer as a vault that stored it would."""
+        self.upload_calls.append(request)
+        return VaultUploadResult(
+            stored=True,
+            vault_ref=f"vault-fragment-{len(self.upload_calls)}",
+            action=VaultIngestAction.CREATED,
+            tags=(),
+        )
+
+
 class _UnopenableLockEngine:
     """A lock engine whose connection can never be established."""
 
@@ -300,12 +339,23 @@ class _UnopenableLockEngine:
 
 
 def _break_the_lock_connection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the request session look like PostgreSQL and its lock engine broken.
+    """Make this deployment look like PostgreSQL and its lock engine broken.
 
     The default lane is SQLite, where the cross-worker half short-circuits and
-    the failure under test is unreachable. Both halves are faked at the module
-    seam rather than by standing up a real database, because what is asserted is
-    the *answer* to a failed acquire, not the failure itself.
+    the failure under test is unreachable. Three things therefore have to be
+    faked, not two: the engine the serializer resolves, the engine constructor
+    it then calls -- and the **rollout**, because
+    :func:`services.account_egress_barrier.hold_account` decides whether to
+    issue any advisory statement at all from
+    :func:`services.account_egress_barrier.rollout_for`, which reads the
+    session's real bind and not the faked one. Without the third, the account
+    barrier never enters its PostgreSQL half, and a test that looks like it
+    pins the barrier's failure answer is really only pinning the per-entry
+    serializer's.
+
+    Faked at the module seam rather than by standing up a real database,
+    because what is asserted is the *answer* to a failed acquire, not the
+    failure itself.
     """
     pretend_postgres = SimpleNamespace(
         dialect=SimpleNamespace(name="postgresql"),
@@ -317,6 +367,11 @@ def _break_the_lock_connection(monkeypatch: pytest.MonkeyPatch) -> None:
         "create_async_engine",
         lambda *_args, **_kwargs: _UnopenableLockEngine(),
     )
+    monkeypatch.setattr(
+        account_egress_barrier_module,
+        "rollout_for",
+        lambda _session: EgressBarrierRollout(EgressBarrierState.READY),
+    )
 
 
 @pytest.mark.asyncio
@@ -324,10 +379,54 @@ async def test_an_unavailable_lock_connection_suppresses_egress(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No ordering means no outbound write, and the caller is told so."""
-    fake = SequencedVaultClient()
+    """No ordering means no outbound write, and the caller is told so.
+
+    Driven at ``POST /corpus/import`` rather than at ``POST /journal/``
+    deliberately. The journal write takes the per-entry serializer inside the
+    account barrier, and that serializer refuses a broken lock connection too --
+    so a journal-shaped test answers 503 with the account barrier's own refusal
+    removed, and pins nothing about the boundary this issue added. The import
+    route is the measured stored-content egress that the account barrier guards
+    *alone*.
+    """
+    fake = UploadingVaultClient()
     monkeypatch.setitem(app.dependency_overrides, get_creek_vault_client, lambda: fake)
     headers, _email = await signup(async_client, "lock_refuses_egress")
+    _break_the_lock_connection(monkeypatch)
+
+    imported = await async_client.post(
+        "/corpus/import",
+        json={
+            "filename": "field-notes.pdf",
+            "content_base64": _DOCUMENT_BASE64,
+            "classification": "personal",
+        },
+        headers=headers,
+    )
+
+    assert imported.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert imported.json()["detail"] == EGRESS_ORDERING_UNAVAILABLE
+    # The status alone would pass for a path that dialled first and raised
+    # afterwards, which is the whole failure this is about.
+    assert fake.upload_calls == [], "the vault was dialled with no ordering lock held"
+
+
+@pytest.mark.asyncio
+async def test_a_journal_write_is_also_refused_without_an_ordering(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nested site answers the same way, from whichever lock refuses first.
+
+    Kept alongside the import case rather than instead of it: this is the route
+    a user actually hits, and the property that matters to them is that a
+    broken lock connection costs them a 503 and never an unordered write. Which
+    of the two nested locks produced it is not something the client can see,
+    which is exactly why it cannot be the only test.
+    """
+    fake = SequencedVaultClient()
+    monkeypatch.setitem(app.dependency_overrides, get_creek_vault_client, lambda: fake)
+    headers, _email = await signup(async_client, "lock_refuses_journal")
     _break_the_lock_connection(monkeypatch)
 
     written = await async_client.post(
@@ -338,8 +437,6 @@ async def test_an_unavailable_lock_connection_suppresses_egress(
 
     assert written.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert written.json()["detail"] == EGRESS_ORDERING_UNAVAILABLE
-    # The status alone would pass for a path that dialled first and raised
-    # afterwards, which is the whole failure this is about.
     assert fake.ingest_calls == [], "the vault was dialled with no ordering lock held"
 
 
