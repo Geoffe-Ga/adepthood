@@ -63,7 +63,10 @@ import ast
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _SRC_ROOT: Final = Path(__file__).resolve().parents[2] / "src"
 
@@ -199,6 +202,38 @@ def _imported_names(tree: ast.Module) -> dict[str, Site]:
     return bindings
 
 
+def _imported_modules(tree: ast.Module) -> dict[str, str]:
+    """Every name this module bound to another *module*, as a dotted module name.
+
+    Both spellings, because the one the walk was blind to is the one this tree
+    actually uses: ``from services import corpus_ingest`` binds a module under
+    an ``ImportFrom``, and ``corpus_ingest.ingest_journal_entry(...)`` is then an
+    attribute call that no alias table keyed on function names can resolve.
+    ``routers/journal.py``, ``routers/botmason.py`` and ``main.py`` all import
+    this way, so a graph blind to it stops walking at the first such call and
+    reports the paths beyond it as absent rather than as unfollowed.
+    """
+    bindings: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bindings[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            for alias in node.names:
+                bindings[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return bindings
+
+
+def _dotted(expression: ast.expr) -> str | None:
+    """``a.b.c`` as a string, for a plain name chain, and ``None`` for anything else."""
+    if isinstance(expression, ast.Name):
+        return expression.id
+    if isinstance(expression, ast.Attribute):
+        prefix = _dotted(expression.value)
+        return None if prefix is None else f"{prefix}.{expression.attr}"
+    return None
+
+
 class SourceGraph:
     """A name-resolved call graph over ``backend/src``.
 
@@ -206,11 +241,25 @@ class SourceGraph:
     is the expensive part and nothing here mutates.
     """
 
-    def __init__(self) -> None:
-        """Parse every module and index its functions and imported names."""
-        self._modules = _source_modules()
+    def __init__(self, modules: dict[str, ast.Module] | None = None) -> None:
+        """Index one set of parsed modules: ``src`` by default, or a given one.
+
+        The parameter is what lets this machinery be driven against a known
+        answer. Every check built on it reports "no gaps" when it has silently
+        stopped working, which is indistinguishable from a clean tree unless
+        something drives it over source whose gaps are known in advance.
+        """
+        self._modules = _source_modules() if modules is None else modules
         self._functions = {module: _function_defs(tree) for module, tree in self._modules.items()}
         self._imports = {module: _imported_names(tree) for module, tree in self._modules.items()}
+        self._module_imports = {
+            module: _imported_modules(tree) for module, tree in self._modules.items()
+        }
+
+    @classmethod
+    def from_sources(cls, sources: Mapping[str, str]) -> SourceGraph:
+        """A graph over source text keyed by dotted module name, for the controls."""
+        return cls({name: ast.parse(text) for name, text in sources.items()})
 
     @property
     def modules(self) -> dict[str, ast.Module]:
@@ -236,6 +285,32 @@ class SourceGraph:
         if self.body_of(imported) is not None:
             return imported
         return imported if (imported.module, imported.name) in EGRESS_FUNCTIONS else None
+
+    def resolve_call(self, module: str, call: ast.Call) -> Site | None:
+        """Where the function ``call`` names is defined, under either spelling.
+
+        A bare name resolves through this module's own definitions and its alias
+        imports; ``module.name(...)`` resolves through the modules this one
+        imported, which is the idiom a name-only table cannot see.
+        """
+        if isinstance(call.func, ast.Attribute):
+            qualified = self._module_qualified(module, call.func)
+            if qualified is not None:
+                return qualified
+        return self.resolve(module, _called_name(call.func))
+
+    def _module_qualified(self, module: str, func: ast.Attribute) -> Site | None:
+        """The site ``<module>.<name>(...)`` names, when the receiver is a module."""
+        receiver = _dotted(func.value)
+        if receiver is None:
+            return None
+        head, _, rest = receiver.partition(".")
+        bound = self._module_imports.get(module, {}).get(head)
+        qualified = f"{bound}.{rest}" if bound is not None and rest else bound
+        for candidate in (receiver, qualified):
+            if candidate is not None and candidate in self._modules:
+                return Site(candidate, func.attr)
+        return None
 
     def route_handlers(self) -> dict[Route, Site]:
         """Every ``@router.<verb>`` operation in ``routers``, by route.
@@ -292,27 +367,34 @@ def source_graph() -> SourceGraph:
     return SourceGraph()
 
 
-def _holds_account(item: ast.withitem) -> bool:
+def _holds_account(item: ast.withitem, *, detached: bool = False) -> bool:
     """Whether this ``with`` item establishes the account egress barrier.
 
-    Either directly, or through one of the asserted indirections in
-    :data:`INDIRECT_BARRIER_HOLDERS`.
+    Directly always; through one of the indirections in
+    :data:`INDIRECT_BARRIER_HOLDERS` **only on a detached walk**, and that
+    condition is the whole of :func:`unbarriered_egress_paths`'s honesty.
+    ``_ordered_dial()`` returns a :func:`~contextlib.nullcontext` whenever the
+    ``_DETACHED_DIAL`` context variable is unset -- which is every request path,
+    since :func:`services.creek_vault_pipeline._continue_ladder_body` is the only
+    thing that sets it. Crediting it on a request path let a handler reach the
+    vault pipeline with no ``hold_account`` anywhere and be certified as
+    barriered by a context manager that does nothing.
     """
     expression = item.context_expr
     if not isinstance(expression, ast.Call):
         return False
     name = _called_name(expression.func)
-    return name == HOLD_ACCOUNT or name in INDIRECT_BARRIER_HOLDERS
+    return name == HOLD_ACCOUNT or (detached and name in INDIRECT_BARRIER_HOLDERS)
 
 
-def takes_barrier_lexically(site: Site) -> bool:
+def takes_barrier_lexically(site: Site, *, graph: SourceGraph | None = None) -> bool:
     """Whether ``site``'s own body opens an ``async with hold_account(...)``.
 
     Direct only -- no indirection is followed -- because this is the check that
     keeps :data:`INDIRECT_BARRIER_HOLDERS` honest, and a check that accepted the
     indirection it is verifying would accept anything.
     """
-    body = source_graph().body_of(site)
+    body = (graph if graph is not None else source_graph()).body_of(site)
     if body is None:
         return False
     return any(
@@ -353,7 +435,7 @@ def _is_egress_leaf(call: ast.Call) -> bool:
     return isinstance(call.func, ast.Attribute) and call.func.attr in VAULT_EGRESS_METHODS
 
 
-def _unbarriered_calls(node: ast.AST) -> list[ast.Call]:
+def _unbarriered_calls(node: ast.AST, *, detached: bool = False) -> list[ast.Call]:
     """Every call in ``node`` that is *not* inside an ``async with hold_account``.
 
     Descent stops at a barriered region rather than recursing into it, because
@@ -362,14 +444,16 @@ def _unbarriered_calls(node: ast.AST) -> list[ast.Call]:
     """
     found: list[ast.Call] = []
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.AsyncWith) and any(_holds_account(item) for item in child.items):
+        if isinstance(child, ast.AsyncWith) and any(
+            _holds_account(item, detached=detached) for item in child.items
+        ):
             # The items themselves still run outside the hold they establish.
             for item in child.items:
-                found.extend(_unbarriered_calls(item))
+                found.extend(_unbarriered_calls(item, detached=detached))
             continue
         if isinstance(child, ast.Call):
             found.append(child)
-        found.extend(_unbarriered_calls(child))
+        found.extend(_unbarriered_calls(child, detached=detached))
     return found
 
 
@@ -382,7 +466,7 @@ def _leaf_name(graph: SourceGraph, module: str, call: ast.Call) -> str | None:
     """The egress leaf this call *is*, or ``None`` when it is not one."""
     if isinstance(call.func, ast.Attribute) and call.func.attr in VAULT_EGRESS_METHODS:
         return f".{call.func.attr}()"
-    resolved = graph.resolve(module, _called_name(call.func))
+    resolved = graph.resolve_call(module, call)
     if resolved is not None and (resolved.module, resolved.name) in EGRESS_FUNCTIONS:
         return str(resolved)
     return None
@@ -400,6 +484,7 @@ class _Walk:
 
     graph: SourceGraph
     barriered_only: bool
+    detached: bool
     found: list[tuple[str, ...]]
 
 
@@ -408,38 +493,56 @@ def _search(walk: _Walk, site: Site, trail: tuple[str, ...], seen: frozenset[Sit
     body = walk.graph.body_of(site)
     if body is None:
         return
-    calls = _unbarriered_calls(body) if walk.barriered_only else _all_calls(body)
+    calls = (
+        _unbarriered_calls(body, detached=walk.detached)
+        if walk.barriered_only
+        else _all_calls(body)
+    )
     for call in calls:
         leaf = _leaf_name(walk.graph, site.module, call)
         if leaf is not None:
             walk.found.append((*trail, leaf))
             continue
-        target = walk.graph.resolve(site.module, _called_name(call.func))
+        target = walk.graph.resolve_call(site.module, call)
         if target is None or target in seen or walk.graph.body_of(target) is None:
             continue
         _search(walk, target, (*trail, str(target)), seen | {target})
 
 
-def _walked(entry: Site, *, barriered_only: bool) -> tuple[tuple[str, ...], ...]:
+def _walked(
+    entry: Site,
+    *,
+    barriered_only: bool,
+    detached: bool = False,
+    graph: SourceGraph | None = None,
+) -> tuple[tuple[str, ...], ...]:
     """Every distinct trail from ``entry`` to a dial, under one traversal mode."""
-    walk = _Walk(source_graph(), barriered_only, [])
+    walk = _Walk(graph if graph is not None else source_graph(), barriered_only, detached, [])
     _search(walk, entry, (str(entry),), frozenset({entry}))
     return tuple(sorted(set(walk.found)))
 
 
-def egress_paths(entry: Site) -> tuple[tuple[str, ...], ...]:
+def egress_paths(entry: Site, *, graph: SourceGraph | None = None) -> tuple[tuple[str, ...], ...]:
     """Every static path from ``entry`` to a dial, barriered or not."""
-    return _walked(entry, barriered_only=False)
+    return _walked(entry, barriered_only=False, graph=graph)
 
 
-def unbarriered_egress_paths(entry: Site) -> tuple[tuple[str, ...], ...]:
+def unbarriered_egress_paths(
+    entry: Site, *, detached: bool = False, graph: SourceGraph | None = None
+) -> tuple[tuple[str, ...], ...]:
     """Every path from ``entry`` to a dial that no ``hold_account`` encloses.
 
     Empty is the property worth having, and it is the one a docstring claiming
     "this route is barriered" is asserting. Removing the barrier from any single
     site makes that site's path appear here.
+
+    ``detached`` says whether this entry point installs the detached ordering
+    (:data:`INDIRECT_BARRIER_HOLDERS`). It defaults to ``False`` because a
+    request path never does, and the indirection is a
+    :func:`~contextlib.nullcontext` there: a walk that credited it on a request
+    path would certify a handler that takes no barrier at all.
     """
-    return _walked(entry, barriered_only=True)
+    return _walked(entry, barriered_only=True, detached=detached, graph=graph)
 
 
 def egress_reaching_routes() -> dict[Route, Site]:
@@ -450,26 +553,60 @@ def egress_reaching_routes() -> dict[Route, Site]:
     }
 
 
-def inverted_nesting_sites() -> tuple[str, ...]:
+def inverted_nesting_sites(*, graph: SourceGraph | None = None) -> tuple[str, ...]:
     """Every place the per-entry serializer is taken outside the account barrier.
 
-    Two shapes count, because both deadlock and both are one edit away from each
-    other: the serializer listed *before* ``hold_account`` in one ``async with``,
-    and an ``async with hold_account`` nested lexically inside a serializer hold.
+    Three shapes count, because each deadlocks and each is one edit away from the
+    others: the serializer listed *before* ``hold_account`` in one ``async with``,
+    an ``async with hold_account`` nested lexically inside a serializer hold, and
+    a **call** made from inside a serializer hold to anything that takes the
+    account barrier -- a helper, a service function, anything one frame down.
+    Only the first two are visible in a single ``async with``, and the third is
+    the one a refactor produces: moving the inner hold into a helper turns a
+    caught inversion into an invisible one without changing what runs.
     """
+    resolved = graph if graph is not None else source_graph()
     found: list[str] = []
-    for module, tree in source_graph().modules.items():
+    for module, tree in resolved.modules.items():
         for node in ast.walk(tree):
             if not isinstance(node, ast.AsyncWith):
                 continue
-            found.extend(_inversions_at(module, node))
+            found.extend(_inversions_at(resolved, module, node))
     return tuple(sorted(set(found)))
 
 
-def _inversions_at(module: str, node: ast.AsyncWith) -> list[str]:
-    """Inversions visible at one ``async with``, by either shape."""
+def _reaches_account_barrier(graph: SourceGraph, site: Site, seen: frozenset[Site]) -> bool:
+    """Whether ``site`` takes the account barrier itself or through anything it calls."""
+    if takes_barrier_lexically(site, graph=graph):
+        return True
+    body = graph.body_of(site)
+    if body is None:
+        return False
+    for call in _all_calls(body):
+        target = graph.resolve_call(site.module, call)
+        if target is None or target in seen:
+            continue
+        if _reaches_account_barrier(graph, target, seen | {target}):
+            return True
+    return False
+
+
+def _barrier_taking_calls(graph: SourceGraph, module: str, node: ast.AsyncWith) -> list[Site]:
+    """Every call inside ``node`` that reaches ``hold_account`` one frame down or further."""
+    reached: list[Site] = []
+    for call in _all_calls(node):
+        target = graph.resolve_call(module, call)
+        if target is None or target in reached:
+            continue
+        if _reaches_account_barrier(graph, target, frozenset({target})):
+            reached.append(target)
+    return reached
+
+
+def _inversions_at(graph: SourceGraph, module: str, node: ast.AsyncWith) -> list[str]:
+    """Inversions visible at one ``async with``, by any of the three shapes."""
     found: list[str] = []
-    names = [_holds_account(item) for item in node.items]
+    names = [_holds_account(item, detached=True) for item in node.items]
     entries = [_holds_entry(item) for item in node.items]
     if any(names) and any(entries) and entries.index(True) < names.index(True):
         found.append(
@@ -479,9 +616,14 @@ def _inversions_at(module: str, node: ast.AsyncWith) -> list[str]:
         for inner in ast.walk(node):
             if inner is node or not isinstance(inner, ast.AsyncWith):
                 continue
-            if any(_holds_account(item) for item in inner.items):
+            if any(_holds_account(item, detached=True) for item in inner.items):
                 found.append(
                     f"{module}:{inner.lineno} takes the account barrier inside an "
                     f"entry-serializer hold opened at line {node.lineno}"
                 )
+        found.extend(
+            f"{module}:{node.lineno} calls {site}, which takes the account barrier, "
+            f"from inside an entry-serializer hold"
+            for site in _barrier_taking_calls(graph, module, node)
+        )
     return found

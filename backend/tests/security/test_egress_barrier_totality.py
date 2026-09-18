@@ -44,6 +44,7 @@ for the other, which is why the mutation table in the PR body lists both columns
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 from fastapi.routing import APIRoute
@@ -51,9 +52,15 @@ from starlette.routing import BaseRoute
 
 from dependencies.creek_vault import get_creek_vault_client
 from main import app
+
+# The private name is bound by import rather than reached by attribute access:
+# the indirection's return type is the premise of a check below, and binding it
+# here is how the neighbouring concurrency suites reach the same kind of seam.
+from services.creek_vault_pipeline import _ordered_dial as ordered_dial
 from tests.support.egress_call_graph import (
     INDIRECT_BARRIER_HOLDERS,
     Site,
+    SourceGraph,
     egress_paths,
     egress_reaching_routes,
     inverted_nesting_sites,
@@ -243,7 +250,9 @@ def test_every_detached_entry_point_takes_the_barrier() -> None:
     """
     for description, entry in sorted(DETACHED_ENTRY_POINTS.items()):
         assert egress_paths(entry), f"{description} ({entry}) no longer reaches any dial"
-        bare = unbarriered_egress_paths(entry)
+        # ``detached=True``: these are the entry points that install the ordering
+        # ``_ordered_dial`` reads, so the indirection is real here and only here.
+        bare = unbarriered_egress_paths(entry, detached=True)
         assert bare == (), f"{description} reaches a dial with no barrier held: {bare}"
 
 
@@ -343,3 +352,258 @@ def _live_routes(application: FastAPI) -> Iterator[_Route]:
             continue
         for method in (route.methods or set()) - {"HEAD", "OPTIONS"}:
             yield (method, route.path)
+
+
+# ---------------------------------------------------------------------------
+# Positive controls.
+#
+# Every check above reports *nothing* when its own machinery breaks: no gaps,
+# no unbarriered paths, no stale entries. That is indistinguishable from a clean
+# tree. :func:`test_the_derivation_is_not_silently_empty` puts a floor under the
+# half that enumerates routes; nothing put one under the half that makes
+# :data:`BARRIERED` a checked claim, and three separate sabotages of it --
+# ``_unbarriered_calls`` returning early, ``_holds_account`` returning ``True``,
+# and the walk stopping at an import spelling it cannot resolve -- each left the
+# whole file green. So the walker is driven here over source whose gaps are known
+# in advance, and over the one live route that really does dial unbarriered.
+# ---------------------------------------------------------------------------
+
+#: A tiny tree with one dial and four ways of reaching it. Source text rather
+#: than fixture files because the answers have to be stated here, next to the
+#: assertions, and because a file under ``tests/`` that looked like production
+#: code would be read as production code.
+_FIXTURE_SOURCES: Mapping[str, str] = {
+    "services.botmason": '''
+"""The one model seam, as the leaf set names it."""
+
+
+async def generate_response(body: str) -> str:
+    """Dial the provider."""
+    return body
+''',
+    "services.account_egress_barrier": '''
+"""The barrier, under the name every call site spells it with."""
+
+
+def hold_account(session: object, user_id: int) -> object:
+    """Order this account's egress."""
+    return session or user_id
+''',
+    "services.dialling": '''
+"""One function that dials, reached three different ways."""
+
+from services.botmason import generate_response
+
+
+async def dials(body: str) -> str:
+    """Hand the body to the provider."""
+    return await generate_response(body)
+''',
+    "routers.fixture": '''
+"""Four handlers: barriered, bare, module-qualified, and falsely ordered."""
+
+from services import dialling
+from services.account_egress_barrier import hold_account
+from services.creek_vault_pipeline import _ordered_dial
+from services.dialling import dials
+
+
+async def barriered(session: object, user_id: int, body: str) -> str:
+    """Dial inside the hold."""
+    async with hold_account(session, user_id):
+        return await dials(body)
+
+
+async def bare(body: str) -> str:
+    """Dial with no hold anywhere."""
+    return await dials(body)
+
+
+async def module_qualified(body: str) -> str:
+    """Dial through the import idiom this tree actually uses, with no hold."""
+    return await dialling.dials(body)
+
+
+async def detached_only(body: str) -> str:
+    """Dial inside the indirection that orders nothing on a request path."""
+    async with _ordered_dial():
+        return await dials(body)
+''',
+    "services.creek_vault_pipeline": '''
+"""The indirection, stubbed: what it returns is the point, not what it is."""
+
+
+def _ordered_dial() -> object:
+    """Order this dial when a detached ladder asked for it, and otherwise not."""
+    return None
+''',
+}
+
+#: The leaf every fixture trail ends at, spelled the way the walk reports it.
+_FIXTURE_LEAF = "services.botmason.generate_response"
+
+
+def _fixture_graph() -> SourceGraph:
+    """The fixture tree, parsed fresh: nothing here shares the cached real graph."""
+    return SourceGraph.from_sources(_FIXTURE_SOURCES)
+
+
+def _fixture_paths(handler: str, *, detached: bool = False) -> tuple[tuple[str, ...], ...]:
+    """Every unbarriered path from one fixture handler."""
+    return unbarriered_egress_paths(
+        Site("routers.fixture", handler), detached=detached, graph=_fixture_graph()
+    )
+
+
+def test_the_walk_reports_a_dial_that_no_hold_encloses() -> None:
+    """The control the whole ``BARRIERED`` claim rests on.
+
+    ``_unbarriered_calls`` returning ``()`` as its first statement, and
+    ``_holds_account`` returning ``True``, both leave every other check in this
+    file passing: a walker that finds nothing reports no gaps. This is the one
+    assertion that fails under either.
+    """
+    assert _fixture_paths("bare") == (
+        ("routers.fixture.bare", "services.dialling.dials", _FIXTURE_LEAF),
+    ), "the walk cannot see a dial with no barrier anywhere near it"
+
+
+def test_the_walk_reports_nothing_when_a_hold_encloses_the_dial() -> None:
+    """The other direction: a real hold really does end the descent.
+
+    Without this, a walker that reported *everything* -- ``_holds_account``
+    returning ``False`` -- would satisfy the control above while making the gate
+    useless in the opposite way.
+    """
+    assert _fixture_paths("barriered") == ()
+
+
+def test_a_dial_reached_by_the_module_import_idiom_is_followed() -> None:
+    """``from services import x`` then ``x.f(...)`` is a call, not a dead end.
+
+    The name table recorded only the alias bindings of an ``ImportFrom``, so this
+    spelling resolved to nothing and the walk stopped -- reporting the paths
+    beyond it as absent rather than as unfollowed. ``routers/journal.py``,
+    ``routers/botmason.py`` and ``main.py`` all import this way, so moving a dial
+    out of its hold *and* spelling the call through the module was enough to keep
+    the gate green.
+    """
+    assert _fixture_paths("module_qualified") == (
+        ("routers.fixture.module_qualified", "services.dialling.dials", _FIXTURE_LEAF),
+    ), "the walk stops at the import idiom the files it guards actually use"
+
+
+def test_the_detached_indirection_is_no_barrier_on_a_request_path() -> None:
+    """``_ordered_dial`` certifies nothing for a handler that runs in a request.
+
+    It returns a ``nullcontext`` unless the detached ladder installed its
+    ordering, which only ``_continue_ladder_body`` does. Credited on a request
+    path it certified 48 paths at once: a handler could hand this account's whole
+    corpus to Creek with no ``hold_account`` anywhere and be declared barriered.
+    """
+    assert _fixture_paths("detached_only") == (
+        ("routers.fixture.detached_only", "services.dialling.dials", _FIXTURE_LEAF),
+    ), "a nullcontext was accepted as this account's egress barrier"
+    assert _fixture_paths("detached_only", detached=True) == (), (
+        "the indirection is real on the path that installs it, and must still count there"
+    )
+
+
+def test_the_detached_indirection_really_is_a_nullcontext_off_the_ladder() -> None:
+    """The premise of the check above, read off the implementation rather than assumed.
+
+    If ``_ordered_dial`` ever began ordering unconditionally, refusing to credit
+    it on a request path would become over-strict rather than honest -- and this
+    is the assertion that would say so instead of leaving the reason in a
+    comment.
+    """
+    assert isinstance(ordered_dial(), nullcontext)
+
+
+def test_a_live_route_that_dials_unbarriered_is_still_reported() -> None:
+    """The same floor, on the real tree rather than on fixture source.
+
+    ``POST /journal/transcribe-page`` is excluded from the barrier with a written
+    reason -- the bytes are caller-supplied in the same request -- and it is
+    therefore the one live handler whose dial no ``hold_account`` encloses. That
+    makes it the real tree's own positive control: a walker that had stopped
+    working would report it as clean, exactly as it would report every barriered
+    route as clean.
+    """
+    handler = call_graph_egress_routes()[("POST", "/journal/transcribe-page")]
+    bare = unbarriered_egress_paths(handler)
+
+    assert bare, "the walk no longer sees the one live route that dials unbarriered"
+    assert {trail[-1] for trail in bare} == {"services.botmason.generate_response"}
+
+
+#: One entry-serializer hold that reaches the account barrier through a helper,
+#: and the same code with the two nested the right way round. The inversion is a
+#: deadlock and the static check that catches it could only ever see a single
+#: ``async with``, so a refactor that moved the inner hold one frame down turned a
+#: caught inversion into an invisible one without changing what runs.
+_NESTING_SOURCES: Mapping[str, str] = {
+    "services.account_egress_barrier": '''
+"""The barrier, under the name every call site spells it with."""
+
+
+def hold_account(session: object, user_id: int) -> object:
+    """Order this account's egress."""
+    return session or user_id
+''',
+    "routers.nesting": '''
+"""Two orderings of the same two locks, one of which deadlocks."""
+
+from services.account_egress_barrier import hold_account
+
+voice_draft_privacy = object()
+
+
+async def takes_the_account_barrier(session: object, user_id: int) -> None:
+    """The account barrier, one frame down from its caller."""
+    async with hold_account(session, user_id):
+        pass
+
+
+async def inverted(session: object, user_id: int, entry_id: int) -> None:
+    """Entry serializer first, account barrier second: the deadlock."""
+    async with voice_draft_privacy.hold(session, entry_id):
+        await takes_the_account_barrier(session, user_id)
+
+
+async def correct(session: object, user_id: int, entry_id: int) -> None:
+    """Account barrier outermost, entry serializer innermost."""
+    async with hold_account(session, user_id), voice_draft_privacy.hold(session, entry_id):
+        pass
+''',
+}
+
+
+def test_an_inversion_hidden_behind_a_call_is_still_an_inversion() -> None:
+    """The lock order is a property of what runs, not of what one statement shows.
+
+    Only the caller of the helper can see this: the helper itself is an ordinary
+    ``async with hold_account``, and the entry-serializer hold it runs inside is
+    in another function entirely.
+    """
+    inverted = inverted_nesting_sites(graph=SourceGraph.from_sources(_NESTING_SOURCES))
+
+    assert len(inverted) == 1, f"expected exactly the one inversion, got: {inverted}"
+    assert "takes_the_account_barrier" in inverted[0]
+    assert "entry-serializer hold" in inverted[0]
+
+
+def test_the_right_order_through_a_call_is_not_reported() -> None:
+    """The control the check above needs, or it would fire on the fixed nesting too.
+
+    The inverted function is cut out rather than renamed: the check walks every
+    ``async with`` in the module, so a rename would leave the same inversion in
+    the tree under a different name and prove nothing.
+    """
+    module = _NESTING_SOURCES["routers.nesting"]
+    correct_only = dict(_NESTING_SOURCES) | {
+        "routers.nesting": module[: module.index("async def inverted")]
+        + module[module.index("async def correct") :]
+    }
+
+    assert inverted_nesting_sites(graph=SourceGraph.from_sources(correct_only)) == ()
