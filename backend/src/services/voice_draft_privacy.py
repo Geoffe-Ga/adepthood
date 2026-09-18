@@ -194,10 +194,18 @@ class VoiceDraftPrivacySerializer:
             return
 
         parameters = {"namespace": self._namespace, "key": key}
-        # A fresh NullPool engine makes the separation structural: waiting for
-        # or holding this advisory lock cannot consume one of the application's
-        # finite request connections and deadlock a handler that still needs DB
-        # work inside the critical section.
+        # A fresh NullPool engine makes the separation structural for *this*
+        # connection: the lock itself never occupies one of the application's
+        # finite request connections, so a handler that still needs database
+        # work inside the critical section cannot be starved by the lock it is
+        # holding.
+        #
+        # What that does **not** say, and must not be read as saying: a caller
+        # that enters this context manager with its own transaction still open
+        # is holding a pooled request connection while it waits here. Most
+        # request-side sites commit immediately before taking the barrier for
+        # exactly that reason; the ones that do not are waiting on the pool's
+        # own terms, and no property of this engine changes that.
         lock_engine = create_async_engine(engine.url, poolclass=NullPool)
         try:
             connection = await _locked_connection(lock_engine, parameters)
