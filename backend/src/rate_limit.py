@@ -166,9 +166,16 @@ class _MovingWindowThrottle:
     throttle key it had ever seen. This wrapper remembers when each key was last
     charged and periodically evicts the keys whose window has fully rolled off,
     bounding the store by the peak concurrent population instead of letting it
-    grow without limit as total traffic accumulates. The mark only ratchets up
-    on a completed sweep and never shrinks, so a burst's dead keys stay resident
-    until traffic climbs back to that peak: the store is bounded, not minimal.
+    grow without limit as total traffic accumulates.
+
+    Two things schedule that scan, and the second exists because the first is
+    not enough on its own. The mark is a multiple of the population that
+    survived the last sweep, so it only ever fires on a *growing* store: a burst
+    that plateaus leaves its dead keys resident at the historical peak for the
+    life of the worker, since the population never climbs back to the mark. So
+    an elapsed window is a trigger too, which costs one scan per window while
+    traffic flows and makes the resident set follow the last window's peak
+    rather than the whole run's.
 
     Eviction can never be premature, which matters because both users of this
     class are security controls: an attacker must not be able to clear their own
@@ -216,6 +223,7 @@ class _MovingWindowThrottle:
         self.sweep_at: int = _SWEEP_MIN_TRACKED
         self._limiter = MovingWindowRateLimiter(self.storage)
         self._clock = clock
+        self._swept_at = clock()
 
     def record(self, key: tuple[str, ...]) -> bool:
         """Charge one attempt against ``key``.
@@ -263,29 +271,38 @@ class _MovingWindowThrottle:
         return max(_MIN_RETRY_AFTER_SECONDS, ceil(stats.reset_time - self._clock()))
 
     def reset(self) -> None:
-        """Drop every counter and return the sweep mark to its floor."""
+        """Drop every counter and return the sweep mark and schedule to their floor."""
         self.storage.reset()
         self.last_attempt.clear()
         self.sweep_at = _SWEEP_MIN_TRACKED
+        self._swept_at = self._clock()
 
     def _sweep_if_crowded(self) -> None:
-        """Evict fully rolled-off keys once the tracked set reaches the mark."""
-        if len(self.last_attempt) < self.sweep_at:
+        """Evict fully rolled-off keys once the tracked set reaches the mark.
+
+        Or once a full window has passed since the last scan, whichever comes
+        first. The mark alone only ever fires on a growing population, which
+        leaves a store that plateaus holding its dead keys for ever; the elapsed
+        window is what bounds the resident set to the last window's peak. It
+        cannot evict prematurely -- :meth:`sweep` still checks every key's own
+        age -- and it costs one scan per window, not one per attempt.
+        """
+        crowded = len(self.last_attempt) >= self.sweep_at
+        overdue = self._clock() - self._swept_at > self.item.get_expiry()
+        if not (crowded or overdue):
             return
         self.sweep()
 
     def sweep(self) -> None:
         """Evict every key whose window has fully rolled off, now.
 
-        Separate from :meth:`_sweep_if_crowded` because that one only ever fires
-        on a *growing* population: it schedules the next scan at a multiple of
-        the population that survived the last, so a store held at a fixed size
-        stops sweeping altogether and never reclaims anything again. A caller
+        Public, and separate from :meth:`_sweep_if_crowded`, because a caller
         that knows the store is at a bound -- :class:`AmbientThrottle` at its
-        per-client ceiling -- needs to ask for the scan rather than wait for a
-        growth that a ceiling has made impossible.
+        per-client ceiling -- may need the scan before either scheduled trigger
+        would reach it.
         """
         now = self._clock()
+        self._swept_at = now
         expiry = self.item.get_expiry()
         # Snapshot: the loop mutates the dict it is walking.
         for key, last in list(self.last_attempt.items()):
@@ -502,9 +519,9 @@ _OVERFLOW_PATH_MARKER = "\x00overflow"
 _CLIENT_COMPONENT = 0
 _PATH_COMPONENT = 1
 
-# Before any reclaim has been forced. Any clock reading is past it, so the first
-# client to reach its ceiling gets a scan rather than waiting out a window for
-# one.
+# Before a client has forced a reclaim of its own. Any clock reading is past it,
+# so a client reaching its ceiling for the first time gets a scan rather than
+# waiting out a window it has never spent.
 _NEVER_RECLAIMED = float("-inf")
 
 # The quick-log tile on the habits screen posts one check-in per tap, on this
@@ -557,10 +574,23 @@ class AmbientThrottle(_MovingWindowThrottle):
 
     The ceiling bounds one client's fan-out and is reached independently by each
     client, so saturating is something a client can only do to itself. Reaching
-    it is also a phase rather than a one-way door: the ordinary sweep only fires
-    on a growing population, so a client parked at its ceiling would never
-    sweep again and its diversion would be permanent, which is why hitting the
-    ceiling asks for a reclaim before it diverts.
+    it is also a phase rather than a one-way door: a client parked at its
+    ceiling stops the population growing, so hitting the ceiling asks for a
+    reclaim of its own buckets before it diverts rather than waiting for a
+    scheduled scan its own ceiling has made unreachable.
+
+    Everything about that reclaim is per client -- which buckets it visits and
+    how often it may be asked for -- because every part of this mechanism that
+    is shared is a part one tenant can spend on another's behalf.
+
+    Attributes:
+        reclaim_after: Client key to the clock reading before which that client
+            may not force another reclaim. Public for the same reason the base
+            class's store is: this module's own unit tests assert the scoping,
+            which is the property a single shared scalar quietly broke. A client
+            is entered here only while it holds at least one bucket, so the map
+            is bounded by the store rather than by the key space an attacker
+            can spell.
     """
 
     def __init__(
@@ -582,8 +612,8 @@ class AmbientThrottle(_MovingWindowThrottle):
         """
         super().__init__(AMBIENT_LIMIT_ITEM if item is None else item, clock=clock)
         self._max_paths_per_client = max_paths_per_client
-        self._paths_held: dict[str, int] = {}
-        self._reclaim_after = _NEVER_RECLAIMED
+        self._paths_held: dict[str, set[str]] = {}
+        self.reclaim_after: dict[str, float] = {}
 
     def charge(self, throttle_key: str, path: str) -> int | None:
         """Charge one request against ``throttle_key``'s budget for ``path``.
@@ -607,7 +637,13 @@ class AmbientThrottle(_MovingWindowThrottle):
         return frozenset(key[_PATH_COMPONENT] for key in self.last_attempt)
 
     def record(self, key: tuple[str, ...]) -> bool:
-        """Charge one attempt against ``key``, keeping its client's fan-out count.
+        """Charge one attempt against ``key``, keeping its client's set of held paths.
+
+        The set, rather than a count, because the reclaim has to be able to
+        visit one client's own buckets without walking the whole store. It is
+        bounded by the same ceiling the count was: past
+        :attr:`_max_paths_per_client` distinct paths a client mints no more, and
+        one overflow marker on top of them.
 
         Args:
             key: Bucket the attempt is charged to.
@@ -616,29 +652,34 @@ class AmbientThrottle(_MovingWindowThrottle):
             True while the bucket remains under its cap.
         """
         client = key[_CLIENT_COMPONENT]
-        if key not in self.last_attempt:
-            self._paths_held[client] = self._paths_held.get(client, 0) + 1
+        self._paths_held.setdefault(client, set()).add(key[_PATH_COMPONENT])
         return super().record(key)
 
     def reset(self) -> None:
-        """Drop every counter, every fan-out count, and the reclaim schedule."""
+        """Drop every counter, every client's fan-out, and every reclaim booking."""
         super().reset()
         self._paths_held.clear()
-        self._reclaim_after = _NEVER_RECLAIMED
+        self.reclaim_after.clear()
 
     def _forget(self, key: tuple[str, ...]) -> None:
         """Evict one bucket and give its client back the fan-out it was holding.
+
+        The client's reclaim booking is dropped with its last bucket, which is
+        what bounds :attr:`reclaim_after`: its key space is a subset of
+        :attr:`_paths_held`'s, and that one the sweep already bounds. A map
+        keyed on an attacker-supplied throttle key that nothing ever pruned
+        would be the defect this ceiling exists to prevent, in a new place.
 
         Args:
             key: Bucket to evict.
         """
         super()._forget(key)
         client = key[_CLIENT_COMPONENT]
-        remaining = self._paths_held[client] - 1
-        if remaining:
-            self._paths_held[client] = remaining
-        else:
+        held = self._paths_held[client]
+        held.discard(key[_PATH_COMPONENT])
+        if not held:
             del self._paths_held[client]
+            self.reclaim_after.pop(client, None)
 
     def _has_room(self, throttle_key: str) -> bool:
         """Report whether ``throttle_key`` may still mint a bucket of its own.
@@ -649,24 +690,46 @@ class AmbientThrottle(_MovingWindowThrottle):
         Returns:
             True while this client holds fewer buckets than its ceiling.
         """
-        return self._paths_held.get(throttle_key, 0) < self._max_paths_per_client
+        return len(self._paths_held.get(throttle_key, ())) < self._max_paths_per_client
 
-    def _reclaim(self) -> None:
-        """Sweep on demand, at most once per window, for a client at its ceiling.
+    def _reclaim(self, throttle_key: str) -> None:
+        """Sweep one client's own buckets on demand, at most once per window.
 
-        A ceiling stops the population growing, and the ordinary sweep only
-        fires on growth, so without this a client that reached its ceiling would
-        hold those buckets for the life of the process and every unseen path it
-        asked for afterwards would be diverted for ever. Rate-limited to once
-        per window because a sweep can only ever reclaim a key older than one
-        full expiry: asking more often scans the store for nothing, at the
-        request rate of whoever is saturating it.
+        A ceiling stops the population growing, and the scheduled sweep fires on
+        growth or on an elapsed window, so without this a client that reached
+        its ceiling could wait out most of a window with every unseen path it
+        asked for diverted, holding buckets that had already rolled off.
+
+        Both halves of the bound are per client, and they have to be. The
+        booking is keyed on the client because a single scalar let the first
+        client to saturate refuse every other client a reclaim for a whole
+        window -- diverting a tenant that had its own reclaimable buckets onto
+        its overflow counter on somebody else's account, which is #2909's shape
+        again. And the scan visits only that client's own paths, bounded by its
+        own ceiling, because a per-client budget over a whole-store scan is a
+        per-client CPU amplifier: every saturating client would buy a full scan
+        per window, over a store their own fan-out is what grew.
+
+        Rate-limited to once per window because a sweep can only ever reclaim a
+        key older than one full expiry: asking more often scans for nothing, at
+        the request rate of whoever is saturating.
+
+        Args:
+            throttle_key: Grouped client key whose buckets are being revisited.
         """
         now = self._clock()
-        if now < self._reclaim_after:
+        if now < self.reclaim_after.get(throttle_key, _NEVER_RECLAIMED):
             return
-        self.sweep()
-        self._reclaim_after = now + self.item.get_expiry()
+        expiry = self.item.get_expiry()
+        # Booked before the scan, so that a scan which reclaims this client's
+        # *last* bucket leaves no booking behind: _forget drops it along with
+        # the fan-out entry, which is what keeps this map's key space a subset
+        # of one the sweep already bounds.
+        self.reclaim_after[throttle_key] = now + expiry
+        # Snapshot: _forget mutates the set this walks, and may drop it outright.
+        for path in list(self._paths_held.get(throttle_key, ())):
+            if now - self.last_attempt[throttle_key, path] > expiry:
+                self._forget((throttle_key, path))
 
     def _bucket_for(self, throttle_key: str, path: str) -> tuple[str, str]:
         """Pick the bucket to bill, diverting unseen paths once this client saturates.
@@ -674,9 +737,13 @@ class AmbientThrottle(_MovingWindowThrottle):
         Three properties make the diversion safe. A bucket that already exists
         is never diverted, so saturation cannot hand an established client a
         counter somebody else is spending. The ceiling and the overflow bucket
-        are both keyed on the client, so one tenant's flood can neither move nor
-        narrow another tenant's counters -- the bound is on the fan-out of the
-        client that caused it. And the degradation is fail-closed: an attacker
+        are both keyed on the client, and so is the reclaim that runs before the
+        diversion -- both which buckets it may take back and how often it may be
+        asked for -- so one tenant's flood can neither move nor narrow another
+        tenant's counters, nor spend the reclaim another tenant was about to
+        need. The bound is on the fan-out of the client that caused it, with
+        nothing shared left for a flood to reach through. And the degradation is
+        fail-closed: an attacker
         enumerating paths under saturation collapses their own traffic onto one
         bucket and is pinned at the floor, rather than buying a fresh budget per
         path.
@@ -688,12 +755,12 @@ class AmbientThrottle(_MovingWindowThrottle):
         Returns:
             The client's bucket for ``path``, or the client's overflow bucket
             when ``path`` is unseen and this client is already at its ceiling
-            with nothing left to reclaim.
+            with nothing of its own left to reclaim.
         """
         bucket = (throttle_key, path)
         if bucket in self.last_attempt or self._has_room(throttle_key):
             return bucket
-        self._reclaim()
+        self._reclaim(throttle_key)
         if self._has_room(throttle_key):
             return bucket
         return (throttle_key, _OVERFLOW_PATH_MARKER)

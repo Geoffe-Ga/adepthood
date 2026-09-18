@@ -26,11 +26,13 @@ from starlette.testclient import TestClient
 
 from middleware import AmbientRateLimitMiddleware
 from rate_limit import (
+    _CLIENT_COMPONENT,
     _MAX_PATHS_PER_CLIENT,
     _MIN_RETRY_AFTER_SECONDS,
     _OVERFLOW_PATH_MARKER,
     _PATH_BURST_FLOORS,
     _PATH_COMPONENT,
+    _SWEEP_MIN_TRACKED,
     AMBIENT_LIMIT_ITEM,
     DEFAULT_RATE_LIMIT,
     AmbientThrottle,
@@ -77,6 +79,19 @@ _DAST_WIDE_OVERRIDE = "6000/minute"
 
 # Far enough past a 60-second window that its reset time is already behind us.
 _WELL_PAST_THE_WINDOW = 3600.0
+
+# The cross-client reclaim timeline, written as fractions of one window so it
+# still says the same thing if the ambient floor's period moves. Client B mints
+# its buckets at the origin; client A mints later and spends a reclaim while B's
+# buckets are still live, so A's sweep cannot be what frees them; B then asks
+# just past the origin's window, when its own buckets -- and only its own --
+# have rolled fully off, and while A's booking is still in the future.
+_A_MINTS_AT = 2 / 3
+_A_RECLAIMS_AT = 5 / 6
+_JUST_PAST_THE_WINDOW = 1 + 1 / 60
+
+# Long enough that every bucket in the store has rolled off, whoever holds it.
+_SEVERAL_WINDOWS = 3
 
 _CLIENT = "198.51.100.7"
 _OTHER_CLIENT = "203.0.113.9"
@@ -275,6 +290,132 @@ def test_a_saturated_client_reclaims_its_buckets_after_a_full_window() -> None:
 
     assert (_CLIENT, "/after-the-window") in throttle.last_attempt
     assert not [key for key in throttle.last_attempt if key[_PATH_COMPONENT].startswith("/flood-")]
+
+
+def test_one_clients_reclaim_does_not_spend_another_clients() -> None:
+    """The reclaim budget is per client, or the ceiling becomes a cross-tenant weapon.
+
+    ``_reclaim_after`` was a single scalar on the throttle. The first client to
+    saturate booked it for everybody, so any *other* client that filled its own
+    ceiling inside that window was refused a reclaim attempt and billed to its
+    own overflow bucket -- collapsing every unseen path it asked for onto one
+    counter -- while its own stale buckets sat reclaimable in the store. That is
+    #2909's shape again in miniature: a global scalar governing a per-client
+    mechanism, and the ceiling's whole claim is that the bound falls on the
+    fan-out of the client that caused it.
+    """
+    now = [0.0]
+    expiry = AMBIENT_LIMIT_ITEM.get_expiry()
+    throttle = AmbientThrottle(clock=lambda: now[0], max_paths_per_client=_CEILING_PROBE)
+
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_OTHER_CLIENT, f"/b-flood-{index}")
+
+    now[0] = expiry * _A_MINTS_AT
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_CLIENT, f"/a-flood-{index}")
+
+    now[0] = expiry * _A_RECLAIMS_AT
+    throttle.charge(_CLIENT, "/a-unseen")
+    assert (_CLIENT, _OVERFLOW_PATH_MARKER) in throttle.last_attempt, (
+        "the timeline is wrong: client A must saturate and spend a reclaim here"
+    )
+    assert throttle.reclaim_after == {_CLIENT: now[0] + expiry}, (
+        "one client's reclaim must be booked against that client alone"
+    )
+
+    now[0] = expiry * _JUST_PAST_THE_WINDOW
+    throttle.charge(_OTHER_CLIENT, "/b-unseen")
+
+    assert (_OTHER_CLIENT, "/b-unseen") in throttle.last_attempt, (
+        "client B was diverted to overflow by a reclaim client A had already spent"
+    )
+    assert (_OTHER_CLIENT, _OVERFLOW_PATH_MARKER) not in throttle.last_attempt
+    assert not [
+        key for key in throttle.last_attempt if key[_PATH_COMPONENT].startswith("/b-flood-")
+    ], "client B never got its own stale buckets back"
+    assert [key for key in throttle.last_attempt if key[_PATH_COMPONENT].startswith("/a-flood-")], (
+        "client B's reclaim reached across and evicted client A's live buckets"
+    )
+
+
+def test_a_clients_reclaim_is_still_rate_limited_to_once_per_window() -> None:
+    """Per client must not quietly become per request.
+
+    A sweep can only ever reclaim a bucket older than one full expiry, so a
+    saturated client allowed to ask for one on every request would be scanning
+    for nothing at its own request rate -- a per-client budget turned into a
+    per-client CPU amplifier. Only the key of the budget moves; the budget
+    itself stays.
+    """
+    now = [0.0]
+    expiry = AMBIENT_LIMIT_ITEM.get_expiry()
+    throttle = AmbientThrottle(clock=lambda: now[0], max_paths_per_client=_CEILING_PROBE)
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_CLIENT, f"/flood-{index}")
+
+    throttle.charge(_CLIENT, "/first-unseen")
+    booked = throttle.reclaim_after[_CLIENT]
+    assert booked == expiry
+
+    now[0] = expiry / 2
+    throttle.charge(_CLIENT, "/second-unseen")
+    assert throttle.reclaim_after[_CLIENT] == booked, (
+        "a saturated client re-armed its reclaim before its own window had passed"
+    )
+
+
+def test_the_reclaim_schedule_is_forgotten_with_the_client_it_names() -> None:
+    """A per-client map is itself a per-client structure, and needs its own bound.
+
+    Replacing one unbounded global with one unbounded map keyed on an
+    attacker-supplied throttle key would be the same defect wearing a new hat.
+    The schedule's key space is therefore tied to the fan-out map's: a client
+    holds a booking exactly as long as it holds at least one bucket, and the
+    buckets are what the sweep already bounds.
+    """
+    now = [0.0]
+    expiry = AMBIENT_LIMIT_ITEM.get_expiry()
+    throttle = AmbientThrottle(clock=lambda: now[0], max_paths_per_client=_CEILING_PROBE)
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_CLIENT, f"/flood-{index}")
+    throttle.charge(_CLIENT, "/unseen")
+    assert _CLIENT in throttle.reclaim_after
+
+    now[0] = expiry * _SEVERAL_WINDOWS
+    throttle.sweep()
+
+    assert not [key for key in throttle.last_attempt if key[_CLIENT_COMPONENT] == _CLIENT]
+    assert throttle.reclaim_after == {}, (
+        "the reclaim schedule outlived every bucket the client it names held"
+    )
+
+
+def test_a_store_at_a_fixed_population_still_gives_its_dead_keys_back() -> None:
+    """The scheduled sweep must not need the population to keep growing.
+
+    The mark is set to a multiple of the population that survived the last
+    sweep, so a store that stops growing stops sweeping: a burst's dead keys
+    would sit at the process's historical peak for the life of the worker, and
+    the on-demand reclaim is per client and never revisits them. One elapsed
+    window is the second trigger, which makes the resident set follow the *last*
+    window's peak rather than the whole run's.
+    """
+    now = [0.0]
+    expiry = AMBIENT_LIMIT_ITEM.get_expiry()
+    throttle = AmbientThrottle(clock=lambda: now[0])
+    for index in range(_SWEEP_MIN_TRACKED):
+        throttle.charge(_CLIENT, f"/peak-{index}")
+    assert throttle.sweep_at > len(throttle.last_attempt), (
+        "the timeline is wrong: the mark has to be out of this population's reach"
+    )
+
+    now[0] = expiry * 2
+    throttle.charge(_OTHER_CLIENT, "/later")
+
+    assert not [
+        key for key in throttle.last_attempt if key[_PATH_COMPONENT].startswith("/peak-")
+    ], "a store held below its sweep mark never reclaimed anything again"
 
 
 def test_the_burst_floor_can_only_widen_the_ambient_one() -> None:
