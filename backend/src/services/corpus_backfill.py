@@ -418,7 +418,14 @@ async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int
     row is still the kind of row this sweep may offer. The mark and the commit
     stay inside the hold too, so a revocation's purge cannot land between the
     fragment being written and the fragment becoming durable.
+
+    The commit below the docstring ends the transaction the sweep's own counting
+    and batching opened, so the *wait* for the barrier holds no pooled
+    connection -- the same discipline every other site takes this barrier under.
+    Nothing of the sweep's is lost to it: each offer commits its own outcome
+    inside the hold, and the only work outstanding here is a read.
     """
+    await session.commit()
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         if not await _consent_still_stands(session, user_id):
