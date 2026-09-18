@@ -829,6 +829,17 @@ async def test_granting_consent_sorts_the_writing_that_was_already_there(
         return SimpleNamespace(text=_CLASSIFIED_REPLY)
 
     monkeypatch.setattr(frequency_classification, "generate_response", classified)
+    # Every dial the sweep makes is inside this account's egress barrier, and the
+    # first statement inside it refuses an account that does not exist, so the row
+    # the fabricated id names has to be real.
+    db_session.add(
+        User(
+            id=_CONSENTING_ACCOUNT,
+            email="granting-consent@example.com",
+            password_hash=_NEVER_VERIFIED_HASH,
+        )
+    )
+    await db_session.commit()
     entry = JournalEntry(
         user_id=_CONSENTING_ACCOUNT,
         sender="user",

@@ -180,6 +180,19 @@ async def put_corpus_consent(
     alternative was a permission the account had given, paid for at a provider,
     and thrown away.
 
+    **The account barrier is held for the decision, never across the sweep.**
+    This route serves the revocation as well as the grant, and
+    ``DELETE /users/me`` takes the same exclusive hold: a hold spanning a sweep
+    bounded only by :data:`services.corpus_backfill.BACKFILL_ENTRY_CEILING`
+    provider calls would not merely delay those two, it would reorder them to
+    after every dial the sweep had left -- the two requests that mean *stop
+    sending my writing* made to wait out the sending, and the writing sent in
+    the meantime withheld by the code that predates the barrier. So the hold
+    here covers the liveness read and the decision, which dial nothing, and the
+    sweep takes it per entry in
+    :func:`services.corpus_backfill._offer_one`, re-reading this decision inside
+    each one. A stop then waits for the dial in flight and for nothing else.
+
     Rate-limited more tightly than ``POST /import`` despite carrying the
     smallest body in the API: a grant is the most expensive request here, since
     the sweep it authorises costs a provider call per entry it reaches, where
@@ -194,8 +207,9 @@ async def put_corpus_consent(
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
-        await backfill_after_consent(session, user_id=user_id, change=change)
         await session.commit()
+    await backfill_after_consent(session, user_id=user_id, change=change)
+    await session.commit()
     return _to_response(change.state)
 
 
