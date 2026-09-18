@@ -9928,6 +9928,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "List Corpus Consent",
@@ -10056,6 +10066,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Put Corpus Consent",
@@ -10176,6 +10196,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Import Corpus Document",
@@ -10286,6 +10316,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Get Corpus Invitation",
@@ -10404,6 +10444,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Put Corpus Invitation",
@@ -10514,6 +10564,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Get Voice Readiness",

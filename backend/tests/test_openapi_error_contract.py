@@ -88,6 +88,29 @@ _STATUS_CONSTANT: Final = re.compile(r"HTTP_(\d{3})_[A-Z_]+")
 # server-error check owns it. Declaring it would document the failure mode.
 _UNDECLARABLE_STATUS: Final = "500"
 
+# Refusals a router inherits from a *service* it calls rather than from an
+# ``errors`` helper it imports. The import-based check above cannot see these:
+# ``hold_account`` raises ``service_unavailable`` from inside
+# ``services.voice_draft_privacy``, and nothing in the router's own source names
+# a 503. That blindness is how ``POST /corpus/import`` and
+# ``PUT /corpus/consent/{source}`` came to answer with a status they never
+# declared. A service helper that can refuse belongs here on the commit that
+# gives it the ability to.
+_HOLD_ACCOUNT: Final = "hold_account"
+_UNAVAILABLE_KEYWORD: Final = "on_unavailable"
+_PROCEEDS_UNORDERED: Final = "proceed"
+
+_SERVICE_HELPER_STATUSES: Final[dict[str, dict[str, frozenset[str]]]] = {
+    "services.account_egress_barrier": {
+        # No ordering means no egress: the barrier refuses rather than transmit
+        # unordered when its cross-worker lock connection cannot be opened.
+        "hold_account": frozenset({"503"}),
+        # The uniform 401 for a request whose account stopped existing while it
+        # was in flight.
+        "ensure_account_live": frozenset({"401"}),
+    },
+}
+
 _HELPER_STATUSES: Final = {
     "bad_request": "400",
     "forbidden": "403",
@@ -200,6 +223,62 @@ def _imported_error_helpers(tree: ast.Module) -> frozenset[str]:
     return frozenset(names)
 
 
+def _imported_refusing_services(tree: ast.Module) -> frozenset[str]:
+    """Service helpers the module imports that refuse with a status of their own."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.module not in _SERVICE_HELPER_STATUSES:
+            continue
+        module_helpers = _SERVICE_HELPER_STATUSES[node.module]
+        names.update(alias.name for alias in node.names if alias.name in module_helpers)
+    return frozenset(names)
+
+
+def _proceeds_when_unavailable(call: ast.Call) -> bool:
+    """Whether this ``hold_account`` call asks to proceed rather than refuse.
+
+    The asymmetry is the barrier's own load-bearing property, so the gate has to
+    know about it: an egress site refuses with 503 when the cross-worker lock
+    cannot be opened, and the erasure site proceeds unordered instead, because
+    blocking somebody's deletion over a lock connection would be the ordering
+    mechanism causing the harm it exists to prevent. Reading the keyword keeps
+    ``DELETE /users/me`` from declaring a 503 it can never send.
+    """
+    return any(
+        keyword.arg == _UNAVAILABLE_KEYWORD
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value == _PROCEEDS_UNORDERED
+        for keyword in call.keywords
+    )
+
+
+def _service_helper_statuses(tree: ast.Module) -> frozenset[str]:
+    """Every status the refusing service helpers this module *calls* can send.
+
+    Call-based rather than import-based, because one helper's answer depends on
+    how it was called -- see :func:`_proceeds_when_unavailable`. The import is
+    still consulted first, so a same-named local function cannot be mistaken for
+    the service helper.
+    """
+    imported = _imported_refusing_services(tree)
+    codes_by_name = {
+        name: codes
+        for helpers in _SERVICE_HELPER_STATUSES.values()
+        for name, codes in helpers.items()
+    }
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _called_name(node.func) not in imported:
+            continue
+        name = _called_name(node.func)
+        if name == _HOLD_ACCOUNT and _proceeds_when_unavailable(node):
+            continue
+        found.update(codes_by_name[name])
+    return frozenset(found)
+
+
 # Selected once, at collection, so a module with nothing to check is absent from
 # the report rather than present as a skip. A skipped case reads like a decision
 # somebody made about that module; an absent one reads like what it is.
@@ -208,6 +287,9 @@ _ROUTE_DECLARING_MODULES: Final = tuple(
 )
 _REFUSING_MODULES: Final = tuple(
     path for path in _router_modules() if _imported_error_helpers(_parsed(path))
+)
+_SERVICE_REFUSING_MODULES: Final = tuple(
+    path for path in _router_modules() if _service_helper_statuses(_parsed(path))
 )
 
 
@@ -351,6 +433,28 @@ def test_router_declares_every_status_its_error_helpers_can_send(
     missing = sorted(reachable - declared)
     assert not missing, (
         f"{module_path.name} raises errors that produce {missing} but declares none of them"
+    )
+
+
+@pytest.mark.parametrize(
+    "module_path", _SERVICE_REFUSING_MODULES, ids=_module_ids(_SERVICE_REFUSING_MODULES)
+)
+def test_router_declares_every_status_the_services_it_calls_can_send(
+    statuses_by_router: dict[str, frozenset[str]], module_path: Path
+) -> None:
+    """A refusal raised inside a service the router calls is still the router's status.
+
+    The two checks either side of this one read the router's *own* source -- the
+    ``errors`` helpers it imports, and the ``HTTPException`` calls it writes out.
+    Neither can see a refusal that a service raises on the router's behalf, so a
+    router could take the account egress barrier, gain a live 503, and keep a
+    declaration that never mentions one. That is exactly what happened.
+    """
+    reachable = _service_helper_statuses(_parsed(module_path))
+    declared = statuses_by_router.get(module_path.stem, frozenset())
+    missing = sorted(reachable - declared)
+    assert not missing, (
+        f"{module_path.name} calls a service that refuses with {missing} but declares none of them"
     )
 
 

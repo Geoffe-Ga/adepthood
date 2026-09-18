@@ -116,7 +116,16 @@ router = build_router(
     prefix="/corpus",
     tags=["corpus"],
     # ``guard_document_payload`` refuses an oversized import before it is decoded.
-    extra_statuses=(status.HTTP_413_CONTENT_TOO_LARGE,),
+    # 503 is the account egress barrier's: ``POST /import`` and
+    # ``PUT /consent/{source}`` both hand this account's stored writing outward,
+    # so both refuse rather than transmit unordered when the cross-worker lock
+    # connection cannot be opened. The refusal is raised inside
+    # ``services.account_egress_barrier``, not here, which is precisely why it
+    # went undeclared until a gate learned to read the service call.
+    extra_statuses=(
+        status.HTTP_413_CONTENT_TOO_LARGE,
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+    ),
 )
 
 
