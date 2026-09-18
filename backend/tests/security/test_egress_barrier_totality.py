@@ -400,9 +400,8 @@ async def dials(body: str) -> str:
     return await generate_response(body)
 ''',
     "routers.fixture": '''
-"""Four handlers: barriered, bare, module-qualified, and falsely ordered."""
+"""Three handlers: barriered, bare, and falsely ordered."""
 
-from services import dialling
 from services.account_egress_barrier import hold_account
 from services.creek_vault_pipeline import _ordered_dial
 from services.dialling import dials
@@ -419,15 +418,25 @@ async def bare(body: str) -> str:
     return await dials(body)
 
 
-async def module_qualified(body: str) -> str:
-    """Dial through the import idiom this tree actually uses, with no hold."""
-    return await dialling.dials(body)
-
-
 async def detached_only(body: str) -> str:
     """Dial inside the indirection that orders nothing on a request path."""
     async with _ordered_dial():
         return await dials(body)
+''',
+    "routers.qualified": '''
+"""One handler that names the dial only through the module it lives in.
+
+Deliberately in a module of its own, importing nothing by name: with ``dials``
+also bound directly, the resolver falls back to the bare name and the control
+passes without ever exercising the idiom it exists for.
+"""
+
+from services import dialling
+
+
+async def module_qualified(body: str) -> str:
+    """Dial through the import idiom this tree actually uses, with no hold."""
+    return await dialling.dials(body)
 ''',
     "services.creek_vault_pipeline": '''
 """The indirection, stubbed: what it returns is the point, not what it is."""
@@ -448,10 +457,12 @@ def _fixture_graph() -> SourceGraph:
     return SourceGraph.from_sources(_FIXTURE_SOURCES)
 
 
-def _fixture_paths(handler: str, *, detached: bool = False) -> tuple[tuple[str, ...], ...]:
+def _fixture_paths(
+    handler: str, *, module: str = "routers.fixture", detached: bool = False
+) -> tuple[tuple[str, ...], ...]:
     """Every unbarriered path from one fixture handler."""
     return unbarriered_egress_paths(
-        Site("routers.fixture", handler), detached=detached, graph=_fixture_graph()
+        Site(module, handler), detached=detached, graph=_fixture_graph()
     )
 
 
@@ -488,8 +499,8 @@ def test_a_dial_reached_by_the_module_import_idiom_is_followed() -> None:
     out of its hold *and* spelling the call through the module was enough to keep
     the gate green.
     """
-    assert _fixture_paths("module_qualified") == (
-        ("routers.fixture.module_qualified", "services.dialling.dials", _FIXTURE_LEAF),
+    assert _fixture_paths("module_qualified", module="routers.qualified") == (
+        ("routers.qualified.module_qualified", "services.dialling.dials", _FIXTURE_LEAF),
     ), "the walk stops at the import idiom the files it guards actually use"
 
 
