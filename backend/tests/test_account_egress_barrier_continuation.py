@@ -44,6 +44,9 @@ from models.user import User
 from models.vault_pipeline_run import VaultPipelineOutcome
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_pipeline import VaultPipelineTrigger
+from services.creek_vault_pipeline import _Continuation as Continuation
+from services.creek_vault_pipeline import _continue_ladder_body as continue_ladder_body
+from services.creek_vault_pipeline import _RunResult as RunResult
 from tests.test_account_egress_barrier import (
     DELETION_RESPONSE,
     delete_account_recording_order,
@@ -291,17 +294,17 @@ async def test_a_continuation_for_a_gone_account_never_starts_climbing(
 
     monkeypatch.setattr(pipeline, "_climb_or_stand_down", _record_climb)
     erased_user_id = 987654321
-    continuation = pipeline._Continuation(  # noqa: SLF001 — the detached seam under test
+    continuation = Continuation(
         factory=concurrent_session_factory,
         client=cast("CreekVaultPipelineClient", client),
         user_id=erased_user_id,
         trigger=VaultPipelineTrigger.JOURNAL_WRITE,
-        pending=pipeline._RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),  # noqa: SLF001
+        pending=RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),
         stage=VaultPipelineStage.CLASSIFY,
         remaining=(),
     )
 
-    await pipeline._continue_ladder_body(continuation)  # noqa: SLF001
+    await continue_ladder_body(continuation)
 
     assert climbed == [], (
         "a ladder for an account that does not exist was admitted and began "
@@ -336,18 +339,18 @@ async def test_a_live_accounts_database_fault_is_still_a_fault(
         raise SQLAlchemyError("the connection went away mid-climb")
 
     monkeypatch.setattr(pipeline, "_climb_detached", _explode)
-    continuation = pipeline._Continuation(  # noqa: SLF001 — the detached seam under test
+    continuation = Continuation(
         factory=concurrent_session_factory,
         client=cast("CreekVaultPipelineClient", _CountingPipelineClient()),
         user_id=live_user_id,
         trigger=VaultPipelineTrigger.JOURNAL_WRITE,
-        pending=pipeline._RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),  # noqa: SLF001
+        pending=RunResult(run_id=1, outcome=VaultPipelineOutcome.ATTEMPTED),
         stage=VaultPipelineStage.CLASSIFY,
         remaining=(),
     )
 
     with pytest.raises(SQLAlchemyError):
-        await pipeline._continue_ladder_body(continuation)  # noqa: SLF001
+        await continue_ladder_body(continuation)
 
 
 async def _sole_user_id(factory: async_sessionmaker[AsyncSession]) -> int:

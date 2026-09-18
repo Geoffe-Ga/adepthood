@@ -31,7 +31,6 @@ from models.habit import Habit
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.user import User
 from routers import journal
-from routers.journal import DetectionInputs
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from tests.test_account_egress_barrier import (
@@ -266,31 +265,40 @@ async def test_completion_detection_refuses_an_erased_account_with_the_uniform_4
 ) -> None:
     """The refusal vocabulary matches every other barriered route: 401.
 
-    The pause is installed at the one await between ``get_current_user`` and the
-    barrier, so the erasure provably wins the race rather than probably winning
-    it. Unbarriered, this route answered the erased account **200 with a checked
+    The pause is installed on the timezone read inside ``_detection_inputs`` --
+    an await this route makes between ``get_current_user`` and the barrier, and
+    one the erasure path provably never makes, so holding it cannot deadlock the
+    ``DELETE``. That makes the erasure win the race rather than probably win it.
+
+    Unbarriered, this route answered the erased account **200 with a checked
     result** -- and, on a pass whose provider returns hits, an HTTP 500 out of
     the persistence that follows the dial. Both are answers to somebody who no
     longer exists, given after their writing has already gone out.
     """
     provider = PausedProvider(json.dumps({"hits": []}))
+    # Unblocked deliberately, although the passing run never reaches it. The
+    # claim here is that the refusal happens *instead of* a dial, so a provider
+    # that would also block turns "the liveness read was deleted" into a
+    # twenty-second timeout rather than into ``assert 200 == 401``. The mutation
+    # this test exists to catch must fail it by answering wrongly, not by hanging.
+    provider.release.set()
     monkeypatch.setattr(marginalia_service, "generate_response", provider)
-    real_detection_inputs = journal._detection_inputs  # noqa: SLF001 — the seam under test
+    real_get_user_timezone = journal.get_user_timezone
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def _pause_before_the_barrier(*args: object, **kwargs: object) -> DetectionInputs:
+    async def _pause_before_the_barrier(session: AsyncSession, user_id: int) -> str:
         """Hold the pass between authentication and the account barrier."""
-        inputs = await real_detection_inputs(*args, **kwargs)  # type: ignore[arg-type]
+        timezone = await real_get_user_timezone(session, user_id)
         entered.set()
         await release.wait()
-        return inputs
+        return timezone
 
     headers, email = await signup(concurrent_async_client, "detect_401")
     user_id = await _user_id(concurrent_session_factory, email)
     await _seed_detection_candidate(concurrent_session_factory, user_id)
     entry_id = await _create_entry(concurrent_async_client, headers)
-    monkeypatch.setattr(journal, "_detection_inputs", _pause_before_the_barrier)
+    monkeypatch.setattr(journal, "get_user_timezone", _pause_before_the_barrier)
 
     detecting = asyncio.create_task(
         concurrent_async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
