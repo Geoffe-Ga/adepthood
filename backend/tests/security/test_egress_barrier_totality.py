@@ -54,6 +54,7 @@ from main import app
 from tests.support.egress_call_graph import (
     INDIRECT_BARRIER_HOLDERS,
     Site,
+    egress_paths,
     egress_reaching_routes,
     inverted_nesting_sites,
     takes_barrier_lexically,
@@ -68,10 +69,21 @@ if TYPE_CHECKING:
 
 _Route = tuple[str, str]
 
-#: The detached ontologization ladder: an egress path that belongs to no route,
-#: opens its own session, and dials after the request that scheduled it has
-#: answered. Checked here with the routes because it is the same property.
-CONTINUATION: Site = Site("services.creek_vault_pipeline", "_continue_ladder_body")
+#: Egress entry points that belong to no route. Each opens its own session and
+#: dials outside any request, so no route-table walk and no request-scoped guard
+#: can reach them; they are checked here with the routes because the property is
+#: the same one. ``resume_vault_pipeline_runs`` is the boot-time replay of
+#: durable runs, which reaches the ladder by a different door than a request
+#: does -- naming it separately is what keeps that door from being covered only
+#: by accident.
+DETACHED_ENTRY_POINTS: Mapping[str, Site] = {
+    "the detached ontologization ladder": Site(
+        "services.creek_vault_pipeline", "_continue_ladder_body"
+    ),
+    "the boot-time resume of durable pipeline runs": Site(
+        "services.creek_vault_pipeline", "resume_vault_pipeline_runs"
+    ),
+}
 
 #: A floor under the derivation itself. If the call graph or the route walk ever
 #: silently stops finding anything, every check below passes on an empty set --
@@ -221,15 +233,18 @@ def test_every_barriered_route_actually_takes_the_barrier() -> None:
     )
 
 
-def test_the_detached_continuation_takes_the_barrier() -> None:
-    """The one egress path that belongs to no route is checked the same way.
+def test_every_detached_entry_point_takes_the_barrier() -> None:
+    """The egress paths that belong to no route are checked the same way.
 
-    No request-scoped guard can reach it: it runs on a detached task, opens its
-    own session, and dials after the request that scheduled it has answered.
+    No request-scoped guard can reach either of them: both run outside a
+    request, open their own session, and dial after whatever scheduled them has
+    finished. Each must also actually reach a dial -- an entry point that
+    reached none would pass the bare-path check for the wrong reason.
     """
-    bare = unbarriered_egress_paths(CONTINUATION)
-
-    assert bare == (), f"the detached ladder reaches a dial with no barrier held: {bare}"
+    for description, entry in sorted(DETACHED_ENTRY_POINTS.items()):
+        assert egress_paths(entry), f"{description} ({entry}) no longer reaches any dial"
+        bare = unbarriered_egress_paths(entry)
+        assert bare == (), f"{description} reaches a dial with no barrier held: {bare}"
 
 
 def test_every_indirect_barrier_holder_really_takes_the_barrier() -> None:

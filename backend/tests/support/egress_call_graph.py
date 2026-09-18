@@ -108,12 +108,21 @@ EGRESS_FUNCTIONS: Final[frozenset[tuple[str, str]]] = frozenset(
 #: ``handshake``, ``wheel``, ``is_available`` and ``supports`` are deliberately
 #: absent: they send nothing of the account's, which is the same reason
 #: ``GET /stages/wheel`` and ``GET /invitations`` are excluded from the barrier.
+#:
+#: The two withdrawal verbs -- ``withdraw_journal_entry`` and
+#: ``delete_voice_draft`` -- are present although they only ever *reduce* what
+#: Creek holds. They carry an identifier derived from this account's rows, they
+#: are already inside the holds their routes take, and a leaf set that admitted
+#: judgement calls about which writes "count" is a leaf set somebody will argue
+#: with. Every write verb, no exceptions.
 VAULT_EGRESS_METHODS: Final[frozenset[str]] = frozenset(
     {
         "complete",
         "ingest",
         "upload",
         "withdraw_journal_entry",
+        "upsert_voice_draft",
+        "delete_voice_draft",
         "classify",
         "classify_corpus",
         "link_corpus",

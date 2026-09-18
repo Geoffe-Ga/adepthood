@@ -2485,12 +2485,23 @@ async def _cache_and_mirror_essay(
     authorization and privacy decisions; the mirror's ordering rationale is long
     enough on its own that interleaving the two made neither readable.
 
-    **The account barrier covers the generation, not only the mirror.**
-    :func:`_cache_essay` hands the stored entry body *and every prior letter
-    essay on this account* to a cloud provider; the mirror that follows sends
-    the model's answer to Creek. Both are this account's stored content leaving
-    the process, so both belong inside one hold -- and the barrier is taken
-    once, because neither lock is reentrant.
+    **This route makes two dials, and the barrier is taken once per dial rather
+    than once across both.** :func:`_cache_essay` hands the stored entry body
+    *and every prior letter essay on this account* to a cloud provider; the
+    mirror that follows sends the model's answer to Creek. Both are this
+    account's stored content leaving the process, so both must be ordered
+    against erasure -- but ordering them under *one* hold would also serialize
+    the window between them, and that window is load-bearing: a privacy PATCH or
+    a journal DELETE that lands while a slow model is still composing is exactly
+    what stops the mirror from happening at all. Holding across both would make
+    that mutation wait, let the mirror go out first, and leave the PATCH to
+    retract an intimate essay Creek had already seen. Two short holds keep the
+    erasure ordering and keep the entry-level race reachable.
+
+    An erasure that lands *in* the gap is refused by the second hold's own
+    liveness read, so nothing is lost by releasing: each dial is ordered, which
+    is the whole claim. It is the same per-dial reasoning the detached
+    ontologization ladder uses for the same reason.
 
     The commit below releases the pooled connection the route's two ownership
     reads opened, so the wait for the barrier holds nothing.
@@ -2498,36 +2509,43 @@ async def _cache_and_mirror_essay(
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
-        return await _cache_and_mirror_under_barrier(
-            session, note=note, entry=entry, message=message, clients=clients
-        )
-
-
-async def _cache_and_mirror_under_barrier(
-    session: AsyncSession,
-    *,
-    note: Marginalia,
-    entry: JournalEntry,
-    message: str,
-    clients: _EssayClients,
-) -> Marginalia:
-    """Generate, cache and mirror, with the caller's account barrier already held."""
-    cached = await _cache_essay(session, note, message, clients.api_key)
+        cached = await _cache_essay(session, note, message, clients.api_key)
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
     # state the privacy floor returns -- and nothing is mirrored, because
     # mirroring a refusal would put it in the vault the cache refused it from.
-    if cached.essay is None:
+    essay = cached.essay
+    if essay is None:
         return cached
-    # Generation may outlive a concurrent privacy PATCH or journal DELETE.
-    # Serialize the final liveness/tier read and mirror: an already-completed
-    # deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
-    # and if this PUT linearized first, the competing mutation waits and retracts
-    # it. The request transaction is committed before Creek I/O; PostgreSQL holds
-    # the cross-worker lock on a non-pooled, dedicated connection rather than
-    # consuming the application pool. Entry-innermost, under the account barrier
-    # the caller already holds -- the fixed nesting everywhere the two meet.
-    async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+    return await _mirror_cached_essay(
+        session, entry=entry, cached=cached, essay=essay, clients=clients
+    )
+
+
+async def _mirror_cached_essay(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    cached: Marginalia,
+    essay: str,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Mirror one generated essay, ordered against both erasure and the entry.
+
+    Generation may outlive a concurrent privacy PATCH or journal DELETE.
+    Serialize the final liveness/tier read and mirror: an already-completed
+    deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
+    and if this PUT linearized first, the competing mutation waits and retracts
+    it. The request transaction is committed before Creek I/O; PostgreSQL holds
+    the cross-worker lock on a non-pooled, dedicated connection rather than
+    consuming the application pool. Account outermost, entry innermost -- the
+    fixed nesting everywhere the two meet.
+    """
+    async with (
+        hold_account(session, entry.user_id),
+        voice_draft_privacy.hold(session, cast("int", entry.id)),
+    ):
+        await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
         await session.commit()
         if entry.deleted_at is not None:
@@ -2536,7 +2554,7 @@ async def _cache_and_mirror_under_barrier(
             clients.vault_client,
             owner_user_id=entry.user_id,
             marginalia_id=cast("int", cached.id),
-            essay=cached.essay,
+            essay=essay,
             classification=entry.classification,
         )
     return cached
