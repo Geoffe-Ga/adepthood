@@ -51,6 +51,7 @@ from domain.reflection_hierarchy import (
     _token_to_level_index,
     due_reflection,
     resolve_sources,
+    scope_cycle,
     scope_weeks,
 )
 from domain.weekly_prompts import TOTAL_WEEKS
@@ -503,7 +504,11 @@ def test_scope_weeks_unknown_token_raises() -> None:
 
 @pytest.mark.parametrize("key", ["c1:p2", "c1:t1", "c1:prog", "c2:p5", "c1:t2", "c1:p1"])
 def test_scope_weeks_rejects_every_retired_token_with_a_value_error(key: str) -> None:
-    """A retired token raises ValueError at EVERY level -- never KeyError.
+    """A retired token raises ValueError from every entry point -- never KeyError.
+
+    All three public readers of the grammar are tried, because each parses the
+    key by its own route: ``scope_weeks`` and ``resolve_sources`` through
+    ``_parse_key``, ``scope_cycle`` through the pattern alone.
 
     ``ValueError`` is load-bearing and must not be widened to ``Exception``:
     :func:`routers.reflections._parsed_reflection_ref` catches ONLY ValueError,
@@ -516,6 +521,10 @@ def test_scope_weeks_rejects_every_retired_token_with_a_value_error(key: str) ->
     for level in ReflectionLevel:
         with pytest.raises(ValueError, match="malformed reflection key"):
             scope_weeks(level, key)
+        with pytest.raises(ValueError, match="malformed reflection key"):
+            resolve_sources(level, key, existing=[], entries=[])
+    with pytest.raises(ValueError, match="malformed reflection key"):
+        scope_cycle(key)
 
 
 def test_key_grammar_is_derived_from_the_level_table() -> None:
