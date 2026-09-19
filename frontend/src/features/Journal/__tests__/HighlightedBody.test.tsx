@@ -11,6 +11,23 @@ import { colors } from '@/design/tokens';
 
 const BODY = 'I walked by the river and the willow bent.';
 
+/**
+ * Every string leaf under a node, concatenated in render order.
+ *
+ * Read verbatim rather than through a text matcher: the bullet decoration is
+ * leading whitespace plus a glyph, and a normalising matcher would collapse
+ * exactly the indent under test.
+ */
+type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+function renderedText(node: RenderedNode): string {
+  return node.children
+    .map((child: RenderedNode | string) =>
+      typeof child === 'string' ? child : renderedText(child),
+    )
+    .join('');
+}
+
 function note(overrides: Partial<Marginalia> = {}): Marginalia {
   return {
     id: 1,
@@ -221,6 +238,28 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     expect(bullets.props.accessibilityLabel).toBe('List');
     expect(getByTestId('journal-markdown-quote-12')).toBeTruthy();
     expect(queryByText(/- one/u)).toBeNull();
+  });
+
+  it('draws a bullet glyph in place of every hidden marker, at the measured indent', () => {
+    // The writer's own '- ' is hidden, so this glyph and this indent are the
+    // whole visible payload of a list line. Three depths: flush, two spaces,
+    // and a tab (JOURNAL_TAB_COLUMNS).
+    const { getByTestId } = render(
+      <HighlightedBody body={'- one\n  - nested\n\t- tabbed'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    expect(renderedText(getByTestId('journal-markdown-bullet-0'))).toBe(
+      '\u2022 one\n  \u2022 nested\n    \u2022 tabbed',
+    );
+  });
+
+  it('draws no bullet decoration on a quote or a prose block', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'> quoted\nplain'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    expect(renderedText(getByTestId('journal-markdown-quote-0'))).toBe('quoted');
+    expect(renderedText(getByTestId('journal-body-read'))).toBe('quotedplain');
   });
 
   it('renders ==text== underlined at its exact source offset', () => {
