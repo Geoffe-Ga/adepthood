@@ -5276,6 +5276,18 @@ def _quarantined_demotions(db_url: str) -> list[tuple[Any, ...]]:
     return [tuple(row) for row in rows]
 
 
+def test_review_cadence_quarantine_statement_names_the_quarantine_table() -> None:
+    """The archive INSERT targets the table the migration says it creates.
+
+    The statement spells the table name out instead of interpolating the
+    constant -- literal SQL is easier to read and leaves no string-built query
+    behind -- so the two spellings are pinned here rather than left to drift
+    into an INSERT against a table that does not exist.
+    """
+    module = _cadence_migration_module()
+    assert module._QUARANTINE_TABLE in module._QUARANTINE_INSERT  # noqa: SLF001
+
+
 def test_review_cadence_mapping_is_injective() -> None:
     """No two retired tokens share a target.
 

@@ -158,6 +158,17 @@ _QUARANTINE_TABLE = "_quarantine_reflection_scope_demotion"
 _REASON_TARGET_TAKEN = "target_taken"  # another live row already holds the target key
 _REASON_UNMAPPABLE = "unmappable_key"  # no key in the new vocabulary spells this scope
 
+# Written out in full rather than interpolated from :data:`_QUARANTINE_TABLE`:
+# every value here is a bind parameter and the table name is a literal, so
+# there is no string-built SQL for a reader -- or a scanner -- to have to vouch
+# for. The two spellings are pinned against each other by
+# ``test_review_cadence_quarantine_statement_names_the_quarantine_table``.
+_QUARANTINE_INSERT = (
+    "INSERT INTO _quarantine_reflection_scope_demotion"
+    " (entry_id, user_id, old_key, old_level, attempted_key, reason)"
+    " VALUES (:entry_id, :user_id, :old_key, :old_level, :attempted_key, :reason)"
+)
+
 # Byte-identical to ``models.journal_entry._reflection_level_check()`` rendered
 # over the new ReflectionLevel, and to ``c4f7a2b8d9e1``'s literal rendered over
 # the old one, so ``alembic check`` sees no drift in either direction.
@@ -334,11 +345,7 @@ def _demote(
     the precedent that survives that formatter.
     """
     connection.execute(
-        sa.text(
-            f"INSERT INTO {_QUARANTINE_TABLE}"  # noqa: S608
-            " (entry_id, user_id, old_key, old_level, attempted_key, reason)"
-            " VALUES (:entry_id, :user_id, :old_key, :old_level, :attempted_key, :reason)"
-        ),
+        sa.text(_QUARANTINE_INSERT),
         {
             "entry_id": row.id,
             "user_id": row.user_id,
