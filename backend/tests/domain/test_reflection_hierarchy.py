@@ -146,9 +146,17 @@ def test_the_final_stage_falls_outside_every_section_as_a_remainder() -> None:
     is a CONSEQUENCE of the shape rather than a third hand-written constant.
     Guarding it here is what stops someone "fixing" the arithmetic into a
     fourth, one-stage section.
+
+    The first line pins ``STAGES_PER_SECTION`` against a LOCAL literal, and the
+    second is the remainder itself. A third line asserting
+    ``SECTION_COUNT == TOTAL_STAGES // STAGES_PER_SECTION`` used to sit between
+    them; it restated ``domain.constants``'s own defining expression using the
+    same three imported names and so could not fail for any value of any of
+    them. Its obvious replacement, ``TOTAL_STAGES % STAGES_PER_SECTION != 0``,
+    is algebraically the same statement as the line below it, so it is gone
+    rather than swapped.
     """
     assert STAGES_PER_SECTION == _STAGES_PER_SECTION
-    assert SECTION_COUNT == TOTAL_STAGES // STAGES_PER_SECTION
     assert SECTION_COUNT * STAGES_PER_SECTION < TOTAL_STAGES
 
 

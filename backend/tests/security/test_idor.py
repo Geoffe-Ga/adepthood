@@ -1517,11 +1517,19 @@ async def test_idor_reflection_sources_never_serve_another_users_material(
     The endpoint takes no ``*_id`` parameter — only ``level`` and ``scope_key`` —
     so there is no id to authorize with the ``resolve_owned_*`` helpers; ownership
     is carried instead by the ``user_id`` predicate on each of the entry query,
-    the child-reflection query, the batch re-scope, and the promoted-quote
-    grouping.  This asserts all four at once: Bob's entry, Bob's scoped
-    reflection and Bob's quote on Alice's own entry are all absent from Alice's
-    feed, while Alice's control entry is present — so "excluded" can never be
-    satisfied by an empty feed.
+    the batch re-scope, and the promoted-quote grouping.  Bob's entry and Bob's
+    quote on Alice's own entry are both absent from Alice's feed, while Alice's
+    control entry is present — so "excluded" can never be satisfied by an empty
+    feed.
+
+    Bob's ``c1:w1`` review is a control for a DIFFERENT predicate, and this
+    test cannot say anything about ownership through it: a week has no child
+    scope, and ``_load_reflection_refs`` excludes any row whose key equals the
+    requested one ("never stands in for itself") for every caller alike. The
+    ownership predicate on that query is exercised by
+    ``test_idor_wide_scope_sources_never_serve_another_users_material``, where
+    Bob's review sits at a child of the requested scope and so would really be
+    served if the predicate went missing.
     """
     alice_headers, alice_id = await _signup(async_client, "alice_reflection_sources")
     bob_headers, bob_id = await _signup(async_client, "bob_reflection_sources")
@@ -1591,8 +1599,19 @@ async def test_idor_wide_scope_sources_never_serve_another_users_material(
     introduced on the request — the endpoint still takes only ``level`` and
     ``scope_key`` — so there is still nothing for the ``resolve_owned_*``
     helpers to authorize, and what is asserted is that the structural scoping
-    holds at the widest level. Alice's own entry being present is what stops
-    "excluded" being satisfied by an empty feed.
+    holds at the widest level.
+
+    Bob's review is keyed to a CHILD of the requested scope (stage 5, inside
+    section 2), and that placement is the whole test. Keyed to ``c1:x2`` — the
+    scope Alice asks for — it would prove nothing: ``_load_reflection_refs``
+    already filters ``reflection_scope_key != scope_key`` so a review never
+    stands in for itself, and that predicate excludes the row for every caller,
+    ownership or not. Deleting ``JournalEntry.user_id == user_id`` from that
+    query leaves such a test green. From a child scope the mutant is visible
+    twice over: Bob's review short-circuits the stage-5 subtree, so it appears
+    in Alice's feed AND her own week-13 page disappears from it. Her two
+    entries being present is also what stops "excluded" being satisfied by an
+    empty feed.
     """
     alice_headers, alice_id = await _signup(async_client, "alice_wide_scope")
     _bob_headers, bob_id = await _signup(async_client, "bob_wide_scope")
@@ -1611,8 +1630,13 @@ async def test_idor_wide_scope_sources_never_serve_another_users_material(
         )
     await db_session.commit()
 
+    # Program day 64 is week 10 (stage 4) and day 88 is week 13 (stage 5) —
+    # both inside section 2, which spans stages 4-6 / weeks 10-18.
     await _seed_reflection_source(
         db_session, alice_id, "Alice's tenth week", anchor + timedelta(days=64)
+    )
+    await _seed_reflection_source(
+        db_session, alice_id, "Alice's thirteenth week", anchor + timedelta(days=88)
     )
     await _seed_reflection_source(
         db_session, bob_id, "Bob's tenth week", anchor + timedelta(days=64)
@@ -1620,10 +1644,10 @@ async def test_idor_wide_scope_sources_never_serve_another_users_material(
     await _seed_reflection_source(
         db_session,
         bob_id,
-        "Bob's section in review",
-        anchor + timedelta(days=125),
-        reflection_level="section",
-        reflection_scope_key="c1:x2",
+        "Bob's fifth stage in review",
+        anchor + timedelta(days=104),
+        reflection_level="stage",
+        reflection_scope_key="c1:s5",
     )
 
     resp = await async_client.get(
@@ -1634,8 +1658,7 @@ async def test_idor_wide_scope_sources_never_serve_another_users_material(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     bodies = [item["body"] for item in resp.json()["items"]]
-    assert bodies == ["Alice's tenth week"]
-    assert "Bob's section in review" not in bodies
+    assert bodies == ["Alice's tenth week", "Alice's thirteenth week"]
 
 
 @pytest.mark.asyncio

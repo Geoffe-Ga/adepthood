@@ -568,16 +568,38 @@ async def test_an_unrecorded_past_cycle_is_declared_unreconstructable(
     assert live["window_start"] is not None
 
 
+@pytest.mark.parametrize(
+    ("stored_level", "stored_key"),
+    [
+        # The grammar rejects the token outright: the shape an UN-MIGRATED row
+        # has, and the one this endpoint has to survive if the migration has
+        # not run yet (or was rolled back, which leaves keys un-mapped).
+        (ReflectionLevel.STAGE.value, "c1:p1"),
+        # The grammar rejects the SPELLING: a non-canonical key the previous
+        # release accepted and stored, refused since the index tightening.
+        (ReflectionLevel.WEEK.value, "c1:w05"),
+        # The key parses but disagrees with the stored level -- a third,
+        # separate raise site inside ``scope_weeks``.
+        (ReflectionLevel.WEEK.value, "c1:x2"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_a_stored_scope_key_the_grammar_cannot_parse_does_not_break_the_feed(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient, db_session: AsyncSession, stored_level: str, stored_key: str
 ) -> None:
     """One unparseable stored key must not 500 the whole feed.
 
     ``_reflection_ref_from`` runs ``scope_weeks`` over every scoped row the
     caller owns, so a single key the current grammar rejects took the entire
-    endpoint down.  That surface is exactly the one a future key migration
-    rewrites, so it has to degrade before the migration runs.
+    endpoint down.  That surface is exactly the one a key migration rewrites,
+    so it has to degrade whether or not the migration has run.
+
+    Parametrized because the three shapes raise from three different places and
+    only the last of them survived #2866: ``c1:x2`` was outside the grammar
+    entirely before this vocabulary change, and ``x`` is now a valid section
+    token, so that row reaches only the level/token-agreement check. A row
+    holding a RETIRED token, or a non-canonical spelling of a live one, is what
+    an un-migrated database actually contains, and neither was covered.
     """
     anchor = (datetime.now(UTC) - timedelta(days=8)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -590,8 +612,8 @@ async def test_a_stored_scope_key_the_grammar_cannot_parse_does_not_break_the_fe
         user_id,
         "a key from another grammar",
         tag=JournalTag.HIERARCHICAL_REFLECTION,
-        reflection_level=ReflectionLevel.WEEK.value,
-        reflection_scope_key="c1:x2",
+        reflection_level=stored_level,
+        reflection_scope_key=stored_key,
         timestamp=anchor + timedelta(days=2),
     )
 
