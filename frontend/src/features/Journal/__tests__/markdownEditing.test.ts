@@ -142,4 +142,21 @@ describe('deleteBackwardEdit', () => {
   ])('defers to the plain field for %j at %j', (body, selection) => {
     expect(deleteBackwardEdit(body, selection)).toBeNull();
   });
+
+  /**
+   * A PLAIN line's content starts at the line's own start, so without the
+   * `contentStart === start` guard every plain line after the first matches
+   * here and Backspace is answered with a no-op edit: the handler consumes the
+   * keypress, hands the field back an unchanged body, and the line feed can
+   * never be deleted. The rows above cannot see this -- three sit on `- one`
+   * and the fourth puts the caret mid-line, so none is a caret at the start of
+   * a plain line that is not line 0.
+   */
+  it.each([
+    ['a\nb', 2],
+    ['- one\ntwo', 6],
+    ['a\n\nb', 2],
+  ])('defers to the plain field at the start of plain line %j:%i', (body, caret) => {
+    expect(deleteBackwardEdit(body, { start: caret, end: caret })).toBeNull();
+  });
 });
