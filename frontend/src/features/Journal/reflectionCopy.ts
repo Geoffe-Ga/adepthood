@@ -4,31 +4,48 @@
  * attribution line beneath it. No React, no I/O — trivially unit-testable.
  *
  * Scope-key grammar (mirrors the backend): ``c{cycle}:{token}`` where the token
- * is one of ``prog`` | ``w<n>`` | ``s<n>`` | ``p<n>`` | ``t<n>`` (week / stage /
- * component / tier / program).
+ * is one of ``course`` | ``w<n>`` | ``s<n>`` | ``x<n>`` (week / stage / section /
+ * course). A section is spelled ``x`` because ``s`` already names a stage and
+ * ``c`` already prefixes the cycle.
  */
 import type { ReflectionLevel, ReflectionSourceItem } from '@/api';
+import { STAGES_PER_SECTION } from '@/constants/program';
+import { STAGE_ORDER } from '@/design/tokens';
 
 /** Extracts the week ordinal from a week scope key (``c1:w14`` → ``14``). */
 const WEEK_SCOPE_KEY = /^c\d+:w(\d+)$/;
 
-/** The fixed titles for the breadth levels that carry no per-scope number. */
-const FIXED_LEVEL_TITLES: Record<Exclude<ReflectionLevel, 'week' | 'stage'>, string> = {
-  component: 'Component Reflection',
-  tier: 'Tier Reflection',
-  program: 'Program Reflection',
-};
+/** Extracts the section ordinal from a section scope key (``c1:x2`` → ``2``). */
+const SECTION_SCOPE_KEY = /^c\d+:x(\d+)$/;
 
 /** A week title, degrading gracefully when the scope key is not the ``w<n>`` shape. */
 function weekTitle(scopeKey: string): string {
   const week = WEEK_SCOPE_KEY.exec(scopeKey)?.[1];
-  return week == null ? 'Week Reflection' : `Week ${week} Reflection`;
+  return week == null ? 'Weekly Review' : `Weekly Review — Week ${week}`;
 }
 
 /**
- * The pre-filled title for a reflection invitation. A ``week`` reads
- * "Week 14 Reflection"; a ``stage`` appends its title when known
- * ("Stage Reflection — Survival"); the broader levels use their fixed label.
+ * A section title naming the Wavelength turn the section closes.
+ *
+ * The colour is DERIVED — section ``n`` closes on stage ``STAGES_PER_SECTION *
+ * n``, and that stage's name is its colour — rather than written out as a list
+ * that could drift from the curriculum. Degrades to the bare label when the
+ * scope key is not the ``x<n>`` shape or names a section the curriculum has no
+ * stage for.
+ */
+function sectionTitle(scopeKey: string): string {
+  const captured = SECTION_SCOPE_KEY.exec(scopeKey)?.[1];
+  const section = captured == null ? Number.NaN : Number.parseInt(captured, 10);
+  const closingStage = STAGE_ORDER[STAGES_PER_SECTION * section - 1];
+  return closingStage == null ? 'Section Review' : `Section Review — ${closingStage}`;
+}
+
+/**
+ * The pre-filled title for a review invitation, in the program's own words.
+ *
+ * A ``week`` reads "Weekly Review — Week 14"; a ``stage`` appends its title
+ * when known ("Stage Review — Survival"); a ``section`` names its Wavelength
+ * turn ("Section Review — Green"); the whole ``course`` reads "Course Review".
  */
 export function reflectionTitle(
   level: ReflectionLevel,
@@ -37,9 +54,10 @@ export function reflectionTitle(
 ): string {
   if (level === 'week') return weekTitle(scopeKey);
   if (level === 'stage') {
-    return stageTitle ? `Stage Reflection — ${stageTitle}` : 'Stage Reflection';
+    return stageTitle ? `Stage Review — ${stageTitle}` : 'Stage Review';
   }
-  return FIXED_LEVEL_TITLES[level];
+  if (level === 'section') return sectionTitle(scopeKey);
+  return 'Course Review';
 }
 
 /**

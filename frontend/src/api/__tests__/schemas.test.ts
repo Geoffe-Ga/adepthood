@@ -373,7 +373,7 @@ describe('journalListResponseSchema validation', () => {
   });
 
   it('accepts a hierarchical_reflection-tagged entry', () => {
-    // Regression: a hierarchical reflection (week/stage/component/tier/program)
+    // Regression: a hierarchical reflection (week/stage/section/course)
     // is stored as a journal row tagged ``hierarchical_reflection`` and appears
     // in the same shelf list. The tag enum omitted it, so one such entry failed
     // the whole page — the same defect the weekly_prompt case above records.

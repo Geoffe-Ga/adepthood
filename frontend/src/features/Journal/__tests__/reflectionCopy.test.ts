@@ -23,31 +23,47 @@ function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSo
 }
 
 describe('reflectionTitle', () => {
-  it('titles a week reflection from its week-number scope key', () => {
-    expect(reflectionTitle('week', 'c1:w14')).toBe('Week 14 Reflection');
+  it('titles a weekly review from its week-number scope key', () => {
+    expect(reflectionTitle('week', 'c1:w14')).toBe('Weekly Review — Week 14');
   });
 
-  it('titles a stage reflection with the stage title appended', () => {
-    const title = reflectionTitle('stage', 'c1:s1', 'Survival');
-    expect(title).toContain('Stage Reflection');
-    expect(title).toContain('Survival');
+  it('falls back to a bare weekly label when the key is not the w<n> shape', () => {
+    expect(reflectionTitle('week', 'c1:course')).toBe('Weekly Review');
+  });
+
+  it('titles a stage review with the stage title appended', () => {
+    expect(reflectionTitle('stage', 'c1:s1', 'Survival')).toBe('Stage Review — Survival');
   });
 
   it('still returns a usable stage title with no stageTitle supplied', () => {
-    const title = reflectionTitle('stage', 'c1:s1');
-    expect(title).toContain('Stage Reflection');
+    expect(reflectionTitle('stage', 'c1:s1')).toBe('Stage Review');
   });
 
-  it('titles a component reflection', () => {
-    expect(reflectionTitle('component', 'c1:p2')).toBe('Component Reflection');
+  // The colour is derived from STAGE_ORDER at the section's closing stage
+  // (3n), so these three cases also pin that the derivation walks the
+  // curriculum rather than a hand-written list of three names.
+  it('names section one after the Wavelength turn it closes', () => {
+    expect(reflectionTitle('section', 'c1:x1')).toBe('Section Review — Red');
   });
 
-  it('titles a tier reflection', () => {
-    expect(reflectionTitle('tier', 'c1:t1')).toBe('Tier Reflection');
+  it('names section two after the Wavelength turn it closes', () => {
+    expect(reflectionTitle('section', 'c1:x2')).toBe('Section Review — Green');
   });
 
-  it('titles a program reflection', () => {
-    expect(reflectionTitle('program', 'c1:prog')).toBe('Program Reflection');
+  it('names section three after the Wavelength turn it closes', () => {
+    expect(reflectionTitle('section', 'c1:x3')).toBe('Section Review — Ultraviolet');
+  });
+
+  it('falls back to a bare section label for a section the curriculum has no stage for', () => {
+    expect(reflectionTitle('section', 'c1:x9')).toBe('Section Review');
+  });
+
+  it('falls back to a bare section label when the key is not the x<n> shape', () => {
+    expect(reflectionTitle('section', 'c1:course')).toBe('Section Review');
+  });
+
+  it('titles the whole-course review', () => {
+    expect(reflectionTitle('course', 'c1:course')).toBe('Course Review');
   });
 });
 

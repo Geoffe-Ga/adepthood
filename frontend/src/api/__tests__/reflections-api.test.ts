@@ -55,7 +55,7 @@ describe('reflections.due', () => {
     expect(result.due).toBeNull();
   });
 
-  it('carries a set existing_entry_id through for a resumable in-progress reflection', async () => {
+  it('carries a set existing_entry_id through for a resumable in-progress review', async () => {
     const due: ReflectionDue = {
       level: 'stage',
       scope_key: 'c1:s1',
@@ -68,6 +68,58 @@ describe('reflections.due', () => {
     const result = await reflections.due('tok');
 
     expect(result.due?.existing_entry_id).toBe(42);
+  });
+
+  // The two widest levels are new (#2866). Parsing them here is what proves
+  // they actually cross the zod boundary -- every other fixture in this file
+  // is a week or a stage, which survived the vocabulary change untouched.
+  it('parses a section-level due window', async () => {
+    const due: ReflectionDue = {
+      level: 'section',
+      scope_key: 'c1:x2',
+      window_start: '2026-06-01T00:00:00Z',
+      window_end: '2026-08-03T00:00:00Z',
+      existing_entry_id: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse({ due }, 200));
+
+    const result = await reflections.due('tok');
+
+    expect(result.due).toMatchObject({ level: 'section', scope_key: 'c1:x2' });
+  });
+
+  it('parses a course-level due window', async () => {
+    const due: ReflectionDue = {
+      level: 'course',
+      scope_key: 'c1:course',
+      window_start: '2026-01-05T00:00:00Z',
+      window_end: '2026-09-14T00:00:00Z',
+      existing_entry_id: null,
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse({ due }, 200));
+
+    const result = await reflections.due('tok');
+
+    expect(result.due).toMatchObject({ level: 'course', scope_key: 'c1:course' });
+  });
+
+  it('rejects a retired level name at the boundary', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        {
+          due: {
+            level: 'component',
+            scope_key: 'c1:p2',
+            window_start: '2026-06-01T00:00:00Z',
+            window_end: '2026-08-03T00:00:00Z',
+            existing_entry_id: null,
+          },
+        },
+        200,
+      ),
+    );
+
+    await expect(reflections.due('tok')).rejects.toThrow();
   });
 });
 
