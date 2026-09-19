@@ -287,7 +287,7 @@
   },
   {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
-    "description": "A due review is opened from the Journal shelf under its own title in the program's words -- \"Weekly Review \u2014 Week 14\", \"Stage Review \u2014 Survival\", \"Section Review \u2014 Green\", \"Course Review\" -- saved with its hierarchical identity (level week | stage | section | course), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text; the stage, section and course invitations, and the review titles in the program's words, are declared separately under journal.section-and-course-review-invitations.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "promotions", "reflections"],
@@ -318,7 +318,7 @@
   },
   {
     "id": "journal.section-and-course-review-invitations",
-    "description": "On the last day of every third stage the Journal shelf offers a Section Review named after the Wavelength turn it closes (Red at stage 3, Green at 6, Ultraviolet at 9), and on the program's final day it offers the Course Review, whose sources decompose into the three sections plus the tenth stage that no section covers. Both moments became reachable only with issue #2866 -- before it, a third stage closed as a plain stage review and the final week closed as a \"program\" review. Uncovered because driving either end to end needs a browser-lane arrange that carries an account to program day 63 or 252, and no such time-travelling arrange exists in the lane; pinned meanwhile by tests/domain/test_reflection_hierarchy.py (the whole-curriculum walk), test_reflections_api.py, test_reflections_window.py and ReflectionInvitationBand.test.tsx.",
+    "description": "On the last day of every third stage the Journal shelf offers a Section Review named after the Wavelength turn it closes (Red at stage 3, Green at 6, Ultraviolet at 9), and on the program's final day it offers the Course Review, whose sources decompose into the three sections plus the tenth stage that no section covers. Both moments became reachable only with issue #2866 -- before it, a third stage closed as a plain stage review and the final week closed as a \"program\" review. Uncovered because no browser-lane spec drives either day, and none asserts a review title at any level. The arrange itself DOES exist -- setProgramAnchorDaysAgo in frontend/e2e/journalHabitsBrowserSupport.ts, and GET /reflections/due is purely anchor-derived, so program day 62 and day 251 are both reachable -- so the gap is a missing spec, not a missing lane capability. Pinned meanwhile by tests/domain/test_reflection_hierarchy.py (the whole-curriculum walk), test_reflections_api.py, test_reflections_window.py and ReflectionInvitationBand.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["reflections", "journal"],
@@ -326,7 +326,7 @@
       "tables": ["journalentry", "stageprogress"]
     },
     "status": "uncovered",
-    "issue": 2866
+    "issue": 2916
   },
   {
     "id": "journal.delete-entry",

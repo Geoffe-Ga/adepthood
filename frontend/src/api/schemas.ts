@@ -321,7 +321,7 @@ export const journalTagSchema = z.enum([
   // includes that row, so the enum must accept it — otherwise the whole page
   // fails Zod validation and the user sees "Load failed".
   'weekly_prompt',
-  // A hierarchical reflection (week/stage/component/tier/program) is a journal
+  // A hierarchical reflection (week/stage/section/course) is a journal
   // row like any other and appears in the same shelf list, so the enum must
   // accept it for the same reason it accepts ``weekly_prompt``.
   'hierarchical_reflection',
