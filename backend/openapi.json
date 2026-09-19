@@ -5309,13 +5309,12 @@
         "type": "object"
       },
       "ReflectionLevel": {
-        "description": "One layer of the nested reflection calendar, widest last but for WEEK.\n\nOrdered here from the narrowest span (a single WEEK) outward through STAGE,\nCOMPONENT, and TIER to the all-encompassing PROGRAM. When several layers\nclose on the same day the widest one wins.",
+        "description": "One layer of the nested review calendar, narrowest first.\n\nA single WEEK, a Wavelength STAGE, a SECTION of three stages, and the whole\nCOURSE. When several layers close on the same day the widest one wins.\nThis enum ships to clients as the ``ReflectionLevel`` schema, and its\nmembers are pinned in the database by a CHECK derived from it.",
         "enum": [
           "week",
           "stage",
-          "component",
-          "tier",
-          "program"
+          "section",
+          "course"
         ],
         "title": "ReflectionLevel",
         "type": "string"

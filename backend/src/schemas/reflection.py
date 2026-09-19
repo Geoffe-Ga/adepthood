@@ -16,7 +16,7 @@ from domain.cycle_calendar import CycleAnchorStatus
 
 
 class PromotedQuoteSummary(BaseModel):
-    """A promoted quote as it rides along with its source entry in a tier feed.
+    """A promoted quote as it rides along with its source entry in a sources feed.
 
     ``pending`` is True while the quote has not yet been folded into any
     reflection (its ``included_in_entry_id`` is NULL).
@@ -71,7 +71,7 @@ class ReflectionSourcesResponse(BaseModel):
     distinction to tell "nothing was written in this period" apart from "this
     period cannot be rebuilt" — without it both read as one silent empty feed.
 
-    Deliberately unpaginated: a single tier's feed is at most a few dozen
+    Deliberately unpaginated: a single scope's feed is at most a few dozen
     items, so the whole set is returned in one call. Pagination can be layered
     on later if a wider layer's feed ever grows past a comfortable page.
     """

@@ -200,6 +200,91 @@ async def test_due_on_stage_boundary_returns_stage_scope(
 
 
 @pytest.mark.asyncio
+async def test_due_on_the_day_before_a_stage_closes_returns_the_weekly_scope(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Program day 20 keys stage 1's final week, and declares that week's window.
+
+    The declared window runs to the END of week 3 -- one day PAST the day the
+    invitation is offered on. That is deliberate and asserted on both halves:
+    ``_due_window`` promises the period is byte-for-byte the period
+    ``GET /reflections/sources`` filters on, so clamping the label without
+    clamping the filter would let an entry fall between the two (the defect
+    class #2886 closed).
+    """
+    now = datetime.now(UTC)
+    anchor = now - timedelta(days=19)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor)
+
+    resp = await async_client.get("/reflections/due", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    due = resp.json()["due"]
+    assert due is not None
+    assert due["level"] == "week"
+    assert due["scope_key"] == "c1:w3"
+
+    window_start = _aware(due["window_start"])
+    window_end = _aware(due["window_end"])
+    assert window_start == datetime.combine(
+        (anchor + timedelta(days=2 * _DAYS_PER_WEEK)).date(), time.min, tzinfo=UTC
+    )
+    assert window_end - window_start == timedelta(days=_DAYS_PER_WEEK)
+    # One day into the future: the review is offered on day 20, and its window
+    # closes at the start of day 22 -- the day AFTER week 3's last day.
+    assert window_end > now
+
+
+@pytest.mark.asyncio
+async def test_due_on_an_even_stages_close_returns_that_stages_own_review(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Stage 2's closing day now offers ``c1:s2`` -- unreachable under the old cadence."""
+    now = datetime.now(UTC)
+    anchor = now - timedelta(days=41)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, current_stage=2)
+    resp = await async_client.get("/reflections/due", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    due = resp.json()["due"]
+    assert due is not None
+    assert (due["level"], due["scope_key"]) == ("stage", "c1:s2")
+
+
+@pytest.mark.asyncio
+async def test_a_migrated_even_stage_review_is_offered_as_a_resume_not_a_duplicate(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A user sitting on stage 2's last day when the migration lands resumes their row.
+
+    Their old ``c1:p1`` component review was rewritten to ``c1:s2`` -- the very
+    key day 42 now makes due -- so ``existing_entry_id`` points at it and the
+    band reopens that entry instead of offering a second, empty one. This is
+    the property the injective same-closing-day mapping table buys: a widening
+    map would have keyed it ``c1:x1`` and left day 42 offering a blank page.
+    """
+    now = datetime.now(UTC)
+    anchor = now - timedelta(days=41)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, current_stage=2)
+    migrated = await _seed_entry(
+        db_session,
+        user_id,
+        "What stage two asked of me.",
+        tag=JournalTag.HIERARCHICAL_REFLECTION,
+        reflection_level="stage",
+        reflection_scope_key="c1:s2",
+    )
+
+    resp = await async_client.get("/reflections/due", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    due = resp.json()["due"]
+    assert due is not None
+    assert due["scope_key"] == "c1:s2"
+    assert due["existing_entry_id"] == migrated.id
+
+
+@pytest.mark.asyncio
 async def test_due_existing_entry_id_toggles_with_soft_delete(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

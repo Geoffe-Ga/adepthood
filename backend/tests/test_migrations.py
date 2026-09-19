@@ -14,7 +14,7 @@ import ast
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import pytest
 from alembic import command
@@ -4844,3 +4844,325 @@ def test_feedback_reports_downgrade_refuses_with_existing_rows(
 
     with pytest.raises(RuntimeError, match="feedbackreport"):
         command.downgrade(cfg, _FEEDBACK_BASE_REVISION)
+
+
+# -- review-cadence scope-key vocabulary migration ----------------------------
+
+_CADENCE_BASE_REVISION = "b4d2e7a9c1f3"  # pragma: allowlist secret
+_CADENCE_REVISION = "e3a9d1c4b6f2"  # pragma: allowlist secret
+
+# The complete image of the retired grammar under the migration's table. Every
+# key that can exist at ``b4d2e7a9c1f3`` is covered: ``prog``, ``p1``..``p5``
+# and ``t1``..``t2`` are rewritten, ``w1``..``w36`` and ``s1``..``s10`` are not.
+# Both halves are exercised below, which is what makes "the mapping is total"
+# an assertion rather than a claim.
+_CADENCE_EXPECTED_MAPPING = {
+    "prog": ("course", "course"),
+    "p1": ("s2", "stage"),
+    "p2": ("s4", "stage"),
+    "p3": ("s6", "stage"),
+    "p4": ("s8", "stage"),
+    "p5": ("s10", "stage"),
+    "t1": ("x2", "section"),
+    "t2": ("x3", "section"),
+}
+_CADENCE_RETIRED_LEVELS = {
+    "prog": "program",
+    "p1": "component",
+    "p2": "component",
+    "p3": "component",
+    "p4": "component",
+    "p5": "component",
+    "t1": "tier",
+    "t2": "tier",
+}
+
+
+def _bootstrap_cadence_baseline(sync_url: str) -> None:
+    """Bootstrap ``user`` and a scoped ``journalentry`` as of ``c4f7a2b8d9e1``.
+
+    Mirrors the shape the review-cadence migration expects to find: both
+    reflection columns, both CHECKs (the level list as it stood, and the paired
+    guard), and the partial unique index whose recreation is the migration's own
+    collision proof.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE user ( id INTEGER PRIMARY KEY, email VARCHAR(255) NOT NULL)")
+        )
+        conn.execute(text("INSERT INTO user (id, email) VALUES (1, 'cadence@example.com')"))
+        conn.execute(text("INSERT INTO user (id, email) VALUES (2, 'other@example.com')"))
+        conn.execute(
+            text(
+                "CREATE TABLE journalentry ("
+                " id INTEGER PRIMARY KEY,"
+                " user_id INTEGER NOT NULL,"
+                " sender VARCHAR(10) NOT NULL,"
+                " message TEXT NOT NULL,"
+                " tag VARCHAR(50) NOT NULL DEFAULT 'freeform',"
+                " status VARCHAR(20) NOT NULL DEFAULT 'finished',"
+                " title VARCHAR(200),"
+                " deleted_at DATETIME,"
+                " updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " reflection_level VARCHAR(20),"
+                " reflection_scope_key VARCHAR(30),"
+                " CONSTRAINT ck_journalentry_reflection_level_valid CHECK ("
+                " reflection_level IS NULL OR reflection_level IN"
+                " ('week', 'stage', 'component', 'tier', 'program')),"
+                " CONSTRAINT ck_journalentry_reflection_scope_paired CHECK ("
+                " (reflection_level IS NULL) = (reflection_scope_key IS NULL))"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX ix_journalentry_user_reflection_scope"
+                " ON journalentry (user_id, reflection_scope_key)"
+                " WHERE reflection_scope_key IS NOT NULL AND deleted_at IS NULL"
+            )
+        )
+    engine.dispose()
+
+
+class _Scope(NamedTuple):
+    """One entry's ``(reflection_scope_key, reflection_level)`` pair.
+
+    Kept together because the paired CHECK requires them to be set or unset
+    together — separating them into two arguments invites a caller to set one.
+    """
+
+    key: str | None
+    level: str | None
+
+
+def _seed_scoped_entry(
+    db_url: str,
+    entry_id: int,
+    scope: _Scope,
+    *,
+    user_id: int = 1,
+    deleted: bool = False,
+) -> None:
+    """Insert one journal entry carrying (or not carrying) a reflection scope."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO journalentry"
+                    " (id, user_id, sender, message, reflection_scope_key,"
+                    "  reflection_level, deleted_at)"
+                    " VALUES (:id, :user_id, 'user', :message, :key, :level, :deleted_at)"
+                ),
+                {
+                    "id": entry_id,
+                    "user_id": user_id,
+                    "message": f"Entry {entry_id}.",
+                    "key": scope.key,
+                    "level": scope.level,
+                    "deleted_at": "2026-01-01 00:00:00" if deleted else None,
+                },
+            )
+    finally:
+        engine.dispose()
+
+
+def _scopes_by_id(db_url: str) -> dict[int, tuple[str | None, str | None, bool]]:
+    """Every journal entry's (scope key, level, is-soft-deleted), keyed by id."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT id, reflection_scope_key, reflection_level, deleted_at"
+                    " FROM journalentry ORDER BY id"
+                )
+            ).all()
+    finally:
+        engine.dispose()
+    return {row[0]: (row[1], row[2], row[3] is not None) for row in rows}
+
+
+def _scope_index_ddl(db_url: str) -> str:
+    """The stored DDL of the partial unique scope index, for predicate assertions."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return cast(
+                "str",
+                conn.execute(
+                    text(
+                        "SELECT sql FROM sqlite_master"
+                        " WHERE name = 'ix_journalentry_user_reflection_scope'"
+                    )
+                ).scalar_one(),
+            )
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_cadence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite Alembic config positioned just before the review-cadence migration."""
+    db_path = tmp_path / "review_cadence_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_cadence_baseline(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _CADENCE_BASE_REVISION)
+    return cfg
+
+
+def test_review_cadence_scope_key_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_cadence: Config,
+) -> None:
+    """Two colliding-under-the-issue's-table reviews for ONE user both survive.
+
+    ``c1:p2`` (program day 84) and ``c1:t1`` (day 126) are both reachable from
+    the calendar for the same user. Under the issue's own mapping they would
+    both become ``c1:x2`` and the rewrite would abort on the partial unique
+    index. Under the same-closing-day table they become ``c1:s4`` and ``c1:x2``
+    and both keep their scope. Seeding them for ONE user is what makes this
+    test able to see a non-injective mapping at all: two users, or two cycles,
+    and the index would never be reached.
+    """
+    cfg = alembic_sqlite_config_cadence
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    _seed_scoped_entry(db_url, 1, _Scope("c1:p2", "component"))
+    _seed_scoped_entry(db_url, 2, _Scope("c1:t1", "tier"))
+    _seed_scoped_entry(db_url, 3, _Scope("c1:w14", "week"))
+    _seed_scoped_entry(db_url, 4, _Scope(None, None))
+
+    command.upgrade(cfg, _CADENCE_REVISION)
+
+    assert _scopes_by_id(db_url) == {
+        1: ("c1:s4", "stage", False),
+        2: ("c1:x2", "section", False),
+        3: ("c1:w14", "week", False),
+        4: (None, None, False),
+    }
+
+    ddl = _scope_index_ddl(db_url)
+    assert "UNIQUE" in ddl.upper()
+    assert "reflection_scope_key IS NOT NULL AND deleted_at IS NULL" in ddl
+
+    command.downgrade(cfg, _CADENCE_BASE_REVISION)
+    assert _scopes_by_id(db_url)[2] == ("c1:x2", "component", False)
+
+    command.upgrade(cfg, _CADENCE_REVISION)
+    assert _scopes_by_id(db_url) == {
+        1: ("c1:s4", "stage", False),
+        2: ("c1:x2", "section", False),
+        3: ("c1:w14", "week", False),
+        4: (None, None, False),
+    }
+
+
+def test_review_cadence_migration_maps_every_key_the_old_grammar_admitted(
+    alembic_sqlite_config_cadence: Config,
+) -> None:
+    """The mapping is TOTAL, and no entry is lost.
+
+    One row per retired token (spread across two users and two cycles so none
+    of them can collide) plus every ``w`` and ``s`` token, and a soft-deleted
+    row for good measure. After the upgrade every seeded id is still present,
+    every retired key has moved to its documented target with a derived level,
+    and every ``w``/``s`` key is byte-identical -- which the begin-again anchor
+    reconstruction in ``a1f7c2b9d604`` depends on.
+    """
+    cfg = alembic_sqlite_config_cadence
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    expected: dict[int, tuple[str | None, str | None, bool]] = {}
+    entry_id = 0
+    for token, (new_token, new_level) in _CADENCE_EXPECTED_MAPPING.items():
+        entry_id += 1
+        _seed_scoped_entry(db_url, entry_id, _Scope(f"c1:{token}", _CADENCE_RETIRED_LEVELS[token]))
+        expected[entry_id] = (f"c1:{new_token}", new_level, False)
+    # The same retired token in a SECOND cycle rewrites independently and cannot
+    # collide with the first: only the part after the ':' is touched.
+    entry_id += 1
+    _seed_scoped_entry(db_url, entry_id, _Scope("c2:p2", "component"))
+    expected[entry_id] = ("c2:s4", "stage", False)
+    # A soft-deleted retired row is rewritten too -- the replacement CHECK
+    # applies to it -- and it is NOT deleted.
+    entry_id += 1
+    _seed_scoped_entry(db_url, entry_id, _Scope("c3:p1", "component"), deleted=True)
+    expected[entry_id] = ("c3:s2", "stage", True)
+    for week in range(1, 37):
+        entry_id += 1
+        _seed_scoped_entry(db_url, entry_id, _Scope(f"c1:w{week}", "week"), user_id=2)
+        expected[entry_id] = (f"c1:w{week}", "week", False)
+    for stage in range(1, 11):
+        entry_id += 1
+        _seed_scoped_entry(db_url, entry_id, _Scope(f"c2:s{stage}", "stage"), user_id=2)
+        expected[entry_id] = (f"c2:s{stage}", "stage", False)
+
+    command.upgrade(cfg, _CADENCE_REVISION)
+
+    actual = _scopes_by_id(db_url)
+    assert set(actual) == set(expected), "a migrated entry disappeared"
+    assert actual == expected
+    assert None not in {key for key, _level, _deleted in actual.values()}
+
+
+def test_review_cadence_migration_demotes_a_collision_instead_of_deleting_it(
+    alembic_sqlite_config_cadence: Config,
+) -> None:
+    """A hand-written key already holding a target is kept; the loser is demoted.
+
+    Demotion means BOTH columns NULL, set together so the paired CHECK is never
+    transiently violated. The row itself survives untouched -- no delete, no
+    soft-delete, and no suffixed key (a suffix would survive to the client,
+    which would then ask for sources with it and take a 422).
+    """
+    cfg = alembic_sqlite_config_cadence
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    _seed_scoped_entry(db_url, 1, _Scope("c1:p1", "component"))
+    _seed_scoped_entry(db_url, 2, _Scope("c1:s2", "stage"))
+
+    command.upgrade(cfg, _CADENCE_REVISION)
+
+    assert _scopes_by_id(db_url) == {
+        1: (None, None, False),
+        2: ("c1:s2", "stage", False),
+    }
+
+
+def test_review_cadence_migration_check_lists_exactly_the_new_levels(
+    alembic_sqlite_config_cadence: Config,
+) -> None:
+    """After the upgrade a ``section`` row inserts and a ``component`` row does not.
+
+    Asserted by WRITING rows, not by reading DDL: a migration that forgot to
+    replace the CHECK still presents every column and index this suite
+    otherwise looks at, and would fail only on the first real ``section``
+    insert in production.
+    """
+    cfg = alembic_sqlite_config_cadence
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    command.upgrade(cfg, _CADENCE_REVISION)
+
+    _seed_scoped_entry(db_url, 10, _Scope("c1:x1", "section"))
+    _seed_scoped_entry(db_url, 11, _Scope("c1:course", "course"))
+
+    for retired in ("component", "tier", "program"):
+        with pytest.raises(IntegrityError, match="ck_journalentry_reflection_level_valid"):
+            _seed_scoped_entry(db_url, 99, _Scope("c1:q9", retired))

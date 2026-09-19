@@ -1579,6 +1579,66 @@ async def test_idor_reflection_sources_never_serve_another_users_material(
 
 
 @pytest.mark.asyncio
+async def test_idor_wide_scope_sources_never_serve_another_users_material(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The widest scopes stay owner-scoped too, and add no id to authorize.
+
+    The section and course levels (#2866) decompose into many child scopes and
+    many weeks of dailies, so they widen the blast radius of any missing
+    ``user_id`` predicate more than a single week ever could: one unscoped join
+    would hand over most of another account's journal. No new ``*_id`` field is
+    introduced on the request — the endpoint still takes only ``level`` and
+    ``scope_key`` — so there is still nothing for the ``resolve_owned_*``
+    helpers to authorize, and what is asserted is that the structural scoping
+    holds at the widest level. Alice's own entry being present is what stops
+    "excluded" being satisfied by an empty feed.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_wide_scope")
+    _bob_headers, bob_id = await _signup(async_client, "bob_wide_scope")
+    anchor = (datetime.now(UTC) - timedelta(days=130)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    for owner in (alice_id, bob_id):
+        db_session.add(
+            StageProgress(
+                user_id=owner,
+                current_stage=6,
+                completed_stages=[],
+                stage_started_at=anchor,
+                program_started_at=anchor,
+            )
+        )
+    await db_session.commit()
+
+    await _seed_reflection_source(
+        db_session, alice_id, "Alice's tenth week", anchor + timedelta(days=64)
+    )
+    await _seed_reflection_source(
+        db_session, bob_id, "Bob's tenth week", anchor + timedelta(days=64)
+    )
+    await _seed_reflection_source(
+        db_session,
+        bob_id,
+        "Bob's section in review",
+        anchor + timedelta(days=125),
+        reflection_level="section",
+        reflection_scope_key="c1:x2",
+    )
+
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "section", "scope_key": "c1:x2"},
+        headers=alice_headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    bodies = [item["body"] for item in resp.json()["items"]]
+    assert bodies == ["Alice's tenth week"]
+    assert "Bob's section in review" not in bodies
+
+
+@pytest.mark.asyncio
 async def test_idor_past_cycle_sources_never_cross_accounts(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

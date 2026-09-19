@@ -1,102 +1,104 @@
-"""The multi-level reflection hierarchy — when a reflection falls due and what feeds it.
+"""The multi-level reflection hierarchy — when a review falls due and what feeds it.
 
 The APTITUDE curriculum is a nested calendar. Ten stages
-(:data:`domain.constants.STAGE_DURATIONS_DAYS`) pair up into five *components*
-(stages ``2n-1`` and ``2n``), and those components split into two *tiers* — the
-first six stages, then the last four. Every layer closes with an invitation to
-reflect: at a plain week's end, at a stage's end, and — when several layers close
-on the very same day — at the most encompassing layer that closes there. The
-precedence is fixed: **program beats tier beats component beats stage beats a
-plain week.** A user who reaches day seven of week eighteen is not asked for four
-reflections; they are offered the single tier reflection that subsumes the rest.
+(:data:`domain.constants.STAGE_DURATIONS_DAYS`) group in threes into three
+*sections* — stages ``3n-2``..``3n`` — and the tenth stage, Clear Light, falls
+outside every section and closes the whole *course* on its own. That leftover is
+the remainder of :data:`domain.constants.SECTION_COUNT`'s floor division, not a
+separate rule.
+
+The cadence is stage-local (issue #2866). Inside a stage a review comes due:
+
+* on every seventh day of the stage — a plain WEEK review;
+* on the day BEFORE the stage closes — that stage's FINAL week, which otherwise
+  would never be keyed at all, because its seventh day is the closing day;
+* on the closing day itself, at the widest layer that closes there. **Course
+  beats section beats stage.** A stage that is a third stage closes its section;
+  the tenth closes the course; every other stage closes only itself.
+
+Forty-six review days across the 252-day program: 36 weekly (every program week
+exactly once), 6 stage, 3 section, 1 course.
 
 This module is pure. It reads an anchor datetime, a wall clock, and immutable
-value objects, and it never touches the database. Two ideas drive it:
+value objects, and it never touches the database. Three ideas drive it:
 
-* **Everything derives from the duration schedule.** Week spans, component
-  membership, and the program length are all computed from
+* **Everything derives from the duration schedule.** Week spans, section
+  membership and the program length are all computed from
   ``STAGE_DURATIONS_DAYS`` so a schedule change ripples through automatically —
-  there are no hand-written week numbers. The one thing the schedule *cannot*
-  tell us is where tier one ends: the six-then-four split is a curriculum design
-  choice, not a consequence of any duration, so it lives in the single named
-  constant :data:`_TIER_ONE_LAST_STAGE`.
+  there are no hand-written week numbers and no per-stage literals. The one
+  thing the schedule *cannot* tell us is how many stages make a section: the
+  three-turn Wavelength cadence is a curriculum design choice, so it lives in
+  the single named constant :data:`domain.constants.STAGES_PER_SECTION`, beside
+  the schedule it cannot be derived from.
+
+* **The key grammar is composed from the level table, never typed out.**
+  :data:`_KEY_PATTERN` and :data:`_TOKEN_TO_LEVEL` are both built from
+  :data:`_LEVEL_SPECS`, so a level retired from the enum is retired from the
+  grammar in the same edit. That matters more than it looks: a pattern that
+  still admits a token the table no longer knows would raise ``KeyError``, and
+  :func:`routers.reflections._parsed_reflection_ref` catches only ``ValueError``
+  — one stale row would 500 a whole sources feed rather than degrade itself.
+  Hence :func:`_token_to_level_index` raises ``ValueError`` for anything the
+  table does not hold.
 
 * **Uniform recursion, no special cases.** :func:`resolve_sources` answers "what
-  raw material feeds this reflection?" by walking the hierarchy top-down: if a
-  child layer already has its own completed reflection, that reflection stands in
-  for its whole span; otherwise we recurse into the child. The recursion bottoms
-  out at a week, which yields either its own weekly reflection or that week's raw
-  daily entries. Crucially, a stage's *final* week can never carry its own weekly
-  reflection — that day resolved to the STAGE (or higher) layer instead — so the
-  final week simply recurses to its dailies like any other gap. Because that is
-  true uniformly, the walk needs no boundary special-casing, and ascending child
-  order yields chronologically ordered output with reflections ahead of the raw
-  entries they summarize.
+  raw material feeds this review?" by walking the hierarchy top-down: if a child
+  layer already has its own completed review, that review stands in for its
+  whole span; otherwise we recurse into the child. The recursion bottoms out at
+  a week, which yields either its own weekly review or that week's raw daily
+  entries. A stage's final week now DOES carry its own weekly review, written
+  the day before the stage closes — and when it exists it stands in for the
+  whole of that week, the stage's closing day included, which is exactly the
+  period that weekly's own declared window promises. Because that is true
+  uniformly, the walk still needs no boundary special-casing, and ascending
+  child order yields chronologically ordered output with reviews ahead of the
+  raw entries they summarize.
 
-Keys are strings of the form ``"c{cycle}:{token}"`` where ``token`` is ``prog``,
-``w<week>``, ``s<stage>``, ``p<component>``, or ``t<tier>``. The ``c{cycle}``
-prefix isolates repeat runs of the program: a reflection from cycle one never
-satisfies a cycle-two lookup.
+Keys are strings of the form ``"c{cycle}:{token}"`` where ``token`` is
+``course``, ``w<week>``, ``s<stage>`` or ``x<section>``. A section is spelled
+``x`` because ``s`` already names a stage and ``c`` already prefixes the cycle.
+The ``c{cycle}`` prefix isolates repeat runs of the program: a review from cycle
+one never satisfies a cycle-two lookup.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from domain.constants import (
     DAYS_PER_WEEK,
+    SECTION_COUNT,
+    STAGE_DURATIONS_DAYS,
+    STAGES_PER_SECTION,
     TOTAL_PROGRAM_WEEKS,
     TOTAL_STAGES,
     WEEKS_PER_STAGE,
 )
-from domain.program_calendar import elapsed_days
+from domain.program_calendar import elapsed_days, stage_position
 
 # ``DAYS_PER_WEEK``, ``WEEKS_PER_STAGE`` and ``TOTAL_PROGRAM_WEEKS`` used to be
 # derived here from ``STAGE_DURATIONS_DAYS``. They now come from
 # :mod:`domain.constants`, which owns the schedule, so the week grid has one
 # definition rather than one per module that needs it.
 
-# Two consecutive stages make one component; the second (even) stage of a
-# pair is the one whose end closes the component.
-_STAGES_PER_COMPONENT = 2
-
-# Five components across the ten stages.
-_COMPONENT_COUNT = TOTAL_STAGES // _STAGES_PER_COMPONENT
-
-# The components split into exactly two tiers (two halves of the journey).
-_TIER_COUNT = 2
-
-# Tier one is the first SIX stages; tier two is the remaining four. This
-# six-then-four split is a curriculum design decision — it is NOT derivable
-# from STAGE_DURATIONS_DAYS (the two long stages sit in tier two, but their
-# length is what makes them long, not what makes them tier two). Hence a
-# named constant rather than a computed value.
-_TIER_ONE_LAST_STAGE = 6
-
-# The token that names a whole-program reflection (it carries no index).
-_PROGRAM_TAG = "prog"
-
-# A key is "c<cycle>:<token>"; the token names one layer of the hierarchy.
-_KEY_PATTERN = re.compile(r"^c(\d+):(prog|w\d+|s\d+|p\d+|t\d+)$")
-
 
 class ReflectionLevel(StrEnum):
-    """One layer of the nested reflection calendar, widest last but for WEEK.
+    """One layer of the nested review calendar, narrowest first.
 
-    Ordered here from the narrowest span (a single WEEK) outward through STAGE,
-    COMPONENT, and TIER to the all-encompassing PROGRAM. When several layers
-    close on the same day the widest one wins.
+    A single WEEK, a Wavelength STAGE, a SECTION of three stages, and the whole
+    COURSE. When several layers close on the same day the widest one wins.
+    This enum ships to clients as the ``ReflectionLevel`` schema, and its
+    members are pinned in the database by a CHECK derived from it.
     """
 
     WEEK = "week"
     STAGE = "stage"
-    COMPONENT = "component"
-    TIER = "tier"
-    PROGRAM = "program"
+    SECTION = "section"
+    COURSE = "course"
 
 
 class SourceKind(StrEnum):
@@ -110,23 +112,62 @@ class SourceKind(StrEnum):
     ENTRY = "entry"
 
 
-# The leading token letter that names each indexed layer (``prog`` is handled
-# separately as it carries no index).
-_LETTER_TO_LEVEL = {
-    "w": ReflectionLevel.WEEK,
-    "s": ReflectionLevel.STAGE,
-    "p": ReflectionLevel.COMPONENT,
-    "t": ReflectionLevel.TIER,
+@dataclass(frozen=True)
+class _LevelSpec:
+    """How one level spells itself in a scope key.
+
+    ``token`` is the leading letter of an indexed level (``w5``, ``s3``, ``x2``)
+    or the WHOLE token of an index-free one. ``max_index`` is the largest valid
+    1-based index, so a stray ``s11`` or ``x4`` is rejected rather than silently
+    scoping an empty span; zero marks the index-free level.
+    """
+
+    token: str
+    max_index: int
+
+
+# The single table every other name in this module's grammar is derived from:
+# the regex, the token→level map, key composition and index validation. Retiring
+# a level from :class:`ReflectionLevel` retires it from all four at once, which
+# is the property that keeps a stale stored key a rejected key rather than an
+# uncaught ``KeyError`` (see the module docstring).
+_LEVEL_SPECS: Mapping[ReflectionLevel, _LevelSpec] = {
+    ReflectionLevel.WEEK: _LevelSpec("w", TOTAL_PROGRAM_WEEKS),
+    ReflectionLevel.STAGE: _LevelSpec("s", TOTAL_STAGES),
+    ReflectionLevel.SECTION: _LevelSpec("x", SECTION_COUNT),
+    ReflectionLevel.COURSE: _LevelSpec("course", 0),
 }
 
-# The largest valid 1-based index for each indexed layer, so a stray ``s11`` or
-# ``t3`` is rejected rather than silently scoping an empty span.
-_LEVEL_MAX_INDEX = {
-    ReflectionLevel.WEEK: TOTAL_PROGRAM_WEEKS,
-    ReflectionLevel.STAGE: TOTAL_STAGES,
-    ReflectionLevel.COMPONENT: _COMPONENT_COUNT,
-    ReflectionLevel.TIER: _TIER_COUNT,
+# ``{"w": WEEK, "s": STAGE, "x": SECTION, "course": COURSE}`` — indexed levels
+# keyed by their leading letter, the index-free one by its whole token.
+_TOKEN_TO_LEVEL: Mapping[str, ReflectionLevel] = {
+    spec.token: level for level, spec in _LEVEL_SPECS.items()
 }
+
+
+def _token_alternative(spec: _LevelSpec) -> str:
+    """The regex alternative matching one level's token."""
+    return spec.token if spec.max_index == 0 else rf"{spec.token}\d+"
+
+
+# A key is "c<cycle>:<token>"; the token names one layer of the hierarchy. The
+# alternatives are COMPOSED from the level table rather than typed out, so the
+# grammar cannot outlive the vocabulary it spells.
+_KEY_PATTERN = re.compile(
+    r"^c(\d+):(" + "|".join(_token_alternative(spec) for spec in _LEVEL_SPECS.values()) + r")$"
+)
+
+
+def _key(prefix: str, level: ReflectionLevel, index: int) -> str:
+    """Compose a scope key from its ``c<cycle>`` prefix, level and 1-based index.
+
+    The one place a key is spelled, so no caller hand-writes ``f"s{n}"`` and no
+    level's token appears twice in this module. ``index`` is ignored for the
+    index-free COURSE.
+    """
+    spec = _LEVEL_SPECS[level]
+    token = spec.token if spec.max_index == 0 else f"{spec.token}{index}"
+    return f"{prefix}:{token}"
 
 
 @dataclass(frozen=True)
@@ -184,62 +225,56 @@ def _stage_week_span(stage_number: int) -> tuple[int, int]:
     return (start, end)
 
 
-def _component_week_span(component_number: int) -> tuple[int, int]:
-    """Return the inclusive (start, end) program-week span for a component."""
-    first_stage = _STAGES_PER_COMPONENT * component_number - 1
-    second_stage = first_stage + 1
-    return (_stage_week_span(first_stage)[0], _stage_week_span(second_stage)[1])
+def _section_stage_span(section_number: int) -> tuple[int, int]:
+    """Return the inclusive (first, last) STAGE numbers a section covers."""
+    last_stage = STAGES_PER_SECTION * section_number
+    return (last_stage - STAGES_PER_SECTION + 1, last_stage)
 
 
-def _tier_week_span(tier_number: int) -> tuple[int, int]:
-    """Return the inclusive (start, end) program-week span for a tier."""
-    if tier_number == 1:
-        return (1, _stage_week_span(_TIER_ONE_LAST_STAGE)[1])
-    return (_stage_week_span(_TIER_ONE_LAST_STAGE + 1)[0], TOTAL_PROGRAM_WEEKS)
+def _section_week_span(section_number: int) -> tuple[int, int]:
+    """Return the inclusive (start, end) program-week span for a section."""
+    first_stage, last_stage = _section_stage_span(section_number)
+    return (_stage_week_span(first_stage)[0], _stage_week_span(last_stage)[1])
 
 
-def _stage_component(stage_number: int) -> int:
-    """Return the 1-based component number a stage belongs to (its pair index)."""
-    return (stage_number + _STAGES_PER_COMPONENT - 1) // _STAGES_PER_COMPONENT
+def _stage_close_level(stage_number: int) -> tuple[ReflectionLevel, int]:
+    """Return the widest layer (and its index) that a stage's final day closes.
+
+    The last stage closes the whole COURSE; every third stage closes its
+    SECTION; any other stage closes only itself. Precedence is decided here and
+    nowhere else — there is no separate "which layers end this week" walk.
+    """
+    if stage_number == TOTAL_STAGES:
+        return (ReflectionLevel.COURSE, 0)
+    if stage_number % STAGES_PER_SECTION == 0:
+        return (ReflectionLevel.SECTION, stage_number // STAGES_PER_SECTION)
+    return (ReflectionLevel.STAGE, stage_number)
 
 
-def _stage_ending_at_week(week: int) -> int | None:
-    """Return the stage that closes on ``week``, or None if none does."""
-    start = 1
-    for index, weeks in enumerate(WEEKS_PER_STAGE, start=1):
-        end = start + weeks - 1
-        if end == week:
-            return index
-        start = end + 1
+def _due_in_stage(stage_number: int, day_in_stage: int) -> tuple[ReflectionLevel, int] | None:
+    """Return what comes due on ``day_in_stage`` of ``stage_number``, or None.
+
+    Three branches, all derived from the stage's own duration:
+
+    * its final day closes the stage (and whatever wider layer ends with it);
+    * every seventh day closes a program week;
+    * the day BEFORE the final day closes the stage's LAST week, which has no
+      seventh day of its own to be closed on — that day belongs to the stage.
+
+    The last two provably never collide: every stage duration is a multiple of
+    ``DAYS_PER_WEEK``, so ``duration - 1`` is congruent to six, never zero, mod
+    seven. Weeks are numbered globally by adding the weeks of every earlier
+    stage, so no stage needs a literal of its own.
+    """
+    duration = STAGE_DURATIONS_DAYS[stage_number - 1]
+    if day_in_stage == duration:
+        return _stage_close_level(stage_number)
+    weeks_before = sum(WEEKS_PER_STAGE[: stage_number - 1])
+    if day_in_stage % DAYS_PER_WEEK == 0:
+        return (ReflectionLevel.WEEK, weeks_before + day_in_stage // DAYS_PER_WEEK)
+    if day_in_stage == duration - 1:
+        return (ReflectionLevel.WEEK, weeks_before + WEEKS_PER_STAGE[stage_number - 1])
     return None
-
-
-def _stage_boundary_level(stage_number: int) -> tuple[ReflectionLevel, str]:
-    """Return the widest layer (and its token) that a stage's end closes.
-
-    A stage that also caps a tier resolves to TIER; a stage that also caps a
-    component (the even stage of a pair) resolves to COMPONENT; otherwise the
-    stage stands on its own.
-    """
-    if stage_number in (_TIER_ONE_LAST_STAGE, TOTAL_STAGES):
-        return (ReflectionLevel.TIER, f"t{1 if stage_number == _TIER_ONE_LAST_STAGE else 2}")
-    if stage_number % _STAGES_PER_COMPONENT == 0:
-        return (ReflectionLevel.COMPONENT, f"p{_stage_component(stage_number)}")
-    return (ReflectionLevel.STAGE, f"s{stage_number}")
-
-
-def _closing_level(week: int) -> tuple[ReflectionLevel, str]:
-    """Return the widest layer (and its token) that program ``week`` closes.
-
-    The whole program wins at the final week; a mid-stage week is a plain WEEK;
-    otherwise the stage boundary decides the layer.
-    """
-    if week == TOTAL_PROGRAM_WEEKS:
-        return (ReflectionLevel.PROGRAM, _PROGRAM_TAG)
-    stage_number = _stage_ending_at_week(week)
-    if stage_number is None:
-        return (ReflectionLevel.WEEK, f"w{week}")
-    return _stage_boundary_level(stage_number)
 
 
 def due_reflection(
@@ -247,36 +282,59 @@ def due_reflection(
     now: datetime | None = None,
     cycle: int = 1,
 ) -> DueReflection | None:
-    """Return the reflection that comes due on the day ``now`` falls in, if any.
+    """Return the review that comes due on the day ``now`` falls in, if any.
 
-    Reflections come due only on the seventh day of a program week; every other
-    day (and any clock skew that puts ``now`` before ``anchor``) yields None, as
-    does any day past the curriculum's final week. On a due day the widest layer
-    that closes that week wins. ``now`` defaults to the current UTC wall clock.
+    The cadence is stage-local: a review falls due on every seventh day of a
+    stage, on the day before the stage closes (its final week), and on the
+    closing day itself at the widest layer that ends there. Every other day
+    yields None, as does any clock skew that puts ``now`` before ``anchor``
+    (:func:`domain.program_calendar.elapsed_days` floors at zero) and every day
+    once the program is over. ``now`` defaults to the current UTC wall clock.
+
+    The returned ``week`` is the program week the day itself falls in, counted
+    from the anchor — including on a day-before-close, where it is the final
+    week the returned key names.
     """
     reference = now if now is not None else datetime.now(UTC)
     elapsed = elapsed_days(anchor, reference)
-    if elapsed % DAYS_PER_WEEK + 1 != DAYS_PER_WEEK:
+    position = stage_position(elapsed)
+    if position is None:
         return None
-    week = elapsed // DAYS_PER_WEEK + 1
-    if week > TOTAL_PROGRAM_WEEKS:
+    stage_number, day_in_stage = position
+    due = _due_in_stage(stage_number, day_in_stage)
+    if due is None:
         return None
-    level, token = _closing_level(week)
-    return DueReflection(level=level, key=f"c{cycle}:{token}", week=week)
+    level, index = due
+    return DueReflection(
+        level=level,
+        key=_key(f"c{cycle}", level, index),
+        week=elapsed // DAYS_PER_WEEK + 1,
+    )
 
 
 def _token_to_level_index(token: str) -> tuple[ReflectionLevel, int]:
-    """Map a validated token to its (level, numeric index); ``prog`` has index 0."""
-    if token == _PROGRAM_TAG:
-        return (ReflectionLevel.PROGRAM, 0)
-    return (_LETTER_TO_LEVEL[token[0]], int(token[1:]))
+    """Map a token to its (level, numeric index); the index-free COURSE has index 0.
+
+    Raises ``ValueError`` — never ``KeyError`` — for a token the level table
+    does not hold, because :func:`routers.reflections._parsed_reflection_ref`
+    catches only ``ValueError``: a ``KeyError`` here would escape and 500 a
+    whole sources feed over one stale row.
+    """
+    indexless = _TOKEN_TO_LEVEL.get(token)
+    if indexless is not None:
+        return (indexless, 0)
+    level = _TOKEN_TO_LEVEL.get(token[:1])
+    if level is None:
+        raise ValueError(f"unknown reflection token: {token!r}")
+    return (level, int(token[1:]))
 
 
 def _validate_index(level: ReflectionLevel, index: int) -> None:
     """Raise ValueError if ``index`` is out of range for its level."""
-    if level is ReflectionLevel.PROGRAM:
+    max_index = _LEVEL_SPECS[level].max_index
+    if max_index == 0:
         return
-    if not 1 <= index <= _LEVEL_MAX_INDEX[level]:
+    if not 1 <= index <= max_index:
         raise ValueError(f"index {index} out of range for {level}")
 
 
@@ -323,10 +381,8 @@ def _span_for(level: ReflectionLevel, index: int) -> tuple[int, int]:
         return (index, index)
     if level is ReflectionLevel.STAGE:
         return _stage_week_span(index)
-    if level is ReflectionLevel.COMPONENT:
-        return _component_week_span(index)
-    if level is ReflectionLevel.TIER:
-        return _tier_week_span(index)
+    if level is ReflectionLevel.SECTION:
+        return _section_week_span(index)
     return (1, TOTAL_PROGRAM_WEEKS)
 
 
@@ -344,42 +400,43 @@ def scope_weeks(level: ReflectionLevel, key: str) -> range:
     return range(start, end + 1)
 
 
-def _tier_component_numbers(tier_number: int) -> range:
-    """Return the component numbers that make up a tier."""
-    if tier_number == 1:
-        return range(1, _stage_component(_TIER_ONE_LAST_STAGE) + 1)
-    return range(_stage_component(_TIER_ONE_LAST_STAGE + 1), _COMPONENT_COUNT + 1)
+def _course_child_indices() -> list[tuple[ReflectionLevel, int]]:
+    """Return the course's children: its sections, then every stage none covers.
 
-
-def _component_stage_numbers(component_number: int) -> range:
-    """Return the stage numbers that make up a component (its consecutive pair)."""
-    first_stage = _STAGES_PER_COMPONENT * component_number - 1
-    return range(first_stage, first_stage + _STAGES_PER_COMPONENT)
-
-
-def _child_spec(level: ReflectionLevel, index: int) -> tuple[ReflectionLevel, str, range]:
-    """Return a node's child level, token letter, and ascending child numbers.
-
-    Program decomposes into tiers, a tier into its components, a component into
-    its stage pair, and a stage into every week it spans. The numbers come back
-    in ascending program order so the caller's walk stays chronological.
+    Heterogeneous by necessity. The tail is derived from the same floor division
+    ``SECTION_COUNT`` is, so a curriculum whose stage count divided evenly would
+    simply produce no tail — the tenth stage standing alone is the remainder,
+    not a rule written for it.
     """
-    if level is ReflectionLevel.PROGRAM:
-        return (ReflectionLevel.TIER, "t", range(1, _TIER_COUNT + 1))
-    if level is ReflectionLevel.TIER:
-        return (ReflectionLevel.COMPONENT, "p", _tier_component_numbers(index))
-    if level is ReflectionLevel.COMPONENT:
-        return (ReflectionLevel.STAGE, "s", _component_stage_numbers(index))
+    sections = [(ReflectionLevel.SECTION, n) for n in range(1, SECTION_COUNT + 1)]
+    uncovered = range(SECTION_COUNT * STAGES_PER_SECTION + 1, TOTAL_STAGES + 1)
+    return sections + [(ReflectionLevel.STAGE, n) for n in uncovered]
+
+
+def _child_scope_indices(level: ReflectionLevel, index: int) -> list[tuple[ReflectionLevel, int]]:
+    """Return a node's ``(child level, child index)`` pairs in ascending program order.
+
+    A course decomposes into :func:`_course_child_indices`, a section into its
+    three stages, and a stage into every week it spans. Ascending order is what
+    keeps the caller's walk chronological.
+    """
+    if level is ReflectionLevel.COURSE:
+        return _course_child_indices()
+    if level is ReflectionLevel.SECTION:
+        first_stage, last_stage = _section_stage_span(index)
+        return [(ReflectionLevel.STAGE, n) for n in range(first_stage, last_stage + 1)]
     start, end = _stage_week_span(index)
-    return (ReflectionLevel.WEEK, "w", range(start, end + 1))
+    return [(ReflectionLevel.WEEK, n) for n in range(start, end + 1)]
 
 
 def _child_scopes(level: ReflectionLevel, key: str) -> list[tuple[ReflectionLevel, str]]:
     """Return the (level, key) children of a node, carrying its cycle prefix."""
     prefix = key.partition(":")[0]
     _, index = _parse_key(key)
-    child_level, letter, numbers = _child_spec(level, index)
-    return [(child_level, f"{prefix}:{letter}{number}") for number in numbers]
+    return [
+        (child_level, _key(prefix, child_level, child_index))
+        for child_level, child_index in _child_scope_indices(level, index)
+    ]
 
 
 def _index_reflections(
