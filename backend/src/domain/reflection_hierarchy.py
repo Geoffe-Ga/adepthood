@@ -145,16 +145,32 @@ _TOKEN_TO_LEVEL: Mapping[str, ReflectionLevel] = {
 }
 
 
+# A 1-based index, spelled the ONE way that is canonical. Deliberately not
+# ``\d+``: Python matches that against every Unicode decimal digit, and
+# ``int()`` reads them all the same, so ``w5``, ``w\u0665``, ``w\uff15`` and
+# ``w05`` are four DISTINCT strings naming one week. That matters because
+# ``ix_journalentry_user_reflection_scope`` -- the partial unique index that is
+# supposed to mean "one live review per scope" -- compares strings: the extra
+# spellings were extra live reviews it could not see, each unreachable forever
+# because :func:`_child_scopes` only ever generates the canonical form. Stored
+# rows in the old spellings are canonicalised by migration ``e3a9d1c4b6f2``.
+_CANONICAL_INDEX = r"[1-9][0-9]*"
+
+
 def _token_alternative(spec: _LevelSpec) -> str:
     """The regex alternative matching one level's token."""
-    return spec.token if spec.max_index == 0 else rf"{spec.token}\d+"
+    return spec.token if spec.max_index == 0 else rf"{spec.token}{_CANONICAL_INDEX}"
 
 
 # A key is "c<cycle>:<token>"; the token names one layer of the hierarchy. The
 # alternatives are COMPOSED from the level table rather than typed out, so the
-# grammar cannot outlive the vocabulary it spells.
+# grammar cannot outlive the vocabulary it spells. Anchored with ``\Z`` rather
+# than ``$``, which matches before a trailing newline and so admitted a second
+# spelling of every key in the language.
 _KEY_PATTERN = re.compile(
-    r"^c(\d+):(" + "|".join(_token_alternative(spec) for spec in _LEVEL_SPECS.values()) + r")$"
+    rf"^c({_CANONICAL_INDEX}):("
+    + "|".join(_token_alternative(spec) for spec in _LEVEL_SPECS.values())
+    + r")\Z"
 )
 
 

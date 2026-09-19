@@ -109,6 +109,44 @@ async def test_create_with_malformed_scope_key_returns_422(async_client: AsyncCl
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        "c1:w5\n",  # trailing newline -- the old ``$`` anchor admitted it
+        "c1:w\u0665",  # ARABIC-INDIC DIGIT FIVE
+        "c1:w\uff15",  # FULLWIDTH DIGIT FIVE
+        "c1:w05",  # leading zero
+    ],
+)
+@pytest.mark.asyncio
+async def test_create_with_a_non_canonical_spelling_of_a_scope_returns_422(
+    async_client: AsyncClient, key: str
+) -> None:
+    """A second spelling of week five is refused at the door, not stored.
+
+    Every one of these returned 201 before: the grammar's digit class matched any
+    Unicode decimal digit and its dollar anchor matched before a trailing
+    newline. Each
+    one then sat in the table as a live review the partial unique index could
+    not tell apart from the canonical ``c1:w5`` -- unreachable by any feed,
+    because the hierarchy only ever generates the canonical spelling -- while
+    ``GET /reflections/due`` went on inviting the writer to compose week five
+    again. Driven through the real client because the grammar's only job is to
+    hold this boundary.
+    """
+    headers = await _signup(async_client)
+    resp = await async_client.post(
+        "/journal/",
+        json={
+            "message": "Week five, spelled sideways",
+            "reflection_level": "week",
+            "reflection_scope_key": key,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
 @pytest.mark.asyncio
 async def test_create_duplicate_live_scope_returns_409(async_client: AsyncClient) -> None:
     """A second live entry claiming the same scope key for the same user 409s."""
