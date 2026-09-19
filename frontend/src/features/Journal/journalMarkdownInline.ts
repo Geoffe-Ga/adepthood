@@ -8,13 +8,14 @@
  */
 import type {
   CharacterFormat,
+  InlineSpan,
+  InlineStyle,
   JournalMarkdownBlock,
   JournalMarkdownLine,
 } from './journalMarkdownTypes';
 
 /** The inline delimiters, each with its width and the style it carries. */
 type InlineMarker = '*' | '_' | '=';
-type InlineStyle = 'bold' | 'italic' | 'underline';
 
 /** True when a marker is escaped by an odd run of immediately preceding slashes. */
 function isEscaped(chars: string[], index: number): boolean {
@@ -73,7 +74,13 @@ function isOpeningMarker(
   );
 }
 
-/** Apply one delimiter width without consuming or changing the stored source. */
+/**
+ * Apply one delimiter width without consuming or changing the stored source.
+ *
+ * Every pair it matches is also recorded in ``spans``: the hidden flag alone
+ * loses which delimiter belongs to which span, and the caret geometry needs
+ * exactly that.
+ */
 function applyDelimitedStyle(
   chars: string[],
   formats: CharacterFormat[],
@@ -81,6 +88,7 @@ function applyDelimitedStyle(
   marker: InlineMarker,
   width: number,
   style: InlineStyle,
+  spans: InlineSpan[],
 ): void {
   let index = line.contentStart;
   while (index + width < line.end) {
@@ -100,6 +108,7 @@ function applyDelimitedStyle(
     for (let contentIndex = index + width; contentIndex < close; contentIndex += 1) {
       formats[contentIndex]![style] = true;
     }
+    spans.push({ start: index, end: close + width, style });
     index = close + width;
   }
 }
@@ -119,17 +128,22 @@ const INLINE_PASSES: readonly (readonly [InlineMarker, number, InlineStyle])[] =
   ['=', 2, 'underline'],
 ] as const);
 
-/** Apply inline styles independently so `*_both_*` composes naturally. */
+/**
+ * Apply inline styles independently so `*_both_*` composes naturally, and hand
+ * back the delimiter pairs that were matched.
+ */
 export function applyInlineFormatting(
   chars: string[],
   formats: CharacterFormat[],
   blocks: JournalMarkdownBlock[],
-): void {
+): InlineSpan[] {
+  const spans: InlineSpan[] = [];
   for (const block of blocks) {
     for (const line of block.lines) {
       for (const [marker, width, style] of INLINE_PASSES) {
-        applyDelimitedStyle(chars, formats, line, marker, width, style);
+        applyDelimitedStyle(chars, formats, line, marker, width, style, spans);
       }
     }
   }
+  return spans;
 }

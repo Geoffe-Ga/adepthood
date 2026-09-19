@@ -55,6 +55,8 @@ export {
 export type { JournalMarkdownSpan, SourceSelection } from './journalMarkdownCaret';
 export type {
   CharacterFormat,
+  InlineSpan,
+  InlineStyle,
   JournalMarkdownBlock,
   JournalMarkdownDocument,
   JournalMarkdownLine,
@@ -75,8 +77,8 @@ export function parseJournalMarkdown(body: string): JournalMarkdownDocument {
   }));
   const blocks = buildBlocks(chars);
   hideBlockPrefixes(formats, blocks);
-  applyInlineFormatting(chars, formats, blocks);
-  return { chars, formats, blocks, indentWidths: bulletIndentWidths(blocks) };
+  const inlineSpans = applyInlineFormatting(chars, formats, blocks);
+  return { chars, formats, blocks, indentWidths: bulletIndentWidths(blocks), inlineSpans };
 }
 
 /**

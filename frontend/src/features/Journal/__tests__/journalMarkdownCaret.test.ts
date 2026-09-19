@@ -85,6 +85,69 @@ describe('spanAt', () => {
     expect(spanAt(parseJournalMarkdown(body), index)).toBeNull();
   });
 
+  it('keeps a closing delimiter inside its own span when two spans abut', () => {
+    // '**bold**_italic_' has no visible character between the bold span's
+    // closing '**' and the italic span's opening '_'. Source 6 is the first '*'
+    // of the BOLD close -- the caret position a writer lands on most often,
+    // immediately after an emphasised word -- so it must report the bold span,
+    // not the italic one that merely abuts it.
+    const document = parseJournalMarkdown('**bold**_italic_');
+    const bold = { start: 0, end: 8, bold: true, italic: false, underline: false };
+    const italic = { start: 8, end: 16, bold: false, italic: true, underline: false };
+    expect(spanAt(document, 6)).toEqual(bold);
+    expect(spanAt(document, 7)).toEqual(bold);
+    expect(spanAt(document, 3)).toEqual(bold);
+    expect(spanAt(document, 8)).toEqual(italic);
+    expect(spanAt(document, 15)).toEqual(italic);
+  });
+
+  it.each([
+    ['- **a**', 2],
+    ['> **a**', 2],
+    ['  - **a**', 4],
+  ])(
+    'never lets the hidden block prefix of %j join the inline span at %i',
+    (body, contentStart) => {
+      const document = parseJournalMarkdown(body);
+      for (let index = 0; index < contentStart; index += 1) {
+        expect(spanAt(document, index)).toBeNull();
+      }
+      expect(spanAt(document, contentStart)).toEqual({
+        start: contentStart,
+        end: contentStart + 5,
+        bold: true,
+        italic: false,
+        underline: false,
+      });
+    },
+  );
+
+  it('reports the outermost owner and every style in force when spans nest', () => {
+    // The '*' pass runs before the '_' pass, so in '_*a*_' the INNER pair is
+    // recorded first. A reveal has to un-hide both pairs, which is the OUTER
+    // range -- picking the first recorded owner would under-report it.
+    const nested = { start: 0, end: 5, bold: true, italic: true, underline: false };
+    expect(spanAt(parseJournalMarkdown('_*a*_'), 2)).toEqual(nested);
+    expect(spanAt(parseJournalMarkdown('*_a_*'), 2)).toEqual(nested);
+
+    // An outer pair's own delimiter is not inside the inner pair, so only the
+    // outer style is in force there.
+    expect(spanAt(parseJournalMarkdown('_*a*_'), 0)).toEqual({
+      start: 0,
+      end: 5,
+      bold: false,
+      italic: true,
+      underline: false,
+    });
+    expect(spanAt(parseJournalMarkdown('*_a_*'), 0)).toEqual({
+      start: 0,
+      end: 5,
+      bold: true,
+      italic: false,
+      underline: false,
+    });
+  });
+
   it('reports an underlined span', () => {
     expect(spanAt(parseJournalMarkdown('a ==und== b'), 5)).toMatchObject({
       start: 2,
@@ -115,6 +178,39 @@ describe('revealedDelimiters', () => {
       { start: 2, end: 3 },
       { start: 6, end: 7 },
       { start: 8, end: 9 },
+    ]);
+  });
+
+  it('reveals only the caret\u2019s own span when two spans abut', () => {
+    const document = parseJournalMarkdown('**bold**_italic_');
+    expect(revealedDelimiters(document, { start: 6, end: 6 })).toEqual([
+      { start: 0, end: 2 },
+      { start: 6, end: 8 },
+    ]);
+    expect(revealedDelimiters(document, { start: 12, end: 12 })).toEqual([
+      { start: 8, end: 9 },
+      { start: 15, end: 16 },
+    ]);
+  });
+
+  it.each([
+    ['- **a**', 2],
+    ['> **a**', 2],
+    ['  - **a**', 4],
+  ])('reveals emphasis but never the hidden block marker of %j', (body, contentStart) => {
+    const document = parseJournalMarkdown(body);
+    expect(
+      revealedDelimiters(document, { start: contentStart + 2, end: contentStart + 2 }),
+    ).toEqual([
+      { start: contentStart, end: contentStart + 2 },
+      { start: contentStart + 3, end: contentStart + 5 },
+    ]);
+  });
+
+  it('reveals both delimiter pairs of a nested span', () => {
+    expect(revealedDelimiters(parseJournalMarkdown('_*a*_'), { start: 2, end: 2 })).toEqual([
+      { start: 0, end: 2 },
+      { start: 3, end: 5 },
     ]);
   });
 

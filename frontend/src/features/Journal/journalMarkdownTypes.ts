@@ -72,6 +72,25 @@ export interface CharacterFormat {
   underline: boolean;
 }
 
+/** The style one delimiter pair carries. */
+export type InlineStyle = 'bold' | 'italic' | 'underline';
+
+/**
+ * One matched delimiter pair and the source range it owns.
+ *
+ * A {@link CharacterFormat} records only that a character is hidden, never WHY,
+ * so ``visible: false`` alone cannot tell a bullet's ``- `` from an emphasis
+ * ``**`` -- nor one span's closing delimiter from the next span's opening one.
+ * These records are the ownership the caret geometry reads: ``start`` is the
+ * opening delimiter's first source position and ``end`` is one past the closing
+ * delimiter's last, so a block prefix is never inside any of them.
+ */
+export interface InlineSpan {
+  start: number;
+  end: number;
+  style: InlineStyle;
+}
+
 /** A parsed body: the source stream plus the views derived from it. */
 export interface JournalMarkdownDocument {
   /** The ONLY stored representation of the body, in code-point order. */
@@ -86,6 +105,14 @@ export interface JournalMarkdownDocument {
    * the unit.
    */
   indentWidths: number[];
+  /**
+   * Every delimiter pair the inline passes matched, in the order they matched.
+   *
+   * Recorded rather than re-derived because the format stream cannot be walked
+   * back into spans: adjacent hidden characters may belong to two different
+   * spans, or to a block prefix that is not a span at all.
+   */
+  inlineSpans: InlineSpan[];
 }
 
 /** A stretch of equally formatted characters inside one source interval. */

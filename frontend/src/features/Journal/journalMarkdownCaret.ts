@@ -11,7 +11,7 @@
  * character that is still in the source stream at its own offset; revealing it
  * is a derived range, never a mutation.
  */
-import type { JournalMarkdownDocument, SourceLine } from './journalMarkdownTypes';
+import type { InlineSpan, JournalMarkdownDocument, SourceLine } from './journalMarkdownTypes';
 
 /** A span of inline emphasis, delimiters included. */
 export interface JournalMarkdownSpan {
@@ -35,11 +35,6 @@ function clamp(value: number, limit: number): number {
 
 function isHidden(document: JournalMarkdownDocument, index: number): boolean {
   return document.formats[index]?.visible === false;
-}
-
-function isStyled(document: JournalMarkdownDocument, index: number): boolean {
-  const format = document.formats[index];
-  return format != null && (format.bold || format.italic || format.underline);
 }
 
 /** How many rendered characters precede this source position. */
@@ -89,57 +84,50 @@ export function visibleToSource(document: JournalMarkdownDocument, visibleIndex:
   return leading === 0 ? 0 : anchor;
 }
 
-/** Walk out of a hidden run to the styled character that owns it, if any. */
-function styledCore(document: JournalMarkdownDocument, index: number): number | null {
-  if (!isHidden(document, index)) return isStyled(document, index) ? index : null;
-  let right = index;
-  while (right < document.chars.length && isHidden(document, right)) right += 1;
-  if (isStyled(document, right)) return right;
-  let left = index;
-  while (left >= 0 && isHidden(document, left)) left -= 1;
-  return isStyled(document, left) ? left : null;
+/** The recorded delimiter pairs whose source range covers this position. */
+function owningSpans(document: JournalMarkdownDocument, sourceIndex: number): InlineSpan[] {
+  return document.inlineSpans.filter((span) => sourceIndex >= span.start && sourceIndex < span.end);
 }
 
-/** Extend from a styled core across its equally styled text and its delimiters. */
-function spanBounds(document: JournalMarkdownDocument, core: number): SourceLine {
-  const format = document.formats[core]!;
-  const matches = (index: number): boolean => {
-    const candidate = document.formats[index];
-    return (
-      candidate?.visible === true &&
-      candidate.bold === format.bold &&
-      candidate.italic === format.italic &&
-      candidate.underline === format.underline
-    );
-  };
-  let start = core;
-  while (start > 0 && matches(start - 1)) start -= 1;
-  while (start > 0 && isHidden(document, start - 1)) start -= 1;
-  let end = core + 1;
-  while (end < document.chars.length && matches(end)) end += 1;
-  while (end < document.chars.length && isHidden(document, end)) end += 1;
-  return { start, end };
+/** The widest of several overlapping owners: earliest start, then longest. */
+function widest(owners: InlineSpan[]): InlineSpan {
+  return owners.reduce((chosen, span) =>
+    span.start < chosen.start || (span.start === chosen.start && span.end > chosen.end)
+      ? span
+      : chosen,
+  );
 }
 
 /**
  * The inline emphasis span containing a source position, delimiters included,
  * or null when the position is ordinary prose or a block prefix.
+ *
+ * Bounds come from the delimiter pairs the parser actually matched, never from
+ * walking the hidden flag: two spans can abut with no visible character between
+ * them (``**bold**_italic_``), and a hidden block prefix can sit flush against
+ * an emphasis delimiter (``- **a**``). Walking hidden characters fuses all
+ * three, which made a span's own closing delimiter report its neighbour's style
+ * and made a bullet marker reachable as inline punctuation.
+ *
+ * With nesting (``*_both_*``) the position is inside more than one pair. The
+ * range reported is then the outermost owner -- what a reveal must un-hide --
+ * while the style flags are the union of every owner, which is what is actually
+ * in force at that position.
  */
 export function spanAt(
   document: JournalMarkdownDocument,
   sourceIndex: number,
 ): JournalMarkdownSpan | null {
   if (sourceIndex < 0 || sourceIndex >= document.chars.length) return null;
-  const core = styledCore(document, sourceIndex);
-  if (core == null) return null;
-  const { start, end } = spanBounds(document, core);
-  const format = document.formats[core]!;
+  const owners = owningSpans(document, sourceIndex);
+  if (owners.length === 0) return null;
+  const { start, end } = widest(owners);
   return {
     start,
     end,
-    bold: format.bold,
-    italic: format.italic,
-    underline: format.underline,
+    bold: owners.some((span) => span.style === 'bold'),
+    italic: owners.some((span) => span.style === 'italic'),
+    underline: owners.some((span) => span.style === 'underline'),
   };
 }
 
