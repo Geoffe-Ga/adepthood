@@ -10,6 +10,9 @@ agree with what the user sees.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from itertools import accumulate
+
+import pytest
 
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS, TOTAL_STAGES
 from domain.program_calendar import (
@@ -18,6 +21,7 @@ from domain.program_calendar import (
     calendar_week,
     elapsed_days,
     resolve_program_anchor,
+    stage_position,
 )
 from domain.weekly_prompts import TOTAL_WEEKS
 from models.stage_progress import StageProgress
@@ -257,3 +261,64 @@ def test_resolve_anchor_falls_back_to_stage_started_at() -> None:
         program_started_at=None,
     )
     assert resolve_program_anchor(progress) == _ANCHOR
+
+
+# ── stage_position: the unclamped (stage, day-in-stage) lookup ───────────
+
+# The 0-based program day each stage OPENS on, accumulated here rather than
+# imported from the module under test: a test that reads the module's own
+# ``_STAGE_OPENING_DAYS`` could not tell a wrong table from a right one.
+_OPENING_DAYS = (0, *accumulate(STAGE_DURATIONS_DAYS[:-1]))
+
+
+@pytest.mark.parametrize("stage", range(1, TOTAL_STAGES + 1))
+def test_stage_position_lands_on_day_one_of_each_stage(stage: int) -> None:
+    """Each stage's opening day is day 1 of that stage, not the last day of the one before.
+
+    ``stage_position`` is built on ``bisect_right`` over the opening days, and
+    ``bisect_left`` reads every boundary one stage early: day 21 becomes stage
+    1 day 22 instead of stage 2 day 1, and day 0 becomes stage ZERO, day -209.
+    Nothing saw that, because the only consumer -- ``_due_in_stage`` -- returns
+    None for any day that is neither the stage's duration, nor one before it,
+    nor a multiple of seven, and those bogus positions all fall in that hole.
+    The next caller to read the stage NUMBER would not be so lucky.
+    """
+    assert stage_position(_OPENING_DAYS[stage - 1]) == (stage, 1)
+
+
+@pytest.mark.parametrize("stage", range(1, TOTAL_STAGES + 1))
+def test_stage_position_lands_on_the_final_day_of_each_stage(stage: int) -> None:
+    """The day before a stage opens is the LAST day of its predecessor."""
+    duration = STAGE_DURATIONS_DAYS[stage - 1]
+    assert stage_position(_OPENING_DAYS[stage - 1] + duration - 1) == (stage, duration)
+
+
+def test_stage_position_is_inside_a_real_stage_for_every_day_of_the_program() -> None:
+    """Whole-range invariant: every program day maps to a day that stage has.
+
+    One loop, and it is the strongest assertion in this file: no stage number
+    outside 1..10, and no day number outside 1..that stage's own duration.
+    Both boundary defects die here even if the two parametrized tests above
+    are ever narrowed.
+    """
+    for elapsed in range(TOTAL_PROGRAM_DAYS):
+        position = stage_position(elapsed)
+        assert position is not None, f"day {elapsed} is inside the program"
+        stage, day = position
+        assert 1 <= stage <= TOTAL_STAGES, f"day {elapsed} -> stage {stage}"
+        assert 1 <= day <= STAGE_DURATIONS_DAYS[stage - 1], (
+            f"day {elapsed} -> stage {stage} day {day},"
+            f" but stage {stage} lasts {STAGE_DURATIONS_DAYS[stage - 1]} days"
+        )
+
+
+def test_stage_position_ends_exactly_at_the_program_boundary() -> None:
+    """The last day of the program has a position; the day after it has none.
+
+    Asserted on both sides of the boundary because a ``>`` in place of ``>=``
+    returns day 43 of the 42-day final stage -- an impossible position, and one
+    ``due_reflection`` happens to swallow.
+    """
+    assert stage_position(TOTAL_PROGRAM_DAYS - 1) == (TOTAL_STAGES, STAGE_DURATIONS_DAYS[-1])
+    assert stage_position(TOTAL_PROGRAM_DAYS) is None
+    assert stage_position(TOTAL_PROGRAM_DAYS + 1) is None

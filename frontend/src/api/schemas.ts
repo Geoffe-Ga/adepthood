@@ -321,7 +321,7 @@ export const journalTagSchema = z.enum([
   // includes that row, so the enum must accept it — otherwise the whole page
   // fails Zod validation and the user sees "Load failed".
   'weekly_prompt',
-  // A hierarchical reflection (week/stage/component/tier/program) is a journal
+  // A hierarchical reflection (week/stage/section/course) is a journal
   // row like any other and appears in the same shelf list, so the enum must
   // accept it for the same reason it accepts ``weekly_prompt``.
   'hierarchical_reflection',
@@ -1250,12 +1250,17 @@ export type WheelBalanceT = z.infer<typeof wheelBalanceSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * The reflection scope a due window covers, in ascending breadth: a single
- * ``week``, a Wavelength ``stage``, a curriculum ``component``, a ``tier`` of
- * stages, or the whole ``program``. Mirrors the backend ``ReflectionLevel``;
- * an unknown value is rejected at the boundary so it can never key untitled copy.
+ * The review scope a due window covers, in ascending breadth: a single
+ * ``week``, a Wavelength ``stage``, a ``section`` of three stages, or the whole
+ * ``course``. Mirrors the backend ``ReflectionLevel``; an unknown value is
+ * rejected at the boundary so it can never key untitled copy.
+ *
+ * RELEASE ORDER (issue #2866): a client still on the retired vocabulary throws
+ * here on a ``section`` payload, and ``ReflectionInvitationBand`` swallows the
+ * throw — so the invitation silently stops appearing rather than erroring. Ship
+ * this client with or before the backend.
  */
-export const reflectionLevelSchema = z.enum(['week', 'stage', 'component', 'tier', 'program']);
+export const reflectionLevelSchema = z.enum(['week', 'stage', 'section', 'course']);
 
 /** Whether a source row is a plain journal entry or an earlier reflection. */
 export const reflectionSourceKindSchema = z.enum(['entry', 'reflection']);

@@ -1082,13 +1082,7 @@ interface MutableEntryState extends EntryState {
   setReflectionScopeKey: (_scopeKey: string | undefined) => void;
 }
 
-const REFLECTION_LEVELS = new Set<ReflectionLevel>([
-  'week',
-  'stage',
-  'component',
-  'tier',
-  'program',
-]);
+const REFLECTION_LEVELS = new Set<ReflectionLevel>(['week', 'stage', 'section', 'course']);
 
 function reflectionLevelFromWire(value: string | null | undefined): ReflectionLevel | undefined {
   return value != null && REFLECTION_LEVELS.has(value as ReflectionLevel)

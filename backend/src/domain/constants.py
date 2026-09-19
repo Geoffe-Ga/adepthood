@@ -39,3 +39,18 @@ WEEKS_PER_STAGE: tuple[int, ...] = tuple(
 
 # 36 — the program's length in weeks.
 TOTAL_PROGRAM_WEEKS = sum(WEEKS_PER_STAGE)
+
+# Three consecutive stages make one SECTION of the course — the Red, Green and
+# Ultraviolet turns of the Archetypal Wavelength, each closing with a review of
+# its own (issue #2866).  Grouping in threes is a curriculum design decision:
+# it is NOT derivable from STAGE_DURATIONS_DAYS, which knows only how long each
+# stage lasts.  CROSS-STACK CONTRACT: mirrored by ``STAGES_PER_SECTION`` in
+# ``frontend/src/constants/program.ts``, where the section's colour name is
+# derived from it, and pinned against this file by a frontend test.
+STAGES_PER_SECTION = 3
+
+# 3 — the number of sections.  The floor division is the point: ten stages do
+# not divide by three, and that remainder is exactly WHY the tenth stage
+# (Clear Light) stands outside every section and closes the whole course on its
+# own.  A third named constant for "the leftover stage" would let the two drift.
+SECTION_COUNT = TOTAL_STAGES // STAGES_PER_SECTION
