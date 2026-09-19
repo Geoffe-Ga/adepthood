@@ -12,6 +12,7 @@ import entryStyles from './JournalEntry.styles';
 import {
   markdownRuns,
   parseJournalMarkdown,
+  type JournalMarkdownBlock,
   type JournalMarkdownDocument,
   type JournalMarkdownLine,
   type JournalMarkdownRun,
@@ -28,6 +29,16 @@ const NOOP = (): void => {};
 const REMOVE_QUOTE_MAX_LINES = 3;
 /** A visible quotation rule, shared in weight with the course reader's rule. */
 const JOURNAL_QUOTE_RULE_WIDTH = 3;
+/**
+ * The bullet glyph a list item renders.
+ *
+ * Renderer decoration, deliberately NOT a character in the source stream: the
+ * writer's own marker stays at its source offset (hidden), so every anchor the
+ * backend stores keeps addressing the same code points.
+ */
+const JOURNAL_BULLET_GLYPH = '\u2022 ';
+/** One column of rendered bullet indent, matching the measured indent width. */
+const JOURNAL_INDENT_COLUMN = ' ';
 
 // React Native's public ViewProps omit the click callback that both the native
 // host view and React Native Web support. Keeping it on a View avoids Pressable's
@@ -150,6 +161,17 @@ function renderMarkdownRun(run: JournalMarkdownRun): React.ReactNode {
       </Text>
     );
   }
+  if (run.underline) {
+    node = (
+      <Text
+        key={`underline-${run.start}`}
+        style={styles.underline}
+        testID={`journal-markdown-underline-${run.start}`}
+      >
+        {node}
+      </Text>
+    );
+  }
   if (run.bold) {
     node = (
       <Text
@@ -256,19 +278,54 @@ function renderLine(
   return rendered;
 }
 
+/** The indent and glyph a bullet line draws in front of its anchored text. */
+function bulletDecoration(block: JournalMarkdownBlock, line: JournalMarkdownLine): string[] {
+  if (block.kind !== 'bullet') return [];
+  return [`${JOURNAL_INDENT_COLUMN.repeat(line.indentWidth)}${JOURNAL_BULLET_GLYPH}`];
+}
+
 /** Render every line in a block, restoring only the line feeds between them. */
 function renderBlockLines(
-  lines: JournalMarkdownLine[],
+  block: JournalMarkdownBlock,
   segments: AnchoredSegment[],
   document: JournalMarkdownDocument,
   claimedAnchors: Set<string>,
   onOpen: (_note: Marginalia) => void,
   onQuotePress?: (_quote: PromotedQuote) => void,
 ): React.ReactNode[] {
-  return lines.flatMap((line, index) => [
+  return block.lines.flatMap((line, index) => [
     ...(index === 0 ? [] : [`\n`]),
+    ...bulletDecoration(block, line),
     ...renderLine(line, segments, document, claimedAnchors, onOpen, onQuotePress),
   ]);
+}
+
+/** Wrap a block's content in the element its kind calls for. */
+function wrapBlock(block: JournalMarkdownBlock, content: React.ReactNode[]): React.JSX.Element {
+  if (block.kind === 'quote') {
+    return (
+      <View
+        role={webRole('blockquote')}
+        accessibilityLabel="Quote block"
+        style={styles.quoteBlock}
+        testID={`journal-markdown-quote-${block.start}`}
+      >
+        <Text style={styles.body}>{content}</Text>
+      </View>
+    );
+  }
+  if (block.kind === 'bullet') {
+    return (
+      <View
+        accessibilityLabel="List"
+        style={styles.bulletBlock}
+        testID={`journal-markdown-bullet-${block.start}`}
+      >
+        <Text style={styles.body}>{content}</Text>
+      </View>
+    );
+  }
+  return <Text style={styles.body}>{content}</Text>;
 }
 
 /** Build the mixed prose/blockquote tree while assigning each anchor one primary ID. */
@@ -279,31 +336,14 @@ function renderDocumentBlocks(
   onQuotePress?: (_quote: PromotedQuote) => void,
 ): React.ReactNode[] {
   const claimedAnchors = new Set<string>();
-  return document.blocks.map((block) => {
-    const content = renderBlockLines(
-      block.lines,
-      segments,
-      document,
-      claimedAnchors,
-      onOpen,
-      onQuotePress,
-    );
-    return block.quote ? (
-      <View
-        key={block.start}
-        role={webRole('blockquote')}
-        accessibilityLabel="Quote block"
-        style={styles.quoteBlock}
-        testID={`journal-markdown-quote-${block.start}`}
-      >
-        <Text style={styles.body}>{content}</Text>
-      </View>
-    ) : (
-      <Text key={block.start} style={styles.body}>
-        {content}
-      </Text>
-    );
-  });
+  return document.blocks.map((block) => (
+    <React.Fragment key={block.start}>
+      {wrapBlock(
+        block,
+        renderBlockLines(block, segments, document, claimedAnchors, onOpen, onQuotePress),
+      )}
+    </React.Fragment>
+  ));
 }
 
 function HighlightedBody({
@@ -352,6 +392,12 @@ const styles = StyleSheet.create({
   },
   italic: {
     fontStyle: 'italic',
+  },
+  underline: {
+    textDecorationLine: 'underline',
+  },
+  bulletBlock: {
+    paddingVertical: SPACING.xs,
   },
   quoteBlock: {
     backgroundColor: colors.paper.backgroundAlt,

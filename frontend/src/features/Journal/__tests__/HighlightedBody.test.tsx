@@ -140,8 +140,10 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     expect(onOpen).toHaveBeenCalledWith(anchored);
   });
 
-  it('keeps an anchor reachable when it includes the hidden quote marker', () => {
-    const body = '> *Quoted river*';
+  it.each([
+    ['> *Quoted river*', 'Quoted river'],
+    ['- *Listed river*', 'Listed river'],
+  ])('keeps an anchor reachable when it includes the hidden marker of %j', (body, inner) => {
     const anchored = note({
       id: 82,
       anchor_start: 0,
@@ -154,33 +156,49 @@ describe('HighlightedBody -- lightweight Markdown', () => {
 
     expect(getByTestId('highlight-82')).toBeTruthy();
     expect(queryByTestId('highlight-82-continuation')).toBeNull();
-    expect(getByTestId('journal-markdown-bold-3').props.children).toBe('Quoted river');
+    expect(getByTestId('journal-markdown-bold-3').props.children).toBe(inner);
   });
 
-  it('keeps syntax-only note anchors visible and actionable', () => {
-    const anchored = note({ id: 83, anchor_start: 0, anchor_end: 1, anchor_text: '*' });
-    const onOpen = jest.fn();
-    const { getByTestId } = render(
-      <HighlightedBody body="*bold*" notes={[anchored]} onOpen={onOpen} />,
-    );
+  it.each([
+    ['*bold*', 0, 1, '*'],
+    ['- one', 0, 1, '-'],
+    ['> quoted', 0, 2, '> '],
+    ['a ==und== b', 2, 4, '=='],
+  ])(
+    'keeps syntax-only note anchors visible and actionable in %j',
+    (body, anchorStart, anchorEnd, literal) => {
+      const anchored = note({
+        id: 83,
+        anchor_start: anchorStart,
+        anchor_end: anchorEnd,
+        anchor_text: literal,
+      });
+      const onOpen = jest.fn();
+      const { getByTestId } = render(
+        <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} />,
+      );
 
-    const highlight = getByTestId('highlight-83');
-    expect(highlight.props.children).toEqual(['*']);
-    fireEvent.press(highlight);
-    expect(onOpen).toHaveBeenCalledWith(anchored);
-  });
+      const highlight = getByTestId('highlight-83');
+      expect(highlight.props.children).toEqual([literal]);
+      fireEvent.press(highlight);
+      expect(onOpen).toHaveBeenCalledWith(anchored);
+    },
+  );
 
-  it('keeps syntax-only promoted quote anchors visible and removable', () => {
+  it.each([
+    ['> quoted', '> '],
+    ['- listed', '- '],
+  ])('keeps syntax-only promoted quote anchors visible and removable in %j', (body, literal) => {
     const anchored = quote({
       id: 93,
       anchor_start: 0,
       anchor_end: 2,
-      anchor_text: '> ',
+      anchor_text: literal,
     });
     const onQuotePress = jest.fn();
     const { getByTestId } = render(
       <HighlightedBody
-        body="> quoted"
+        body={body}
         notes={[]}
         onOpen={jest.fn()}
         quotes={[anchored]}
@@ -189,9 +207,31 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     );
 
     const highlight = getByTestId('quote-highlight-93');
-    expect(highlight.props.children).toEqual(['> ']);
+    expect(highlight.props.children).toEqual([literal]);
     fireEvent.press(highlight);
     expect(onQuotePress).toHaveBeenCalledWith(anchored);
+  });
+
+  it('renders adjacent bullet lines as one block, markers hidden, quotes unaffected', () => {
+    const { getByTestId, queryByText } = render(
+      <HighlightedBody body={'- one\n- two\n> q'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const bullets = getByTestId('journal-markdown-bullet-0');
+    expect(bullets.props.accessibilityLabel).toBe('List');
+    expect(getByTestId('journal-markdown-quote-12')).toBeTruthy();
+    expect(queryByText(/- one/u)).toBeNull();
+  });
+
+  it('renders ==text== underlined at its exact source offset', () => {
+    const { getByTestId, queryByText } = render(
+      <HighlightedBody body="a ==und== b" notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const underline = getByTestId('journal-markdown-underline-4');
+    expect(underline.props.children).toBe('und');
+    expect(StyleSheet.flatten(underline.props.style).textDecorationLine).toBe('underline');
+    expect(queryByText('a ==und== b')).toBeNull();
   });
 });
 
