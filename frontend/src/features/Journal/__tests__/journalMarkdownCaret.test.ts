@@ -243,6 +243,40 @@ describe('sourceRuns', () => {
     expect(runs.map((run) => run.text).join('')).toBe('a*b*');
   });
 
+  /**
+   * Every term of the run comparator, pinned one at a time.
+   *
+   * ``markdownRuns`` cannot reach the comparator: a style change in this
+   * dialect is always bounded by hidden delimiters, so two adjacent VISIBLE
+   * characters never differ in style and the visibility flag alone splits the
+   * run. ``sourceRuns`` keeps the delimiters, and nested emphasis gives a
+   * delimiter the OUTER pass's style while its neighbour has none -- which is
+   * the only place each term is observable.
+   */
+  it.each([
+    ['bold', '*_a_*', ['*', '_', 'a', '_', '*']],
+    ['italic', '_*a*_', ['_', '*', 'a', '*', '_']],
+    ['underline', '==*a*==', ['==', '*', 'a', '*', '==']],
+  ])('splits adjacent hidden delimiters that differ only in %s', (_term, body, texts) => {
+    const document = parseJournalMarkdown(body);
+    expect(sourceRuns(document, 0, document.chars.length).map((run) => run.text)).toEqual(texts);
+  });
+
+  it('carries the outer style onto the inner delimiter it wraps', () => {
+    // '*_a_*': the '_' at source 1 is hidden AND bold, its neighbour '*' at 0
+    // is hidden and not bold. Without the bold term the two would be one run.
+    const document = parseJournalMarkdown('*_a_*');
+    expect(
+      sourceRuns(document, 0, 5).map((run) => [run.text, run.bold, run.italic, run.underline]),
+    ).toEqual([
+      ['*', false, false, false],
+      ['_', true, false, false],
+      ['a', true, true, false],
+      ['_', true, false, false],
+      ['*', false, false, false],
+    ]);
+  });
+
   it('keeps a hidden bullet prefix present and flagged', () => {
     const document = parseJournalMarkdown('- one');
     expect(sourceRuns(document, 0, 5)[0]).toMatchObject({ start: 0, end: 2, visible: false });
