@@ -214,6 +214,21 @@ describe('revealedDelimiters', () => {
     ]);
   });
 
+  it('returns the ranges in ascending order even when two spans overlap', () => {
+    // '*_=*_' is the one shape where the flattened ranges are NOT already
+    // ascending: the bold pair [0,4) and the italic pair [1,5) overlap without
+    // nesting, so the second span's first hidden run starts before the first
+    // span's last one. The documented ascending order is a sort, not an
+    // accident of discovery order.
+    const document = parseJournalMarkdown('*_=*_');
+    expect(revealedDelimiters(document, { start: 0, end: 5 })).toEqual([
+      { start: 0, end: 2 },
+      { start: 1, end: 2 },
+      { start: 3, end: 4 },
+      { start: 3, end: 5 },
+    ]);
+  });
+
   it('never writes a visible flag on the stored document', () => {
     const body = '**bold** and _soft_';
     const document = parseJournalMarkdown(body);
