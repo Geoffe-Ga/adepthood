@@ -77,6 +77,42 @@ describe('serializeJournalMarkdown', () => {
   );
 });
 
+/**
+ * The five guards the emphasis scanner composes, one discriminating body each.
+ *
+ * Each body is plain prose on shipped code and becomes emphasised the moment
+ * its guard is removed, so every assertion here is a live kill rather than a
+ * restatement of the corpus round trip. Three of the guards need a body whose
+ * OTHER guards all pass -- `a \*x\* b` escapes both markers, so the closing
+ * scan rejects it for its own reason and the opening escape guard is never
+ * reached; `a * b *` and `snake_case_here` are likewise blocked downstream.
+ */
+describe('emphasis guards', () => {
+  const GUARDS: [rule: string, body: string, style: 'bold' | 'italic'][] = [
+    ['a closing marker may not be preceded by whitespace', 'a *b * c', 'bold'],
+    ['a closing `_` may not be glued to a word character', '_a_b', 'italic'],
+    ['an escaped opening marker does not open', 'a \\*x* b', 'bold'],
+    ['an opening marker must touch content', 'a * b*', 'bold'],
+    ['an opening `_` inside a word is prose', 'tag_name_ here', 'italic'],
+  ];
+
+  it.each(GUARDS)('%s: %j stays plain', (_rule, body, style) => {
+    const document = parseJournalMarkdown(body);
+    expect(document.formats.some((format) => format[style])).toBe(false);
+    expect(document.formats.every((format) => format.visible)).toBe(true);
+  });
+
+  it.each(['a *b* c', '_a_ b', 'a ==u== b'])(
+    'still emphasises %j, so the guards are not simply refusing everything',
+    (body) => {
+      const document = parseJournalMarkdown(body);
+      expect(
+        document.formats.some((format) => format.bold || format.italic || format.underline),
+      ).toBe(true);
+    },
+  );
+});
+
 describe('source coordinates', () => {
   it('uses one conversion implementation, shared by reference with the anchor helper', () => {
     expect(utf16ToSource).toBe(utf16ToCodePoint);

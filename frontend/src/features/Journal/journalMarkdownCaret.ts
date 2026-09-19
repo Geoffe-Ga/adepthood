@@ -89,13 +89,16 @@ function owningSpans(document: JournalMarkdownDocument, sourceIndex: number): In
   return document.inlineSpans.filter((span) => sourceIndex >= span.start && sourceIndex < span.end);
 }
 
-/** The widest of several overlapping owners: earliest start, then longest. */
-function widest(owners: InlineSpan[]): InlineSpan {
-  return owners.reduce((chosen, span) =>
-    span.start < chosen.start || (span.start === chosen.start && span.end > chosen.end)
-      ? span
-      : chosen,
-  );
+/**
+ * The outermost of several overlapping owners.
+ *
+ * Earliest start is enough to identify it: a source position opens at most one
+ * delimiter pair, because `isMarkerRun` requires a whole run and the passes are
+ * keyed by distinct marker/width combinations. (Brute-forced over every body of
+ * length <= 6 in `*_=a \\->`: no two recorded pairs ever share a start.)
+ */
+function outermost(owners: InlineSpan[]): InlineSpan {
+  return owners.reduce((chosen, span) => (span.start < chosen.start ? span : chosen));
 }
 
 /**
@@ -121,7 +124,7 @@ export function spanAt(
   if (sourceIndex < 0 || sourceIndex >= document.chars.length) return null;
   const owners = owningSpans(document, sourceIndex);
   if (owners.length === 0) return null;
-  const { start, end } = widest(owners);
+  const { start, end } = outermost(owners);
   return {
     start,
     end,
