@@ -1,0 +1,220 @@
+/* ==========================================================================
+   Adepthood promotional flyers — shared print stylesheet
+   Palette and type roles follow the "Candle & Ink" design system:
+   frontend/src/design/DESIGN.md and frontend/src/design/tokens.ts
+   ========================================================================== */
+
+@import url("fonts.css");
+
+:root {
+  /* Surfaces — tokens.ts `surface.*` */
+  --canvas:   #faf6ef;
+  --raised:   #ffffff;
+  --sunken:   #f3ecdf;
+  --desk:     #e7dcc8;
+  --hairline: #e3dccd;
+
+  /* Ink — tokens.ts `ink.*` (13.9 / 7.3 / 5.7 : 1 on canvas) */
+  --ink:      #2b2620;
+  --ink-soft: #5a5046;
+  --ink-mute: #6b6055;
+
+  /* Accent — tokens.ts `accent.*` (4.9 / 6.1 : 1 on canvas) */
+  --accent:        #a5572f;
+  --accent-strong: #8f4a28;
+
+  /* Showcase umber band — tokens.ts `showcase.*` / `onShowcase.*` */
+  --umber:        #2a211a;
+  --umber-raised: #352a20;
+  --on-umber:      #f3ece0;
+  --on-umber-soft: #cdbfae;
+  --on-umber-mute: #a8967c;
+
+  /* Goal-tier arc — tokens.ts `colors.tier.*` */
+  --brass:     #b08d40;
+  --terracotta:#be6e46;
+  --garnet:    #8c3b2e;
+
+  --serif: "Fraunces", "Bitstream Charter", Georgia, serif;
+  --body:  "Spectral", "Bitstream Charter", Georgia, serif;
+  --sans:  "Inter", "Liberation Sans", Helvetica, Arial, sans-serif;
+}
+
+@page { size: 8.5in 11in; margin: 0; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+  width: 8.5in;
+  height: 11in;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 11pt;
+  line-height: 1.5;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+/* --- masthead ------------------------------------------------------------ */
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.46in 0.62in 0;
+}
+
+.wordmark {
+  font-family: var(--serif);
+  font-variation-settings: "SOFT" 20, "WONK" 1, "opsz" 40;
+  font-weight: 700;
+  font-size: 19pt;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.masthead .kicker {
+  font-family: var(--sans);
+  font-size: 7.4pt;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* --- the sheet ----------------------------------------------------------- */
+
+.sheet { flex: 1 1 auto; min-height: 0; padding: 0 0.62in; display: flex; flex-direction: column; }
+
+.rule {
+  height: 1px;
+  background: var(--hairline);
+  margin: 0.15in 0 0.3in;
+}
+
+.eyebrow {
+  font-family: var(--sans);
+  font-size: 8pt;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  font-family: var(--serif);
+  font-variation-settings: "SOFT" 30, "WONK" 1, "opsz" 144;
+  font-weight: 700;
+  letter-spacing: -0.021em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+h1 em { font-style: italic; font-variation-settings: "SOFT" 60, "WONK" 1, "opsz" 144; }
+
+.deck {
+  font-family: var(--body);
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+/* --- feature rows -------------------------------------------------------- */
+
+.features { display: flex; gap: 0.26in; }
+
+.feature { flex: 1; border-top: 2px solid var(--ink); padding-top: 0.11in; }
+
+.feature h3 {
+  font-family: var(--sans);
+  font-size: 8.3pt;
+  font-weight: 700;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-bottom: 0.055in;
+}
+
+.feature p { font-size: 9.6pt; line-height: 1.46; color: var(--ink-soft); }
+
+/* --- footer band --------------------------------------------------------- */
+
+.band {
+  flex: none;
+  background: var(--umber);
+  color: var(--on-umber);
+  padding: 0.27in 0.62in 0.3in;
+  display: flex;
+  align-items: center;
+  gap: 0.3in;
+}
+
+.band .qr {
+  width: 1.02in;
+  height: 1.02in;
+  background: #fff;
+  padding: 0.045in;
+  border-radius: 0.035in;
+  flex: none;
+}
+
+.band .qr img { width: 100%; height: 100%; display: block; }
+
+.band .pitch { flex: 1; }
+
+.band .url {
+  font-family: var(--serif);
+  font-variation-settings: "SOFT" 20, "WONK" 1, "opsz" 72;
+  font-weight: 700;
+  font-size: 23pt;
+  letter-spacing: -0.005em;
+  line-height: 1.05;
+  color: var(--on-umber);
+}
+
+.band .scan {
+  font-family: var(--sans);
+  font-size: 7.6pt;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--on-umber-mute);
+  margin-bottom: 0.07in;
+}
+
+.band .terms {
+  font-family: var(--body);
+  font-size: 9.2pt;
+  line-height: 1.45;
+  color: var(--on-umber-soft);
+  margin-top: 0.08in;
+  max-width: 4.5in;
+}
+
+.band .terms strong { color: var(--on-umber); font-weight: 600; }
+
+/* --- small print --------------------------------------------------------- */
+
+.smallprint {
+  font-family: var(--sans);
+  font-size: 6.9pt;
+  line-height: 1.5;
+  letter-spacing: 0.005em;
+  color: var(--ink-mute);
+}
+
+.pull {
+  font-family: var(--serif);
+  font-variation-settings: "SOFT" 60, "WONK" 1, "opsz" 72;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--accent-strong);
+  text-wrap: balance;
+}

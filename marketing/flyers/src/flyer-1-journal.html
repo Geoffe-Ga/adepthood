@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adepthood — A journal that answers back</title>
+<link rel="stylesheet" href="../assets/flyer.css">
+<style>
+  .sheet { padding-top: 0.04in; }
+  h1 { font-size: 46pt; line-height: 1.0; margin-bottom: 0.17in; }
+  .deck { font-size: 12.3pt; line-height: 1.52; max-width: 6.35in; }
+  .deck .lede { font-weight: 500; color: var(--ink); }
+
+  /* --- hero: a page of the journal, with a note in its margin --- */
+  .hero { position: relative; margin: 0.36in 0 0.34in; display: flex; align-items: flex-start; }
+
+  .paper {
+    width: 4.18in;
+    background: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: 0.045in;
+    box-shadow: 0 0.035in 0.09in rgba(43, 38, 32, 0.09);
+    padding: 0.26in 0.28in 0.3in;
+    flex: none;
+  }
+  .paper .stamp {
+    font-family: var(--sans);
+    font-size: 7.2pt; font-weight: 600; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--ink-mute);
+    padding-bottom: 0.1in; margin-bottom: 0.15in;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .paper p {
+    font-size: 11pt; line-height: 1.58; color: var(--ink);
+  }
+  .paper mark {
+    background: rgba(190, 110, 70, 0.17);
+    color: inherit;
+    padding: 0.012in 0;
+    border-radius: 0.015in;
+    box-decoration-break: clone;
+  }
+
+  /* connector from the highlighted clause out to the margin */
+  .tether { flex: none; width: 0.52in; height: 1.7in; position: relative; }
+  .tether svg { position: absolute; top: 0; left: 0; overflow: visible; }
+
+  .note {
+    flex: 1;
+    background: var(--sunken);
+    border-left: 2.5px solid var(--accent);
+    border-radius: 0 0.045in 0.045in 0;
+    padding: 0.21in 0.24in 0.22in;
+    margin-top: 0.42in;
+  }
+  .note .label {
+    font-family: var(--sans);
+    font-size: 6.8pt; font-weight: 700; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--accent-strong);
+    margin-bottom: 0.11in;
+  }
+  .note blockquote {
+    font-family: var(--body); font-style: italic;
+    font-size: 11.1pt; line-height: 1.46; color: var(--ink);
+  }
+  .note cite {
+    display: block; font-style: normal;
+    font-family: var(--sans); font-size: 8pt; font-weight: 500;
+    color: var(--ink-mute); margin-top: 0.13in;
+  }
+
+  .features { margin-top: 0.06in; }
+  .caption { margin-top: auto; padding-top: 0.2in; }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="wordmark">Adepthood</div>
+    <div class="kicker">aptitude.guru</div>
+  </header>
+
+  <main class="sheet">
+    <div class="rule"></div>
+
+    <div class="eyebrow">For people who already keep a notebook</div>
+    <h1>A journal that,<br>in time, <em>answers back.</em></h1>
+
+    <p class="deck">
+      <span class="lede">Adepthood is a private, encrypted journal.</span>
+      Write whatever you want, for as long as you want. As the entries accumulate,
+      the app begins drawing on what you already wrote — returning your own past
+      thinking to you as notes in the margin, at the moment it is relevant again.
+      Not advice from a chatbot. Your words, handed back.
+    </p>
+
+    <div class="hero">
+      <div class="paper">
+        <div class="stamp">Tuesday, 14 March</div>
+        <p>
+          Flat again — third day of it. I keep
+          <mark>waiting to feel like myself before I start anything</mark>,
+          and then the day is gone and I have proof I was right.
+        </p>
+      </div>
+
+      <div class="tether">
+        <svg width="50" height="163" viewBox="0 0 50 163" fill="none">
+          <circle cx="2" cy="92" r="3.6" fill="#a5572f"/>
+          <path d="M 2 92 C 20 92 24 46 48 46"
+                stroke="#a5572f" stroke-width="1.2" fill="none" stroke-dasharray="3 2.6"/>
+        </svg>
+      </div>
+
+      <div class="note">
+        <div class="label">Margin note · drawn from your own journal</div>
+        <blockquote>
+          “The tiredness isn’t laziness. It’s the bottom of the wave —
+          and the bottom is where the next thing gets built.”
+        </blockquote>
+        <cite>— you, on 2 November</cite>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Yours, provably</h3>
+        <p>Entries are stored encrypted. Export the lot — JSON, plus your journal as
+          plain Markdown — or delete the account outright, from Settings. No request
+          form, no waiting.</p>
+      </div>
+      <div class="feature">
+        <h3>No streaks to keep</h3>
+        <p>Nothing is gated, nothing is mandatory. The journal alone is the whole
+          product if you want it to be. Habits, practices, a course and a community
+          wait behind doors you open only if you feel like it.</p>
+      </div>
+      <div class="feature">
+        <h3>Built to be outgrown</h3>
+        <p>The stated goal is that you eventually stop needing it. No lock-in, no guilt
+          mechanics, nothing that punishes you for leaving and taking your writing
+          with you.</p>
+      </div>
+    </div>
+
+    <p class="smallprint caption">
+      Illustration of the app’s margin-note feature. Entry text is an example, not a real person’s writing.
+    </p>
+  </main>
+
+  <footer class="band">
+    <div class="qr"><img src="../assets/qr-aptitude-guru.svg" alt="QR code linking to aptitude.guru"></div>
+    <div class="pitch">
+      <div class="scan">Scan, or visit</div>
+      <div class="url">aptitude.guru</div>
+      <p class="terms">
+        <strong>Gift economy — pay what you can.</strong> A seat you buy can be handed
+        to someone else; it isn’t tied to your email address.
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>

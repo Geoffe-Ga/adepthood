@@ -1,0 +1,18 @@
+Fonts bundled with the promotional flyers
+=========================================
+
+`frontend/src/design/DESIGN.md` requires that any bundled face commits its
+licence. These three are all SIL Open Font License 1.1; the full text of each
+is in `licenses/`.
+
+  Fraunces  — display/headline.  Copyright 2018 The Fraunces Project Authors
+              https://github.com/undercasetype/Fraunces          OFL-1.1
+  Spectral  — body text.         Copyright 2017 The Spectral Project Authors
+              https://github.com/productiontype/Spectral         OFL-1.1
+  Inter     — labels/eyebrows.   Copyright 2020 The Inter Project Authors
+              https://github.com/rsms/inter                      OFL-1.1
+
+The `.woff2` files are the latin and latin-ext subsets served by Google Fonts,
+named by a hash of their contents and referenced from `assets/fonts.css`. They
+are embedded so the flyers render identically on any machine — the app itself
+still ships no bundled fonts and continues to use platform system stacks.

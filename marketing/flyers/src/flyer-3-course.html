@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APTITUDE — a ten-stage, 36-week course</title>
+<link rel="stylesheet" href="../assets/flyer.css">
+<style>
+  h1 { font-size: 43pt; line-height: 1.01; margin-bottom: 0.16in; }
+  .deck { font-size: 12.1pt; line-height: 1.5; max-width: 6.4in; }
+  .deck .lede { font-weight: 500; color: var(--ink); }
+
+  /* --- hero: the practice ramp laid over the real 36-week cadence --- */
+  .ramp-block { margin: 0.22in 0 0.14in; }
+  .ramp { width: 100%; display: block; }
+
+  /* 8 stages of 3 weeks, then 2 of 6 weeks — the grid mirrors the SVG bands */
+  .stages {
+    display: grid;
+    grid-template-columns: repeat(8, 3fr) 6fr 6fr;
+    margin-top: 0.05in;
+  }
+  .stages { gap: 0.045in; }
+  .chip { height: 0.062in; border-radius: 0.031in; }
+  .capacities {
+    font-family: var(--sans);
+    font-size: 7.6pt; font-weight: 600; letter-spacing: 0.035em;
+    color: var(--ink-soft); line-height: 1.55;
+    text-align: center; margin-top: 0.12in; padding: 0 0.1in;
+  }
+
+  .cadence {
+    display: grid;
+    grid-template-columns: 24fr 12fr;
+    margin-top: 0.11in; padding-top: 0.1in;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--sans); font-size: 7.4pt; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute);
+  }
+  .cadence span { text-align: center; }
+  .cadence span + span { border-left: 1px solid var(--hairline); }
+
+  .pull { font-size: 15.5pt; line-height: 1.28; margin: 0.16in 0 0.17in; text-align: center; }
+
+  .features { margin-top: 0; }
+  .caption { margin-top: auto; padding-top: 0.08in; }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="wordmark">Aptitude</div>
+    <div class="kicker">The course behind Adepthood</div>
+  </header>
+
+  <main class="sheet">
+    <div class="rule"></div>
+
+    <div class="eyebrow">A ten-stage, thirty-six-week rite of passage</div>
+    <h1>One to three minutes a day.<br><em>That’s where it starts.</em></h1>
+
+    <p class="deck">
+      <span class="lede">APTITUDE brings ten human capacities online, one at a time, over 36 weeks.</span>
+      Each stage adds one habit and one practice, and the practice steps up only every
+      three weeks — so you are never asked for more than the next small increment.
+    </p>
+
+    <div class="ramp-block">
+      <svg class="ramp" viewBox="0 0 720 206" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- stage bands: eight of three weeks (60px), two of six weeks (120px) -->
+        <g fill="#f3ecdf">
+          <rect x="60"  y="12" width="60" height="172"/>
+          <rect x="180" y="12" width="60" height="172"/>
+          <rect x="300" y="12" width="60" height="172"/>
+          <rect x="420" y="12" width="60" height="172"/>
+          <rect x="600" y="12" width="120" height="172"/>
+        </g>
+
+        <!-- the ramp: gradual climb, then a plateau held to the end -->
+        <path d="M 0 184 C 120 184, 240 30, 360 30 L 720 30 L 720 184 L 0 184 Z"
+              fill="#a5572f" fill-opacity="0.13"/>
+        <path d="M 0 184 C 120 184, 240 30, 360 30 L 720 30"
+              stroke="#a5572f" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+        <!-- baseline and stage ticks -->
+        <line x1="0" y1="184" x2="720" y2="184" stroke="#2b2620" stroke-width="1.4"/>
+        <g stroke="#e3dccd" stroke-width="1">
+          <line x1="60"  y1="12" x2="60"  y2="184"/><line x1="120" y1="12" x2="120" y2="184"/>
+          <line x1="180" y1="12" x2="180" y2="184"/><line x1="240" y1="12" x2="240" y2="184"/>
+          <line x1="300" y1="12" x2="300" y2="184"/><line x1="360" y1="12" x2="360" y2="184"/>
+          <line x1="420" y1="12" x2="420" y2="184"/><line x1="480" y1="12" x2="480" y2="184"/>
+          <line x1="600" y1="12" x2="600" y2="184"/>
+        </g>
+
+        <!-- the two figures the course actually states -->
+        <circle cx="4" cy="184" r="4.6" fill="#8f4a28"/>
+        <text x="16" y="166" font-family="Inter, sans-serif" font-size="13" font-weight="700"
+              fill="#8f4a28" letter-spacing="0.4" paint-order="stroke"
+              stroke="#faf6ef" stroke-width="5" stroke-linejoin="round">1–3 MIN A DAY</text>
+        <circle cx="716" cy="30" r="4.6" fill="#8f4a28"/>
+        <text x="706" y="21" text-anchor="end" font-family="Inter, sans-serif" font-size="13"
+              font-weight="700" fill="#8f4a28" letter-spacing="0.4" paint-order="stroke"
+              stroke="#faf6ef" stroke-width="5" stroke-linejoin="round">45 MIN A DAY</text>
+
+        <text x="0" y="203" font-family="Inter, sans-serif" font-size="11" font-weight="600"
+              fill="#6b6055" letter-spacing="1.1">WEEK 1</text>
+        <text x="720" y="203" text-anchor="end" font-family="Inter, sans-serif" font-size="11"
+              font-weight="600" fill="#6b6055" letter-spacing="1.1">WEEK 36</text>
+      </svg>
+
+      <div class="stages">
+        <div class="chip" style="background:#c9ad74"></div>
+        <div class="chip" style="background:#c2a063"></div>
+        <div class="chip" style="background:#bc9455"></div>
+        <div class="chip" style="background:#b8874a"></div>
+        <div class="chip" style="background:#b57a44"></div>
+        <div class="chip" style="background:#b06c42"></div>
+        <div class="chip" style="background:#a75c3b"></div>
+        <div class="chip" style="background:#9c4d35"></div>
+        <div class="chip" style="background:#914330"></div>
+        <div class="chip" style="background:#8c3b2e"></div>
+      </div>
+
+      <p class="capacities">Agency · Receptivity · Self-Love · Community Love · Intellectual Understanding ·
+        Embodied Understanding · Systems Wisdom · True Self Wisdom · Unity · Emptiness</p>
+
+      <div class="cadence">
+        <span>Eight stages · three weeks each</span>
+        <span>The last two · six weeks each</span>
+      </div>
+    </div>
+
+    <p class="pull">“Stages organize the course.<br>Capacities organize a life.”</p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Not a ladder</h3>
+        <p>No stage is higher than another. Wholeness means having the whole range
+          available and knowing which part the moment is asking for. Then it begins
+          again.</p>
+      </div>
+      <div class="feature">
+        <h3>No guru</h3>
+        <p>The author’s own line. The course hands you blueprints; you pick the
+          materials. Every stage lists alternatives of the same length to swap in.</p>
+      </div>
+      <div class="feature">
+        <h3>Householder, not monastic</h3>
+        <p>What a monastery does with architecture, you do with habits: one new habit
+          per stage, scaffolded so the stack never outruns your energy.</p>
+      </div>
+    </div>
+
+    <p class="smallprint caption">
+      Practice lengths as stated in the course text. The ramp shown is the shape of the climb, not a per-stage schedule.
+    </p>
+  </main>
+
+  <footer class="band">
+    <div class="qr"><img src="../assets/qr-aptitude-guru.svg" alt="QR code linking to aptitude.guru"></div>
+    <div class="pitch">
+      <div class="scan">Scan, or visit</div>
+      <div class="url">aptitude.guru</div>
+      <p class="terms">
+        <strong>Gift economy — pay what you can.</strong> A seat you buy can be handed
+        to someone else; it isn’t tied to your email address.
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>

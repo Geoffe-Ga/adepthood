@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Adepthood — The Archetypal Wavelength</title>
+<link rel="stylesheet" href="../assets/flyer.css">
+<style>
+  h1 { font-size: 46pt; line-height: 1.0; margin-bottom: 0.16in; }
+  .deck { font-size: 12.3pt; line-height: 1.52; max-width: 6.35in; }
+  .deck .lede { font-weight: 500; color: var(--ink); }
+
+  /* --- hero: one full cycle, its six phases, each phase two ways --- */
+  .wave-block { margin: 0.24in 0 0.18in; }
+  .wave { width: 100%; display: block; }
+
+  .phases {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    margin-top: 0.02in;
+  }
+  .phase { text-align: center; padding: 0 0.04in; }
+  .phase .name {
+    font-family: var(--sans);
+    font-size: 7.4pt; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink);
+    line-height: 1.25; min-height: 0.26in;
+  }
+  .phase .rx, .phase .od {
+    font-family: var(--body);
+    font-size: 10.2pt; line-height: 1.3;
+  }
+  .phase .rx { color: var(--accent-strong); font-weight: 600; margin-top: 0.05in; }
+  .phase .od { color: var(--ink-mute); font-style: italic; }
+  .phase .slash { color: var(--hairline); font-size: 8pt; line-height: 1.1; }
+
+  .legend {
+    display: flex; justify-content: center; gap: 0.34in;
+    margin-top: 0.12in; padding-top: 0.09in;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--sans); font-size: 7.6pt; font-weight: 600;
+    letter-spacing: 0.11em; text-transform: uppercase;
+  }
+  .legend .rx-key { color: var(--accent-strong); }
+  .legend .od-key { color: var(--ink-mute); }
+
+  .features { margin-top: 0.06in; }
+  .caption { margin-top: auto; padding-top: 0.06in; }
+</style>
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="wordmark">Adepthood</div>
+    <div class="kicker">aptitude.guru</div>
+  </header>
+
+  <main class="sheet">
+    <div class="rule"></div>
+
+    <div class="eyebrow">The Archetypal Wavelength</div>
+    <h1>Your moods already<br>have <em>a shape.</em></h1>
+
+    <p class="deck">
+      <span class="lede">Rising. Peaking. Withdrawal. Diminishing. Bottoming out. Restoration.</span>
+      Six phases that turn up in a mood, a creative project, a relationship, a season.
+      The Archetypal Wavelength names them — and names, for each one, the difference
+      between riding a phase and being flattened by it.
+    </p>
+
+    <div class="wave-block">
+      <svg class="wave" viewBox="0 0 720 206" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- centre line -->
+        <line x1="0" y1="110" x2="720" y2="110" stroke="#e3dccd" stroke-width="1" stroke-dasharray="4 4"/>
+        <!-- one full cycle -->
+        <path d="M 0.00 110.00 C 30.00 91.67 60.00 73.46 90.00 60.50 C 120.00 47.54 150.00 40.00 180.00 40.00 C 210.00 40.00 240.00 47.54 270.00 60.50 C 300.00 73.46 330.00 91.67 360.00 110.00 C 390.00 128.33 420.00 146.54 450.00 159.50 C 480.00 172.46 510.00 180.00 540.00 180.00 C 570.00 180.00 600.00 172.46 630.00 159.50 C 660.00 146.54 690.00 128.33 720.00 110.00"
+              stroke="#2b2620" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- phase markers, evenly spaced at the centres of six columns -->
+        <g stroke="#a5572f" stroke-width="1" stroke-dasharray="2.5 3">
+          <line x1="60"  y1="75"  x2="60"  y2="198"/>
+          <line x1="180" y1="40"  x2="180" y2="198"/>
+          <line x1="300" y1="75"  x2="300" y2="198"/>
+          <line x1="420" y1="145" x2="420" y2="198"/>
+          <line x1="540" y1="180" x2="540" y2="198"/>
+          <line x1="660" y1="145" x2="660" y2="198"/>
+        </g>
+        <g fill="#a5572f">
+          <circle cx="60"  cy="75"  r="5.4"/>
+          <circle cx="180" cy="40"  r="5.4"/>
+          <circle cx="300" cy="75"  r="5.4"/>
+          <circle cx="420" cy="145" r="5.4"/>
+          <circle cx="540" cy="180" r="5.4"/>
+          <circle cx="660" cy="145" r="5.4"/>
+        </g>
+      </svg>
+
+      <div class="phases">
+        <div class="phase">
+          <div class="name">Rising</div>
+          <div class="rx">Inspiration</div>
+          <div class="slash">or</div>
+          <div class="od">Grandiosity</div>
+        </div>
+        <div class="phase">
+          <div class="name">Peaking</div>
+          <div class="rx">Joy</div>
+          <div class="slash">or</div>
+          <div class="od">Ecstasy</div>
+        </div>
+        <div class="phase">
+          <div class="name">Withdrawal</div>
+          <div class="rx">Introspectivity</div>
+          <div class="slash">or</div>
+          <div class="od">Anxiety</div>
+        </div>
+        <div class="phase">
+          <div class="name">Diminishing</div>
+          <div class="rx">Tranquility</div>
+          <div class="slash">or</div>
+          <div class="od">Self-Doubt</div>
+        </div>
+        <div class="phase">
+          <div class="name">Bottoming&nbsp;Out</div>
+          <div class="rx">Convalescence</div>
+          <div class="slash">or</div>
+          <div class="od">Self-Loathing</div>
+        </div>
+        <div class="phase">
+          <div class="name">Restoration</div>
+          <div class="rx">Recuperation</div>
+          <div class="slash">or</div>
+          <div class="od">Selfishness</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="rx-key">■ The medicine of the phase</span>
+        <span class="od-key">■ The overdose of it</span>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="feature">
+        <h3>A map, not a mood ring</h3>
+        <p>The Wavelength is the spine of APTITUDE, a ten-stage course, and of
+          Adepthood, the app that paces it. Each of the ten stages reads all six
+          phases in its own vocabulary.</p>
+      </div>
+      <div class="feature">
+        <h3>Knowing which phase</h3>
+        <p>Write in the app’s journal and your entries are sorted by phase and by
+          stage, so the pattern you are living becomes something you can actually
+          look at rather than only endure.</p>
+      </div>
+      <div class="feature">
+        <h3>Contraction is not failure</h3>
+        <p>There is no permanent peak on offer here. The bottom of the wave has its
+          own medicine — convalescence — and the course treats it as a phase to be
+          met well, not a lapse to be fixed.</p>
+      </div>
+    </div>
+
+    <p class="smallprint caption">
+      Phase pairs use the Purple stage’s vocabulary; each of the ten stages names all six in its own terms.
+      Adepthood is a framework for self-knowledge — it complements professional mental-health care and does not replace it.
+    </p>
+  </main>
+
+  <footer class="band">
+    <div class="qr"><img src="../assets/qr-aptitude-guru.svg" alt="QR code linking to aptitude.guru"></div>
+    <div class="pitch">
+      <div class="scan">Scan, or visit</div>
+      <div class="url">aptitude.guru</div>
+      <p class="terms">
+        <strong>Gift economy — pay what you can.</strong> A seat you buy can be handed
+        to someone else; it isn’t tied to your email address.
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
