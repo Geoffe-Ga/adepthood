@@ -157,11 +157,12 @@ h1 em { font-style: italic; font-variation-settings: "SOFT" 60, "WONK" 1, "opsz"
 }
 
 .band .qr {
-  width: 1.02in;
-  height: 1.02in;
+  /* Sized so the tracking URL's 57-module symbol prints at ~0.53mm per
+     module. No padding: the plate edge is the quiet zone, which keeps the
+     symbol verifiable by verify-qr.py on the same grid as the posters. */
+  width: 1.2in;
+  height: 1.2in;
   background: #fff;
-  padding: 0.045in;
-  border-radius: 0.035in;
   flex: none;
 }
 

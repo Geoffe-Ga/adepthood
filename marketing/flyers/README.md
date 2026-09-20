@@ -1,40 +1,88 @@
 # Promotional flyers
 
-Three single-page, print-ready flyers for public noticeboards — libraries,
-co-op and grocery community boards, yoga and movement studios.
+Two formats of the same three pitches, for libraries, grocery and co-op
+community boards, and yoga / movement studios.
 
-| File | Angle | Meant for |
+## Posters — for a wall you walk past
+
+The primary artefact. One idea readable across a room, proof only for whoever
+stops, and a large QR. A deep umber field so the sheet reads as an object on a
+corkboard otherwise covered in white paper.
+
+| File | The one idea | Venue |
 | --- | --- | --- |
-| `out/flyer-1-journal.pdf` | The journal that returns your own past writing to you | Libraries, bookshops, writing groups |
-| `out/flyer-2-wavelength.pdf` | The Archetypal Wavelength as a readable shape for your cycles | Grocery / co-op community boards |
-| `out/flyer-3-course.pdf` | APTITUDE as a 36-week practice ramp that starts at 1–3 minutes | Yoga, meditation and movement studios |
+| `out/poster-1-library.pdf` | "Your journal, answering back." | Libraries, bookshops, writing groups |
+| `out/poster-2-grocery.pdf` | "Your moods have a shape." | Grocery / co-op community boards |
+| `out/poster-3-studio.pdf` | "It starts with three minutes." | Yoga, meditation, movement studios |
 
-- **Size:** US Letter, 8.5 × 11 in, full colour, full-bleed footer band.
-- **QR:** all three encode `https://aptitude.guru`, version 3, error correction
-  level H (≈30% recoverable), printing at 1.02 in — a 0.72 mm module, comfortably
-  above the ~0.4 mm floor for phone cameras, with margin for scuffing on a corkboard.
+## Handouts — for a table, a counter, or a hand
+
+The longer editorial version of each pitch: too much text for a wall, right for
+something somebody picks up and takes away.
+
+| File | Venue |
+| --- | --- |
+| `out/handout-1-library.pdf` | Libraries, bookshops, writing groups |
+| `out/handout-2-grocery.pdf` | Grocery / co-op community boards |
+| `out/handout-3-studio.pdf` | Yoga, meditation, movement studios |
+
+- **Size:** US Letter, 8.5 × 11 in, full colour.
 - **Type:** Fraunces (display), Spectral (body), Inter (labels) — all SIL Open
-  Font License, embedded in `assets/fonts/`.
-- **Palette:** the app's own Candle & Ink tokens, taken from
-  `frontend/src/design/tokens.ts` and `frontend/src/design/DESIGN.md`.
+  Font License, embedded in `assets/fonts/` with their licences.
+- **Palette:** the app's own Candle & Ink tokens, from
+  `frontend/src/design/tokens.ts` and `frontend/src/design/DESIGN.md`. The
+  posters use the warm-dark `showcase` / `onShowcase` layer; the terracotta is
+  lifted to `#d08558` so it clears WCAG AA on the umber.
 
-## Rebuilding
+## Which flyer did the scan come from
+
+Every one of the six carries its own QR, so a scan is attributable to a
+format and a venue. The URLs are standard UTM, which analytics platforms
+parse into their own columns with no work on the site:
+
+| Flyer | QR target |
+| --- | --- |
+| poster-1-library | `aptitude.guru/?utm_source=poster&utm_medium=print&utm_campaign=library` |
+| poster-2-grocery | `aptitude.guru/?utm_source=poster&utm_medium=print&utm_campaign=grocery` |
+| poster-3-studio | `aptitude.guru/?utm_source=poster&utm_medium=print&utm_campaign=studio` |
+| handout-1-library | `aptitude.guru/?utm_source=handout&utm_medium=print&utm_campaign=library` |
+| handout-2-grocery | `aptitude.guru/?utm_source=handout&utm_medium=print&utm_campaign=grocery` |
+| handout-3-studio | `aptitude.guru/?utm_source=handout&utm_medium=print&utm_campaign=studio` |
+
+`utm_campaign` is the venue, `utm_source` the format — so a dashboard answers
+both "which venue pulls" and "do posters or handouts pull" without further
+setup. The exact strings are in `assets/qr-targets.json`, which is also what
+`verify-qr.py` checks the rendered output against.
+
+This needs analytics on `aptitude.guru` that record UTM parameters (GA4,
+Plausible and Fathom all do by default). If there is no analytics at all, the
+parameters still appear in server request logs; a shorter `?ref=library` form
+would work equally well there and produce a less dense QR.
+
+## Rebuilding and checking
 
 ```bash
-./build.sh          # renders every src/*.html to out/*.pdf and a 2x proof out/*.png
+./build.sh          # every src/*.html -> out/*.pdf plus a 2x proof out/*.png
+python3 verify-qr.py  # every rendered QR decoded back against its target URL
 ```
 
-Requires the Chromium that ships with Playwright; override with
-`CHROME=/path/to/chrome ./build.sh`. The proof PNG is rendered into a viewport
-taller than the page and then cropped, because headless Chromium's usable
-viewport is ~88 px shorter than `--window-size` asks for and silently clips the
-bottom of an exactly-page-height screenshot.
+`build.sh` requires the Chromium that ships with Playwright; override with
+`CHROME=/path/to/chrome`. The proof PNG is rendered into a viewport taller than
+the page and then cropped, because headless Chromium's usable viewport is
+~88 px shorter than `--window-size` asks for and silently clips the bottom of
+an exactly-page-height screenshot.
+
+`verify-qr.py` finds the white QR plate in each rendered page, samples its
+module grid and compares it module-for-module with the symbol segno generates
+for that flyer's URL. It also fails a symbol printing below 0.4 mm per module.
+Current output: posters 0.69 mm per module, handouts 0.53 mm — both comfortably
+scannable, the posters deliberately larger because they are read off a wall.
 
 ## Every claim, and where it comes from
 
 Nothing on these flyers is asserted without a source in one of the five repos.
 
-### Flyer 1 — the journal
+### The library pitch — the journal
 
 | Claim | Source |
 | --- | --- |
@@ -46,10 +94,15 @@ Nothing on these flyers is asserted without a source in one of the five repos.
 | Habits, practices, a course and a community are optional depths | `README.md` § Features — "Optional depths — choose any, in any order" |
 | "The stated goal is that you eventually stop needing it" / no lock-in | `NORTH-STAR.md` §8 — "The app's deepest success … is its own eventual obsolescence"; "Build nothing that punishes leaving" |
 
-The journal entry and margin note in the illustration are written examples, not
-a real person's writing. The flyer says so in its footnote.
+The journal entry and margin note are written examples, not a real person's
+writing. Both the handout and the poster say so — the handout under its
+illustration, the poster in the line beneath its URL ("Journal excerpt shown
+is an example"). The poster's "you wrote that in November" is the product's
+behaviour dramatised, in the way an advertisement shows a mocked-up screen;
+if that reads as too strong a claim, the `cite` line in
+`src/poster-1-library.html` is a one-line change.
 
-### Flyer 2 — the Archetypal Wavelength
+### The community-board pitch — the Archetypal Wavelength
 
 | Claim | Source |
 | --- | --- |
@@ -64,7 +117,7 @@ a real person's writing. The flyer says so in its footnote.
 The flyer states that the phase pairs use the Purple stage's vocabulary, so the
 specific words are not mistaken for the whole model.
 
-### Flyer 3 — the course
+### The studio pitch — the course
 
 | Claim | Source |
 | --- | --- |
@@ -107,11 +160,11 @@ specific words are not mistaken for the whole model.
 
 ## Two things to confirm before printing
 
-1. **"Gift economy — pay what you can"** appears in the footer of all three.
+1. **"Gift economy — pay what you can"** appears in the footer of all six.
    That framing came from the brief, and the giftability half is pinned by ADR
    0008 — but the pay-what-you-can half depends on the Gumroad listing actually
    being configured for pay-what-you-want pricing. If it isn't, edit the
    `.terms` paragraph in the footer of each `src/*.html` and re-run `./build.sh`.
-2. **`aptitude.guru` is the QR target for all three.** Signup needs a licence
+2. **`aptitude.guru` is the QR target for all six.** Signup needs a licence
    key, so that page has to explain the offer and lead to purchase. It could not
    be checked from this environment.
