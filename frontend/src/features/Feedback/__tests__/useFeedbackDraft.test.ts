@@ -239,4 +239,20 @@ describe('useFeedbackDraft', () => {
     expect(result.current.draft.idempotencyKey).toBe(key);
     expect((await loadFeedbackDraft())?.attempt).toBeNull();
   });
+
+  it('after the account leaves, an edit that still arrives is not written anywhere (review [4])', async () => {
+    const { result } = await mountHydrated();
+    // What logout does: wipe the row, then drop the scope.
+    await act(async () => {
+      await AsyncStorage.clear();
+      setActiveUser(null);
+    });
+
+    act(() => result.current.setAnswer('summary', 'private words typed as the session ended'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+    });
+
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
+  });
 });
