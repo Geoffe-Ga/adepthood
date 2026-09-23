@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, afterEach, beforeEach, jest */
-import { fireEvent, render, within } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { AccessibilityInfo } from 'react-native';
 
@@ -36,10 +36,25 @@ jest.mock('@/config', () => {
   });
 });
 
+// The operator row asks the server; each test decides what the server says.
+// Everything else in the API module stays real.
+const mockCapabilities = jest.fn<Promise<{ feedback_triage: boolean }>, []>(() =>
+  Promise.reject(new Error('no capability answer configured')),
+);
+
+jest.mock('@/api', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/api');
+  return {
+    ...actual,
+    adminFeedback: { capabilities: () => mockCapabilities() },
+  };
+});
+
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
+import { ApiError } from '@/api';
 import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 
 beforeEach(() => {
@@ -503,5 +518,27 @@ describe('SettingsHubScreen — focus comes back to the row (#2898 review [13])'
     expect(focus).toHaveBeenCalledTimes(1);
     expect(focus).toHaveBeenCalledWith(expect.anything(), 'focus');
     focus.mockRestore();
+  });
+});
+
+describe('SettingsHubScreen — the operator inbox entry', () => {
+  const HTTP_FORBIDDEN = 403;
+  const ROW = 'settings-row-feedback-inbox';
+
+  test('shows the inbox row for a server-confirmed operator and opens the inbox', async () => {
+    mockCapabilities.mockResolvedValueOnce({ feedback_triage: true });
+    const { findByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(await findByTestId(ROW));
+
+    expect(mockNavigate).toHaveBeenCalledWith('AdminFeedback');
+  });
+
+  test('has no inbox row when the server refuses the capability', async () => {
+    mockCapabilities.mockRejectedValueOnce(new ApiError(HTTP_FORBIDDEN, 'admin_required'));
+    const { queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockCapabilities).toHaveBeenCalled());
+    expect(queryByTestId(ROW)).toBeNull();
   });
 });
