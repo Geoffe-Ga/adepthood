@@ -294,3 +294,38 @@ async def test_the_operator_text_bounds_are_inclusive(
 
     assert response.status_code == HTTPStatus.OK
     assert _REPORTER_WORDS not in response.text
+
+
+# The decided bounds, written as literals so that a changed constant is a
+# disagreement with this file rather than a bound that moves with its own test.
+_DECIDED_TITLE_BOUND = 100
+_DECIDED_SUMMARY_BOUND = 2000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title_length", "summary_length", "status"),
+    [
+        (_DECIDED_TITLE_BOUND, _DECIDED_SUMMARY_BOUND, HTTPStatus.OK),
+        (_DECIDED_TITLE_BOUND + 1, _DECIDED_SUMMARY_BOUND, HTTPStatus.UNPROCESSABLE_ENTITY),
+        (_DECIDED_TITLE_BOUND, _DECIDED_SUMMARY_BOUND + 1, HTTPStatus.UNPROCESSABLE_ENTITY),
+    ],
+)
+async def test_the_operator_text_bounds_are_the_decided_numbers(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    title_length: int,
+    summary_length: int,
+    status: HTTPStatus,
+) -> None:
+    """100 characters of title and 2000 of summary, inclusive."""
+    admin = await make_account(db_session, "operator@example.com", admin=True)
+    public_id, _, _, _ = await _seed(db_session)
+
+    response = await async_client.post(
+        f"/admin/feedback/{public_id}/draft",
+        json={"title": "t" * title_length, "summary": "s" * summary_length},
+        headers=admin.headers,
+    )
+
+    assert response.status_code == status
