@@ -6,7 +6,7 @@ import {
   FEEDBACK_EDIT_AFTER_FAILURE_COPY,
   FEEDBACK_OUTCOME_COPY,
   FEEDBACK_SUCCESS_COPY,
-  isAmbiguousFailure,
+  isDefinitiveRefusal,
 } from '@/features/Feedback/feedbackOutcome';
 
 const networkError = new TypeError('Network request failed');
@@ -38,13 +38,15 @@ describe('classifySubmitFailure', () => {
   });
 });
 
-describe('isAmbiguousFailure', () => {
-  it('freezes only when the report may already be stored', () => {
-    expect(isAmbiguousFailure('retryable')).toBe(true);
-    expect(isAmbiguousFailure('unexpected')).toBe(true);
-    expect(isAmbiguousFailure('rate_limited')).toBe(false);
-    expect(isAmbiguousFailure('invalid')).toBe(false);
-    expect(isAmbiguousFailure('session')).toBe(false);
+describe('isDefinitiveRefusal', () => {
+  it('unfreezes only on a body refusal, which no retry can have got past', () => {
+    expect(isDefinitiveRefusal('invalid')).toBe(true);
+    // 429 and 401 can be the LAST error of a retry loop whose first attempt was
+    // stored (review [1]), so they keep the attempt frozen.
+    expect(isDefinitiveRefusal('rate_limited')).toBe(false);
+    expect(isDefinitiveRefusal('session')).toBe(false);
+    expect(isDefinitiveRefusal('retryable')).toBe(false);
+    expect(isDefinitiveRefusal('unexpected')).toBe(false);
   });
 });
 
@@ -53,7 +55,7 @@ describe('copy', () => {
     expect(FEEDBACK_OUTCOME_COPY.retryable).toMatch(/safe to send again/);
     expect(FEEDBACK_OUTCOME_COPY.retryable).toMatch(/will not create a duplicate/);
     expect(FEEDBACK_OUTCOME_COPY.unexpected).toMatch(/will not create a duplicate/);
-    expect(FEEDBACK_OUTCOME_COPY.rate_limited).toMatch(/try again later/);
+    expect(FEEDBACK_OUTCOME_COPY.rate_limited).toMatch(/send it again later/);
     expect(FEEDBACK_OUTCOME_COPY.invalid).toMatch(/draft is still here/);
     expect(FEEDBACK_OUTCOME_COPY.session).toMatch(/not sent/);
     expect(FEEDBACK_EDIT_AFTER_FAILURE_COPY).toMatch(/second one/);

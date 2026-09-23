@@ -2,19 +2,21 @@
 /* global describe, it, expect, jest, beforeEach, afterEach */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
-import { AccessibilityInfo, Dimensions, Text } from 'react-native';
+import { AccessibilityInfo, Dimensions, Text, type View } from 'react-native';
 
 import { renderComposer } from './composerHarness';
 
 import * as api from '@/api';
 import { ApiError, ApiValidationError, type FeedbackCreate, type FeedbackReceipt } from '@/api';
 import { FEEDBACK_CONTEXT_LABELS } from '@/features/Feedback/feedbackCopy';
+import { rememberFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 import {
   FEEDBACK_EDIT_AFTER_FAILURE_COPY,
   FEEDBACK_OUTCOME_COPY,
 } from '@/features/Feedback/feedbackOutcome';
 import { FEEDBACK_TEST_IDS as IDS } from '@/features/Feedback/feedbackTestIds';
 import {
+  clearFeedbackDraft,
   FEEDBACK_DRAFT_KEY,
   loadFeedbackDraft,
   saveFeedbackDraft,
@@ -207,6 +209,8 @@ describe('FeedbackComposerScreen — one key per draft', () => {
       fireEvent.press(screen.getByTestId(IDS.send));
     });
 
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    await act(async () => undefined);
     expect(submit).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId(IDS.send).props.accessibilityState).toMatchObject({ busy: true });
     await act(async () => resolve(RECEIPT));
@@ -469,5 +473,214 @@ describe('FeedbackComposerScreen — more states', () => {
 
     await waitFor(() => expect(screen.queryByTestId(IDS.screen)).toBeNull());
     expect(screen.getByText('Journal stub')).toBeTruthy();
+  });
+});
+
+/** A submit that stays in flight until the test settles it. */
+function pendingSubmit(): {
+  resolve: (receipt: FeedbackReceipt) => void;
+  reject: (error: unknown) => void;
+} {
+  const handle = {
+    resolve: (_receipt: FeedbackReceipt): void => undefined,
+    reject: (_error: unknown): void => undefined,
+  };
+  submit.mockImplementationOnce(
+    () =>
+      new Promise<FeedbackReceipt>((resolve, reject) => {
+        handle.resolve = resolve;
+        handle.reject = reject;
+      }),
+  );
+  return handle;
+}
+
+async function sendAndWaitForRequest(): Promise<void> {
+  await pressSend();
+  await waitFor(() => expect(submit).toHaveBeenCalled());
+}
+
+describe('FeedbackComposerScreen — a send that outlives the composer (review [0])', () => {
+  it('the attempt is on disk before the request leaves, so a remount mid-send is frozen', async () => {
+    pendingSubmit();
+    const view = renderComposer({ control: 'shell.header.send_feedback' });
+    await screen.findByTestId(IDS.categoryOption('broken'));
+    chooseBrokenAndFill();
+    await sendAndWaitForRequest();
+
+    const stored = await loadFeedbackDraft();
+    expect(stored?.attempt?.key).toBe(submit.mock.calls[0]?.[1]);
+    expect(stored?.attempt?.payload).toEqual(submit.mock.calls[0]?.[0]);
+
+    view.unmount();
+    renderComposer({ control: 'shell.header.send_feedback' });
+    await screen.findByTestId(IDS.field('summary'));
+
+    expect(screen.getByTestId(IDS.send).props.accessibilityLabel).toBe('Send again');
+    expect(screen.getByTestId(IDS.field('summary')).props.editable).toBe(false);
+  });
+
+  it('an orphaned send that later succeeds does not clear a draft reopened for edit', async () => {
+    const first = pendingSubmit();
+    const view = renderComposer({ control: 'shell.header.send_feedback' });
+    await screen.findByTestId(IDS.categoryOption('broken'));
+    chooseBrokenAndFill();
+    await sendAndWaitForRequest();
+    view.unmount();
+
+    renderComposer({ control: 'shell.header.send_feedback' });
+    await screen.findByTestId(IDS.edit);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(IDS.edit));
+    });
+    fireEvent.changeText(screen.getByTestId(IDS.field('summary')), 'A corrected summary');
+    await act(async () => undefined);
+
+    await act(async () => first.resolve(RECEIPT));
+
+    expect((await loadFeedbackDraft())?.answers.summary).toBe('A corrected summary');
+  });
+});
+
+describe('FeedbackComposerScreen — a 429 is not proof nothing was stored (review [1])', () => {
+  it('keeps the attempt frozen and resends it unchanged under the same key', async () => {
+    submit.mockRejectedValueOnce(new ApiError(429, 'rate limited')).mockResolvedValue(RECEIPT);
+    await openComposer();
+    chooseBrokenAndFill();
+
+    await pressSend();
+
+    expect(screen.getByText(FEEDBACK_OUTCOME_COPY.rate_limited)).toBeTruthy();
+    expect(screen.getByTestId(IDS.field('summary')).props.editable).toBe(false);
+    expect(screen.getByTestId(IDS.edit)).toBeTruthy();
+
+    await pressSend();
+    const [first, second] = submit.mock.calls;
+    expect(JSON.stringify(second?.[0])).toBe(JSON.stringify(first?.[0]));
+    expect(second?.[1]).toBe(first?.[1]);
+  });
+});
+
+describe('FeedbackComposerScreen — a send that outlives the session (review [3], [4])', () => {
+  async function feedbackRows(): Promise<string[]> {
+    const keys = (await AsyncStorage.getAllKeys()) as string[];
+    return keys.filter((key) => key.startsWith(FEEDBACK_DRAFT_KEY));
+  }
+
+  it('after logout, a late failure writes nothing back to disk', async () => {
+    const inFlight = pendingSubmit();
+    await openComposer();
+    chooseBrokenAndFill();
+    await sendAndWaitForRequest();
+
+    // What logout does: wipe this user's row, then drop the scope.
+    await act(async () => {
+      await clearFeedbackDraft();
+      setActiveUser(null);
+    });
+    await act(async () => inFlight.reject(new TypeError('Network request failed')));
+    await act(async () => undefined);
+
+    expect(await feedbackRows()).toEqual([]);
+  });
+
+  it('after logout, a late 422 writes nothing back to disk either', async () => {
+    const inFlight = pendingSubmit();
+    await openComposer();
+    chooseBrokenAndFill();
+    await sendAndWaitForRequest();
+
+    await act(async () => {
+      await clearFeedbackDraft();
+      setActiveUser(null);
+    });
+    await act(async () => inFlight.reject(new ApiError(422, 'validation')));
+    await act(async () => undefined);
+
+    expect(await feedbackRows()).toEqual([]);
+  });
+
+  it('after a switch to another account, a late success leaves that account’s draft alone', async () => {
+    const inFlight = pendingSubmit();
+    await openComposer();
+    chooseBrokenAndFill();
+    await sendAndWaitForRequest();
+
+    const draftOfB = {
+      category: 'idea' as const,
+      impact: null,
+      answers: { summary: 'B is writing this', intent: '', expected: '', actual: '' },
+      idempotencyKey: 'b-key',
+      attempt: {
+        key: 'b-key',
+        payload: {
+          category: 'idea' as const,
+          impact: 'not_applicable' as const,
+          summary: 'B is writing this',
+          context: {
+            screen: 'journal.shelf',
+            platform: 'ios' as const,
+            app_build: '1.0.0',
+            viewport_class: 'compact' as const,
+          },
+        },
+      },
+    };
+    await act(async () => {
+      await clearFeedbackDraft();
+      setActiveUser(2);
+      await saveFeedbackDraft(draftOfB);
+    });
+    await act(async () => inFlight.resolve(RECEIPT));
+
+    await expect(loadFeedbackDraft()).resolves.toEqual(draftOfB);
+    setActiveUser(1);
+    await expect(loadFeedbackDraft()).resolves.toBeNull();
+  });
+});
+
+describe('FeedbackComposerScreen — Send waits for the key (review [6])', () => {
+  it('offers nothing to press until the new draft and its key are on disk', async () => {
+    let finishWrite: () => void = () => undefined;
+    (AsyncStorage.setItem as jest.Mock).mockImplementationOnce(
+      (key: string, value: string) =>
+        new Promise<void>((resolve) => {
+          finishWrite = () => {
+            // Let the real mock store the row, then release the hook.
+            void (AsyncStorage.setItem as jest.Mock).getMockImplementation()?.(key, value);
+            resolve();
+          };
+        }),
+    );
+    renderComposer({ control: 'shell.header.send_feedback' });
+    await act(async () => undefined);
+
+    expect(screen.queryByTestId(IDS.categoryOption('broken'))).toBeNull();
+    expect(screen.queryByTestId(IDS.send)).toBeNull();
+
+    await act(async () => finishWrite());
+    expect(await screen.findByTestId(IDS.categoryOption('broken'))).toBeTruthy();
+    expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('FeedbackComposerScreen — focus returns to the opener (review [8])', () => {
+  it('Done hands focus back to the control that opened the composer', async () => {
+    const focus = jest
+      .spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
+      .mockImplementation(() => undefined);
+    const opener = {} as View;
+    rememberFeedbackOrigin({ current: opener });
+    submit.mockResolvedValue(RECEIPT);
+    await openComposer();
+    chooseBrokenAndFill();
+    await pressSend();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(IDS.done));
+    });
+
+    await waitFor(() => expect(focus).toHaveBeenCalledWith(opener, 'focus'));
+    focus.mockRestore();
   });
 });

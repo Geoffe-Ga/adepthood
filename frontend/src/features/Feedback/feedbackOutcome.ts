@@ -11,9 +11,12 @@
  *   safe, and it will not create a duplicate.
  * - `unexpected` -- the server answered 2xx but the receipt did not validate.
  *   It almost certainly WAS stored, so this freezes too.
- * - `rate_limited` / `invalid` -- a 429 or a 4xx refusal happens before any row
- *   is written, so the draft stays editable under the same key.
- * - `session` -- a 401/403: the session ended; nothing was stored.
+ * - `rate_limited` -- a 429. On its own it writes nothing, but the request layer
+ *   retries a keyed POST and reports only its last error, so it may follow an
+ *   attempt that was stored. It freezes too (see `isDefinitiveRefusal`).
+ * - `invalid` -- a 422 or another 4xx refusal of the body. The only definitive
+ *   outcome: the draft becomes editable again under the same key.
+ * - `session` -- a 401/403: the session ended. Frozen, for the same reason as 429.
  */
 import { ApiError, ApiTimeoutError, ApiValidationError } from '@/api';
 
@@ -43,9 +46,15 @@ export function classifySubmitFailure(error: unknown): FeedbackFailureKind {
   return 'retryable';
 }
 
-/** Whether a failure of this kind means the report might already be stored. */
-export function isAmbiguousFailure(kind: FeedbackFailureKind): boolean {
-  return kind === 'retryable' || kind === 'unexpected';
+/**
+ * Whether this failure proves nothing was stored, so the draft may be edited
+ * under the same key. Only `invalid` does: body validation answers every retry
+ * of the same body the same way, before the key is ever looked up. Every other
+ * kind -- 429 and 401 included -- can be the LAST error of a retry loop whose
+ * earlier attempt was stored, so the attempt stays frozen.
+ */
+export function isDefinitiveRefusal(kind: FeedbackFailureKind): boolean {
+  return kind === 'invalid';
 }
 
 /**
@@ -58,7 +67,7 @@ export const FEEDBACK_OUTCOME_COPY: Readonly<Record<FeedbackFailureKind, string>
   unexpected:
     "Your report may have reached us, but we couldn't read the confirmation. It's safe to send again — it will not create a duplicate.",
   rate_limited:
-    "You've sent several reports in a short time. Your draft is saved here — please try again later.",
+    "You've sent several reports in a short time. Your report is saved here — please send it again later.",
   invalid:
     "Part of this report couldn't be accepted. Your draft is still here — check it and send again.",
   session: 'Your session has ended, so this report was not sent. Sign in again to send feedback.',

@@ -5,7 +5,11 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import * as api from '@/api';
 import { useFeedbackDraft } from '@/features/Feedback/useFeedbackDraft';
-import { FEEDBACK_DRAFT_KEY, loadFeedbackDraft } from '@/storage/feedbackDraftStorage';
+import {
+  FEEDBACK_DRAFT_KEY,
+  loadFeedbackDraft,
+  saveFeedbackDraft,
+} from '@/storage/feedbackDraftStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
 import { scopedKey, setActiveUser } from '@/storage/userScope';
 
@@ -15,6 +19,9 @@ const CONTEXT = {
   app_build: '1.0.0',
   viewport_class: 'compact',
 } as const;
+
+/** Long enough for a stalled read's follow-on writes to have landed. */
+const SETTLE_MS = 50;
 
 let warn: jest.SpyInstance;
 
@@ -122,14 +129,6 @@ describe('useFeedbackDraft', () => {
     expect((await loadFeedbackDraft())?.idempotencyKey).toBe(result.current.draft.idempotencyKey);
   });
 
-  it('clear removes the stored draft', async () => {
-    const { result } = await mountHydrated();
-
-    await act(async () => result.current.clear());
-
-    expect(await AsyncStorage.getItem(scopedKey(FEEDBACK_DRAFT_KEY))).toBeNull();
-  });
-
   it('keeps working with a fixed warning when the device will not store the draft', async () => {
     (AsyncStorage.setItem as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
     const { result } = await mountHydrated();
@@ -138,19 +137,106 @@ describe('useFeedbackDraft', () => {
     expect(warn).toHaveBeenCalledWith('[feedback] could not save the draft on this device');
   });
 
-  it('warns without detail when clearing fails', async () => {
-    const { result } = await mountHydrated();
-    (AsyncStorage.removeItem as jest.Mock).mockRejectedValueOnce(new Error('locked'));
+  it('a composer closed before its draft loaded mints and writes nothing (review [9])', async () => {
+    let finishRead: (value: string | null) => void = () => undefined;
+    (AsyncStorage.getItem as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          finishRead = resolve;
+        }),
+    );
+    const setItem = AsyncStorage.setItem as jest.Mock;
+    const { unmount } = renderHook(() => useFeedbackDraft());
+    // The read is issued (and stalls) before the composer closes.
+    await act(async () => undefined);
+    expect(AsyncStorage.getItem).toHaveBeenCalledTimes(1);
+    unmount();
 
-    await act(async () => result.current.clear());
+    await act(async () => {
+      finishRead(null);
+      // Let the whole read -> create -> write chain run out.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+    });
 
-    expect(warn).toHaveBeenCalledWith('[feedback] could not clear the sent draft on this device');
+    expect(setItem).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
   });
 
-  it('ignores a load that lands after unmount', async () => {
-    const { unmount } = renderHook(() => useFeedbackDraft());
-    unmount();
+  it('an unreadable draft is never overwritten by a fresh one (review [2])', async () => {
+    const saved = {
+      category: 'broken' as const,
+      impact: 'blocked' as const,
+      answers: { summary: 'keep me', intent: '', expected: '', actual: '' },
+      idempotencyKey: 'saved-key',
+      attempt: null,
+    };
+    await saveFeedbackDraft(saved);
+    (AsyncStorage.getItem as jest.Mock).mockRejectedValueOnce(new Error('database is locked'));
+
+    const { result } = await mountHydrated();
+    act(() => result.current.setAnswer('summary', 'typed over it'));
     await act(async () => undefined);
-    expect(warn).not.toHaveBeenCalled();
+
+    expect(result.current.draft.idempotencyKey).not.toBe('saved-key');
+    await expect(loadFeedbackDraft()).resolves.toEqual(saved);
+  });
+
+  it('settles an attempt only for the account that sent it (review [3], [4])', async () => {
+    const { result } = await mountHydrated();
+    const key = result.current.draft.idempotencyKey;
+    const payload = {
+      category: 'idea',
+      impact: 'not_applicable',
+      summary: 'x',
+      context: CONTEXT,
+    } as const;
+    await act(async () => result.current.freezeAttempt(payload));
+
+    setActiveUser(2);
+    await act(async () => result.current.settleAttempt(key, 'sent'));
+    await act(async () => result.current.freezeAttempt(payload));
+
+    setActiveUser(1);
+    // The account switch happened mid-send: nothing was cleared, and nothing
+    // was written under user 2.
+    expect((await loadFeedbackDraft())?.attempt?.key).toBe(key);
+    setActiveUser(2);
+    await expect(loadFeedbackDraft()).resolves.toBeNull();
+  });
+
+  it('settling a sent attempt removes the stored draft', async () => {
+    const { result } = await mountHydrated();
+    const key = result.current.draft.idempotencyKey;
+    await act(async () =>
+      result.current.freezeAttempt({
+        category: 'idea',
+        impact: 'not_applicable',
+        summary: 'x',
+        context: CONTEXT,
+      }),
+    );
+
+    await act(async () => result.current.settleAttempt(key, 'sent'));
+
+    expect(await AsyncStorage.getItem(scopedKey(FEEDBACK_DRAFT_KEY))).toBeNull();
+  });
+
+  it('unfreezing drops the attempt in memory and on disk, keeping the key', async () => {
+    const { result } = await mountHydrated();
+    const key = result.current.draft.idempotencyKey;
+    await act(async () =>
+      result.current.freezeAttempt({
+        category: 'idea',
+        impact: 'not_applicable',
+        summary: 'x',
+        context: CONTEXT,
+      }),
+    );
+
+    await act(async () => result.current.settleAttempt(key, 'unfreeze'));
+
+    expect(result.current.draft.attempt).toBeNull();
+    expect(result.current.draft.idempotencyKey).toBe(key);
+    expect((await loadFeedbackDraft())?.attempt).toBeNull();
   });
 });

@@ -5,8 +5,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   clearFeedbackDraft,
   FEEDBACK_DRAFT_KEY,
+  feedbackDraftKey,
   loadFeedbackDraft,
+  readFeedbackDraft,
   saveFeedbackDraft,
+  settleFeedbackAttempt,
   type StoredFeedbackDraft,
 } from '@/storage/feedbackDraftStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
@@ -135,5 +138,68 @@ describe('feedbackDraftStorage', () => {
     await expect(loadFeedbackDraft()).resolves.toBeNull();
 
     expect(warnedWith('SENTINEL')).toBe(false);
+  });
+});
+
+describe('feedbackDraftStorage — reads that fail are not "no draft" (review [2])', () => {
+  it('reports a transient read failure as unreadable, distinct from empty', async () => {
+    await saveFeedbackDraft(DRAFT);
+    (AsyncStorage.getItem as jest.Mock).mockRejectedValueOnce(new Error('locked'));
+
+    await expect(readFeedbackDraft()).resolves.toEqual({ kind: 'unreadable' });
+    await expect(readFeedbackDraft()).resolves.toEqual({ kind: 'draft', draft: DRAFT });
+  });
+
+  it('reports a missing row as empty', async () => {
+    await expect(readFeedbackDraft()).resolves.toEqual({ kind: 'empty' });
+  });
+});
+
+describe('feedbackDraftStorage — settling a sent attempt (review [0], [3], [4])', () => {
+  const FROZEN: StoredFeedbackDraft = {
+    ...DRAFT,
+    attempt: {
+      key: DRAFT.idempotencyKey,
+      payload: {
+        category: 'broken',
+        impact: 'blocked',
+        summary: 'It broke',
+        context: {
+          screen: 'journal.shelf',
+          platform: 'web',
+          app_build: '1.0.0',
+          viewport_class: 'compact',
+        },
+      },
+    },
+  };
+
+  it('writes and clears under an explicitly captured key, whatever the active scope now is', async () => {
+    const key = feedbackDraftKey();
+    setActiveUser(2);
+    await saveFeedbackDraft(FROZEN, key);
+    expect(await AsyncStorage.getItem(scopedKey(FEEDBACK_DRAFT_KEY))).toBeNull();
+    await clearFeedbackDraft(key);
+    expect(await AsyncStorage.getItem(key)).toBeNull();
+  });
+
+  it('a sent attempt removes the row only while that attempt is still the stored one', async () => {
+    await saveFeedbackDraft(FROZEN);
+    await settleFeedbackAttempt(feedbackDraftKey(), 'some-other-key', 'sent');
+    await expect(loadFeedbackDraft()).resolves.toEqual(FROZEN);
+
+    await settleFeedbackAttempt(feedbackDraftKey(), DRAFT.idempotencyKey, 'sent');
+    await expect(loadFeedbackDraft()).resolves.toBeNull();
+  });
+
+  it('an unfrozen attempt keeps the stored answers and key, and drops only the attempt', async () => {
+    await saveFeedbackDraft(FROZEN);
+    await settleFeedbackAttempt(feedbackDraftKey(), DRAFT.idempotencyKey, 'unfreeze');
+    await expect(loadFeedbackDraft()).resolves.toEqual({ ...FROZEN, attempt: null });
+  });
+
+  it('settling against an empty scope writes nothing', async () => {
+    await settleFeedbackAttempt(feedbackDraftKey(), DRAFT.idempotencyKey, 'unfreeze');
+    expect(await AsyncStorage.getAllKeys()).toEqual([]);
   });
 });
