@@ -1,9 +1,8 @@
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
-import { BACKEND_DIR, pythonExecutable, readLaneState } from './laneState';
+import { runBackendModule } from './laneDatabase';
 import { freshLicenseKey } from './licenseKey';
 
 import { auth, setTokenGetter, stages, wheel } from '@/api';
@@ -69,37 +68,9 @@ interface ProgressRow {
   stage_started_at: string;
 }
 
-let cachedDatabaseUrl: string | null = null;
-
-/** The throwaway database this run owns, which the out-of-band arrange writes to. */
-function laneDatabaseUrl(): string {
-  if (cachedDatabaseUrl === null) {
-    const state = readLaneState();
-    if (state === null) {
-      throw new Error(
-        'the e2e lane wrote no state file, so this journey has no database to arrange ' +
-          'against. Run the lane through "npm run test:e2e".',
-      );
-    }
-    cachedDatabaseUrl = state.databaseUrl;
-  }
-  return cachedDatabaseUrl;
-}
-
 /** Run the backend anchor module against the lane database and parse its one JSON line. */
 function programAnchor(args: readonly string[]): ProgressRow {
-  const result = spawnSync(pythonExecutable(), ['-m', ANCHOR_MODULE, ...args], {
-    cwd: BACKEND_DIR,
-    encoding: 'utf8',
-    env: { ...process.env, PYTHONPATH: 'src', DATABASE_URL: laneDatabaseUrl() },
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `${ANCHOR_MODULE} ${args.join(' ')} exited ${String(result.status)}: ` +
-        `${result.stderr || result.stdout}`,
-    );
-  }
-  return JSON.parse(result.stdout) as ProgressRow;
+  return JSON.parse(runBackendModule(ANCHOR_MODULE, args)) as ProgressRow;
 }
 
 /** Put both program timestamps exactly `daysAgo` days back, touching no stage number. */

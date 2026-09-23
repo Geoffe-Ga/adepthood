@@ -79,6 +79,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
+  'admin-feedback-triage.e2e.test.ts',
   'auth.e2e.test.ts',
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',

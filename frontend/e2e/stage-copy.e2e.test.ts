@@ -1,9 +1,8 @@
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 import { describe, afterAll, expect, it } from '@jest/globals';
 
-import { BACKEND_DIR, pythonExecutable, readLaneState } from './laneState';
+import { runBackendModule } from './laneDatabase';
 import { freshLicenseKey } from './licenseKey';
 
 import { auth, setTokenGetter, stages } from '@/api';
@@ -77,37 +76,9 @@ interface StageCopyListing {
   stages: StageCopyRow[];
 }
 
-let cachedDatabaseUrl: string | null = null;
-
-/** The throwaway database this run owns, which the out-of-band arrange reads and writes. */
-function laneDatabaseUrl(): string {
-  if (cachedDatabaseUrl === null) {
-    const state = readLaneState();
-    if (state === null) {
-      throw new Error(
-        'the e2e lane wrote no state file, so this journey has no database to arrange ' +
-          'against. Run the lane through "npm run test:e2e".',
-      );
-    }
-    cachedDatabaseUrl = state.databaseUrl;
-  }
-  return cachedDatabaseUrl;
-}
-
 /** Run the backend copy module against the lane database and return its one JSON line. */
 function stageCopy(args: readonly string[]): string {
-  const result = spawnSync(pythonExecutable(), ['-m', COPY_MODULE, ...args], {
-    cwd: BACKEND_DIR,
-    encoding: 'utf8',
-    env: { ...process.env, PYTHONPATH: 'src', DATABASE_URL: laneDatabaseUrl() },
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `${COPY_MODULE} ${args.join(' ')} exited ${String(result.status)}: ` +
-        `${result.stderr || result.stdout}`,
-    );
-  }
-  return result.stdout;
+  return runBackendModule(COPY_MODULE, args);
 }
 
 /** Every stage's copy as the table holds it, read without going near the server. */
