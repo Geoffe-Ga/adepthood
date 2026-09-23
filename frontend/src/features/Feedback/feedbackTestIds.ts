@@ -7,6 +7,8 @@ export const FEEDBACK_TEST_IDS = {
   categoryOption: (category: string): string => `feedback-category-${category}`,
   field: (field: string): string => `feedback-field-${field}`,
   fieldError: (field: string): string => `feedback-field-${field}-error`,
+  fieldHint: (field: string): string => `feedback-field-${field}-hint`,
+  categoryDescription: (category: string): string => `feedback-category-${category}-description`,
   impactOption: (impact: string): string => `feedback-impact-${impact}`,
   impactError: 'feedback-impact-error',
   preview: 'feedback-attached-preview',

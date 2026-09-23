@@ -31,4 +31,5 @@ export const optionStyles = StyleSheet.create({
   labelSelected: { color: accent.strong, fontWeight: uiType.button.fontWeight },
   prompt: { color: ink.primary, marginBottom: rhythm.blockGap },
   error: { color: colors.destructive.text, marginTop: SPACING.xs },
+  description: { color: ink.soft, marginTop: SPACING.xs, marginLeft: SPACING.lg },
 });

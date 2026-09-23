@@ -5,6 +5,7 @@ import type { TextInputProps } from 'react-native';
 import { FEEDBACK_TEST_IDS } from './feedbackTestIds';
 
 import { TextField } from '@/components/TextField';
+import { webDescribedBy } from '@/components/webAria';
 import { colors, ink, rhythm, SPACING, touchTarget, type as typeRamp } from '@/design/tokens';
 
 /** A multi-line answer opens at roughly three lines, then grows with its text. */
@@ -23,21 +24,34 @@ export interface FeedbackFieldProps {
 }
 
 /**
- * Point a web input at the element that explains its error. React Native's own
- * props have no `aria-describedby`; react-native-web forwards it to the DOM, so
- * it is attached on the web only and typed through a narrowing cast, the same
- * way `writingFieldFocus` attaches its web-only CSS.
+ * The ids that describe a field, and the web-only props that link them. On the
+ * web the hint is the input's description, joined by the error once there is
+ * one; on native the same text rides in `accessibilityHint`.
  */
-function describedBy(id: string | undefined): Partial<TextInputProps> {
-  if (Platform.OS !== 'web' || id === undefined) return {};
-  return { 'aria-describedby': id, 'aria-invalid': true } as unknown as Partial<TextInputProps>;
+function fieldDescription(
+  field: string,
+  error: string | undefined,
+): { hintId: string; errorId: string | undefined; webProps: Partial<TextInputProps> } {
+  const hintId = FEEDBACK_TEST_IDS.fieldHint(field);
+  const errorId = error === undefined ? undefined : FEEDBACK_TEST_IDS.fieldError(field);
+  const describedBy = errorId === undefined ? hintId : `${hintId} ${errorId}`;
+  const invalid =
+    errorId !== undefined && Platform.OS === 'web'
+      ? ({ 'aria-invalid': true } as unknown as Partial<TextInputProps>)
+      : {};
+  return {
+    hintId,
+    errorId,
+    webProps: { ...webDescribedBy<TextInputProps>(describedBy), ...invalid },
+  };
 }
 
 /**
  * A labelled text field for the composer. `TextField` has no label or error of
  * its own, so this wraps it: a visible label, the label and hint as the input's
  * accessible name and hint, and an error that is tied to the input (the hint on
- * native, `aria-describedby` on the web) and announced through a live region.
+ * native, `aria-describedby` on the web, where the hint is linked the same way)
+ * and announced through a live region.
  */
 export function FeedbackField({
   field,
@@ -52,13 +66,13 @@ export function FeedbackField({
 }: FeedbackFieldProps): React.JSX.Element {
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
-  const errorId = error === undefined ? undefined : FEEDBACK_TEST_IDS.fieldError(field);
+  const { hintId, errorId, webProps } = fieldDescription(field, error);
   return (
     <View style={styles.wrap}>
       <Text allowFontScaling style={[t.label, styles.label]}>
         {label}
       </Text>
-      <Text allowFontScaling style={[t.caption, styles.hint]}>
+      <Text allowFontScaling nativeID={hintId} style={[t.caption, styles.hint]}>
         {hint}
       </Text>
       <TextField
@@ -72,7 +86,7 @@ export function FeedbackField({
         accessibilityHint={error === undefined ? hint : `${error} ${hint}`}
         testID={FEEDBACK_TEST_IDS.field(field)}
         style={multiline ? styles.multiline : undefined}
-        {...describedBy(errorId)}
+        {...webProps}
       />
       {errorId === undefined ? null : (
         <Text

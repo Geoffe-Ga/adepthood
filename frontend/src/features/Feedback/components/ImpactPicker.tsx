@@ -38,6 +38,7 @@ export function ImpactPicker({
       <RadioGroup
         style={optionStyles.group}
         accessibilityLabel={FEEDBACK_COMPOSER_COPY.impactPrompt}
+        describedBy={error === undefined ? undefined : FEEDBACK_TEST_IDS.impactError}
       >
         {choices.map((impact) => (
           <RadioOption
