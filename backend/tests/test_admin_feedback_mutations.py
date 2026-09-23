@@ -553,3 +553,17 @@ async def test_sentinel_prose_reaches_no_log_no_422_no_repr_no_exception(
             assert _NOTE_SENTINEL not in rendering
             assert _REPORT_SENTINEL not in rendering
     assert _NOTE_SENTINEL not in repr(AddNoteCommand(action="add_note", body=_NOTE_SENTINEL))
+
+
+@pytest.mark.asyncio
+async def test_a_command_on_an_unknown_reference_is_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The locked load refuses a never-issued reference, and writes nothing."""
+    admin = await _admin(db_session)
+    response = await _act(
+        async_client, admin.headers, "FB-22222222", {"action": "transition", "status": "triaged"}
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert response.json()["detail"] == "feedback_report_not_found"
+    assert await row_count(db_session, FeedbackTriageEvent) == 0
