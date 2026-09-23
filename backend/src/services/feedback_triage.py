@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, cast
 
-from sqlalchemy import CursorResult, delete, update
+from sqlalchemy import CursorResult, delete, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
@@ -51,6 +51,7 @@ from models.feedback import FeedbackCategory, FeedbackImpact, FeedbackReport, Fe
 from models.feedback_triage import FeedbackNote, FeedbackTriageAction, FeedbackTriageEvent
 from models.user import User
 from schemas.pagination import PaginationParams, paginate_query
+from services.advisory_lock_namespaces import FEEDBACK_DUPLICATE_LINK_LOCK_NAMESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,11 @@ SIBLING_LIMIT: Final = 10
 SIBLING_SCAN_LIMIT: Final = 500
 
 _LOG_EVENT: Final = "feedback_triage_mutation"
+
+_POSTGRESQL: Final = "postgresql"
+# The second key of the link lock. There is one lock for all links, because a
+# cycle can join any two reports.
+_ALL_LINKS_KEY: Final = 0
 
 
 @dataclass(frozen=True)
@@ -142,6 +148,35 @@ async def load_report(session: AsyncSession, public_id: str) -> FeedbackReport:
     """The report behind ``public_id``, or 404."""
     result = await session.execute(
         select(FeedbackReport).where(col(FeedbackReport.public_id) == public_id)
+    )
+    report = result.scalars().first()
+    if report is None:
+        raise not_found(REPORT_RESOURCE)
+    return report
+
+
+async def load_report_for_update(session: AsyncSession, public_id: str) -> FeedbackReport:
+    """The report behind ``public_id``, row-locked until this transaction ends; or 404.
+
+    Every mutation reads a report, checks its state and writes it back. Without
+    the lock, two operators acting at once both check against the same stale
+    state under READ COMMITTED -- both transitions pass the table, both write,
+    and the trail records an ``old_state`` the row no longer had. With it, the
+    second waits for the first to commit and then reads what the first wrote.
+    ``populate_existing`` makes that fresh read win over a copy already in the
+    session. (SQLite ignores the clause; its writer queue already serialises.)
+
+    ``FOR NO KEY UPDATE`` rather than ``FOR UPDATE``: linking ``X -> Y`` makes
+    PostgreSQL take a ``KEY SHARE`` lock on ``Y`` for the foreign-key check,
+    which ``FOR UPDATE`` on ``Y`` would block -- so two crossed links, each
+    holding its own row, would deadlock. ``NO KEY UPDATE`` still excludes every
+    other triage mutation of the row, and lets the key-share check through.
+    """
+    result = await session.execute(
+        select(FeedbackReport)
+        .where(col(FeedbackReport.public_id) == public_id)
+        .with_for_update(key_share=True)
+        .execution_options(populate_existing=True)
     )
     report = result.scalars().first()
     if report is None:
@@ -322,12 +357,30 @@ async def linked_public_id(session: AsyncSession, report: FeedbackReport) -> str
     return found.get(report.duplicate_of_id)
 
 
+async def _lock_duplicate_links(session: AsyncSession) -> None:
+    """Serialise every duplicate-link change on PostgreSQL, until this transaction ends.
+
+    Two links whose union is a loop -- ``X -> Y`` and ``Y -> X`` -- write
+    different rows, so no row lock stands between them: each cycle check reads
+    a table without the other's link and both commit. One transaction-scoped
+    lock over the link table makes the second check run after the first commit,
+    and READ COMMITTED gives it a fresh snapshot that includes it.
+    """
+    if session.get_bind().dialect.name != _POSTGRESQL:
+        return
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :key)"),
+        {"namespace": FEEDBACK_DUPLICATE_LINK_LOCK_NAMESPACE, "key": _ALL_LINKS_KEY},
+    )
+
+
 async def _refuse_bad_link(
     session: AsyncSession, report: FeedbackReport, target: FeedbackReport
 ) -> None:
     """409 when the link would change nothing, or would close a loop of any length."""
     if report.duplicate_of_id == target.id:
         raise conflict(DUPLICATE_UNCHANGED)
+    await _lock_duplicate_links(session)
     parents = await _duplicate_parents(session)
     if creates_duplicate_cycle(report.id or 0, target.id or 0, parents):
         raise conflict(DUPLICATE_CYCLE)

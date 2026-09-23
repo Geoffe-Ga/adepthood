@@ -285,7 +285,7 @@ async def act_on_feedback_report(
     ``feedback_not_a_duplicate``. Every refusal is decided before anything is
     written. Linking never changes status.
     """
-    report = await feedback_triage.load_report(context.session, public_id)
+    report = await feedback_triage.load_report_for_update(context.session, public_id)
     await _apply(command, report, context, _actor(request, context))
     return await _detail(context.session, report)
 

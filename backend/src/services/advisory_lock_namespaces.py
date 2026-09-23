@@ -37,12 +37,17 @@ CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE: Final[int] = 0x41504450
 #: never content, a vault identifier, or anything derived from either.
 ACCOUNT_EGRESS_LOCK_NAMESPACE: Final[int] = 0x41454752
 
+# ``services.feedback_triage``: one lock over every duplicate-link change, so
+# the cycle check reads a link table no other link is being written into.
+FEEDBACK_DUPLICATE_LINK_LOCK_NAMESPACE: Final[int] = 0x46424454
+
 #: The registry the distinctness test reads. A subsystem that starts taking a
 #: two-int advisory lock belongs here on the same commit.
 REGISTERED_ADVISORY_NAMESPACES: Final[Mapping[str, int]] = {
     "services.voice_draft_privacy": VOICE_DRAFT_LOCK_NAMESPACE,
     "services.creek_vault_pipeline": CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE,
     "services.account_egress_barrier": ACCOUNT_EGRESS_LOCK_NAMESPACE,
+    "services.feedback_triage": FEEDBACK_DUPLICATE_LINK_LOCK_NAMESPACE,
 }
 
 
