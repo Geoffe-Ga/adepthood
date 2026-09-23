@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
+import { announceOnIos } from '../feedbackAnnounce';
 import {
   FEEDBACK_EDIT_AFTER_FAILURE_COPY,
   FEEDBACK_OUTCOME_COPY,
@@ -31,6 +32,9 @@ export function SubmitStatus({
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   const text = failure === null ? message : FEEDBACK_OUTCOME_COPY[failure];
+  useEffect(() => {
+    if (text !== null) announceOnIos(text);
+  }, [text]);
   if (text === null) return null;
   return (
     <View

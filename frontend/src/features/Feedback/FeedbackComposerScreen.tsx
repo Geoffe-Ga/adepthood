@@ -8,6 +8,7 @@ import { CategoryStep } from './components/CategoryStep';
 import { ImpactPicker } from './components/ImpactPicker';
 import { QuestionFields } from './components/QuestionFields';
 import { SubmitStatus } from './components/SubmitStatus';
+import { announceOnIos } from './feedbackAnnounce';
 import { FEEDBACK_COMPOSER_COPY } from './feedbackCopy';
 import { focusHost, restoreFeedbackOrigin } from './feedbackFocus';
 import { FEEDBACK_SUCCESS_COPY } from './feedbackOutcome';
@@ -54,6 +55,11 @@ export default function FeedbackComposerScreen(): React.JSX.Element {
   );
 }
 
+/**
+ * The composer's heading and lead. Only the title is the heading -- and the
+ * focus target on open -- so a screen reader names it "Send feedback" and reads
+ * the lead as ordinary text after it.
+ */
 function ComposerHeading({
   headingRef,
 }: {
@@ -62,16 +68,18 @@ function ComposerHeading({
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   return (
-    <View
-      ref={headingRef}
-      tabIndex={-1}
-      accessible
-      accessibilityRole="header"
-      testID={FEEDBACK_TEST_IDS.heading}
-    >
-      <Text allowFontScaling style={[t.title, styles.title]}>
-        {FEEDBACK_COMPOSER_COPY.title}
-      </Text>
+    <View>
+      <View
+        ref={headingRef}
+        tabIndex={-1}
+        accessible
+        accessibilityRole="header"
+        testID={FEEDBACK_TEST_IDS.heading}
+      >
+        <Text allowFontScaling style={[t.title, styles.title]}>
+          {FEEDBACK_COMPOSER_COPY.title}
+        </Text>
+      </View>
       <Text allowFontScaling style={[t.body, styles.lead]}>
         {FEEDBACK_COMPOSER_COPY.lead}
       </Text>
@@ -152,13 +160,27 @@ function SendControls({ model }: { model: ComposerModel }): React.JSX.Element {
   );
 }
 
+/**
+ * The confirmation. It replaces the form -- and the Send button that had focus
+ * -- so it takes focus itself, and on iOS also speaks the reference, which the
+ * live region alone would not.
+ */
 function SentView({ receipt }: { receipt: FeedbackReceipt }): React.JSX.Element {
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
+  const statusRef = useRef<View>(null);
+  useEffect(() => {
+    focusHost(statusRef.current);
+    announceOnIos(
+      `${FEEDBACK_SUCCESS_COPY.heading} ${FEEDBACK_SUCCESS_COPY.reference} ${receipt.public_id}.`,
+    );
+  }, [receipt.public_id]);
   return (
     <View style={styles.form}>
       <View
+        ref={statusRef}
+        tabIndex={-1}
         accessible
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"

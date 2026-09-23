@@ -2,13 +2,13 @@
 /* global describe, it, expect, jest, beforeEach, afterEach */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
-import { AccessibilityInfo, Dimensions, Text, type View } from 'react-native';
+import { AccessibilityInfo, Dimensions, Platform, Text, type View } from 'react-native';
 
 import { renderComposer } from './composerHarness';
 
 import * as api from '@/api';
 import { ApiError, ApiValidationError, type FeedbackCreate, type FeedbackReceipt } from '@/api';
-import { FEEDBACK_CONTEXT_LABELS } from '@/features/Feedback/feedbackCopy';
+import { FEEDBACK_COMPOSER_COPY, FEEDBACK_CONTEXT_LABELS } from '@/features/Feedback/feedbackCopy';
 import { rememberFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 import {
   FEEDBACK_EDIT_AFTER_FAILURE_COPY,
@@ -661,6 +661,77 @@ describe('FeedbackComposerScreen — Send waits for the key (review [6])', () =>
     await act(async () => finishWrite());
     expect(await screen.findByTestId(IDS.categoryOption('broken'))).toBeTruthy();
     expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe('FeedbackComposerScreen — iOS announcements (review [11])', () => {
+  let announce: jest.SpyInstance;
+  const original = Platform.OS;
+
+  beforeEach(() => {
+    announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => undefined);
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+  });
+
+  afterEach(() => {
+    announce.mockRestore();
+    Object.defineProperty(Platform, 'OS', { value: original, configurable: true });
+  });
+
+  it('speaks the FB reference on success, and moves focus to the confirmation', async () => {
+    const focus = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent');
+    submit.mockResolvedValue(RECEIPT);
+    await openComposer();
+    chooseBrokenAndFill();
+    focus.mockClear();
+
+    await pressSend();
+
+    expect(announce).toHaveBeenCalledWith(expect.stringContaining('FB-7K3M9Q2B'));
+    expect(focus).toHaveBeenCalledWith(expect.anything(), 'focus');
+    focus.mockRestore();
+  });
+
+  it('speaks a failure', async () => {
+    submit.mockRejectedValue(new TypeError('Network request failed'));
+    await openComposer();
+    chooseBrokenAndFill();
+
+    await pressSend();
+
+    expect(announce).toHaveBeenCalledWith(FEEDBACK_OUTCOME_COPY.retryable);
+  });
+
+  it('speaks a validation stop', async () => {
+    await openComposer();
+    fireEvent.press(screen.getByTestId(IDS.categoryOption('idea')));
+
+    await pressSend();
+
+    expect(announce).toHaveBeenCalledWith(FEEDBACK_COMPOSER_COPY.needsAttention);
+  });
+
+  it('leaves Android to its live regions rather than speaking twice', async () => {
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    submit.mockRejectedValue(new TypeError('Network request failed'));
+    await openComposer();
+    chooseBrokenAndFill();
+
+    await pressSend();
+
+    expect(announce).not.toHaveBeenCalled();
+  });
+});
+
+describe('FeedbackComposerScreen — the heading is only the title (review [15])', () => {
+  it('names the heading "Send feedback" and keeps the lead outside it', async () => {
+    await openComposer();
+    const heading = screen.getByTestId(IDS.heading);
+    expect(within(heading).getByText(FEEDBACK_COMPOSER_COPY.title)).toBeTruthy();
+    expect(within(heading).queryByText(FEEDBACK_COMPOSER_COPY.lead)).toBeNull();
+    expect(screen.getByText(FEEDBACK_COMPOSER_COPY.lead)).toBeTruthy();
   });
 });
 
