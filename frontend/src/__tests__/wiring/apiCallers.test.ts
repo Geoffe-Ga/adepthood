@@ -27,9 +27,7 @@ const CALLER_ALLOWLIST: Record<string, string> = {
   'habits.list':
     'Deliberately retained beside listAll as the request-machinery test vehicle and bare-array wire-contract guard, per its own docstring in src/api/index.ts.',
   'feedback.receipt':
-    'Intake contract only (#2897): the reporter screen that resolves a public reference lands with #2899, and the journey ledger requires a route to be issuable from this module before it may be declared at all, so the wrapper precedes its caller by one issue rather than the journey going undeclared.',
-  'feedback.submit':
-    'Intake contract only (#2897): the reporter screen that files a report lands with #2899, and the journey ledger requires a route to be issuable from this module before it may be declared at all, so the wrapper precedes its caller by one issue rather than the journey going undeclared.',
+    "No screen calls it (#2898): submit's 201 is Zod-validated as the receipt the reporter shows, so a second read would add a round trip whose failure could misreport a stored report. It stays because the journey ledger requires GET /feedback/{public_id}/receipt to be issuable from this module, and the feedback-composer browser spec resolves a reference through it.",
   idempotencyKey:
     'Called inside the API layer to key suggestion-accept, invitation-dismiss and return-start; exported for unit coverage, and its caller-supplied seam on the habit check-in wrapper is still unadopted by any screen.',
 };

@@ -1,0 +1,19 @@
+/** Stable test IDs shared by the composer, its entry points and the browser spec. */
+export const FEEDBACK_TEST_IDS = {
+  headerButton: 'open-feedback-button',
+  settingsRow: 'settings-row-feedback',
+  screen: 'feedback-composer-screen',
+  heading: 'feedback-composer-heading',
+  categoryOption: (category: string): string => `feedback-category-${category}`,
+  field: (field: string): string => `feedback-field-${field}`,
+  fieldError: (field: string): string => `feedback-field-${field}-error`,
+  impactOption: (impact: string): string => `feedback-impact-${impact}`,
+  impactError: 'feedback-impact-error',
+  preview: 'feedback-attached-preview',
+  previewValue: (key: string): string => `feedback-attached-${key}`,
+  send: 'feedback-send',
+  edit: 'feedback-edit',
+  status: 'feedback-status',
+  reference: 'feedback-reference',
+  done: 'feedback-done',
+} as const;

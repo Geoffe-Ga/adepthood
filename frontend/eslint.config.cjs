@@ -149,6 +149,7 @@ module.exports = tseslint.config(
       'src/navigation/**/*.{ts,tsx}',
       'src/features/Auth/**/*.{ts,tsx}',
       'src/features/Settings/**/*.{ts,tsx}',
+      'src/features/Feedback/**/*.{ts,tsx}',
       'src/features/Journal/ChatInput.tsx',
       'src/features/Journal/SearchBar.tsx',
       'src/features/Journal/TagFilter.tsx',

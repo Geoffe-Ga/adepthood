@@ -2,6 +2,7 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 
+import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
@@ -52,6 +53,11 @@ export type RootStackParamList = {
   PracticeDetail: { practiceId: number; assignError?: string };
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
+  /**
+   * The beta feedback composer (#2898). Carries at most one stable control
+   * token naming the entry point -- never text from the screen being left.
+   */
+  Feedback: { control?: string } | undefined;
   /** The shelf of expanded margin notes. No params: it is a place, not a query. */
   VoiceDrafts: undefined;
   JournalPhotograph:
@@ -237,6 +243,11 @@ const RootStack = (): React.JSX.Element => (
       options={{ title: 'Practices' }}
     />
     {JournalScreens()}
+    <Stack.Screen
+      name="Feedback"
+      component={FeedbackComposerScreen}
+      options={{ title: 'Send feedback' }}
+    />
   </Stack.Navigator>
 );
 
