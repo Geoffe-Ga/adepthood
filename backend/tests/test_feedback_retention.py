@@ -9,6 +9,7 @@ promise.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
@@ -21,6 +22,7 @@ from sqlmodel import col, select
 from models.feedback import FEEDBACK_RETENTION_DAYS, FeedbackReport
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.user import User
+from services import feedback as feedback_service
 from services.feedback import delete_expired_feedback_reports
 from tests.helpers.feedback_triage import make_account, report_state, seed_report
 
@@ -194,3 +196,23 @@ async def test_the_sweep_takes_an_expired_reports_notes_and_events_and_leaves_no
     assert await report_state(db_session, fresh_id) == ("new", None)
     remaining = (await db_session.execute(select(FeedbackReport.id))).scalars().all()
     assert list(remaining) == [fresh_id]
+
+
+@pytest.mark.asyncio
+async def test_a_driver_that_reports_no_row_count_is_named_not_counted_as_zero(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``-1`` rowcount returns 0 and says so, rather than passing as a quiet sweep."""
+
+    async def _unreported(*_args: object, **_kwargs: object) -> int:
+        return -1
+
+    monkeypatch.setattr(feedback_service, "purge_feedback_reports", _unreported)
+
+    with caplog.at_level(logging.WARNING):
+        deleted = await delete_expired_feedback_reports(db_session)
+
+    assert deleted == 0
+    assert any("did not report a row count" in record.getMessage() for record in caplog.records)
