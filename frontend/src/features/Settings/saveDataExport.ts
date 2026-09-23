@@ -156,16 +156,31 @@ export async function saveDataExport(format: ExportFormat): Promise<SavedExport>
   const spec = FORMATS[format];
   const { contents, records } = await spec.fetch();
   const filename = `${spec.filename}-${today()}.${spec.extension}`;
+  const saved = await saveTextFile(filename, contents, spec.mediaType);
+  return { ...saved, records };
+}
+
+/** Where one saved text file ended up. */
+export type SavedTextFile = Omit<SavedExport, 'records'>;
+
+/**
+ * Put one text file in the person's hands: a browser download on web, and on
+ * native a file in the document directory offered to the share sheet.
+ *
+ * The export's own delivery path, factored out so another screen that hands
+ * over a text file (the feedback inbox's issue draft) reaches the same
+ * platform handoff rather than a second copy of it.
+ */
+export async function saveTextFile(
+  filename: string,
+  contents: string,
+  mediaType: string,
+): Promise<SavedTextFile> {
   if (Platform.OS === 'web') {
-    downloadOnWeb(filename, contents, spec.mediaType);
-    return { filename, uri: null, records, destination: 'browser-download' };
+    downloadOnWeb(filename, contents, mediaType);
+    return { filename, uri: null, destination: 'browser-download' };
   }
   const file = writeTextFile(filename, contents);
   const shared = await offerToShare(file.uri);
-  return {
-    filename,
-    uri: file.uri,
-    records,
-    destination: shared ? 'shared' : 'device-file',
-  };
+  return { filename, uri: file.uri, destination: shared ? 'shared' : 'device-file' };
 }

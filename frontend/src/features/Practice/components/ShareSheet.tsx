@@ -33,6 +33,7 @@ import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
+import { copyToClipboard } from '@/utils/clipboard';
 
 const DEEP_LINK_PREFIX = 'adepthood://practices/share/';
 
@@ -51,30 +52,8 @@ export function buildShareUrl(token: string): string {
   return `${DEEP_LINK_PREFIX}${encodeURIComponent(token)}`;
 }
 
-/**
- * Best-effort clipboard write that survives the absence of
- * ``expo-clipboard``. The web bundle hits ``navigator.clipboard``
- * (works on RN web); React Native targets fall through to the rejection
- * branch and the caller renders a "long-press the link to copy"
- * fallback. Pulled into a tiny helper so tests can mock it without
- * touching globals.
- */
-interface ClipboardHost {
-  clipboard?: { writeText?: (_v: string) => Promise<void> };
-}
-
-export async function copyToClipboard(value: string): Promise<boolean> {
-  const host: ClipboardHost =
-    typeof navigator === 'undefined' ? {} : (navigator as unknown as ClipboardHost);
-  const writer = host.clipboard?.writeText;
-  if (!writer) return false;
-  try {
-    await writer.call(host.clipboard, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
+/** Re-exported so existing importers of the share sheet keep working. */
+export { copyToClipboard };
 
 interface MintFormState {
   expiresInDays: string;
