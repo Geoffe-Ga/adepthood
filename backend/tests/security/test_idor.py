@@ -48,6 +48,7 @@ from models.completion_suggestion import (
 from models.corpus_invitation_state import CorpusInvitationState
 from models.course_stage import CourseStage
 from models.feedback import FeedbackReport
+from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -62,6 +63,7 @@ from models.prompt_dismissal import PromptDismissal
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
+from tests.helpers.feedback_triage import make_account, report_state, row_count, seed_report
 
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
@@ -1865,3 +1867,85 @@ async def test_accepting_a_suggestion_pointing_at_another_tenants_goal_404s_and_
     refreshed = await db_session.get(CompletionSuggestion, suggestion_id)
     assert refreshed is not None
     assert refreshed.status == SuggestionStatus.PENDING
+
+
+# ── Admin feedback triage: ids in a command body (#2900) ──────────────────
+#
+# The triage routes are role-gated, not owner-gated: an administrator acts on
+# every account's reports by design, so "another tenant's id" is not a refusal
+# there. What still has to hold is the scope check on ids that ride in a body:
+# a draft may only quote notes on the report it is drafting, and a duplicate
+# link may only target a report that exists. Each rejection is 404, and each
+# leaves nothing behind -- no link, no event, no note text in the response.
+
+
+@pytest.mark.asyncio
+async def test_a_draft_cannot_quote_a_note_from_another_report(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A note id belonging to a different report is 404 and its text never renders."""
+    admin = await make_account(db_session, "idor_triage_admin@example.com", admin=True)
+    alice = await make_account(db_session, "idor_triage_alice@example.com")
+    bob = await make_account(db_session, "idor_triage_bob@example.com")
+    alices = await seed_report(db_session, alice.user_id)
+    bobs = await seed_report(db_session, bob.user_id)
+    foreign = FeedbackNote(report_id=bobs.id or 0, body="BOBS-REPORT-NOTE-SENTINEL")
+    db_session.add(foreign)
+    await db_session.commit()
+    foreign_id, alices_ref = foreign.id, alices.public_id
+    events_before = await row_count(db_session, FeedbackTriageEvent)
+
+    resp = await async_client.post(
+        f"/admin/feedback/{alices_ref}/draft",
+        json={"note_ids": [foreign_id]},
+        headers=admin.headers,
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "feedback_note_not_found"
+    assert "BOBS-REPORT-NOTE-SENTINEL" not in resp.text
+    assert await row_count(db_session, FeedbackTriageEvent) == events_before
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_link_to_a_report_that_does_not_exist_persists_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An unknown target reference is 404; the source keeps no link and gains no event."""
+    admin = await make_account(db_session, "idor_link_admin@example.com", admin=True)
+    alice = await make_account(db_session, "idor_link_alice@example.com")
+    report = await seed_report(db_session, alice.user_id)
+    report_id, public_id = report.id or 0, report.public_id
+
+    resp = await async_client.post(
+        f"/admin/feedback/{public_id}/actions",
+        json={"action": "link_duplicate", "target_public_id": "FB-22222222"},
+        headers=admin.headers,
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json()["detail"] == "feedback_report_not_found"
+    assert await report_state(db_session, report_id) == ("new", None)
+    assert await row_count(db_session, FeedbackTriageEvent) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_non_admin_cannot_link_their_report_to_another_tenants(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The reporter holding both references is still refused, and nothing is written."""
+    alice = await make_account(db_session, "idor_nonadmin_alice@example.com")
+    bob = await make_account(db_session, "idor_nonadmin_bob@example.com")
+    alices = await seed_report(db_session, alice.user_id)
+    bobs = await seed_report(db_session, bob.user_id)
+    alices_id, alices_ref, bobs_ref = alices.id or 0, alices.public_id, bobs.public_id
+
+    resp = await async_client.post(
+        f"/admin/feedback/{alices_ref}/actions",
+        json={"action": "link_duplicate", "target_public_id": bobs_ref},
+        headers=alice.headers,
+    )
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert await report_state(db_session, alices_id) == ("new", None)
+    assert await row_count(db_session, FeedbackTriageEvent) == 0

@@ -38,6 +38,7 @@ from models.feedback import (
     mint_public_id,
 )
 from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
+from tests.helpers.feedback_triage import make_account
 
 _PROSE = "The habit card vanished when I tapped the offer."
 _IDEMPOTENCY_HEADER = "Idempotency-Key"
@@ -620,3 +621,37 @@ async def test_a_mint_that_always_collides_surfaces_rather_than_hanging(
     assert exhausted.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert _PROSE not in exhausted.text
     assert await _report_count(db_session) == 1
+
+
+# ── The receipt after triage (#2900) ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_is_byte_identical_before_and_after_triage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Status, a duplicate link and a note change nothing the reporter can read."""
+    headers = await _signup(async_client, "feedback_receipt_triage")
+    filed = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    other = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    public_id, other_id = filed.json()["public_id"], other.json()["public_id"]
+    receipt_path = f"/feedback/{public_id}/receipt"
+    before = await async_client.get(receipt_path, headers=headers)
+    admin = await make_account(db_session, "receipt_triage_admin@example.com", admin=True)
+
+    for command in (
+        {"action": "transition", "status": "triaged"},
+        {"action": "transition", "status": "planned"},
+        {"action": "link_duplicate", "target_public_id": other_id},
+        {"action": "add_note", "body": "Operator only."},
+    ):
+        resp = await async_client.post(
+            f"/admin/feedback/{public_id}/actions", json=command, headers=admin.headers
+        )
+        assert resp.status_code == HTTPStatus.OK, resp.text
+    after = await async_client.get(receipt_path, headers=headers)
+
+    assert before.status_code == after.status_code == HTTPStatus.OK
+    assert after.content == before.content
+    for leaked in ("planned", "triaged", "Operator only.", other_id, "duplicate", "note"):
+        assert leaked not in after.text

@@ -730,7 +730,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 27 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 28 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -738,6 +738,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
 _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.admin.grant_entitlement": ("10 per 1 minute",),
     "routers.admin.revoke_entitlement": ("10 per 1 minute",),
+    "routers.admin_feedback.act_on_feedback_report": ("60 per 1 minute",),
     "routers.auth.apple_oauth_signin": ("5 per 1 minute",),
     "routers.auth.cancel_password_reset": ("10 per 1 hour",),
     "routers.auth.confirm_password_reset": ("5 per 1 hour",),
@@ -771,14 +772,14 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 144 mounted ``APIRoute``s share 118 distinct paths. Pinned so a future router
+# 149 mounted ``APIRoute``s share 123 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 118
+_DISTINCT_MOUNTED_PATHS = 123
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 27 declared limits are exactly what they were before the ambient floor.
+    """The 28 declared limits: the 27 from before the ambient floor, plus #2900's.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
@@ -798,7 +799,7 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     """Every distinct mounted path is charged, not merely the three app-level ones.
 
     Deliberately iterates distinct *paths* with a reset between them rather than
-    routes: 144 routes share 118 paths, the ambient bucket is keyed per path,
+    routes: 149 routes share 123 paths, the ambient bucket is keyed per path,
     and a per-route walk would see the second and third method on a shared path
     charged to a bucket the first already spent.
     """

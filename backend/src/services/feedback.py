@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from models.feedback import FEEDBACK_RETENTION_DAYS, FeedbackReport
+from services.feedback_triage import purge_feedback_reports
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +42,10 @@ async def delete_expired_feedback_reports(
         msg = "older_than_days must be positive"
         raise ValueError(msg)
     cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
-    # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
-    # ``rowcount`` is the number of rows removed.
-    result = cast(
-        "CursorResult[Any]",
-        await session.execute(
-            delete(FeedbackReport).where(col(FeedbackReport.created_at) < cutoff),
-        ),
-    )
+    # The reports' notes, triage events and inbound duplicate links go first,
+    # in the same transaction (see ``purge_feedback_reports``).
+    deleted = await purge_feedback_reports(session, lambda: col(FeedbackReport.created_at) < cutoff)
     await session.commit()
-    deleted = int(result.rowcount)
     if deleted < 0:
         # The driver doesn't report rowcount; surface it rather than silently
         # claiming zero deletions.

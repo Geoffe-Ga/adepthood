@@ -20,7 +20,9 @@ from httpx import AsyncClient
 
 from models._prose_repr import REDACTED
 from models.feedback import FeedbackReport
+from models.feedback_triage import FeedbackNote
 from schemas.feedback import FeedbackCreate
+from schemas.feedback_admin import AddNoteCommand, FeedbackIssueDraft, FeedbackReporterSaid
 from sentry import scrub_event
 from services.journal_encryption import EncryptedString
 
@@ -238,3 +240,56 @@ def test_the_representation_hook_is_redacted_at_source() -> None:
     for column in ("summary", "intent", "expected", "actual"):
         assert rendered[column] == REDACTED, column
     assert rendered["public_id"] == f"'{_PUBLIC_ID}'"
+
+
+# ── Operator notes (#2900) ────────────────────────────────────────────────
+
+
+def _note() -> FeedbackNote:
+    """An operator note whose body is the sentinel."""
+    return FeedbackNote(id=7, report_id=3, author_admin_id=1, body=_PROSE_SENTINEL)
+
+
+@pytest.mark.parametrize(("name", "render"), _RENDERERS, ids=_RENDERER_IDS)
+def test_no_rendering_channel_reproduces_an_operator_note(
+    name: str, render: Callable[[object], str]
+) -> None:
+    """A note is prose about somebody's report; every rendering hides it."""
+    assert _PROSE_SENTINEL not in render(_note()), name
+
+
+def test_an_operator_note_repr_still_names_the_row() -> None:
+    """The honesty half: the ids survive, only the body is redacted."""
+    rendered = repr(_note())
+    assert "FeedbackNote" in rendered
+    assert "report_id=3" in rendered
+    assert f"body={REDACTED}" in rendered
+
+
+def test_the_triage_command_and_draft_responses_keep_prose_out_of_repr() -> None:
+    """The parsed command and the draft/detail DTOs render no prose either."""
+    rendered = " ".join(
+        repr(value)
+        for value in (
+            AddNoteCommand(action="add_note", body=_PROSE_SENTINEL),
+            FeedbackIssueDraft(
+                title=_PROSE_SENTINEL, markdown=_PROSE_SENTINEL, source_public_ids=[]
+            ),
+            FeedbackReporterSaid(
+                summary=_PROSE_SENTINEL,
+                intent=_PROSE_SENTINEL,
+                expected=_PROSE_SENTINEL,
+                actual=_PROSE_SENTINEL,
+            ),
+        )
+    )
+    assert _PROSE_SENTINEL not in rendered
+
+
+def test_an_error_monitoring_event_carrying_a_triage_command_is_scrubbed() -> None:
+    """A note posted to the command route is request data like any other."""
+    event: dict[str, Any] = {
+        "request": {"data": {"action": "add_note", "body": _PROSE_SENTINEL}},
+    }
+
+    assert _PROSE_SENTINEL not in json.dumps(scrub_event(event, {}))

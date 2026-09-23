@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.feedback import FEEDBACK_RETENTION_DAYS, FeedbackReport
+from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.user import User
 from services.feedback import delete_expired_feedback_reports
+from tests.helpers.feedback_triage import make_account, report_state, seed_report
 
 
 async def _signup(client: AsyncClient, email: str) -> tuple[int, dict[str, str]]:
@@ -151,3 +153,44 @@ async def test_the_admin_maintenance_route_refuses_a_non_positive_window(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert resp.json()["detail"][0]["loc"] == ["query", "older_than_days"]
+
+
+# ── Triage children (#2900) ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_takes_an_expired_reports_notes_and_events_and_leaves_no_orphan(
+    db_session: AsyncSession,
+) -> None:
+    """On SQLite, where no cascade fires: children go, survivors unlink, fresh rows stay."""
+    reporter = await make_account(db_session, "retention_reporter@example.com")
+    admin = await make_account(db_session, "retention_admin@example.com", admin=True)
+    expired = await seed_report(
+        db_session,
+        reporter.user_id,
+        created_at=datetime.now(UTC) - timedelta(days=FEEDBACK_RETENTION_DAYS + 1),
+    )
+    fresh = await seed_report(db_session, reporter.user_id)
+    expired_id, fresh_id = expired.id or 0, fresh.id or 0
+    fresh.duplicate_of_id = expired_id
+    db_session.add(fresh)
+    for report_id in (expired_id, fresh_id):
+        db_session.add(FeedbackNote(report_id=report_id, author_admin_id=admin.user_id, body="n"))
+        db_session.add(
+            FeedbackTriageEvent(
+                report_id=report_id, actor_admin_id=admin.user_id, action="note_added"
+            )
+        )
+    await db_session.commit()
+
+    deleted = await delete_expired_feedback_reports(db_session)
+
+    assert deleted == 1
+    db_session.expire_all()
+    notes = (await db_session.execute(select(FeedbackNote.report_id))).scalars().all()
+    events = (await db_session.execute(select(FeedbackTriageEvent.report_id))).scalars().all()
+    assert list(notes) == [fresh_id]
+    assert list(events) == [fresh_id]
+    assert await report_state(db_session, fresh_id) == ("new", None)
+    remaining = (await db_session.execute(select(FeedbackReport.id))).scalars().all()
+    assert list(remaining) == [fresh_id]
