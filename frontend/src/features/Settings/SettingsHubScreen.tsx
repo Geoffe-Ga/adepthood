@@ -14,7 +14,7 @@ import {
   Trash2,
   Vault,
 } from 'lucide-react-native';
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
@@ -242,8 +242,10 @@ const SupportSection = ({ onSupportCare }: { onSupportCare: () => void }): React
  */
 const FeedbackSection = (): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // Remembered as the composer's origin, so closing it returns focus here.
+  const rowRef = useRef<View>(null);
   const onPress = useCallback(
-    () => openFeedbackComposer(navigation, FEEDBACK_CONTROL_TOKENS.settingsRow),
+    () => openFeedbackComposer(navigation, FEEDBACK_CONTROL_TOKENS.settingsRow, rowRef),
     [navigation],
   );
   return (
@@ -254,6 +256,7 @@ const FeedbackSection = (): React.JSX.Element => {
         description={SETTINGS_FEEDBACK_DESCRIPTION}
         onPress={onPress}
         testID={FEEDBACK_TEST_IDS.settingsRow}
+        ref={rowRef}
       />
     </EditorialSection>
   );

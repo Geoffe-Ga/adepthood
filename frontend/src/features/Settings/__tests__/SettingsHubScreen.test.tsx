@@ -2,6 +2,7 @@
 /* global describe, test, expect, afterEach, beforeEach, jest */
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
+import { AccessibilityInfo } from 'react-native';
 
 const mockNavigate = jest.fn();
 const mockLogout = jest.fn(() => Promise.resolve());
@@ -38,6 +39,8 @@ jest.mock('@/config', () => {
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
+
+import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -483,5 +486,22 @@ describe('SettingsHubScreen — Send feedback (#2898)', () => {
     expect(mockNavigate).toHaveBeenCalledWith('Feedback', {
       control: 'settings.row.send_feedback',
     });
+  });
+});
+
+describe('SettingsHubScreen — focus comes back to the row (#2898 review [13])', () => {
+  test('the Send feedback row is remembered as the place to return focus to', () => {
+    const focus = jest
+      .spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
+      .mockImplementation(() => undefined);
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-feedback'));
+    // What the composer does when it closes.
+    restoreFeedbackOrigin();
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledWith(expect.anything(), 'focus');
+    focus.mockRestore();
   });
 });

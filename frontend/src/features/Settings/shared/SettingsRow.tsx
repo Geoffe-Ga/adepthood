@@ -24,6 +24,11 @@ export interface SettingsRowProps {
   testID: string;
   /** Tints the row and drops the chevron: this ends something, it goes nowhere. */
   destructive?: boolean;
+  /**
+   * The row's touchable, for a destination that hands focus back to the row
+   * when it closes (the feedback composer). React 19 passes ``ref`` as a prop.
+   */
+  ref?: React.Ref<View>;
 }
 
 export const SettingsRow = ({
@@ -33,12 +38,14 @@ export const SettingsRow = ({
   onPress,
   testID,
   destructive = false,
+  ref,
 }: SettingsRowProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   const tint = destructive ? accent.strong : accent.primary;
   return (
     <TouchableOpacity
+      ref={ref}
       style={styles.row}
       onPress={onPress}
       accessibilityRole="button"
