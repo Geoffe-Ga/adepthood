@@ -53,6 +53,7 @@ import {
   voiceDraftListSchema,
   voiceReadinessSchema,
   wheelBalanceSchema,
+  feedbackReceiptSchema,
   type AccountDeletionReceiptT,
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
@@ -3802,7 +3803,7 @@ export const vaultActivation = {
   },
 };
 
-// Private beta feedback (#2897 intake contract; #2899/#2900 build the reporter)
+// Private beta feedback (#2897 intake contract; #2898 reporter; #2899 seam verification; #2900 inbox)
 
 /** What kind of report a tester is filing. Mirrors the published enum component. */
 export type FeedbackCategory = 'broken' | 'confusing' | 'idea' | 'praise';
@@ -3853,27 +3854,32 @@ export interface FeedbackReceipt {
  * `submit` takes the idempotency key as a header rather than a body field,
  * matching `POST /practice-sessions` and `POST /v1/goal-completions`: a retry
  * under the same key resolves to the report already stored rather than filing a
- * second one. Automatic retry is left on for exactly that reason — with a key
+ * second one. Automatic retry is left on for exactly that reason -- with a key
  * present, a retried submit is safe by construction.
  *
- * No Zod schema yet: the reporter screen that would consume these lands with
- * #2899, and a runtime validator declared ahead of its only caller would be an
- * unexercised claim about a shape nothing yet reads.
+ * The key is REQUIRED. An unkeyed POST always inserts a new row, so a lost
+ * response followed by any retry -- automatic or a second press -- would file
+ * the report twice. The reporter (#2898) mints one key per draft and persists it
+ * with the draft, so it survives remounts and restarts.
+ *
+ * Both calls validate against `feedbackReceiptSchema`: the reporter shows
+ * `public_id` as the tester's confirmation, so a reference that does not match
+ * the published pattern is an `ApiValidationError`, never something displayed.
  */
 export const feedback = {
-  submit(
-    report: FeedbackCreate,
-    idempotencyKey?: string,
-    token?: string,
-  ): Promise<FeedbackReceipt> {
+  submit(report: FeedbackCreate, idempotencyKey: string, token?: string): Promise<FeedbackReceipt> {
     return request<FeedbackReceipt>('/feedback/', {
       method: 'POST',
       body: report,
       token,
-      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      schema: feedbackReceiptSchema,
     });
   },
   receipt(publicId: string, token?: string): Promise<FeedbackReceipt> {
-    return request<FeedbackReceipt>(`/feedback/${publicId}/receipt`, { token });
+    return request<FeedbackReceipt>(`/feedback/${publicId}/receipt`, {
+      token,
+      schema: feedbackReceiptSchema,
+    });
   },
 };

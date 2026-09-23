@@ -1340,3 +1340,45 @@ export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
 export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
 export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;
 export type ReflectionAnchorStatusT = z.infer<typeof anchorStatusSchema>;
+
+// ---------------------------------------------------------------------------
+// Private beta feedback (#2897 intake contract; #2898 reporter)
+// ---------------------------------------------------------------------------
+
+/** What kind of report a tester is filing. Mirrors the ``FeedbackCategory`` component. */
+export const feedbackCategorySchema = z.enum(['broken', 'confusing', 'idea', 'praise']);
+
+/** What the reported thing cost the person reporting it. Mirrors ``FeedbackImpact``. */
+export const feedbackImpactSchema = z.enum([
+  'blocked',
+  'can_continue',
+  'cosmetic',
+  'not_applicable',
+]);
+
+/**
+ * A report's public reference: ``FB-`` plus eight characters from an alphabet
+ * with the misread pairs (and ``U``) removed. Mirrors ``PUBLIC_ID_PATTERN`` in
+ * ``backend/src/models/feedback.py``; ``feedbackBoundsDrift.test.ts`` composes the
+ * server pattern from its parts and compares.
+ */
+export const FEEDBACK_PUBLIC_ID_PATTERN = /^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/;
+
+/**
+ * The receipt ``POST /feedback/`` returns (and a replay under the same key
+ * returns again). The reporter shows ``public_id`` as the confirmation, so a
+ * reference that does not match the pattern is a validation failure rather than
+ * something shown to the tester. ``created_at`` is read as a plain string, as the
+ * other ``created_at`` fields here are: nothing formats it, and a storage
+ * backend that drops the offset must not turn a filed report into an error.
+ */
+export const feedbackReceiptSchema = z.object({
+  public_id: z.string().regex(FEEDBACK_PUBLIC_ID_PATTERN, {
+    message: 'expected a public reference such as FB-7K3M9Q2B',
+  }),
+  category: feedbackCategorySchema,
+  impact: feedbackImpactSchema,
+  created_at: z.string(),
+});
+
+export type FeedbackReceiptT = z.infer<typeof feedbackReceiptSchema>;
