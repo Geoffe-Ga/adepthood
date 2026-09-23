@@ -31,6 +31,7 @@ from typing import Any, Final, cast
 
 from sqlalchemy import CursorResult, delete, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 
@@ -71,6 +72,10 @@ SIBLING_LIMIT: Final = 10
 SIBLING_SCAN_LIMIT: Final = 500
 
 _LOG_EVENT: Final = "feedback_triage_mutation"
+
+# What an audit state that named a since-deleted report reads as afterwards.
+# Not a ``FB-`` reference, so it can never be mistaken for a live one.
+DELETED_REPORT_STATE: Final = "deleted"
 
 _POSTGRESQL: Final = "postgresql"
 # The second key of the link lock. There is one lock for all links, because a
@@ -479,6 +484,58 @@ async def build_draft(
 # ── Retention ─────────────────────────────────────────────────────────────
 
 
+async def detach_from_doomed_reports(session: AsyncSession, doomed: Select[Any]) -> None:
+    """Unlink every surviving report from the reports ``doomed`` selects, on the record.
+
+    Called before those reports are deleted -- by the retention sweep and by
+    account deletion -- so the survivors' trails stay true and stop naming
+    them:
+
+    * each survivor that was a duplicate of a doomed report gets a system
+      ``duplicate_unlinked`` event (no actor: nobody chose it) and its link
+      cleared -- explicitly, because SQLite never fires ``SET NULL``;
+    * every event state that holds a doomed report's public reference is
+      rewritten to :data:`DELETED_REPORT_STATE`, so the reference does not
+      outlive the report it names.
+
+    ``doomed`` is a ``SELECT`` of report ids. Does not commit.
+    """
+    fetch = {"synchronize_session": "fetch"}
+    survivors = (
+        await session.execute(
+            select(FeedbackReport.id).where(
+                col(FeedbackReport.duplicate_of_id).in_(doomed),
+                col(FeedbackReport.id).not_in(doomed),
+            )
+        )
+    ).scalars()
+    session.add_all(
+        FeedbackTriageEvent(
+            report_id=survivor_id,
+            actor_admin_id=None,
+            action=FeedbackTriageAction.DUPLICATE_UNLINKED.value,
+            old_state=DELETED_REPORT_STATE,
+            new_state=None,
+        )
+        for survivor_id in survivors
+    )
+    await session.flush()
+    doomed_refs = select(FeedbackReport.public_id).where(col(FeedbackReport.id).in_(doomed))
+    for state in (FeedbackTriageEvent.old_state, FeedbackTriageEvent.new_state):
+        await session.execute(
+            update(FeedbackTriageEvent)
+            .where(col(state).in_(doomed_refs))
+            .values({col(state): DELETED_REPORT_STATE}),
+            execution_options=fetch,
+        )
+    await session.execute(
+        update(FeedbackReport)
+        .where(col(FeedbackReport.duplicate_of_id).in_(doomed))
+        .values(duplicate_of_id=None),
+        execution_options=fetch,
+    )
+
+
 async def purge_feedback_reports(
     session: AsyncSession, predicate: Callable[[], ColumnElement[bool]]
 ) -> int:
@@ -487,7 +544,8 @@ async def purge_feedback_reports(
     Explicit, child first, because the suite runs on SQLite where neither the
     ``CASCADE`` on the children nor the ``SET NULL`` on ``duplicate_of_id``
     fires: notes and events of the doomed reports go first, surviving reports
-    that pointed at a doomed one are detached, and only then do the reports
+    that pointed at a doomed one are detached on the record
+    (:func:`detach_from_doomed_reports`), and only then do the reports
     go. Does not commit; the caller owns the transaction. Returns the number of
     reports removed, or ``-1`` when the driver does not report a row count.
     """
@@ -504,12 +562,7 @@ async def purge_feedback_reports(
         delete(FeedbackTriageEvent).where(col(FeedbackTriageEvent.report_id).in_(doomed)),
         execution_options=fetch,
     )
-    await session.execute(
-        update(FeedbackReport)
-        .where(col(FeedbackReport.duplicate_of_id).in_(doomed))
-        .values(duplicate_of_id=None),
-        execution_options=fetch,
-    )
+    await detach_from_doomed_reports(session, doomed)
     result = cast(
         "CursorResult[Any]",
         await session.execute(delete(FeedbackReport).where(predicate()), execution_options=fetch),

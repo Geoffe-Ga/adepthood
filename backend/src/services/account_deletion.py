@@ -40,7 +40,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, Table, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, col, select
 
 from domain.account_deletion import (
     POLICY,
@@ -51,6 +51,8 @@ from domain.account_deletion import (
 )
 from domain.ownership import OwnedBy, owner_predicate
 from models.account_deletion_audit import AccountDeletionAudit
+from models.feedback import FeedbackReport
+from services.feedback_triage import detach_from_doomed_reports
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +267,12 @@ async def delete_account(
     finds the account gone and sends nothing.
     """
     _require_total_policy()
+    # Before the sweep, so other accounts' reports that were duplicates of this
+    # account's record their unlink rather than silently losing it.
+    await detach_from_doomed_reports(
+        session,
+        select(FeedbackReport.id).where(col(FeedbackReport.user_id) == account.user_id),
+    )
     counts = await _sweep(session, account)
     receipt = _build_receipt(account, counts, vault_disposition)
     session.add(

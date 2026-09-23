@@ -651,10 +651,20 @@ async def test_deleting_a_reporter_takes_the_triage_of_their_reports(
     assert await _count(db_session, _NOTE_TABLE, _REPORT_ID, doomed_id) == 0
     assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, doomed_id) == 0
     assert await _count(db_session, _NOTE_TABLE, _REPORT_ID, survivor_id) == 1
-    assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, survivor_id) == 3
+    assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, survivor_id) == 4
     detail = await async_client.get(f"/admin/feedback/{survivor_ref}", headers=admin.headers)
     assert detail.status_code == HTTPStatus.OK
-    assert detail.json()["operator_added"]["duplicate_of"] is None
+    operator = detail.json()["operator_added"]
+    assert operator["duplicate_of"] is None
+    assert doomed_ref not in detail.text
+    last = operator["events"][-1]
+    assert (last["action"], last["old_state"], last["new_state"]) == (
+        "duplicate_unlinked",
+        "deleted",
+        None,
+    )
+    assert await _count(db_session, _EVENT_TABLE, "old_state", doomed_ref) == 0
+    assert await _count(db_session, _EVENT_TABLE, "new_state", doomed_ref) == 0
 
 
 @pytest.mark.asyncio
