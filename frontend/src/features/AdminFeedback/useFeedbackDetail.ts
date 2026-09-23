@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { adminFeedback, type FeedbackStatusT, type FeedbackTriageDetailT } from '@/api';
 import { useAuth } from '@/context/AuthContext';
@@ -10,10 +10,11 @@ export interface FeedbackDetailState {
   /** Set when the last change was refused or lost; cleared by the next success. */
   actionFailed: boolean;
   busy: boolean;
-  transition: (_status: FeedbackStatusT) => void;
-  linkDuplicate: (_target: string) => void;
-  unlinkDuplicate: () => void;
-  addNote: (_body: string) => void;
+  /** Each change resolves ``true`` once the server has applied it, else ``false``. */
+  transition: (_status: FeedbackStatusT) => Promise<boolean>;
+  linkDuplicate: (_target: string) => Promise<boolean>;
+  unlinkDuplicate: () => Promise<boolean>;
+  addNote: (_body: string) => Promise<boolean>;
   reload: () => void;
 }
 
@@ -66,29 +67,44 @@ function useLoadedDetail(
  * server's state after each one rather than an optimistic guess -- including
  * which transitions are allowed next, which the server decides.
  */
-export function useFeedbackDetail(publicId: string | null): FeedbackDetailState {
+export function useFeedbackDetail(
+  publicId: string | null,
+  onChanged?: () => void,
+): FeedbackDetailState {
   const { token } = useAuth();
   const authToken = token ?? undefined;
   const [attempt, setAttempt] = useState(0);
   const { detail, setDetail, loading, failed } = useLoadedDetail(publicId, authToken, attempt);
   const [actionFailed, setActionFailed] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The report open NOW. A change started on another report may answer after
+  // the operator has moved on; its answer must not replace this one's detail,
+  // or the next action would be aimed at a report the pane no longer shows.
+  const openId = useRef(publicId);
+  openId.current = publicId;
 
   useEffect(() => setActionFailed(false), [publicId]);
 
   const withReport = useCallback(
-    (change: (_id: string) => Promise<FeedbackTriageDetailT>) => {
-      if (publicId === null) return;
+    async (change: (_id: string) => Promise<FeedbackTriageDetailT>): Promise<boolean> => {
+      if (publicId === null) return false;
       setBusy(true);
-      change(publicId)
-        .then((updated) => {
+      try {
+        const updated = await change(publicId);
+        if (updated.public_id === openId.current) {
           setDetail(updated);
           setActionFailed(false);
-        })
-        .catch(() => setActionFailed(true))
-        .finally(() => setBusy(false));
+        }
+        onChanged?.();
+        return true;
+      } catch {
+        if (publicId === openId.current) setActionFailed(true);
+        return false;
+      } finally {
+        setBusy(false);
+      }
     },
-    [publicId, setDetail],
+    [publicId, setDetail, onChanged],
   );
 
   return {

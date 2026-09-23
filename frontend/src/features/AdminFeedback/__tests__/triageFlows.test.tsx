@@ -27,6 +27,7 @@ const mockDetail = jest.fn<() => Detail>();
 const mockLink = jest.fn<(_id: string, _target: string) => Detail>();
 const mockUnlink = jest.fn<(_id: string) => Detail>();
 const mockNote = jest.fn<(_id: string, _body: string) => Detail>();
+const mockTransition = jest.fn<(_id: string, _status: string) => Detail>();
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
@@ -40,6 +41,7 @@ jest.mock('@/api', () => {
       linkDuplicate: (id: string, target: string) => mockLink(id, target),
       unlinkDuplicate: (id: string) => mockUnlink(id),
       addNote: (id: string, body: string) => mockNote(id, body),
+      transition: (id: string, status: string) => mockTransition(id, status),
     },
   };
 });
@@ -62,7 +64,15 @@ async function openReport(): Promise<ReturnType<typeof render>> {
 }
 
 beforeEach(() => {
-  for (const mock of [mockCapabilities, mockList, mockDetail, mockLink, mockUnlink, mockNote]) {
+  for (const mock of [
+    mockCapabilities,
+    mockList,
+    mockDetail,
+    mockLink,
+    mockUnlink,
+    mockNote,
+    mockTransition,
+  ]) {
     mock.mockReset();
   }
   mockCapabilities.mockResolvedValue({ feedback_triage: true });
@@ -107,6 +117,38 @@ describe('triage flows', () => {
 
     await waitFor(() => expect(mockNote).toHaveBeenCalledWith('FB-23456789', 'Reproduced.'));
     expect(screen.getByTestId('triage-note-body').props.value).toBe('');
+  });
+
+  it('keeps the typed note when saving it fails', async () => {
+    mockNote.mockRejectedValue(new ApiError(HTTP_SERVER_ERROR, 'server_error'));
+    const screen = await openReport();
+
+    fireEvent.changeText(screen.getByTestId('triage-note-body'), 'a long careful note');
+    fireEvent.press(screen.getByTestId('triage-add-note'));
+
+    await waitFor(() => expect(mockNote).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByText('That change was not saved. Refresh the report and try again.'),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByTestId('triage-note-body').props.value).toBe('a long careful note');
+  });
+
+  it('refreshes the inbox from the top after a change lands', async () => {
+    mockTransition.mockResolvedValue(
+      detail({ operator_added: { ...detail().operator_added, status: 'planned' } }),
+    );
+    mockList
+      .mockResolvedValueOnce(page([summary({ status: 'triaged' })]))
+      .mockResolvedValueOnce(page([summary({ status: 'planned' })]));
+    const screen = await openReport();
+    const listedBefore = mockList.mock.calls.length;
+
+    fireEvent.press(screen.getByTestId('triage-transition-planned'));
+
+    await waitFor(() => expect(mockList.mock.calls.length).toBe(listedBefore + 1));
+    expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 0 });
   });
 
   it('says a refused change was not saved', async () => {

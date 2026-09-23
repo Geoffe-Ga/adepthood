@@ -25,7 +25,9 @@ function Inbox(): React.JSX.Element {
   const layout = triageLayoutFor(width);
   const inbox = useFeedbackInbox();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const detail = useFeedbackDetail(selectedId);
+  // A change can move a report out of the active filter or reorder the list,
+  // so the inbox is re-read from the top after every change that lands.
+  const detail = useFeedbackDetail(selectedId, inbox.reload);
 
   if (layout === 'split') {
     return (

@@ -11,16 +11,16 @@ import { rhythm, touchTarget } from '@/design/tokens';
 interface TriageActionsProps {
   detail: FeedbackTriageDetailT;
   busy: boolean;
-  onTransition: (_status: FeedbackStatusT) => void;
-  onLinkDuplicate: (_target: string) => void;
-  onUnlinkDuplicate: () => void;
-  onAddNote: (_body: string) => void;
+  onTransition: (_status: FeedbackStatusT) => unknown;
+  onLinkDuplicate: (_target: string) => unknown;
+  onUnlinkDuplicate: () => unknown;
+  onAddNote: (_body: string) => Promise<boolean>;
 }
 
 interface StatusButtonsProps {
   detail: FeedbackTriageDetailT;
   busy: boolean;
-  onTransition: (_status: FeedbackStatusT) => void;
+  onTransition: (_status: FeedbackStatusT) => unknown;
 }
 
 /** One button per status the server says this report may move to next. */
@@ -45,8 +45,8 @@ function StatusButtons({ detail, busy, onTransition }: StatusButtonsProps): Reac
 interface DuplicateControlsProps {
   linked: boolean;
   busy: boolean;
-  onLinkDuplicate: (_target: string) => void;
-  onUnlinkDuplicate: () => void;
+  onLinkDuplicate: (_target: string) => unknown;
+  onUnlinkDuplicate: () => unknown;
 }
 
 /** Link the report to its canonical one by reference, or clear the link. */
@@ -99,7 +99,7 @@ function NoteComposer({
   onAddNote,
 }: {
   busy: boolean;
-  onAddNote: (_body: string) => void;
+  onAddNote: (_body: string) => Promise<boolean>;
 }): React.JSX.Element {
   const [note, setNote] = useState('');
   return (
@@ -118,8 +118,11 @@ function NoteComposer({
         disabled={note.trim() === ''}
         busy={busy}
         onPress={() => {
-          onAddNote(note);
-          setNote('');
+          // Cleared only once the server has the note: a refused or lost save
+          // leaves the operator's words where they typed them.
+          void onAddNote(note).then((saved) => {
+            if (saved) setNote('');
+          });
         }}
         testID="triage-add-note"
         style={styles.action}
