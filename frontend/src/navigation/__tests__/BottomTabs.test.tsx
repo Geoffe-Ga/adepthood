@@ -1,10 +1,16 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
-import { NavigationContainer, type NavigationContainerRef } from '@react-navigation/native';
-import { act, render, waitFor } from '@testing-library/react-native';
+import {
+  NavigationContainer,
+  type NavigationContainerRef,
+  type NavigatorScreenParams,
+} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { BookOpen, Compass, Flower2, NotebookPen, Settings, Sprout } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet, Text, type ViewStyle } from 'react-native';
 
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted' }),
@@ -73,6 +79,8 @@ jest.mock('@/context/AuthContext', () => ({
 
 import BottomTabs, { type RootTabParamList } from '../BottomTabs';
 import { NAV_DESTINATIONS } from '../destinations';
+
+import { touchTarget } from '@/design/tokens';
 
 // ---------------------------------------------------------------------------
 // Reset mutable state between tests.
@@ -509,5 +517,106 @@ describe('BottomTabs — load-on-mount', () => {
 
     // Load is mount-only; re-renders must not trigger extra fetches.
     expect(mockLoad).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2898 — "Send feedback" is part of the shell header on every tab.
+// ---------------------------------------------------------------------------
+
+type FeedbackHarnessStack = {
+  Tabs: NavigatorScreenParams<RootTabParamList>;
+  Feedback: { control?: string } | undefined;
+};
+
+const FeedbackStack = createNativeStackNavigator<FeedbackHarnessStack>();
+
+function FeedbackStub(): React.JSX.Element {
+  return <Text>Feedback composer stub</Text>;
+}
+
+function renderShell(ref: React.RefObject<NavigationContainerRef<FeedbackHarnessStack> | null>) {
+  return render(
+    <NavigationContainer ref={ref}>
+      <FeedbackStack.Navigator>
+        <FeedbackStack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
+        <FeedbackStack.Screen name="Feedback" component={FeedbackStub} />
+      </FeedbackStack.Navigator>
+    </NavigationContainer>,
+  );
+}
+
+const ALL_TABS = ['Journal', 'Habits', 'Practice', 'Course', 'Map'] as const;
+
+describe('BottomTabs — Send feedback in the shell header', () => {
+  it('every one of the five tabs carries its own labelled control beside the gear', async () => {
+    const navRef = React.createRef<NavigationContainerRef<FeedbackHarnessStack>>();
+    const { getAllByTestId, getAllByRole } = renderShell(navRef);
+
+    for (const [visited, tab] of ALL_TABS.entries()) {
+      act(() => {
+        navRef.current?.navigate('Tabs', { screen: tab });
+      });
+      await waitFor(() => expect(navRef.current?.getCurrentRoute()?.name).toBe(tab));
+      // The focused tab's header shows exactly one control, beside exactly one gear...
+      expect(getAllByRole('button', { name: 'Send feedback' })).toHaveLength(1);
+      expect(getAllByTestId('open-settings-button')).toHaveLength(1);
+      // ...and each visited tab mounted a header of its own that carries one.
+      expect(getAllByTestId('open-feedback-button', { includeHiddenElements: true })).toHaveLength(
+        visited + 1,
+      );
+    }
+  });
+
+  it('is present with every ring off, and after a ring is switched back on', async () => {
+    setMockState({ enable_habits: false, enable_practices: false, enable_course: false });
+    const navRef = React.createRef<NavigationContainerRef<FeedbackHarnessStack>>();
+    const { getAllByTestId, getByTestId, rerender } = renderShell(navRef);
+    expect(getByTestId('open-feedback-button')).toBeTruthy();
+
+    act(() => {
+      setMockState({ enable_practices: true });
+    });
+    rerender(
+      <NavigationContainer ref={navRef}>
+        <FeedbackStack.Navigator>
+          <FeedbackStack.Screen
+            name="Tabs"
+            component={BottomTabs}
+            options={{ headerShown: false }}
+          />
+          <FeedbackStack.Screen name="Feedback" component={FeedbackStub} />
+        </FeedbackStack.Navigator>
+      </NavigationContainer>,
+    );
+    act(() => {
+      navRef.current?.navigate('Tabs', { screen: 'Practice' });
+    });
+    await waitFor(() => expect(navRef.current?.getCurrentRoute()?.name).toBe('Practice'));
+    expect(getByTestId('open-feedback-button')).toBeTruthy();
+    expect(getAllByTestId('open-feedback-button', { includeHiddenElements: true })).toHaveLength(2);
+  });
+
+  it('meets the touch-target floor and is the quiet (tertiary) variant', () => {
+    const navRef = React.createRef<NavigationContainerRef<FeedbackHarnessStack>>();
+    const { getByTestId } = renderShell(navRef);
+
+    const style = StyleSheet.flatten(getByTestId('open-feedback-button').props.style) as ViewStyle;
+    expect(Number(style.minHeight)).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(Number(style.minWidth)).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.backgroundColor).toBe('transparent');
+    expect(getByTestId('open-feedback-button').props.accessibilityLabel).toBe('Send feedback');
+  });
+
+  it('opens the composer carrying only the shell-header token', async () => {
+    const navRef = React.createRef<NavigationContainerRef<FeedbackHarnessStack>>();
+    const { getByTestId } = renderShell(navRef);
+
+    fireEvent.press(getByTestId('open-feedback-button'));
+
+    await waitFor(() => expect(navRef.current?.getCurrentRoute()?.name).toBe('Feedback'));
+    expect(navRef.current?.getCurrentRoute()?.params).toEqual({
+      control: 'shell.header.send_feedback',
+    });
   });
 });

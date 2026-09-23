@@ -471,3 +471,17 @@ describe('SettingsHubScreen — the Digital Sangha door', () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
+
+describe('SettingsHubScreen — Send feedback (#2898)', () => {
+  test('the row opens the same composer route, carrying only the settings-row token', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    const row = getByTestId('settings-row-feedback');
+    expect(row.props.accessibilityLabel).toBe('Send feedback');
+    fireEvent.press(row);
+
+    expect(mockNavigate).toHaveBeenCalledWith('Feedback', {
+      control: 'settings.row.send_feedback',
+    });
+  });
+});
