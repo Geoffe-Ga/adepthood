@@ -156,14 +156,47 @@ async def _summaries(
     ]
 
 
-async def _detail(session: AsyncSession, report: FeedbackReport) -> FeedbackTriageDetail:
-    """Assemble the three-section detail view. Reads only."""
+async def _operator_added(session: AsyncSession, report: FeedbackReport) -> FeedbackOperatorAdded:
+    """Everything operators added to ``report``, with its duplicate link resolved."""
     report_id = report.id or 0
-    canonical = await feedback_triage.public_ids_for(
-        session, {report.duplicate_of_id} if report.duplicate_of_id is not None else set()
-    )
     notes = await feedback_triage.notes_for(session, report_id)
     events = await feedback_triage.events_for(session, report_id)
+    return FeedbackOperatorAdded(
+        status=FeedbackStatus(report.status),
+        duplicate_of=await feedback_triage.linked_public_id(session, report),
+        duplicates=await feedback_triage.duplicates_of(session, report_id),
+        notes=[
+            FeedbackOperatorNote(id=note.id or 0, body=note.body, created_at=note.created_at)
+            for note in notes
+        ],
+        events=[
+            FeedbackTriageEventPublic(
+                action=event.action,
+                old_state=event.old_state,
+                new_state=event.new_state,
+                created_at=event.created_at,
+            )
+            for event in events
+        ],
+    )
+
+
+def _app_attached(report: FeedbackReport) -> FeedbackAppAttached:
+    """The allowlisted envelope, the one place the correlation id is shown."""
+    return FeedbackAppAttached(
+        screen=report.screen,
+        control=report.control,
+        platform=report.platform,
+        app_build=report.app_build,
+        viewport_class=report.viewport_class,
+        locale=report.locale,
+        correlation_id=report.correlation_id,
+        created_at=report.created_at,
+    )
+
+
+async def _detail(session: AsyncSession, report: FeedbackReport) -> FeedbackTriageDetail:
+    """Assemble the three-section detail view. Reads only."""
     siblings = await feedback_triage.suggest_siblings(session, report)
     return FeedbackTriageDetail(
         public_id=report.public_id,
@@ -175,34 +208,8 @@ async def _detail(session: AsyncSession, report: FeedbackReport) -> FeedbackTria
             expected=report.expected,
             actual=report.actual,
         ),
-        app_attached=FeedbackAppAttached(
-            screen=report.screen,
-            control=report.control,
-            platform=report.platform,
-            app_build=report.app_build,
-            viewport_class=report.viewport_class,
-            locale=report.locale,
-            correlation_id=report.correlation_id,
-            created_at=report.created_at,
-        ),
-        operator_added=FeedbackOperatorAdded(
-            status=FeedbackStatus(report.status),
-            duplicate_of=next(iter(canonical.values()), None),
-            duplicates=await feedback_triage.duplicates_of(session, report_id),
-            notes=[
-                FeedbackOperatorNote(id=note.id or 0, body=note.body, created_at=note.created_at)
-                for note in notes
-            ],
-            events=[
-                FeedbackTriageEventPublic(
-                    action=event.action,
-                    old_state=event.old_state,
-                    new_state=event.new_state,
-                    created_at=event.created_at,
-                )
-                for event in events
-            ],
-        ),
+        app_attached=_app_attached(report),
+        operator_added=await _operator_added(session, report),
         fingerprint=feedback_triage.report_fingerprint(report),
         siblings=await _summaries(session, siblings),
         allowed_transitions=feedback_triage.allowed_transitions(report),

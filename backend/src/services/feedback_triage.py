@@ -86,21 +86,27 @@ class InboxFilters:
 
     def clauses(self) -> list[ColumnElement[bool]]:
         """One WHERE clause per supplied filter."""
-        equalities: list[tuple[Any, object]] = [
+        return self._equalities() + self._window()
+
+    def _equalities(self) -> list[ColumnElement[bool]]:
+        """The exact-match filters that were supplied."""
+        pairs: list[tuple[Any, object]] = [
             (FeedbackReport.status, self.status),
             (FeedbackReport.category, self.category),
             (FeedbackReport.impact, self.impact),
             (FeedbackReport.screen, self.screen),
             (FeedbackReport.app_build, self.app_build),
         ]
-        found: list[ColumnElement[bool]] = [
-            col(column) == value for column, value in equalities if value is not None
-        ]
+        return [col(column) == value for column, value in pairs if value is not None]
+
+    def _window(self) -> list[ColumnElement[bool]]:
+        """The creation-time bounds that were supplied: from inclusive, before exclusive."""
+        bounds: list[ColumnElement[bool]] = []
         if self.created_from is not None:
-            found.append(col(FeedbackReport.created_at) >= self.created_from)
+            bounds.append(col(FeedbackReport.created_at) >= self.created_from)
         if self.created_before is not None:
-            found.append(col(FeedbackReport.created_at) < self.created_before)
-        return found
+            bounds.append(col(FeedbackReport.created_at) < self.created_before)
+        return bounds
 
 
 @dataclass(frozen=True)
@@ -304,6 +310,29 @@ async def _duplicate_parents(session: AsyncSession) -> dict[int, int | None]:
     return {int(row[0]): row[1] for row in result.all()}
 
 
+async def linked_public_id(session: AsyncSession, report: FeedbackReport) -> str | None:
+    """The public reference ``report`` is currently linked to, or ``None``.
+
+    ``None`` both when there is no link and when the link dangles (its target
+    was deleted on SQLite, where ``SET NULL`` never fires).
+    """
+    if report.duplicate_of_id is None:
+        return None
+    found = await public_ids_for(session, {report.duplicate_of_id})
+    return found.get(report.duplicate_of_id)
+
+
+async def _refuse_bad_link(
+    session: AsyncSession, report: FeedbackReport, target: FeedbackReport
+) -> None:
+    """409 when the link would change nothing, or would close a loop of any length."""
+    if report.duplicate_of_id == target.id:
+        raise conflict(DUPLICATE_UNCHANGED)
+    parents = await _duplicate_parents(session)
+    if creates_duplicate_cycle(report.id or 0, target.id or 0, parents):
+        raise conflict(DUPLICATE_CYCLE)
+
+
 async def link_duplicate(
     session: AsyncSession, report: FeedbackReport, target_public_id: str, actor: Actor
 ) -> FeedbackReport:
@@ -316,16 +345,8 @@ async def link_duplicate(
     if target_public_id == report.public_id:
         raise unprocessable(DUPLICATE_SELF)
     target = await load_report(session, target_public_id)
-    if target.id is None or report.id is None:  # pragma: no cover - loaded rows carry keys
-        raise not_found(REPORT_RESOURCE)
-    if report.duplicate_of_id == target.id:
-        raise conflict(DUPLICATE_UNCHANGED)
-    if creates_duplicate_cycle(report.id, target.id, await _duplicate_parents(session)):
-        raise conflict(DUPLICATE_CYCLE)
-    previous = await public_ids_for(
-        session, {report.duplicate_of_id} if report.duplicate_of_id is not None else set()
-    )
-    old_state = previous.get(report.duplicate_of_id) if report.duplicate_of_id else None
+    await _refuse_bad_link(session, report, target)
+    old_state = await linked_public_id(session, report)
     report.duplicate_of_id = target.id
     session.add(report)
     await _record(
@@ -341,18 +362,14 @@ async def unlink_duplicate(session: AsyncSession, report: FeedbackReport, actor:
     """Clear ``report``'s duplicate link; 409 when it has none."""
     if report.duplicate_of_id is None:
         raise conflict(NOT_A_DUPLICATE)
-    previous = await public_ids_for(session, {report.duplicate_of_id})
+    old_state = await linked_public_id(session, report)
     report.duplicate_of_id = None
     session.add(report)
     await _record(
         session,
         report,
         actor,
-        TriageChange(
-            FeedbackTriageAction.DUPLICATE_UNLINKED,
-            next(iter(previous.values()), None),
-            None,
-        ),
+        TriageChange(FeedbackTriageAction.DUPLICATE_UNLINKED, old_state, None),
     )
 
 
@@ -378,6 +395,17 @@ async def add_note(
 # ── Draft ─────────────────────────────────────────────────────────────────
 
 
+async def _selected_notes(
+    session: AsyncSession, report_id: int, note_ids: Sequence[int]
+) -> tuple[str, ...]:
+    """The bodies of the named notes, in the order named; 404 for any not on this report."""
+    by_id = {note.id: note for note in await notes_for(session, report_id)}
+    wanted = list(dict.fromkeys(note_ids))
+    if any(note_id not in by_id for note_id in wanted):
+        raise not_found(NOTE_RESOURCE)
+    return tuple(by_id[note_id].body for note_id in wanted)
+
+
 async def build_draft(
     session: AsyncSession, report: FeedbackReport, note_ids: Sequence[int]
 ) -> IssueDraft:
@@ -388,12 +416,9 @@ async def build_draft(
     is a 404 rather than a silently shorter draft, so an operator never pastes
     a draft believing it carries a note it does not.
     """
-    wanted = list(dict.fromkeys(note_ids))
-    by_id = {note.id: note for note in await notes_for(session, report.id or 0)}
-    if any(note_id not in by_id for note_id in wanted):
-        raise not_found(NOTE_RESOURCE)
-    selected = tuple(by_id[note_id].body for note_id in wanted)
-    related = tuple(await duplicates_of(session, report.id or 0))
+    report_id = report.id or 0
+    selected = await _selected_notes(session, report_id, note_ids)
+    related = tuple(await duplicates_of(session, report_id))
     source = DraftSource.from_report(report, notes=selected, related_public_ids=related)
     return render_issue_draft(source)
 
