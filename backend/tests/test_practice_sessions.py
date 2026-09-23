@@ -1036,7 +1036,11 @@ async def test_insights_empty_user_returns_empty_rollup(async_client: AsyncClien
     # own owner logs a session (see the read-after-write test below).
     assert resp.headers["cache-control"] == "private, no-store"
     # Vary: Authorization is defense-in-depth against a proxy that ignores ``private``.
-    assert resp.headers["vary"] == "Authorization"
+    # Membership, not equality: CORSMiddleware appends ``Origin`` to ``Vary``
+    # (Starlette >= 1.7 does so even without an ``Origin`` request header), and
+    # the property that matters is that the cache is keyed per credential.
+    vary_fields = {f.strip().lower() for f in resp.headers["vary"].split(",")}
+    assert "authorization" in vary_fields
 
 
 @pytest.mark.asyncio
