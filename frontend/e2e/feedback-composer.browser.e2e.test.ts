@@ -77,10 +77,10 @@ async function openScreen(page: Page, from: string, to: string): Promise<void> {
 async function expectNoOverlapAcrossScreens(page: Page): Promise<void> {
   await expectClearOf(page, [
     [page.getByRole('button', { name: 'Open Journal menu' }), 'the Journal drawer toggle'],
-    [
-      page.getByTestId('journal-new-entry').or(page.getByTestId('journal-empty-cta')),
-      'the Journal new-page action',
-    ],
+    // New entry sits in the shelf header and is always there; the empty-shelf
+    // call to action renders beside it on a fresh account, so an either-or
+    // locator would match both and trip strict mode.
+    [page.getByTestId('journal-new-entry'), 'the Journal new-page action'],
   ]);
   await openScreen(page, 'Journal', 'Habits');
   await expectClearOf(page, [
@@ -164,14 +164,25 @@ test('keyboard-only at 1280x720: open, report something broken, read back the re
   await page.keyboard.press('Enter');
   await expect(feedbackControl(page)).toBeFocused();
 
-  // The Settings hub opens the same composer, on a fresh draft.
+  // The Settings hub opens the same composer, on a fresh draft, and closing it
+  // hands focus back to the row that opened it.
   await tabTo(page, page.getByRole('button', { name: 'Open settings' }).filter({ visible: true }));
   await page.keyboard.press('Enter');
-  await tabTo(page, page.getByTestId('settings-row-feedback'));
+  const settingsRow = page.getByTestId('settings-row-feedback');
+  await tabTo(page, settingsRow);
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('feedback-composer-heading')).toBeFocused();
-  await expect(page.getByRole('radio', { name: 'Something broke' })).toBeVisible();
   await expect(page.getByTestId('feedback-field-summary')).toHaveCount(0);
+  await tabTo(page, page.getByRole('radio', { name: 'Something worked well' }));
+  await page.keyboard.press('Enter');
+  await typeInto(page, 'feedback-field-summary', 'The Settings hub');
+  await typeInto(page, 'feedback-field-actual', 'Everything in one place');
+  await tabTo(page, page.getByTestId('feedback-send'));
+  await page.keyboard.press('Enter');
+  await readReference(page);
+  await tabTo(page, page.getByTestId('feedback-done'));
+  await page.keyboard.press('Enter');
+  await expect(settingsRow).toBeFocused();
 });
 
 test('at 390x844: find the control by name and send a report', async ({ page }) => {
