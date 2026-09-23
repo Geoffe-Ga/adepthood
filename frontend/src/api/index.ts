@@ -3917,6 +3917,17 @@ export interface FeedbackInboxFilters {
   created_before?: string;
 }
 
+/**
+ * What an operator sends to draft an issue: their own title and summary, and
+ * which of their notes to quote. The reporter's words are never part of a
+ * draft; the server refuses a request without the operator's text.
+ */
+export interface FeedbackDraftRequest {
+  title: string;
+  summary: string;
+  noteIds: number[];
+}
+
 /** The page window the inbox reads. */
 export interface FeedbackInboxWindow {
   limit: number;
@@ -3966,7 +3977,8 @@ function actOnReport(
  *
  * ``capabilities`` is the ONLY way the client learns it may show the inbox: a
  * 200 means yes, a 401 or 403 means no. Nothing here reads a role from a token.
- * ``draft`` renders Markdown and returns it; nothing is published anywhere.
+ * ``draft`` renders Markdown from the operator's own words and returns it;
+ * nothing is published anywhere.
  */
 export const adminFeedback = {
   capabilities(token?: string): Promise<AdminCapabilitiesT> {
@@ -4015,10 +4027,14 @@ export const adminFeedback = {
   addNote(publicId: string, body: string, token?: string): Promise<FeedbackTriageDetailT> {
     return actOnReport(publicId, { action: 'add_note', body }, token);
   },
-  draft(publicId: string, noteIds: number[], token?: string): Promise<FeedbackIssueDraftT> {
+  draft(
+    publicId: string,
+    { title, summary, noteIds }: FeedbackDraftRequest,
+    token?: string,
+  ): Promise<FeedbackIssueDraftT> {
     return request<FeedbackIssueDraftT>(`/admin/feedback/${publicId}/draft`, {
       method: 'POST',
-      body: { note_ids: noteIds },
+      body: { title, summary, note_ids: noteIds },
       token,
       schema: feedbackIssueDraftSchema,
     });

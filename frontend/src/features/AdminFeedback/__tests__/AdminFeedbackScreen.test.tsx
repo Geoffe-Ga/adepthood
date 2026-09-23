@@ -186,3 +186,22 @@ describe('DetailPane — three sources, kept apart', () => {
     expect(mockTransition).toHaveBeenCalledWith('FB-23456789', 'planned', 'operator-token');
   });
 });
+
+describe("DetailPane — the draft is the operator's own words", () => {
+  it("shows the reporter's words for reference beside empty operator fields", async () => {
+    mockCapabilities.mockResolvedValue({ feedback_triage: true });
+    const screen = render(<AdminFeedbackScreen />);
+    await waitFor(() => expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('inbox-row-FB-23456789'));
+    await waitFor(() => expect(screen.getByTestId('draft-panel')).toBeTruthy());
+
+    expect(
+      within(screen.getByTestId('evidence-reporter-said')).getByText(REPORTER_PROSE),
+    ).toBeTruthy();
+    const title = screen.getByTestId('draft-operator-title');
+    const body = screen.getByTestId('draft-operator-summary');
+    expect(title.props.value).toBe('');
+    expect(body.props.value).toBe('');
+    expect(within(screen.getByTestId('draft-panel')).queryByText(REPORTER_PROSE)).toBeNull();
+  });
+});

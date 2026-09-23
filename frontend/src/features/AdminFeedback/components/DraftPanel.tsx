@@ -5,6 +5,7 @@ import * as copy from '../copy';
 
 import { adminFeedback, type FeedbackIssueDraftT, type FeedbackOperatorNoteT } from '@/api';
 import { Button } from '@/components/Button';
+import { TextField } from '@/components/TextField';
 import { useAuth } from '@/context/AuthContext';
 import {
   accent,
@@ -57,7 +58,7 @@ function NoteToggle({ note, checked, onToggle }: NoteToggleProps): React.JSX.Ele
   );
 }
 
-interface DraftState {
+interface DraftState extends OperatorText {
   selected: ReadonlySet<number>;
   toggle: (_id: number) => void;
   draft: FeedbackIssueDraftT | null;
@@ -68,9 +69,33 @@ interface DraftState {
   downloadDraft: (_draft: FeedbackIssueDraftT) => void;
 }
 
+interface OperatorText {
+  title: string;
+  setTitle: (_value: string) => void;
+  summary: string;
+  setSummary: (_value: string) => void;
+  ready: boolean;
+}
+
+/**
+ * The operator's own title and summary, and nothing else.
+ *
+ * Deliberately never seeded from the report: the reporter's words are shown
+ * above for reference only and must never find their way into a draft that
+ * may be posted publicly.
+ */
+function useOperatorText(): OperatorText {
+  const [title, setTitle] = useState('');
+  const [summary, setSummary] = useState('');
+  const ready = title.trim() !== '' && summary.trim() !== '';
+  return { title, setTitle, summary, setSummary, ready };
+}
+
 /** The draft panel's state: which notes are ticked, the draft, and the handoffs. */
 function useDraft(publicId: string): DraftState {
   const { token } = useAuth();
+  const operator = useOperatorText();
+  const { title, summary, ready } = operator;
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [draft, setDraft] = useState<FeedbackIssueDraftT | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,10 +109,11 @@ function useDraft(publicId: string): DraftState {
   };
 
   const prepare = (): void => {
+    if (!ready) return;
     setBusy(true);
     setMessage(null);
     adminFeedback
-      .draft(publicId, [...selected], token ?? undefined)
+      .draft(publicId, { title, summary, noteIds: [...selected] }, token ?? undefined)
       .then(setDraft)
       .catch(() => setMessage(copy.DRAFT_FAILED))
       .finally(() => setBusy(false));
@@ -106,7 +132,42 @@ function useDraft(publicId: string): DraftState {
       .catch(() => setMessage(copy.DRAFT_FAILED));
   };
 
-  return { selected, toggle, draft, busy, message, prepare, copyDraft, downloadDraft };
+  return {
+    ...operator,
+    selected,
+    toggle,
+    draft,
+    busy,
+    message,
+    prepare,
+    copyDraft,
+    downloadDraft,
+  };
+}
+
+/** The two fields the operator writes the draft's prose in. Empty until they type. */
+function OperatorFields({ text }: { text: OperatorText }): React.JSX.Element {
+  return (
+    <>
+      <TextField
+        value={text.title}
+        onChangeText={text.setTitle}
+        accessibilityLabel={copy.DRAFT_TITLE_LABEL}
+        placeholder={copy.DRAFT_TITLE_LABEL}
+        style={styles.field}
+        testID="draft-operator-title"
+      />
+      <TextField
+        value={text.summary}
+        onChangeText={text.setSummary}
+        accessibilityLabel={copy.DRAFT_SUMMARY_LABEL}
+        placeholder={copy.DRAFT_SUMMARY_LABEL}
+        multiline
+        style={styles.field}
+        testID="draft-operator-summary"
+      />
+    </>
+  );
 }
 
 /** The rendered draft, with exactly two ways out: copy it, or download it. */
@@ -147,8 +208,10 @@ function DraftPreview({
  *
  * There is deliberately no third button. Publishing is a human decision made in
  * the tracker, with the draft in hand; this panel never talks to GitHub, and the
- * route behind it makes no outbound call either. A note is quoted only when its
- * box is ticked -- the default is none.
+ * route behind it makes no outbound call either. The draft is the operator's
+ * own title and summary plus listed non-identifying details; the reporter's
+ * words are never in it. A note is quoted only when its box is ticked -- the
+ * default is none.
  */
 export function DraftPanel({ publicId, notes }: DraftPanelProps): React.JSX.Element {
   const { width } = useWindowDimensions();
@@ -161,6 +224,7 @@ export function DraftPanel({ publicId, notes }: DraftPanelProps): React.JSX.Elem
         {copy.DRAFT_HEADING}
       </Text>
       <Text style={[t.caption, styles.explainer]}>{copy.DRAFT_EXPLAINER}</Text>
+      <OperatorFields text={state} />
       {notes.map((note) => (
         <NoteToggle
           key={note.id}
@@ -171,6 +235,7 @@ export function DraftPanel({ publicId, notes }: DraftPanelProps): React.JSX.Elem
       ))}
       <Button
         label={copy.GENERATE_DRAFT}
+        disabled={!state.ready}
         busy={state.busy}
         onPress={state.prepare}
         testID="draft-generate"
@@ -197,6 +262,10 @@ const styles = StyleSheet.create({
   },
   heading: {
     color: ink.primary,
+    marginBottom: rhythm.blockGap,
+  },
+  field: {
+    minHeight: touchTarget.minimum,
     marginBottom: rhythm.blockGap,
   },
   explainer: {

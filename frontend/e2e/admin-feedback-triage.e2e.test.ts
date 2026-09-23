@@ -34,6 +34,11 @@ const operatorEmail = `e2e-feedback-operator-${randomUUID()}${EMAIL_DOMAIN}`;
 const correlationId = randomUUID();
 const summary = `The habit card vanished — ${randomUUID()}`;
 const note = `Seen twice on Android — ${randomUUID()}`;
+const OPERATOR_TEXT = {
+  title: 'Habit card blanks after accepting an offer',
+  summary: 'Accepting a habit offer on the shelf blanks the card.',
+  noteIds: [],
+};
 
 let reporterToken: string | null = null;
 let operatorToken: string | null = null;
@@ -110,7 +115,7 @@ describe('admin feedback triage journey against a live server', () => {
       HTTP_FORBIDDEN,
     );
     expect(await refusal(() => adminFeedback.detail(publicId))).toBe(HTTP_FORBIDDEN);
-    expect(await refusal(() => adminFeedback.draft(publicId, []))).toBe(HTTP_FORBIDDEN);
+    expect(await refusal(() => adminFeedback.draft(publicId, OPERATOR_TEXT))).toBe(HTTP_FORBIDDEN);
   });
 
   it('confirms the operator once the lane database says so', async () => {
@@ -144,19 +149,23 @@ describe('admin feedback triage journey against a live server', () => {
     ]);
   });
 
-  it('drafts an issue that carries the report and none of the reporter', async () => {
+  it('drafts an issue from the operator`s words that carries none of the reporter', async () => {
     actAs(operatorToken);
     const opened = await adminFeedback.detail(publicId);
     const noteId = opened.operator_added.notes[0]?.id ?? 0;
 
-    const unquoted = await adminFeedback.draft(publicId, []);
-    const quoted = await adminFeedback.draft(publicId, [noteId]);
+    const unquoted = await adminFeedback.draft(publicId, OPERATOR_TEXT);
+    const quoted = await adminFeedback.draft(publicId, { ...OPERATOR_TEXT, noteIds: [noteId] });
 
     for (const draft of [unquoted, quoted]) {
       const text = `${draft.title}\n${draft.markdown}`;
       expect(text).toContain(publicId);
       expect(text).not.toContain(reporterEmail);
       expect(text).not.toContain(correlationId);
+      // The reporter's words are never published (#2900 finding [5]).
+      expect(text).not.toContain(summary);
+      expect(text).not.toContain('It went blank');
+      expect(text).toContain(OPERATOR_TEXT.summary);
     }
     expect(unquoted.markdown).not.toContain(note);
     expect(quoted.markdown).toContain(note);

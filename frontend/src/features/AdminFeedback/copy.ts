@@ -67,7 +67,9 @@ export const ACTION_FAILED = 'That change was not saved. Refresh the report and 
 
 export const DRAFT_HEADING = 'Issue draft';
 export const DRAFT_EXPLAINER =
-  'A summary for the issue tracker, with account details, correlation ids and anything shaped like an address, token or key left out. Nothing is sent anywhere: copy it or download it.';
+  "The draft contains only what you write here, plus these details: category, impact, screen, control or error code, build family, platform, viewport class, locale, and the report references. The reporter's own words are never included, and nor is their account. Nothing is sent anywhere: copy it or download it.";
+export const DRAFT_TITLE_LABEL = 'Issue title, in your own words';
+export const DRAFT_SUMMARY_LABEL = 'Summary, in your own words';
 export const DRAFT_INCLUDE_NOTE = (id: number): string => `Include note ${id} in the draft`;
 export const GENERATE_DRAFT = 'Prepare draft';
 export const COPY_DRAFT = 'Copy';

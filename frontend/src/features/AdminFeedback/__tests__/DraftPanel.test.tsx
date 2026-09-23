@@ -4,10 +4,12 @@ import React from 'react';
 
 import { DraftPanel, draftFilename } from '../components/DraftPanel';
 
-import type { FeedbackIssueDraftT } from '@/api';
+import type { FeedbackDraftRequest, FeedbackIssueDraftT } from '@/api';
 
 const mockDraft =
-  jest.fn<(_id: string, _notes: number[], _token?: string) => Promise<FeedbackIssueDraftT>>();
+  jest.fn<
+    (_id: string, _request: FeedbackDraftRequest, _token?: string) => Promise<FeedbackIssueDraftT>
+  >();
 const mockCopy = jest.fn<(_value: string) => Promise<boolean>>();
 const mockSave = jest.fn<(_name: string, _contents: string, _type: string) => Promise<unknown>>();
 
@@ -16,7 +18,8 @@ jest.mock('@/api', () => {
   return {
     ...actual,
     adminFeedback: {
-      draft: (id: string, notes: number[], token?: string) => mockDraft(id, notes, token),
+      draft: (id: string, request: FeedbackDraftRequest, token?: string) =>
+        mockDraft(id, request, token),
     },
   };
 });
@@ -31,10 +34,12 @@ const NOTES = [
   { id: 8, body: 'Not this one.', created_at: '2026-09-02T12:05:00+00:00' },
 ];
 const DRAFT: FeedbackIssueDraftT = {
-  title: '[broken] The card vanished',
-  markdown: '## Observed\n\nIt disappeared.\n',
+  title: '[broken] Card blanks after accepting an offer',
+  markdown: '## Summary\n\nThe card blanks.\n',
   source_public_ids: ['FB-23456789'],
 };
+const TITLE = 'Card blanks after accepting an offer';
+const SUMMARY = 'Accepting a habit offer blanks the card.';
 
 beforeEach(() => {
   mockDraft.mockReset();
@@ -45,17 +50,45 @@ beforeEach(() => {
   mockSave.mockResolvedValue({ filename: 'x', uri: null, destination: 'browser-download' });
 });
 
+function writeOperatorText(screen: ReturnType<typeof render>): void {
+  fireEvent.changeText(screen.getByTestId('draft-operator-title'), TITLE);
+  fireEvent.changeText(screen.getByTestId('draft-operator-summary'), SUMMARY);
+}
+
 async function prepared(): Promise<ReturnType<typeof render>> {
   const screen = render(<DraftPanel publicId="FB-23456789" notes={NOTES} />);
+  writeOperatorText(screen);
   fireEvent.press(screen.getByTestId('draft-generate'));
   await waitFor(() => expect(screen.getByTestId('draft-preview')).toBeTruthy());
   return screen;
 }
 
 describe('DraftPanel', () => {
-  it('quotes no note by default', async () => {
+  it('starts with empty operator fields and says what a draft contains', () => {
+    const screen = render(<DraftPanel publicId="FB-23456789" notes={NOTES} />);
+    expect(screen.getByTestId('draft-operator-title').props.value).toBe('');
+    expect(screen.getByTestId('draft-operator-summary').props.value).toBe('');
+    expect(screen.getByText(/only what you write here/)).toBeTruthy();
+    expect(screen.getByText(/reporter's own words are never included/)).toBeTruthy();
+  });
+
+  it('will not prepare a draft until the operator has written a title and a summary', () => {
+    const screen = render(<DraftPanel publicId="FB-23456789" notes={NOTES} />);
+    fireEvent.press(screen.getByTestId('draft-generate'));
+    fireEvent.changeText(screen.getByTestId('draft-operator-title'), TITLE);
+    fireEvent.press(screen.getByTestId('draft-generate'));
+    fireEvent.changeText(screen.getByTestId('draft-operator-summary'), '   ');
+    fireEvent.press(screen.getByTestId('draft-generate'));
+    expect(mockDraft).not.toHaveBeenCalled();
+  });
+
+  it('sends the operator text and no note by default', async () => {
     await prepared();
-    expect(mockDraft).toHaveBeenCalledWith('FB-23456789', [], 'operator-token');
+    expect(mockDraft).toHaveBeenCalledWith(
+      'FB-23456789',
+      { title: TITLE, summary: SUMMARY, noteIds: [] },
+      'operator-token',
+    );
   });
 
   it('sends only the notes that were ticked', async () => {
@@ -64,9 +97,14 @@ describe('DraftPanel', () => {
     expect(screen.getByTestId('draft-note-7').props.accessibilityState).toMatchObject({
       checked: true,
     });
+    writeOperatorText(screen);
     fireEvent.press(screen.getByTestId('draft-generate'));
     await waitFor(() =>
-      expect(mockDraft).toHaveBeenCalledWith('FB-23456789', [7], 'operator-token'),
+      expect(mockDraft).toHaveBeenCalledWith(
+        'FB-23456789',
+        { title: TITLE, summary: SUMMARY, noteIds: [7] },
+        'operator-token',
+      ),
     );
   });
 
@@ -91,7 +129,7 @@ describe('DraftPanel', () => {
 
   it('offers copy and download and nothing that publishes', async () => {
     const screen = await prepared();
-    expect(screen.queryByText(/publish|github|create issue|post/i)).toBeNull();
+    expect(screen.queryByText(/^(publish|post|create issue)/i)).toBeNull();
     expect(screen.getAllByRole('button').map((node) => node.props.testID)).toEqual(
       expect.not.arrayContaining(['draft-publish']),
     );
