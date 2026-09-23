@@ -53,6 +53,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   BROWSER_JOURNEY,
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
+  'feedback-composer.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
