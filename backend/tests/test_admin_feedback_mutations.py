@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from itertools import product
 from typing import get_args
@@ -408,6 +408,8 @@ async def test_each_mutation_appends_exactly_one_event_with_a_utc_time(
         assert response.status_code < HTTPStatus.BAD_REQUEST, response.text
         assert await row_count(db_session, FeedbackTriageEvent) == count
 
+    finished = datetime.now(UTC)
+
     events = await _events(db_session, report_id)
     assert [e.action for e in events] == [
         "status_changed",
@@ -417,9 +419,18 @@ async def test_each_mutation_appends_exactly_one_event_with_a_utc_time(
     ]
     for event in events:
         assert event.actor_admin_id == admin.user_id
-        stamped = event.created_at.replace(tzinfo=event.created_at.tzinfo or UTC)
-        assert stamped.utcoffset() is not None
-        assert stamped >= started.replace(microsecond=0)
+        # SQLite hands a timestamptz back naive; read it as the UTC wall time the
+        # column was written in. A clock in any other zone lands outside the
+        # window, because the window is taken in UTC on both sides.
+        assert event.created_at.tzinfo in {None, UTC}
+        stamped = event.created_at.replace(tzinfo=UTC)
+        assert started <= stamped <= finished
+
+
+def test_an_event_is_stamped_in_utc_by_default() -> None:
+    """The model's default timestamp is aware and at offset zero, not naive or local."""
+    stamped = FeedbackTriageEvent(report_id=1, action="note_added").created_at
+    assert stamped.utcoffset() == timedelta(0)
 
 
 @pytest.mark.asyncio
