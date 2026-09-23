@@ -27,6 +27,7 @@ import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
 import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
+import { AdminInboxSettingsSection } from '@/features/AdminFeedback/AdminInboxSettingsSection';
 import { FEEDBACK_CONTROL_TOKENS } from '@/features/Feedback/feedbackControlTokens';
 import {
   SEND_FEEDBACK_LABEL,
@@ -292,6 +293,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
       <FeedbackSection />
+      <AdminInboxSettingsSection />
       <LegalSection />
     </ScreenScaffold>
   );

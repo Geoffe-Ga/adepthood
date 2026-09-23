@@ -2,6 +2,7 @@ import type { NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 
+import AdminFeedbackScreen from '../features/AdminFeedback/AdminFeedbackScreen';
 import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
@@ -60,6 +61,8 @@ export type RootStackParamList = {
   Feedback: { control?: string } | undefined;
   /** The shelf of expanded margin notes. No params: it is a place, not a query. */
   VoiceDrafts: undefined;
+  /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
+  AdminFeedback: undefined;
   JournalPhotograph:
     | {
         /**
@@ -247,6 +250,11 @@ const RootStack = (): React.JSX.Element => (
       name="Feedback"
       component={FeedbackComposerScreen}
       options={{ title: 'Send feedback' }}
+    />
+    <Stack.Screen
+      name="AdminFeedback"
+      component={AdminFeedbackScreen}
+      options={{ title: 'Beta feedback inbox' }}
     />
   </Stack.Navigator>
 );
