@@ -45,6 +45,8 @@ const FILES = [...productionFiles(FEEDBACK_DIR), ...EXTRA_FILES];
 
 const FORBIDDEN_IMPORT =
   /clipboard|view-shot|screen-?capture|screenshot|@sentry|observability\/sentry/i;
+/** A named binding or property that reads the clipboard or captures the screen. */
+const FORBIDDEN_BINDING = /clipboard|capture|screenshot|viewshot/i;
 const FORBIDDEN_CONSOLE = new Set(['log', 'info', 'debug', 'trace', 'dir', 'table']);
 /** The only thing a console call in this package may pass: a fixed string or a WARN_ constant. */
 const isFixedArgument = (arg: ts.Expression): boolean =>
@@ -89,17 +91,71 @@ function scan(file: string): { imports: string[]; consoleCalls: ConsoleCall[] } 
   return { imports, consoleCalls };
 }
 
+/** The local and imported names an import declaration binds. */
+function importedNames(node: ts.ImportDeclaration): string[] {
+  const clause = node.importClause;
+  const bindings = clause?.namedBindings;
+  const named =
+    bindings !== undefined && ts.isNamedImports(bindings)
+      ? bindings.elements.flatMap((el) => [el.name.text, el.propertyName?.text ?? ''])
+      : [];
+  return [clause?.name?.text ?? '', ...named].filter((name) => name !== '');
+}
+
+function importOffenders(node: ts.ImportDeclaration): string[] {
+  if (!ts.isStringLiteral(node.moduleSpecifier)) return [];
+  const spec = node.moduleSpecifier.text;
+  return [
+    ...(FORBIDDEN_IMPORT.test(spec) ? [spec] : []),
+    ...importedNames(node).filter((name) => FORBIDDEN_BINDING.test(name)),
+  ];
+}
+
+/** Everything in a file that could read the clipboard or capture the screen. */
+function captureOffenders(file: string, text: string): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) found.push(...importOffenders(node));
+    // `navigator.clipboard`, `Clipboard.getString` -- no import needed on the web.
+    if (ts.isPropertyAccessExpression(node) && FORBIDDEN_BINDING.test(node.name.text)) {
+      found.push(node.getText());
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+describe('the capture scan itself (review [7])', () => {
+  it.each([
+    ["import { Clipboard } from 'react-native';"],
+    ["import { Clipboard as C } from 'react-native';"],
+    ["import { captureRef } from 'react-native-view-shot';"],
+    ["import { takeScreenshot } from './somewhere';"],
+    ['export const read = () => navigator.clipboard.readText();'],
+  ])('catches %s', (text) => {
+    expect(captureOffenders('fixture.ts', text)).not.toEqual([]);
+  });
+
+  it('does not flag ordinary code', () => {
+    expect(
+      captureOffenders('fixture.ts', "import { Text, View } from 'react-native';\nconst x = a.b;"),
+    ).toEqual([]);
+  });
+});
+
 describe('the reporter package, statically', () => {
   it('scans a real, non-empty set of files', () => {
     expect(FILES.length).toBeGreaterThanOrEqual(15);
     expect(FILES.some((f) => f.endsWith('FeedbackComposerScreen.tsx'))).toBe(true);
   });
 
-  it('imports no clipboard, screenshot, screen-capture or crash-reporter module', () => {
+  it('imports no clipboard, screenshot, screen-capture or crash-reporter module or binding', () => {
     const offenders = FILES.flatMap((file) =>
-      scan(file)
-        .imports.filter((spec) => FORBIDDEN_IMPORT.test(spec))
-        .map((spec) => `${path.relative(SRC, file)} -> ${spec}`),
+      captureOffenders(file, fs.readFileSync(file, 'utf-8')).map(
+        (what) => `${path.relative(SRC, file)} -> ${what}`,
+      ),
     );
     expect(offenders).toEqual([]);
   });

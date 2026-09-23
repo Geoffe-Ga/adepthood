@@ -26,14 +26,56 @@ const section = (() => {
   return normalise(POLICY.slice(start, end === -1 ? undefined : end));
 })();
 
+/** The policy's own bolded name for each of the seven context keys. */
+const POLICY_TERM_BY_KEY = {
+  screen: 'canonical screen',
+  control: 'control',
+  platform: 'platform',
+  app_build: 'app build',
+  viewport_class: 'viewport class',
+  locale: 'locale',
+  correlation_id: 'correlation id',
+} as const;
+
+/**
+ * The bolded field names in the policy's "What the app attaches" list: every
+ * `**...**` span between "Seven fields, and no eighth" and "That list is an
+ * allowlist". Bare words like "screen" and "control" also appear elsewhere in
+ * the section, so only the bolded list entries count.
+ */
+function policyFieldTerms(markdown: string): Set<string> {
+  const start = markdown.indexOf('Seven fields, and no eighth');
+  const end = markdown.indexOf('That list is an allowlist', start);
+  if (start === -1 || end === -1) throw new Error('policy field list not found');
+  const list = markdown.slice(start, end);
+  return new Set(
+    [...list.matchAll(/\*\*([^*]+)\*\*/g)]
+      .map((m) => (m[1] ?? '').toLowerCase().replace(/\s+/g, ' ').trim())
+      .filter((term) => term !== 'what the app attaches.'),
+  );
+}
+
 describe('preview copy agrees with the privacy policy', () => {
-  it('names each of the seven fields the policy lists', () => {
-    const labels = Object.values(FEEDBACK_CONTEXT_LABELS);
-    expect(labels).toHaveLength(7);
-    for (const label of labels) {
-      expect(section).toContain(label.toLowerCase());
+  it('lists, in bold, exactly the seven fields the preview can show (review [5])', () => {
+    const terms = policyFieldTerms(POLICY);
+    expect(terms).toEqual(new Set(Object.values(POLICY_TERM_BY_KEY)));
+    expect(Object.keys(POLICY_TERM_BY_KEY).sort()).toEqual(
+      Object.keys(FEEDBACK_CONTEXT_LABELS).sort(),
+    );
+    for (const [key, label] of Object.entries(FEEDBACK_CONTEXT_LABELS)) {
+      // The preview's label is the policy's own word for the field.
+      expect(POLICY_TERM_BY_KEY[key as keyof typeof POLICY_TERM_BY_KEY]).toContain(
+        label.toLowerCase(),
+      );
     }
     expect(section).toContain('seven fields, and no eighth');
+  });
+
+  it('fails when the policy drops a field, even one named by a common word', () => {
+    const withoutScreen = POLICY.replace('**canonical screen**', 'canonical screen');
+    expect(policyFieldTerms(withoutScreen)).not.toContain('canonical screen');
+    const withoutControl = POLICY.replace('**control**', 'control');
+    expect(policyFieldTerms(withoutControl)).not.toContain('control');
   });
 
   it('states the same retention', () => {
