@@ -7,7 +7,6 @@ identity is a first-class per-user flag rather than a shared header secret.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated
@@ -19,6 +18,7 @@ from sqlmodel import col
 
 from bounds import RowIdPath
 from database import get_session
+from dependencies.admin import AdminContext, admin_context
 from dependencies.auth import require_admin
 from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
@@ -425,29 +425,6 @@ async def cleanup_feedback_reports(
     return FeedbackCleanupResult(deleted=deleted, older_than_days=older_than_days)
 
 
-@dataclass(frozen=True)
-class _AdminContext:
-    """The session and the acting admin, which always travel together here.
-
-    Bundled into one dependency so the override routes stay under ruff's
-    ``PLR0913`` argument cap without dropping either the audit actor or the
-    rate-limiter's ``request`` — the same restructure-don't-suppress move as
-    :class:`services.wallet._AuditEntry` and the ``domain.streaks`` kwarg
-    bundle.
-    """
-
-    session: AsyncSession
-    admin: User
-
-
-async def admin_context(
-    session: Annotated[AsyncSession, Depends(get_session)],
-    admin: Annotated[User, Depends(require_admin)],
-) -> _AdminContext:
-    """Resolve the admin gate and the session as a single dependency."""
-    return _AdminContext(session=session, admin=admin)
-
-
 async def _require_user(session: AsyncSession, user_id: int) -> User:
     """Load a target user or 404.
 
@@ -487,7 +464,7 @@ async def grant_entitlement(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     user_id: RowIdPath,
     payload: EntitlementGrantRequest,
-    context: Annotated[_AdminContext, Depends(admin_context)],
+    context: Annotated[AdminContext, Depends(admin_context)],
 ) -> EntitlementSummary:
     """Comp a user's course access, recording who did it and why.
 
@@ -536,7 +513,7 @@ async def revoke_entitlement(
     user_id: RowIdPath,
     entitlement_id: RowIdPath,
     payload: EntitlementRevokeRequest,
-    context: Annotated[_AdminContext, Depends(admin_context)],
+    context: Annotated[AdminContext, Depends(admin_context)],
 ) -> EntitlementSummary:
     """Revoke one named entitlement, recording who did it and why.
 
