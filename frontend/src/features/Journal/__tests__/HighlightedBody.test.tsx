@@ -11,6 +11,23 @@ import { colors } from '@/design/tokens';
 
 const BODY = 'I walked by the river and the willow bent.';
 
+/**
+ * Every string leaf under a node, concatenated in render order.
+ *
+ * Read verbatim rather than through a text matcher: the bullet decoration is
+ * leading whitespace plus a glyph, and a normalising matcher would collapse
+ * exactly the indent under test.
+ */
+type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+function renderedText(node: RenderedNode): string {
+  return node.children
+    .map((child: RenderedNode | string) =>
+      typeof child === 'string' ? child : renderedText(child),
+    )
+    .join('');
+}
+
 function note(overrides: Partial<Marginalia> = {}): Marginalia {
   return {
     id: 1,
@@ -140,8 +157,10 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     expect(onOpen).toHaveBeenCalledWith(anchored);
   });
 
-  it('keeps an anchor reachable when it includes the hidden quote marker', () => {
-    const body = '> *Quoted river*';
+  it.each([
+    ['> *Quoted river*', 'Quoted river'],
+    ['- *Listed river*', 'Listed river'],
+  ])('keeps an anchor reachable when it includes the hidden marker of %j', (body, inner) => {
     const anchored = note({
       id: 82,
       anchor_start: 0,
@@ -154,33 +173,49 @@ describe('HighlightedBody -- lightweight Markdown', () => {
 
     expect(getByTestId('highlight-82')).toBeTruthy();
     expect(queryByTestId('highlight-82-continuation')).toBeNull();
-    expect(getByTestId('journal-markdown-bold-3').props.children).toBe('Quoted river');
+    expect(getByTestId('journal-markdown-bold-3').props.children).toBe(inner);
   });
 
-  it('keeps syntax-only note anchors visible and actionable', () => {
-    const anchored = note({ id: 83, anchor_start: 0, anchor_end: 1, anchor_text: '*' });
-    const onOpen = jest.fn();
-    const { getByTestId } = render(
-      <HighlightedBody body="*bold*" notes={[anchored]} onOpen={onOpen} />,
-    );
+  it.each([
+    ['*bold*', 0, 1, '*'],
+    ['- one', 0, 1, '-'],
+    ['> quoted', 0, 2, '> '],
+    ['a ==und== b', 2, 4, '=='],
+  ])(
+    'keeps syntax-only note anchors visible and actionable in %j',
+    (body, anchorStart, anchorEnd, literal) => {
+      const anchored = note({
+        id: 83,
+        anchor_start: anchorStart,
+        anchor_end: anchorEnd,
+        anchor_text: literal,
+      });
+      const onOpen = jest.fn();
+      const { getByTestId } = render(
+        <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} />,
+      );
 
-    const highlight = getByTestId('highlight-83');
-    expect(highlight.props.children).toEqual(['*']);
-    fireEvent.press(highlight);
-    expect(onOpen).toHaveBeenCalledWith(anchored);
-  });
+      const highlight = getByTestId('highlight-83');
+      expect(highlight.props.children).toEqual([literal]);
+      fireEvent.press(highlight);
+      expect(onOpen).toHaveBeenCalledWith(anchored);
+    },
+  );
 
-  it('keeps syntax-only promoted quote anchors visible and removable', () => {
+  it.each([
+    ['> quoted', '> '],
+    ['- listed', '- '],
+  ])('keeps syntax-only promoted quote anchors visible and removable in %j', (body, literal) => {
     const anchored = quote({
       id: 93,
       anchor_start: 0,
       anchor_end: 2,
-      anchor_text: '> ',
+      anchor_text: literal,
     });
     const onQuotePress = jest.fn();
     const { getByTestId } = render(
       <HighlightedBody
-        body="> quoted"
+        body={body}
         notes={[]}
         onOpen={jest.fn()}
         quotes={[anchored]}
@@ -189,9 +224,53 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     );
 
     const highlight = getByTestId('quote-highlight-93');
-    expect(highlight.props.children).toEqual(['> ']);
+    expect(highlight.props.children).toEqual([literal]);
     fireEvent.press(highlight);
     expect(onQuotePress).toHaveBeenCalledWith(anchored);
+  });
+
+  it('renders adjacent bullet lines as one block, markers hidden, quotes unaffected', () => {
+    const { getByTestId, queryByText } = render(
+      <HighlightedBody body={'- one\n- two\n> q'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const bullets = getByTestId('journal-markdown-bullet-0');
+    expect(bullets.props.accessibilityLabel).toBe('List');
+    expect(getByTestId('journal-markdown-quote-12')).toBeTruthy();
+    expect(queryByText(/- one/u)).toBeNull();
+  });
+
+  it('draws a bullet glyph in place of every hidden marker, at the measured indent', () => {
+    // The writer's own '- ' is hidden, so this glyph and this indent are the
+    // whole visible payload of a list line. Three depths: flush, two spaces,
+    // and a tab (JOURNAL_TAB_COLUMNS).
+    const { getByTestId } = render(
+      <HighlightedBody body={'- one\n  - nested\n\t- tabbed'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    expect(renderedText(getByTestId('journal-markdown-bullet-0'))).toBe(
+      '\u2022 one\n  \u2022 nested\n    \u2022 tabbed',
+    );
+  });
+
+  it('draws no bullet decoration on a quote or a prose block', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'> quoted\nplain'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    expect(renderedText(getByTestId('journal-markdown-quote-0'))).toBe('quoted');
+    expect(renderedText(getByTestId('journal-body-read'))).toBe('quotedplain');
+  });
+
+  it('renders ==text== underlined at its exact source offset', () => {
+    const { getByTestId, queryByText } = render(
+      <HighlightedBody body="a ==und== b" notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const underline = getByTestId('journal-markdown-underline-4');
+    expect(underline.props.children).toBe('und');
+    expect(StyleSheet.flatten(underline.props.style).textDecorationLine).toBe('underline');
+    expect(queryByText('a ==und== b')).toBeNull();
   });
 });
 

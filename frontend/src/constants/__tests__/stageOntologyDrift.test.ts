@@ -3,7 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 
 import { STAGE_ORDER } from '../../design/tokens';
 import { SPIRAL_DYNAMICS_COLORS } from '../../features/Practice/data/colorPalette';
-import { STAGE_DURATIONS_DAYS } from '../program';
+import { STAGE_DURATIONS_DAYS, STAGES_PER_SECTION } from '../program';
 
 import { readBackendSource } from '@/testing/backendSource';
 
@@ -30,6 +30,8 @@ const FREQUENCY_COLORS_BLOCK = /FREQUENCY_COLORS[^=]*=\s*MappingProxyType\(\s*\{
 const FREQUENCY_COLOR_ENTRY = /Frequency\.F(\d+):\s*"([^"]+)"/g;
 /** The `STAGE_DURATIONS_DAYS: tuple[int, ...] = (21, ...)` literal. */
 const STAGE_DURATIONS = /STAGE_DURATIONS_DAYS[^=]*=\s*\(([\d,\s]+)\)/;
+/** The `STAGES_PER_SECTION = 3` assignment (issue #2866). */
+const STAGES_PER_SECTION_LITERAL = /^STAGES_PER_SECTION\s*=\s*(\d+)\s*$/m;
 
 function capture(pattern: RegExp, file: string[], what: string): string {
   const group = pattern.exec(readBackendSource(...file))?.[1];
@@ -45,6 +47,10 @@ function backendStageColors(): string[] {
     .map(([, position = '', colour = '']) => ({ position: Number(position), colour }))
     .sort((left, right) => left.position - right.position)
     .map((entry) => entry.colour);
+}
+
+function backendStagesPerSection(): number {
+  return Number(capture(STAGES_PER_SECTION_LITERAL, CONSTANTS, 'the STAGES_PER_SECTION literal'));
 }
 
 function backendStageDurationDays(): number[] {
@@ -74,5 +80,20 @@ describe('the frontend mirrors of the APTITUDE ten', () => {
 
   it('schedules each stage for the same number of days as the backend', () => {
     expect([...STAGE_DURATIONS_DAYS]).toEqual(backendStageDurationDays());
+  });
+
+  it('groups stages into sections the same way the backend does', () => {
+    // Guards the parse before the comparison, the same way the colour table
+    // above does: a regex that matched nothing would read NaN and compare
+    // vacuously. The frontend derives each section's colour name from this
+    // number (`reflectionTitle`) while the backend derives the section's week
+    // span from it, so a divergence would name a section after the wrong turn
+    // of the Wavelength rather than fail anywhere visible.
+    expect(Number.isInteger(backendStagesPerSection())).toBe(true);
+    expect(STAGES_PER_SECTION).toBe(backendStagesPerSection());
+  });
+
+  it('leaves the final stage outside every section, in both stacks', () => {
+    expect(STAGE_ORDER.length % STAGES_PER_SECTION).not.toBe(0);
   });
 });

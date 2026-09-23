@@ -125,6 +125,21 @@ describe('ReflectionSourcesPanel -- chronological feed', () => {
     expect(getByText(/week/i)).toBeTruthy();
   });
 
+  // The panel labels a SOURCE row, not an invitation, and its naive
+  // capitalisation reads correctly for both new levels — so it is deliberately
+  // left alone by #2866 rather than taught the invitation's title table. The
+  // assertion is here so the choice is a decision and not an oversight.
+  it.each([
+    ['section', 'Section reflection'],
+    ['course', 'Course reflection'],
+  ])('labels a %s source row "%s"', (level, expected) => {
+    const items = [item({ kind: 'reflection', id: 7, reflection_level: level })];
+    const { getByText } = render(
+      <ReflectionSourcesPanel items={items} onInsertQuote={jest.fn()} />,
+    );
+    expect(getByText(expected)).toBeTruthy();
+  });
+
   it('expands a row to reveal its full body on tap', () => {
     const items = [item({ id: 5, body: 'A very particular sentence about the river.' })];
     const { getByTestId, queryByTestId } = render(

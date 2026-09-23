@@ -50,8 +50,8 @@ class JournalTag(enum.StrEnum):
     # distinct tag so stage-scoped aggregates (filtered by
     # ``STAGE_REFLECTION``) do not double-count them.
     WEEKLY_PROMPT = "weekly_prompt"
-    # A reflection that closes a layer of the nested APTITUDE calendar (week,
-    # stage, component, tier, or program). Carries a ``reflection_level`` /
+    # A review that closes a layer of the nested APTITUDE calendar (week,
+    # stage, section, or course). Carries a ``reflection_level`` /
     # ``reflection_scope_key`` pair pinning which layer it summarizes.
     HIERARCHICAL_REFLECTION = "hierarchical_reflection"
 

@@ -238,7 +238,11 @@ async def test_stats_are_never_served_from_a_client_cache(
 
     assert resp.headers["cache-control"] == "private, no-store"
     assert "max-age" not in resp.headers["cache-control"]
-    assert resp.headers["vary"] == "Authorization"
+    # Membership, not equality: CORSMiddleware appends ``Origin`` to ``Vary``
+    # (Starlette >= 1.7 does so even without an ``Origin`` request header), and
+    # the property that matters is that the cache is keyed per credential.
+    vary_fields = {f.strip().lower() for f in resp.headers["vary"].split(",")}
+    assert "authorization" in vary_fields
 
 
 @pytest.mark.asyncio

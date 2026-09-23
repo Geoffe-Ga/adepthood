@@ -235,7 +235,7 @@
   },
   {
     "id": "journal.write-markdown-read-reload",
-    "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
+    "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, ==equals-delimited== underline, adjacent -/*/+ lines as one list block, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -244,6 +244,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-markdown.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.live-markdown-edit",
+    "description": "A writer sees the journal's Markdown rendered while they are still typing in it -- emphasis styled in place, block markers dimmed rather than deleted, and the delimiters of the span under the caret revealed -- with the stored body still byte-identical to what they typed and every marginalia / promoted-quote anchor still addressing the same code points. The anchor-safe model this needs (exact source round trip, one code-point coordinate space, bullet blocks, caret and reveal geometry) has landed; the live editing surface that consumes it has not.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 2889
   },
   {
     "id": "journal.close-fresh-page-after-save-settles",
@@ -287,7 +299,7 @@
   },
   {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
-    "description": "A due reflection is opened from the Journal shelf, saved with its hierarchical identity, closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server.",
+    "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text; the stage, section and course invitations, and the review titles in the program's words, are declared separately under journal.section-and-course-review-invitations.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "promotions", "reflections"],
@@ -306,7 +318,7 @@
   },
   {
     "id": "journal.reopen-past-cycle-review-sees-its-own-sources",
-    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. Uncovered because driving it end to end needs a browser-lane arrange that completes a cycle and presses begin-again, and no begin-again journey exists yet; pinned meanwhile by test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py and ReflectionSourcesPanel.test.tsx.",
+    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass, at any level of the cadence -- a week, a stage, a section of three stages, or the whole course. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. Uncovered because driving it end to end needs a browser-lane arrange that completes a cycle and presses begin-again, and no begin-again journey exists yet; pinned meanwhile by test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py and ReflectionSourcesPanel.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["reflections"],
@@ -315,6 +327,18 @@
     },
     "status": "uncovered",
     "issue": 2904
+  },
+  {
+    "id": "journal.section-and-course-review-invitations",
+    "description": "On the last day of every third stage the Journal shelf offers a Section Review named after the Wavelength turn it closes (Red at stage 3, Green at 6, Ultraviolet at 9), and on the program's final day it offers the Course Review, whose sources decompose into the three sections plus the tenth stage that no section covers. Both moments became reachable only with issue #2866 -- before it, a third stage closed as a plain stage review and the final week closed as a \"program\" review. Uncovered because no browser-lane spec drives either day, and none asserts a review title at any level. The arrange itself DOES exist -- setProgramAnchorDaysAgo in frontend/e2e/journalHabitsBrowserSupport.ts, and GET /reflections/due is purely anchor-derived, so program day 62 and day 251 are both reachable -- so the gap is a missing spec, not a missing lane capability. Pinned meanwhile by tests/domain/test_reflection_hierarchy.py (the whole-curriculum walk), test_reflections_api.py, test_reflections_window.py and ReflectionInvitationBand.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["reflections", "journal"],
+      "routes": ["GET /reflections/due", "GET /reflections/sources", "POST /journal/"],
+      "tables": ["journalentry", "stageprogress"]
+    },
+    "status": "uncovered",
+    "issue": 2916
   },
   {
     "id": "journal.delete-entry",

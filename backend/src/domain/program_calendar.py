@@ -14,10 +14,17 @@ calendar.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import UTC, datetime, timedelta
+from itertools import accumulate
 from typing import TYPE_CHECKING
 
-from domain.constants import DAYS_PER_WEEK, STAGE_DURATIONS_DAYS, TOTAL_STAGES
+from domain.constants import (
+    DAYS_PER_WEEK,
+    STAGE_DURATIONS_DAYS,
+    TOTAL_PROGRAM_DAYS,
+    TOTAL_STAGES,
+)
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date
 from domain.weekly_prompts import TOTAL_WEEKS
 
@@ -123,6 +130,35 @@ def calendar_day_in_stage(
     duration = STAGE_DURATIONS_DAYS[stage - 1]
     day = elapsed_days(anchor, moment, tz=tz) - window_start + 1
     return min(day, duration)
+
+
+# The 0-based program day each stage OPENS on: (0, 21, 42, ..., 210).  Derived
+# from the schedule so a duration change carries through; a bisect over it turns
+# "which stage is day N in?" into one lookup with no walk and no clamp.
+_STAGE_OPENING_DAYS: tuple[int, ...] = (0, *accumulate(STAGE_DURATIONS_DAYS[:-1]))
+
+
+def stage_position(elapsed: int) -> tuple[int, int] | None:
+    """The 1-based ``(stage, day within that stage)`` ``elapsed`` program days land on.
+
+    ``None`` once the program is over — ``elapsed >= TOTAL_PROGRAM_DAYS``.
+
+    Deliberately NOT built on :func:`calendar_stage` and
+    :func:`calendar_day_in_stage`, which both CLAMP: past the final day that
+    pair reports *stage 10, day 42* forever, so anything reading it sees the
+    course closing again every single day and is correct only while some
+    separate end-of-program guard sits upstream of it.  Here the end of the
+    program is the same guard as the position lookup, so there is one place to
+    get it wrong instead of two.
+
+    There is no negative-``elapsed`` branch because there is no negative
+    ``elapsed``: :func:`elapsed_days` floors at zero for clock skew (and is the
+    only producer of this argument), so day 0 is the earliest input possible.
+    """
+    if elapsed >= TOTAL_PROGRAM_DAYS:
+        return None
+    index = bisect_right(_STAGE_OPENING_DAYS, elapsed) - 1
+    return (index + 1, elapsed - _STAGE_OPENING_DAYS[index] + 1)
 
 
 def resolve_program_anchor(progress: StageProgress) -> datetime:

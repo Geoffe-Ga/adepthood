@@ -83,18 +83,34 @@ beforeEach(() => {
 });
 
 describe('ReflectionInvitationBand', () => {
-  it('renders the band with level-appropriate copy when a reflection is due', async () => {
+  it('renders the band with level-appropriate copy when a review is due', async () => {
     const { findByText } = render(<ReflectionInvitationBand />);
-    // The default due window is a week reflection at scope c1:w14, so the band's
+    // The default due window is a weekly review at scope c1:w14, so the band's
     // title must read the week-level copy rather than a generic fallback.
-    expect(await findByText('Week 14 Reflection')).toBeTruthy();
+    expect(await findByText('Weekly Review — Week 14')).toBeTruthy();
   });
 
   it('shows the stage title alongside stage-level copy', async () => {
     mockDue.mockResolvedValue({ due: due({ level: 'stage', scope_key: 'c1:s1' }) });
     const { findByText } = render(<ReflectionInvitationBand />);
-    expect(await findByText(/Stage Reflection/)).toBeTruthy();
+    expect(await findByText(/Stage Review/)).toBeTruthy();
     expect(await findByText(/Survival/)).toBeTruthy();
+  });
+
+  it('names a section review after its Wavelength turn, under the unchanged label', async () => {
+    // The band needs NO source change to render this: the colour resolves
+    // inside reflectionTitle from the scope key, and the invitation copy is
+    // the same warm, declinable line it has always been.
+    mockDue.mockResolvedValue({ due: due({ level: 'section', scope_key: 'c1:x2' }) });
+    const { findByText } = render(<ReflectionInvitationBand />);
+    expect(await findByText('Section Review — Green')).toBeTruthy();
+    expect(await findByText('A reflection has come round')).toBeTruthy();
+  });
+
+  it('renders the course review on the final day', async () => {
+    mockDue.mockResolvedValue({ due: due({ level: 'course', scope_key: 'c1:course' }) });
+    const { findByText } = render(<ReflectionInvitationBand />);
+    expect(await findByText('Course Review')).toBeTruthy();
   });
 
   it('renders nothing when nothing is due', async () => {
@@ -158,7 +174,7 @@ describe('ReflectionInvitationBand', () => {
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 99 });
   });
 
-  it('navigates a fresh reflection with the level/scope/prefillTitle params, not weekNumber', async () => {
+  it('navigates a fresh review with the level/scope/prefillTitle params, not weekNumber', async () => {
     const { findByTestId, getByTestId } = render(<ReflectionInvitationBand />);
     await findByTestId('journal-reflection-band');
 
@@ -169,7 +185,7 @@ describe('ReflectionInvitationBand', () => {
       expect.objectContaining({
         reflectionLevel: 'week',
         reflectionScopeKey: 'c1:w14',
-        prefillTitle: 'Week 14 Reflection',
+        prefillTitle: 'Weekly Review — Week 14',
       }),
     );
     const [, params] = mockNavigate.mock.calls[0] as [string, Record<string, unknown>];

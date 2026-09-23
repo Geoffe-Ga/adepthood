@@ -44,7 +44,7 @@ _EASTERN = "America/New_York"
 # discover which token belongs to which level by asking ``scope_weeks``
 # rather than hard-coding level names, so a later vocabulary change (#2866)
 # only has to extend this tuple.
-_SCOPE_TOKENS = ("w", "s", "p", "t", "prog")
+_SCOPE_TOKENS = ("w", "s", "x", "course")
 
 
 def _scope_key(level: ReflectionLevel, index: int) -> str | None:
@@ -52,12 +52,12 @@ def _scope_key(level: ReflectionLevel, index: int) -> str | None:
 
     Discovered from the key grammar itself: the token that ``scope_weeks``
     accepts for this level is the right one.  ``None`` means the level has
-    no such scope (the program carries no index, so only index 1 exists).
+    no such scope (the course carries no index, so only index 1 exists).
     """
     for token in _SCOPE_TOKENS:
-        if token == "prog" and index != 1:
-            continue  # The program carries no index, so it has no second scope.
-        key = f"c1:{token}" if token == "prog" else f"c1:{token}{index}"
+        if token == "course" and index != 1:
+            continue  # The course carries no index, so it has no second scope.
+        key = f"c1:{token}" if token == "course" else f"c1:{token}{index}"
         try:
             scope_weeks(level, key)
         except ValueError:
@@ -568,16 +568,38 @@ async def test_an_unrecorded_past_cycle_is_declared_unreconstructable(
     assert live["window_start"] is not None
 
 
+@pytest.mark.parametrize(
+    ("stored_level", "stored_key"),
+    [
+        # The grammar rejects the token outright: the shape an UN-MIGRATED row
+        # has, and the one this endpoint has to survive if the migration has
+        # not run yet (or was rolled back, which leaves keys un-mapped).
+        (ReflectionLevel.STAGE.value, "c1:p1"),
+        # The grammar rejects the SPELLING: a non-canonical key the previous
+        # release accepted and stored, refused since the index tightening.
+        (ReflectionLevel.WEEK.value, "c1:w05"),
+        # The key parses but disagrees with the stored level -- a third,
+        # separate raise site inside ``scope_weeks``.
+        (ReflectionLevel.WEEK.value, "c1:x2"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_a_stored_scope_key_the_grammar_cannot_parse_does_not_break_the_feed(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient, db_session: AsyncSession, stored_level: str, stored_key: str
 ) -> None:
     """One unparseable stored key must not 500 the whole feed.
 
     ``_reflection_ref_from`` runs ``scope_weeks`` over every scoped row the
     caller owns, so a single key the current grammar rejects took the entire
-    endpoint down.  That surface is exactly the one a future key migration
-    rewrites, so it has to degrade before the migration runs.
+    endpoint down.  That surface is exactly the one a key migration rewrites,
+    so it has to degrade whether or not the migration has run.
+
+    Parametrized because the three shapes raise from three different places and
+    only the last of them survived #2866: ``c1:x2`` was outside the grammar
+    entirely before this vocabulary change, and ``x`` is now a valid section
+    token, so that row reaches only the level/token-agreement check. A row
+    holding a RETIRED token, or a non-canonical spelling of a live one, is what
+    an un-migrated database actually contains, and neither was covered.
     """
     anchor = (datetime.now(UTC) - timedelta(days=8)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -590,8 +612,8 @@ async def test_a_stored_scope_key_the_grammar_cannot_parse_does_not_break_the_fe
         user_id,
         "a key from another grammar",
         tag=JournalTag.HIERARCHICAL_REFLECTION,
-        reflection_level=ReflectionLevel.WEEK.value,
-        reflection_scope_key="c1:x2",
+        reflection_level=stored_level,
+        reflection_scope_key=stored_key,
         timestamp=anchor + timedelta(days=2),
     )
 
@@ -792,7 +814,7 @@ async def test_a_wide_feed_mixes_reviews_and_dailies_without_repeating_either(
 ) -> None:
     """Nested layers decompose to reviews where they exist and dailies where they do not.
 
-    A tier scope walks components, stages and weeks in turn. Wherever a review
+    A section scope walks its stages and their weeks in turn. Wherever a review
     already stands for a span it stands alone; every gap falls through to its
     raw dailies. No entry may appear twice, and none inside a covered span may
     appear at all.
@@ -829,7 +851,10 @@ async def test_a_wide_feed_mixes_reviews_and_dailies_without_repeating_either(
     )
 
     feed = await _bodies(
-        async_client, headers, ReflectionLevel.TIER, _require_scope_key(ReflectionLevel.TIER, 1)
+        async_client,
+        headers,
+        ReflectionLevel.SECTION,
+        _require_scope_key(ReflectionLevel.SECTION, 1),
     )
 
     assert feed.count("stage one, in review") == 1
