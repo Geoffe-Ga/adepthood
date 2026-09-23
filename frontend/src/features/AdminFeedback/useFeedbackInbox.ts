@@ -41,21 +41,22 @@ function appendPage(
  *
  * Paging appends rather than replaces, and only ever asks for the next offset
  * the server's own ``has_more`` promised, so the list is the union of pages the
- * server's total order produced -- no row twice, none skipped.
+ * server's total order produced -- no row twice, none skipped. Changing the
+ * filter restarts paging in the same update, so each filter is fetched once.
  */
 export function useFeedbackInbox(): FeedbackInboxState {
   const { token } = useAuth();
-  const [status, setStatus] = useState<FeedbackStatusT | undefined>(undefined);
   const [items, setItems] = useState<FeedbackTriageSummaryT[]>([]);
-  const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [{ total, hasMore }, setMeta] = useState({ total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [pageRequest, setPageRequest] = useState<PageRequest>({ filters: {}, offset: 0 });
-
-  useEffect(() => {
-    setPageRequest({ filters: status ? { status } : {}, offset: 0 });
-  }, [status]);
+  const status = pageRequest.filters.status;
+  const setStatus = useCallback(
+    (next: FeedbackStatusT | undefined) =>
+      setPageRequest({ filters: next ? { status: next } : {}, offset: 0 }),
+    [],
+  );
 
   useEffect(() => {
     let live = true;
@@ -69,10 +70,8 @@ export function useFeedbackInbox(): FeedbackInboxState {
       )
       .then((page) => {
         if (!live) return;
-        const merge = appendPage(pageRequest.offset, page.items);
-        setItems(merge);
-        setTotal(page.total);
-        setHasMore(page.has_more);
+        setItems(appendPage(pageRequest.offset, page.items));
+        setMeta({ total: page.total, hasMore: page.has_more });
       })
       .catch(() => {
         if (live) setFailed(true);
