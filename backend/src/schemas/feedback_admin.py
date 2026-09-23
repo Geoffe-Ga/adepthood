@@ -42,6 +42,12 @@ from security.text_sanitize import sanitize_user_text
 # not a transcript of the operator's working file.
 MAX_DRAFT_NOTES: Final = 20
 
+# The operator's own words for a draft. The title stays short enough that the
+# ``[category] `` prefix still fits under the draft's title ceiling; the summary
+# has the same ceiling as a note.
+OPERATOR_TITLE_MAX_LENGTH: Final = 100
+OPERATOR_SUMMARY_MAX_LENGTH: Final = FEEDBACK_NOTE_MAX_LENGTH
+
 _PublicId = Annotated[str, Field(pattern=PUBLIC_ID_PATTERN, max_length=PUBLIC_ID_MAX_LENGTH)]
 
 
@@ -197,16 +203,55 @@ FeedbackTriageCommand = Annotated[
 ]
 
 
+def _operator_text(value: str, max_len: int, field: str) -> str:
+    """Normalise one piece of operator text, refusing one that normalises to nothing."""
+    cleaned = sanitize_user_text(value, max_len=max_len)
+    if not cleaned.strip():
+        msg = f"{field} must not be empty after normalization"
+        raise ValueError(msg)
+    return cleaned
+
+
 class FeedbackDraftRequest(BaseModel):
-    """Which of the report's notes, if any, the draft should quote."""
+    """The operator's own title and summary, and which notes, if any, to quote.
+
+    ``title`` and ``summary`` are required and are the only prose a draft
+    carries besides selected notes. There is no fallback: a request without
+    them is refused, and the reporter's words are never used in their place.
+    They are used to render this one response and are never stored.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    title: str = Field(
+        min_length=1,
+        max_length=OPERATOR_TITLE_MAX_LENGTH,
+        description="The issue title, in the operator's words.",
+        repr=False,
+    )
+    summary: str = Field(
+        min_length=1,
+        max_length=OPERATOR_SUMMARY_MAX_LENGTH,
+        description="What is wrong and how it shows, in the operator's words.",
+        repr=False,
+    )
     note_ids: list[RowIdField] = Field(
         default_factory=list,
         max_length=MAX_DRAFT_NOTES,
         description="Notes on THIS report to include. Omitted notes never appear.",
     )
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, value: str) -> str:
+        """Normalise the operator's title."""
+        return _operator_text(value, OPERATOR_TITLE_MAX_LENGTH, "title")
+
+    @field_validator("summary")
+    @classmethod
+    def _clean_summary(cls, value: str) -> str:
+        """Normalise the operator's summary."""
+        return _operator_text(value, OPERATOR_SUMMARY_MAX_LENGTH, "summary")
 
 
 class FeedbackIssueDraft(BaseModel):

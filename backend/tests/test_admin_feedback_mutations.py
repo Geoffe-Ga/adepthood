@@ -35,6 +35,7 @@ from models.feedback import FeedbackReport, FeedbackStatus
 from models.feedback_triage import FEEDBACK_NOTE_MAX_LENGTH, FeedbackNote, FeedbackTriageEvent
 from schemas.feedback_admin import AddNoteCommand, FeedbackTriageCommand
 from tests.helpers.feedback_triage import (
+    DRAFT_BODY,
     Account,
     force_status,
     make_account,
@@ -444,7 +445,7 @@ async def test_reads_and_drafts_append_no_event(
     await async_client.get("/admin/feedback", headers=admin.headers)
     await async_client.get(f"/admin/feedback/{report.public_id}", headers=admin.headers)
     await async_client.post(
-        f"/admin/feedback/{report.public_id}/draft", json={}, headers=admin.headers
+        f"/admin/feedback/{report.public_id}/draft", json=DRAFT_BODY, headers=admin.headers
     )
     assert await row_count(db_session, FeedbackTriageEvent) == 0
 
@@ -520,7 +521,7 @@ async def test_sentinel_prose_reaches_no_log_no_422_no_repr_no_exception(
         ),
         ("POST", actions, {"action": "add_note", "body": _NOTE_SENTINEL, "extra": 1}),
         ("POST", actions, {"action": "add_note_sneakily", "body": _NOTE_SENTINEL}),
-        ("POST", f"/admin/feedback/{public_id}/draft", {"note_ids": [999_999]}),
+        ("POST", f"/admin/feedback/{public_id}/draft", {**DRAFT_BODY, "note_ids": [999_999]}),
     ]:
         response = await async_client.request(method, path, json=body, headers=admin.headers)
         if response.status_code >= HTTPStatus.BAD_REQUEST:

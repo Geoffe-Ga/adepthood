@@ -63,7 +63,13 @@ from models.prompt_dismissal import PromptDismissal
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
-from tests.helpers.feedback_triage import make_account, report_state, row_count, seed_report
+from tests.helpers.feedback_triage import (
+    DRAFT_BODY,
+    make_account,
+    report_state,
+    row_count,
+    seed_report,
+)
 
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
@@ -1897,7 +1903,7 @@ async def test_a_draft_cannot_quote_a_note_from_another_report(
 
     resp = await async_client.post(
         f"/admin/feedback/{alices_ref}/draft",
-        json={"note_ids": [foreign_id]},
+        json={**DRAFT_BODY, "note_ids": [foreign_id]},
         headers=admin.headers,
     )
 

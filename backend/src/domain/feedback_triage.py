@@ -23,10 +23,10 @@ family. It is never stored: a stored fingerprint is one more column to migrate
 when the family rule changes, and computing it cannot change a report.
 
 **Draft.** :class:`DraftSource` is the allowlist. It has a field for each thing
-a GitHub issue may say and no field for anything it may not, so a renderer
-widened to print an account id has nothing to print it from. Every piece of
-prose is also passed through :func:`security.secret_shapes.redact_secret_shapes`
-on the way in, for the credentials and addresses a tester may have typed.
+a GitHub issue may say and no field for anything it may not -- no account id,
+and none of the reporter's own words -- so a renderer widened to print either
+has nothing to print it from. The operator's text is also passed through
+:func:`security.secret_shapes.redact_secret_shapes`, as defence in depth.
 """
 
 from __future__ import annotations
@@ -139,10 +139,18 @@ def creates_duplicate_cycle(
 
 
 # ── Draft ─────────────────────────────────────────────────────────────────
+#
+# Owner ruling on #2900 finding [5]: the reporter's words are never published.
+# A draft is written to be posted to the project's public issue tracker, so it
+# carries the OPERATOR's own title and summary, operator notes the operator
+# selects, and a fixed list of non-identifying metadata -- and nothing the
+# reporter typed. That rule lives here, in the fields of :class:`DraftSource`,
+# rather than in the redactor: a draft cannot publish a field it was never
+# given.
 
 # What a draft must never contain, by field name. Asserted disjoint from
-# :class:`DraftSource`'s fields, and the draft tests seed each of these with a
-# sentinel and assert it absent.
+# :class:`DraftSource`'s fields. The reporter's four prose fields are here, and
+# so is the exact build: the draft carries its family, not the build itself.
 FORBIDDEN_DRAFT_FIELDS: Final = frozenset(
     {
         "user_id",
@@ -151,6 +159,11 @@ FORBIDDEN_DRAFT_FIELDS: Final = frozenset(
         "idem_key",
         "author_admin_id",
         "actor_admin_id",
+        "summary",
+        "intent",
+        "expected",
+        "actual",
+        "app_build",
     }
 )
 
@@ -158,8 +171,7 @@ DRAFT_TITLE_MAX_LENGTH: Final = 120
 _ELLIPSIS: Final = "…"
 NOT_PROVIDED: Final = "_Not provided._"
 
-_SECTION_OBSERVED: Final = "Observed"
-_SECTION_EXPECTED: Final = "Expected"
+_SECTION_SUMMARY: Final = "Summary"
 _SECTION_REPRODUCTION: Final = "Reproduction context"
 _SECTION_IMPACT: Final = "Impact"
 _SECTION_ENVIRONMENT: Final = "Environment"
@@ -168,13 +180,34 @@ _SECTION_SOURCES: Final = "Source references"
 
 # The always-present sections, in the order they are rendered.
 DRAFT_SECTIONS: Final = (
-    _SECTION_OBSERVED,
-    _SECTION_EXPECTED,
+    _SECTION_SUMMARY,
     _SECTION_REPRODUCTION,
     _SECTION_IMPACT,
     _SECTION_ENVIRONMENT,
     _SECTION_SOURCES,
 )
+
+# The non-identifying metadata a draft carries, as the privacy policy names it.
+# ``tests/test_legal_documents.py`` pins the policy's list to this, and this to
+# the fields of :class:`DraftSource`.
+DRAFT_METADATA_FIELDS: Final = (
+    "category",
+    "impact",
+    "screen",
+    "control",
+    "build_family",
+    "platform",
+    "viewport_class",
+    "locale",
+)
+
+
+@dataclass(frozen=True)
+class OperatorWriting:
+    """What the operator wrote for the draft: a title and a summary, in their words."""
+
+    title: str
+    summary: str
 
 
 @dataclass(frozen=True)
@@ -184,44 +217,45 @@ class DraftSource:
     public_id: str
     category: str
     impact: str
-    summary: str
-    intent: str | None
-    expected: str | None
-    actual: str | None
     screen: str
     control: str | None
     platform: str
-    app_build: str
+    build_family: str
     viewport_class: str
     locale: str | None
-    notes: tuple[str, ...]
     related_public_ids: tuple[str, ...]
+    operator_title: str
+    operator_summary: str
+    notes: tuple[str, ...]
 
     @classmethod
     def from_report(
         cls,
         report: FeedbackReport,
         *,
+        operator: OperatorWriting,
         notes: tuple[str, ...],
         related_public_ids: tuple[str, ...],
     ) -> DraftSource:
-        """Copy the allowlisted fields off ``report``, one named field at a time."""
+        """Copy the allowlisted metadata off ``report``, one named field at a time.
+
+        The report's prose is not read here at all: the only words in a draft are
+        ``operator``'s and the selected ``notes``.
+        """
         return cls(
             public_id=report.public_id,
             category=report.category,
             impact=report.impact,
-            summary=report.summary,
-            intent=report.intent,
-            expected=report.expected,
-            actual=report.actual,
             screen=report.screen,
             control=report.control,
             platform=report.platform,
-            app_build=report.app_build,
+            build_family=build_family(report.app_build),
             viewport_class=report.viewport_class,
             locale=report.locale,
-            notes=notes,
             related_public_ids=related_public_ids,
+            operator_title=operator.title,
+            operator_summary=operator.summary,
+            notes=notes,
         )
 
 
@@ -234,21 +268,14 @@ class IssueDraft:
     source_public_ids: tuple[str, ...]
 
 
-def _prose(value: str | None) -> str:
-    """One redacted answer, or the placeholder saying there was none."""
-    if value is None or not value.strip():
-        return NOT_PROVIDED
-    return redact_secret_shapes(value)
-
-
 def _token(value: str | None) -> str:
-    """An envelope token in code style, or the placeholder."""
+    """A metadata token in code style, or the placeholder."""
     return NOT_PROVIDED if value is None else f"`{value}`"
 
 
 def _title(source: DraftSource) -> str:
-    """``[category] summary``, cut to :data:`DRAFT_TITLE_MAX_LENGTH`."""
-    one_line = " ".join(redact_secret_shapes(source.summary).split())
+    """``[category] operator title``, cut to :data:`DRAFT_TITLE_MAX_LENGTH`."""
+    one_line = " ".join(redact_secret_shapes(source.operator_title).split())
     title = f"[{source.category}] {one_line}"
     if len(title) <= DRAFT_TITLE_MAX_LENGTH:
         return title
@@ -259,25 +286,33 @@ def _section(heading: str, lines: list[str]) -> str:
     return "\n".join([f"## {heading}", "", *lines])
 
 
+def _reference_lines(cited: tuple[str, ...]) -> list[str]:
+    noun = "report" if len(cited) == 1 else "reports"
+    return [f"{len(cited)} {noun}:", *(f"- {public_id}" for public_id in cited)]
+
+
 def render_issue_draft(source: DraftSource) -> IssueDraft:
-    """Render ``source`` as a GitHub issue draft. Writes nothing, sends nothing."""
+    """Render ``source`` as a GitHub issue draft. Writes nothing, sends nothing.
+
+    The operator's text is passed through the secret-shape redactor as well --
+    defence in depth for what an operator might paste in; the reporter's text
+    never arrives here to need it.
+    """
     sections = [
-        _section(_SECTION_OBSERVED, [_prose(source.actual)]),
-        _section(_SECTION_EXPECTED, [_prose(source.expected)]),
+        _section(_SECTION_SUMMARY, [redact_secret_shapes(source.operator_summary)]),
         _section(
             _SECTION_REPRODUCTION,
-            [
-                f"- Trying to: {_prose(source.intent)}",
-                f"- Screen: {_token(source.screen)}",
-                f"- Control: {_token(source.control)}",
-            ],
+            [f"- Screen: {_token(source.screen)}", f"- Control: {_token(source.control)}"],
         ),
-        _section(_SECTION_IMPACT, [f"`{source.impact}`"]),
+        _section(
+            _SECTION_IMPACT,
+            [f"- Category: {_token(source.category)}", f"- Impact: {_token(source.impact)}"],
+        ),
         _section(
             _SECTION_ENVIRONMENT,
             [
                 f"- Platform: {_token(source.platform)}",
-                f"- Build: {_token(source.app_build)}",
+                f"- Build family: {_token(source.build_family)}",
                 f"- Viewport: {_token(source.viewport_class)}",
                 f"- Locale: {_token(source.locale)}",
             ],
@@ -288,7 +323,7 @@ def render_issue_draft(source: DraftSource) -> IssueDraft:
             _section(_SECTION_NOTES, [f"- {redact_secret_shapes(note)}" for note in source.notes])
         )
     cited = (source.public_id, *source.related_public_ids)
-    sections.append(_section(_SECTION_SOURCES, [f"- {public_id}" for public_id in cited]))
+    sections.append(_section(_SECTION_SOURCES, _reference_lines(cited)))
     return IssueDraft(
         title=_title(source),
         markdown="\n\n".join(sections) + "\n",

@@ -36,6 +36,7 @@ from bounds import MAX_PAGE_OFFSET
 from database import get_session
 from dependencies.admin import AdminContext, admin_context
 from dependencies.auth import require_admin
+from domain.feedback_triage import OperatorWriting
 from error_responses import build_router
 from models.feedback import (
     FEEDBACK_BUILD_MAX_LENGTH,
@@ -296,13 +297,19 @@ async def draft_feedback_issue(
     payload: FeedbackDraftRequest,
     context: Annotated[AdminContext, Depends(admin_context)],
 ) -> FeedbackIssueDraft:
-    """Render a sanitized GitHub issue draft. Writes nothing and calls nothing.
+    """Render a GitHub issue draft from the operator's own words. Writes and calls nothing.
 
-    ``note_ids`` names notes on THIS report; any other id is 404
-    ``feedback_note_not_found``. Unnamed notes never appear.
+    ``title`` and ``summary`` are required (422 without them); the reporter's
+    words are never in a draft. ``note_ids`` names notes on THIS report; any
+    other id is 404 ``feedback_note_not_found``. Unnamed notes never appear.
     """
     report = await feedback_triage.load_report(context.session, public_id)
-    draft = await feedback_triage.build_draft(context.session, report, payload.note_ids)
+    draft = await feedback_triage.build_draft(
+        context.session,
+        report,
+        OperatorWriting(title=payload.title, summary=payload.summary),
+        payload.note_ids,
+    )
     return FeedbackIssueDraft(
         title=draft.title,
         markdown=draft.markdown,

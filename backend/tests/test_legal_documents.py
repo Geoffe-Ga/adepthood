@@ -69,7 +69,7 @@ from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
 from domain.data_export import MANIFEST, Included, Omitted
-from domain.feedback_triage import FORBIDDEN_DRAFT_FIELDS
+from domain.feedback_triage import DRAFT_METADATA_FIELDS, FORBIDDEN_DRAFT_FIELDS, DraftSource
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
 from main import validate_journal_encryption_config
@@ -1056,12 +1056,62 @@ def test_the_policy_discloses_what_the_operator_adds_and_where_it_goes() -> None
         assert policy_entry.owned_by.through == "feedbackreport"
 
 
-def test_the_policy_says_the_draft_never_carries_identity() -> None:
-    """The draft paragraph names what is left out, and the code agrees."""
-    policy = _prose(_PRIVACY_POLICY)
-    assert "never your account, your email address or the" in policy
-    assert "nothing is sent anywhere" in policy
+# The paragraph that says what may reach the public issue tracker (#2900
+# finding [5], owner ruling: the reporter's words are never published).
+_PUBLIC_PARAGRAPH_OPENING = "**what may be posted publicly.**"
+_PUBLIC_PARAGRAPH_CLOSING = "**how long it is kept.**"
+
+# The policy's words for each metadata field a draft may carry, mapped to the
+# DraftSource field it names. Written out here, independently of both sides.
+_POLICY_LABEL_TO_DRAFT_FIELD = {
+    "category": "category",
+    "impact": "impact",
+    "canonical screen": "screen",
+    "control or error code": "control",
+    "build family": "build_family",
+    "platform": "platform",
+    "viewport class": "viewport_class",
+    "locale": "locale",
+}
+
+# DraftSource's fields that are not metadata: the references, and the operator's
+# own writing. Nothing of the reporter's is allowed to join this set.
+_DRAFT_NON_METADATA_FIELDS = frozenset(
+    {"public_id", "related_public_ids", "operator_title", "operator_summary", "notes"}
+)
+
+
+def _public_paragraph(policy: str) -> str:
+    start = policy.index(_PUBLIC_PARAGRAPH_OPENING)
+    end = policy.index(_PUBLIC_PARAGRAPH_CLOSING, start)
+    return policy[start:end]
+
+
+def test_the_policy_promises_the_reporters_words_are_never_published() -> None:
+    """The promise, the operator-words rule, and the identity exclusion, verbatim."""
+    paragraph = _public_paragraph(_prose(_PRIVACY_POLICY))
+    assert "your report's words are never published." in paragraph
+    assert "in the operator's own words" in paragraph
+    assert "your account identity and your own text are never included" in paragraph
+    assert "nothing is sent anywhere automatically" in paragraph
+    assert "not published" in _prose(_PRIVACY_POLICY)
     assert {"user_id", "email", "correlation_id"} <= FORBIDDEN_DRAFT_FIELDS
+    assert {"summary", "intent", "expected", "actual"} <= FORBIDDEN_DRAFT_FIELDS
+
+
+def test_the_policy_lists_exactly_the_metadata_a_draft_can_carry() -> None:
+    """The bolded list in the policy and the DraftSource allowlist are one list, both ways."""
+    paragraph = _public_paragraph(_prose(_PRIVACY_POLICY))
+    lead_in = _PUBLIC_PARAGRAPH_OPENING.strip("*")
+    named = [
+        term for term in _EMPHASISED.findall(paragraph) if term not in {lead_in, "summary draft"}
+    ]
+
+    assert sorted(named) == sorted(_POLICY_LABEL_TO_DRAFT_FIELD), named
+    assert {_POLICY_LABEL_TO_DRAFT_FIELD[term] for term in named} == set(DRAFT_METADATA_FIELDS)
+    draft_fields = set(DraftSource.__dataclass_fields__)
+    assert draft_fields - set(DRAFT_METADATA_FIELDS) == _DRAFT_NON_METADATA_FIELDS
+    assert set(DRAFT_METADATA_FIELDS) <= draft_fields
 
 
 def test_your_data_says_operator_triage_goes_with_the_report() -> None:
@@ -1070,3 +1120,4 @@ def test_your_data_says_operator_triage_goes_with_the_report() -> None:
     assert "the operator's private notes" in your_data
     assert "are not in your export" in your_data
     assert "they do not outlive the report they describe" in your_data
+    assert "your report's words are never published" in your_data

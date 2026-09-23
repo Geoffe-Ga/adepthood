@@ -138,7 +138,12 @@ Everything in the app that is yours:
   duplicate link, the operator's private notes and the audit trail of who
   changed what. Those are the operator's working notes rather than your
   writing, so they are never shown to you and are not in your export — but
-  they do not outlive the report they describe.
+  they do not outlive the report they describe. Your report's words are never
+  published. An operator may post a summary in their own words to the
+  project's public issue tracker, with only non-identifying technical details
+  (category, impact, screen, control or error code, build family, platform,
+  viewport class and locale) and the report references; your account identity
+  and your own text are never included.
 - Your account row itself — email, password hash, display name, wallet
   balances — and every linked Google or Apple sign-in.
 - The record of sign-in attempts made with your address, including the IP

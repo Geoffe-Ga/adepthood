@@ -36,6 +36,7 @@ from domain.feedback_triage import (
     TRANSITION_NOT_ALLOWED,
     TRANSITIONS,
     DraftSource,
+    OperatorWriting,
     TransitionNotAllowedError,
     build_family,
     check_transition,
@@ -65,24 +66,30 @@ _ALL_PAIRS = list(product(FeedbackStatus, FeedbackStatus))
 # The exact field set a draft may be built from. Pinned literally: the only
 # mutation guard a renderer cannot step around is one where the forbidden value
 # was never handed to it, and this list is what says it was not.
+#
+# Owner ruling on #2900 finding [5]: the reporter's words are never published,
+# so NONE of the reporter's prose fields is here. The draft is the operator's
+# own title and summary, operator notes the operator selects, and the
+# non-identifying metadata below -- nothing else.
 _DRAFT_SOURCE_FIELDS = (
     "public_id",
     "category",
     "impact",
-    "summary",
-    "intent",
-    "expected",
-    "actual",
     "screen",
     "control",
     "platform",
-    "app_build",
+    "build_family",
     "viewport_class",
     "locale",
-    "notes",
     "related_public_ids",
+    "operator_title",
+    "operator_summary",
+    "notes",
 )
 
+# Every field the reporter typed. Stated independently of the model so that a
+# column added to FeedbackReport's prose cannot quietly become draftable.
+_REPORTER_PROSE_FIELDS = frozenset({"summary", "intent", "expected", "actual"})
 
 # ── Transitions ───────────────────────────────────────────────────────────
 
@@ -235,73 +242,100 @@ def test_the_draft_source_carries_exactly_the_allowlisted_fields() -> None:
 
 
 def test_no_allowlisted_field_is_a_forbidden_one() -> None:
-    """The two declarations cannot overlap."""
+    """The two declarations cannot overlap, and the reporter's prose is forbidden."""
     assert FORBIDDEN_DRAFT_FIELDS.isdisjoint(_DRAFT_SOURCE_FIELDS)
     assert {"user_id", "email", "correlation_id", "idem_key"} <= FORBIDDEN_DRAFT_FIELDS
+    assert _REPORTER_PROSE_FIELDS <= FORBIDDEN_DRAFT_FIELDS
+    assert {"app_build"} <= FORBIDDEN_DRAFT_FIELDS
 
+
+_OPERATOR = OperatorWriting(
+    title="Habit card disappears after accepting an offer",
+    summary="Accepting a habit offer on the shelf blanks the card; reproduced twice.",
+)
 
 _BASE_SOURCE = DraftSource(
     public_id="FB-23456789",
     category="broken",
     impact="blocked",
-    summary="The habit card vanished.",
-    intent="Log a sit.",
-    expected="The card stays.",
-    actual="It disappeared.",
     screen="journal.shelf",
     control="habit_offer.accept",
     platform="ios",
-    app_build="1.4.2+318",
+    build_family="1.4",
     viewport_class="compact",
     locale="en-US",
-    notes=(),
     related_public_ids=(),
+    operator_title=_OPERATOR.title,
+    operator_summary=_OPERATOR.summary,
+    notes=(),
 )
 
+_REPORTER_SENTINEL = "SENTINEL-REPORTER-WORDS-8D2C"
 
-def test_from_report_copies_only_allowlisted_values() -> None:
-    """Built from a live row, the source holds none of the row's identity."""
-    report = FeedbackReport(
+
+def _report() -> FeedbackReport:
+    return FeedbackReport(
         user_id=4242,
         public_id="FB-23456789",
         category="broken",
         impact="blocked",
         platform="ios",
         viewport_class="compact",
-        summary="s",
+        summary=_REPORTER_SENTINEL,
+        intent=_REPORTER_SENTINEL,
+        expected=_REPORTER_SENTINEL,
+        actual=_REPORTER_SENTINEL,
         screen="journal.shelf",
-        app_build="1.4.2",
+        control="habit_offer.accept",
+        app_build="1.4.2+318",
+        locale="en-US",
         correlation_id="00000000-0000-4000-8000-000000000042",
         idem_key="digest-4242",
     )
-    source = DraftSource.from_report(report, notes=("n",), related_public_ids=("FB-34567892",))
+
+
+def test_from_report_copies_no_identity_and_no_reporter_words() -> None:
+    """Built from a live row, the source holds metadata and the operator's text only."""
+    source = DraftSource.from_report(
+        _report(), operator=_OPERATOR, notes=("n",), related_public_ids=("FB-34567892",)
+    )
     rendered = repr(source)
-    assert "4242" not in rendered
-    assert "00000000-0000-4000-8000-000000000042" not in rendered
-    assert "digest-4242" not in rendered
+    for absent in ("4242", "00000000-0000-4000-8000-000000000042", "digest-4242"):
+        assert absent not in rendered
+    assert _REPORTER_SENTINEL not in rendered
+    assert "1.4.2+318" not in rendered
+    assert source.build_family == "1.4"
+    assert source.operator_summary == _OPERATOR.summary
     assert source.notes == ("n",)
     assert source.related_public_ids == ("FB-34567892",)
 
 
+def test_the_reporter_words_never_reach_the_rendered_draft() -> None:
+    """Every reporter prose field holds the sentinel; the draft holds none of it."""
+    draft = render_issue_draft(
+        DraftSource.from_report(_report(), operator=_OPERATOR, notes=(), related_public_ids=())
+    )
+    assert _REPORTER_SENTINEL not in draft.title + draft.markdown
+
+
 def test_the_draft_has_every_section_in_order() -> None:
-    """Title, then observed / expected / reproduction / impact / environment / sources."""
+    """Title, then summary / reproduction / impact / environment / sources."""
     draft = render_issue_draft(_BASE_SOURCE)
     positions = [draft.markdown.index(f"## {heading}") for heading in DRAFT_SECTIONS]
     assert positions == sorted(positions)
-    assert draft.title.startswith("[broken]")
-    assert "The habit card vanished." in draft.title
+    assert draft.title == f"[broken] {_OPERATOR.title}"
     for fragment in (
-        "It disappeared.",
-        "The card stays.",
-        "Log a sit.",
+        _OPERATOR.summary,
         "`journal.shelf`",
         "`habit_offer.accept`",
-        "blocked",
-        "ios",
-        "1.4.2+318",
-        "compact",
-        "en-US",
+        "`broken`",
+        "`blocked`",
+        "`ios`",
+        "`1.4`",
+        "`compact`",
+        "`en-US`",
         "FB-23456789",
+        "1 report",
     ):
         assert fragment in draft.markdown
 
@@ -315,30 +349,26 @@ def test_notes_appear_only_when_supplied() -> None:
     assert "Seen twice on Android too." in noted.markdown
 
 
-def test_absent_answers_render_a_placeholder() -> None:
-    """An optional answer left blank is said to be blank, not silently dropped."""
-    draft = render_issue_draft(
-        replace(_BASE_SOURCE, intent=None, expected=None, actual=None, control=None)
-    )
-    assert draft.markdown.count(NOT_PROVIDED) >= 4
+def test_an_absent_token_renders_a_placeholder() -> None:
+    """A report with no control or locale says so, rather than dropping the line."""
+    draft = render_issue_draft(replace(_BASE_SOURCE, control=None, locale=None))
+    assert draft.markdown.count(NOT_PROVIDED) == 2
 
 
-def test_a_long_summary_is_cut_to_the_title_bound() -> None:
+def test_a_long_title_is_cut_to_the_title_bound() -> None:
     """GitHub titles have a ceiling; the draft stays under ours."""
-    draft = render_issue_draft(replace(_BASE_SOURCE, summary="x" * 500))
+    draft = render_issue_draft(replace(_BASE_SOURCE, operator_title="x" * 500))
     assert len(draft.title) == DRAFT_TITLE_MAX_LENGTH
 
 
-def test_secret_shapes_in_prose_never_reach_the_draft() -> None:
-    """Every prose field is redacted, the title included."""
+def test_secret_shapes_in_operator_text_never_reach_the_draft() -> None:
+    """Defence in depth: the operator's own text is redacted too, title included."""
     poisoned = "ping me at tester@example.com with Bearer abc.def.ghi"
     draft = render_issue_draft(
         replace(
             _BASE_SOURCE,
-            summary=poisoned,
-            intent=poisoned,
-            expected=poisoned,
-            actual=poisoned,
+            operator_title=poisoned,
+            operator_summary=poisoned,
             notes=(poisoned,),
         )
     )
@@ -346,11 +376,12 @@ def test_secret_shapes_in_prose_never_reach_the_draft() -> None:
     assert "abc.def.ghi" not in draft.title + draft.markdown
 
 
-def test_related_references_are_listed() -> None:
-    """Reports folded into this one are cited by reference."""
+def test_related_references_are_listed_and_counted() -> None:
+    """Reports folded into this one are cited by reference, with a count."""
     draft = render_issue_draft(
         replace(_BASE_SOURCE, related_public_ids=("FB-34567892", "FB-45678923"))
     )
     assert "FB-34567892" in draft.markdown
     assert "FB-45678923" in draft.markdown
+    assert "3 reports" in draft.markdown
     assert draft.source_public_ids == ("FB-23456789", "FB-34567892", "FB-45678923")

@@ -333,16 +333,22 @@ you or to anyone else in the app, and they are **not included in your export**.
 Operator notes are encrypted in the database the same way your own words are.
 The operator's view of a report also shows its correlation id, so the report
 can be matched to that session's telemetry; the inbox list and the summary
-draft described next leave it out. The operator can also generate a
-**summary draft** of a report for the project's own issue tracker. That draft
-is built from your words and the attached screen, control, platform, build,
-viewport and locale only — never your account, your email address or the
-correlation id — and anything in your words shaped like an email address, a
-token, a key or a web address with a query string is removed from it. The app
-only produces the text for the operator to copy; nothing is sent anywhere
-automatically. The status, duplicate link, notes and audit trail are deleted
-together with the report they belong to — by the retention sweep below, or
-when you delete your account.
+draft described next leave it out. The status, duplicate link, notes and audit
+trail are deleted together with the report they belong to — by the retention
+sweep below, or when you delete your account.
+
+**What may be posted publicly.** Your report's words are never published. An
+operator may post a summary to the project's public issue tracker, written in
+the operator's own words, together with these non-identifying technical details
+and nothing else: the report's **category**, its **impact**, the **canonical
+screen**, the **control or error code**, the **build family** (for example
+`1.4`, not the exact build), the **platform**, the **viewport class** and the
+**locale** — plus how many reports it covers and their `FB-` references. An
+operator may also choose to include private notes that operators wrote. Your
+account identity and your own text are never included: not your summary, not
+your answers, not your email address, not the correlation id. The app only
+prepares this **summary draft** for the operator to copy or download; nothing
+is sent anywhere automatically.
 
 **How long it is kept.** A report is kept for **180 days**. Past that, it is
 deleted the next time the operator runs the maintenance sweep — there is no

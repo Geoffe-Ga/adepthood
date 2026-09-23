@@ -1730,7 +1730,7 @@
       },
       "FeedbackDraftRequest": {
         "additionalProperties": false,
-        "description": "Which of the report's notes, if any, the draft should quote.",
+        "description": "The operator's own title and summary, and which notes, if any, to quote.\n\n``title`` and ``summary`` are required and are the only prose a draft\ncarries besides selected notes. There is no fallback: a request without\nthem is refused, and the reporter's words are never used in their place.\nThey are used to render this one response and are never stored.",
         "properties": {
           "note_ids": {
             "description": "Notes on THIS report to include. Omitted notes never appear.",
@@ -1742,8 +1742,26 @@
             "maxItems": 20,
             "title": "Note Ids",
             "type": "array"
+          },
+          "summary": {
+            "description": "What is wrong and how it shows, in the operator's words.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "description": "The issue title, in the operator's words.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
           }
         },
+        "required": [
+          "title",
+          "summary"
+        ],
         "title": "FeedbackDraftRequest",
         "type": "object"
       },
@@ -9004,7 +9022,7 @@
     },
     "/admin/feedback/{public_id}/draft": {
       "post": {
-        "description": "Render a sanitized GitHub issue draft. Writes nothing and calls nothing.\n\n``note_ids`` names notes on THIS report; any other id is 404\n``feedback_note_not_found``. Unnamed notes never appear.",
+        "description": "Render a GitHub issue draft from the operator's own words. Writes and calls nothing.\n\n``title`` and ``summary`` are required (422 without them); the reporter's\nwords are never in a draft. ``note_ids`` names notes on THIS report; any\nother id is 404 ``feedback_note_not_found``. Unnamed notes never appear.",
         "operationId": "draft_feedback_issue_admin_feedback__public_id__draft_post",
         "parameters": [
           {

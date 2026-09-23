@@ -30,6 +30,12 @@ SEED_INTENT = "I was trying to log the sit I had just finished."
 SEED_EXPECTED = "The card stays on the shelf."
 SEED_ACTUAL = "The whole row went blank."
 
+# What an operator writes into a draft request: their own title and summary.
+# The draft route refuses a request without them (#2900 finding [5]).
+OPERATOR_TITLE = "Habit card disappears after accepting an offer"
+OPERATOR_SUMMARY = "Accepting a habit offer on the shelf blanks the card."
+DRAFT_BODY: dict[str, object] = {"title": OPERATOR_TITLE, "summary": OPERATOR_SUMMARY}
+
 
 @dataclass(frozen=True)
 class Account:

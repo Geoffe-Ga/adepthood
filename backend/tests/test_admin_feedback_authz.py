@@ -33,6 +33,7 @@ from dependencies.auth import require_admin
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from schemas.feedback_admin import FeedbackTriageSummary
 from tests.helpers.feedback_triage import (
+    DRAFT_BODY,
     SEED_ACTUAL,
     SEED_SUMMARY,
     Account,
@@ -89,7 +90,7 @@ _ROUTES: tuple[_Route, ...] = (
     _Route("POST", _ACTIONS, lambda o: {"action": "link_duplicate", "target_public_id": o}),
     _Route("POST", _ACTIONS, lambda _o: {"action": "unlink_duplicate"}),
     _Route("POST", _ACTIONS, lambda _o: {"action": "add_note", "body": _NOTE_SENTINEL}),
-    _Route("POST", "/admin/feedback/{public_id}/draft", lambda _o: {"note_ids": []}),
+    _Route("POST", "/admin/feedback/{public_id}/draft", lambda _o: dict(DRAFT_BODY)),
 )
 
 _ROUTE_IDS = [

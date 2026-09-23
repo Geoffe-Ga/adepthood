@@ -40,6 +40,7 @@ from domain.feedback_triage import (
     TRANSITIONS,
     DraftSource,
     IssueDraft,
+    OperatorWriting,
     TransitionNotAllowedError,
     build_family,
     check_transition,
@@ -465,19 +466,25 @@ async def _selected_notes(
 
 
 async def build_draft(
-    session: AsyncSession, report: FeedbackReport, note_ids: Sequence[int]
+    session: AsyncSession,
+    report: FeedbackReport,
+    operator: OperatorWriting,
+    note_ids: Sequence[int],
 ) -> IssueDraft:
     """Render the report as a GitHub issue draft. Reads only; writes and sends nothing.
 
-    Only the notes named in ``note_ids`` are quoted, and each must belong to
-    THIS report: an id that is missing, or that belongs to a different report,
-    is a 404 rather than a silently shorter draft, so an operator never pastes
-    a draft believing it carries a note it does not.
+    The draft's prose is ``operator``'s title and summary plus the notes named
+    in ``note_ids`` -- never the reporter's words. Each note must belong to THIS
+    report: an id that is missing, or that belongs to a different report, is a
+    404 rather than a silently shorter draft, so an operator never pastes a
+    draft believing it carries a note it does not.
     """
     report_id = report.id or 0
     selected = await _selected_notes(session, report_id, note_ids)
     related = tuple(await duplicates_of(session, report_id))
-    source = DraftSource.from_report(report, notes=selected, related_public_ids=related)
+    source = DraftSource.from_report(
+        report, operator=operator, notes=selected, related_public_ids=related
+    )
     return render_issue_draft(source)
 
 

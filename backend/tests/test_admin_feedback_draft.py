@@ -24,8 +24,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domain.feedback_triage import DRAFT_SECTIONS
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.user import User
-from schemas.feedback_admin import MAX_DRAFT_NOTES
-from tests.helpers.feedback_triage import make_account, report_state, row_count, seed_report
+from schemas.feedback_admin import (
+    MAX_DRAFT_NOTES,
+    OPERATOR_SUMMARY_MAX_LENGTH,
+    OPERATOR_TITLE_MAX_LENGTH,
+)
+from tests.helpers.feedback_triage import (
+    DRAFT_BODY,
+    OPERATOR_SUMMARY,
+    OPERATOR_TITLE,
+    make_account,
+    report_state,
+    row_count,
+    seed_report,
+)
 
 _REPORTER_ID = 987_654
 _REPORTER_EMAIL = "sentinel-reporter@example.com"
@@ -44,12 +56,18 @@ _API_KEY = "sk-sentinel0123456789abcdef"  # pragma: allowlist secret
 _URL_QUERY = "https://app.example.com/reset?token=SENTINELRESET"
 _PROSE_EMAIL = "tester-in-prose@example.com"
 
-_SECRET_PROSE = (
+# Plain words, no secret shape at all: nothing but the allowlist keeps these out.
+_REPORTER_WORDS = "SENTINEL-REPORTER-OWN-WORDS-5E1A"
+
+_SECRET_SHAPES = (
     f"I pasted {_JWT} and then Bearer {_BEARER_TOKEN} and my key {_API_KEY}; "
     f"the link was {_URL_QUERY} -- write to {_PROSE_EMAIL}."
 )
+# What the reporter typed: credential shapes AND plain words of their own.
+_SECRET_PROSE = f"{_SECRET_SHAPES} {_REPORTER_WORDS}"
 
 _NEVER_IN_DRAFT = (
+    _REPORTER_WORDS,
     _REPORTER_EMAIL,
     str(_REPORTER_ID),
     _CORRELATION,
@@ -78,7 +96,7 @@ async def _seed(session: AsyncSession) -> tuple[str, int, int, int]:
         idem_key=_IDEM_KEY,
     )
     report_id = report.id or 0
-    selected = FeedbackNote(report_id=report_id, body=f"{_SELECTED_NOTE} {_SECRET_PROSE}")
+    selected = FeedbackNote(report_id=report_id, body=f"{_SELECTED_NOTE} {_SECRET_SHAPES}")
     unselected = FeedbackNote(report_id=report_id, body=_UNSELECTED_NOTE)
     session.add_all([selected, unselected])
     await session.commit()
@@ -119,7 +137,7 @@ async def test_the_draft_carries_the_report_and_none_of_the_sentinels(
 
     response = await async_client.post(
         f"/admin/feedback/{public_id}/draft",
-        json={"note_ids": [selected_id]},
+        json={**DRAFT_BODY, "note_ids": [selected_id]},
         headers=admin.headers,
     )
 
@@ -132,7 +150,8 @@ async def test_the_draft_carries_the_report_and_none_of_the_sentinels(
         assert f"## {heading}" in draft["markdown"]
     assert "## Operator notes" in draft["markdown"]
     assert _SELECTED_NOTE in draft["markdown"]
-    assert draft["title"].startswith("[broken] ")
+    assert draft["title"] == f"[broken] {OPERATOR_TITLE}"
+    assert OPERATOR_SUMMARY in draft["markdown"]
     assert draft["source_public_ids"] == [public_id]
     assert public_id in draft["markdown"]
     assert (
@@ -151,7 +170,7 @@ async def test_no_note_is_quoted_unless_selected(
     public_id, _, _, _ = await _seed(db_session)
 
     response = await async_client.post(
-        f"/admin/feedback/{public_id}/draft", json={}, headers=admin.headers
+        f"/admin/feedback/{public_id}/draft", json=DRAFT_BODY, headers=admin.headers
     )
 
     assert response.status_code == HTTPStatus.OK
@@ -176,7 +195,7 @@ async def test_duplicates_folded_into_the_report_are_cited(
 
     draft = (
         await async_client.post(
-            f"/admin/feedback/{canonical_ref}/draft", json={}, headers=admin.headers
+            f"/admin/feedback/{canonical_ref}/draft", json=DRAFT_BODY, headers=admin.headers
         )
     ).json()
 
@@ -200,7 +219,7 @@ async def test_a_note_id_outside_the_report_is_404(
 
     response = await async_client.post(
         f"/admin/feedback/{report.public_id}/draft",
-        json={"note_ids": [note_id]},
+        json={**DRAFT_BODY, "note_ids": [note_id]},
         headers=admin.headers,
     )
 
@@ -220,8 +239,58 @@ async def test_the_note_selection_is_bounded(
 
     response = await async_client.post(
         f"/admin/feedback/{report.public_id}/draft",
-        json={"note_ids": list(range(1, MAX_DRAFT_NOTES + 2))},
+        json={**DRAFT_BODY, "note_ids": list(range(1, MAX_DRAFT_NOTES + 2))},
         headers=admin.headers,
     )
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"title": OPERATOR_TITLE},
+        {"summary": OPERATOR_SUMMARY},
+        {"title": "", "summary": OPERATOR_SUMMARY},
+        {"title": OPERATOR_TITLE, "summary": ""},
+        {"title": "   ", "summary": "\u200b  "},
+        {"title": OPERATOR_TITLE, "summary": "x" * (OPERATOR_SUMMARY_MAX_LENGTH + 1)},
+        {"title": "x" * (OPERATOR_TITLE_MAX_LENGTH + 1), "summary": OPERATOR_SUMMARY},
+    ],
+)
+async def test_a_draft_without_the_operators_own_words_is_refused(
+    async_client: AsyncClient, db_session: AsyncSession, body: dict[str, str]
+) -> None:
+    """No operator title or summary is a 422 -- never a draft in the reporter's words."""
+    admin = await make_account(db_session, "operator@example.com", admin=True)
+    public_id, _, _, _ = await _seed(db_session)
+
+    response = await async_client.post(
+        f"/admin/feedback/{public_id}/draft", json=body, headers=admin.headers
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert _REPORTER_WORDS not in response.text
+
+
+@pytest.mark.asyncio
+async def test_the_operator_text_bounds_are_inclusive(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Exactly at both bounds is a draft."""
+    admin = await make_account(db_session, "operator@example.com", admin=True)
+    public_id, _, _, _ = await _seed(db_session)
+
+    response = await async_client.post(
+        f"/admin/feedback/{public_id}/draft",
+        json={
+            "title": "t" * OPERATOR_TITLE_MAX_LENGTH,
+            "summary": "s" * OPERATOR_SUMMARY_MAX_LENGTH,
+        },
+        headers=admin.headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert _REPORTER_WORDS not in response.text
