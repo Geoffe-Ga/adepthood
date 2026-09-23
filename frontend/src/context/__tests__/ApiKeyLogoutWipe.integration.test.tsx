@@ -8,6 +8,7 @@ import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { clearUserTimezone } from '@/storage/authStorage';
+import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
@@ -302,5 +303,72 @@ describe('the dropped-check-in quarantine does not survive a logout on a shared 
     await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
 
     expect(clearDroppedCheckIns).not.toHaveBeenCalled();
+  });
+});
+
+describe('an unsent beta report does not survive a logout on a shared device (#2898)', () => {
+  const USER = 1;
+  const draft = {
+    category: 'broken' as const,
+    impact: 'blocked' as const,
+    answers: { summary: 'private words', intent: '', expected: '', actual: '' },
+    idempotencyKey: 'draft-key',
+    attempt: null,
+  };
+
+  async function signInWithDraft() {
+    mockAuthApi.login.mockResolvedValueOnce({ token: 'token-a', user_id: USER });
+    const { result } = renderHook(useHarness, { wrapper });
+    await waitFor(() => expect(result.current.auth.authStatus).not.toBe('loading'));
+    await waitFor(() => expect(result.current.apiKey.isLoading).toBe(false));
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await act(async () => {
+      await saveFeedbackDraft(draft);
+    });
+    expect(await loadFeedbackDraft()).toEqual(draft);
+    return result;
+  }
+
+  /** Read the outgoing user's namespace, wherever the scope has moved since. */
+  async function draftOfUser(): Promise<unknown> {
+    setActiveUser(USER);
+    return loadFeedbackDraft();
+  }
+
+  test('logout clears the draft', async () => {
+    const result = await signInWithDraft();
+
+    await act(async () => {
+      await result.current.auth.logout();
+    });
+
+    expect(await draftOfUser()).toBeNull();
+  });
+
+  test('dismissing the re-auth sheet clears the draft', async () => {
+    const result = await signInWithDraft();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+    await act(async () => {
+      await result.current.auth.dismissReauth();
+    });
+
+    expect(await draftOfUser()).toBeNull();
+  });
+
+  test('a forced reauth alone keeps the draft, so signing back in finds it', async () => {
+    const result = await signInWithDraft();
+
+    await act(async () => {
+      result.current.auth.onUnauthorized();
+    });
+    await waitFor(() => expect(result.current.auth.authStatus).toBe('reauth-required'));
+
+    expect(await draftOfUser()).toEqual(draft);
   });
 });

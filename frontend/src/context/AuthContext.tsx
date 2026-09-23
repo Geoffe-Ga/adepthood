@@ -21,6 +21,7 @@ import {
   saveToken,
   saveUserTimezone,
 } from '@/storage/authStorage';
+import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
@@ -279,6 +280,8 @@ async function wipeUserState(): Promise<void> {
     // #2847: the cached zone is this user's calendar, so it leaves with the
     // rest of their rows rather than telling the next account what "today" is.
     ['cached timezone', clearUserTimezone()],
+    // #2898: an unsent beta report is this user's writing; it leaves with them.
+    ['feedback draft', clearFeedbackDraft()],
   ];
   // Run the clears concurrently — they target independent AsyncStorage keys —
   // but surface every failure via ``allSettled`` so one dead key doesn't

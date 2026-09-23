@@ -9,6 +9,7 @@ import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { clearUserTimezone, saveUserTimezone } from '@/storage/authStorage';
+import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import {
   loadDroppedCheckIns,
   loadHabits,
@@ -333,5 +334,35 @@ describe('a device whose owner was never recorded', () => {
     });
 
     expect(await loadHabits()).toBeNull();
+  });
+});
+
+describe('an account switch with no explicit logout (#2898)', () => {
+  test('takes the previous user’s unsent beta report with them', async () => {
+    mockAuthApi.login
+      .mockResolvedValueOnce({ token: 'token-a', user_id: USER_A })
+      .mockResolvedValueOnce({ token: 'token-b', user_id: USER_B });
+    const result = await mountSignedOut();
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await act(async () => {
+      await saveFeedbackDraft({
+        category: 'confusing',
+        impact: 'can_continue',
+        answers: { summary: 'A wrote this', intent: '', expected: '', actual: '' },
+        idempotencyKey: 'a-key',
+        attempt: null,
+      });
+    });
+
+    await act(async () => {
+      await result.current.auth.login('b@test.com', 'password123');
+    });
+
+    // B's namespace never had it; the point is that A's namespace no longer does.
+    expect(await loadFeedbackDraft()).toBeNull();
+    setActiveUser(USER_A);
+    expect(await loadFeedbackDraft()).toBeNull();
   });
 });
