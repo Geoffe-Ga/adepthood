@@ -323,6 +323,27 @@ app. Reports are not shown to other users, not published, and not sold. If the
 report is about something on a screen, the operator sees the screen's name and
 your words about it — not the screen.
 
+**What the operator adds.** While working through reports, the operator can
+give each one a **triage status** — new, triaged, planned or closed — mark it
+as a **duplicate** of another report, and write **private notes** about it.
+Every one of those changes is recorded in an **audit trail** naming which
+operator made it and when. These are the operator's working notes about your
+report, not your writing: only operators can see them, they are never shown to
+you or to anyone else in the app, and they are **not included in your export**.
+Operator notes are encrypted in the database the same way your own words are.
+The operator's view of a report also shows its correlation id, so the report
+can be matched to that session's telemetry; the inbox list and the summary
+draft described next leave it out. The operator can also generate a
+**summary draft** of a report for the project's own issue tracker. That draft
+is built from your words and the attached screen, control, platform, build,
+viewport and locale only — never your account, your email address or the
+correlation id — and anything in your words shaped like an email address, a
+token, a key or a web address with a query string is removed from it. The app
+only produces the text for the operator to copy; nothing is sent anywhere
+automatically. The status, duplicate link, notes and audit trail are deleted
+together with the report they belong to — by the retention sweep below, or
+when you delete your account.
+
 **How long it is kept.** A report is kept for **180 days**. Past that, it is
 deleted the next time the operator runs the maintenance sweep — there is no
 automatic timer, so the exact day depends on when that sweep is run. You do not
@@ -330,9 +351,11 @@ have to ask for it, and deleting your account removes every report you have
 filed at a moment you choose.
 
 **Your copy, and getting rid of it.** Every report you have filed is in your
-export, in full, under `feedback_reports` — with one exception: the retry token
+export, in full, under `feedback_reports` — with two exceptions: the retry token
 the app sends so a double-tap cannot file the same report twice is dropped,
-because it is a transport detail and not something you wrote. Deleting your
+because it is a transport detail and not something you wrote; and the
+operator's triage status and duplicate link are dropped, because they are the
+operator's, not yours. Deleting your
 account deletes every report you filed, immediately, along with everything
 else.
 

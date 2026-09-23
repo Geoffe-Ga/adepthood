@@ -68,7 +68,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
 from domain.account_deletion import POLICY, Disposition
-from domain.data_export import MANIFEST, Included
+from domain.data_export import MANIFEST, Included, Omitted
+from domain.feedback_triage import FORBIDDEN_DRAFT_FIELDS
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
 from main import validate_journal_encryption_config
@@ -123,6 +124,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "completionsuggestion.anchor_text",
         "completionsuggestion.label",
         "corpusfragment.content",
+        "feedbacknote.body",
         "feedbackreport.actual",
         "feedbackreport.expected",
         "feedbackreport.intent",
@@ -1017,3 +1019,54 @@ def test_your_data_states_the_same_retention_window_the_code_enforces() -> None:
     your_data = _prose(_YOUR_DATA)
 
     assert f"older than {FEEDBACK_RETENTION_DAYS} days" in your_data
+
+
+# What the policy owes about the operator's side of a report (#2900). Each is a
+# promise the code keeps somewhere named in the test that pins it.
+_OPERATOR_DISCLOSURES = (
+    "**triage status**",
+    "**duplicate**",
+    "**private notes**",
+    "**audit trail**",
+    "**not included in your export**",
+    "**summary draft**",
+)
+
+
+def test_the_policy_discloses_what_the_operator_adds_and_where_it_goes() -> None:
+    """Notes, status, links and the trail are named, and so is their exclusion from export.
+
+    The disclosure is only true while the manifests say the same thing: the two
+    triage tables omitted from the archive, the two triage columns dropped from
+    the report rows, and both tables erased with the report they hang off.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    for phrase in _OPERATOR_DISCLOSURES:
+        assert phrase in policy, phrase
+    assert "operator notes are encrypted in the database" in policy
+
+    report_rule = MANIFEST["feedbackreport"]
+    assert isinstance(report_rule, Included)
+    assert {"status", "duplicate_of_id"} <= set(report_rule.drop_columns)
+    for table in ("feedbacknote", "feedbacktriageevent"):
+        assert isinstance(MANIFEST[table], Omitted), table
+        policy_entry = POLICY[table]
+        assert policy_entry.disposition is Disposition.ERASE
+        assert policy_entry.owned_by is not None
+        assert policy_entry.owned_by.through == "feedbackreport"
+
+
+def test_the_policy_says_the_draft_never_carries_identity() -> None:
+    """The draft paragraph names what is left out, and the code agrees."""
+    policy = _prose(_PRIVACY_POLICY)
+    assert "never your account, your email address or the" in policy
+    assert "nothing is sent anywhere" in policy
+    assert {"user_id", "email", "correlation_id"} <= FORBIDDEN_DRAFT_FIELDS
+
+
+def test_your_data_says_operator_triage_goes_with_the_report() -> None:
+    """The deletion document names the operator's additions and their exclusion."""
+    your_data = _prose(_YOUR_DATA)
+    assert "the operator's private notes" in your_data
+    assert "are not in your export" in your_data
+    assert "they do not outlive the report they describe" in your_data
