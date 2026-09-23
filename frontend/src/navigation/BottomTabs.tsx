@@ -66,6 +66,15 @@ const MapTab = withBoundary('Map', MapScreen);
 
 const SETTINGS_ICON_SIZE = 24;
 
+/**
+ * Tab titles sit at the leading edge on every platform. iOS centres them by
+ * default, which gives the empty leading slot the same share of the bar as the
+ * trailing one; at phone widths the trailing "Send feedback" + Settings cluster
+ * then ran into the centred title (#2898 review [12]). Android and the web
+ * already left-align, so this changes iOS only.
+ */
+const HEADER_TITLE_ALIGN = 'left' as const;
+
 /** The single screen-component mapping, keyed by route so registry lookup is total. */
 const SCREEN_COMPONENT_BY_NAME: Readonly<
   Record<keyof RootTabParamList, React.ComponentType<object>>
@@ -225,7 +234,7 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName={REDIRECT_TARGET}
       tabBar={renderTabBar}
-      screenOptions={{ headerRight: renderHeaderRight }}
+      screenOptions={{ headerRight: renderHeaderRight, headerTitleAlign: HEADER_TITLE_ALIGN }}
     >
       {destinations.map(({ name }) => (
         <Tab.Screen key={name} name={name} component={SCREEN_COMPONENT_BY_NAME[name]} />

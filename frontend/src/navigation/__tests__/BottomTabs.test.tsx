@@ -620,3 +620,34 @@ describe('BottomTabs — Send feedback in the shell header', () => {
     });
   });
 });
+
+describe('BottomTabs — the header title does not squeeze the controls on iOS (review [12])', () => {
+  type Instance = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+  function flat(node: Instance): ViewStyle {
+    return (StyleSheet.flatten(node.props.style as ViewStyle) ?? {}) as ViewStyle;
+  }
+
+  /** The header's leading slot: a row laid out at flex-start with a marginStart. */
+  const isStartSlot = (n: Instance): boolean =>
+    typeof n.type === 'string' &&
+    flat(n).justifyContent === 'flex-start' &&
+    flat(n).flexDirection === 'row' &&
+    'marginStart' in flat(n);
+
+  it('left-aligns the tab title, so the start slot does not claim half the bar', () => {
+    const navRef = React.createRef<NavigationContainerRef<FeedbackHarnessStack>>();
+    const { getByTestId } = renderShell(navRef);
+
+    // The header lays out [start slot][title][end slot]. iOS centres titles by
+    // default, and a centred title gives the (empty) start slot the same
+    // flexGrow as the end slot -- which is what pushed "Feedback" onto the
+    // title at phone widths. Climb from the control to the header row and read
+    // its start slot.
+    let row: Instance | null = getByTestId('open-feedback-button');
+    while (row !== null && row.findAll(isStartSlot).length === 0) row = row.parent;
+    if (row === null) throw new Error('header row not found');
+    const [start] = row.findAll(isStartSlot);
+    expect(start === undefined ? 'missing' : flat(start).flexGrow).toBeUndefined();
+  });
+});
