@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
+import { parseJournalMarkdown, serializeJournalMarkdown } from '../journalMarkdown';
 import {
   continueMarkdownEdit,
   continueMarkdownLine,
   deleteBackwardEdit,
   minimalReplacement,
+  reconcileBodyChange,
 } from '../markdownEditing';
 
 describe('continueMarkdownLine', () => {
@@ -168,11 +170,28 @@ describe('deleteBackwardEdit', () => {
     });
   });
 
-  it('removes an indented prefix back to the line start', () => {
+  it('outdents a nested list item one level instead of removing its prefix', () => {
+    // #2890: Backspace at a nested item's content start steps it out a level;
+    // only a level-0 item loses its prefix.
     expect(deleteBackwardEdit('a\n  - two', { start: 6, end: 6 })).toEqual({
-      text: 'a\ntwo',
-      selection: { start: 2, end: 2 },
+      text: 'a\n- two',
+      selection: { start: 4, end: 4 },
     });
+  });
+
+  it('outdents an empty nested item, then removes the prefix at level 0', () => {
+    const first = deleteBackwardEdit('- a\n  - b\n    - ', { start: 16, end: 16 });
+    expect(first).toEqual({ text: '- a\n  - b\n  - ', selection: { start: 14, end: 14 } });
+    const second = deleteBackwardEdit(first!.text, first!.selection!);
+    expect(second).toEqual({ text: '- a\n  - b\n- ', selection: { start: 12, end: 12 } });
+    expect(deleteBackwardEdit(second!.text, second!.selection!)).toEqual({
+      text: '- a\n  - b\n',
+      selection: { start: 10, end: 10 },
+    });
+  });
+
+  it('removes an indented quote-looking prefix never, since it renders as prose', () => {
+    expect(deleteBackwardEdit('  > q', { start: 4, end: 4 })).toBeNull();
   });
 
   it('removes a quote prefix the same way', () => {
@@ -243,5 +262,76 @@ describe('minimalReplacement', () => {
     // U+10000 and U+10400 share their LOW surrogate, U+DC00.
     const replacement = minimalReplacement('a\u{10000}', 'a\u{10400}');
     expect(replacement).toEqual({ start: 1, end: 3, text: '\u{10400}' });
+  });
+});
+
+describe('reconcileBodyChange', () => {
+  it("turns a Backspace at a nested item's content start into an outdent", () => {
+    // The field already removed the separator; the edit replaces that result.
+    expect(reconcileBodyChange('- a\n  - b', '- a\n  -b', { start: 8, end: 8 })).toEqual({
+      text: '- a\n- b',
+      selection: { start: 6, end: 6 },
+    });
+  });
+
+  it('removes a level-0 prefix on Backspace at its content start', () => {
+    expect(reconcileBodyChange('- one', '-one', { start: 2, end: 2 })).toEqual({
+      text: 'one',
+      selection: { start: 0, end: 0 },
+    });
+  });
+
+  it('leaves a Backspace anywhere else to the field', () => {
+    expect(reconcileBodyChange('- one', '- oe', { start: 4, end: 4 })).toEqual({ text: '- oe' });
+  });
+
+  it('ignores a stale selection that does not explain the change', () => {
+    expect(reconcileBodyChange('- one', '-one', { start: 5, end: 5 })).toEqual({ text: '-one' });
+  });
+
+  it('never reads a range deletion as Backspace', () => {
+    expect(reconcileBodyChange('- one', '-one', { start: 1, end: 2 })).toEqual({ text: '-one' });
+  });
+
+  it('ignores a deletion of more than one character', () => {
+    expect(reconcileBodyChange('- one', 'one', { start: 2, end: 2 })).toEqual({ text: 'one' });
+  });
+
+  it('counts a surrogate pair as the one character Backspace removes', () => {
+    const previous = '\u{1F600}- a\n  - b';
+    // Backspace after the emoji removes both UTF-16 units: plain deletion.
+    expect(reconcileBodyChange(previous, '- a\n  - b', { start: 2, end: 2 })).toEqual({
+      text: '- a\n  - b',
+    });
+    // Backspace at the nested item's content start (UTF-16 10) still outdents.
+    expect(reconcileBodyChange(previous, '\u{1F600}- a\n  -b', { start: 10, end: 10 })).toEqual({
+      text: '\u{1F600}- a\n- b',
+      selection: { start: 8, end: 8 },
+    });
+  });
+
+  it('leaves a forward Delete alone even where it looks like Backspace', () => {
+    // '-  x' with the caret at 2: Backspace and Delete both yield '- x'.
+    expect(reconcileBodyChange('-  x', '- x', { start: 2, end: 2 }, 'Delete')).toEqual({
+      text: '- x',
+    });
+    expect(reconcileBodyChange('-  x', '- x', { start: 2, end: 2 })).toEqual({
+      text: ' x',
+      selection: { start: 0, end: 0 },
+    });
+  });
+
+  it('still continues a list on Return', () => {
+    expect(reconcileBodyChange('- a', '- a\n', { start: 3, end: 3 })).toEqual({
+      text: '- a\n- ',
+      selection: { start: 6, end: 6 },
+    });
+  });
+
+  it('stores a pasted multi-line list byte for byte, markers and indents as typed', () => {
+    const pasted = '- a\n\t* b\n    + c\n  - d';
+    const edit = reconcileBodyChange('', pasted, { start: 0, end: 0 });
+    expect(edit).toEqual({ text: pasted });
+    expect(serializeJournalMarkdown(parseJournalMarkdown(edit.text))).toBe(pasted);
   });
 });

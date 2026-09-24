@@ -483,6 +483,47 @@ describe('LiveMarkdownBody formatting toolbar', () => {
   });
 });
 
+describe('LiveMarkdownBody Backspace on list items', () => {
+  it('outdents a nested item when Backspace removes its separator', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial={'- a\n  - b'} onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 8);
+    fireEvent(input, 'keyPress', keyPress('Backspace').event);
+    fireEvent.changeText(input, '- a\n  -b');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- a\n- b');
+    expect(getByTestId('journal-body-input').props.selection).toEqual({ start: 6, end: 6 });
+  });
+
+  it('removes a level-0 prefix outright', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="- one" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 2);
+    fireEvent.changeText(input, '-one');
+    expect(onChangeBody).toHaveBeenLastCalledWith('one');
+  });
+
+  it('keeps a forward Delete exactly as the field reported it', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="-  x" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 2);
+    fireEvent(input, 'keyPress', keyPress('Delete').event);
+    fireEvent.changeText(input, '- x');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- x');
+  });
+
+  it('leaves ordinary deletion mid-item to the field', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="- one" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 4);
+    fireEvent.changeText(input, '- oe');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- oe');
+  });
+});
+
 describe('LiveMarkdownBody on native', () => {
   it('keeps the visible TextInput with no mirror behind it', () => {
     const { getByTestId, queryByTestId } = render(<Harness initial="**a**" />);

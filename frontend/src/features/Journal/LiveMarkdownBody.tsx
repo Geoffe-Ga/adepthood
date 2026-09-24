@@ -31,7 +31,7 @@ import {
   type MarkdownCommand,
   type MarkdownKeyEvent,
 } from './markdownCommands';
-import { continueMarkdownEdit, type MarkdownEdit, type MarkdownSelection } from './markdownEditing';
+import { reconcileBodyChange, type MarkdownEdit, type MarkdownSelection } from './markdownEditing';
 import MarkdownFormatToolbar from './MarkdownFormatToolbar';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLiveMirrorEnabled } from './useLiveMirrorEnabled';
@@ -98,8 +98,22 @@ function useApplyEdit(
 }
 
 /**
- * Transform Return at the native caret and briefly control the adjusted
- * selection. The caret is also kept as state, in UTF-16 as the field reports
+ * The key the field reported last, read once: a forward Delete can leave the
+ * same text Backspace would, and must never be rewritten as one.
+ */
+function useLastKey() {
+  const lastKeyRef = useRef<string | undefined>(undefined);
+  const takeLastKey = useCallback(() => {
+    const key = lastKeyRef.current;
+    lastKeyRef.current = undefined;
+    return key;
+  }, []);
+  return { lastKeyRef, takeLastKey };
+}
+
+/**
+ * Transform Return and Backspace at the native caret and briefly control the
+ * adjusted selection. The caret is also kept as state, in UTF-16 as the field reports
  * it, for what is drawn around it.
  */
 function useMarkdownBodyBindings(
@@ -113,6 +127,7 @@ function useMarkdownBodyBindings(
   // True while a command is being applied through the browser: the input
   // event it fires is the command's own text and must pass through verbatim.
   const applyingCommandRef = useRef(false);
+  const { lastKeyRef, takeLastKey } = useLastKey();
   /** Hand the body a new value, briefly controlling the caret when the edit moves it. */
   const commit = useCallback(
     (edit: MarkdownEdit) => {
@@ -127,9 +142,9 @@ function useMarkdownBodyBindings(
       commit(
         applyingCommandRef.current
           ? { text: next }
-          : continueMarkdownEdit(body, next, nativeSelectionRef.current),
+          : reconcileBodyChange(body, next, nativeSelectionRef.current, takeLastKey()),
       ),
-    [body, commit, nativeSelectionRef],
+    [body, commit, nativeSelectionRef, takeLastKey],
   );
   const changeSelection = useCallback(
     (event: SelectionChangeEvent) => {
@@ -144,6 +159,7 @@ function useMarkdownBodyBindings(
     selection,
     caret,
     nativeSelectionRef,
+    lastKeyRef,
     trackCaret,
     changeBody,
     changeSelection,
@@ -163,10 +179,11 @@ type BodyKeyPressEvent = NativeSyntheticEvent<TextInputKeyPressEventData & Markd
  * the browser untouched.
  */
 function useMarkdownKeyCommands(body: string, bindings: BodyBindings) {
-  const { applyEdit, nativeSelectionRef } = bindings;
+  const { applyEdit, nativeSelectionRef, lastKeyRef } = bindings;
   const primary = useMemo(editorPrimaryModifier, []);
   return useCallback(
     (event: BodyKeyPressEvent) => {
+      lastKeyRef.current = event.nativeEvent.key;
       const command = keyCommand(event.nativeEvent, primary);
       if (command == null) return;
       const result = applyMarkdownCommand(body, nativeSelectionRef.current, command);
@@ -174,7 +191,7 @@ function useMarkdownKeyCommands(body: string, bindings: BodyBindings) {
       event.preventDefault();
       if (result.kind === 'edit') applyEdit(result.edit);
     },
-    [applyEdit, body, nativeSelectionRef, primary],
+    [applyEdit, body, lastKeyRef, nativeSelectionRef, primary],
   );
 }
 

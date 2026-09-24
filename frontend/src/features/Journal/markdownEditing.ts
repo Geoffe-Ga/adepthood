@@ -16,7 +16,10 @@
 import { codePointToUtf16 } from './codePoints';
 import { classifyLine, sourceLines } from './journalMarkdownLines';
 import type { JournalMarkdownLine } from './journalMarkdownTypes';
-import { inferIndentUnit, isListLine, outdentIndent } from './markdownIndent';
+import { inferIndentUnit, isListLine, outdentIndent, shiftListLines } from './markdownIndent';
+
+/** The key name a field reports for a forward delete. */
+const FORWARD_DELETE_KEY = 'Delete';
 
 export interface MarkdownEdit {
   text: string;
@@ -151,14 +154,13 @@ function markedLineAtCaret(body: string, caret: number): JournalMarkdownLine | n
 }
 
 /**
- * Backspace at the start of a marked line's content, removing the whole hidden
- * prefix in one step; null everywhere else so the field handles ordinary
- * deletion itself.
+ * Backspace at the start of a marked line's content; null everywhere else so
+ * the field handles ordinary deletion itself.
  *
- * The prefix renders as nothing, so deleting it one invisible character at a
- * time would look like a stuck key. Removing it atomically turns the line back
- * into the prose it renders as. Outdenting a nested item one level instead of
- * exiting is a refinement the Tab/indent work owns.
+ * A nested LIST item steps out one level, keeping its marker and the caret at
+ * its content. Any other marked line -- a level-0 item, a quote -- loses its
+ * whole hidden prefix in one step: the prefix renders as nothing, so deleting
+ * it one invisible character at a time would look like a stuck key.
  */
 export function deleteBackwardEdit(
   body: string,
@@ -167,11 +169,49 @@ export function deleteBackwardEdit(
   if (selection.start !== selection.end) return null;
   const line = markedLineAtCaret(body, selection.start);
   if (line == null) return null;
+  const outdented = isListLine(line) ? shiftListLines(body, selection, 'outdent') : null;
+  if (outdented != null) return outdented;
   const lineStart = codePointToUtf16(body, line.start);
   return {
     text: `${body.slice(0, lineStart)}${body.slice(selection.start)}`,
     selection: { start: lineStart, end: lineStart },
   };
+}
+
+/** Whether ``next`` is ``previous`` less exactly the one character before a collapsed caret. */
+function isBackspaceAt(previous: string, next: string, selection: MarkdownSelection): boolean {
+  if (selection.start !== selection.end) return false;
+  const before = previous.slice(0, selection.start);
+  const removed = Array.from(before).at(-1);
+  if (removed == null) return false;
+  return next === `${before.slice(0, -removed.length)}${previous.slice(selection.start)}`;
+}
+
+/**
+ * The editor's reading of one change the field reports.
+ *
+ * A Backspace at a marked line's content start becomes ``deleteBackwardEdit``
+ * (outdent a nested item, drop a level-0 prefix); an inserted line feed
+ * becomes ``continueMarkdownEdit``; anything else -- typing, paste, dictation,
+ * a forward Delete -- is kept exactly as the field reported it. ``lastKey`` is
+ * the key the field last reported, when it reports keys: a forward ``Delete``
+ * can produce the same text as Backspace (``-  x``), and is never rewritten.
+ */
+export function reconcileBodyChange(
+  previous: string,
+  next: string,
+  previousSelection?: MarkdownSelection,
+  lastKey?: string,
+): MarkdownEdit {
+  if (
+    previousSelection != null &&
+    lastKey !== FORWARD_DELETE_KEY &&
+    isBackspaceAt(previous, next, previousSelection)
+  ) {
+    const edit = deleteBackwardEdit(previous, previousSelection);
+    if (edit != null) return edit;
+  }
+  return continueMarkdownEdit(previous, next, previousSelection);
 }
 
 /** One contiguous UTF-16 replacement: ``before[start, end)`` becomes ``text``. */
