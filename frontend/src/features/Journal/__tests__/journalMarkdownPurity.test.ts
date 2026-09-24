@@ -138,8 +138,11 @@ describe('the Markdown model stays free of the renderer', () => {
     expect(editorRoots()).toEqual(
       expect.arrayContaining([
         'journalMarkdown.ts',
+        'markdownCommands.ts',
         'markdownEditing.ts',
+        'markdownIndent.ts',
         'markdownInlineToggle.ts',
+        'markdownMirror.ts',
       ]),
     );
     expect(editorRoots().every((name) => !name.endsWith('.test.ts'))).toBe(true);
