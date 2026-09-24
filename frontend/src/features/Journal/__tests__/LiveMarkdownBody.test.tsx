@@ -612,6 +612,19 @@ describe('LiveMarkdownBody formatting toolbar', () => {
     expect(onChangeBody).toHaveBeenLastCalledWith('prose\n  - b');
   });
 
+  it('enables Outdent on an item indented by less than a whole unit', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId, getByRole } = render(
+      <Harness initial={' - a'} onChangeBody={onChangeBody} />,
+    );
+    select(getByTestId('journal-body-input'), 4);
+    expect(getByTestId('journal-format-outdent').props.accessibilityState).toMatchObject({
+      disabled: false,
+    });
+    fireEvent.press(getByRole('button', { name: 'Outdent list item' }));
+    expect(onChangeBody).toHaveBeenLastCalledWith('- a');
+  });
+
   it('does nothing to the body for an action the dialect cannot apply', () => {
     const onChangeBody = jest.fn();
     const { getByTestId, getByRole } = render(

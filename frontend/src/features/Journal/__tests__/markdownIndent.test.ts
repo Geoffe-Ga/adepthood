@@ -194,6 +194,9 @@ describe('listLevelAt', () => {
     ['  - a', 3, 1],
     ['- a\n    - b\n        - c', 20, 2],
     ['\t\t- a', 4, 2],
+    // A partial indent still counts as nested: outdent can remove it.
+    [' - a', 2, 1],
+    ['- a\n   - b', 8, 2],
   ])('reads %j at %i as level %i', (body, caret, level) => {
     expect(listLevelAt(body, caret)).toBe(level);
   });
