@@ -17,7 +17,11 @@ report rather than to the account.
 
 Mutations are rate limited at :data:`_TRIAGE_RATE_LIMIT`: comfortably above an
 operator working a queue by hand, far below a looping script or a stolen token
-rewriting the inbox. Reads are not limited beyond the ambient floor.
+rewriting the inbox. The inbox and the detail read are limited at
+:data:`_TRIAGE_READ_RATE_LIMIT`, per route rather than per path: the ambient
+floor (and a plain ``@limiter.limit``) buckets each report's URL separately,
+so the detail read shares one fixed-scope budget across every report; without
+it a stolen admin token could read the whole table at a per-report rate.
 
 Nothing here publishes anything. ``POST …/draft`` renders Markdown and returns
 it; the client offers copy and download, and the route makes no outbound call.
@@ -77,6 +81,18 @@ router = build_router(prefix="/admin", tags=["admin"])
 # One operator triaging by hand makes a few mutations a minute; sixty is a
 # ceiling they never meet and a runaway script meets in a second.
 _TRIAGE_RATE_LIMIT: Final = "60/minute"
+
+# Reading is where a leaked admin token does its damage: every report, every
+# account's words. An operator reads a report and acts on it, a few a minute;
+# thirty reads is headroom for that and the refetch after each action, and it
+# caps a scrape of the whole inbox (the same ceiling the journal list uses).
+_TRIAGE_READ_RATE_LIMIT: Final = "30/minute"
+
+# slowapi buckets a plain ``@limiter.limit`` by the *concrete* request path, so
+# on ``/feedback/{public_id}`` every report would get thirty reads of its own
+# and the cap would bound nothing. A fixed scope makes it one budget per client
+# for the route, whichever report each read names.
+_REPORT_READ_SCOPE: Final = "admin_feedback.read_feedback_report"
 
 _PublicIdPath = Annotated[
     str,
@@ -231,23 +247,36 @@ async def read_admin_capabilities(
 
 
 @router.get("/feedback", response_model=Page[FeedbackTriageSummary])
+@limiter.limit(_TRIAGE_READ_RATE_LIMIT)
 async def list_feedback_reports(
+    request: Request,
     query: Annotated[_InboxQuery, Depends()],
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
 ) -> Page[FeedbackTriageSummary]:
-    """The inbox: filtered, newest first, paged over a total order."""
+    """The inbox: filtered, newest first, paged over a total order.
+
+    ``request`` is what :data:`limiter` keys the read budget on.
+    """
+    del request
     window = query.window()
     reports, total = await feedback_triage.list_reports(session, query.filters(), window)
     return build_page(await _summaries(session, reports), total, window)
 
 
 @router.get("/feedback/{public_id}", response_model=FeedbackTriageDetail)
+@limiter.shared_limit(_TRIAGE_READ_RATE_LIMIT, scope=_REPORT_READ_SCOPE)
 async def read_feedback_report(
+    request: Request,
     public_id: _PublicIdPath,
     context: Annotated[AdminContext, Depends(admin_context)],
 ) -> FeedbackTriageDetail:
-    """One report, its three sources kept apart, its fingerprint and siblings."""
+    """One report, its three sources kept apart, its fingerprint and siblings.
+
+    ``request`` is what :data:`limiter` keys the read budget on: one budget
+    across every report, not one per report's URL.
+    """
+    del request
     report = await feedback_triage.load_report(context.session, public_id)
     return await _detail(context.session, report)
 

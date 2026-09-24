@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 from starlette.requests import Request
 
+from models.feedback import mint_public_id
 from models.user import User
 from rate_limit import (
     ambient_tracked_paths,
@@ -375,6 +376,52 @@ async def test_add_balance_rate_limit_pinned_at_5_per_minute(
         )
 
     await _assert_limit_pinned(send, _LIMIT_5)
+
+
+# ── Per-endpoint: the admin feedback inbox reads (30/minute) ────────────
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_inbox_list_pinned_at_30_per_minute(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /admin/feedback is pinned at 30/minute, below the ambient 60 on its path.
+
+    Each request pages somewhere different, so a limit keyed on the full URL
+    rather than on the route would not add up to this refusal.
+    """
+    headers = await _signup(async_client)
+    await _promote_admin(db_session)
+    offsets = iter(range(_LIMIT_30 + 1))
+
+    async def send() -> Response:
+        return await async_client.get(
+            "/admin/feedback", params={"offset": str(next(offsets))}, headers=headers
+        )
+
+    await _assert_limit_pinned(send, _LIMIT_30)
+
+
+@pytest.mark.asyncio
+async def test_admin_feedback_report_detail_pinned_at_30_per_minute_across_reports(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """GET /admin/feedback/{public_id} spends ONE budget however many reports it reads.
+
+    Every request names a different report, so each lands in a fresh ambient
+    bucket (that floor is keyed per path) and only the route's own declared
+    limit can refuse the 31st: the scrape-every-report walk the floor misses.
+    """
+    headers = await _signup(async_client)
+    await _promote_admin(db_session)
+
+    async def send() -> Response:
+        # A well-formed reference nobody holds: a 404 that has already been charged.
+        response = await async_client.get(f"/admin/feedback/{mint_public_id()}", headers=headers)
+        assert response.status_code in {HTTPStatus.NOT_FOUND, HTTPStatus.TOO_MANY_REQUESTS}
+        return response
+
+    await _assert_limit_pinned(send, _LIMIT_30)
 
 
 async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> Response:
@@ -730,7 +777,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 28 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 30 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -739,6 +786,8 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.admin.grant_entitlement": ("10 per 1 minute",),
     "routers.admin.revoke_entitlement": ("10 per 1 minute",),
     "routers.admin_feedback.act_on_feedback_report": ("60 per 1 minute",),
+    "routers.admin_feedback.list_feedback_reports": ("30 per 1 minute",),
+    "routers.admin_feedback.read_feedback_report": ("30 per 1 minute",),
     "routers.auth.apple_oauth_signin": ("5 per 1 minute",),
     "routers.auth.cancel_password_reset": ("10 per 1 hour",),
     "routers.auth.confirm_password_reset": ("5 per 1 hour",),
@@ -779,7 +828,7 @@ _DISTINCT_MOUNTED_PATHS = 123
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 28 declared limits: the 27 from before the ambient floor, plus #2900's.
+    """The 30 declared limits: the 27 from before the ambient floor, plus #2900's three.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
