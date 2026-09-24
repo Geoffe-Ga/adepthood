@@ -38,6 +38,7 @@ from models.feedback import (
     mint_public_id,
 )
 from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
+from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH
 from tests.helpers.feedback_triage import make_account
 
 _PROSE = "The habit card vanished when I tapped the offer."
@@ -291,6 +292,40 @@ async def test_the_raw_idempotency_key_is_never_stored(
     stored = (await db_session.execute(select(FeedbackReport))).scalars().one()
     assert stored.idem_key is not None
     assert _A_KEY not in stored.idem_key
+
+
+@pytest.mark.asyncio
+async def test_an_idempotency_key_past_its_bound_is_rejected_and_persists_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """One character over ``IDEMPOTENCY_KEY_MAX_LENGTH`` is a 422, and no row."""
+    headers = {
+        **await _signup(async_client, "feedback_key_too_long"),
+        _IDEMPOTENCY_HEADER: "k" * (IDEMPOTENCY_KEY_MAX_LENGTH + 1),
+    }
+
+    resp = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert await _report_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_idempotency_key_at_its_bound_is_accepted_and_replays(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Exactly ``IDEMPOTENCY_KEY_MAX_LENGTH`` characters is a key, not a refusal."""
+    headers = {
+        **await _signup(async_client, "feedback_key_at_bound"),
+        _IDEMPOTENCY_HEADER: "k" * IDEMPOTENCY_KEY_MAX_LENGTH,
+    }
+
+    first = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    second = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert first.status_code == HTTPStatus.CREATED
+    assert second.json()["public_id"] == first.json()["public_id"]
+    assert await _report_count(db_session) == 1
 
 
 @pytest.mark.asyncio
