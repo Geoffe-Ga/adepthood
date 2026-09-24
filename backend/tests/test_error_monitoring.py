@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from typing import cast
 from unittest.mock import AsyncMock, patch
@@ -573,3 +574,32 @@ def test_unreported_exception_is_still_logged_when_monitoring_is_off(
 
     record = next(r for r in caplog.records if r.message == "unhandled_exception")
     assert record.exc_info is not None
+
+
+def test_disarming_leaves_no_transport_even_with_a_dsn_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capture's reset must disarm the SDK while ``SENTRY_DSN`` is still set.
+
+    ``sentry_sdk.init(dsn=None)`` is not a reset: a ``None`` DSN falls back to
+    the environment variable the capture itself set, and builds a live HTTP
+    transport that ships every later test's exception over the network.
+    Asserted on the client's own state, because a revert is otherwise silent --
+    the only symptom is urllib3 retry noise in some later test's log.
+    """
+    with capturing_sentry(monkeypatch):
+        assert sentry_sdk.get_client().transport is not None
+
+    assert error_monitoring.SENTRY_DSN_ENV_VAR in os.environ
+    assert sentry_sdk.get_client().transport is None
+
+
+def test_disarm_sentry_ignores_a_dsn_already_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Called on its own, with a DSN configured, the helper still leaves no transport."""
+    monkeypatch.setenv(error_monitoring.SENTRY_DSN_ENV_VAR, TEST_DSN)
+
+    disarm_sentry()
+
+    assert sentry_sdk.get_client().transport is None
