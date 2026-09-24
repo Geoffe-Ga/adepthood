@@ -28,16 +28,26 @@ from sqlmodel import col, select
 
 from main import app
 from models.feedback import (
+    FEEDBACK_BUILD_MAX_LENGTH,
+    FEEDBACK_CONTROL_MAX_LENGTH,
+    FEEDBACK_SCREEN_MAX_LENGTH,
     FEEDBACK_SUMMARY_MAX_LENGTH,
     PUBLIC_ID_ALPHABET,
     PUBLIC_ID_BODY_LENGTH,
     PUBLIC_ID_MAX_LENGTH,
     PUBLIC_ID_PATTERN,
     PUBLIC_ID_PREFIX,
+    FeedbackControl,
     FeedbackReport,
+    FeedbackScreen,
     mint_public_id,
 )
-from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
+from schemas.feedback import (
+    ALLOWED_CONTEXT_KEYS,
+    CONTROL_PATTERN,
+    SCREEN_PATTERN,
+    FeedbackContext,
+)
 from tests.helpers.feedback_triage import make_account
 
 _PROSE = "The habit card vanished when I tapped the offer."
@@ -62,7 +72,7 @@ def _context(**overrides: object) -> dict[str, Any]:
     """A well-formed diagnostic envelope, with overrides applied."""
     return {
         "screen": "journal.shelf",
-        "control": "habit_offer.accept",
+        "control": "shell.header.send_feedback",
         "platform": "ios",
         "app_build": "1.4.2+318",
         "viewport_class": "compact",
@@ -192,8 +202,15 @@ async def test_the_refusal_detail_is_the_repositorys_sanitised_entry_list(
     [
         ("url_with_query_string", {"screen": "https://app.example.com/journal?token=abc123"}),
         ("stack_trace_as_control", {"control": 'File "main.py", line 42, in handler'}),
-        ("build_past_its_bound", {"app_build": "9" * 64}),
+        # Version-shaped, so only the length bound can be what refuses it.
+        ("build_past_its_bound", {"app_build": "1." + "9" * FEEDBACK_BUILD_MAX_LENGTH}),
         ("log_bundle_shaped_screen", {"screen": "2026-09-17T10:00:00Z ERROR body={...}"}),
+        # Word-bearing tokens: prose disguised in the token grammar. Only a
+        # closed vocabulary refuses these; a shape pattern admits every one.
+        ("journal_prose_as_screen", {"screen": "journal.i_miss_my_father"}),
+        ("resonance_prose_as_control", {"control": "my_dead_mother.letter"}),
+        ("passage_prose_as_screen", {"screen": "course.the_self_is_a_river"}),
+        ("prose_as_build", {"app_build": "Dear-diary-I-cried"}),
     ],
 )
 @pytest.mark.asyncio
@@ -216,6 +233,28 @@ async def test_an_unsafe_context_value_is_rejected_and_persists_nothing(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, label
     assert await _report_count(db_session) == 0, label
+
+
+@pytest.mark.parametrize(
+    ("vocabulary", "grammar", "bound"),
+    [
+        (FeedbackScreen, SCREEN_PATTERN, FEEDBACK_SCREEN_MAX_LENGTH),
+        (FeedbackControl, CONTROL_PATTERN, FEEDBACK_CONTROL_MAX_LENGTH),
+    ],
+)
+def test_every_closed_token_satisfies_its_grammar(
+    vocabulary: type[FeedbackScreen] | type[FeedbackControl], grammar: str, bound: int
+) -> None:
+    """Each vocabulary member is spelled in the token grammar and fits its column.
+
+    The closed set is what the request enforces; the grammar and the column
+    width are what the admin filter and the database still assume. A member
+    added outside either would be accepted at intake and then be unfilterable
+    or truncated.
+    """
+    for member in vocabulary:
+        assert re.fullmatch(grammar, member.value), member
+        assert len(member.value) <= bound, member
 
 
 @pytest.mark.asyncio

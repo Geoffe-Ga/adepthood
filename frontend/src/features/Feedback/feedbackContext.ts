@@ -15,21 +15,26 @@
  * in a session linkable to the others.
  */
 import { LOCALE_PATTERN } from './feedbackBounds';
+import type { FeedbackControlToken } from './feedbackControlTokens';
 
-import type { FeedbackContext } from '@/api';
+import type { FeedbackContext, FeedbackScreen } from '@/api';
 import { breakpoints } from '@/design/tokens';
 
 type FeedbackPlatform = FeedbackContext['platform'];
 type FeedbackViewportClass = FeedbackContext['viewport_class'];
 
 /** Where the report was filed from, when the route is not one we name. */
-export const UNKNOWN_SCREEN_TOKEN = 'app.unknown';
+export const UNKNOWN_SCREEN_TOKEN: FeedbackScreen = 'app.unknown';
 
 /**
  * Route name -> canonical screen token. Keyed by the navigator's route NAME,
  * which is a developer-chosen identifier; params are never consulted.
+ *
+ * Every value is a member of the server's closed `FeedbackScreen` vocabulary
+ * (typed here, set-compared by `feedbackBoundsDrift.test.ts`): the server
+ * refuses any other screen, so a new origin is added on both sides together.
  */
-export const SCREEN_TOKEN_BY_ROUTE: Readonly<Record<string, string>> = {
+export const SCREEN_TOKEN_BY_ROUTE: Readonly<Record<string, FeedbackScreen>> = {
   Journal: 'journal.shelf',
   Habits: 'habits.grid',
   Practice: 'practice.player',
@@ -133,7 +138,7 @@ export function resolveOriginRouteName(state: NavStateLike | undefined): string 
 /** Everything the envelope is built from. Deliberately no params, no text. */
 export interface FeedbackContextInput {
   routeName: string | undefined;
-  control: string | undefined;
+  control: FeedbackControlToken | undefined;
   width: number;
   os: string;
   locale: string | undefined;
@@ -141,9 +146,11 @@ export interface FeedbackContextInput {
 }
 
 /** A Map, so an inherited Object key such as `toString` can never name a screen. */
-const SCREEN_TOKENS: ReadonlyMap<string, string> = new Map(Object.entries(SCREEN_TOKEN_BY_ROUTE));
+const SCREEN_TOKENS: ReadonlyMap<string, FeedbackScreen> = new Map(
+  Object.entries(SCREEN_TOKEN_BY_ROUTE),
+);
 
-function screenTokenFor(routeName: string | undefined): string {
+function screenTokenFor(routeName: string | undefined): FeedbackScreen {
   return (
     (routeName === undefined ? undefined : SCREEN_TOKENS.get(routeName)) ?? UNKNOWN_SCREEN_TOKEN
   );

@@ -582,7 +582,7 @@ async def test_delete_me_erases_the_accounts_beta_reports(
             "impact": "can_continue",
             "summary": "I could not tell which depth I had chosen.",
             "context": {
-                "screen": "map.overview",
+                "screen": "map.stages",
                 "platform": "web",
                 "app_build": "1.4.2",
                 "viewport_class": "regular",

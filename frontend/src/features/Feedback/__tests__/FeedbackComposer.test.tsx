@@ -618,7 +618,7 @@ describe('FeedbackComposerScreen — a send that outlives the session (review [3
           impact: 'not_applicable' as const,
           summary: 'B is writing this',
           context: {
-            screen: 'journal.shelf',
+            screen: 'journal.shelf' as const,
             platform: 'ios' as const,
             app_build: '1.0.0',
             viewport_class: 'compact' as const,

@@ -92,7 +92,7 @@ describe('admin feedback triage journey against a live server', () => {
         actual: `It went blank; mail me at ${reporterEmail}`,
         context: {
           screen: 'journal.shelf',
-          control: 'habit_offer.accept',
+          control: 'shell.header.send_feedback',
           platform: 'web',
           app_build: '1.4.2+318',
           viewport_class: 'compact',
