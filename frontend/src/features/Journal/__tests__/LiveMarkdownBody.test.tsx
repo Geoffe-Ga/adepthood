@@ -7,7 +7,7 @@ import { StyleSheet, type TextInput } from 'react-native';
 import HighlightedBody from '../HighlightedBody';
 import { BULLET_MARKERS, parseJournalMarkdown } from '../journalMarkdown';
 import LiveMarkdownBody from '../LiveMarkdownBody';
-import { LIVE_TAB_STYLE, MIRROR_HIDDEN_OPACITY } from '../LiveMarkdownStyles';
+import { LIVE_TAB_STYLE } from '../LiveMarkdownStyles';
 import { liveSelectionCss } from '../liveSelectionStyle';
 import { buildMirrorModel, visibleMirrorRuns } from '../markdownMirror';
 
@@ -205,11 +205,11 @@ describe('LiveMarkdownBody on web', () => {
     expect(renderedText(getByTestId('journal-live-marker-2'))).toBe('> ');
   });
 
-  it('dims block markers and delimiters instead of removing them', () => {
+  it('draws block markers and delimiters in the soft ink instead of removing them', () => {
     const { getByTestId } = render(<Harness initial="- **a**" />);
     for (const id of ['journal-live-marker-0', 'journal-live-delimiter-2']) {
       const style = StyleSheet.flatten(getByTestId(id).props.style);
-      expect(style.opacity).toBe(MIRROR_HIDDEN_OPACITY);
+      expect(style.opacity).toBeUndefined();
       expect(style.color).toBe(colors.paper.inkSoft);
     }
     expect(renderedText(getByTestId('journal-live-marker-0'))).toBe('- ');
@@ -219,10 +219,10 @@ describe('LiveMarkdownBody on web', () => {
     const onChangeBody = jest.fn();
     const { getByTestId } = render(<Harness initial="a **b** c" onChangeBody={onChangeBody} />);
     const input = getByTestId('journal-body-input');
-    const opacity = (id: string) => StyleSheet.flatten(getByTestId(id).props.style).opacity;
+    const inkOf = (id: string) => StyleSheet.flatten(getByTestId(id).props.style).color;
 
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 0, end: 0 } } });
-    expect(opacity('journal-live-delimiter-2')).toBe(MIRROR_HIDDEN_OPACITY);
+    expect(inkOf('journal-live-delimiter-2')).toBe(colors.paper.inkSoft);
 
     for (const caret of [3, 4, 5, 6, 9]) {
       fireEvent(input, 'selectionChange', {
@@ -230,8 +230,8 @@ describe('LiveMarkdownBody on web', () => {
       });
     }
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 4, end: 4 } } });
-    expect(opacity('journal-live-delimiter-2')).toBe(1);
-    expect(opacity('journal-live-delimiter-5')).toBe(1);
+    expect(inkOf('journal-live-delimiter-2')).toBe(colors.paper.ink);
+    expect(inkOf('journal-live-delimiter-5')).toBe(colors.paper.ink);
 
     expect(onChangeBody).not.toHaveBeenCalled();
     expect(getByTestId('journal-body-input').props.value).toBe('a **b** c');
@@ -243,15 +243,15 @@ describe('LiveMarkdownBody on web', () => {
     (globalThis as MutableGlobal).document = new EventTarget() as unknown as Document;
     const fieldRef: React.RefObject<TextInput | null> = { current: null };
     const { getByTestId } = render(<Harness initial="a **b** c" fieldRef={fieldRef} />);
-    const opacity = () =>
-      StyleSheet.flatten(getByTestId('journal-live-delimiter-2').props.style).opacity;
-    expect(opacity()).toBe(MIRROR_HIDDEN_OPACITY);
+    const inkOf = () =>
+      StyleSheet.flatten(getByTestId('journal-live-delimiter-2').props.style).color;
+    expect(inkOf()).toBe(colors.paper.inkSoft);
 
     (fieldRef as { current: unknown }).current = { selectionStart: 4, selectionEnd: 4 };
     act(() => {
       globalThis.document.dispatchEvent(new Event('selectionchange'));
     });
-    expect(opacity()).toBe(1);
+    expect(inkOf()).toBe(colors.paper.ink);
     delete (globalThis as MutableGlobal).document;
   });
 

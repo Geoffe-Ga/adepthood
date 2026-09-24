@@ -25,9 +25,6 @@ import { JOURNAL_TAB_COLUMNS } from './journalMarkdown';
 
 import { accent, colors, writingField } from '@/design/tokens';
 
-/** Opacity of a block marker or delimiter the caret is not inside. */
-export const MIRROR_HIDDEN_OPACITY = 0.45;
-
 /** Horizontal offset, in px, of the same-ink shadow that thickens faux bold. */
 export const FAUX_BOLD_OFFSET = 0.6;
 
@@ -78,13 +75,17 @@ const liveStyles = StyleSheet.create({
     color: colors.paper.ink,
     backgroundColor: 'transparent',
   },
+  /**
+   * Block markers and delimiters the caret is not inside: the soft ink, set
+   * apart from content by hue rather than faded -- they are characters the
+   * writer typed and edits, so they keep text contrast (7.3:1).
+   */
   dimmed: {
     color: colors.paper.inkSoft,
-    opacity: MIRROR_HIDDEN_OPACITY,
   },
+  /** Delimiters around the caret come up to the content's full ink. */
   revealed: {
-    color: colors.paper.inkSoft,
-    opacity: 1,
+    color: colors.paper.ink,
   },
   bold: {
     textShadowColor: colors.paper.ink,
