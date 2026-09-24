@@ -31,8 +31,6 @@ import pytest
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sentry_sdk.envelope import Envelope
-from sentry_sdk.transport import Transport
 from sentry_sdk.types import Breadcrumb
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,15 +40,12 @@ from errors import ERROR_KEY, INTERNAL_ERROR, install_exception_handlers
 from main import app, lifespan
 from middleware import CorrelationIdMiddleware
 from observability import TRACE_ID_HEADER
-
-# The event as the vendor would receive it: a dict of JSON-safe values.
-# Written as a plain assignment, not PEP 695 ``type`` syntax: the backend's
-# compatibility matrix still builds on Python 3.11, which cannot parse it.
-CapturedEvent = dict[str, object]
-
-# A syntactically valid DSN pointing at a host no test ever reaches: the
-# transport is replaced with a list, so nothing leaves the process.
-TEST_DSN = "https://0123456789abcdef@o0.ingest.sentry.io/1"
+from tests.helpers.sentry_capture import (
+    TEST_DSN,
+    CapturedEvent,
+    CapturingTransport,
+    capturing_sentry,
+)
 
 # Sentinels stand in for the three content classes the acceptance bar names.
 # They are defined here, far from any ``raise``, because Sentry's stack frames
@@ -65,27 +60,6 @@ SMTP_PASSWORD_SENTINEL = (
 )
 
 BOOM_PATH = "/__boom__"
-
-
-class CapturingTransport(Transport):
-    """A real ``Transport`` that keeps envelopes instead of sending them.
-
-    Subclassing the vendor's own transport (rather than passing a function)
-    means the assertions run against the event *after* the client has
-    serialised it into an envelope — the same bytes a live deployment would
-    put on the wire.
-    """
-
-    def __init__(self) -> None:
-        """Start with an empty capture log."""
-        super().__init__()
-        self.events: list[CapturedEvent] = []
-
-    def capture_envelope(self, envelope: Envelope) -> None:
-        """Record the envelope's event item."""
-        event = envelope.get_event()
-        if event is not None:
-            self.events.append(dict(event))
 
 
 @pytest.fixture
@@ -117,17 +91,8 @@ def captured_events(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[CapturedEv
     variable policy, request-body policy — is the production configuration, and
     a regression in any of it fails these tests.
     """
-    monkeypatch.setenv("ENV", "staging")
-    monkeypatch.setenv(error_monitoring.SENTRY_DSN_ENV_VAR, TEST_DSN)
-    monkeypatch.setenv(error_monitoring.SENTRY_RELEASE_ENV_VAR, "test-release-abc123")
-    transport = CapturingTransport()
-    assert error_monitoring.init_error_monitoring(transport=transport) is True
-    try:
-        yield transport.events
-    finally:
-        # Leave the process with an inert client so no later test can ship an
-        # event into this list (or anywhere else).
-        sentry_sdk.init(dsn=None)
+    with capturing_sentry(monkeypatch) as events:
+        yield events
 
 
 def _post_boom(app: FastAPI, text: str) -> None:
