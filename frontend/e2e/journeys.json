@@ -258,6 +258,18 @@
     "coveredBy": "frontend/e2e/journal-live-markdown.browser.e2e.test.ts"
   },
   {
+    "id": "journal.list-indent",
+    "description": "A writer nests a list from the keyboard: Tab indents the list item under the caret by the document's own unit, Shift+Tab outdents it, Return on an empty nested item steps out one level (and leaves the list at level 0), and Backspace at a nested item's content start steps out one level too. Tab on prose and Shift+Tab at level 0 are left to the browser, so focus always moves on. On a list line the toolbar offers Indent and Outdent. The stored body is exactly the indentation typed, and read mode draws the same nesting after a cold reload.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-list-indent.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.close-fresh-page-after-save-settles",
     "description": "A writer types a fresh page and presses the always-available X before its debounced first save. The close waits for the create response before navigation lets the shelf refetch, the new page is visible immediately, and reopening it shows the exact body. A component regression test separately holds the create promise open to prove navigation ordering and verifies a rejected final write leaves the writer with the retry affordance.",
     "crosses": {
