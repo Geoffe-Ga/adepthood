@@ -88,3 +88,46 @@ describe('markdownCommandState', () => {
     });
   });
 });
+
+describe('keyCommand -- list nesting', () => {
+  it('maps Tab to indent and Shift+Tab to outdent', () => {
+    expect(keyCommand({ key: 'Tab' }, 'meta')).toBe('indent');
+    expect(keyCommand({ key: 'Tab', shiftKey: true }, 'ctrl')).toBe('outdent');
+  });
+
+  it.each([
+    ['Ctrl+Tab (switches browser tabs)', { key: 'Tab', ctrlKey: true }],
+    ['Cmd+Tab', { key: 'Tab', metaKey: true }],
+    ['Alt+Tab', { key: 'Tab', altKey: true }],
+    ['a composing Tab', { key: 'Tab', isComposing: true }],
+  ])('leaves %s alone', (_label, event) => {
+    expect(keyCommand(event, 'meta')).toBeNull();
+  });
+});
+
+describe('applyMarkdownCommand -- list nesting', () => {
+  it('indents a list line as an edit', () => {
+    expect(applyMarkdownCommand('- a', { start: 3, end: 3 }, 'indent')).toEqual({
+      kind: 'edit',
+      edit: { text: '  - a', selection: { start: 5, end: 5 } },
+    });
+  });
+
+  it('passes Tab on prose through, so focus moves on', () => {
+    expect(applyMarkdownCommand('prose', { start: 2, end: 2 }, 'indent')).toEqual({ kind: 'pass' });
+  });
+
+  it('passes Shift+Tab at level 0 through, so the keyboard is never trapped', () => {
+    expect(applyMarkdownCommand('- a', { start: 3, end: 3 }, 'outdent')).toEqual({ kind: 'pass' });
+  });
+});
+
+describe('markdownCommandState -- list level', () => {
+  it.each([
+    ['- a', 3, 0],
+    ['- a\n  - b', 9, 1],
+    ['prose', 2, null],
+  ])('reports %j at %i as list level %j', (body, caret, level) => {
+    expect(markdownCommandState(body, { start: caret, end: caret }).listLevel).toBe(level);
+  });
+});

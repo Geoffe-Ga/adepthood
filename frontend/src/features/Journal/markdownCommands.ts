@@ -12,10 +12,11 @@
  */
 import type { InlineStyle } from './journalMarkdown';
 import type { MarkdownEdit, MarkdownSelection } from './markdownEditing';
+import { listLevelAt, shiftListLines, type ShiftDirection } from './markdownIndent';
 import { inlineStyleActive, toggleInlineStyle } from './markdownInlineToggle';
 
-/** What an editor action does. */
-export type MarkdownCommand = InlineStyle;
+/** What an editor action does: style the selection, or move its list items a level. */
+export type MarkdownCommand = InlineStyle | ShiftDirection;
 
 /** The parts of a keyboard event the dispatcher reads (a DOM KeyboardEvent fits). */
 export interface MarkdownKeyEvent {
@@ -53,7 +54,11 @@ export interface MarkdownCommandState {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  /** The caret's list level (0 = flush), or null off a list line. */
+  listLevel: number | null;
 }
+
+const TAB_KEY = 'Tab';
 
 function isComposing(event: MarkdownKeyEvent): boolean {
   return event.isComposing === true || event.keyCode === IME_COMPOSITION_KEYCODE;
@@ -70,6 +75,12 @@ function shortcutCommand(
   return SHORTCUT_STYLES[event.key.toLowerCase()] ?? null;
 }
 
+/** Tab indents and Shift+Tab outdents; Tab with Ctrl or Cmd belongs to the browser. */
+function tabCommand(event: MarkdownKeyEvent): MarkdownCommand | null {
+  if (event.ctrlKey === true || event.metaKey === true) return null;
+  return event.shiftKey === true ? 'outdent' : 'indent';
+}
+
 /**
  * The command a key names, or null when the key is not the editor's.
  *
@@ -81,6 +92,7 @@ export function keyCommand(
   primary: PrimaryModifier,
 ): MarkdownCommand | null {
   if (isComposing(event) || event.altKey === true) return null;
+  if (event.key === TAB_KEY) return tabCommand(event);
   return shortcutCommand(event, primary);
 }
 
@@ -90,6 +102,12 @@ export function applyMarkdownCommand(
   selection: MarkdownSelection,
   command: MarkdownCommand,
 ): CommandResult {
+  if (command === 'indent' || command === 'outdent') {
+    // Nothing to move -- prose, or an outdent at level 0 -- lets the key
+    // through, so Tab and Shift+Tab still move focus and never trap it.
+    const shifted = shiftListLines(body, selection, command);
+    return shifted == null ? { kind: 'pass' } : { kind: 'edit', edit: shifted };
+  }
   const edit = toggleInlineStyle(body, selection, command);
   // A refused toggle still claims the key: the writer asked for formatting,
   // and the browser's own Cmd+B / Cmd+U would do something unrelated.
@@ -105,5 +123,6 @@ export function markdownCommandState(
     bold: inlineStyleActive(body, selection, 'bold'),
     italic: inlineStyleActive(body, selection, 'italic'),
     underline: inlineStyleActive(body, selection, 'underline'),
+    listLevel: listLevelAt(body, selection.start),
   };
 }

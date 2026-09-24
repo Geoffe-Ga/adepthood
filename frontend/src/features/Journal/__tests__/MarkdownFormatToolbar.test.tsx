@@ -12,7 +12,7 @@ import MarkdownFormatToolbar from '../MarkdownFormatToolbar';
 
 import { touchTarget } from '@/design/tokens';
 
-const PLAIN = { bold: false, italic: false, underline: false };
+const PLAIN = { bold: false, italic: false, underline: false, listLevel: null };
 
 describe('MarkdownFormatToolbar -- inline styles', () => {
   const LABELLED: [label: string, command: MarkdownCommand][] = [

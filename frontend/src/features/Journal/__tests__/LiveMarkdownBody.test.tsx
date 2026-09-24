@@ -418,6 +418,52 @@ describe('LiveMarkdownBody keyboard commands', () => {
     expect(onChangeBody).not.toHaveBeenCalled();
   });
 
+  it('indents the caret list line on Tab and claims the key', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial={'- a\n- b'} onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 7);
+    const { event, preventDefault } = keyPress('Tab');
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onChangeBody).toHaveBeenCalledWith('- a\n  - b');
+    expect(getByTestId('journal-body-input').props.selection).toEqual({ start: 9, end: 9 });
+  });
+
+  it('outdents on Shift+Tab', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial={'- a\n  - b'} onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 9);
+    const { event, preventDefault } = keyPress('Tab', { shiftKey: true });
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onChangeBody).toHaveBeenCalledWith('- a\n- b');
+  });
+
+  it.each([
+    ['Tab on a prose line', 'prose', 2, {}],
+    ['Shift+Tab on a level-0 item', '- a', 3, { shiftKey: true }],
+    ['Ctrl+Tab', '- a', 3, { ctrlKey: true }],
+  ])('lets %s move focus instead', (_label, initial, caret, modifiers) => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial={initial} onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), caret);
+    const { event, preventDefault } = keyPress('Tab', modifiers);
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(onChangeBody).not.toHaveBeenCalled();
+  });
+
+  it('keeps the caret on the same character past an emoji when an item moves', () => {
+    const onChangeBody = jest.fn();
+    const body = '\u{1F600}\n- a\u{1F600}b';
+    const { getByTestId } = render(<Harness initial={body} onChangeBody={onChangeBody} />);
+    // UTF-16 8 sits between the second emoji and "b".
+    select(getByTestId('journal-body-input'), 8);
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', keyPress('Tab').event);
+    expect(onChangeBody).toHaveBeenCalledWith('\u{1F600}\n  - a\u{1F600}b');
+    expect(getByTestId('journal-body-input').props.selection).toEqual({ start: 10, end: 10 });
+  });
+
   it('passes the input event a browser command fires straight through', () => {
     // A command that inserts exactly one line feed must not be re-read as a
     // Return and continued as a list item.
