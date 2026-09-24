@@ -437,6 +437,47 @@ describe('LiveMarkdownBody keyboard commands', () => {
   });
 });
 
+describe('LiveMarkdownBody formatting toolbar', () => {
+  it('applies a toolbar action at the field selection and returns focus to the field', () => {
+    const onChangeBody = jest.fn();
+    const focus = jest.fn();
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const { getByTestId, getByRole } = render(
+      <Harness initial="a word" onChangeBody={onChangeBody} fieldRef={fieldRef} />,
+    );
+    (fieldRef as { current: unknown }).current = { focus };
+    select(getByTestId('journal-body-input'), 2, 6);
+
+    fireEvent.press(getByRole('button', { name: 'Underline' }));
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(onChangeBody).toHaveBeenCalledWith('a <u>word</u>');
+  });
+
+  it('shows the style at the caret as the pressed action', () => {
+    const { getByTestId } = render(<Harness initial="**a** b" />);
+    const input = getByTestId('journal-body-input');
+    const selected = (style: string) =>
+      getByTestId(`journal-format-${style}`).props.accessibilityState.selected;
+
+    select(input, 3);
+    expect(selected('bold')).toBe(true);
+    expect(selected('italic')).toBe(false);
+    select(input, 7);
+    expect(selected('bold')).toBe(false);
+  });
+
+  it('does nothing to the body for an action the dialect cannot apply', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId, getByRole } = render(
+      <Harness initial="forward" onChangeBody={onChangeBody} />,
+    );
+    select(getByTestId('journal-body-input'), 3);
+    fireEvent.press(getByRole('button', { name: 'Italic' }));
+    expect(onChangeBody).not.toHaveBeenCalled();
+  });
+});
+
 describe('LiveMarkdownBody on native', () => {
   it('keeps the visible TextInput with no mirror behind it', () => {
     const { getByTestId, queryByTestId } = render(<Harness initial="**a**" />);

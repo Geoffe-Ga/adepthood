@@ -24,8 +24,15 @@ import styles from './JournalEntry.styles';
 import { utf16ToSource, type SourceSelection } from './journalMarkdown';
 import LiveMarkdownMirror from './LiveMarkdownMirror';
 import liveStyles, { LIVE_TAB_STYLE } from './LiveMarkdownStyles';
-import { applyMarkdownCommand, keyCommand, type MarkdownKeyEvent } from './markdownCommands';
+import {
+  applyMarkdownCommand,
+  keyCommand,
+  markdownCommandState,
+  type MarkdownCommand,
+  type MarkdownKeyEvent,
+} from './markdownCommands';
 import { continueMarkdownEdit, type MarkdownEdit, type MarkdownSelection } from './markdownEditing';
+import MarkdownFormatToolbar from './MarkdownFormatToolbar';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLiveMirrorEnabled } from './useLiveMirrorEnabled';
 import { useWebSelectionListener } from './webSelectionListener';
@@ -172,6 +179,30 @@ function useMarkdownKeyCommands(body: string, bindings: BodyBindings) {
 }
 
 /**
+ * The toolbar's view of the field: what is in force at the selection, and a
+ * press handler that runs the same command the keyboard would. The field is
+ * focused first, because the browser applies an edit only to the focused
+ * element and a press has just moved focus to the button.
+ */
+function useToolbarCommands(
+  body: string,
+  bindings: BodyBindings,
+  inputRef: LiveMarkdownBodyProps['inputRef'],
+) {
+  const { applyEdit, nativeSelectionRef, caret } = bindings;
+  const toolbarState = useMemo(() => markdownCommandState(body, caret), [body, caret]);
+  const runCommand = useCallback(
+    (command: MarkdownCommand) => {
+      inputRef.current?.focus();
+      const result = applyMarkdownCommand(body, nativeSelectionRef.current, command);
+      if (result.kind === 'edit') applyEdit(result.edit);
+    },
+    [applyEdit, body, inputRef, nativeSelectionRef],
+  );
+  return { toolbarState, runCommand };
+}
+
+/**
  * The field's caret in SOURCE positions, for what is drawn around it.
  *
  * iOS Safari fires no ``select`` event for selection-handle drags, so on web
@@ -208,36 +239,40 @@ export default function LiveMarkdownBody({
   const growth = useGrowingFieldHeight(minimumBodyHeight);
   const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange, inputRef);
   const onKeyPress = useMarkdownKeyCommands(body, markdown);
+  const { toolbarState, runCommand } = useToolbarCommands(body, markdown, inputRef);
   const mirrored = useLiveMirrorEnabled();
   const sourceSelection = useSourceCaret(body, markdown, inputRef);
   return (
-    <View style={liveStyles.frame}>
-      {mirrored ? (
-        <LiveMarkdownMirror body={body} selection={sourceSelection} textStyle={LIVE_TAB_STYLE} />
-      ) : null}
-      <TextInput
-        ref={inputRef}
-        style={[
-          styles.bodyInput,
-          writingFieldFocus,
-          growth.style,
-          mirrored ? [liveStyles.inputMirrored, LIVE_TAB_STYLE] : null,
-        ]}
-        value={body}
-        onChangeText={markdown.changeBody}
-        onContentSizeChange={growth.onContentSizeChange}
-        selection={markdown.selection}
-        onSelectionChange={markdown.changeSelection}
-        onKeyPress={onKeyPress}
-        placeholder={bodyPlaceholder}
-        placeholderTextColor={colors.paper.inkSoft}
-        selectionColor={writingField.caret}
-        cursorColor={writingField.caret}
-        multiline
-        scrollEnabled={false}
-        accessibilityLabel="Entry body"
-        testID="journal-body-input"
-      />
-    </View>
+    <>
+      <MarkdownFormatToolbar state={toolbarState} onCommand={runCommand} />
+      <View style={liveStyles.frame}>
+        {mirrored ? (
+          <LiveMarkdownMirror body={body} selection={sourceSelection} textStyle={LIVE_TAB_STYLE} />
+        ) : null}
+        <TextInput
+          ref={inputRef}
+          style={[
+            styles.bodyInput,
+            writingFieldFocus,
+            growth.style,
+            mirrored ? [liveStyles.inputMirrored, LIVE_TAB_STYLE] : null,
+          ]}
+          value={body}
+          onChangeText={markdown.changeBody}
+          onContentSizeChange={growth.onContentSizeChange}
+          selection={markdown.selection}
+          onSelectionChange={markdown.changeSelection}
+          onKeyPress={onKeyPress}
+          placeholder={bodyPlaceholder}
+          placeholderTextColor={colors.paper.inkSoft}
+          selectionColor={writingField.caret}
+          cursorColor={writingField.caret}
+          multiline
+          scrollEnabled={false}
+          accessibilityLabel="Entry body"
+          testID="journal-body-input"
+        />
+      </View>
+    </>
   );
 }
