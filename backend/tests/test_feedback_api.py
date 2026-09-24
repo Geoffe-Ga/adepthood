@@ -96,6 +96,15 @@ def _payload(**overrides: object) -> dict[str, Any]:
     }
 
 
+def _leaf_strings(value: object) -> list[str]:
+    """Every string a smuggling attempt carried, however deeply it was nested."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _leaf_strings(item)]
+    return []
+
+
 async def _report_count(session: AsyncSession) -> int:
     """How many feedback reports the database holds, read past the identity map."""
     total = await session.scalar(select(func.count()).select_from(FeedbackReport))
@@ -211,6 +220,25 @@ async def test_the_refusal_detail_is_the_repositorys_sanitised_entry_list(
         ("resonance_prose_as_control", {"control": "my_dead_mother.letter"}),
         ("passage_prose_as_screen", {"screen": "course.the_self_is_a_river"}),
         ("prose_as_build", {"app_build": "Dear-diary-I-cried"}),
+        ("prose_as_build_suffix", {"app_build": "1.0.0-imissyoudad"}),
+        # Every other forbidden class, cast as a value of an allowlisted key.
+        ("route_query_as_screen", {"screen": "journal.shelf?entry=42"}),
+        ("vault_address_as_screen", {"screen": "https://vault.example.com/mine"}),
+        ("authorization_as_control", {"control": "Authorization: Bearer abc.def"}),
+        ("cookie_as_screen", {"screen": "Cookie: session=abc"}),
+        ("header_map_string_as_control", {"control": '{"x-api-key": "k"}'}),
+        ("header_map_object_as_screen", {"screen": {"authorization": "Bearer abc.def"}}),
+        ("request_body_as_screen", {"screen": '{"summary": "I miss my father"}'}),
+        ("response_body_as_control", {"control": '{"detail": "Not authenticated"}'}),
+        ("console_log_as_screen", {"screen": "console.error: TypeError at App.tsx:12"}),
+        ("stack_trace_as_build", {"app_build": 'Traceback (most recent call last): File "a.py"'}),
+        ("journal_prose_as_screen_value", {"screen": "I miss my father every morning"}),
+        ("resonance_prose_as_control_value", {"control": "The river keeps returning to me"}),
+        ("passage_prose_as_build", {"app_build": "The self is a river"}),
+        ("prose_as_locale", {"locale": "en-US I miss him"}),
+        ("prose_as_correlation_id", {"correlation_id": "i-miss-my-father"}),
+        ("prose_as_platform", {"platform": "my private note"}),
+        ("prose_as_viewport_class", {"viewport_class": "my private note"}),
     ],
 )
 @pytest.mark.asyncio
@@ -233,6 +261,46 @@ async def test_an_unsafe_context_value_is_rejected_and_persists_nothing(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, label
     assert await _report_count(db_session) == 0, label
+    for smuggled in _leaf_strings(context_override):
+        assert smuggled not in resp.text, label
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("authorization", "Bearer abc.def"),
+        ("cookie", "session=abc; theme=dark"),
+        ("headers", {"x-api-key": "k-4417", "user-agent": "Mozilla/5.0 private"}),
+        ("request_body", '{"summary": "I miss my father"}'),
+        ("response_body", '{"detail": "Not authenticated for my letter"}'),
+        ("console_log", "console.error: TypeError at App.tsx:12"),
+        ("vault_address", "https://vault.example.com/mine"),
+        ("stack_trace", 'Traceback (most recent call last): File "a.py"'),
+        ("route_query", "entry=42&note=grief"),
+        ("journal_excerpt", "I miss my father every morning"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_forbidden_context_key_is_rejected_and_persists_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    key: str,
+    value: object,
+) -> None:
+    """An eighth key is refused whatever it is called, and its value is not echoed.
+
+    The key itself may appear in the refusal's ``loc`` -- that is what tells a
+    client which field to drop -- but nothing it carried may.
+    """
+    headers = await _signup(async_client, f"feedback_key_{key}")
+    payload = _payload(context=_context(**{key: value}))
+
+    resp = await async_client.post("/feedback/", json=payload, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, key
+    assert await _report_count(db_session) == 0, key
+    for smuggled in _leaf_strings(value):
+        assert smuggled not in resp.text, key
 
 
 @pytest.mark.parametrize(
