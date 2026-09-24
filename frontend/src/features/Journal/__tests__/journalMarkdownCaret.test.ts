@@ -149,9 +149,9 @@ describe('spanAt', () => {
   });
 
   it('reports an underlined span', () => {
-    expect(spanAt(parseJournalMarkdown('a ==und== b'), 5)).toMatchObject({
+    expect(spanAt(parseJournalMarkdown('a <u>und</u> b'), 6)).toMatchObject({
       start: 2,
-      end: 9,
+      end: 12,
       underline: true,
     });
   });
@@ -271,10 +271,14 @@ describe('sourceRuns', () => {
   it.each([
     ['bold', '*_a_*', ['*', '_', 'a', '_', '*']],
     ['italic', '_*a*_', ['_', '*', 'a', '*', '_']],
-    ['underline', '==*a*==', ['==', '*', 'a', '*', '==']],
+    ['underline', '<u>*a*</u>', ['<u>', '*', 'a', '*', '</u>']],
   ])('splits adjacent hidden delimiters that differ only in %s', (_term, body, texts) => {
     const document = parseJournalMarkdown(body);
-    expect(sourceRuns(document, 0, document.chars.length).map((run) => run.text)).toEqual(texts);
+    const runs = sourceRuns(document, 0, document.chars.length);
+    expect(runs.map((run) => run.text)).toEqual(texts);
+    // Only the content is visible: every delimiter, outer and inner, is a
+    // parsed marker rather than literal prose that happens to split the same way.
+    expect(runs.map((run) => run.visible)).toEqual([false, false, true, false, false]);
   });
 
   it('carries the outer style onto the inner delimiter it wraps', () => {

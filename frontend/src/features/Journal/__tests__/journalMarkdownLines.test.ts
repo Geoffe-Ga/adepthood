@@ -98,7 +98,7 @@ describe('classifyLine', () => {
   );
 
   it('does not mistake the underline delimiter for a bullet', () => {
-    expect(classify('==x==')).toMatchObject({ kind: 'plain', marker: null });
+    expect(classify('<u>x</u>')).toMatchObject({ kind: 'plain', marker: null });
   });
 
   it('does not continue an exotic whitespace separator', () => {

@@ -45,6 +45,8 @@ import type {
 export { codePointToUtf16 as sourceToUtf16, utf16ToCodePoint as utf16ToSource } from './codePoints';
 
 export { BULLET_MARKERS, JOURNAL_TAB_COLUMNS, classifyLine } from './journalMarkdownLines';
+export { INLINE_DELIMITERS, UNDERLINE_DELIMITER, isWordChar } from './journalMarkdownInline';
+export type { InlineDelimiterPair } from './journalMarkdownInline';
 export {
   revealedDelimiters,
   sourceToVisible,

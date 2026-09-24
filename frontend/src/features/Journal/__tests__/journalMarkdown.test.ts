@@ -42,7 +42,8 @@ const CORPUS: readonly string[] = Object.freeze([
   '+ plus\n* star\n- dash',
   'line\n',
   '  padded  ',
-  'a ==underlined== b',
+  'a <u>underlined</u> b',
+  'a ==not underline== b',
   'Intro\n- one\n- two\n> quoted\nplain',
 ]);
 
@@ -102,7 +103,7 @@ describe('emphasis guards', () => {
     expect(document.formats.every((format) => format.visible)).toBe(true);
   });
 
-  it.each(['a *b* c', '_a_ b', 'a ==u== b'])(
+  it.each(['a *b* c', '_a_ b', 'a <u>u</u> b'])(
     'still emphasises %j, so the guards are not simply refusing everything',
     (body) => {
       const document = parseJournalMarkdown(body);
