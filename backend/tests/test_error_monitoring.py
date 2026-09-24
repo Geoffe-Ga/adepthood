@@ -45,6 +45,7 @@ from tests.helpers.sentry_capture import (
     CapturedEvent,
     CapturingTransport,
     capturing_sentry,
+    disarm_sentry,
 )
 
 # Sentinels stand in for the three content classes the acceptance bar names.
@@ -229,7 +230,7 @@ def test_vendor_default_options_would_have_captured_the_journal_body(
     try:
         _post_boom(monitored_app, JOURNAL_SENTINEL)
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
     assert JOURNAL_SENTINEL in json.dumps(transport.events[0], default=str)
 
@@ -456,7 +457,7 @@ def test_init_with_dsn_enables_monitoring_with_one_line(
         with caplog.at_level(logging.DEBUG, logger="sentry"):
             assert error_monitoring.init_error_monitoring(transport=CapturingTransport()) is True
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
     assert len(caplog.records) == 1
     message = caplog.records[0].getMessage()
@@ -512,7 +513,7 @@ def test_init_pins_every_privacy_critical_option(
         options = cast("dict[str, object]", sentry_sdk.get_client().options)
         assert options[option] == expected
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
 
 @pytest.mark.asyncio
@@ -565,7 +566,7 @@ def test_unreported_exception_is_still_logged_when_monitoring_is_off(
 ) -> None:
     """Degrading must never mean swallowing: the traceback still hits the log."""
     monkeypatch.delenv(error_monitoring.SENTRY_DSN_ENV_VAR, raising=False)
-    sentry_sdk.init(dsn=None)
+    disarm_sentry()
 
     with caplog.at_level(logging.ERROR, logger="errors"):
         _post_boom(monitored_app, JOURNAL_SENTINEL)

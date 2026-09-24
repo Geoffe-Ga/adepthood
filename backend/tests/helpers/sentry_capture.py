@@ -58,6 +58,19 @@ class CapturingTransport(Transport):
             self.events.append(dict(event))
 
 
+# ``sentry_sdk.init(dsn=None)`` does NOT disarm the SDK: a ``None`` DSN falls back
+# to the ``SENTRY_DSN`` environment variable, and every capture here has just set
+# that variable to ``TEST_DSN`` -- so a ``None`` reset quietly builds a real HTTP
+# transport pointed at it, and the next event a later test raises is shipped over
+# the network. An empty DSN is the value the SDK reads as "no transport at all".
+_NO_DSN = ""
+
+
+def disarm_sentry() -> None:
+    """Leave the process with an inert Sentry client, whatever the environment says."""
+    sentry_sdk.init(dsn=_NO_DSN)
+
+
 @contextmanager
 def capturing_sentry(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[CapturedEvent]]:
     """Initialise the production Sentry client, capturing locally, then disarm it.
@@ -73,4 +86,4 @@ def capturing_sentry(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[CapturedE
     try:
         yield transport.events
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
