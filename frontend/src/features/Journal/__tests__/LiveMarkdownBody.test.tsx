@@ -537,8 +537,10 @@ describe('LiveMarkdownBody keyboard commands', () => {
   });
 
   it('passes the input event a browser command fires straight through', () => {
-    // A command that inserts exactly one line feed must not be re-read as a
-    // Return and continued as a list item.
+    // The input event a command's execCommand fires is the command's own text.
+    // Here it is shaped exactly like Return after a list item -- one line feed
+    // after '- a' -- which the Return handler WOULD continue to '- a\n- '. It
+    // must reach the body verbatim instead.
     const onChangeBody = jest.fn();
     const fieldRef: React.RefObject<TextInput | null> = { current: null };
     const { getByTestId } = render(
@@ -548,15 +550,16 @@ describe('LiveMarkdownBody keyboard commands', () => {
     const node = { value: '- a', setSelectionRange: jest.fn() };
     (globalThis as MutableGlobal).document = {
       execCommand: jest.fn(() => {
-        node.value = '- <u>a</u>';
-        fireEvent.changeText(input, '- <u>a</u>');
+        node.value = '- a\n';
+        fireEvent.changeText(input, '- a\n');
         return true;
       }),
     } as unknown as Document;
     (fieldRef as { current: unknown }).current = node;
     select(input, 2, 3);
     fireEvent(input, 'keyPress', keyPress('u', { ctrlKey: true }).event);
-    expect(onChangeBody).toHaveBeenCalledWith('- <u>a</u>');
+    expect(onChangeBody.mock.calls[0]).toEqual(['- a\n']);
+    expect(onChangeBody).not.toHaveBeenCalledWith('- a\n- ');
   });
 });
 
