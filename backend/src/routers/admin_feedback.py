@@ -74,7 +74,7 @@ from schemas.feedback_admin import (
 )
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, PaginationParams, build_page
 from services import feedback_triage
-from services.feedback_triage import Actor, InboxFilters
+from services.feedback_triage import Actor, InboxFilters, persisted_id
 
 router = build_router(prefix="/admin", tags=["admin"])
 
@@ -176,7 +176,7 @@ async def _summaries(
 
 async def _operator_added(session: AsyncSession, report: FeedbackReport) -> FeedbackOperatorAdded:
     """Everything operators added to ``report``, with its duplicate link resolved."""
-    report_id = report.id or 0
+    report_id = persisted_id(report)
     notes = await feedback_triage.notes_for(session, report_id)
     events = await feedback_triage.events_for(session, report_id)
     return FeedbackOperatorAdded(
@@ -184,7 +184,7 @@ async def _operator_added(session: AsyncSession, report: FeedbackReport) -> Feed
         duplicate_of=await feedback_triage.linked_public_id(session, report),
         duplicates=await feedback_triage.duplicates_of(session, report_id),
         notes=[
-            FeedbackOperatorNote(id=note.id or 0, body=note.body, created_at=note.created_at)
+            FeedbackOperatorNote(id=persisted_id(note), body=note.body, created_at=note.created_at)
             for note in notes
         ],
         events=[
