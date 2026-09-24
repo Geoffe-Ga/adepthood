@@ -3,7 +3,7 @@
  * always the exact stored source, plus the Markdown editing conveniences
  * layered over it.
  *
- * On web a styled mirror (``LiveMarkdownMirror``) is drawn behind the field
+ * On web a styled mirror (``LiveMarkdownMirror``) is drawn in register over the field
  * and the field's own glyphs go transparent, so the writer sees their Markdown
  * rendered while the textarea keeps the caret, selection, undo, paste and the
  * screen reader. The value is never a display copy: #2891's quote anchors read

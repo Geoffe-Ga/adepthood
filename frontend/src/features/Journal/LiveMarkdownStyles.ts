@@ -36,7 +36,13 @@ const liveStyles = StyleSheet.create({
     flexGrow: 1,
     position: 'relative',
   },
+  /**
+   * Laid exactly over the field and above it, ignoring the pointer: clicks,
+   * drags and taps reach the textarea, while the field's own selection
+   * highlight and caret paint beneath the styled glyphs instead of over them.
+   */
   mirror: {
+    zIndex: 1,
     position: 'absolute',
     top: 0,
     right: 0,

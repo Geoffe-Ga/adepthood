@@ -1,5 +1,5 @@
 /**
- * Whether the live Markdown mirror draws behind the body field.
+ * Whether the live Markdown mirror draws over the body field.
  *
  * Web only: the mirror is laid out under a real ``<textarea>`` whose glyphs go
  * transparent, and web is the one platform where that alignment is measured

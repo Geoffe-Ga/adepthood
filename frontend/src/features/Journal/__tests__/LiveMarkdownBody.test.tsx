@@ -230,6 +230,11 @@ describe('LiveMarkdownBody on web', () => {
     expect(mirror.props.importantForAccessibility).toBe('no-hide-descendants');
     expect(mirror.props.accessibilityElementsHidden).toBe(true);
     expect(mirror.props.pointerEvents).toBe('none');
+    // Over the field, so its selection highlight and caret paint beneath the glyphs.
+    expect(StyleSheet.flatten(mirror.props.style)).toMatchObject({
+      position: 'absolute',
+      zIndex: 1,
+    });
     expect(queryByTestId('journal-body-mirror', { includeHiddenElements: false })).toBeNull();
     expect(queryByTestId('journal-live-bold-2', { includeHiddenElements: false })).toBeNull();
     expect(getByLabelText('Entry body').props.value).toBe('**a**');
