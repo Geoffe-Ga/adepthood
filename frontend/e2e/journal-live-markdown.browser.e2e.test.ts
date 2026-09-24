@@ -15,6 +15,10 @@ const CARET_PROBE_FRACTION = 0.25;
 const PROBE_WIDTHS = [390, 768, 1024, 1440] as const;
 const PROBE_HEIGHT = 900;
 const COLOR_SCHEMES = ['light', 'dark'] as const;
+/** How a browser reports a transparent computed colour. */
+const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+/** The writing caret token (accent.strong, #8f4a28) as a computed colour. */
+const CARET_RGB = 'rgb(143, 74, 40)';
 
 const body = (page: Page): Locator => page.getByTestId('journal-body-input');
 
@@ -82,18 +86,26 @@ test('live Markdown editing keeps the typed source byte-identical and renders it
   await page.getByTestId('journal-title-input').fill('Typed live');
 
   // The title is not the editor: Cmd/Ctrl+B there is left to the browser.
+  // react-native-web's TextInput stops keydown propagation, so a bubbling
+  // listener never hears it. Listen in the CAPTURE phase, which reaches window
+  // first, keep the event itself, and read defaultPrevented only after the
+  // press, when every handler has had its say.
   await page.evaluate(() => {
-    window.addEventListener('keydown', (event) => {
-      (window as unknown as { lastKeyPrevented: boolean }).lastKeyPrevented =
-        event.defaultPrevented;
-    });
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        (window as unknown as { lastKeydown?: KeyboardEvent }).lastKeydown = event;
+      },
+      { capture: true },
+    );
   });
+  const lastKeyPrevented = () =>
+    page.evaluate(
+      () => (window as unknown as { lastKeydown?: KeyboardEvent }).lastKeydown?.defaultPrevented,
+    );
   await page.getByTestId('journal-title-input').press('ControlOrMeta+b');
-  expect(
-    await page.evaluate(
-      () => (window as unknown as { lastKeyPrevented: boolean }).lastKeyPrevented,
-    ),
-  ).toBe(false);
+  // Seen (not undefined) and not prevented.
+  expect(await lastKeyPrevented()).toBe(false);
 
   const field = body(page);
   await field.click();
@@ -115,6 +127,8 @@ test('live Markdown editing keeps the typed source byte-identical and renders it
   // Cmd/Ctrl+B on a selection wraps it; undo and redo go through the browser's own stack.
   await selectRange(field, 6, 11);
   await page.keyboard.press('ControlOrMeta+b');
+  // The same probe does see the body claim its shortcut, so the title check above can fail.
+  expect(await lastKeyPrevented()).toBe(true);
   const bolded = 'Plain **words** here\n> remembered\n_soft_ and <u>under</u> end';
   await expect(field).toHaveValue(bolded);
   expect(await selection(field)).toEqual([8, 13]);
@@ -189,6 +203,31 @@ test('the live mirror stays in register with the real textarea at every width an
       await expect(page.getByTestId('journal-body-mirror')).toContainText('Tail');
 
       for (const index of probes) await expectCaretLandsOn(page, index);
+
+      // The field is the top layer: a point on a quote line's glyph (under the
+      // mirror's opaque wash) hits the textarea, whose caret and selection paint
+      // there; its glyph fill alone is transparent and its selection tint is
+      // see-through, so selected text stays readable.
+      const quoteGlyph = await mirrorCharRect(page, text.indexOf('a quote') + 2);
+      const layering = await body(page).evaluate(
+        (area, point) => {
+          const hit = document.elementFromPoint(point.x, point.y);
+          const style = getComputedStyle(area);
+          return {
+            fieldOnTop: hit === area,
+            color: style.color,
+            fill: style.getPropertyValue('-webkit-text-fill-color'),
+            caret: style.caretColor,
+            selection: getComputedStyle(area, '::selection').backgroundColor,
+          };
+        },
+        { x: quoteGlyph.left + quoteGlyph.width / 2, y: quoteGlyph.top + quoteGlyph.height / 2 },
+      );
+      expect(layering.fieldOnTop).toBe(true);
+      expect(layering.color).not.toBe(TRANSPARENT);
+      expect(layering.fill).toBe(TRANSPARENT);
+      expect(layering.caret).toBe(CARET_RGB);
+      expect(layering.selection).toMatch(/^rgba\(.*, 0\.\d+\)$/u);
 
       // Hidden delimiters keep their advance: dimmed, never collapsed.
       const delimiterWidth = await page
