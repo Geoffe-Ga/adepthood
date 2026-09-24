@@ -93,6 +93,11 @@ describe('shiftListLines -- the caret line', () => {
     const indented = shiftListLines('\t- a', { start: 3, end: 3 }, 'indent');
     expect(indented?.text).toBe('\t\t- a');
     expect(shiftListLines(indented!.text, indented!.selection!, 'outdent')?.text).toBe('\t- a');
+
+    // A mixed indent shows where the unit goes: after the tab, not before it.
+    const mixed = shiftListLines('- x\n  \t- a', { start: 10, end: 10 }, 'indent');
+    expect(mixed).toEqual({ text: '- x\n  \t  - a', selection: { start: 12, end: 12 } });
+    expect(shiftListLines(mixed!.text, mixed!.selection!, 'outdent')?.text).toBe('- x\n  \t- a');
   });
 
   it('outdents one level', () => {
