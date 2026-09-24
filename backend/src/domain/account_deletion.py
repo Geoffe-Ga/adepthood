@@ -152,6 +152,28 @@ POLICY: Mapping[str, TablePolicy] = {
         "describes where those words were typed, so keeping it would leave a "
         "record of somebody being somewhere, saying something no longer here.",
     ),
+    "feedbacknote": TablePolicy(
+        disposition=Disposition.ERASE,
+        rationale=(
+            "An operator's private note on one of the account's beta reports. "
+            "It describes the report, so it goes with the report. A note an "
+            "administrator wrote on somebody ELSE's report stays, with its "
+            "author cleared, when that administrator's own account is deleted."
+        ),
+        owned_by=OwnedBy("report_id", through="feedbackreport"),
+        clear_columns=("author_admin_id",),
+    ),
+    "feedbacktriageevent": TablePolicy(
+        disposition=Disposition.ERASE,
+        rationale=(
+            "The triage trail of one of the account's beta reports: content-free, "
+            "but a record about a report that no longer exists is a record about "
+            "nobody. Events an administrator recorded on other people's reports "
+            "survive that administrator's deletion with the actor cleared."
+        ),
+        owned_by=OwnedBy("report_id", through="feedbackreport"),
+        clear_columns=("actor_admin_id",),
+    ),
     "goal": TablePolicy(
         disposition=Disposition.ERASE,
         rationale="Goals belong to a habit, and every habit belongs to one account.",

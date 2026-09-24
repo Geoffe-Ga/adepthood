@@ -53,6 +53,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   BROWSER_JOURNEY,
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
+  'feedback-composer.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
@@ -78,6 +79,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
   'account-deletion.e2e.test.ts',
+  'admin-feedback-triage.e2e.test.ts',
   'auth.e2e.test.ts',
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',

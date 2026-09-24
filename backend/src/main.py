@@ -44,6 +44,7 @@ from observability import configure_logging
 from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
+from routers.admin_feedback import router as admin_feedback_router
 from routers.auth import router as auth_router
 from routers.botmason import router as botmason_router
 from routers.corpus import router as corpus_router
@@ -1194,6 +1195,7 @@ app.add_middleware(ForwardedProtoMiddleware)
 
 # Register feature routers
 app.include_router(admin_router)
+app.include_router(admin_feedback_router)
 app.include_router(auth_router)
 app.include_router(botmason_router)
 app.include_router(course_router)

@@ -28,11 +28,12 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.data_export import EXPORT_PAGE_SIZE
+from domain.data_export import EXPORT_PAGE_SIZE, MANIFEST, Included, Omitted
 from main import app
 from models.journal_entry import JournalEntry
 from services import journal_encryption as je
 from services.data_export import ExportSubject, stream_json_export
+from tests.helpers.feedback_triage import make_account, seed_report
 
 _EXPORT_PATH = "/users/me/export"
 _JOURNAL_MARKDOWN_PATH = "/users/me/export/journal.md"
@@ -479,3 +480,60 @@ async def test_a_submitted_beta_report_round_trips_into_the_archive_as_plaintext
     assert "idem_key" not in reports[0]
     assert "user_id" not in reports[0]
     assert _CIPHERTEXT_MARKER not in raw
+
+
+# What a report row in the archive carries once an operator has triaged it:
+# what the account filed, and nothing the operator added (#2900).
+_EXPORTED_REPORT_KEYS = frozenset(
+    {
+        "id",
+        "public_id",
+        "category",
+        "impact",
+        "platform",
+        "viewport_class",
+        "summary",
+        "intent",
+        "expected",
+        "actual",
+        "screen",
+        "control",
+        "app_build",
+        "locale",
+        "correlation_id",
+        "created_at",
+    }
+)
+_OPERATOR_NOTE_SENTINEL = "OPERATOR-NOTE-SENTINEL-NEVER-EXPORTED"
+
+
+@pytest.mark.asyncio
+async def test_the_export_after_triage_carries_no_operator_state(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Status, duplicate link, notes and the trail stay with the operator."""
+    reporter = await make_account(db_session, "reviewed_exporter@example.com")
+    admin = await make_account(db_session, "triaging_admin@example.com", admin=True)
+    canonical = await seed_report(db_session, reporter.user_id)
+    report = await seed_report(db_session, reporter.user_id)
+    actions = f"/admin/feedback/{report.public_id}/actions"
+    for command in (
+        {"action": "transition", "status": "triaged"},
+        {"action": "link_duplicate", "target_public_id": canonical.public_id},
+        {"action": "add_note", "body": _OPERATOR_NOTE_SENTINEL},
+    ):
+        response = await async_client.post(actions, json=command, headers=admin.headers)
+        assert response.status_code == HTTPStatus.OK, response.text
+
+    raw, document = await _export(async_client, reporter.headers)
+
+    assert _OPERATOR_NOTE_SENTINEL not in raw
+    assert '"triaged"' not in raw
+    reports = _records(document, "feedback_reports")
+    assert len(reports) == 2
+    for row in reports:
+        assert set(row) == _EXPORTED_REPORT_KEYS
+    included = {rule.key for rule in MANIFEST.values() if isinstance(rule, Included)}
+    assert set(document["records"]) == included
+    assert isinstance(MANIFEST["feedbacknote"], Omitted)
+    assert isinstance(MANIFEST["feedbacktriageevent"], Omitted)

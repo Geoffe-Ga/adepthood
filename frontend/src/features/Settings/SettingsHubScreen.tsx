@@ -9,11 +9,12 @@ import {
   KeyRound,
   LifeBuoy,
   LogOut,
+  MessageSquare,
   ShieldCheck,
   Trash2,
   Vault,
 } from 'lucide-react-native';
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
@@ -26,6 +27,14 @@ import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { useAuth } from '@/context/AuthContext';
 import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
+import { AdminInboxSettingsSection } from '@/features/AdminFeedback/AdminInboxSettingsSection';
+import { FEEDBACK_CONTROL_TOKENS } from '@/features/Feedback/feedbackControlTokens';
+import {
+  SEND_FEEDBACK_LABEL,
+  SETTINGS_FEEDBACK_DESCRIPTION,
+} from '@/features/Feedback/feedbackCopy';
+import { FEEDBACK_TEST_IDS } from '@/features/Feedback/feedbackTestIds';
+import { openFeedbackComposer } from '@/features/Feedback/navigation';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import SanghaSection from '@/features/Settings/SanghaSection';
 import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
@@ -227,6 +236,33 @@ const SupportSection = ({ onSupportCare }: { onSupportCare: () => void }): React
   </EditorialSection>
 );
 
+/**
+ * Private beta feedback (#2898): the same composer the header control opens,
+ * reachable from the hub for anyone who looks for it here first. Its own small
+ * group so the admin inbox entry (#2900) can sit beside it.
+ */
+const FeedbackSection = (): React.JSX.Element => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  // Remembered as the composer's origin, so closing it returns focus here.
+  const rowRef = useRef<View>(null);
+  const onPress = useCallback(
+    () => openFeedbackComposer(navigation, FEEDBACK_CONTROL_TOKENS.settingsRow, rowRef),
+    [navigation],
+  );
+  return (
+    <EditorialSection title="Beta feedback" testID="settings-group-feedback">
+      <SettingsRow
+        icon={MessageSquare}
+        label={SEND_FEEDBACK_LABEL}
+        description={SETTINGS_FEEDBACK_DESCRIPTION}
+        onPress={onPress}
+        testID={FEEDBACK_TEST_IDS.settingsRow}
+        ref={rowRef}
+      />
+    </EditorialSection>
+  );
+};
+
 const SettingsHubScreen = (): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout } = useAuth();
@@ -256,6 +292,8 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <YourDataSection onExportData={openExportData} />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
       <SupportSection onSupportCare={openSupportCare} />
+      <FeedbackSection />
+      <AdminInboxSettingsSection />
       <LegalSection />
     </ScreenScaffold>
   );

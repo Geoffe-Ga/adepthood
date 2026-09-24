@@ -241,7 +241,21 @@ MANIFEST: Mapping[str, ExportRule] = {
         "the account did about this product, which is still writing the account "
         "did -- an archive that carried the journal but not this would be "
         "answering a narrower question than the one a person asks.",
-        drop_columns=("idem_key",),
+        # ``status`` and ``duplicate_of_id`` are the operator's triage of the
+        # report, not anything the account wrote; the archive answers "what
+        # did I say", and an operator's working state is not part of that.
+        drop_columns=("idem_key", "status", "duplicate_of_id"),
+    ),
+    "feedbacknote": Omitted(
+        "An operator's private working note about a beta report. The report "
+        "itself is exported in the account's own words; a note is somebody "
+        "else's reading of them, written for triage, and putting it in the "
+        "reporter's archive would turn a private note into a message.",
+    ),
+    "feedbacktriageevent": Omitted(
+        "The operator audit trail of a beta report -- status changes, duplicate "
+        "links, notes added -- recorded about the report by an administrator. "
+        "Content-free operational history, not writing the account did.",
     ),
     "goal": Included(
         key="goals",

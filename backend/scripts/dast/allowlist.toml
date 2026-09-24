@@ -187,6 +187,34 @@ path     = "/admin/users/{user_id}/summary"
 category = "admin_only"
 reason   = "gated on the admin role rather than on ownership; both identities are denied"
 
+# The beta feedback triage inbox (#2900). Administrators triage everybody's
+# reports by design, so ownership is the wrong axis: the admin role is the
+# control, and tests/test_admin_feedback_authz.py exercises the anonymous,
+# reporter-as-non-admin and stranger legs on every one of these routes. Ids are
+# resolved within their scope instead: a duplicate target that does not exist
+# is 404 feedback_report_not_found, and a draft's note id that is missing or on
+# another report is 404 feedback_note_not_found. The four triage mutations share
+# one command route (/actions) so the role-gated surface this list must excuse
+# stays three method/path pairs.
+
+[[route]]
+method   = "GET"
+path     = "/admin/feedback/{public_id}"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "POST"
+path     = "/admin/feedback/{public_id}/actions"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
+[[route]]
+method   = "POST"
+path     = "/admin/feedback/{public_id}/draft"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
+
 # --- No way to create the object from outside the process -------------------
 
 [[route]]

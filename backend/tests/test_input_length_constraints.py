@@ -24,6 +24,7 @@ from models.feedback import (
     FEEDBACK_SUMMARY_MAX_LENGTH,
     PUBLIC_ID_MAX_LENGTH,
 )
+from models.feedback_triage import FEEDBACK_NOTE_MAX_LENGTH
 from models.practice import Practice
 from schemas.goal_group import (
     GOAL_GROUP_DESCRIPTION_MAX_LENGTH,
@@ -44,6 +45,7 @@ from schemas.practice import (
     PRACTICE_REFLECTION_MAX_LENGTH,
 )
 from schemas.prompt import PROMPT_RESPONSE_MAX_LENGTH
+from tests.helpers.feedback_triage import make_account, seed_report
 
 
 async def _signup(client: AsyncClient, username: str = "alice") -> dict[str, str]:
@@ -470,3 +472,29 @@ async def test_an_oversized_public_reference_is_rejected_by_the_path_bound(
     )
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+# ── Operator notes on beta feedback (#2900) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("length", "accepted"),
+    [(FEEDBACK_NOTE_MAX_LENGTH, True), (FEEDBACK_NOTE_MAX_LENGTH + 1, False)],
+)
+async def test_an_operator_note_is_bounded_at_its_named_constant(
+    async_client: AsyncClient, db_session: AsyncSession, length: int, *, accepted: bool
+) -> None:
+    """At the bound is a note; one past it is a 422."""
+    admin = await make_account(db_session, "note_bound_admin@example.com", admin=True)
+    reporter = await make_account(db_session, "note_bound_reporter@example.com")
+    report = await seed_report(db_session, reporter.user_id)
+
+    resp = await async_client.post(
+        f"/admin/feedback/{report.public_id}/actions",
+        json={"action": "add_note", "body": "n" * length},
+        headers=admin.headers,
+    )
+
+    expected = HTTPStatus.OK if accepted else HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.status_code == expected

@@ -98,6 +98,13 @@ jest.mock('@/features/Practice/screens/PracticeDetailScreen', () => {
   const Stub = () => <Text>PracticeDetailScreen</Text>;
   return { PracticeDetailScreen: Stub, default: Stub };
 });
+// #2898: RootStack mounts the feedback composer as a sibling of ``Tabs``; it
+// reads its route and the navigation state, which the navigator stub above
+// does not provide -- stub it like the other route-reading screens.
+jest.mock('@/features/Feedback/FeedbackComposerScreen', () => {
+  const { Text } = require('react-native');
+  return () => <Text>FeedbackComposerScreen</Text>;
+});
 jest.mock('@/features/Practice/screens/CreatePracticeWizard', () => {
   const { Text } = require('react-native');
   const Stub = () => <Text>CreatePracticeWizard</Text>;

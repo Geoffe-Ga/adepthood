@@ -87,6 +87,20 @@ class FeedbackViewportClass(enum.StrEnum):
     REGULAR = "regular"
 
 
+class FeedbackStatus(enum.StrEnum):
+    """Where a report stands in the operator's triage, and nothing more.
+
+    Operator-authored state about the report, not the reporter's writing: it is
+    never shown on the receipt and never carried in the reporter's export. The
+    edges between these states live in :data:`domain.feedback_triage.TRANSITIONS`.
+    """
+
+    CLOSED = "closed"
+    NEW = "new"
+    PLANNED = "planned"
+    TRIAGED = "triaged"
+
+
 # --------------------------------------------------------------------------
 # Bounds. Every one of them is named, because each is asserted somewhere else:
 # the request schema validates against it, the column is declared at it, and
@@ -108,6 +122,8 @@ FEEDBACK_CORRELATION_ID_LENGTH: Final = 36
 # The enum columns are plaintext strings; the CHECK is what bounds their value,
 # so the width only has to clear the longest member.
 _ENUM_COLUMN_WIDTH: Final = 20
+
+_TABLE: Final = "feedbackreport"
 
 # ``FB-`` plus eight characters.
 PUBLIC_ID_PREFIX: Final = "FB-"
@@ -143,17 +159,22 @@ def mint_public_id() -> str:
     return f"{PUBLIC_ID_PREFIX}{body}"
 
 
-def _enum_check(column: str, values: type[enum.StrEnum]) -> CheckConstraint:
-    """CHECK pinning ``column`` to ``values``, in the shape the seeder can read.
+def enum_check(table: str, column: str, values: type[enum.StrEnum]) -> CheckConstraint:
+    """CHECK pinning ``table.column`` to ``values``, in the shape the seeder can read.
 
     ``col IN ('a','b')`` is the one form ``tests/helpers/account_seed.py``
     parses, so writing it this way is what lets the account-deletion end-to-end
     sweep synthesise a row here without a hand-maintained entry. Members are
     sorted so the rendered SQL is order-stable and ``alembic --autogenerate``
     reports no drift against the migration.
+
+    ``table`` is a parameter rather than a literal because the triage tables in
+    :mod:`models.feedback_triage` enumerate columns too, and a constraint named
+    ``ck_feedbackreport_action_valid`` on a table that is not ``feedbackreport``
+    would send whoever reads the violation to the wrong table.
     """
     quoted = ", ".join(f"'{member.value}'" for member in sorted(values))
-    return CheckConstraint(f"{column} IN ({quoted})", name=f"ck_feedbackreport_{column}_valid")
+    return CheckConstraint(f"{column} IN ({quoted})", name=f"ck_{table}_{column}_valid")
 
 
 class FeedbackReport(ProseRedactingRepr, SQLModel, table=True):
@@ -169,13 +190,16 @@ class FeedbackReport(ProseRedactingRepr, SQLModel, table=True):
     than writing a second one.
     """
 
-    __tablename__ = "feedbackreport"
+    __tablename__ = _TABLE
     __table_args__ = (
-        _enum_check("category", FeedbackCategory),
-        _enum_check("impact", FeedbackImpact),
-        _enum_check("platform", FeedbackPlatform),
-        _enum_check("viewport_class", FeedbackViewportClass),
+        enum_check(_TABLE, "category", FeedbackCategory),
+        enum_check(_TABLE, "impact", FeedbackImpact),
+        enum_check(_TABLE, "platform", FeedbackPlatform),
+        enum_check(_TABLE, "viewport_class", FeedbackViewportClass),
+        enum_check(_TABLE, "status", FeedbackStatus),
         Index("ix_feedbackreport_public_id", "public_id", unique=True),
+        # The inbox's default read: one status, newest first, id as the tiebreak.
+        Index("ix_feedbackreport_status_created_at_id", "status", "created_at", "id"),
         Index(
             "ix_feedbackreport_user_idem_key",
             "user_id",
@@ -194,6 +218,31 @@ class FeedbackReport(ProseRedactingRepr, SQLModel, table=True):
     impact: str = Field(sa_column=Column(String(_ENUM_COLUMN_WIDTH), nullable=False))
     platform: str = Field(sa_column=Column(String(_ENUM_COLUMN_WIDTH), nullable=False))
     viewport_class: str = Field(sa_column=Column(String(_ENUM_COLUMN_WIDTH), nullable=False))
+
+    # Operator triage. Written only by :mod:`services.feedback_triage`, read
+    # only by the admin routes, dropped from the reporter's export, and absent
+    # from the receipt. ``server_default`` is what backfilled the rows that
+    # existed before triage did.
+    status: str = Field(
+        default=FeedbackStatus.NEW.value,
+        sa_column=Column(
+            String(_ENUM_COLUMN_WIDTH),
+            nullable=False,
+            server_default=FeedbackStatus.NEW.value,
+        ),
+    )
+    # The report this one repeats, if an operator said so. ``SET NULL`` so a
+    # canonical report leaving (retention, or its reporter's account deletion)
+    # detaches its duplicates rather than taking them with it. The service
+    # clears it explicitly too, and the reader resolves a dangling id to
+    # ``None``, because SQLite -- which the suite runs on -- never fires it.
+    duplicate_of_id: int | None = Field(
+        default=None,
+        foreign_key="feedbackreport.id",
+        ondelete="SET NULL",
+        nullable=True,
+        index=True,
+    )
 
     # The account's own writing. Encrypted at rest, exported, erased, and kept
     # out of ``repr``. No ``max_length`` on the Field: it cannot coexist with

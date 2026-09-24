@@ -44,6 +44,7 @@ from sqlmodel import SQLModel
 
 from models.completion_suggestion import CompletionSuggestion, CompletionTargetType
 from models.feedback import FeedbackReport
+from models.feedback_triage import FeedbackNote
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalEntry
@@ -119,6 +120,12 @@ _FEEDBACK_PROSE_COLUMNS: frozenset[str] = frozenset(
     }
 )
 
+# What an operator wrote about somebody's beta report. Its own set, because the
+# argument is its own: this is not the reporter's writing, but it is prose about
+# what they wrote, typed by an administrator in the expectation that only other
+# administrators read it -- and a stolen dump would read it just as easily.
+_OPERATOR_NOTE_COLUMNS: frozenset[str] = frozenset({"feedbacknote.body"})
+
 # Columns encrypted for a reason other than holding anyone's writing. They are
 # named here rather than folded into the sets above because the distinction is
 # the whole subject of this module: the argument for encrypting a person's prose
@@ -147,6 +154,7 @@ _FEEDBACK_SUMMARY = "The habit card vanished the moment I accepted the offer."
 _FEEDBACK_INTENT = "I was trying to log the sit I had just finished."
 _FEEDBACK_EXPECTED = "The card would stay on the shelf and show today as done."
 _FEEDBACK_ACTUAL = "The whole row went blank and I could not get it back."
+_OPERATOR_NOTE = "Same fault as the offer-card crash; reproduce on a cold start."
 
 
 @pytest.fixture
@@ -264,6 +272,7 @@ _RAW_READS: dict[str, str] = {
     "feedbackreport.intent": "SELECT intent FROM feedbackreport",
     "feedbackreport.expected": "SELECT expected FROM feedbackreport",
     "feedbackreport.actual": "SELECT actual FROM feedbackreport",
+    "feedbacknote.body": "SELECT body FROM feedbacknote",
 }
 
 
@@ -300,6 +309,7 @@ def test_the_pinned_inventory_is_exactly_what_the_schema_encrypts() -> None:
         == _JOURNAL_TEXT_COLUMNS
         | _PRACTICE_PROSE_COLUMNS
         | _FEEDBACK_PROSE_COLUMNS
+        | _OPERATOR_NOTE_COLUMNS
         | _OTHER_ENCRYPTED_COLUMNS
     )
 
@@ -525,6 +535,34 @@ async def test_feedback_prose_is_ciphertext_in_the_raw_columns(
         ("feedbackreport.actual", _FEEDBACK_ACTUAL),
     ):
         _assert_ciphertext_of(await _raw(db_session, column), plaintext, column)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_an_operator_note_is_ciphertext_in_the_raw_column(
+    db_session: AsyncSession,
+) -> None:
+    """An administrator's triage note is stored the way the report it annotates is."""
+    user_id = await _user(db_session)
+    report = FeedbackReport(
+        user_id=user_id,
+        public_id="FB-34567892",
+        category="broken",
+        impact="blocked",
+        platform="ios",
+        viewport_class="compact",
+        summary=_FEEDBACK_SUMMARY,
+        screen="habits.shelf",
+        app_build="1.4.2",
+    )
+    db_session.add(report)
+    await db_session.commit()
+    db_session.add(FeedbackNote(report_id=report.id or 0, body=_OPERATOR_NOTE))
+    await db_session.commit()
+
+    _assert_ciphertext_of(
+        await _raw(db_session, "feedbacknote.body"), _OPERATOR_NOTE, "feedbacknote.body"
+    )
 
 
 @pytest.mark.asyncio

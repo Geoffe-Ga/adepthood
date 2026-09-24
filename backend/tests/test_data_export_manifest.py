@@ -122,7 +122,11 @@ def test_every_omission_names_a_table_the_user_did_not_write() -> None:
     }
     # ``uservaultconfig`` is the one encrypted column that is a credential
     # rather than writing, and it is omitted for exactly that reason.
-    assert omitted & encrypted_text_tables == {"uservaultconfig"}
+    # ``feedbacknote`` is encrypted prose, but an *administrator's* prose about
+    # the account's report rather than anything the account wrote (#2900):
+    # handing it to the reporter would turn a private triage note into a
+    # message. Both exceptions are named so a third cannot join silently.
+    assert omitted & encrypted_text_tables == {"uservaultconfig", "feedbacknote"}
 
 
 def test_the_journal_is_exported() -> None:

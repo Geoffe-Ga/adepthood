@@ -5,11 +5,14 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Settings } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
 import { accent, SPACING, touchTarget } from '../design/tokens';
 import CourseScreen from '../features/Course/CourseScreen';
+import { FEEDBACK_CONTROL_TOKENS } from '../features/Feedback/feedbackControlTokens';
+import { openFeedbackComposer } from '../features/Feedback/navigation';
+import { SendFeedbackButton } from '../features/Feedback/SendFeedbackButton';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
 import MapScreen from '../features/Map/MapScreen';
@@ -62,6 +65,15 @@ const JournalTab = withBoundary('Journal', JournalShelfScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
 const SETTINGS_ICON_SIZE = 24;
+
+/**
+ * Tab titles sit at the leading edge on every platform. iOS centres them by
+ * default, which gives the empty leading slot the same share of the bar as the
+ * trailing one; at phone widths the trailing "Send feedback" + Settings cluster
+ * then ran into the centred title (#2898 review [12]). Android and the web
+ * already left-align, so this changes iOS only.
+ */
+const HEADER_TITLE_ALIGN = 'left' as const;
 
 /** The single screen-component mapping, keyed by route so registry lookup is total. */
 const SCREEN_COMPONENT_BY_NAME: Readonly<
@@ -162,21 +174,29 @@ const useLoadDepthPreferences = (): void => {
 
 interface TabHeaderRightProps {
   onSettings: () => void;
+  onFeedback: (origin: React.RefObject<View | null>) => void;
 }
 
 /** Header-right gear that opens the Settings hub (#835), hoisted to a stable
  * component so it is not redefined on every ``BottomTabs`` render. Logout now
- * lives inside the hub's Session group, not on the tab header. */
-const TabHeaderRight = ({ onSettings }: TabHeaderRightProps): React.JSX.Element => (
-  <TouchableOpacity
-    onPress={onSettings}
-    style={styles.headerButton}
-    accessibilityLabel="Open settings"
-    accessibilityRole="button"
-    testID="open-settings-button"
-  >
-    <Settings color={accent.primary} size={SETTINGS_ICON_SIZE} />
-  </TouchableOpacity>
+ * lives inside the hub's Session group, not on the tab header.
+ *
+ * #2898: "Send feedback" sits before the gear. It is rendered by the shell
+ * rather than by any one screen, so every tab -- ring-gated ones included --
+ * carries it, and it survives a ring being toggled off and on. */
+const TabHeaderRight = ({ onSettings, onFeedback }: TabHeaderRightProps): React.JSX.Element => (
+  <View style={styles.headerRow}>
+    <SendFeedbackButton onPress={onFeedback} />
+    <TouchableOpacity
+      onPress={onSettings}
+      style={styles.headerButton}
+      accessibilityLabel="Open settings"
+      accessibilityRole="button"
+      testID="open-settings-button"
+    >
+      <Settings color={accent.primary} size={SETTINGS_ICON_SIZE} />
+    </TouchableOpacity>
+  </View>
 );
 
 /**
@@ -194,9 +214,15 @@ const BottomTabs = (): React.JSX.Element => {
     navigation.navigate('Settings');
   }, [navigation]);
 
+  const openFeedback = React.useCallback(
+    (origin: React.RefObject<View | null>) =>
+      openFeedbackComposer(navigation, FEEDBACK_CONTROL_TOKENS.shellHeader, origin),
+    [navigation],
+  );
+
   const renderHeaderRight = React.useCallback(
-    () => <TabHeaderRight onSettings={openSettings} />,
-    [openSettings],
+    () => <TabHeaderRight onSettings={openSettings} onFeedback={openFeedback} />,
+    [openSettings, openFeedback],
   );
 
   const renderTabBar = React.useCallback(
@@ -208,7 +234,7 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName={REDIRECT_TARGET}
       tabBar={renderTabBar}
-      screenOptions={{ headerRight: renderHeaderRight }}
+      screenOptions={{ headerRight: renderHeaderRight, headerTitleAlign: HEADER_TITLE_ALIGN }}
     >
       {destinations.map(({ name }) => (
         <Tab.Screen key={name} name={name} component={SCREEN_COMPONENT_BY_NAME[name]} />
@@ -218,6 +244,10 @@ const BottomTabs = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   headerButton: {
     minWidth: touchTarget.minimum,
     minHeight: touchTarget.minimum,

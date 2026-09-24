@@ -9,18 +9,23 @@ promise.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.feedback import FEEDBACK_RETENTION_DAYS, FeedbackReport
+from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.user import User
+from services import feedback as feedback_service
 from services.feedback import delete_expired_feedback_reports
+from services.feedback_triage import DELETED_REPORT_STATE
+from tests.helpers.feedback_triage import make_account, report_state, seed_report
 
 
 async def _signup(client: AsyncClient, email: str) -> tuple[int, dict[str, str]]:
@@ -151,3 +156,118 @@ async def test_the_admin_maintenance_route_refuses_a_non_positive_window(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert resp.json()["detail"][0]["loc"] == ["query", "older_than_days"]
+
+
+# ── Triage children (#2900) ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_takes_an_expired_reports_notes_and_events_and_leaves_no_orphan(
+    db_session: AsyncSession,
+) -> None:
+    """On SQLite, where no cascade fires: children go, survivors unlink, fresh rows stay."""
+    reporter = await make_account(db_session, "retention_reporter@example.com")
+    admin = await make_account(db_session, "retention_admin@example.com", admin=True)
+    expired = await seed_report(
+        db_session,
+        reporter.user_id,
+        created_at=datetime.now(UTC) - timedelta(days=FEEDBACK_RETENTION_DAYS + 1),
+    )
+    fresh = await seed_report(db_session, reporter.user_id)
+    expired_id, fresh_id = expired.id or 0, fresh.id or 0
+    fresh.duplicate_of_id = expired_id
+    db_session.add(fresh)
+    for report_id in (expired_id, fresh_id):
+        db_session.add(FeedbackNote(report_id=report_id, author_admin_id=admin.user_id, body="n"))
+        db_session.add(
+            FeedbackTriageEvent(
+                report_id=report_id, actor_admin_id=admin.user_id, action="note_added"
+            )
+        )
+    await db_session.commit()
+
+    deleted = await delete_expired_feedback_reports(db_session)
+
+    assert deleted == 1
+    db_session.expire_all()
+    notes = (await db_session.execute(select(FeedbackNote.report_id))).scalars().all()
+    events = (await db_session.execute(select(FeedbackTriageEvent.report_id))).scalars().all()
+    assert list(notes) == [fresh_id]
+    # The survivor's own note_added event, plus the system unlink that records
+    # it losing its canonical report.
+    assert list(events) == [fresh_id, fresh_id]
+    assert await report_state(db_session, fresh_id) == ("new", None)
+    remaining = (await db_session.execute(select(FeedbackReport.id))).scalars().all()
+    assert list(remaining) == [fresh_id]
+
+
+@pytest.mark.asyncio
+async def test_a_driver_that_reports_no_row_count_is_named_not_counted_as_zero(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``-1`` rowcount returns 0 and says so, rather than passing as a quiet sweep."""
+
+    async def _unreported(*_args: object, **_kwargs: object) -> int:
+        return -1
+
+    monkeypatch.setattr(feedback_service, "purge_feedback_reports", _unreported)
+
+    with caplog.at_level(logging.WARNING):
+        deleted = await delete_expired_feedback_reports(db_session)
+
+    assert deleted == 0
+    assert any("did not report a row count" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_survivor_linked_to_an_expired_report_records_the_unlink_and_forgets_it(
+    db_session: AsyncSession,
+) -> None:
+    """The survivor's trail ends in a system unlink, and no event still names the gone report."""
+    reporter = await make_account(db_session, "retention_link_reporter@example.com")
+    admin = await make_account(db_session, "retention_link_admin@example.com", admin=True)
+    expired = await seed_report(
+        db_session,
+        reporter.user_id,
+        created_at=datetime.now(UTC) - timedelta(days=FEEDBACK_RETENTION_DAYS + 1),
+    )
+    survivor = await seed_report(db_session, reporter.user_id)
+    expired_ref, survivor_id = expired.public_id, survivor.id or 0
+    survivor.duplicate_of_id = expired.id
+    db_session.add(survivor)
+    db_session.add(
+        FeedbackTriageEvent(
+            report_id=survivor_id,
+            actor_admin_id=admin.user_id,
+            action="duplicate_linked",
+            old_state=None,
+            new_state=expired_ref,
+        )
+    )
+    await db_session.commit()
+
+    await delete_expired_feedback_reports(db_session)
+
+    db_session.expire_all()
+    trail = (
+        await db_session.execute(
+            select(FeedbackTriageEvent)
+            .where(col(FeedbackTriageEvent.report_id) == survivor_id)
+            .order_by(col(FeedbackTriageEvent.id))
+        )
+    ).scalars()
+    assert [(e.action, e.actor_admin_id, e.old_state, e.new_state) for e in trail] == [
+        ("duplicate_linked", admin.user_id, None, DELETED_REPORT_STATE),
+        ("duplicate_unlinked", None, DELETED_REPORT_STATE, None),
+    ]
+    named = await db_session.scalar(
+        select(func.count())
+        .select_from(FeedbackTriageEvent)
+        .where(
+            (col(FeedbackTriageEvent.old_state) == expired_ref)
+            | (col(FeedbackTriageEvent.new_state) == expired_ref)
+        )
+    )
+    assert named == 0

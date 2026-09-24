@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
+import type { StyleProp, TextStyle, View, ViewStyle } from 'react-native';
 
 import { accent, BORDER_RADIUS, SPACING, surface, touchTarget, uiType } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -29,6 +29,12 @@ interface ButtonProps {
   icon?: React.ReactNode;
   /** Optional override for the label, layered over the variant's own colour. */
   labelStyle?: StyleProp<TextStyle>;
+  /**
+   * The underlying touchable, for a caller that must move focus back onto the
+   * button later (the feedback composer returns focus to the control that
+   * opened it). React 19 passes ``ref`` to a function component as a prop.
+   */
+  ref?: React.Ref<View>;
 }
 
 /**
@@ -86,6 +92,7 @@ export function Button({
   style,
   icon,
   labelStyle,
+  ref,
 }: ButtonProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const isDisabled = disabled || busy;
@@ -94,6 +101,7 @@ export function Button({
   const labelColor = StyleSheet.flatten<TextStyle>([labelStyles[variant], labelStyle]).color;
   return (
     <TouchableOpacity
+      ref={ref}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: isDisabled, busy }}

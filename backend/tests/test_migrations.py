@@ -5509,3 +5509,207 @@ def test_review_cadence_downgrade_coarsens_every_level_the_mapping_produces(
     command.downgrade(cfg, _CADENCE_BASE_REVISION)
 
     assert _scopes_by_id(db_url) == expected_after_downgrade
+
+
+# -- #2900 feedback triage migration -----------------------------------------
+
+_TRIAGE_BASE_REVISION = "e3a9d1c4b6f2"  # pragma: allowlist secret
+_TRIAGE_REVISION = "c7e4a2f9b1d8"  # pragma: allowlist secret
+
+
+@pytest.fixture
+def alembic_sqlite_config_triage(alembic_sqlite_config_feedback: Config) -> Config:
+    """A SQLite database holding ``feedbackreport`` at the triage migration's parent.
+
+    ``e3a9d1c4b6f2`` rewrites ``journalentry``, which this minimal database does
+    not have, so the fixture upgrades to the report table's own revision and
+    stamps past the unrelated one -- which is also what keeps this round-trip a
+    statement about the triage migration alone.
+    """
+    cfg = alembic_sqlite_config_feedback
+    command.upgrade(cfg, _FEEDBACK_REVISION)
+    command.stamp(cfg, _TRIAGE_BASE_REVISION)
+    return cfg
+
+
+def _scalar(db_url: str, sql: str) -> object:
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            return conn.execute(text(sql)).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def _execute(db_url: str, sql: str) -> None:
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(sql))
+    finally:
+        engine.dispose()
+
+
+def test_feedback_triage_migration_backfills_existing_reports_to_new(
+    alembic_sqlite_config_triage: Config,
+) -> None:
+    """A report filed before triage existed comes out ``new``, unlinked."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    _insert_feedback_row(db_url, public_id="FB-67892345")
+
+    command.upgrade(cfg, _TRIAGE_REVISION)
+
+    assert _scalar(db_url, "SELECT status FROM feedbackreport") == "new"
+    assert _scalar(db_url, "SELECT duplicate_of_id FROM feedbackreport") is None
+    assert {"status", "duplicate_of_id"} <= _columns_of(db_url, "feedbackreport")
+    assert _columns_of(db_url, "feedbacknote") == {
+        "id",
+        "report_id",
+        "author_admin_id",
+        "body",
+        "created_at",
+    }
+    assert _columns_of(db_url, "feedbacktriageevent") == {
+        "id",
+        "report_id",
+        "actor_admin_id",
+        "action",
+        "old_state",
+        "new_state",
+        "created_at",
+    }
+
+
+def test_feedback_triage_migration_keeps_the_partial_idempotency_index(
+    alembic_sqlite_config_triage: Config,
+) -> None:
+    """Rebuilding the table on SQLite must not drop the keyed-dedup index or its WHERE."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    command.upgrade(cfg, _TRIAGE_REVISION)
+
+    ddl = _scalar(
+        db_url,
+        "SELECT sql FROM sqlite_master WHERE name = 'ix_feedbackreport_user_idem_key'",
+    )
+    assert isinstance(ddl, str)
+    assert "UNIQUE" in ddl.upper()
+    assert "idem_key IS NOT NULL" in ddl
+
+
+def test_feedback_triage_migration_declares_the_constraints_and_indexes(
+    alembic_sqlite_config_triage: Config,
+) -> None:
+    """Sorted status CHECK, SET NULL self-link and actors, CASCADE children, indexes."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    command.upgrade(cfg, _TRIAGE_REVISION)
+
+    report_ddl = _scalar(db_url, "SELECT sql FROM sqlite_master WHERE name = 'feedbackreport'")
+    assert isinstance(report_ddl, str)
+    assert "status IN ('closed', 'new', 'planned', 'triaged')" in report_ddl
+    event_ddl = _scalar(db_url, "SELECT sql FROM sqlite_master WHERE name = 'feedbacktriageevent'")
+    assert isinstance(event_ddl, str)
+    assert (
+        "action IN ('duplicate_linked', 'duplicate_unlinked', 'note_added', 'status_changed')"
+        in event_ddl
+    )
+
+    engine = create_engine(_sync_url(db_url))
+    try:
+        inspector = inspect(engine)
+        ondelete = {
+            (table, tuple(fk["constrained_columns"])): fk["options"].get("ondelete")
+            for table in ("feedbackreport", "feedbacknote", "feedbacktriageevent")
+            for fk in inspector.get_foreign_keys(table)
+        }
+        indexes = {
+            index["name"]
+            for table in ("feedbackreport", "feedbacknote", "feedbacktriageevent")
+            for index in inspector.get_indexes(table)
+        }
+    finally:
+        engine.dispose()
+
+    assert ondelete[("feedbackreport", ("duplicate_of_id",))] == "SET NULL"
+    assert ondelete[("feedbacknote", ("report_id",))] == "CASCADE"
+    assert ondelete[("feedbacknote", ("author_admin_id",))] == "SET NULL"
+    assert ondelete[("feedbacktriageevent", ("report_id",))] == "CASCADE"
+    assert ondelete[("feedbacktriageevent", ("actor_admin_id",))] == "SET NULL"
+    assert {
+        "ix_feedbackreport_duplicate_of_id",
+        "ix_feedbackreport_status_created_at_id",
+        "ix_feedbacknote_report_id",
+        "ix_feedbacknote_author_admin_id",
+        "ix_feedbacktriageevent_report_id",
+        "ix_feedbacktriageevent_actor_admin_id",
+    } <= indexes
+
+
+def test_feedback_triage_status_check_rejects_an_unknown_status(
+    alembic_sqlite_config_triage: Config,
+) -> None:
+    """The status CHECK is live."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    _insert_feedback_row(db_url, public_id="FB-78923456")
+    command.upgrade(cfg, _TRIAGE_REVISION)
+
+    with pytest.raises(IntegrityError):
+        _execute(db_url, "UPDATE feedbackreport SET status = 'wontfix'")
+
+
+def test_feedback_triage_migration_round_trips_when_there_is_nothing_to_lose(
+    alembic_sqlite_config_triage: Config,
+) -> None:
+    """Upgrade, downgrade and re-upgrade with an untriaged report in place."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    _insert_feedback_row(db_url, public_id="FB-89234567")
+
+    command.upgrade(cfg, _TRIAGE_REVISION)
+    command.downgrade(cfg, _TRIAGE_BASE_REVISION)
+    assert not _table_exists(db_url, "feedbacknote")
+    assert not _table_exists(db_url, "feedbacktriageevent")
+    assert "status" not in _columns_of(db_url, "feedbackreport")
+    assert _scalar(db_url, "SELECT COUNT(*) FROM feedbackreport") == 1
+
+    command.upgrade(cfg, _TRIAGE_REVISION)
+    assert _scalar(db_url, "SELECT status FROM feedbackreport") == "new"
+
+
+@pytest.mark.parametrize(
+    "triage_sql",
+    [
+        "UPDATE feedbackreport SET status = 'triaged'",
+        "UPDATE feedbackreport SET duplicate_of_id = id",
+        (
+            "INSERT INTO feedbacknote (report_id, body, created_at)"
+            " SELECT id, 'ciphertext', CURRENT_TIMESTAMP FROM feedbackreport"
+        ),
+        (
+            "INSERT INTO feedbacktriageevent (report_id, action, created_at)"
+            " SELECT id, 'note_added', CURRENT_TIMESTAMP FROM feedbackreport"
+        ),
+    ],
+)
+def test_feedback_triage_downgrade_refuses_while_triage_state_exists(
+    alembic_sqlite_config_triage: Config, triage_sql: str
+) -> None:
+    """A note, an event or a moved status is operator work the downgrade will not destroy."""
+    cfg = alembic_sqlite_config_triage
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+    _insert_feedback_row(db_url, public_id="FB-92345678")
+    command.upgrade(cfg, _TRIAGE_REVISION)
+    _execute(db_url, triage_sql)
+
+    with pytest.raises(RuntimeError, match="feedback triage state"):
+        command.downgrade(cfg, _TRIAGE_BASE_REVISION)
+    assert _table_exists(db_url, "feedbacknote")

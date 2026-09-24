@@ -36,6 +36,7 @@ from services.account_deletion import (
     delete_account,
 )
 from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
+from tests.helpers.feedback_triage import make_account, seed_report
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
 _ENTRY_BODY = "The thing I would least like to survive my own deletion."
@@ -601,3 +602,90 @@ async def test_delete_me_erases_the_accounts_beta_reports(
 
     assert resp.status_code == HTTPStatus.OK
     assert await _count(db_session, _FEEDBACK_TABLE, _USER_ID, user_id) == 0
+
+
+# ── Beta feedback triage (#2900) ──────────────────────────────────────────
+
+_NOTE_TABLE = "feedbacknote"
+_EVENT_TABLE = "feedbacktriageevent"
+_REPORT_ID = "report_id"
+
+
+async def _triage(
+    client: AsyncClient, admin_headers: dict[str, str], public_id: str, target: str
+) -> None:
+    """Transition, link and annotate one report through the admin command route."""
+    for command in (
+        {"action": "transition", "status": "triaged"},
+        {"action": "link_duplicate", "target_public_id": target},
+        {"action": "add_note", "body": "Operator reading."},
+    ):
+        resp = await client.post(
+            f"/admin/feedback/{public_id}/actions", json=command, headers=admin_headers
+        )
+        assert resp.status_code == HTTPStatus.OK, resp.text
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_reporter_takes_the_triage_of_their_reports(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Their reports' notes and events go; a survivor pointing at one reads null."""
+    reporter = await make_account(db_session, "triaged_leaver@example.com")
+    other = await make_account(db_session, "stays@example.com")
+    admin = await make_account(db_session, "deletion_admin@example.com", admin=True)
+    doomed = await seed_report(db_session, reporter.user_id)
+    survivor = await seed_report(db_session, other.user_id)
+    spare = await seed_report(db_session, other.user_id)
+    doomed_id, survivor_id = doomed.id or 0, survivor.id or 0
+    doomed_ref, survivor_ref, spare_ref = doomed.public_id, survivor.public_id, spare.public_id
+    await _triage(async_client, admin.headers, doomed_ref, spare_ref)
+    await _triage(async_client, admin.headers, survivor_ref, doomed_ref)
+
+    resp = await async_client.request(
+        "DELETE", "/users/me", json={"confirm_email": reporter.email}, headers=reporter.headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert await _count(db_session, _NOTE_TABLE, _REPORT_ID, doomed_id) == 0
+    assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, doomed_id) == 0
+    assert await _count(db_session, _NOTE_TABLE, _REPORT_ID, survivor_id) == 1
+    assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, survivor_id) == 4
+    detail = await async_client.get(f"/admin/feedback/{survivor_ref}", headers=admin.headers)
+    assert detail.status_code == HTTPStatus.OK
+    operator = detail.json()["operator_added"]
+    assert operator["duplicate_of"] is None
+    assert doomed_ref not in detail.text
+    last = operator["events"][-1]
+    assert (last["action"], last["old_state"], last["new_state"]) == (
+        "duplicate_unlinked",
+        "deleted",
+        None,
+    )
+    assert await _count(db_session, _EVENT_TABLE, "old_state", doomed_ref) == 0
+    assert await _count(db_session, _EVENT_TABLE, "new_state", doomed_ref) == 0
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_admin_keeps_their_triage_and_forgets_who_did_it(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Notes and events on other people's reports survive, with the actor cleared."""
+    reporter = await make_account(db_session, "reporter_stays@example.com")
+    admin = await make_account(db_session, "departing_admin@example.com", admin=True)
+    report = await seed_report(db_session, reporter.user_id)
+    target = await seed_report(db_session, reporter.user_id)
+    report_id = report.id or 0
+    await _triage(async_client, admin.headers, report.public_id, target.public_id)
+
+    resp = await async_client.request(
+        "DELETE", "/users/me", json={"confirm_email": admin.email}, headers=admin.headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert await _count(db_session, _NOTE_TABLE, _REPORT_ID, report_id) == 1
+    assert await _count(db_session, _EVENT_TABLE, _REPORT_ID, report_id) == 3
+    assert await _count(db_session, _NOTE_TABLE, "author_admin_id", admin.user_id) == 0
+    assert await _count(db_session, _EVENT_TABLE, "actor_admin_id", admin.user_id) == 0

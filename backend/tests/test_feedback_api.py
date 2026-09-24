@@ -38,6 +38,8 @@ from models.feedback import (
     mint_public_id,
 )
 from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
+from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH
+from tests.helpers.feedback_triage import make_account
 
 _PROSE = "The habit card vanished when I tapped the offer."
 _IDEMPOTENCY_HEADER = "Idempotency-Key"
@@ -290,6 +292,40 @@ async def test_the_raw_idempotency_key_is_never_stored(
     stored = (await db_session.execute(select(FeedbackReport))).scalars().one()
     assert stored.idem_key is not None
     assert _A_KEY not in stored.idem_key
+
+
+@pytest.mark.asyncio
+async def test_an_idempotency_key_past_its_bound_is_rejected_and_persists_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """One character over ``IDEMPOTENCY_KEY_MAX_LENGTH`` is a 422, and no row."""
+    headers = {
+        **await _signup(async_client, "feedback_key_too_long"),
+        _IDEMPOTENCY_HEADER: "k" * (IDEMPOTENCY_KEY_MAX_LENGTH + 1),
+    }
+
+    resp = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert await _report_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_idempotency_key_at_its_bound_is_accepted_and_replays(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Exactly ``IDEMPOTENCY_KEY_MAX_LENGTH`` characters is a key, not a refusal."""
+    headers = {
+        **await _signup(async_client, "feedback_key_at_bound"),
+        _IDEMPOTENCY_HEADER: "k" * IDEMPOTENCY_KEY_MAX_LENGTH,
+    }
+
+    first = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    second = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert first.status_code == HTTPStatus.CREATED
+    assert second.json()["public_id"] == first.json()["public_id"]
+    assert await _report_count(db_session) == 1
 
 
 @pytest.mark.asyncio
@@ -620,3 +656,37 @@ async def test_a_mint_that_always_collides_surfaces_rather_than_hanging(
     assert exhausted.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert _PROSE not in exhausted.text
     assert await _report_count(db_session) == 1
+
+
+# ── The receipt after triage (#2900) ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_receipt_is_byte_identical_before_and_after_triage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Status, a duplicate link and a note change nothing the reporter can read."""
+    headers = await _signup(async_client, "feedback_receipt_triage")
+    filed = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    other = await async_client.post("/feedback/", json=_payload(), headers=headers)
+    public_id, other_id = filed.json()["public_id"], other.json()["public_id"]
+    receipt_path = f"/feedback/{public_id}/receipt"
+    before = await async_client.get(receipt_path, headers=headers)
+    admin = await make_account(db_session, "receipt_triage_admin@example.com", admin=True)
+
+    for command in (
+        {"action": "transition", "status": "triaged"},
+        {"action": "transition", "status": "planned"},
+        {"action": "link_duplicate", "target_public_id": other_id},
+        {"action": "add_note", "body": "Operator only."},
+    ):
+        resp = await async_client.post(
+            f"/admin/feedback/{public_id}/actions", json=command, headers=admin.headers
+        )
+        assert resp.status_code == HTTPStatus.OK, resp.text
+    after = await async_client.get(receipt_path, headers=headers)
+
+    assert before.status_code == after.status_code == HTTPStatus.OK
+    assert after.content == before.content
+    for leaked in ("planned", "triaged", "Operator only.", other_id, "duplicate", "note"):
+        assert leaked not in after.text

@@ -87,6 +87,45 @@
         "title": "AccountDeletionRequest",
         "type": "object"
       },
+      "AddNoteCommand": {
+        "additionalProperties": false,
+        "description": "Attach one private operator note.",
+        "properties": {
+          "action": {
+            "const": "add_note",
+            "title": "Action",
+            "type": "string"
+          },
+          "body": {
+            "description": "The note. Private to administrators.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "body"
+        ],
+        "title": "AddNoteCommand",
+        "type": "object"
+      },
+      "AdminCapabilities": {
+        "description": "What the signed-in administrator may do. Reaching this at all means admin.",
+        "properties": {
+          "feedback_triage": {
+            "description": "Whether the beta feedback inbox is available.",
+            "title": "Feedback Triage",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "feedback_triage"
+        ],
+        "title": "AdminCapabilities",
+        "type": "object"
+      },
       "AdminUserSummary": {
         "description": "Everything the operator needs about one account, in a single call.\n\nDeliberately a read-only aggregate: the point is to replace a SQL console\nsession, so it gathers the entitlement, licence-binding, wallet and\npurchase pictures that would otherwise require four separate queries\nagainst four tables.",
         "properties": {
@@ -1438,6 +1477,78 @@
         "title": "EntryStatus",
         "type": "string"
       },
+      "FeedbackAppAttached": {
+        "description": "The allowlisted diagnostic envelope the client attached.",
+        "properties": {
+          "app_build": {
+            "title": "App Build",
+            "type": "string"
+          },
+          "control": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Client correlation id, for finding the session's telemetry. Operator-only.",
+            "title": "Correlation Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "screen": {
+            "title": "Screen",
+            "type": "string"
+          },
+          "viewport_class": {
+            "title": "Viewport Class",
+            "type": "string"
+          }
+        },
+        "required": [
+          "screen",
+          "control",
+          "platform",
+          "app_build",
+          "viewport_class",
+          "locale",
+          "correlation_id",
+          "created_at"
+        ],
+        "title": "FeedbackAppAttached",
+        "type": "object"
+      },
       "FeedbackCategory": {
         "description": "What kind of report this is, in the tester's own framing.",
         "enum": [
@@ -1617,6 +1728,43 @@
         "title": "FeedbackCreate",
         "type": "object"
       },
+      "FeedbackDraftRequest": {
+        "additionalProperties": false,
+        "description": "The operator's own title and summary, and which notes, if any, to quote.\n\n``title`` and ``summary`` are required and are the only prose a draft\ncarries besides selected notes. There is no fallback: a request without\nthem is refused, and the reporter's words are never used in their place.\nThey are used to render this one response and are never stored.",
+        "properties": {
+          "note_ids": {
+            "description": "Notes on THIS report to include. Omitted notes never appear.",
+            "items": {
+              "maximum": 2147483647.0,
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "title": "Note Ids",
+            "type": "array"
+          },
+          "summary": {
+            "description": "What is wrong and how it shows, in the operator's words.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "description": "The issue title, in the operator's words.",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "summary"
+        ],
+        "title": "FeedbackDraftRequest",
+        "type": "object"
+      },
       "FeedbackImpact": {
         "description": "How much the thing being reported cost the person reporting it.",
         "enum": [
@@ -1627,6 +1775,109 @@
         ],
         "title": "FeedbackImpact",
         "type": "string"
+      },
+      "FeedbackIssueDraft": {
+        "description": "A GitHub issue draft. Returned for copying; nothing is published.",
+        "properties": {
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "source_public_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Public Ids",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "markdown",
+          "source_public_ids"
+        ],
+        "title": "FeedbackIssueDraft",
+        "type": "object"
+      },
+      "FeedbackOperatorAdded": {
+        "description": "Everything administrators have added to the report.",
+        "properties": {
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Public reference of the canonical report, or null if none (or if it is gone).",
+            "title": "Duplicate Of"
+          },
+          "duplicates": {
+            "description": "Public references of reports marked as this one.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Duplicates",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackTriageEventPublic"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackOperatorNote"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FeedbackStatus"
+          }
+        },
+        "required": [
+          "status",
+          "duplicate_of",
+          "duplicates",
+          "notes",
+          "events"
+        ],
+        "title": "FeedbackOperatorAdded",
+        "type": "object"
+      },
+      "FeedbackOperatorNote": {
+        "description": "One private operator note.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "created_at"
+        ],
+        "title": "FeedbackOperatorNote",
+        "type": "object"
       },
       "FeedbackPlatform": {
         "description": "Which client the report came from. A closed set, not a user-agent string.",
@@ -1669,6 +1920,241 @@
           "created_at"
         ],
         "title": "FeedbackReceipt",
+        "type": "object"
+      },
+      "FeedbackReporterSaid": {
+        "description": "The tester's own words, exactly as stored.",
+        "properties": {
+          "actual": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What happened instead.",
+            "title": "Actual"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What they expected.",
+            "title": "Expected"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What they were trying to do.",
+            "title": "Intent"
+          },
+          "summary": {
+            "description": "The one-sentence summary.",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "title": "FeedbackReporterSaid",
+        "type": "object"
+      },
+      "FeedbackStatus": {
+        "description": "Where a report stands in the operator's triage, and nothing more.\n\nOperator-authored state about the report, not the reporter's writing: it is\nnever shown on the receipt and never carried in the reporter's export. The\nedges between these states live in :data:`domain.feedback_triage.TRANSITIONS`.",
+        "enum": [
+          "closed",
+          "new",
+          "planned",
+          "triaged"
+        ],
+        "title": "FeedbackStatus",
+        "type": "string"
+      },
+      "FeedbackTriageAction": {
+        "description": "Every kind of change an operator can make to a report. One event each.",
+        "enum": [
+          "duplicate_linked",
+          "duplicate_unlinked",
+          "note_added",
+          "status_changed"
+        ],
+        "title": "FeedbackTriageAction",
+        "type": "string"
+      },
+      "FeedbackTriageDetail": {
+        "description": "One report, with its three sources kept apart, its fingerprint and siblings.",
+        "properties": {
+          "allowed_transitions": {
+            "description": "The statuses this report may move to next, per the server's table.",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackStatus"
+            },
+            "title": "Allowed Transitions",
+            "type": "array"
+          },
+          "app_attached": {
+            "$ref": "#/components/schemas/FeedbackAppAttached"
+          },
+          "category": {
+            "$ref": "#/components/schemas/FeedbackCategory"
+          },
+          "fingerprint": {
+            "description": "Read-time digest of category, screen, control, family.",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/FeedbackImpact"
+          },
+          "operator_added": {
+            "$ref": "#/components/schemas/FeedbackOperatorAdded"
+          },
+          "public_id": {
+            "title": "Public Id",
+            "type": "string"
+          },
+          "reporter_said": {
+            "$ref": "#/components/schemas/FeedbackReporterSaid"
+          },
+          "siblings": {
+            "description": "Other reports sharing the fingerprint. Suggestions only; nothing is merged.",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackTriageSummary"
+            },
+            "title": "Siblings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "public_id",
+          "category",
+          "impact",
+          "reporter_said",
+          "app_attached",
+          "operator_added",
+          "fingerprint",
+          "siblings",
+          "allowed_transitions"
+        ],
+        "title": "FeedbackTriageDetail",
+        "type": "object"
+      },
+      "FeedbackTriageEventPublic": {
+        "description": "One row of the append-only triage trail.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/FeedbackTriageAction"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "new_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New State"
+          },
+          "old_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old State"
+          }
+        },
+        "required": [
+          "action",
+          "old_state",
+          "new_state",
+          "created_at"
+        ],
+        "title": "FeedbackTriageEventPublic",
+        "type": "object"
+      },
+      "FeedbackTriageSummary": {
+        "description": "One inbox row: enough to choose what to open, and no prose or identity.",
+        "properties": {
+          "app_build": {
+            "description": "The build the reporter was running.",
+            "title": "App Build",
+            "type": "string"
+          },
+          "category": {
+            "$ref": "#/components/schemas/FeedbackCategory",
+            "description": "What kind of report it is."
+          },
+          "created_at": {
+            "description": "When the report was recorded.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Public reference of the report this one repeats, if any.",
+            "title": "Duplicate Of"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/FeedbackImpact",
+            "description": "What the reported thing cost the reporter."
+          },
+          "public_id": {
+            "description": "The report's public reference.",
+            "title": "Public Id",
+            "type": "string"
+          },
+          "screen": {
+            "description": "The canonical screen token it was filed from.",
+            "title": "Screen",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FeedbackStatus",
+            "description": "Where the report stands in triage."
+          }
+        },
+        "required": [
+          "public_id",
+          "status",
+          "category",
+          "impact",
+          "screen",
+          "app_build",
+          "created_at"
+        ],
+        "title": "FeedbackTriageSummary",
         "type": "object"
       },
       "FeedbackViewportClass": {
@@ -3421,6 +3907,30 @@
         "title": "LicenseBindingSummary",
         "type": "object"
       },
+      "LinkDuplicateCommand": {
+        "additionalProperties": false,
+        "description": "Mark the report a duplicate of ``target_public_id``. Status is left alone.",
+        "properties": {
+          "action": {
+            "const": "link_duplicate",
+            "title": "Action",
+            "type": "string"
+          },
+          "target_public_id": {
+            "description": "The canonical report's public reference.",
+            "maxLength": 11,
+            "pattern": "^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$",
+            "title": "Target Public Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target_public_id"
+        ],
+        "title": "LinkDuplicateCommand",
+        "type": "object"
+      },
       "MarginaliaKind": {
         "description": "What a margin note surfaces about the anchored span.",
         "enum": [
@@ -3892,6 +4402,42 @@
           "estimated_cost_usd"
         ],
         "title": "ModelUsageBreakdown",
+        "type": "object"
+      },
+      "Page_FeedbackTriageSummary_": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackTriageSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "title": "Page[FeedbackTriageSummary]",
         "type": "object"
       },
       "PasswordResetAccepted": {
@@ -6750,6 +7296,26 @@
         "title": "TranscribePageResponse",
         "type": "object"
       },
+      "TransitionCommand": {
+        "additionalProperties": false,
+        "description": "Move the report to ``status``, if the transition table allows it.",
+        "properties": {
+          "action": {
+            "const": "transition",
+            "title": "Action",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/FeedbackStatus"
+          }
+        },
+        "required": [
+          "action",
+          "status"
+        ],
+        "title": "TransitionCommand",
+        "type": "object"
+      },
       "UiFlagsResponse": {
         "description": "The two UI flags returned to the caller.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.",
         "properties": {
@@ -6782,6 +7348,22 @@
           }
         },
         "title": "UiFlagsUpdate",
+        "type": "object"
+      },
+      "UnlinkDuplicateCommand": {
+        "additionalProperties": false,
+        "description": "Clear the report's duplicate link.",
+        "properties": {
+          "action": {
+            "const": "unlink_duplicate",
+            "title": "Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "UnlinkDuplicateCommand",
         "type": "object"
       },
       "UploadDocumentRequest": {
@@ -7846,6 +8428,719 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/capabilities": {
+      "get": {
+        "description": "Confirm the caller is an administrator, and say what they may use.\n\nThe client's only source of admin knowledge: a 200 here reveals the inbox,\nand a 401 or 403 hides it. No client ever infers the role from a token.",
+        "operationId": "read_admin_capabilities_admin_capabilities_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCapabilities"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Admin Capabilities",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/feedback": {
+      "get": {
+        "description": "The inbox: filtered, newest first, paged over a total order.",
+        "operationId": "list_feedback_reports_admin_feedback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FeedbackStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FeedbackCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "impact",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/FeedbackImpact"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Impact"
+            }
+          },
+          {
+            "in": "query",
+            "name": "screen",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,3}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Screen"
+            }
+          },
+          {
+            "in": "query",
+            "name": "app_build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "App Build"
+            }
+          },
+          {
+            "description": "Inclusive lower bound on created_at.",
+            "in": "query",
+            "name": "created_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive lower bound on created_at.",
+              "title": "Created From"
+            }
+          },
+          {
+            "description": "Exclusive upper bound on created_at.",
+            "in": "query",
+            "name": "created_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exclusive upper bound on created_at.",
+              "title": "Created Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_FeedbackTriageSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/feedback/{public_id}": {
+      "get": {
+        "description": "One report, its three sources kept apart, its fingerprint and siblings.",
+        "operationId": "read_feedback_report_admin_feedback__public_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "maxLength": 11,
+              "pattern": "^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$",
+              "title": "Public Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackTriageDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Feedback Report",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/feedback/{public_id}/actions": {
+      "post": {
+        "description": "Apply one triage command and return the report as it now stands.\n\nOne route, four commands -- ``transition``, ``link_duplicate``,\n``unlink_duplicate``, ``add_note`` -- each of which appends exactly one\naudit event. Refusals: 409 ``feedback_transition_not_allowed`` for a pair\noutside the table; 422 ``feedback_duplicate_self``; 404\n``feedback_report_not_found`` for a duplicate target that does not exist\n(any report is a valid target -- administrators link across accounts); 409\n``feedback_duplicate_cycle`` / ``feedback_duplicate_unchanged`` /\n``feedback_not_a_duplicate``. Every refusal is decided before anything is\nwritten. Linking never changes status.",
+        "operationId": "act_on_feedback_report_admin_feedback__public_id__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "maxLength": 11,
+              "pattern": "^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$",
+              "title": "Public Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TransitionCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LinkDuplicateCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UnlinkDuplicateCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AddNoteCommand"
+                  }
+                ],
+                "title": "Command"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackTriageDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Act On Feedback Report",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/feedback/{public_id}/draft": {
+      "post": {
+        "description": "Render a GitHub issue draft from the operator's own words. Writes and calls nothing.\n\n``title`` and ``summary`` are required (422 without them); the reporter's\nwords are never in a draft. ``note_ids`` names notes on THIS report; any\nother id is 404 ``feedback_note_not_found``. Unnamed notes never appear.",
+        "operationId": "draft_feedback_issue_admin_feedback__public_id__draft_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "maxLength": 11,
+              "pattern": "^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$",
+              "title": "Public Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackIssueDraft"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Draft Feedback Issue",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/maintenance/energy-plans": {
       "post": {
         "description": "Delete persisted energy plans older than ``older_than_days``.\n\nThe integration point for the retention sweep: durable ``energyplan`` rows\nhave no TTL, and unkeyed requests are not deduplicated, so the table grows\nunbounded without this. Safe to call from a cron via an admin token.",

@@ -53,6 +53,7 @@ import {
   voiceDraftListSchema,
   voiceReadinessSchema,
   wheelBalanceSchema,
+  feedbackReceiptSchema,
   type AccountDeletionReceiptT,
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
@@ -101,6 +102,15 @@ import {
   type VaultActivationT,
   type DocumentImportT,
   type WheelBalanceT,
+  adminCapabilitiesSchema,
+  feedbackIssueDraftSchema,
+  feedbackTriageDetailSchema,
+  feedbackTriageSummarySchema,
+  type AdminCapabilitiesT,
+  type FeedbackIssueDraftT,
+  type FeedbackStatusT,
+  type FeedbackTriageDetailT,
+  type FeedbackTriageSummaryT,
 } from './schemas';
 
 import { API_BASE_URL } from '@/config';
@@ -3802,7 +3812,7 @@ export const vaultActivation = {
   },
 };
 
-// Private beta feedback (#2897 intake contract; #2899/#2900 build the reporter)
+// Private beta feedback (#2897 intake contract; #2898 reporter; #2899 seam verification; #2900 inbox)
 
 /** What kind of report a tester is filing. Mirrors the published enum component. */
 export type FeedbackCategory = 'broken' | 'confusing' | 'idea' | 'praise';
@@ -3853,27 +3863,180 @@ export interface FeedbackReceipt {
  * `submit` takes the idempotency key as a header rather than a body field,
  * matching `POST /practice-sessions` and `POST /v1/goal-completions`: a retry
  * under the same key resolves to the report already stored rather than filing a
- * second one. Automatic retry is left on for exactly that reason — with a key
+ * second one. Automatic retry is left on for exactly that reason -- with a key
  * present, a retried submit is safe by construction.
  *
- * No Zod schema yet: the reporter screen that would consume these lands with
- * #2899, and a runtime validator declared ahead of its only caller would be an
- * unexercised claim about a shape nothing yet reads.
+ * The key is REQUIRED. An unkeyed POST always inserts a new row, so a lost
+ * response followed by any retry -- automatic or a second press -- would file
+ * the report twice. The reporter (#2898) mints one key per draft and persists it
+ * with the draft, so it survives remounts and restarts.
+ *
+ * Both calls validate against `feedbackReceiptSchema`: the reporter shows
+ * `public_id` as the tester's confirmation, so a reference that does not match
+ * the published pattern is an `ApiValidationError`, never something displayed.
  */
 export const feedback = {
-  submit(
-    report: FeedbackCreate,
-    idempotencyKey?: string,
-    token?: string,
-  ): Promise<FeedbackReceipt> {
+  submit(report: FeedbackCreate, idempotencyKey: string, token?: string): Promise<FeedbackReceipt> {
     return request<FeedbackReceipt>('/feedback/', {
       method: 'POST',
       body: report,
       token,
-      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      schema: feedbackReceiptSchema,
     });
   },
   receipt(publicId: string, token?: string): Promise<FeedbackReceipt> {
-    return request<FeedbackReceipt>(`/feedback/${publicId}/receipt`, { token });
+    return request<FeedbackReceipt>(`/feedback/${publicId}/receipt`, {
+      token,
+      schema: feedbackReceiptSchema,
+    });
+  },
+};
+
+// Admin beta feedback triage (#2900) -- operator-only; see backend routers/admin_feedback.py
+
+export type {
+  AdminCapabilitiesT,
+  FeedbackIssueDraftT,
+  FeedbackOperatorNoteT,
+  FeedbackStatusT,
+  FeedbackTriageDetailT,
+  FeedbackTriageSummaryT,
+} from './schemas';
+
+/** The inbox filters. Every one supplied narrows the list; they AND together. */
+export interface FeedbackInboxFilters {
+  status?: FeedbackStatusT;
+  category?: FeedbackCategory;
+  impact?: FeedbackImpact;
+  screen?: string;
+  app_build?: string;
+  /** Inclusive lower bound, ISO-8601 with an offset. */
+  created_from?: string;
+  /** Exclusive upper bound, ISO-8601 with an offset. */
+  created_before?: string;
+}
+
+/**
+ * What an operator sends to draft an issue: their own title and summary, and
+ * which of their notes to quote. The reporter's words are never part of a
+ * draft; the server refuses a request without the operator's text.
+ */
+export interface FeedbackDraftRequest {
+  title: string;
+  summary: string;
+  noteIds: number[];
+}
+
+/** The page window the inbox reads. */
+export interface FeedbackInboxWindow {
+  limit: number;
+  offset: number;
+}
+
+const feedbackInboxPageSchema = pageSchema(feedbackTriageSummarySchema);
+
+/** One audited change, as the command route accepts it. */
+type FeedbackTriageCommand =
+  | { action: 'transition'; status: FeedbackStatusT }
+  | { action: 'link_duplicate'; target_public_id: string }
+  | { action: 'unlink_duplicate' }
+  | { action: 'add_note'; body: string };
+
+/** The inbox query string: only the filters that were actually set, plus the window. */
+function inboxQuery(filters: FeedbackInboxFilters, window: FeedbackInboxWindow): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (typeof value === 'string' && value !== '') params.set(key, value);
+  }
+  params.set('limit', String(window.limit));
+  params.set('offset', String(window.offset));
+  return params.toString();
+}
+
+/** Send one triage command; every command answers with the report as it now stands. */
+function actOnReport(
+  publicId: string,
+  command: FeedbackTriageCommand,
+  token?: string,
+): Promise<FeedbackTriageDetailT> {
+  return request<FeedbackTriageDetailT>(`/admin/feedback/${publicId}/actions`, {
+    method: 'POST',
+    body: command,
+    token,
+    schema: feedbackTriageDetailSchema,
+    // A command is one audited change; a lost response is reported, not replayed
+    // into a second event (or, for a transition, a 409 that reads as a refusal).
+    retry: false,
+  });
+}
+
+/**
+ * The operator's beta feedback inbox. Every route is admin-only on the server;
+ * a non-admin gets 403 ``admin_required`` from each of them.
+ *
+ * ``capabilities`` is the ONLY way the client learns it may show the inbox: a
+ * 200 means yes, a 401 or 403 means no. Nothing here reads a role from a token.
+ * ``draft`` renders Markdown from the operator's own words and returns it;
+ * nothing is published anywhere.
+ */
+export const adminFeedback = {
+  capabilities(token?: string): Promise<AdminCapabilitiesT> {
+    return request<AdminCapabilitiesT>('/admin/capabilities', {
+      token,
+      schema: adminCapabilitiesSchema,
+    });
+  },
+  list(
+    filters: FeedbackInboxFilters,
+    window: FeedbackInboxWindow,
+    token?: string,
+  ): Promise<Page<FeedbackTriageSummaryT>> {
+    return request<Page<FeedbackTriageSummaryT>>(`/admin/feedback?${inboxQuery(filters, window)}`, {
+      token,
+      schema: feedbackInboxPageSchema,
+    });
+  },
+  detail(publicId: string, token?: string): Promise<FeedbackTriageDetailT> {
+    return request<FeedbackTriageDetailT>(`/admin/feedback/${publicId}`, {
+      token,
+      schema: feedbackTriageDetailSchema,
+    });
+  },
+  transition(
+    publicId: string,
+    status: FeedbackStatusT,
+    token?: string,
+  ): Promise<FeedbackTriageDetailT> {
+    return actOnReport(publicId, { action: 'transition', status }, token);
+  },
+  linkDuplicate(
+    publicId: string,
+    targetPublicId: string,
+    token?: string,
+  ): Promise<FeedbackTriageDetailT> {
+    return actOnReport(
+      publicId,
+      { action: 'link_duplicate', target_public_id: targetPublicId },
+      token,
+    );
+  },
+  unlinkDuplicate(publicId: string, token?: string): Promise<FeedbackTriageDetailT> {
+    return actOnReport(publicId, { action: 'unlink_duplicate' }, token);
+  },
+  addNote(publicId: string, body: string, token?: string): Promise<FeedbackTriageDetailT> {
+    return actOnReport(publicId, { action: 'add_note', body }, token);
+  },
+  draft(
+    publicId: string,
+    { title, summary, noteIds }: FeedbackDraftRequest,
+    token?: string,
+  ): Promise<FeedbackIssueDraftT> {
+    return request<FeedbackIssueDraftT>(`/admin/feedback/${publicId}/draft`, {
+      method: 'POST',
+      body: { title, summary, note_ids: noteIds },
+      token,
+      schema: feedbackIssueDraftSchema,
+    });
   },
 };

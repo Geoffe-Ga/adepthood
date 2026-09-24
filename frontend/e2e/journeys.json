@@ -1223,14 +1223,34 @@
   },
   {
     "id": "feedback.report-from-settings-to-receipt",
-    "description": "A private-beta tester opens the feedback reporter from Settings, chooses a category and impact, writes what happened, and is handed a public reference such as FB-7K3M9Q2B that resolves to their own receipt and to nobody else's. Uncovered because #2897 ships the intake contract only -- the model, the migration, the allowlisted diagnostic envelope, the idempotency header, the export and deletion participation and the retention sweep -- and there is no reporter screen or API client to drive across the seam yet. The backend suites prove the contract in process: tests/test_feedback_api.py pins the 422 on an eighth context key with zero rows persisted, the concurrency test that two posts under one Idempotency-Key create one row, and the byte-identical 404 a cross-tenant reference gets. #2899 and #2900 build the reporter and the inbox; the spec belongs with them.",
+    "description": "A private-beta tester opens the feedback composer from the Send feedback control in the app shell's header (present on Journal, Habits, Practice, Course and Map) or from the Settings hub, chooses what kind of report it is, answers that kind's questions, sees exactly which of the seven allowlisted context fields will be attached, and sends it under one idempotency key minted and persisted with the draft. The live intake route answers with a public reference such as FB-7K3M9Q2B, which the composer shows only after feedbackReceiptSchema has validated it, and which resolves through GET /feedback/{public_id}/receipt to the tester's own receipt. The covering Playwright spec drives the whole path keyboard-only at 1280x720 -- Tab to the header control, focus lands on the composer heading, focus returns to the control on close -- and again at 390x844, and measures the header control against the drawer toggles, the Journal new-page action, the Habits first-use action and the Map magnifier. Composer states the browser cannot provoke deterministically (a lost response, a 429, a 422, a receipt that fails validation) are pinned in FeedbackComposer.test.tsx; the backend suites pin the 422 on an eighth context key, the one-row concurrency guarantee under a shared Idempotency-Key, and the byte-identical cross-tenant 404.",
     "crosses": {
-      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "screen": "frontend/src/features/Feedback/FeedbackComposerScreen.tsx",
       "client": ["feedback"],
       "routes": ["POST /feedback/", "GET /feedback/{public_id}/receipt"],
       "tables": ["feedbackreport"]
     },
-    "status": "uncovered",
-    "issue": 2899
+    "status": "covered",
+    "coveredBy": "frontend/e2e/feedback-composer.browser.e2e.test.ts"
+  },
+  {
+    "id": "feedback.admin-triage-inbox",
+    "description": "An operator, confirmed by GET /admin/capabilities rather than by anything the client infers, opens the Beta feedback inbox from Settings, reads a report, moves it along the triage table, adds a private note, and prepares an issue draft. What the covering spec proves is the seam: it drives the unmocked production client against a live server -- a reporter files a report, a second account is promoted in the lane database (is_admin has no HTTP writer), the reporter is refused every operator question including on their own report, and the operator's list, detail, transition, note and draft all cross. It renders no screen. The UI half is proven in Jest instead, not across the seam: SettingsHubScreen.test (the row appears only on a 200 from capabilities and navigates to AdminFeedback), navigation/__tests__/RootStack.test (the route is registered), and the AdminFeedback screen, flow and draft-panel tests.",
+    "crosses": {
+      "screen": "frontend/src/features/AdminFeedback/AdminFeedbackScreen.tsx",
+      "client": ["adminFeedback", "feedback"],
+      "routes": [
+        "GET /admin/capabilities",
+        "GET /admin/feedback",
+        "GET /admin/feedback/{public_id}",
+        "POST /admin/feedback/{public_id}/actions",
+        "POST /admin/feedback/{public_id}/draft",
+        "POST /feedback/",
+        "GET /feedback/{public_id}/receipt"
+      ],
+      "tables": ["feedbackreport", "feedbacknote", "feedbacktriageevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/admin-feedback-triage.e2e.test.ts"
   }
 ]

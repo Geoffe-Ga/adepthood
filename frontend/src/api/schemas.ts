@@ -1340,3 +1340,151 @@ export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
 export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
 export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;
 export type ReflectionAnchorStatusT = z.infer<typeof anchorStatusSchema>;
+
+// ---------------------------------------------------------------------------
+// Private beta feedback (#2897 intake contract; #2898 reporter)
+// ---------------------------------------------------------------------------
+
+/** What kind of report a tester is filing. Mirrors the ``FeedbackCategory`` component. */
+export const feedbackCategorySchema = z.enum(['broken', 'confusing', 'idea', 'praise']);
+
+/** What the reported thing cost the person reporting it. Mirrors ``FeedbackImpact``. */
+export const feedbackImpactSchema = z.enum([
+  'blocked',
+  'can_continue',
+  'cosmetic',
+  'not_applicable',
+]);
+
+/**
+ * A report's public reference: ``FB-`` plus eight characters from an alphabet
+ * with the misread pairs (and ``U``) removed. Mirrors ``PUBLIC_ID_PATTERN`` in
+ * ``backend/src/models/feedback.py``; ``feedbackBoundsDrift.test.ts`` composes the
+ * server pattern from its parts and compares.
+ */
+export const FEEDBACK_PUBLIC_ID_PATTERN = /^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/;
+
+/**
+ * The receipt ``POST /feedback/`` returns (and a replay under the same key
+ * returns again). The reporter shows ``public_id`` as the confirmation, so a
+ * reference that does not match the pattern is a validation failure rather than
+ * something shown to the tester. ``created_at`` is read as a plain string, as the
+ * other ``created_at`` fields here are: nothing formats it, and a storage
+ * backend that drops the offset must not turn a filed report into an error.
+ */
+export const feedbackReceiptSchema = z.object({
+  public_id: z.string().regex(FEEDBACK_PUBLIC_ID_PATTERN, {
+    message: 'expected a public reference such as FB-7K3M9Q2B',
+  }),
+  category: feedbackCategorySchema,
+  impact: feedbackImpactSchema,
+  created_at: z.string(),
+});
+
+export type FeedbackReceiptT = z.infer<typeof feedbackReceiptSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin beta feedback triage (#2900)
+// ---------------------------------------------------------------------------
+//
+// Operator-only shapes. They reuse the category and impact enums above.
+
+/** Where a report stands in the operator's triage. Mirrors ``FeedbackStatus``. */
+export const feedbackStatusSchema = z.enum(['closed', 'new', 'planned', 'triaged']);
+
+/** Every kind of audited operator change. Mirrors ``FeedbackTriageAction``. */
+export const feedbackTriageActionSchema = z.enum([
+  'duplicate_linked',
+  'duplicate_unlinked',
+  'note_added',
+  'status_changed',
+]);
+
+/**
+ * The server's answer to "may this account triage?". Reaching it at all means
+ * yes; the client never infers the role from a token or a user object.
+ */
+export const adminCapabilitiesSchema = z.object({ feedback_triage: z.boolean() });
+
+/** One inbox row: a reference and its triage envelope, never prose or identity. */
+export const feedbackTriageSummarySchema = z.object({
+  public_id: z.string(),
+  status: feedbackStatusSchema,
+  category: feedbackCategorySchema,
+  impact: feedbackImpactSchema,
+  screen: z.string(),
+  app_build: z.string(),
+  created_at: isoDateTime,
+  duplicate_of: z.string().nullable(),
+});
+
+/** The tester's own words, exactly as stored. */
+export const feedbackReporterSaidSchema = z.object({
+  summary: z.string(),
+  intent: z.string().nullable(),
+  expected: z.string().nullable(),
+  actual: z.string().nullable(),
+});
+
+/** The allowlisted envelope the client attached. */
+export const feedbackAppAttachedSchema = z.object({
+  screen: z.string(),
+  control: z.string().nullable(),
+  platform: z.string(),
+  app_build: z.string(),
+  viewport_class: z.string(),
+  locale: z.string().nullable(),
+  correlation_id: z.string().nullable(),
+  created_at: isoDateTime,
+});
+
+/** One private operator note. */
+export const feedbackOperatorNoteSchema = z.object({
+  id: z.number().int(),
+  body: z.string(),
+  created_at: isoDateTime,
+});
+
+/** One row of the append-only triage trail. */
+export const feedbackTriageEventPublicSchema = z.object({
+  action: feedbackTriageActionSchema,
+  old_state: z.string().nullable(),
+  new_state: z.string().nullable(),
+  created_at: isoDateTime,
+});
+
+/** Everything administrators have added to a report. */
+export const feedbackOperatorAddedSchema = z.object({
+  status: feedbackStatusSchema,
+  duplicate_of: z.string().nullable(),
+  duplicates: z.array(z.string()),
+  notes: z.array(feedbackOperatorNoteSchema),
+  events: z.array(feedbackTriageEventPublicSchema),
+});
+
+/** One report, its three sources kept apart. */
+export const feedbackTriageDetailSchema = z.object({
+  public_id: z.string(),
+  category: feedbackCategorySchema,
+  impact: feedbackImpactSchema,
+  reporter_said: feedbackReporterSaidSchema,
+  app_attached: feedbackAppAttachedSchema,
+  operator_added: feedbackOperatorAddedSchema,
+  fingerprint: z.string(),
+  siblings: z.array(feedbackTriageSummarySchema),
+  allowed_transitions: z.array(feedbackStatusSchema),
+});
+
+/** A GitHub issue draft, for copying or downloading. Nothing is published. */
+export const feedbackIssueDraftSchema = z.object({
+  title: z.string(),
+  markdown: z.string(),
+  source_public_ids: z.array(z.string()),
+});
+
+export type FeedbackStatusT = z.infer<typeof feedbackStatusSchema>;
+export type AdminCapabilitiesT = z.infer<typeof adminCapabilitiesSchema>;
+export type FeedbackTriageSummaryT = z.infer<typeof feedbackTriageSummarySchema>;
+export type FeedbackTriageDetailT = z.infer<typeof feedbackTriageDetailSchema>;
+export type FeedbackOperatorNoteT = z.infer<typeof feedbackOperatorNoteSchema>;
+export type FeedbackIssueDraftT = z.infer<typeof feedbackIssueDraftSchema>;

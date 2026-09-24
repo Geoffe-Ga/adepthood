@@ -13,7 +13,15 @@
  */
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
-import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
+import type {
+  StyleProp,
+  TextStyle,
+  TouchableOpacityProps,
+  ViewProps,
+  ViewStyle,
+} from 'react-native';
+
+import { webDescribedBy, webRadioState } from './webAria';
 
 export interface RadioOptionProps {
   label: string;
@@ -21,8 +29,10 @@ export interface RadioOptionProps {
   onPress: () => void;
   testID: string;
   accessibilityHint?: string;
-  /** When true, the option is announced as disabled to assistive tech. */
+  /** When true, the option is announced as disabled and cannot be pressed. */
   disabled?: boolean;
+  /** Id of visible text that describes the option; linked on the web. */
+  describedBy?: string;
   style: StyleProp<ViewStyle>;
   selectedStyle: StyleProp<ViewStyle>;
   labelStyle: StyleProp<TextStyle>;
@@ -32,6 +42,8 @@ export interface RadioOptionProps {
 export interface RadioGroupProps {
   style: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
+  /** Id of text describing the whole choice (e.g. its error); linked on the web. */
+  describedBy?: string;
   children: React.ReactNode;
 }
 
@@ -47,6 +59,7 @@ export function RadioOption({
   testID,
   accessibilityHint,
   disabled = false,
+  describedBy,
   style,
   selectedStyle,
   labelStyle,
@@ -60,7 +73,12 @@ export function RadioOption({
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ selected, disabled }}
+      disabled={disabled}
       testID={testID}
+      // react-native-web ignores accessibilityState, so the web tree gets the
+      // same facts as aria-* props, plus the text that describes the option.
+      {...webRadioState<TouchableOpacityProps>(selected, disabled)}
+      {...webDescribedBy<TouchableOpacityProps>(describedBy)}
     >
       <Text style={[labelStyle, selected && selectedLabelStyle]}>{label}</Text>
     </TouchableOpacity>
@@ -74,10 +92,16 @@ export function RadioOption({
 export function RadioGroup({
   style,
   accessibilityLabel,
+  describedBy,
   children,
 }: RadioGroupProps): React.JSX.Element {
   return (
-    <View style={style} accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel}>
+    <View
+      style={style}
+      accessibilityRole="radiogroup"
+      accessibilityLabel={accessibilityLabel}
+      {...webDescribedBy<ViewProps>(describedBy)}
+    >
       {children}
     </View>
   );

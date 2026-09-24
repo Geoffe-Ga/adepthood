@@ -1,7 +1,8 @@
 /* eslint-env jest */
 /* global describe, test, expect, afterEach, beforeEach, jest */
-import { fireEvent, render, within } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { AccessibilityInfo } from 'react-native';
 
 const mockNavigate = jest.fn();
 const mockLogout = jest.fn(() => Promise.resolve());
@@ -35,9 +36,26 @@ jest.mock('@/config', () => {
   });
 });
 
+// The operator row asks the server; each test decides what the server says.
+// Everything else in the API module stays real.
+const mockCapabilities = jest.fn<Promise<{ feedback_triage: boolean }>, []>(() =>
+  Promise.reject(new Error('no capability answer configured')),
+);
+
+jest.mock('@/api', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/api');
+  return {
+    ...actual,
+    adminFeedback: { capabilities: () => mockCapabilities() },
+  };
+});
+
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
+
+import { ApiError } from '@/api';
+import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -469,5 +487,58 @@ describe('SettingsHubScreen — the Digital Sangha door', () => {
     fireEvent.press(getByTestId('settings-row-sangha-discord'));
 
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsHubScreen — Send feedback (#2898)', () => {
+  test('the row opens the same composer route, carrying only the settings-row token', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    const row = getByTestId('settings-row-feedback');
+    expect(row.props.accessibilityLabel).toBe('Send feedback');
+    fireEvent.press(row);
+
+    expect(mockNavigate).toHaveBeenCalledWith('Feedback', {
+      control: 'settings.row.send_feedback',
+    });
+  });
+});
+
+describe('SettingsHubScreen — focus comes back to the row (#2898 review [13])', () => {
+  test('the Send feedback row is remembered as the place to return focus to', () => {
+    const focus = jest
+      .spyOn(AccessibilityInfo, 'sendAccessibilityEvent')
+      .mockImplementation(() => undefined);
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-feedback'));
+    // What the composer does when it closes.
+    restoreFeedbackOrigin();
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledWith(expect.anything(), 'focus');
+    focus.mockRestore();
+  });
+});
+
+describe('SettingsHubScreen — the operator inbox entry', () => {
+  const HTTP_FORBIDDEN = 403;
+  const ROW = 'settings-row-feedback-inbox';
+
+  test('shows the inbox row for a server-confirmed operator and opens the inbox', async () => {
+    mockCapabilities.mockResolvedValueOnce({ feedback_triage: true });
+    const { findByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(await findByTestId(ROW));
+
+    expect(mockNavigate).toHaveBeenCalledWith('AdminFeedback');
+  });
+
+  test('has no inbox row when the server refuses the capability', async () => {
+    mockCapabilities.mockRejectedValueOnce(new ApiError(HTTP_FORBIDDEN, 'admin_required'));
+    const { queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockCapabilities).toHaveBeenCalled());
+    expect(queryByTestId(ROW)).toBeNull();
   });
 });
