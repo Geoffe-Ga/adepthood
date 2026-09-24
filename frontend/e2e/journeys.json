@@ -739,7 +739,7 @@
   },
   {
     "id": "account.export-my-data",
-    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds.",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds. Beta feedback reports (the feedbackreport table) travel in the same archive under feedback_reports; that half is proven at the seam by feedback.admin-triage-inbox.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
       "client": ["users", "journal", "auth"],
@@ -779,7 +779,7 @@
   },
   {
     "id": "account.delete",
-    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt. The receipt's vault half is account-scoped rather than deployment-scoped. This lane does have a deployment-wide vault for seed.upload-document, but globalSetup binds that single corpus to one pre-provisioned owner; the later account created by this journey has no per-user connection and must therefore receive `configured: false` with no-vault guidance, never a claim on the other person's vault. Backend API regressions separately pin manual owner, per-user connection, unconfigured, and provisioned teardown receipts.",
+    "description": "Someone ends their account from inside the app: they read what goes and what stays, retype their own address to confirm, and the server erases them and hands back a receipt. The receipt's vault half is account-scoped rather than deployment-scoped. This lane does have a deployment-wide vault for seed.upload-document, but globalSetup binds that single corpus to one pre-provisioned owner; the later account created by this journey has no per-user connection and must therefore receive `configured: false` with no-vault guidance, never a claim on the other person's vault. Backend API regressions separately pin manual owner, per-user connection, unconfigured, and provisioned teardown receipts. Erasure takes the account's beta feedback reports (feedbackreport) with it; that half is proven at the seam by feedback.admin-triage-inbox, where the operator can no longer open or list them.",
     "crosses": {
       "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
       "client": ["users"],
@@ -1223,7 +1223,7 @@
   },
   {
     "id": "feedback.report-from-settings-to-receipt",
-    "description": "A private-beta tester opens the feedback composer from the Send feedback control in the app shell's header (present on Journal, Habits, Practice, Course and Map) or from the Settings hub, chooses what kind of report it is, answers that kind's questions, sees exactly which of the seven allowlisted context fields will be attached, and sends it under one idempotency key minted and persisted with the draft. The live intake route answers with a public reference such as FB-7K3M9Q2B, which the composer shows only after feedbackReceiptSchema has validated it, and which resolves through GET /feedback/{public_id}/receipt to the tester's own receipt. The covering Playwright spec drives the whole path keyboard-only at 1280x720 -- Tab to the header control, focus lands on the composer heading, focus returns to the control on close -- and again at 390x844, and measures the header control against the drawer toggles, the Journal new-page action, the Habits first-use action and the Map magnifier. Composer states the browser cannot provoke deterministically (a lost response, a 429, a 422, a receipt that fails validation) are pinned in FeedbackComposer.test.tsx; the backend suites pin the 422 on an eighth context key, the one-row concurrency guarantee under a shared Idempotency-Key, and the byte-identical cross-tenant 404.",
+    "description": "A private-beta tester opens the feedback composer from the Send feedback control in the app shell's header (present on Journal, Habits, Practice, Course and Map) or from the Settings hub, chooses what kind of report it is, answers that kind's questions, sees exactly which of the seven allowlisted context fields will be attached, and sends it under one idempotency key minted and persisted with the draft. The live intake route answers with a public reference such as FB-7K3M9Q2B, which the composer shows only after feedbackReceiptSchema has validated it, and which resolves through GET /feedback/{public_id}/receipt to the tester's own receipt. The covering Playwright spec drives the whole path keyboard-only at 1280x720 -- Tab to the header control, focus lands on the composer heading, focus returns to the control on close -- and again at 390x844, and measures the header control against the drawer toggles, the Journal new-page action, the Habits first-use action and the Map magnifier. The same spec runs an origin matrix -- all five tabs and Settings at 1280x720, Journal and Map again at 390x844 -- asserting the screen, control and viewport class each attaches; files a compact report from a Journal whose shelf load was made to fail, double-clicked, and proves exactly one POST left the page and that its context equals the rendered preview key for key; and files a keyboard-only confusing report from the wide Map. Lost responses, a reload mid-send, offline, 422 and 429 are provoked deterministically with Playwright routing in feedback.recover-a-lost-send; a receipt that fails validation stays pinned in FeedbackComposer.test.tsx. The lane's server disarms the rate limiter, so the server's own 429 is pinned in process by backend/tests/test_rate_limits.py; the backend suites pin the 422 on an eighth context key, the one-row concurrency guarantee under a shared Idempotency-Key (on real PostgreSQL in backend/tests/integration/test_feedback_intake_race.py), the closed screen and control vocabularies that refuse prose dressed as a token, and the byte-identical cross-tenant 404.",
     "crosses": {
       "screen": "frontend/src/features/Feedback/FeedbackComposerScreen.tsx",
       "client": ["feedback"],
@@ -1235,10 +1235,10 @@
   },
   {
     "id": "feedback.admin-triage-inbox",
-    "description": "An operator, confirmed by GET /admin/capabilities rather than by anything the client infers, opens the Beta feedback inbox from Settings, reads a report, moves it along the triage table, adds a private note, and prepares an issue draft. What the covering spec proves is the seam: it drives the unmocked production client against a live server -- a reporter files a report, a second account is promoted in the lane database (is_admin has no HTTP writer), the reporter is refused every operator question including on their own report, and the operator's list, detail, transition, note and draft all cross. It renders no screen. The UI half is proven in Jest instead, not across the seam: SettingsHubScreen.test (the row appears only on a 200 from capabilities and navigates to AdminFeedback), navigation/__tests__/RootStack.test (the route is registered), and the AdminFeedback screen, flow and draft-panel tests.",
+    "description": "An operator, confirmed by GET /admin/capabilities rather than by anything the client infers, opens the Beta feedback inbox from Settings, reads a report, moves it along the triage table, adds a private note, and prepares an issue draft. What the covering spec proves is the seam: it drives the unmocked production client against a live server -- a reporter files a report, a second account is promoted in the lane database (is_admin has no HTTP writer), the reporter files the two reports the browser journeys file (a compact-Journal broken report and a wide-Map confusing one, filed through the client because the browser lane has its own database), the reporter and a bystander are both refused every operator question including the transition and note actions, the bystander gets the byte-identical 404 on the reporter's receipt, and neither refusal moves status, notes or events. The operator lists both reports and sees reporter_said, app_attached and operator_added kept apart for each; the draft carries the envelope evidence on labelled lines and none of the reporter's address, correlation id or words. Finally the reporter's export carries both reports, and after the account is deleted the operator can neither open nor list them. It renders no screen. The UI half is proven in Jest instead, not across the seam: SettingsHubScreen.test (the row appears only on a 200 from capabilities and navigates to AdminFeedback), navigation/__tests__/RootStack.test (the route is registered), and the AdminFeedback screen, flow and draft-panel tests.",
     "crosses": {
       "screen": "frontend/src/features/AdminFeedback/AdminFeedbackScreen.tsx",
-      "client": ["adminFeedback", "feedback"],
+      "client": ["adminFeedback", "auth", "feedback", "users"],
       "routes": [
         "GET /admin/capabilities",
         "GET /admin/feedback",
@@ -1246,9 +1246,11 @@
         "POST /admin/feedback/{public_id}/actions",
         "POST /admin/feedback/{public_id}/draft",
         "POST /feedback/",
-        "GET /feedback/{public_id}/receipt"
+        "GET /feedback/{public_id}/receipt",
+        "GET /users/me/export",
+        "DELETE /users/me"
       ],
-      "tables": ["feedbackreport", "feedbacknote", "feedbacktriageevent"]
+      "tables": ["feedbackreport", "feedbacknote", "feedbacktriageevent", "accountdeletionaudit"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/admin-feedback-triage.e2e.test.ts"
@@ -1264,5 +1266,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/feedback-resilience.browser.e2e.test.ts"
+  },
+  {
+    "id": "feedback.report-from-error-state",
+    "description": "A tester who has just hit a failure -- the Journal shelf failing to load, say -- reports it from a control on the error state itself, and the report carries a stable error code naming the failure as context.control. Uncovered because the entry point does not exist yet: #2898 AC24 was deferred, so the only controls that open the composer are the shell header and the Settings row, and a report filed after a failure carries the header token (feedback-composer.browser.e2e.test.ts files exactly that). Adding it means adding each code to the closed FeedbackControl vocabulary on both sides, not widening the check.",
+    "crosses": {
+      "screen": "frontend/src/features/Feedback/FeedbackComposerScreen.tsx",
+      "client": ["feedback"],
+      "routes": ["POST /feedback/"],
+      "tables": ["feedbackreport"]
+    },
+    "status": "uncovered",
+    "issue": 2926
   }
 ]
