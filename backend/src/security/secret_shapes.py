@@ -31,10 +31,19 @@ REDACTED_BEARER: Final = "[redacted-bearer]"
 REDACTED_KEY: Final = "[redacted-key]"
 REDACTED_EMAIL: Final = "[redacted-email]"
 
-# An http(s) URL carrying a query string. The query is where a session token, a
-# reset code or a signed download link lives; a bare path is left alone because
-# "it broke on /journal" is exactly the kind of thing triage needs to read.
-_URL_WITH_QUERY: Final = re.compile(r"https?://[^\s?#]*\?\S*", re.IGNORECASE)
+# A URL of ANY scheme carrying a query string. The query is where a session
+# token, a reset code or a signed download link lives -- whether the scheme is
+# ``https``, the app's own ``adepthood`` deep link, Expo's ``exp`` or an Android
+# ``intent``. A bare path is left alone because "it broke on /journal" is
+# exactly the kind of thing triage needs to read. The scheme grammar is
+# RFC 3986's: a letter, then letters, digits, ``+``, ``-`` or ``.``.
+_URL_WITH_QUERY: Final = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s?#]*\?\S*", re.IGNORECASE)
+
+# The app's own deep links, whole, query or not. The practice share link
+# carries its capability token in the PATH (``adepthood://practices/share/<t>``),
+# so for this scheme a query is not the only place a secret can be.
+APP_LINK_SCHEME: Final = "adepthood"
+_APP_LINK: Final = re.compile(rf"\b{APP_LINK_SCHEME}://\S*", re.IGNORECASE)
 
 # A JSON Web Token: three base64url segments, the first of which always begins
 # ``eyJ`` because it is an encoded ``{"``.
@@ -65,6 +74,7 @@ _EMAIL: Final = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*
 # Applied in this order; see the module docstring for why URLs lead.
 _PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (_URL_WITH_QUERY, REDACTED_URL),
+    (_APP_LINK, REDACTED_URL),
     (_JWT, REDACTED_JWT),
     (_BEARER, REDACTED_BEARER),
     (_VENDOR_KEY, REDACTED_KEY),
