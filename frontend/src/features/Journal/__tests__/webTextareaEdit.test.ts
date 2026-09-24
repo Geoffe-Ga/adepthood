@@ -88,6 +88,17 @@ describe('applyEditToTextarea', () => {
     expect(applyEditToTextarea(node, { text: 'a **word**' })).toBe(false);
   });
 
+  it("trusts the browser's own refusal even when the text happens to match", () => {
+    const node = fakeTextarea('a word');
+    (globalThis as MutableGlobal).document = {
+      execCommand: jest.fn(() => {
+        node.value = 'a **word**';
+        return false;
+      }),
+    };
+    expect(applyEditToTextarea(node, { text: 'a **word**' })).toBe(false);
+  });
+
   it('reports failure when the browser produced some other text', () => {
     const node = fakeTextarea('a word');
     (globalThis as MutableGlobal).document = {

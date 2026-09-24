@@ -211,6 +211,14 @@ describe('toggleInlineStyle -- a collapsed caret', () => {
     expect(toggleInlineStyle('_a *b* c_', { start: 4, end: 4 }, 'bold')?.text).toBe('_a b c_');
   });
 
+  it('unwraps only the inner of two nested bold spans around the caret', () => {
+    // '*a **b** c*': the caret in "b" is inside both; only the nearest goes.
+    expect(toggleInlineStyle('*a **b** c*', { start: 5, end: 5 }, 'bold')).toEqual({
+      text: '*a b c*',
+      selection: { start: 3, end: 3 },
+    });
+  });
+
   it('declines a mid-word italic caret, where no typed text could parse as italic', () => {
     expect(toggleInlineStyle('forward', { start: 3, end: 3 }, 'italic')).toBeNull();
   });
