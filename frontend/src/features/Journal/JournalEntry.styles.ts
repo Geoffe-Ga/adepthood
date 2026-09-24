@@ -82,6 +82,16 @@ export const WRITING_TIMER_PILL_MAX_HEIGHT = Math.max(
 export const WRITING_TIMER_CLEARANCE =
   RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT + SPACING.md;
 
+/**
+ * The body's type metrics, shared by the text field and the live mirror drawn
+ * behind it. The mirror has to lay text out exactly as the field does, so the
+ * two spread this one fragment instead of each spelling the font.
+ */
+export const LIVE_BODY_METRICS = {
+  ...editorialType.body,
+  paddingTop: spacing(1.5),
+} as const;
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -174,9 +184,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   bodyInput: {
-    ...editorialType.body,
+    ...LIVE_BODY_METRICS,
     color: colors.paper.ink,
-    paddingTop: spacing(1.5),
     // A growing multiline field; flexGrow fills the writing column's
     // available height while minHeight keeps the blank page inviting.
     flexGrow: 1,
