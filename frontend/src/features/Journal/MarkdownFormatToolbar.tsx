@@ -18,11 +18,12 @@ import {
   type LucideIcon,
 } from 'lucide-react-native';
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, type PressableProps } from 'react-native';
 
 import type { MarkdownCommand, MarkdownCommandState } from './markdownCommands';
 
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
+import { webPressedState } from '@/components/webAria';
 import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
 
 export interface MarkdownFormatToolbarProps {
@@ -54,17 +55,23 @@ const OUTDENT_ACTION: ToolbarAction = {
   Icon: ListIndentDecrease,
 };
 
+/** Height of the bar under a pressed toggle -- its non-colour, 3:1-contrast state cue. */
+const PRESSED_BAR_WIDTH = 2;
+
 /** How far an unavailable action fades, matching the shared Button's disabled state. */
 const DISABLED_ACTION_OPACITY = 0.5;
 
 function ToolbarButton({
   action,
   selected,
+  toggle = false,
   disabled = false,
   onCommand,
 }: {
   action: ToolbarAction;
   selected: boolean;
+  /** A style toggle, whose on/off state web assistive technology reads as aria-pressed. */
+  toggle?: boolean;
   disabled?: boolean;
   onCommand: (command: MarkdownCommand) => void;
 }): React.JSX.Element {
@@ -82,6 +89,7 @@ function ToolbarButton({
         disabled ? styles.buttonDisabled : null,
       ]}
       testID={`journal-format-${action.command}`}
+      {...(toggle ? webPressedState<PressableProps>(selected) : {})}
     >
       <Icon
         size={NAV_ICON_SIZE}
@@ -104,6 +112,7 @@ export default function MarkdownFormatToolbar({
           key={action.command}
           action={action}
           selected={state[action.command]}
+          toggle
           onCommand={onCommand}
         />
       ))}
@@ -136,9 +145,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: BORDER_RADIUS.md,
+    borderBottomWidth: PRESSED_BAR_WIDTH,
+    borderBottomColor: 'transparent',
   },
   buttonSelected: {
     backgroundColor: colors.paper.backgroundAlt,
+    borderBottomColor: colors.paper.ink,
   },
   buttonDisabled: {
     opacity: DISABLED_ACTION_OPACITY,
