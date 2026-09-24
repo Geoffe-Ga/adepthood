@@ -262,6 +262,181 @@ describe('LiveMarkdownBody on web', () => {
   });
 });
 
+/** A keydown as react-native-web hands it to onKeyPress. */
+function keyPress(key: string, modifiers: Record<string, boolean | number> = {}) {
+  const preventDefault = jest.fn();
+  return { event: { nativeEvent: { key, ...modifiers }, preventDefault }, preventDefault };
+}
+
+function select(input: RenderedNode, start: number, end = start) {
+  fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start, end } } });
+}
+
+describe('LiveMarkdownBody keyboard commands', () => {
+  let originalOS: string;
+  let originalNavigator: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+    originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { platform: 'Linux x86_64', userAgent: 'X11; Linux' },
+      configurable: true,
+    });
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    delete (globalThis as MutableGlobal).document;
+  });
+
+  it.each([
+    ['b', 'a **word**', { start: 4, end: 8 }],
+    ['i', 'a _word_', { start: 3, end: 7 }],
+    ['u', 'a <u>word</u>', { start: 5, end: 9 }],
+  ])('Ctrl+%s wraps the selection and claims the key', (key, expected, selection) => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="a word" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 2, 6);
+    const { event, preventDefault } = keyPress(key, { ctrlKey: true });
+
+    fireEvent(input, 'keyPress', event);
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onChangeBody).toHaveBeenCalledWith(expected);
+    expect(getByTestId('journal-body-input').props.selection).toEqual(selection);
+  });
+
+  it('toggles the same span back off on a second press', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="a word" onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 2, 6);
+    fireEvent(
+      getByTestId('journal-body-input'),
+      'keyPress',
+      keyPress('b', { ctrlKey: true }).event,
+    );
+    fireEvent(
+      getByTestId('journal-body-input'),
+      'keyPress',
+      keyPress('b', { ctrlKey: true }).event,
+    );
+    expect(onChangeBody).toHaveBeenLastCalledWith('a word');
+  });
+
+  it('uses Command, not Control, on an Apple browser', () => {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { platform: 'MacIntel' },
+      configurable: true,
+    });
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="a word" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 2, 6);
+    const control = keyPress('b', { ctrlKey: true });
+    fireEvent(input, 'keyPress', control.event);
+    expect(control.preventDefault).not.toHaveBeenCalled();
+    fireEvent(input, 'keyPress', keyPress('b', { metaKey: true }).event);
+    expect(onChangeBody).toHaveBeenCalledWith('a **word**');
+  });
+
+  it.each([
+    ['an active composition', { ctrlKey: true, isComposing: true }],
+    ['the IME keyCode', { ctrlKey: true, keyCode: 229 }],
+    ['Alt', { ctrlKey: true, altKey: true }],
+  ])('leaves Ctrl+B alone during %s', (_label, modifiers) => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="a word" onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 2, 6);
+    const { event, preventDefault } = keyPress('b', modifiers);
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(onChangeBody).not.toHaveBeenCalled();
+  });
+
+  it('leaves ordinary typing alone', () => {
+    const { getByTestId } = render(<Harness initial="a" />);
+    const { event, preventDefault } = keyPress('b');
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('claims a shortcut it cannot apply without changing the body', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="forward" onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 3);
+    const { event, preventDefault } = keyPress('i', { ctrlKey: true });
+    fireEvent(getByTestId('journal-body-input'), 'keyPress', event);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onChangeBody).not.toHaveBeenCalled();
+  });
+
+  it('opens an empty pair at a collapsed caret, with the caret inside it', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="say " onChangeBody={onChangeBody} />);
+    select(getByTestId('journal-body-input'), 4);
+    fireEvent(
+      getByTestId('journal-body-input'),
+      'keyPress',
+      keyPress('b', { ctrlKey: true }).event,
+    );
+    expect(onChangeBody).toHaveBeenCalledWith('say ****');
+    expect(getByTestId('journal-body-input').props.selection).toEqual({ start: 6, end: 6 });
+  });
+
+  it('applies the command through the browser when it can, for native undo', () => {
+    const execCommand = jest.fn(() => {
+      node.value = 'a **word**';
+      return true;
+    });
+    const node = { value: 'a word', setSelectionRange: jest.fn() };
+    (globalThis as MutableGlobal).document = Object.assign(new EventTarget(), {
+      execCommand,
+    }) as unknown as Document;
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(
+      <Harness initial="a word" onChangeBody={onChangeBody} fieldRef={fieldRef} />,
+    );
+    (fieldRef as { current: unknown }).current = node;
+    select(getByTestId('journal-body-input'), 2, 6);
+    fireEvent(
+      getByTestId('journal-body-input'),
+      'keyPress',
+      keyPress('b', { ctrlKey: true }).event,
+    );
+
+    expect(execCommand).toHaveBeenCalledWith('insertText', false, '**word**');
+    expect(node.setSelectionRange).toHaveBeenLastCalledWith(4, 8);
+    // The browser's own input event carries the text; the controlled fallback stays out.
+    expect(onChangeBody).not.toHaveBeenCalled();
+  });
+
+  it('passes the input event a browser command fires straight through', () => {
+    // A command that inserts exactly one line feed must not be re-read as a
+    // Return and continued as a list item.
+    const onChangeBody = jest.fn();
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const { getByTestId } = render(
+      <Harness initial="- a" onChangeBody={onChangeBody} fieldRef={fieldRef} />,
+    );
+    const input = getByTestId('journal-body-input');
+    const node = { value: '- a', setSelectionRange: jest.fn() };
+    (globalThis as MutableGlobal).document = {
+      execCommand: jest.fn(() => {
+        node.value = '- <u>a</u>';
+        fireEvent.changeText(input, '- <u>a</u>');
+        return true;
+      }),
+    } as unknown as Document;
+    (fieldRef as { current: unknown }).current = node;
+    select(input, 2, 3);
+    fireEvent(input, 'keyPress', keyPress('u', { ctrlKey: true }).event);
+    expect(onChangeBody).toHaveBeenCalledWith('- <u>a</u>');
+  });
+});
+
 describe('LiveMarkdownBody on native', () => {
   it('keeps the visible TextInput with no mirror behind it', () => {
     const { getByTestId, queryByTestId } = render(<Harness initial="**a**" />);

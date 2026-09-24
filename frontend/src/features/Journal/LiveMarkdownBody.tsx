@@ -9,23 +9,27 @@
  * screen reader. The value is never a display copy: #2891's quote anchors read
  * the textarea selection straight through ``utf16ToSource``.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   TextInput,
   View,
   useWindowDimensions,
   type NativeSyntheticEvent,
+  type TextInputKeyPressEventData,
   type TextInputSelectionChangeEventData,
 } from 'react-native';
 
+import { editorPrimaryModifier } from './editorPrimaryModifier';
 import styles from './JournalEntry.styles';
 import { utf16ToSource, type SourceSelection } from './journalMarkdown';
 import LiveMarkdownMirror from './LiveMarkdownMirror';
 import liveStyles, { LIVE_TAB_STYLE } from './LiveMarkdownStyles';
-import { continueMarkdownEdit, type MarkdownSelection } from './markdownEditing';
+import { applyMarkdownCommand, keyCommand, type MarkdownKeyEvent } from './markdownCommands';
+import { continueMarkdownEdit, type MarkdownEdit, type MarkdownSelection } from './markdownEditing';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLiveMirrorEnabled } from './useLiveMirrorEnabled';
 import { useWebSelectionListener } from './webSelectionListener';
+import { applyEditToTextarea } from './webTextareaEdit';
 
 import { colors, writingField, writingFieldFocus } from '@/design/tokens';
 
@@ -45,16 +49,10 @@ export interface LiveMarkdownBodyProps {
 }
 
 /**
- * Transform Return at the native caret and briefly control the adjusted
- * selection. The caret is also kept as state, in UTF-16 as the field reports
- * it, for what is drawn around it.
+ * The field's last reported selection (UTF-16), as a ref for handlers that
+ * must read it synchronously and as state for what is drawn around it.
  */
-function useMarkdownBodyBindings(
-  body: string,
-  onChangeBody: LiveMarkdownBodyProps['onChangeBody'],
-  onBodySelectionChange: LiveMarkdownBodyProps['onBodySelectionChange'],
-) {
-  const [selection, setSelection] = useState<MarkdownSelection>();
+function useTrackedCaret(body: string) {
   const [caret, setCaret] = useState<MarkdownSelection>({ start: body.length, end: body.length });
   const nativeSelectionRef = useRef<MarkdownSelection>({ start: body.length, end: body.length });
   const trackCaret = useCallback((next: MarkdownSelection) => {
@@ -63,14 +61,68 @@ function useMarkdownBodyBindings(
       current.start === next.start && current.end === next.end ? current : next,
     );
   }, []);
-  const changeBody = useCallback(
-    (next: string) => {
-      const edit = continueMarkdownEdit(body, next, nativeSelectionRef.current);
+  return { caret, nativeSelectionRef, trackCaret };
+}
+
+/**
+ * Apply a command's edit through the browser, so native undo records it, and
+ * fall back to ``commit`` (a controlled value) where that is unavailable.
+ */
+function useApplyEdit(
+  inputRef: LiveMarkdownBodyProps['inputRef'],
+  applyingCommandRef: React.MutableRefObject<boolean>,
+  commit: (edit: MarkdownEdit) => void,
+  trackCaret: (next: MarkdownSelection) => void,
+) {
+  return useCallback(
+    (edit: MarkdownEdit) => {
+      applyingCommandRef.current = true;
+      let applied = false;
+      try {
+        applied = applyEditToTextarea(inputRef.current, edit);
+      } finally {
+        applyingCommandRef.current = false;
+      }
+      if (!applied) commit(edit);
+      else if (edit.selection) trackCaret(edit.selection);
+    },
+    [applyingCommandRef, commit, inputRef, trackCaret],
+  );
+}
+
+/**
+ * Transform Return at the native caret and briefly control the adjusted
+ * selection. The caret is also kept as state, in UTF-16 as the field reports
+ * it, for what is drawn around it.
+ */
+function useMarkdownBodyBindings(
+  body: string,
+  onChangeBody: LiveMarkdownBodyProps['onChangeBody'],
+  onBodySelectionChange: LiveMarkdownBodyProps['onBodySelectionChange'],
+  inputRef: LiveMarkdownBodyProps['inputRef'],
+) {
+  const [selection, setSelection] = useState<MarkdownSelection>();
+  const { caret, nativeSelectionRef, trackCaret } = useTrackedCaret(body);
+  // True while a command is being applied through the browser: the input
+  // event it fires is the command's own text and must pass through verbatim.
+  const applyingCommandRef = useRef(false);
+  /** Hand the body a new value, briefly controlling the caret when the edit moves it. */
+  const commit = useCallback(
+    (edit: MarkdownEdit) => {
       if (edit.selection) trackCaret(edit.selection);
       setSelection(edit.selection);
       onChangeBody(edit.text);
     },
-    [body, onChangeBody, trackCaret],
+    [onChangeBody, trackCaret],
+  );
+  const changeBody = useCallback(
+    (next: string) =>
+      commit(
+        applyingCommandRef.current
+          ? { text: next }
+          : continueMarkdownEdit(body, next, nativeSelectionRef.current),
+      ),
+    [body, commit, nativeSelectionRef],
   );
   const changeSelection = useCallback(
     (event: SelectionChangeEvent) => {
@@ -80,7 +132,43 @@ function useMarkdownBodyBindings(
     },
     [onBodySelectionChange, trackCaret],
   );
-  return { selection, caret, trackCaret, changeBody, changeSelection };
+  const applyEdit = useApplyEdit(inputRef, applyingCommandRef, commit, trackCaret);
+  return {
+    selection,
+    caret,
+    nativeSelectionRef,
+    trackCaret,
+    changeBody,
+    changeSelection,
+    applyEdit,
+  };
+}
+
+type BodyBindings = ReturnType<typeof useMarkdownBodyBindings>;
+
+/** The key a TextInput reports, with the modifiers react-native-web passes through on web. */
+type BodyKeyPressEvent = NativeSyntheticEvent<TextInputKeyPressEventData & MarkdownKeyEvent>;
+
+/**
+ * Keyboard commands on the body field. Being the field's own handler, it only
+ * ever sees keys pressed while the body is focused; a key that is not an
+ * editor command, or a command that does not apply here (``pass``), is left to
+ * the browser untouched.
+ */
+function useMarkdownKeyCommands(body: string, bindings: BodyBindings) {
+  const { applyEdit, nativeSelectionRef } = bindings;
+  const primary = useMemo(editorPrimaryModifier, []);
+  return useCallback(
+    (event: BodyKeyPressEvent) => {
+      const command = keyCommand(event.nativeEvent, primary);
+      if (command == null) return;
+      const result = applyMarkdownCommand(body, nativeSelectionRef.current, command);
+      if (result.kind === 'pass') return;
+      event.preventDefault();
+      if (result.kind === 'edit') applyEdit(result.edit);
+    },
+    [applyEdit, body, nativeSelectionRef, primary],
+  );
 }
 
 /**
@@ -92,7 +180,7 @@ function useMarkdownBodyBindings(
  */
 function useSourceCaret(
   body: string,
-  markdown: ReturnType<typeof useMarkdownBodyBindings>,
+  markdown: BodyBindings,
   inputRef: React.RefObject<TextInput | null>,
 ): SourceSelection {
   const { trackCaret } = markdown;
@@ -118,7 +206,8 @@ export default function LiveMarkdownBody({
   const viewportHeight = useWindowDimensions().height;
   const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
   const growth = useGrowingFieldHeight(minimumBodyHeight);
-  const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange);
+  const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange, inputRef);
+  const onKeyPress = useMarkdownKeyCommands(body, markdown);
   const mirrored = useLiveMirrorEnabled();
   const sourceSelection = useSourceCaret(body, markdown, inputRef);
   return (
@@ -139,6 +228,7 @@ export default function LiveMarkdownBody({
         onContentSizeChange={growth.onContentSizeChange}
         selection={markdown.selection}
         onSelectionChange={markdown.changeSelection}
+        onKeyPress={onKeyPress}
         placeholder={bodyPlaceholder}
         placeholderTextColor={colors.paper.inkSoft}
         selectionColor={writingField.caret}

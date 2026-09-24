@@ -1,6 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { continueMarkdownEdit, continueMarkdownLine, deleteBackwardEdit } from '../markdownEditing';
+import {
+  continueMarkdownEdit,
+  continueMarkdownLine,
+  deleteBackwardEdit,
+  minimalReplacement,
+} from '../markdownEditing';
 
 describe('continueMarkdownLine', () => {
   it.each([
@@ -158,5 +163,34 @@ describe('deleteBackwardEdit', () => {
     ['a\n\nb', 2],
   ])('defers to the plain field at the start of plain line %j:%i', (body, caret) => {
     expect(deleteBackwardEdit(body, { start: caret, end: caret })).toBeNull();
+  });
+});
+
+describe('minimalReplacement', () => {
+  it.each([
+    ['a word', 'a **word**', { start: 2, end: 6, text: '**word**' }],
+    ['a **word**', 'a word', { start: 2, end: 10, text: 'word' }],
+    ['- a', '  - a', { start: 0, end: 0, text: '  ' }],
+    ['  - a', '- a', { start: 0, end: 2, text: '' }],
+    ['same', 'same', { start: 4, end: 4, text: '' }],
+  ])('replaces the one differing stretch of %j to reach %j', (before, after, expected) => {
+    const replacement = minimalReplacement(before, after);
+    expect(replacement).toEqual(expected);
+    expect(
+      `${before.slice(0, replacement.start)}${replacement.text}${before.slice(replacement.end)}`,
+    ).toBe(after);
+  });
+
+  it('never splits a surrogate pair', () => {
+    // '\u{1F600}' and '\u{1F601}' share their high surrogate; a UTF-16 prefix
+    // match would leave a lone low surrogate as the "replacement".
+    const replacement = minimalReplacement('\u{1F600}', '\u{1F601}');
+    expect(replacement).toEqual({ start: 0, end: 2, text: '\u{1F601}' });
+  });
+
+  it('never splits a surrogate pair at the end of the shared suffix', () => {
+    // U+10000 and U+10400 share their LOW surrogate, U+DC00.
+    const replacement = minimalReplacement('a\u{10000}', 'a\u{10400}');
+    expect(replacement).toEqual({ start: 1, end: 3, text: '\u{10400}' });
   });
 });

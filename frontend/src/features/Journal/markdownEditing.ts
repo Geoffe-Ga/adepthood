@@ -149,3 +149,46 @@ export function deleteBackwardEdit(
     selection: { start: lineStart, end: lineStart },
   };
 }
+
+/** One contiguous UTF-16 replacement: ``before[start, end)`` becomes ``text``. */
+export interface TextReplacement {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/**
+ * The smallest single replacement that turns ``before`` into ``after``.
+ *
+ * A browser applies an editor command as one native text insertion so its own
+ * undo stack stays coherent, and that insertion needs exactly this: a range and
+ * the text for it. The shared prefix and suffix never end or begin inside a
+ * surrogate pair, so the inserted text is never a lone half of a character.
+ */
+export function minimalReplacement(before: string, after: string): TextReplacement {
+  let prefix = 0;
+  const shorter = Math.min(before.length, after.length);
+  while (prefix < shorter && before[prefix] === after[prefix]) prefix += 1;
+  if (prefix > 0 && isHighSurrogate(before.charCodeAt(prefix - 1))) prefix -= 1;
+  let suffix = 0;
+  while (
+    suffix < shorter - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  if (suffix > 0 && isLowSurrogate(before.charCodeAt(before.length - suffix))) suffix -= 1;
+  return {
+    start: prefix,
+    end: before.length - suffix,
+    text: after.slice(prefix, after.length - suffix),
+  };
+}
