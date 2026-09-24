@@ -11,9 +11,26 @@ import * as path from 'path';
 
 import { buildFeedbackContext } from '@/features/Feedback/feedbackContext';
 import { FEEDBACK_CONTEXT_LABELS, FEEDBACK_PREVIEW_COPY } from '@/features/Feedback/feedbackCopy';
-import { REPO_ROOT } from '@/testing/backendSource';
+import { readBackendSource, REPO_ROOT } from '@/testing/backendSource';
 
 const POLICY = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'legal', 'privacy-policy.md'), 'utf-8');
+
+/**
+ * How long the backend keeps a report, read from the Python that sweeps it
+ * rather than restated here: the copy and the policy must follow the backend,
+ * and reading through `@/testing/backendSource` is what makes `backend-ci.yml`
+ * run this file on the backend change that would break it.
+ */
+const BACKEND_MODEL = ['src', 'models', 'feedback.py'];
+const RETENTION = /^FEEDBACK_RETENTION_DAYS: Final = (\d+)$/m;
+
+function backendRetentionDays(): string {
+  const match = RETENTION.exec(readBackendSource(...BACKEND_MODEL));
+  if (match === null) {
+    throw new Error(`FEEDBACK_RETENTION_DAYS not found in backend/${BACKEND_MODEL.join('/')}`);
+  }
+  return match[1] ?? '';
+}
 
 function normalise(text: string): string {
   return text.toLowerCase().replace(/[*`]/g, '').split(/\s+/).join(' ');
@@ -78,9 +95,9 @@ describe('preview copy agrees with the privacy policy', () => {
     expect(policyFieldTerms(withoutControl)).not.toContain('control');
   });
 
-  it('states the same retention', () => {
+  it('states the retention the backend enforces', () => {
     const days = /(\d+) days/.exec(FEEDBACK_PREVIEW_COPY.retention)?.[1];
-    expect(days).toBe('180');
+    expect(days).toBe(backendRetentionDays());
     expect(section).toContain(`kept for ${days} days`);
   });
 
