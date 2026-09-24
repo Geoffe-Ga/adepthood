@@ -247,15 +247,15 @@
   },
   {
     "id": "journal.live-markdown-edit",
-    "description": "A writer sees the journal's Markdown rendered while they are still typing in it -- emphasis styled in place, block markers dimmed rather than deleted, and the delimiters of the span under the caret revealed -- with the stored body still byte-identical to what they typed and every marginalia / promoted-quote anchor still addressing the same code points. The anchor-safe model this needs (exact source round trip, one code-point coordinate space, bullet blocks, caret and reveal geometry) has landed; the live editing surface that consumes it has not.",
+    "description": "A writer sees the journal's Markdown rendered while they are still typing it -- a styled mirror over the real textarea draws bold, italics, <u>underline</u> and quote lines in place, block markers and delimiters dimmed rather than deleted and revealed around the caret -- and formats with Cmd/Ctrl+B/I/U or the toolbar. Browser undo and redo take a shortcut back, pasted Markdown is kept verbatim, and the stored body stays byte-identical to what was typed, so every marginalia / promoted-quote anchor still addresses the same code points. The spec types with the keyboard, checks the title is never intercepted, lets the page save, reloads into read mode, and separately probes that clicking a mirror glyph puts the textarea caret on that exact character at 390/768/1024/1440px in light and dark.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
       "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
       "tables": ["journalentry"]
     },
-    "status": "uncovered",
-    "issue": 2889
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-live-markdown.browser.e2e.test.ts"
   },
   {
     "id": "journal.close-fresh-page-after-save-settles",
