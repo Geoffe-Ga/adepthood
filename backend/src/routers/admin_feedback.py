@@ -26,7 +26,7 @@ it; the client offers copy and download, and the route makes no outbound call.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Final
+from typing import Annotated, Final, assert_never
 
 from fastapi import Body, Depends, Path, Query, Request
 from pydantic import AwareDatetime
@@ -52,6 +52,7 @@ from models.user import User
 from rate_limit import limiter
 from schemas.feedback import BUILD_PATTERN, SCREEN_PATTERN
 from schemas.feedback_admin import (
+    AddNoteCommand,
     AdminCapabilities,
     FeedbackAppAttached,
     FeedbackDraftRequest,
@@ -251,19 +252,29 @@ async def read_feedback_report(
     return await _detail(context.session, report)
 
 
-async def _apply(
+async def apply_triage_command(
     command: FeedbackTriageCommand, report: FeedbackReport, context: AdminContext, actor: Actor
 ) -> None:
-    """Dispatch one command to the single triage writer."""
+    """Dispatch one command to the single triage writer, and fail closed.
+
+    Every variant of the union has its own arm, ``add_note`` included; there is
+    no catch-all that a new variant could fall into. ``assert_never`` makes a
+    variant added to :data:`FeedbackTriageCommand` without an arm here a mypy
+    error, and -- should one arrive anyway -- an ``AssertionError`` (a 500 that
+    writes nothing) rather than a note or a status change nobody asked for.
+    """
     session = context.session
-    if isinstance(command, TransitionCommand):
-        await feedback_triage.transition(session, report, command.status, actor)
-    elif isinstance(command, LinkDuplicateCommand):
-        await feedback_triage.link_duplicate(session, report, command.target_public_id, actor)
-    elif isinstance(command, UnlinkDuplicateCommand):
-        await feedback_triage.unlink_duplicate(session, report, actor)
-    else:
-        await feedback_triage.add_note(session, report, command.body, actor)
+    match command:
+        case TransitionCommand():
+            await feedback_triage.transition(session, report, command.status, actor)
+        case LinkDuplicateCommand():
+            await feedback_triage.link_duplicate(session, report, command.target_public_id, actor)
+        case UnlinkDuplicateCommand():
+            await feedback_triage.unlink_duplicate(session, report, actor)
+        case AddNoteCommand():
+            await feedback_triage.add_note(session, report, command.body, actor)
+        case _:
+            assert_never(command)
 
 
 @router.post("/feedback/{public_id}/actions", response_model=FeedbackTriageDetail)
@@ -287,7 +298,7 @@ async def act_on_feedback_report(
     written. Linking never changes status.
     """
     report = await feedback_triage.load_report_for_update(context.session, public_id)
-    await _apply(command, report, context, _actor(request, context))
+    await apply_triage_command(command, report, context, _actor(request, context))
     return await _detail(context.session, report)
 
 
