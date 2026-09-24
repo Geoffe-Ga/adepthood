@@ -54,7 +54,7 @@ from models.feedback import (
 )
 from models.user import User
 from rate_limit import limiter
-from schemas.feedback import BUILD_PATTERN, SCREEN_PATTERN
+from schemas.feedback import BUILD_FILTER_PATTERN, SCREEN_PATTERN
 from schemas.feedback_admin import (
     AddNoteCommand,
     AdminCapabilities,
@@ -111,7 +111,7 @@ class _InboxQuery:
         str | None, Query(pattern=SCREEN_PATTERN, max_length=FEEDBACK_SCREEN_MAX_LENGTH)
     ] = None
     app_build: Annotated[
-        str | None, Query(pattern=BUILD_PATTERN, max_length=FEEDBACK_BUILD_MAX_LENGTH)
+        str | None, Query(pattern=BUILD_FILTER_PATTERN, max_length=FEEDBACK_BUILD_MAX_LENGTH)
     ] = None
     created_from: Annotated[
         AwareDatetime | None, Query(description="Inclusive lower bound on created_at.")

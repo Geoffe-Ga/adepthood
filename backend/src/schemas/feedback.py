@@ -70,6 +70,13 @@ CONTROL_PATTERN: Final = r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,3}$"
 # release. Length is bounded separately, by FEEDBACK_BUILD_MAX_LENGTH.
 BUILD_PATTERN: Final = r"^[0-9]+(\.[0-9]+){1,3}(\+[0-9]+|-(alpha|beta|rc)(\.[0-9]+)?)?$"
 
+# The grammar the admin inbox's build filter accepts: the wider shape intake
+# took before the build was narrowed to a version (#2899). The filter reads
+# stored rows, and rows stored under the wider grammar -- a commit hash, a
+# free-suffix release -- are still shown in the inbox, so the filter must be
+# able to name them. Same reasoning as SCREEN_PATTERN for the screen filter.
+BUILD_FILTER_PATTERN: Final = r"^[0-9A-Za-z][0-9A-Za-z._+-]*$"
+
 # A BCP-47 language tag narrowed to language plus optional region. Enough to
 # know which translation the person was reading; not enough to be a fingerprint.
 LOCALE_PATTERN: Final = r"^[a-z]{2,3}(-[A-Z]{2})?$"
