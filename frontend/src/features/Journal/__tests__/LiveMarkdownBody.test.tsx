@@ -4,9 +4,10 @@ import { act, configure, fireEvent, render } from '@testing-library/react-native
 import React, { useRef, useState } from 'react';
 import { StyleSheet, type TextInput } from 'react-native';
 
-import { parseJournalMarkdown } from '../journalMarkdown';
+import HighlightedBody from '../HighlightedBody';
+import { BULLET_MARKERS, parseJournalMarkdown } from '../journalMarkdown';
 import LiveMarkdownBody from '../LiveMarkdownBody';
-import { MIRROR_HIDDEN_OPACITY } from '../LiveMarkdownStyles';
+import { LIVE_TAB_STYLE, MIRROR_HIDDEN_OPACITY } from '../LiveMarkdownStyles';
 import { buildMirrorModel, visibleMirrorRuns } from '../markdownMirror';
 
 import { CORPUS } from './fixtures/journalMarkdownCorpus';
@@ -19,6 +20,9 @@ const Platform = require('react-native').Platform as { OS: string };
 // library's queries honour that by default; these tests look at it anyway.
 // The accessibility test below checks the hiding with the default restored.
 configure({ defaultIncludeHiddenElements: true });
+
+/** The tab stop the field and the mirror share on web. */
+const LIVE_TAB_COLUMNS = (LIVE_TAB_STYLE as { tabSize: number }).tabSize;
 
 type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
 
@@ -149,6 +153,43 @@ describe('LiveMarkdownBody on web', () => {
         .find((candidate) => candidate.start === start);
       expect(renderedText(getByTestId(id))).toBe(run?.text);
     }
+  });
+
+  it.each([...BULLET_MARKERS])(
+    'keeps a typed %j marker in the source and draws the line as a bullet',
+    (marker) => {
+      const onChangeBody = jest.fn();
+      const { getByTestId } = render(<Harness initial="" onChangeBody={onChangeBody} />);
+      fireEvent.changeText(getByTestId('journal-body-input'), `${marker} item`);
+      expect(onChangeBody).toHaveBeenLastCalledWith(`${marker} item`);
+      expect(renderedText(getByTestId('journal-live-bullet-0'))).toBe(`${marker} item`);
+      expect(renderedText(getByTestId('journal-live-marker-0'))).toBe(`${marker} `);
+    },
+  );
+
+  it.each([
+    ['spaces', '- one\n  - two\n    - three', [0, 2, 4]],
+    ['tabs', '- one\n\t- two\n\t\t- three', [0, 4, 8]],
+  ])('indents three nesting levels (%s) exactly as read mode does', (_label, body, columns) => {
+    const read = render(<HighlightedBody body={body} notes={[]} onOpen={jest.fn()} />);
+    const readColumns = renderedText(read.getByTestId('journal-markdown-bullet-0'))
+      .split('\n')
+      .map((line) => line.indexOf('\u2022'));
+    read.unmount();
+
+    const edit = render(<Harness initial={body} />);
+    const lineStarts = [0, ...Array.from(body.matchAll(/\n/gu), (match) => match.index + 1)];
+    const mirrorColumns = lineStarts.map((start) => {
+      const indent = edit.queryByTestId(`journal-live-indent-${start}`);
+      const text = indent == null ? '' : renderedText(indent);
+      return Array.from(text).reduce(
+        (total, char) => total + (char === '\t' ? LIVE_TAB_COLUMNS : 1),
+        0,
+      );
+    });
+
+    expect(readColumns).toEqual(columns);
+    expect(mirrorColumns).toEqual(readColumns);
   });
 
   it('keeps a quote marker in the source and draws the line as a quote', () => {
@@ -516,6 +557,25 @@ describe('LiveMarkdownBody formatting toolbar', () => {
     expect(selected('italic')).toBe(false);
     select(input, 7);
     expect(selected('bold')).toBe(false);
+  });
+
+  it('offers list actions on a list line and moves the item from the toolbar', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId, getByRole, queryByRole } = render(
+      <Harness initial={'prose\n  - b'} onChangeBody={onChangeBody} />,
+    );
+    const input = getByTestId('journal-body-input');
+    select(input, 2);
+    expect(queryByRole('button', { name: 'Indent list item' })).toBeNull();
+
+    select(input, 11);
+    fireEvent.press(getByRole('button', { name: 'Outdent list item' }));
+    expect(onChangeBody).toHaveBeenLastCalledWith('prose\n- b');
+    expect(getByTestId('journal-format-outdent').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+    fireEvent.press(getByRole('button', { name: 'Indent list item' }));
+    expect(onChangeBody).toHaveBeenLastCalledWith('prose\n  - b');
   });
 
   it('does nothing to the body for an action the dialect cannot apply', () => {

@@ -59,3 +59,50 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
     expect(source).not.toMatch(/rgba?\(/iu);
   });
 });
+
+describe('MarkdownFormatToolbar -- list nesting', () => {
+  it('offers Indent and Outdent only while the caret is on a list line', () => {
+    const { queryByRole, rerender } = render(
+      <MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />,
+    );
+    expect(queryByRole('button', { name: 'Indent list item' })).toBeNull();
+    expect(queryByRole('button', { name: 'Outdent list item' })).toBeNull();
+
+    rerender(<MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 1 }} onCommand={jest.fn()} />);
+    expect(queryByRole('button', { name: 'Indent list item' })).toBeTruthy();
+    expect(queryByRole('button', { name: 'Outdent list item' })).toBeTruthy();
+  });
+
+  it('disables Outdent at level 0 and enables it one level in', () => {
+    const onCommand = jest.fn();
+    const { getByTestId, rerender } = render(
+      <MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 0 }} onCommand={onCommand} />,
+    );
+    const outdent = () => getByTestId('journal-format-outdent');
+    expect(outdent().props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(outdent());
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(getByTestId('journal-format-indent').props.accessibilityState).toMatchObject({
+      disabled: false,
+    });
+
+    rerender(<MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 1 }} onCommand={onCommand} />);
+    expect(outdent().props.accessibilityState).toMatchObject({ disabled: false });
+    fireEvent.press(outdent());
+    expect(onCommand).toHaveBeenCalledWith('outdent');
+  });
+
+  it('runs indent and keeps list actions at the minimum touch target', () => {
+    const onCommand = jest.fn();
+    const { getByRole, getByTestId } = render(
+      <MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 3 }} onCommand={onCommand} />,
+    );
+    fireEvent.press(getByRole('button', { name: 'Indent list item' }));
+    expect(onCommand).toHaveBeenCalledWith('indent');
+    for (const id of ['journal-format-indent', 'journal-format-outdent']) {
+      const flat = StyleSheet.flatten(getByTestId(id).props.style);
+      expect(flat.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+      expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    }
+  });
+});
