@@ -27,7 +27,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Final, cast
+from typing import Any, Final, Protocol, cast
 
 from sqlalchemy import CursorResult, delete, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +82,34 @@ _POSTGRESQL: Final = "postgresql"
 # The second key of the link lock. There is one lock for all links, because a
 # cycle can join any two reports.
 _ALL_LINKS_KEY: Final = 0
+
+
+class PersistedIdMissingError(RuntimeError):
+    """A row the triage code loaded or flushed has no primary key.
+
+    Never expected: every report and note here comes out of the database or has
+    just been flushed into it. Raised rather than read as ``0`` because report
+    ``0`` is a plausible-looking wrong answer -- a cycle check over the wrong
+    node, a draft that silently lists no notes.
+    """
+
+
+class _KeyedRow(Protocol):
+    """Any table row whose integer primary key is ``None`` until it is flushed."""
+
+    id: int | None
+
+
+def persisted_id(row: _KeyedRow) -> int:
+    """Return ``row``'s primary key, or raise when it has none.
+
+    Raises:
+        PersistedIdMissingError: When ``row`` was never flushed.
+    """
+    if row.id is None:
+        msg = f"{type(row).__name__} has no primary key; it was never flushed"
+        raise PersistedIdMissingError(msg)
+    return row.id
 
 
 @dataclass(frozen=True)
@@ -295,12 +323,9 @@ async def _record(
     change: TriageChange,
 ) -> None:
     """Append the one event and emit the one log line a mutation owes, then commit."""
-    if report.id is None:  # pragma: no cover - a loaded report always has its key
-        msg = "feedback report id missing"
-        raise ValueError(msg)
     session.add(
         FeedbackTriageEvent(
-            report_id=report.id,
+            report_id=persisted_id(report),
             actor_admin_id=actor.admin.id,
             action=change.action.value,
             old_state=change.old_state,
@@ -388,13 +413,13 @@ async def _refuse_bad_link(
         raise conflict(DUPLICATE_UNCHANGED)
     await _lock_duplicate_links(session)
     parents = await _duplicate_parents(session)
-    if creates_duplicate_cycle(report.id or 0, target.id or 0, parents):
+    if creates_duplicate_cycle(persisted_id(report), persisted_id(target), parents):
         raise conflict(DUPLICATE_CYCLE)
 
 
 async def link_duplicate(
     session: AsyncSession, report: FeedbackReport, target_public_id: str, actor: Actor
-) -> FeedbackReport:
+) -> None:
     """Mark ``report`` a duplicate of the report behind ``target_public_id``.
 
     Refused -- before anything is written -- when the target is the report
@@ -414,7 +439,6 @@ async def link_duplicate(
         actor,
         TriageChange(FeedbackTriageAction.DUPLICATE_LINKED, old_state, target.public_id),
     )
-    return target
 
 
 async def unlink_duplicate(session: AsyncSession, report: FeedbackReport, actor: Actor) -> None:
@@ -436,9 +460,7 @@ async def add_note(
     session: AsyncSession, report: FeedbackReport, body: str, actor: Actor
 ) -> FeedbackNote:
     """Attach one private note to ``report``."""
-    if report.id is None:  # pragma: no cover - a loaded report always has its key
-        raise not_found(REPORT_RESOURCE)
-    note = FeedbackNote(report_id=report.id, author_admin_id=actor.admin.id, body=body)
+    note = FeedbackNote(report_id=persisted_id(report), author_admin_id=actor.admin.id, body=body)
     session.add(note)
     await session.flush()
     await _record(
@@ -479,7 +501,7 @@ async def build_draft(
     404 rather than a silently shorter draft, so an operator never pastes a
     draft believing it carries a note it does not.
     """
-    report_id = report.id or 0
+    report_id = persisted_id(report)
     selected = await _selected_notes(session, report_id, note_ids)
     related = tuple(await duplicates_of(session, report_id))
     source = DraftSource.from_report(

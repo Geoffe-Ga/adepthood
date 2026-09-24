@@ -17,7 +17,11 @@ report rather than to the account.
 
 Mutations are rate limited at :data:`_TRIAGE_RATE_LIMIT`: comfortably above an
 operator working a queue by hand, far below a looping script or a stolen token
-rewriting the inbox. Reads are not limited beyond the ambient floor.
+rewriting the inbox. The inbox and the detail read are limited at
+:data:`_TRIAGE_READ_RATE_LIMIT`, per route rather than per path: the ambient
+floor (and a plain ``@limiter.limit``) buckets each report's URL separately,
+so the detail read shares one fixed-scope budget across every report; without
+it a stolen admin token could read the whole table at a per-report rate.
 
 Nothing here publishes anything. ``POST …/draft`` renders Markdown and returns
 it; the client offers copy and download, and the route makes no outbound call.
@@ -26,7 +30,7 @@ it; the client offers copy and download, and the route makes no outbound call.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Final
+from typing import Annotated, Final, assert_never
 
 from fastapi import Body, Depends, Path, Query, Request
 from pydantic import AwareDatetime
@@ -52,6 +56,7 @@ from models.user import User
 from rate_limit import limiter
 from schemas.feedback import BUILD_PATTERN, SCREEN_PATTERN
 from schemas.feedback_admin import (
+    AddNoteCommand,
     AdminCapabilities,
     FeedbackAppAttached,
     FeedbackDraftRequest,
@@ -69,13 +74,25 @@ from schemas.feedback_admin import (
 )
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page, PaginationParams, build_page
 from services import feedback_triage
-from services.feedback_triage import Actor, InboxFilters
+from services.feedback_triage import Actor, InboxFilters, persisted_id
 
 router = build_router(prefix="/admin", tags=["admin"])
 
 # One operator triaging by hand makes a few mutations a minute; sixty is a
 # ceiling they never meet and a runaway script meets in a second.
 _TRIAGE_RATE_LIMIT: Final = "60/minute"
+
+# Reading is where a leaked admin token does its damage: every report, every
+# account's words. An operator reads a report and acts on it, a few a minute;
+# thirty reads is headroom for that and the refetch after each action, and it
+# caps a scrape of the whole inbox (the same ceiling the journal list uses).
+_TRIAGE_READ_RATE_LIMIT: Final = "30/minute"
+
+# slowapi buckets a plain ``@limiter.limit`` by the *concrete* request path, so
+# on ``/feedback/{public_id}`` every report would get thirty reads of its own
+# and the cap would bound nothing. A fixed scope makes it one budget per client
+# for the route, whichever report each read names.
+_REPORT_READ_SCOPE: Final = "admin_feedback.read_feedback_report"
 
 _PublicIdPath = Annotated[
     str,
@@ -159,7 +176,7 @@ async def _summaries(
 
 async def _operator_added(session: AsyncSession, report: FeedbackReport) -> FeedbackOperatorAdded:
     """Everything operators added to ``report``, with its duplicate link resolved."""
-    report_id = report.id or 0
+    report_id = persisted_id(report)
     notes = await feedback_triage.notes_for(session, report_id)
     events = await feedback_triage.events_for(session, report_id)
     return FeedbackOperatorAdded(
@@ -167,7 +184,7 @@ async def _operator_added(session: AsyncSession, report: FeedbackReport) -> Feed
         duplicate_of=await feedback_triage.linked_public_id(session, report),
         duplicates=await feedback_triage.duplicates_of(session, report_id),
         notes=[
-            FeedbackOperatorNote(id=note.id or 0, body=note.body, created_at=note.created_at)
+            FeedbackOperatorNote(id=persisted_id(note), body=note.body, created_at=note.created_at)
             for note in notes
         ],
         events=[
@@ -230,40 +247,56 @@ async def read_admin_capabilities(
 
 
 @router.get("/feedback", response_model=Page[FeedbackTriageSummary])
+@limiter.limit(_TRIAGE_READ_RATE_LIMIT)
 async def list_feedback_reports(
+    request: Request,
     query: Annotated[_InboxQuery, Depends()],
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
 ) -> Page[FeedbackTriageSummary]:
     """The inbox: filtered, newest first, paged over a total order."""
+    del request  # Read by @limiter.limit, which keys the read budget on it.
     window = query.window()
     reports, total = await feedback_triage.list_reports(session, query.filters(), window)
     return build_page(await _summaries(session, reports), total, window)
 
 
 @router.get("/feedback/{public_id}", response_model=FeedbackTriageDetail)
+@limiter.shared_limit(_TRIAGE_READ_RATE_LIMIT, scope=_REPORT_READ_SCOPE)
 async def read_feedback_report(
+    request: Request,
     public_id: _PublicIdPath,
     context: Annotated[AdminContext, Depends(admin_context)],
 ) -> FeedbackTriageDetail:
     """One report, its three sources kept apart, its fingerprint and siblings."""
+    del request  # Read by @limiter.shared_limit: one budget across every report.
     report = await feedback_triage.load_report(context.session, public_id)
     return await _detail(context.session, report)
 
 
-async def _apply(
+async def apply_triage_command(
     command: FeedbackTriageCommand, report: FeedbackReport, context: AdminContext, actor: Actor
 ) -> None:
-    """Dispatch one command to the single triage writer."""
+    """Dispatch one command to the single triage writer, and fail closed.
+
+    Every variant of the union has its own arm, ``add_note`` included; there is
+    no catch-all that a new variant could fall into. ``assert_never`` makes a
+    variant added to :data:`FeedbackTriageCommand` without an arm here a mypy
+    error, and -- should one arrive anyway -- an ``AssertionError`` (a 500 that
+    writes nothing) rather than a note or a status change nobody asked for.
+    """
     session = context.session
-    if isinstance(command, TransitionCommand):
-        await feedback_triage.transition(session, report, command.status, actor)
-    elif isinstance(command, LinkDuplicateCommand):
-        await feedback_triage.link_duplicate(session, report, command.target_public_id, actor)
-    elif isinstance(command, UnlinkDuplicateCommand):
-        await feedback_triage.unlink_duplicate(session, report, actor)
-    else:
-        await feedback_triage.add_note(session, report, command.body, actor)
+    match command:
+        case TransitionCommand():
+            await feedback_triage.transition(session, report, command.status, actor)
+        case LinkDuplicateCommand():
+            await feedback_triage.link_duplicate(session, report, command.target_public_id, actor)
+        case UnlinkDuplicateCommand():
+            await feedback_triage.unlink_duplicate(session, report, actor)
+        case AddNoteCommand():
+            await feedback_triage.add_note(session, report, command.body, actor)
+        case _:
+            assert_never(command)
 
 
 @router.post("/feedback/{public_id}/actions", response_model=FeedbackTriageDetail)
@@ -287,7 +320,7 @@ async def act_on_feedback_report(
     written. Linking never changes status.
     """
     report = await feedback_triage.load_report_for_update(context.session, public_id)
-    await _apply(command, report, context, _actor(request, context))
+    await apply_triage_command(command, report, context, _actor(request, context))
     return await _detail(context.session, report)
 
 
