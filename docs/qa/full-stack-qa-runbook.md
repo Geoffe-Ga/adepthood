@@ -406,6 +406,8 @@ state, error state, and destructive confirmation encountered later.
       stealing focus.
 - [ ] Contrast remains adequate in normal, pressed, disabled, selected, and dark states.
 - [ ] Timers, audio cues, motion, and haptics have equivalent visible/non-audio meaning.
+- [ ] The beta feedback composer gets its own manual pass at both profiles and on native;
+      see §15.7.
 
 ### 5.4 Request and recovery behaviour
 
@@ -422,6 +424,8 @@ state, error state, and destructive confirmation encountered later.
       failed mutation was saved.
 - [ ] Retrying idempotent operations does not duplicate rows, charges, sessions,
       fragments, marginalia, essays, invitations, or imports.
+- [ ] Beta feedback: a lost response, a refresh mid-send, and offline each keep a
+      recoverable draft and resend to one reference (§15.7).
 
 ## 6. Authentication, account recovery, and first run
 
@@ -976,6 +980,46 @@ configuration change, pause/resume, completion, and persistence:
       states do not freeze the app.
 - [ ] Support & care is always reachable, readable without a model/provider/vault, and offers
       accurate human/professional/crisis resources for the user's locale where promised.
+
+### 15.7 Beta feedback
+
+Automated corroboration: `feedback-composer.browser.e2e.test.ts` and
+`feedback-resilience.browser.e2e.test.ts` (real browser),
+`admin-feedback-triage.e2e.test.ts` (seam), and the backend privacy, race and
+Sentry suites. This pass covers what those cannot: real devices, real assistive
+technology and a person's judgement of the copy.
+
+Smoke path, at 390×844 and at 1280×720:
+
+- [ ] Open the composer from each of the six origins: the header control on Journal,
+      Habits, Practice, Course and Map, and the Settings row. "What will be attached"
+      names the matching screen (`journal.shelf`, `habits.grid`, `practice.player`,
+      `course.reader`, `map.stages`, `settings.hub`), the control, and a viewport class
+      that matches the width (`compact` on the phone, `expanded` on the laptop).
+- [ ] File one report of each kind (Something broke, Something was confusing, I have an
+      idea, Something worked well). Each shows an `FB-` reference, and
+      `GET /feedback/{public_id}/receipt` returns it for the same account only.
+- [ ] As an operator, the Beta feedback inbox lists every report. Each detail keeps what
+      the reporter said, what the app attached and what the operator added apart, and a
+      draft carries no reporter words, address or correlation id.
+- [ ] Export my data carries the reports under `feedback_reports`. After account
+      deletion, the inbox can neither open nor list them.
+
+Manual exploratory pass, at 390×844, at 1280×720 and on native iOS and Android:
+
+- [ ] Touch: every option, field and button is reachable and at least 44×44. A
+      double-tap on Send files one report, never two.
+- [ ] Keyboard only: Tab reaches the header control, Enter opens the composer with focus
+      on its heading, and every choice and field can be completed without a pointer.
+      Done returns focus to the control that opened the composer.
+- [ ] VoiceOver and TalkBack: the heading is announced on open. The failure outcome is
+      announced without focus being stolen. The confirmation and the full `FB-`
+      reference are announced, character by character when asked.
+- [ ] Reduced motion: no transition in the composer or its confirmation depends on
+      animation, and nothing is lost with motion off.
+- [ ] Offline, and refresh mid-send: the draft survives, "Send again" is offered and
+      reuses the same report, nothing resends on its own, and the account ends with one
+      report.
 
 ## 16. Security, privacy, tenancy, and abuse pass
 

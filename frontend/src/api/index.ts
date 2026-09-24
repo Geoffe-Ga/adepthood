@@ -3821,16 +3821,33 @@ export type FeedbackCategory = 'broken' | 'confusing' | 'idea' | 'praise';
 export type FeedbackImpact = 'blocked' | 'can_continue' | 'cosmetic' | 'not_applicable';
 
 /**
+ * The screen a report was filed from. Mirrors the closed `FeedbackScreen`
+ * component: the server refuses any other token, however token-shaped.
+ */
+export type FeedbackScreen =
+  | 'app.unknown'
+  | 'course.reader'
+  | 'habits.grid'
+  | 'journal.shelf'
+  | 'map.stages'
+  | 'practice.player'
+  | 'settings.hub';
+
+/** The control that opened the composer. Mirrors the closed `FeedbackControl` component. */
+export type FeedbackControl = 'settings.row.send_feedback' | 'shell.header.send_feedback';
+
+/**
  * The allowlisted diagnostic envelope — seven fields, and no eighth.
  *
  * The server publishes this component with `additionalProperties: false`, so an
  * extra key is a 422 rather than a silently trimmed field. Nothing here is free
- * text: `screen` and `control` are canonical dotted tokens, which is what makes
- * a URL, a stack trace or a pasted log impossible to spell in them.
+ * text: `screen` and `control` are closed vocabularies, which is what makes a
+ * URL, a stack trace, a pasted log or a phrase dressed as a token impossible to
+ * spell in them.
  */
 export interface FeedbackContext {
-  screen: string;
-  control?: string;
+  screen: FeedbackScreen;
+  control?: FeedbackControl;
   platform: 'android' | 'ios' | 'web';
   app_build: string;
   viewport_class: 'compact' | 'expanded' | 'regular';

@@ -10,6 +10,9 @@ import {
   parseControlToken,
 } from '@/features/Feedback/feedbackControlTokens';
 
+/** A 40-character hexadecimal commit hash; built, not pasted, so it reads as what it is. */
+const FULL_COMMIT_HASH = 'deadbeef'.repeat(5);
+
 const APP_JSON = path.resolve(__dirname, '..', '..', '..', '..', 'app.json');
 
 describe('resolveAppBuild', () => {
@@ -26,18 +29,27 @@ describe('resolveAppBuild', () => {
     expect(resolveAppBuild('2026.09.17-beta')).toBe('2026.09.17-beta');
   });
 
-  it('accepts a release exactly at the length bound and rejects one past it', () => {
-    const atBound = 'a'.repeat(FEEDBACK_BUILD_MAX_LENGTH);
+  it('accepts a version-shaped release exactly at the length bound and rejects one past it', () => {
+    const major = '1.';
+    const atBound = `${major}${'9'.repeat(FEEDBACK_BUILD_MAX_LENGTH - major.length)}`;
+    expect(atBound).toHaveLength(FEEDBACK_BUILD_MAX_LENGTH);
     expect(resolveAppBuild(atBound)).toBe(atBound);
-    expect(resolveAppBuild(`${atBound}1`)).toBe(APP_BUILD_FALLBACK);
+    expect(resolveAppBuild(`${atBound}9`)).toBe(APP_BUILD_FALLBACK);
   });
 
-  it.each([['adepthood@1.4.2'], ['-leading-dash'], [''], ['with space']])(
-    'falls back rather than mangling %p',
-    (release) => {
-      expect(resolveAppBuild(release)).toBe(APP_BUILD_FALLBACK);
-    },
-  );
+  it.each([
+    ['adepthood@1.4.2'],
+    ['-leading-dash'],
+    [''],
+    ['with space'],
+    // A word riding along in a prerelease suffix, a bare word, and a commit hash:
+    // each would put something other than a release name into every report.
+    ['1.0.0-imissyoudad'],
+    ['Dear-diary-I-cried'],
+    [FULL_COMMIT_HASH],
+  ])('falls back rather than mangling %p', (release) => {
+    expect(resolveAppBuild(release)).toBe(APP_BUILD_FALLBACK);
+  });
 
   it('falls back when nothing is configured', () => {
     expect(resolveAppBuild(undefined)).toBe(APP_BUILD_FALLBACK);

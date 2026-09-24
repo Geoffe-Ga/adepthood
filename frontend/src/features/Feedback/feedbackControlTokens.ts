@@ -1,5 +1,7 @@
 import { CONTROL_PATTERN, FEEDBACK_CONTROL_MAX_LENGTH } from './feedbackBounds';
 
+import type { FeedbackControl } from '@/api';
+
 /**
  * Every control that may open the composer, as the stable token the report's
  * `context.control` carries.
@@ -7,14 +9,15 @@ import { CONTROL_PATTERN, FEEDBACK_CONTROL_MAX_LENGTH } from './feedbackBounds';
  * A finite set rather than "anything matching CONTROL_PATTERN": the pattern
  * alone admits word-bearing tokens such as `my_private_note`, so a route param
  * that merely *looks* like a token could still smuggle a phrase into a report.
- * Only a member of this table is ever attached. A later error-state deep link
- * (#2898 AC24, deferred) adds its error codes here rather than widening the
- * check.
+ * Only a member of this table is ever attached, and the server now enforces the
+ * same closed set (`FeedbackControl`), which `feedbackBoundsDrift.test.ts`
+ * compares against this table. A later error-state deep link (#2898 AC24,
+ * deferred) adds its error codes on both sides rather than widening the check.
  */
 export const FEEDBACK_CONTROL_TOKENS = {
   shellHeader: 'shell.header.send_feedback',
   settingsRow: 'settings.row.send_feedback',
-} as const;
+} as const satisfies Readonly<Record<string, FeedbackControl>>;
 
 export type FeedbackControlToken =
   (typeof FEEDBACK_CONTROL_TOKENS)[keyof typeof FEEDBACK_CONTROL_TOKENS];

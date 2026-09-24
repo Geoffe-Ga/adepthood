@@ -458,7 +458,7 @@ async def test_a_submitted_beta_report_round_trips_into_the_archive_as_plaintext
         "summary": _FEEDBACK_SUMMARY,
         "intent": _FEEDBACK_INTENT,
         "context": {
-            "screen": "habits.shelf",
+            "screen": "habits.grid",
             "platform": "ios",
             "app_build": "1.4.2",
             "viewport_class": "compact",

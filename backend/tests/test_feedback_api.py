@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from http import HTTPStatus
 from itertools import pairwise
 from statistics import mean
@@ -28,22 +29,35 @@ from sqlmodel import col, select
 
 from main import app
 from models.feedback import (
+    FEEDBACK_BUILD_MAX_LENGTH,
+    FEEDBACK_CONTROL_MAX_LENGTH,
+    FEEDBACK_SCREEN_MAX_LENGTH,
     FEEDBACK_SUMMARY_MAX_LENGTH,
     PUBLIC_ID_ALPHABET,
     PUBLIC_ID_BODY_LENGTH,
     PUBLIC_ID_MAX_LENGTH,
     PUBLIC_ID_PATTERN,
     PUBLIC_ID_PREFIX,
+    FeedbackControl,
     FeedbackReport,
+    FeedbackScreen,
     mint_public_id,
 )
-from schemas.feedback import ALLOWED_CONTEXT_KEYS, FeedbackContext
+from routers import feedback as feedback_router
+from schemas.feedback import (
+    ALLOWED_CONTEXT_KEYS,
+    CONTROL_PATTERN,
+    SCREEN_PATTERN,
+    FeedbackContext,
+)
 from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH
 from tests.helpers.feedback_triage import make_account
 
 _PROSE = "The habit card vanished when I tapped the offer."
 _IDEMPOTENCY_HEADER = "Idempotency-Key"
 _A_KEY = "beta-report-0001"  # pragma: allowlist secret
+# The router's insert step, named once so the counting wrapper and its install agree.
+_INSERT = "_insert_with_fresh_public_id"
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
@@ -63,7 +77,7 @@ def _context(**overrides: object) -> dict[str, Any]:
     """A well-formed diagnostic envelope, with overrides applied."""
     return {
         "screen": "journal.shelf",
-        "control": "habit_offer.accept",
+        "control": "shell.header.send_feedback",
         "platform": "ios",
         "app_build": "1.4.2+318",
         "viewport_class": "compact",
@@ -85,6 +99,15 @@ def _payload(**overrides: object) -> dict[str, Any]:
         "context": _context(),
         **overrides,
     }
+
+
+def _leaf_strings(value: object) -> list[str]:
+    """Every string a smuggling attempt carried, however deeply it was nested."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _leaf_strings(item)]
+    return []
 
 
 async def _report_count(session: AsyncSession) -> int:
@@ -193,8 +216,34 @@ async def test_the_refusal_detail_is_the_repositorys_sanitised_entry_list(
     [
         ("url_with_query_string", {"screen": "https://app.example.com/journal?token=abc123"}),
         ("stack_trace_as_control", {"control": 'File "main.py", line 42, in handler'}),
-        ("build_past_its_bound", {"app_build": "9" * 64}),
+        # Version-shaped, so only the length bound can be what refuses it.
+        ("build_past_its_bound", {"app_build": "1." + "9" * FEEDBACK_BUILD_MAX_LENGTH}),
         ("log_bundle_shaped_screen", {"screen": "2026-09-17T10:00:00Z ERROR body={...}"}),
+        # Word-bearing tokens: prose disguised in the token grammar. Only a
+        # closed vocabulary refuses these; a shape pattern admits every one.
+        ("journal_prose_as_screen", {"screen": "journal.i_miss_my_father"}),
+        ("resonance_prose_as_control", {"control": "my_dead_mother.letter"}),
+        ("passage_prose_as_screen", {"screen": "course.the_self_is_a_river"}),
+        ("prose_as_build", {"app_build": "Dear-diary-I-cried"}),
+        ("prose_as_build_suffix", {"app_build": "1.0.0-imissyoudad"}),
+        # Every other forbidden class, cast as a value of an allowlisted key.
+        ("route_query_as_screen", {"screen": "journal.shelf?entry=42"}),
+        ("vault_address_as_screen", {"screen": "https://vault.example.com/mine"}),
+        ("authorization_as_control", {"control": "Authorization: Bearer abc.def"}),
+        ("cookie_as_screen", {"screen": "Cookie: session=abc"}),
+        ("header_map_string_as_control", {"control": '{"x-api-key": "k"}'}),
+        ("header_map_object_as_screen", {"screen": {"authorization": "Bearer abc.def"}}),
+        ("request_body_as_screen", {"screen": '{"summary": "I miss my father"}'}),
+        ("response_body_as_control", {"control": '{"detail": "Not authenticated"}'}),
+        ("console_log_as_screen", {"screen": "console.error: TypeError at App.tsx:12"}),
+        ("stack_trace_as_build", {"app_build": 'Traceback (most recent call last): File "a.py"'}),
+        ("journal_prose_as_screen_value", {"screen": "I miss my father every morning"}),
+        ("resonance_prose_as_control_value", {"control": "The river keeps returning to me"}),
+        ("passage_prose_as_build", {"app_build": "The self is a river"}),
+        ("prose_as_locale", {"locale": "en-US I miss him"}),
+        ("prose_as_correlation_id", {"correlation_id": "i-miss-my-father"}),
+        ("prose_as_platform", {"platform": "my private note"}),
+        ("prose_as_viewport_class", {"viewport_class": "my private note"}),
     ],
 )
 @pytest.mark.asyncio
@@ -217,6 +266,68 @@ async def test_an_unsafe_context_value_is_rejected_and_persists_nothing(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, label
     assert await _report_count(db_session) == 0, label
+    for smuggled in _leaf_strings(context_override):
+        assert smuggled not in resp.text, label
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("authorization", "Bearer abc.def"),
+        ("cookie", "session=abc; theme=dark"),
+        ("headers", {"x-api-key": "k-4417", "user-agent": "Mozilla/5.0 private"}),
+        ("request_body", '{"summary": "I miss my father"}'),
+        ("response_body", '{"detail": "Not authenticated for my letter"}'),
+        ("console_log", "console.error: TypeError at App.tsx:12"),
+        ("vault_address", "https://vault.example.com/mine"),
+        ("stack_trace", 'Traceback (most recent call last): File "a.py"'),
+        ("route_query", "entry=42&note=grief"),
+        ("journal_excerpt", "I miss my father every morning"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_forbidden_context_key_is_rejected_and_persists_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    key: str,
+    value: object,
+) -> None:
+    """An eighth key is refused whatever it is called, and its value is not echoed.
+
+    The key itself may appear in the refusal's ``loc`` -- that is what tells a
+    client which field to drop -- but nothing it carried may.
+    """
+    headers = await _signup(async_client, f"feedback_key_{key}")
+    payload = _payload(context=_context(**{key: value}))
+
+    resp = await async_client.post("/feedback/", json=payload, headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, key
+    assert await _report_count(db_session) == 0, key
+    for smuggled in _leaf_strings(value):
+        assert smuggled not in resp.text, key
+
+
+@pytest.mark.parametrize(
+    ("vocabulary", "grammar", "bound"),
+    [
+        (FeedbackScreen, SCREEN_PATTERN, FEEDBACK_SCREEN_MAX_LENGTH),
+        (FeedbackControl, CONTROL_PATTERN, FEEDBACK_CONTROL_MAX_LENGTH),
+    ],
+)
+def test_every_closed_token_satisfies_its_grammar(
+    vocabulary: type[FeedbackScreen] | type[FeedbackControl], grammar: str, bound: int
+) -> None:
+    """Each vocabulary member is spelled in the token grammar and fits its column.
+
+    The closed set is what the request enforces; the grammar and the column
+    width are what the admin filter and the database still assume. A member
+    added outside either would be accepted at intake and then be unfilterable
+    or truncated.
+    """
+    for member in vocabulary:
+        assert re.fullmatch(grammar, member.value), member
+        assert len(member.value) <= bound, member
 
 
 @pytest.mark.asyncio
@@ -277,6 +388,42 @@ async def test_a_retry_under_the_same_key_returns_the_same_report(
 
     assert first.status_code == HTTPStatus.CREATED
     assert second.json()["public_id"] == first.json()["public_id"]
+    assert await _report_count(db_session) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_replay_is_read_only_and_logs_no_second_submission(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A retry answers from the stored report: no insert attempt, no second event.
+
+    The response alone cannot tell a replay from a collision recovered after an
+    insert. Both return the stored reference, so the side effects are what pin
+    the replay path. A retry that reached the insert would roll back a write,
+    burn a sequence value, and log ``feedback_submitted`` a second time for the
+    same report, double-counting anything built on that event.
+    """
+    headers = {**await _signup(async_client, "feedback_quiet_replay"), _IDEMPOTENCY_HEADER: _A_KEY}
+    real_insert: Callable[..., Awaitable[FeedbackReport]] = getattr(feedback_router, _INSERT)
+    inserts: list[object] = []
+
+    async def _counting_insert(*args: object, **kwargs: object) -> FeedbackReport:
+        inserts.append(kwargs.get("hashed"))
+        return await real_insert(*args, **kwargs)
+
+    monkeypatch.setattr(feedback_router, _INSERT, _counting_insert)
+
+    with caplog.at_level(logging.INFO):
+        first = await async_client.post("/feedback/", json=_payload(), headers=headers)
+        second = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert second.json()["public_id"] == first.json()["public_id"]
+    assert len(inserts) == 1
+    submitted = [r for r in caplog.records if r.message == "feedback_submitted"]
+    assert [r.__dict__["public_id"] for r in submitted] == [first.json()["public_id"]]
     assert await _report_count(db_session) == 1
 
 

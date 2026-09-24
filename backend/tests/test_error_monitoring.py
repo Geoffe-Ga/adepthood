@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from typing import cast
 from unittest.mock import AsyncMock, patch
@@ -31,8 +32,6 @@ import pytest
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sentry_sdk.envelope import Envelope
-from sentry_sdk.transport import Transport
 from sentry_sdk.types import Breadcrumb
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -42,15 +41,13 @@ from errors import ERROR_KEY, INTERNAL_ERROR, install_exception_handlers
 from main import app, lifespan
 from middleware import CorrelationIdMiddleware
 from observability import TRACE_ID_HEADER
-
-# The event as the vendor would receive it: a dict of JSON-safe values.
-# Written as a plain assignment, not PEP 695 ``type`` syntax: the backend's
-# compatibility matrix still builds on Python 3.11, which cannot parse it.
-CapturedEvent = dict[str, object]
-
-# A syntactically valid DSN pointing at a host no test ever reaches: the
-# transport is replaced with a list, so nothing leaves the process.
-TEST_DSN = "https://0123456789abcdef@o0.ingest.sentry.io/1"
+from tests.helpers.sentry_capture import (
+    TEST_DSN,
+    CapturedEvent,
+    CapturingTransport,
+    capturing_sentry,
+    disarm_sentry,
+)
 
 # Sentinels stand in for the three content classes the acceptance bar names.
 # They are defined here, far from any ``raise``, because Sentry's stack frames
@@ -65,27 +62,6 @@ SMTP_PASSWORD_SENTINEL = (
 )
 
 BOOM_PATH = "/__boom__"
-
-
-class CapturingTransport(Transport):
-    """A real ``Transport`` that keeps envelopes instead of sending them.
-
-    Subclassing the vendor's own transport (rather than passing a function)
-    means the assertions run against the event *after* the client has
-    serialised it into an envelope — the same bytes a live deployment would
-    put on the wire.
-    """
-
-    def __init__(self) -> None:
-        """Start with an empty capture log."""
-        super().__init__()
-        self.events: list[CapturedEvent] = []
-
-    def capture_envelope(self, envelope: Envelope) -> None:
-        """Record the envelope's event item."""
-        event = envelope.get_event()
-        if event is not None:
-            self.events.append(dict(event))
 
 
 @pytest.fixture
@@ -117,17 +93,8 @@ def captured_events(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[CapturedEv
     variable policy, request-body policy — is the production configuration, and
     a regression in any of it fails these tests.
     """
-    monkeypatch.setenv("ENV", "staging")
-    monkeypatch.setenv(error_monitoring.SENTRY_DSN_ENV_VAR, TEST_DSN)
-    monkeypatch.setenv(error_monitoring.SENTRY_RELEASE_ENV_VAR, "test-release-abc123")
-    transport = CapturingTransport()
-    assert error_monitoring.init_error_monitoring(transport=transport) is True
-    try:
-        yield transport.events
-    finally:
-        # Leave the process with an inert client so no later test can ship an
-        # event into this list (or anywhere else).
-        sentry_sdk.init(dsn=None)
+    with capturing_sentry(monkeypatch) as events:
+        yield events
 
 
 def _post_boom(app: FastAPI, text: str) -> None:
@@ -264,7 +231,7 @@ def test_vendor_default_options_would_have_captured_the_journal_body(
     try:
         _post_boom(monitored_app, JOURNAL_SENTINEL)
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
     assert JOURNAL_SENTINEL in json.dumps(transport.events[0], default=str)
 
@@ -491,7 +458,7 @@ def test_init_with_dsn_enables_monitoring_with_one_line(
         with caplog.at_level(logging.DEBUG, logger="sentry"):
             assert error_monitoring.init_error_monitoring(transport=CapturingTransport()) is True
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
     assert len(caplog.records) == 1
     message = caplog.records[0].getMessage()
@@ -547,7 +514,7 @@ def test_init_pins_every_privacy_critical_option(
         options = cast("dict[str, object]", sentry_sdk.get_client().options)
         assert options[option] == expected
     finally:
-        sentry_sdk.init(dsn=None)
+        disarm_sentry()
 
 
 @pytest.mark.asyncio
@@ -600,10 +567,39 @@ def test_unreported_exception_is_still_logged_when_monitoring_is_off(
 ) -> None:
     """Degrading must never mean swallowing: the traceback still hits the log."""
     monkeypatch.delenv(error_monitoring.SENTRY_DSN_ENV_VAR, raising=False)
-    sentry_sdk.init(dsn=None)
+    disarm_sentry()
 
     with caplog.at_level(logging.ERROR, logger="errors"):
         _post_boom(monitored_app, JOURNAL_SENTINEL)
 
     record = next(r for r in caplog.records if r.message == "unhandled_exception")
     assert record.exc_info is not None
+
+
+def test_disarming_leaves_no_transport_even_with_a_dsn_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capture's reset must disarm the SDK while ``SENTRY_DSN`` is still set.
+
+    ``sentry_sdk.init(dsn=None)`` is not a reset: a ``None`` DSN falls back to
+    the environment variable the capture itself set, and builds a live HTTP
+    transport that ships every later test's exception over the network.
+    Asserted on the client's own state, because a revert is otherwise silent --
+    the only symptom is urllib3 retry noise in some later test's log.
+    """
+    with capturing_sentry(monkeypatch):
+        assert sentry_sdk.get_client().transport is not None
+
+    assert error_monitoring.SENTRY_DSN_ENV_VAR in os.environ
+    assert sentry_sdk.get_client().transport is None
+
+
+def test_disarm_sentry_ignores_a_dsn_already_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Called on its own, with a DSN configured, the helper still leaves no transport."""
+    monkeypatch.setenv(error_monitoring.SENTRY_DSN_ENV_VAR, TEST_DSN)
+
+    disarm_sentry()
+
+    assert sentry_sdk.get_client().transport is None

@@ -10,10 +10,14 @@ import type { FeedbackCreate } from '@/api';
 import {
   FEEDBACK_PUBLIC_ID_PATTERN,
   feedbackCategorySchema,
+  feedbackControlSchema,
   feedbackImpactSchema,
+  feedbackScreenSchema,
 } from '@/api/schemas';
 import * as bounds from '@/features/Feedback/feedbackBounds';
 import { FEEDBACK_CATEGORY_ORDER } from '@/features/Feedback/feedbackCategories';
+import { SCREEN_TOKEN_BY_ROUTE, UNKNOWN_SCREEN_TOKEN } from '@/features/Feedback/feedbackContext';
+import { FEEDBACK_CONTROL_TOKENS } from '@/features/Feedback/feedbackControlTokens';
 import { FEEDBACK_CREATE_FIELDS } from '@/features/Feedback/feedbackPayload';
 import { readBackendSource } from '@/testing/backendSource';
 
@@ -57,6 +61,22 @@ describe('feedback bounds mirror the intake contract', () => {
     expect([...feedbackCategorySchema.options]).toEqual(pyStrEnum(modelSource, 'FeedbackCategory'));
     expect([...feedbackImpactSchema.options]).toEqual(pyStrEnum(modelSource, 'FeedbackImpact'));
     expect([...FEEDBACK_CATEGORY_ORDER]).toEqual(pyStrEnum(modelSource, 'FeedbackCategory'));
+  });
+
+  // The server refuses any screen or control outside these closed vocabularies,
+  // so a client token the server lacks is a 422 on every report from that
+  // origin, and a server member the client lacks is a word nobody should be
+  // able to send. Compared as sorted sets: the client maps are keyed by route.
+  it('screen vocabulary is exactly the route map plus the unknown fallback', () => {
+    const client = [...new Set([...Object.values(SCREEN_TOKEN_BY_ROUTE), UNKNOWN_SCREEN_TOKEN])];
+    expect(client.sort()).toEqual(pyStrEnum(modelSource, 'FeedbackScreen').sort());
+    expect([...feedbackScreenSchema.options]).toEqual(pyStrEnum(modelSource, 'FeedbackScreen'));
+  });
+
+  it('control vocabulary is exactly the declared control tokens', () => {
+    const client = [...new Set(Object.values(FEEDBACK_CONTROL_TOKENS))];
+    expect(client.sort()).toEqual(pyStrEnum(modelSource, 'FeedbackControl').sort());
+    expect([...feedbackControlSchema.options]).toEqual(pyStrEnum(modelSource, 'FeedbackControl'));
   });
 
   it('the payload can only name fields FeedbackCreate declares', () => {

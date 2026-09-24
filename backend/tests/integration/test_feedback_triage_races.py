@@ -25,23 +25,17 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient, Response
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel, col, select
+from httpx import Response
+from sqlmodel import col, select
 
-from database import get_session
-from main import app
 from models.feedback import FeedbackReport
 from models.feedback_triage import FeedbackTriageEvent
 from services import feedback_triage
 from tests.helpers.feedback_triage import Account, force_status, make_account, seed_report
+from tests.integration.session_per_request import SessionPerRequest
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
-
-    from sqlalchemy.ext.asyncio import AsyncEngine
+    from collections.abc import Awaitable, Callable
 
 pytestmark = pytest.mark.integration
 
@@ -50,40 +44,6 @@ pytestmark = pytest.mark.integration
 # twin back at its row lock, the first simply proceeds once this runs out.
 _RENDEZVOUS_SECONDS = 1.0
 _PARTIES = 2
-
-
-class _Pair:
-    """Session factory, client, and the two operators acting at once."""
-
-    def __init__(
-        self,
-        factory: async_sessionmaker[AsyncSession],
-        client: AsyncClient,
-    ) -> None:
-        self.factory = factory
-        self.client = client
-
-
-@pytest_asyncio.fixture
-async def pair(pg_database_url: str) -> AsyncGenerator[_Pair, None]:
-    """A client whose requests each get their own PostgreSQL session."""
-    engine: AsyncEngine = create_async_engine(pg_database_url)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    async def _per_request_session() -> AsyncGenerator[AsyncSession, None]:
-        async with factory() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = _per_request_session
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            yield _Pair(factory, client)
-    finally:
-        app.dependency_overrides.clear()
-        names = ", ".join(f'"{table.name}"' for table in SQLModel.metadata.sorted_tables)
-        async with engine.begin() as connection:
-            await connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-        await engine.dispose()
 
 
 def _hold_at(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
@@ -109,7 +69,9 @@ def _hold_at(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setattr(feedback_triage, name, _held)
 
 
-async def _seed(pair: _Pair, count: int) -> tuple[Account, Account, list[FeedbackReport]]:
+async def _seed(
+    pair: SessionPerRequest, count: int
+) -> tuple[Account, Account, list[FeedbackReport]]:
     """Two operators and ``count`` reports, written through their own session."""
     async with pair.factory() as session:
         first = await make_account(session, "race_admin_a@example.com", admin=True)
@@ -119,13 +81,17 @@ async def _seed(pair: _Pair, count: int) -> tuple[Account, Account, list[Feedbac
     return first, second, reports
 
 
-def _act(pair: _Pair, who: Account, public_id: str, command: dict[str, str]) -> Awaitable[Response]:
+def _act(
+    pair: SessionPerRequest, who: Account, public_id: str, command: dict[str, str]
+) -> Awaitable[Response]:
     return pair.client.post(
         f"/admin/feedback/{public_id}/actions", json=command, headers=who.headers
     )
 
 
-async def _events(pair: _Pair, report_id: int) -> list[tuple[str, str | None, str | None]]:
+async def _events(
+    pair: SessionPerRequest, report_id: int
+) -> list[tuple[str, str | None, str | None]]:
     async with pair.factory() as session:
         rows = (
             await session.execute(
@@ -137,7 +103,7 @@ async def _events(pair: _Pair, report_id: int) -> list[tuple[str, str | None, st
         return [(row.action, row.old_state, row.new_state) for row in rows]
 
 
-async def _state(pair: _Pair, report_id: int) -> tuple[str, int | None]:
+async def _state(pair: SessionPerRequest, report_id: int) -> tuple[str, int | None]:
     async with pair.factory() as session:
         row = await session.get(FeedbackReport, report_id)
         assert row is not None
@@ -150,7 +116,7 @@ def _statuses(responses: list[Response]) -> list[int]:
 
 @pytest.mark.asyncio
 async def test_two_transitions_from_one_state_cannot_both_land(
-    pair: _Pair, monkeypatch: pytest.MonkeyPatch
+    pair: SessionPerRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """triaged->closed and triaged->planned at once: one lands, one is refused."""
     first, second, [report] = await _seed(pair, 1)
@@ -177,7 +143,7 @@ async def test_two_transitions_from_one_state_cannot_both_land(
 
 @pytest.mark.asyncio
 async def test_two_unlinks_of_one_link_write_one_event(
-    pair: _Pair, monkeypatch: pytest.MonkeyPatch
+    pair: SessionPerRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both operators clear the same link: one clears it, the other is told there is none."""
     first, second, [canonical, duplicate] = await _seed(pair, 2)
@@ -205,7 +171,7 @@ async def test_two_unlinks_of_one_link_write_one_event(
 
 @pytest.mark.asyncio
 async def test_crossed_links_cannot_form_a_two_cycle(
-    pair: _Pair, monkeypatch: pytest.MonkeyPatch
+    pair: SessionPerRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """X -> Y and Y -> X at once: one lands, the other is refused as a cycle."""
     first, second, [left, right] = await _seed(pair, 2)

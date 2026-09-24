@@ -1586,23 +1586,20 @@
           "app_build": {
             "description": "The build identifier the client is running.",
             "maxLength": 32,
-            "pattern": "^[0-9A-Za-z][0-9A-Za-z._+-]*$",
+            "pattern": "^[0-9]+(\\.[0-9]+){1,3}(\\+[0-9]+|-(alpha|beta|rc)(\\.[0-9]+)?)?$",
             "title": "App Build",
             "type": "string"
           },
           "control": {
             "anyOf": [
               {
-                "maxLength": 64,
-                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,3}$",
-                "type": "string"
+                "$ref": "#/components/schemas/FeedbackControl"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Originating control or stable error code.",
-            "title": "Control"
+            "description": "The control that opened the composer."
           },
           "correlation_id": {
             "anyOf": [
@@ -1636,11 +1633,8 @@
             "description": "Which client the report came from."
           },
           "screen": {
-            "description": "Canonical dotted screen token, e.g. ``journal.shelf``.",
-            "maxLength": 64,
-            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,3}$",
-            "title": "Screen",
-            "type": "string"
+            "$ref": "#/components/schemas/FeedbackScreen",
+            "description": "The screen the report was filed from."
           },
           "viewport_class": {
             "$ref": "#/components/schemas/FeedbackViewportClass",
@@ -1655,6 +1649,15 @@
         ],
         "title": "FeedbackContext",
         "type": "object"
+      },
+      "FeedbackControl": {
+        "description": "The control that opened the composer, from the shipped vocabulary only.\n\nClosed for the same reason as :class:`FeedbackScreen`. Mirrors the client's\n``FEEDBACK_CONTROL_TOKENS``; a later error-state deep link (#2898 AC24) adds\nits stable error codes here rather than widening the check.",
+        "enum": [
+          "settings.row.send_feedback",
+          "shell.header.send_feedback"
+        ],
+        "title": "FeedbackControl",
+        "type": "string"
       },
       "FeedbackCreate": {
         "additionalProperties": false,
@@ -1972,6 +1975,20 @@
         ],
         "title": "FeedbackReporterSaid",
         "type": "object"
+      },
+      "FeedbackScreen": {
+        "description": "Where a report was filed from: the shipped screen vocabulary, and no other word.\n\nA closed set rather than a token grammar. ``SCREEN_PATTERN`` alone admits\n``journal.i_miss_my_father``, which is prose wearing a token's clothes; only\na finite vocabulary makes that unspellable. The members are exactly the\nclient's ``SCREEN_TOKEN_BY_ROUTE`` values plus its unknown-route fallback,\nand ``feedbackBoundsDrift.test.ts`` fails the moment either side moves alone.\nA new origin screen is added here and there together.",
+        "enum": [
+          "app.unknown",
+          "course.reader",
+          "habits.grid",
+          "journal.shelf",
+          "map.stages",
+          "practice.player",
+          "settings.hub"
+        ],
+        "title": "FeedbackScreen",
+        "type": "string"
       },
       "FeedbackStatus": {
         "description": "Where a report stands in the operator's triage, and nothing more.\n\nOperator-authored state about the report, not the reporter's writing: it is\nnever shown on the receipt and never carried in the reporter's export. The\nedges between these states live in :data:`domain.feedback_triage.TRANSITIONS`.",
