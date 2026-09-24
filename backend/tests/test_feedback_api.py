@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from http import HTTPStatus
 from itertools import pairwise
 from statistics import mean
@@ -42,6 +43,7 @@ from models.feedback import (
     FeedbackScreen,
     mint_public_id,
 )
+from routers import feedback as feedback_router
 from schemas.feedback import (
     ALLOWED_CONTEXT_KEYS,
     CONTROL_PATTERN,
@@ -54,6 +56,8 @@ from tests.helpers.feedback_triage import make_account
 _PROSE = "The habit card vanished when I tapped the offer."
 _IDEMPOTENCY_HEADER = "Idempotency-Key"
 _A_KEY = "beta-report-0001"  # pragma: allowlist secret
+# The router's insert step, named once so the counting wrapper and its install agree.
+_INSERT = "_insert_with_fresh_public_id"
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
@@ -384,6 +388,42 @@ async def test_a_retry_under_the_same_key_returns_the_same_report(
 
     assert first.status_code == HTTPStatus.CREATED
     assert second.json()["public_id"] == first.json()["public_id"]
+    assert await _report_count(db_session) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_replay_is_read_only_and_logs_no_second_submission(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A retry answers from the stored report: no insert attempt, no second event.
+
+    The response alone cannot tell a replay from a collision recovered after an
+    insert. Both return the stored reference, so the side effects are what pin
+    the replay path. A retry that reached the insert would roll back a write,
+    burn a sequence value, and log ``feedback_submitted`` a second time for the
+    same report, double-counting anything built on that event.
+    """
+    headers = {**await _signup(async_client, "feedback_quiet_replay"), _IDEMPOTENCY_HEADER: _A_KEY}
+    real_insert: Callable[..., Awaitable[FeedbackReport]] = getattr(feedback_router, _INSERT)
+    inserts: list[object] = []
+
+    async def _counting_insert(*args: object, **kwargs: object) -> FeedbackReport:
+        inserts.append(kwargs.get("hashed"))
+        return await real_insert(*args, **kwargs)
+
+    monkeypatch.setattr(feedback_router, _INSERT, _counting_insert)
+
+    with caplog.at_level(logging.INFO):
+        first = await async_client.post("/feedback/", json=_payload(), headers=headers)
+        second = await async_client.post("/feedback/", json=_payload(), headers=headers)
+
+    assert second.json()["public_id"] == first.json()["public_id"]
+    assert len(inserts) == 1
+    submitted = [r for r in caplog.records if r.message == "feedback_submitted"]
+    assert [r.__dict__["public_id"] for r in submitted] == [first.json()["public_id"]]
     assert await _report_count(db_session) == 1
 
 
