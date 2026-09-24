@@ -8,11 +8,12 @@ import HighlightedBody from '../HighlightedBody';
 import { BULLET_MARKERS, parseJournalMarkdown } from '../journalMarkdown';
 import LiveMarkdownBody from '../LiveMarkdownBody';
 import { LIVE_TAB_STYLE, MIRROR_HIDDEN_OPACITY } from '../LiveMarkdownStyles';
+import { liveSelectionCss } from '../liveSelectionStyle';
 import { buildMirrorModel, visibleMirrorRuns } from '../markdownMirror';
 
 import { CORPUS } from './fixtures/journalMarkdownCorpus';
 
-import { colors } from '@/design/tokens';
+import { colors, writingField } from '@/design/tokens';
 
 const Platform = require('react-native').Platform as { OS: string };
 
@@ -271,23 +272,53 @@ describe('LiveMarkdownBody on web', () => {
     expect(mirror.props.importantForAccessibility).toBe('no-hide-descendants');
     expect(mirror.props.accessibilityElementsHidden).toBe(true);
     expect(mirror.props.pointerEvents).toBe('none');
-    // Over the field, so its selection highlight and caret paint beneath the glyphs.
-    expect(StyleSheet.flatten(mirror.props.style)).toMatchObject({
-      position: 'absolute',
-      zIndex: 1,
-    });
+    expect(StyleSheet.flatten(mirror.props.style)).toMatchObject({ position: 'absolute' });
     expect(queryByTestId('journal-body-mirror', { includeHiddenElements: false })).toBeNull();
     expect(queryByTestId('journal-live-bold-2', { includeHiddenElements: false })).toBeNull();
     expect(getByLabelText('Entry body').props.value).toBe('**a**');
   });
 
-  it('makes only the field glyphs transparent, keeping its caret colour', () => {
+  it('lays the mirror BEHIND the field, so nothing it paints covers the caret or selection', () => {
+    const { getByTestId } = render(<Harness initial={'> quoted **a**'} />);
+    const mirror = StyleSheet.flatten(getByTestId('journal-body-mirror').props.style);
+    const field = StyleSheet.flatten(getByTestId('journal-body-input').props.style);
+    expect(field.position).toBe('relative');
+    expect(Number(field.zIndex)).toBeGreaterThan(Number(mirror.zIndex));
+    // The field is see-through, so the quote wash beneath it still shows.
+    expect(field.backgroundColor).toBe('transparent');
+  });
+
+  it('hides only the field glyph fill, keeping caret, IME and spelling marks visible', () => {
     const { getByTestId } = render(<Harness initial="a" />);
-    const input = getByTestId('journal-body-input');
-    const style = StyleSheet.flatten(input.props.style) as Record<string, unknown>;
-    expect(style.color).toBe('transparent');
+    const style = StyleSheet.flatten(getByTestId('journal-body-input').props.style) as Record<
+      string,
+      unknown
+    >;
+    // ``color`` stays ink: the IME composition underline and text decorations
+    // are drawn in it. Only the glyph FILL is transparent.
+    expect(style.color).toBe(colors.paper.ink);
+    expect(style.WebkitTextFillColor).toBe('transparent');
+    expect(style.caretColor).toBe(writingField.caret);
     expect(style.tabSize).toBe(4);
-    expect(input.props.selectionColor).toBeDefined();
+  });
+
+  it('installs a see-through selection highlight for the field while the mirror is on', () => {
+    const head = { appendChild: jest.fn() };
+    const created: { id: string; textContent: string }[] = [];
+    (globalThis as MutableGlobal).document = Object.assign(new EventTarget(), {
+      head,
+      getElementById: (id: string) => created.find((node) => node.id === id) ?? null,
+      createElement: () => {
+        const node = { id: '', textContent: '' };
+        created.push(node);
+        return node;
+      },
+    }) as unknown as Document;
+    render(<Harness initial="a" />);
+    render(<Harness initial="b" />);
+    expect(head.appendChild).toHaveBeenCalledTimes(1);
+    expect(created[0]!.textContent).toBe(liveSelectionCss());
+    delete (globalThis as MutableGlobal).document;
   });
 
   it('turns the mirror off under forced colors, keeping the field glyphs visible', () => {

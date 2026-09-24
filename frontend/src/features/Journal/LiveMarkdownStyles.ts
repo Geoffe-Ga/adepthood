@@ -1,10 +1,18 @@
 /**
  * Presentation of the live Markdown mirror -- Candle & Ink tokens only.
  *
- * Every style here is ADVANCE-NEUTRAL: it may change colour, opacity, a
- * shadow or a decoration, but never a glyph's width, because the mirror's
- * characters sit exactly under the transparent characters of the real
- * textarea and the caret is drawn by the textarea. Hence faux bold (a
+ * Layering: the mirror sits BEHIND the real textarea. The textarea is on
+ * top with a transparent background and a transparent glyph FILL, so the
+ * caret, the selection highlight, spelling marks and the IME composition
+ * underline all paint above everything the mirror draws, the quote wash
+ * included. ``color`` stays ink (those marks are drawn in it); only
+ * ``-webkit-text-fill-color`` is transparent, and ``caret-color`` is the
+ * writing caret token. Over the textarea, the mirror's opaque quote wash hid
+ * the caret and selection on quote lines.
+ *
+ * Every style here is ADVANCE-NEUTRAL: it may change colour, a shadow or a
+ * decoration, but never a glyph's width, because the mirror's characters sit
+ * exactly under the transparent characters of the real textarea. Hence faux bold (a
  * same-ink text shadow) instead of a heavier weight, and italic shown as an
  * upright accent-ink run: a true italic face has different advances and would
  * drift every later glyph on the line. Read mode keeps the real bold weight and
@@ -15,7 +23,7 @@ import { StyleSheet, type TextStyle } from 'react-native';
 import { LIVE_BODY_METRICS } from './JournalEntry.styles';
 import { JOURNAL_TAB_COLUMNS } from './journalMarkdown';
 
-import { accent, colors } from '@/design/tokens';
+import { accent, colors, writingField } from '@/design/tokens';
 
 /** Opacity of a block marker or delimiter the caret is not inside. */
 export const MIRROR_HIDDEN_OPACITY = 0.45;
@@ -31,18 +39,28 @@ export const FAUX_BOLD_OFFSET = 0.6;
  */
 export const LIVE_TAB_STYLE = { tabSize: JOURNAL_TAB_COLUMNS } as unknown as TextStyle;
 
+/**
+ * The field's web-only paint over the mirror: glyph fill transparent, caret
+ * in the writing caret token. Both are CSS passthroughs absent from RN's
+ * ``TextStyle``, attached only while the mirror is on (web).
+ */
+export const LIVE_FIELD_WEB_STYLE = {
+  WebkitTextFillColor: 'transparent',
+  caretColor: writingField.caret,
+} as unknown as TextStyle;
+
+/** Stacking: the field above the mirror. */
+const MIRROR_LAYER = 0;
+const FIELD_LAYER = 1;
+
 const liveStyles = StyleSheet.create({
   frame: {
     flexGrow: 1,
     position: 'relative',
   },
-  /**
-   * Laid exactly over the field and above it, ignoring the pointer: clicks,
-   * drags and taps reach the textarea, while the field's own selection
-   * highlight and caret paint beneath the styled glyphs instead of over them.
-   */
+  /** Laid exactly under the field, ignoring the pointer. */
   mirror: {
-    zIndex: 1,
+    zIndex: MIRROR_LAYER,
     position: 'absolute',
     top: 0,
     right: 0,
@@ -53,9 +71,11 @@ const liveStyles = StyleSheet.create({
     ...LIVE_BODY_METRICS,
     color: colors.paper.ink,
   },
-  /** The real textarea over the mirror: caret and selection only, no glyphs of its own. */
+  /** The real textarea over the mirror: see-through, so only its caret and marks show. */
   inputMirrored: {
-    color: 'transparent',
+    position: 'relative',
+    zIndex: FIELD_LAYER,
+    color: colors.paper.ink,
     backgroundColor: 'transparent',
   },
   dimmed: {

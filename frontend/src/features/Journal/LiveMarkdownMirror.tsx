@@ -1,7 +1,6 @@
 /**
- * The styled mirror drawn in register with the body's real ``<textarea>`` on
- * web -- laid over it with pointer events off, so every click, drag and tap
- * still lands on the textarea.
+ * The styled mirror drawn in register BEHIND the body's real ``<textarea>`` on
+ * web, with pointer events off; see ``LiveMarkdownStyles`` for why behind.
  *
  * The textarea keeps the exact source, the caret, selection, undo, paste and
  * the screen reader; its glyphs are transparent. This draws the same

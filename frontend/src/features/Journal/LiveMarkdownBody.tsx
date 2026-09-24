@@ -3,7 +3,7 @@
  * always the exact stored source, plus the Markdown editing conveniences
  * layered over it.
  *
- * On web a styled mirror (``LiveMarkdownMirror``) is drawn in register over the field
+ * On web a styled mirror (``LiveMarkdownMirror``) is drawn in register behind the field
  * and the field's own glyphs go transparent, so the writer sees their Markdown
  * rendered while the textarea keeps the caret, selection, undo, paste and the
  * screen reader. The value is never a display copy: #2891's quote anchors read
@@ -23,7 +23,7 @@ import { editorPrimaryModifier } from './editorPrimaryModifier';
 import styles from './JournalEntry.styles';
 import { utf16ToSource, type SourceSelection } from './journalMarkdown';
 import LiveMarkdownMirror from './LiveMarkdownMirror';
-import liveStyles, { LIVE_TAB_STYLE } from './LiveMarkdownStyles';
+import liveStyles, { LIVE_FIELD_WEB_STYLE, LIVE_TAB_STYLE } from './LiveMarkdownStyles';
 import {
   applyMarkdownCommand,
   keyCommand,
@@ -272,7 +272,7 @@ export default function LiveMarkdownBody({
             styles.bodyInput,
             writingFieldFocus,
             growth.style,
-            mirrored ? [liveStyles.inputMirrored, LIVE_TAB_STYLE] : null,
+            mirrored ? [liveStyles.inputMirrored, LIVE_FIELD_WEB_STYLE, LIVE_TAB_STYLE] : null,
           ]}
           value={body}
           onChangeText={markdown.changeBody}
