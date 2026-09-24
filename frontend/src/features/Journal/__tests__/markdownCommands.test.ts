@@ -131,3 +131,32 @@ describe('markdownCommandState -- list level', () => {
     expect(markdownCommandState(body, { start: caret, end: caret }).listLevel).toBe(level);
   });
 });
+
+describe('keyCommand -- non-Latin layouts', () => {
+  it.each([
+    ['Cyrillic', '\u0438', 'KeyB', 'bold'],
+    ['Greek', '\u03b9', 'KeyI', 'italic'],
+    ['Hebrew', '\u05d5', 'KeyU', 'underline'],
+  ] as [string, string, string, MarkdownCommand][])(
+    'reads the physical key on a %s layout, whose key is not a Latin letter',
+    (_layout, key, code, command) => {
+      expect(keyCommand({ key, code, ctrlKey: true }, 'ctrl')).toBe(command);
+    },
+  );
+
+  it('trusts the letter a Latin layout reports over the physical key (Dvorak x on KeyB)', () => {
+    expect(keyCommand({ key: 'x', code: 'KeyB', ctrlKey: true }, 'ctrl')).toBeNull();
+  });
+
+  it('still leaves a composing keystroke to the IME whatever its code', () => {
+    expect(
+      keyCommand({ key: '\u0438', code: 'KeyB', ctrlKey: true, isComposing: true }, 'ctrl'),
+    ).toBeNull();
+  });
+
+  it('ignores an unmapped physical key', () => {
+    expect(keyCommand({ key: '\u0438', code: 'KeyK', ctrlKey: true }, 'ctrl')).toBeNull();
+    // A platform that reports no physical key at all (native) leaves it alone too.
+    expect(keyCommand({ key: '\u0438', ctrlKey: true }, 'ctrl')).toBeNull();
+  });
+});

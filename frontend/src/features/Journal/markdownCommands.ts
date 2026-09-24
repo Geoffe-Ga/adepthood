@@ -27,6 +27,8 @@ export interface MarkdownKeyEvent {
   shiftKey?: boolean;
   isComposing?: boolean;
   keyCode?: number;
+  /** The physical key (``KeyB``), independent of the layout. */
+  code?: string;
 }
 
 /**
@@ -44,6 +46,20 @@ const SHORTCUT_STYLES: Readonly<Record<string, InlineStyle>> = Object.freeze({
   i: 'italic',
   u: 'underline',
 });
+
+/**
+ * The same shortcuts by physical key, for layouts whose keys are not Latin
+ * letters (Cyrillic, Greek, Hebrew, Arabic...): there Ctrl+B reports ``key``
+ * 'и', and only ``code`` still says KeyB.
+ */
+const SHORTCUT_CODES: Readonly<Record<string, InlineStyle>> = Object.freeze({
+  KeyB: 'bold',
+  KeyI: 'italic',
+  KeyU: 'underline',
+});
+
+/** A Latin letter: a layout that reports one means it, so ``code`` is not consulted. */
+const LATIN_LETTER = /^[a-z]$/iu;
 
 /** The outcome of running a command against the body. */
 export type CommandResult =
@@ -72,7 +88,8 @@ function shortcutCommand(
   const primaryHeld = primary === 'meta' ? event.metaKey === true : event.ctrlKey === true;
   const otherHeld = primary === 'meta' ? event.ctrlKey === true : event.metaKey === true;
   if (!primaryHeld || otherHeld || event.shiftKey === true) return null;
-  return SHORTCUT_STYLES[event.key.toLowerCase()] ?? null;
+  if (LATIN_LETTER.test(event.key)) return SHORTCUT_STYLES[event.key.toLowerCase()] ?? null;
+  return event.code == null ? null : (SHORTCUT_CODES[event.code] ?? null);
 }
 
 /** Tab indents and Shift+Tab outdents; Tab with Ctrl or Cmd belongs to the browser. */
