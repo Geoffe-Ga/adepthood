@@ -79,6 +79,57 @@ describe('continueMarkdownLine', () => {
   });
 });
 
+describe('continueMarkdownEdit -- Return on an empty nested list item', () => {
+  it('outdents an empty nested item one level instead of exiting the list', () => {
+    expect(continueMarkdownEdit('- a\n  - ', '- a\n  - \n', { start: 8, end: 8 })).toEqual({
+      text: '- a\n- ',
+      selection: { start: 6, end: 6 },
+    });
+  });
+
+  it("outdents by the document's own unit: four spaces", () => {
+    const previous = '- a\n    - b\n        - ';
+    expect(
+      continueMarkdownEdit(previous, `${previous}\n`, {
+        start: previous.length,
+        end: previous.length,
+      }),
+    ).toEqual({ text: '- a\n    - b\n    - ', selection: { start: 18, end: 18 } });
+  });
+
+  it("outdents by the document's own unit: a tab, keeping the typed marker", () => {
+    const previous = '* a\n\t\t* ';
+    expect(
+      continueMarkdownEdit(previous, `${previous}\n`, {
+        start: previous.length,
+        end: previous.length,
+      }),
+    ).toEqual({ text: '* a\n\t* ', selection: { start: 7, end: 7 } });
+  });
+
+  it('keeps the text after the item when it outdents mid-document', () => {
+    expect(
+      continueMarkdownEdit('- a\n  + \nafter', '- a\n  + \n\nafter', { start: 8, end: 8 }),
+    ).toEqual({ text: '- a\n+ \nafter', selection: { start: 6, end: 6 } });
+  });
+
+  it('still exits an empty level-0 item outright', () => {
+    expect(continueMarkdownEdit('- a\n- ', '- a\n- \n', { start: 6, end: 6 })).toEqual({
+      text: '- a\n',
+      selection: { start: 4, end: 4 },
+    });
+  });
+
+  it('exits an empty indented quote outright rather than promoting it to a real quote', () => {
+    // '  > ' renders as prose (an indented > is not a quote), so outdenting it
+    // to '> ' would silently turn the writer's line into a quote block.
+    expect(continueMarkdownEdit('x\n  > ', 'x\n  > \n', { start: 6, end: 6 })).toEqual({
+      text: 'x\n',
+      selection: { start: 2, end: 2 },
+    });
+  });
+});
+
 describe('continueMarkdownEdit -- marker separators the shared classifier must not flatten', () => {
   it('leaves a bare > alone instead of treating it as an empty quote to exit', () => {
     // A bare `>` classifies as a QUOTE with no content (journalMarkdown has

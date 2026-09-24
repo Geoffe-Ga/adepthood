@@ -39,6 +39,19 @@ describe('bullet marker contract between the parser and the editor', () => {
     });
   });
 
+  it.each([...BULLET_MARKERS])(
+    'steps an empty nested %j item out one level on Return',
+    (marker) => {
+      const previous = `${marker} a\n  ${marker} `;
+      expect(
+        continueMarkdownEdit(previous, `${previous}\n`, {
+          start: previous.length,
+          end: previous.length,
+        }),
+      ).toEqual({ text: `${marker} a\n${marker} `, selection: { start: 6, end: 6 } });
+    },
+  );
+
   it.each([...BULLET_MARKERS])('exits an empty %j item on Return', (marker) => {
     const previous = `${marker} `;
     expect(continueMarkdownEdit(previous, `${previous}\n`, { start: 2, end: 2 })).toEqual({

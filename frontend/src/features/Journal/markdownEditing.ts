@@ -16,6 +16,7 @@
 import { codePointToUtf16 } from './codePoints';
 import { classifyLine, sourceLines } from './journalMarkdownLines';
 import type { JournalMarkdownLine } from './journalMarkdownTypes';
+import { inferIndentUnit, isListLine, outdentIndent } from './markdownIndent';
 
 export interface MarkdownEdit {
   text: string;
@@ -76,12 +77,37 @@ function isSeparated(line: JournalMarkdownLine): boolean {
 }
 
 /**
+ * Return on an empty item: a nested LIST item steps out one level (keeping its
+ * marker), and anything else -- a level-0 item, a quote -- leaves the block.
+ * ``line`` is classified over the item's own characters, so its offsets are
+ * line-relative.
+ */
+function exitEmptyItem(
+  previous: string,
+  next: string,
+  lineStart: number,
+  newlineIndex: number,
+  line: JournalMarkdownLine,
+  chars: string[],
+): MarkdownEdit {
+  const indent = chars.slice(0, line.indentEnd).join('');
+  const outdented = isListLine(line) ? outdentIndent(indent, inferIndentUnit(previous)) : null;
+  const prefix = outdented == null ? '' : `${outdented}${line.marker} `;
+  const caret = lineStart + prefix.length;
+  return {
+    text: `${next.slice(0, lineStart)}${prefix}${next.slice(newlineIndex + 1)}`,
+    selection: { start: caret, end: caret },
+  };
+}
+
+/**
  * Continue the lightweight Markdown block at the actual caret.
  *
  * React Native's TextInput remains the source of truth so selection, dictation,
  * undo, and autosave all keep working. This adds the one editor convenience a
  * plain multiline field does not provide: Return after a list item or quote
- * carries its marker forward, while Return on an empty marker exits the block.
+ * carries its marker forward, Return on an empty nested list item steps it out
+ * one level, and Return on any other empty marker exits the block.
  */
 export function continueMarkdownEdit(
   previous: string,
@@ -97,10 +123,8 @@ export function continueMarkdownEdit(
   if (line.marker == null || !isSeparated(line)) return { text: next };
 
   const content = chars.slice(line.markerEnd).join('');
-  if (content.length === 0) {
-    const text = `${next.slice(0, lineStart)}${next.slice(newlineIndex + 1)}`;
-    return { text, selection: { start: lineStart, end: lineStart } };
-  }
+  if (content.length === 0)
+    return exitEmptyItem(previous, next, lineStart, newlineIndex, line, chars);
 
   const prefix = `${chars.slice(0, line.indentEnd).join('')}${line.marker} `;
   const caret = newlineIndex + 1 + prefix.length;
