@@ -254,11 +254,8 @@ async def list_feedback_reports(
     session: Annotated[AsyncSession, Depends(get_session)],
     _admin: Annotated[User, Depends(require_admin)],
 ) -> Page[FeedbackTriageSummary]:
-    """The inbox: filtered, newest first, paged over a total order.
-
-    ``request`` is what :data:`limiter` keys the read budget on.
-    """
-    del request
+    """The inbox: filtered, newest first, paged over a total order."""
+    del request  # Read by @limiter.limit, which keys the read budget on it.
     window = query.window()
     reports, total = await feedback_triage.list_reports(session, query.filters(), window)
     return build_page(await _summaries(session, reports), total, window)
@@ -271,12 +268,8 @@ async def read_feedback_report(
     public_id: _PublicIdPath,
     context: Annotated[AdminContext, Depends(admin_context)],
 ) -> FeedbackTriageDetail:
-    """One report, its three sources kept apart, its fingerprint and siblings.
-
-    ``request`` is what :data:`limiter` keys the read budget on: one budget
-    across every report, not one per report's URL.
-    """
-    del request
+    """One report, its three sources kept apart, its fingerprint and siblings."""
+    del request  # Read by @limiter.shared_limit: one budget across every report.
     report = await feedback_triage.load_report(context.session, public_id)
     return await _detail(context.session, report)
 
