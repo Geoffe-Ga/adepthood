@@ -9,6 +9,7 @@
  *
  * No maximum depth is enforced. The lower bound, level 0, always exists.
  */
+import { codePointToUtf16, utf16ToCodePoint } from './codePoints';
 import {
   BULLET_MARKERS,
   JOURNAL_TAB_COLUMNS,
@@ -16,6 +17,7 @@ import {
   sourceLines,
 } from './journalMarkdownLines';
 import type { JournalMarkdownLine } from './journalMarkdownTypes';
+import type { MarkdownEdit, MarkdownSelection } from './markdownEditing';
 
 /** The indent unit when a document does not settle on one of its own. */
 export const DEFAULT_INDENT_UNIT = '  ';
@@ -78,4 +80,100 @@ export function outdentIndent(indent: string, unit: string): string | null {
   if (indent.endsWith(TAB_INDENT_UNIT)) return indent.slice(0, -1);
   const trailing = indent.length - indent.replace(/ +$/u, '').length;
   return indent.slice(0, indent.length - Math.min(trailing, unitColumns(unit)));
+}
+
+/** Which way a list item moves. */
+export type ShiftDirection = 'indent' | 'outdent';
+
+/** One indent replacement, in code points: ``[start, end)`` becomes ``insert``. */
+interface IndentChange {
+  start: number;
+  end: number;
+  insert: string;
+}
+
+/**
+ * Whether a selection touches a line. A collapsed caret touches its own line;
+ * a range touches every line it overlaps, but NOT a line it merely reaches the
+ * start of -- selecting down to the start of the next line selects none of it.
+ */
+function touches(line: JournalMarkdownLine, start: number, end: number): boolean {
+  if (start === end) return line.start <= start && start <= line.end;
+  return line.start < end && start <= line.end;
+}
+
+/** The change one list line makes, or null when it cannot move that way. */
+function changeFor(
+  chars: string[],
+  line: JournalMarkdownLine,
+  direction: ShiftDirection,
+  unit: string,
+): IndentChange | null {
+  if (direction === 'indent') return { start: line.indentEnd, end: line.indentEnd, insert: unit };
+  const outdented = outdentIndent(chars.slice(line.start, line.indentEnd).join(''), unit);
+  if (outdented == null) return null;
+  return { start: line.start + Array.from(outdented).length, end: line.indentEnd, insert: '' };
+}
+
+/** Where a source position lands after the changes; one inside a removed range clamps to its start. */
+function remap(changes: IndentChange[], position: number): number {
+  let shifted = position;
+  for (const change of changes) {
+    const inserted = Array.from(change.insert).length;
+    if (position >= change.end) shifted += inserted - (change.end - change.start);
+    else if (position > change.start) shifted -= position - change.start;
+  }
+  return shifted;
+}
+
+/**
+ * Move the list item(s) under a UTF-16 selection one level in or out.
+ *
+ * Every list line the selection touches moves; prose and quote lines never do.
+ * The returned selection covers the same content, shifted by what was inserted
+ * or removed before it. Null when no touched line can move -- a selection with
+ * no list line, or an outdent with every touched item already at level 0 --
+ * which is what lets Tab / Shift+Tab fall through to focus navigation there.
+ */
+export function shiftListLines(
+  body: string,
+  selection: MarkdownSelection,
+  direction: ShiftDirection,
+): MarkdownEdit | null {
+  const chars = Array.from(body);
+  const start = utf16ToCodePoint(body, Math.min(selection.start, selection.end));
+  const end = utf16ToCodePoint(body, Math.max(selection.start, selection.end));
+  const unit = inferIndentUnit(body);
+  const changes = listLines(chars)
+    .filter((line) => touches(line, start, end))
+    .map((line) => changeFor(chars, line, direction, unit))
+    .filter((change): change is IndentChange => change != null);
+  if (changes.length === 0) return null;
+
+  const next = [...chars];
+  for (const change of [...changes].reverse()) {
+    next.splice(change.start, change.end - change.start, ...Array.from(change.insert));
+  }
+  const text = next.join('');
+  return {
+    text,
+    selection: {
+      start: codePointToUtf16(text, remap(changes, start)),
+      end: codePointToUtf16(text, remap(changes, end)),
+    },
+  };
+}
+
+/**
+ * The nesting level of the list item at a UTF-16 caret -- 0 for a flush item
+ * -- or null when the caret is not on a list line.
+ */
+export function listLevelAt(body: string, caret: number): number | null {
+  const chars = Array.from(body);
+  const position = utf16ToCodePoint(body, caret);
+  const line = sourceLines(chars)
+    .map((source) => classifyLine(chars, source))
+    .find((candidate) => candidate.start <= position && position <= candidate.end);
+  if (line == null || !isListLine(line)) return null;
+  return Math.ceil(line.indentWidth / unitColumns(inferIndentUnit(body)));
 }
