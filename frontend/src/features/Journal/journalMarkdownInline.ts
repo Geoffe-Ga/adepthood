@@ -115,19 +115,12 @@ function spellsAt(chars: string[], index: number, text: string): boolean {
 }
 
 /** Hide a matched pair's delimiters, style its content, and record the span. */
-function markPair(
-  formats: CharacterFormat[],
-  span: InlineSpan,
-  openLength: number,
-  closeLength: number,
-  spans: InlineSpan[],
-): void {
-  const closeStart = span.end - closeLength;
-  for (let index = span.start; index < span.start + openLength; index += 1) {
+function markPair(formats: CharacterFormat[], span: InlineSpan, spans: InlineSpan[]): void {
+  for (let index = span.start; index < span.contentStart; index += 1) {
     formats[index]!.visible = false;
   }
-  for (let index = closeStart; index < span.end; index += 1) formats[index]!.visible = false;
-  for (let index = span.start + openLength; index < closeStart; index += 1) {
+  for (let index = span.contentEnd; index < span.end; index += 1) formats[index]!.visible = false;
+  for (let index = span.contentStart; index < span.contentEnd; index += 1) {
     formats[index]![span.style] = true;
   }
   spans.push(span);
@@ -160,7 +153,13 @@ function applyDelimitedStyle(
       index += width;
       continue;
     }
-    markPair(formats, { start: index, end: close + width, style }, width, width, spans);
+    const span = {
+      start: index,
+      contentStart: index + width,
+      contentEnd: close,
+      end: close + width,
+    };
+    markPair(formats, { ...span, style }, spans);
     index = close + width;
   }
 }
@@ -204,13 +203,9 @@ function applyTagStyle(
       index += 1;
       continue;
     }
-    markPair(
-      formats,
-      { start: index, end: close + closeLength, style },
-      openLength,
-      closeLength,
-      spans,
-    );
+    const contentStart = index + openLength;
+    const span = { start: index, contentStart, contentEnd: close, end: close + closeLength };
+    markPair(formats, { ...span, style }, spans);
     index = close + closeLength;
   }
 }
