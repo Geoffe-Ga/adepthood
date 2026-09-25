@@ -288,6 +288,18 @@ describe('LiveMarkdownBody on web', () => {
     expect(field.backgroundColor).toBe('transparent');
   });
 
+  it('renders the mirror with the field\u2019s font and first-line inset, on a block box', () => {
+    const { getByTestId } = render(<Harness initial="a" />);
+    const mirror = getByTestId('journal-body-mirror');
+    const field = StyleSheet.flatten(getByTestId('journal-body-input').props.style);
+    const text = StyleSheet.flatten(mirror.children[0]!.props.style);
+    expect(StyleSheet.flatten(mirror.props.style).paddingTop).toBe(field.paddingTop);
+    expect(text.paddingTop).toBeUndefined();
+    for (const key of ['fontFamily', 'fontSize', 'lineHeight', 'fontWeight', 'letterSpacing']) {
+      expect(text[key as keyof typeof text]).toBe(field[key as keyof typeof field]);
+    }
+  });
+
   it('hides only the field glyph fill, keeping caret, IME and spelling marks visible', () => {
     const { getByTestId } = render(<Harness initial="a" />);
     const style = StyleSheet.flatten(getByTestId('journal-body-input').props.style) as Record<

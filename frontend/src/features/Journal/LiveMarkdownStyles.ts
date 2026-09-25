@@ -20,7 +20,7 @@
  */
 import { StyleSheet, type TextStyle } from 'react-native';
 
-import { LIVE_BODY_METRICS } from './JournalEntry.styles';
+import { LIVE_BODY_FONT, LIVE_BODY_INSET } from './JournalEntry.styles';
 import { JOURNAL_TAB_COLUMNS } from './journalMarkdown';
 
 import { accent, colors, writingField } from '@/design/tokens';
@@ -55,7 +55,10 @@ const liveStyles = StyleSheet.create({
     flexGrow: 1,
     position: 'relative',
   },
-  /** Laid exactly under the field, ignoring the pointer. */
+  /**
+   * Laid exactly under the field, ignoring the pointer. It carries the field's
+   * inset itself: its text is inline, and inline padding would move no line.
+   */
   mirror: {
     zIndex: MIRROR_LAYER,
     position: 'absolute',
@@ -63,9 +66,11 @@ const liveStyles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
+    ...LIVE_BODY_INSET,
   },
+  /** The field's own glyph metrics, and nothing that would box the inline text. */
   mirrorText: {
-    ...LIVE_BODY_METRICS,
+    ...LIVE_BODY_FONT,
     color: colors.paper.ink,
   },
   /** The real textarea over the mirror: see-through, so only its caret and marks show. */
@@ -74,6 +79,9 @@ const liveStyles = StyleSheet.create({
     zIndex: FIELD_LAYER,
     color: colors.paper.ink,
     backgroundColor: 'transparent',
+    // The field grows to its content and never scrolls (scrollEnabled=false);
+    // without this a transient scrollbar would narrow its lines and not the mirror's.
+    overflow: 'hidden',
   },
   /**
    * Block markers and delimiters the caret is not inside: the soft ink, set
