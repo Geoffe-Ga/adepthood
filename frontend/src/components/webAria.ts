@@ -24,3 +24,13 @@ export function webRadioState<P>(checked: boolean, disabled: boolean): Partial<P
   if (Platform.OS !== 'web') return {};
   return { 'aria-checked': checked, 'aria-disabled': disabled } as unknown as Partial<P>;
 }
+
+/**
+ * A toggle button's on/off state for react-native-web, which drops
+ * `accessibilityState`. `aria-pressed` is the ARIA for a toggle button
+ * (`aria-selected` is not valid on role=button). Web only, as above.
+ */
+export function webPressedState<P>(pressed: boolean): Partial<P> {
+  if (Platform.OS !== 'web') return {};
+  return { 'aria-pressed': pressed } as unknown as Partial<P>;
+}

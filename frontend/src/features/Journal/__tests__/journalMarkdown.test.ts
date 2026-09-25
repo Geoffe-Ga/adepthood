@@ -9,42 +9,7 @@ import {
   utf16ToSource,
 } from '../journalMarkdown';
 
-/**
- * Bodies the client model must carry through parse → serialize untouched.
- *
- * Frozen, and holding STRINGS rather than parsed documents, so the deliberate
- * mutation in "serializes only from the source stream" cannot leak into any
- * other case.
- *
- * Note: this is a CLIENT-MODEL corpus. `sanitize_user_text` on the backend
- * (backend/src/routers/journal.py -> backend/src/utils/text_sanitize.py) NFC
- * normalises and strips zero-width characters on save, so an end-to-end round
- * trip over the combining-mark and ZWJ entries below would be a false red on
- * deliberate security policy, not a bug.
- */
-const CORPUS: readonly string[] = Object.freeze([
-  '',
-  '\n',
-  '\n\n\n',
-  '***',
-  'a **unclosed',
-  'a *b _c*',
-  'a \\*x\\* b',
-  'éclair *bold*',
-  '**\u{1F600}x**',
-  '\u{1F468}‍\u{1F469}‍\u{1F467} tail',
-  '*héllo* there',
-  '>',
-  '>\n> after',
-  '>\tfoo',
-  '\tindented\ttabs',
-  '- one\n  - nested\n\t- tabbed',
-  '+ plus\n* star\n- dash',
-  'line\n',
-  '  padded  ',
-  'a ==underlined== b',
-  'Intro\n- one\n- two\n> quoted\nplain',
-]);
+import { CORPUS } from './fixtures/journalMarkdownCorpus';
 
 describe('serializeJournalMarkdown', () => {
   it.each(CORPUS)('round trips %j byte for byte', (body) => {
@@ -102,7 +67,7 @@ describe('emphasis guards', () => {
     expect(document.formats.every((format) => format.visible)).toBe(true);
   });
 
-  it.each(['a *b* c', '_a_ b', 'a ==u== b'])(
+  it.each(['a *b* c', '_a_ b', 'a <u>u</u> b'])(
     'still emphasises %j, so the guards are not simply refusing everything',
     (body) => {
       const document = parseJournalMarkdown(body);

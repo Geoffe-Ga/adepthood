@@ -88,6 +88,15 @@ export type InlineStyle = 'bold' | 'italic' | 'underline';
 export interface InlineSpan {
   start: number;
   end: number;
+  /**
+   * The styled content is ``[contentStart, contentEnd)``: the delimiters are
+   * ``[start, contentStart)`` and ``[contentEnd, end)``. Recorded because one
+   * style has several spellings of different widths (``*``, ``**``, ``__``) and
+   * an asymmetric one (``<u>…</u>``), so an editor removing a pair must read
+   * the widths the parser matched rather than assume them.
+   */
+  contentStart: number;
+  contentEnd: number;
   style: InlineStyle;
 }
 

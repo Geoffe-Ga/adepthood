@@ -82,6 +82,29 @@ export const WRITING_TIMER_PILL_MAX_HEIGHT = Math.max(
 export const WRITING_TIMER_CLEARANCE =
   RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT + SPACING.md;
 
+/**
+ * The body's glyph metrics, shared by the text field and the live mirror drawn
+ * behind it. The mirror has to lay text out exactly as the field does, so the
+ * two spread this one fragment instead of each spelling the font. ``fontStyle``
+ * and ``letterSpacing`` are pinned rather than inherited: a textarea resets
+ * them in the browser's own stylesheet, while the mirror would otherwise
+ * inherit whatever an ancestor set.
+ */
+export const LIVE_BODY_FONT = {
+  ...editorialType.body,
+  fontStyle: 'normal',
+  letterSpacing: 0,
+} as const;
+
+/**
+ * The inset before the body's first line. It belongs on a BLOCK box: the
+ * mirror applies it to its container, because react-native-web renders a
+ * top-level Text as ``display: inline``, where vertical padding moves no line.
+ */
+export const LIVE_BODY_INSET = {
+  paddingTop: spacing(1.5),
+} as const;
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -174,9 +197,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   bodyInput: {
-    ...editorialType.body,
+    ...LIVE_BODY_FONT,
+    ...LIVE_BODY_INSET,
     color: colors.paper.ink,
-    paddingTop: spacing(1.5),
     // A growing multiline field; flexGrow fills the writing column's
     // available height while minHeight keeps the blank page inviting.
     flexGrow: 1,

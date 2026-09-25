@@ -61,6 +61,8 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',
   'journal-failed-checkoff.browser.e2e.test.ts',
+  'journal-list-indent.browser.e2e.test.ts',
+  'journal-live-markdown.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',

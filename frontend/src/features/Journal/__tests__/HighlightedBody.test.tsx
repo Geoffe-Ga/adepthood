@@ -180,7 +180,7 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     ['*bold*', 0, 1, '*'],
     ['- one', 0, 1, '-'],
     ['> quoted', 0, 2, '> '],
-    ['a ==und== b', 2, 4, '=='],
+    ['a <u>und</u> b', 2, 5, '<u>'],
   ])(
     'keeps syntax-only note anchors visible and actionable in %j',
     (body, anchorStart, anchorEnd, literal) => {
@@ -262,15 +262,26 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     expect(renderedText(getByTestId('journal-body-read'))).toBe('quotedplain');
   });
 
-  it('renders ==text== underlined at its exact source offset', () => {
+  it('renders <u>text</u> underlined at its exact source offset', () => {
     const { getByTestId, queryByText } = render(
+      <HighlightedBody body="a <u>und</u> b" notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const underline = getByTestId('journal-markdown-underline-5');
+    expect(underline.props.children).toBe('und');
+    expect(StyleSheet.flatten(underline.props.style).textDecorationLine).toBe('underline');
+    expect(queryByText('a <u>und</u> b')).toBeNull();
+    expect(renderedText(getByTestId('journal-body-read'))).toBe('a und b');
+  });
+
+  it('renders the retired ==text== spelling as the literal prose it now is', () => {
+    const { getByTestId, queryByTestId } = render(
       <HighlightedBody body="a ==und== b" notes={[]} onOpen={jest.fn()} />,
     );
 
-    const underline = getByTestId('journal-markdown-underline-4');
-    expect(underline.props.children).toBe('und');
-    expect(StyleSheet.flatten(underline.props.style).textDecorationLine).toBe('underline');
-    expect(queryByText('a ==und== b')).toBeNull();
+    expect(queryByTestId('journal-markdown-underline-4')).toBeNull();
+    expect(queryByTestId('journal-markdown-underline-2')).toBeNull();
+    expect(renderedText(getByTestId('journal-body-read'))).toBe('a ==und== b');
   });
 });
 

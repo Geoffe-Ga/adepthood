@@ -94,8 +94,10 @@ function owningSpans(document: JournalMarkdownDocument, sourceIndex: number): In
  *
  * Earliest start is enough to identify it: a source position opens at most one
  * delimiter pair, because `isMarkerRun` requires a whole run and the passes are
- * keyed by distinct marker/width combinations. (Brute-forced over every body of
- * length <= 6 in `*_=a \\->`: no two recorded pairs ever share a start.)
+ * keyed by distinct marker/width combinations, and the only tag pair opens on
+ * `<`, which no symmetric pass uses. (Brute-forced over every body of up to six
+ * tokens from `*`, `_`, `<u>`, `</u>`, `a`, space, `\\`, `-`, `>`: no two
+ * recorded pairs ever share a start.)
  */
 function outermost(owners: InlineSpan[]): InlineSpan {
   return owners.reduce((chosen, span) => (span.start < chosen.start ? span : chosen));
