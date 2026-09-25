@@ -47,6 +47,8 @@ _FRONTEND_SCRIPT_DIR = _REPO_ROOT / "scripts" / "frontend"
 _CHECK_ALL = _FRONTEND_SCRIPT_DIR / "check-all.sh"
 _SDK_ALIGN = _FRONTEND_SCRIPT_DIR / "sdk-align.sh"
 _FRONTEND = _REPO_ROOT / "frontend"
+_MANIFEST = _FRONTEND / "package.json"
+_LOCKFILE = _FRONTEND / "package-lock.json"
 _INSTALLED_EXPO = _FRONTEND / "node_modules" / "expo"
 _SDK_TABLE = _INSTALLED_EXPO / "bundledNativeModules.json"
 _INSTALLED_EXPO_BIN = _FRONTEND / "node_modules" / ".bin" / "expo"
@@ -103,6 +105,15 @@ _BLOCK_RUN_RE = re.compile(r"^(\s*)(?:-\s+)?run:\s*[|>][-+]?\s*$")
 
 # A bare exact semver: no ``~``, ``^``, range, or tag.
 _EXACT_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+# The SDK-managed names when there is no install to read the table from (the
+# backend CI job): expo itself and its own scoped and prefixed modules. Where
+# frontend/node_modules exists, the real table's keys are used instead, which
+# also cover the community packages it pins (netinfo, screens, web, ...).
+_SDK_NAME_FALLBACK_RE = re.compile(r"^(?:expo|expo-.*|@expo/.*)$")
+
+# The two sections of a manifest whose specs the lockfile's root entry mirrors.
+_DEPENDENCY_SECTIONS = ("dependencies", "devDependencies")
 
 # The package the drift fixture moves. Its table entry is an exact version (not
 # a ``~`` range), so "one patch past the table" is unambiguously outside it.
@@ -505,3 +516,164 @@ class TestTheDriftFixtureHelpers:
         """A range has no single "one patch past", so the fixture must refuse it."""
         with pytest.raises(AssertionError, match="not an exact version"):
             _bumped_patch(spec)
+
+
+def _json(path: Path) -> dict[str, object]:
+    """Return a JSON document as a dict, failing legibly when it is absent."""
+    document: dict[str, object] = json.loads(_read(path))
+    return document
+
+
+def _declared(manifest: dict[str, object]) -> dict[str, str]:
+    """Return every dependency and devDependency spec a manifest declares."""
+    declared: dict[str, str] = {}
+    for section in _DEPENDENCY_SECTIONS:
+        declared.update(_section(manifest, section))
+    return declared
+
+
+def _sdk_managed_names(declared: dict[str, str], table: dict[str, str] | None) -> set[str]:
+    """Return the declared names the Expo SDK pins, from its table when installed."""
+    if table is None:
+        return {name for name in declared if _SDK_NAME_FALLBACK_RE.match(name)}
+    return {name for name in declared if name in table} | ({"expo"} & declared.keys())
+
+
+def _inexact(declared: dict[str, str], names: set[str]) -> dict[str, str]:
+    """Return the SDK-managed specs that are not a bare exact version."""
+    return {
+        name: declared[name] for name in sorted(names) if not _EXACT_SEMVER_RE.match(declared[name])
+    }
+
+
+def _off_lock(
+    declared: dict[str, str], lock: dict[str, object], names: set[str]
+) -> dict[str, tuple[str, str]]:
+    """Return the SDK-managed specs that differ from the version the lockfile installs."""
+    packages = lock["packages"]
+    assert isinstance(packages, dict)
+    off: dict[str, tuple[str, str]] = {}
+    for name in sorted(names):
+        locked = packages.get(f"node_modules/{name}", {}).get("version")
+        if declared[name] != locked:
+            off[name] = (declared[name], str(locked))
+    return off
+
+
+def _section(document: dict[str, object], section: str) -> dict[str, str]:
+    """Return one dependency section of a manifest-shaped dict (empty if absent)."""
+    specs = document.get(section, {})
+    assert isinstance(specs, dict)
+    return specs
+
+
+def _root_drift(manifest: dict[str, object], lock: dict[str, object]) -> list[str]:
+    """Return how the lockfile's root entry disagrees with the manifest's specs."""
+    packages = lock["packages"]
+    assert isinstance(packages, dict)
+    root = packages[""]
+    drift: list[str] = []
+    for section in _DEPENDENCY_SECTIONS:
+        declared = _section(manifest, section)
+        mirrored = _section(root, section)
+        if declared != mirrored:
+            changed = sorted(set(declared.items()) ^ set(mirrored.items()))
+            drift.append(f"{section}: {changed}")
+    return drift
+
+
+def _installed_table() -> dict[str, str] | None:
+    """Return the installed SDK table, or None where the frontend is not installed."""
+    return _table() if _SDK_TABLE.is_file() else None
+
+
+class TestTheSdkPinsAreExact:
+    """The owner's ruling on #2918: the Expo-managed packages are pinned exactly.
+
+    A ``~`` spec let the declared intent lag the installed tree (package.json
+    said expo-file-system ~57.0.4 while the lockfile installed 57.0.7). An exact
+    spec equal to the locked version says what is installed, and any move to a
+    new SDK patch becomes a visible diff -- a Dependabot ``expo-sdk`` PR.
+    """
+
+    def test_every_sdk_managed_dependency_is_pinned_exactly(self) -> None:
+        """No ``~``, ``^`` or range on anything the SDK table pins."""
+        declared = _declared(_json(_MANIFEST))
+        names = _sdk_managed_names(declared, _installed_table())
+        assert "expo" in names
+        inexact = _inexact(declared, names)
+        assert not inexact, (
+            f"frontend/package.json declares SDK-managed packages with a range: "
+            f"{inexact}. Pin each to the exact version package-lock.json installs."
+        )
+
+    def test_every_sdk_pin_is_the_locked_install(self) -> None:
+        """The pin says what is installed, not an older floor of it."""
+        declared = _declared(_json(_MANIFEST))
+        names = _sdk_managed_names(declared, _installed_table())
+        off = _off_lock(declared, _json(_LOCKFILE), names)
+        assert not off, f"SDK-managed pins disagree with the lockfile as (declared, locked): {off}."
+
+    def test_the_lockfile_root_mirrors_the_manifest(self) -> None:
+        """A hand-edited spec must reach packages[""] too, or npm ci rejects it."""
+        drift = _root_drift(_json(_MANIFEST), _json(_LOCKFILE))
+        assert not drift, f"package-lock.json packages[''] lags package.json: {drift}"
+
+
+class TestThePinDetectorsAreNonVacuous:
+    """Each pin detector, fired and quieted on fabricated manifests."""
+
+    def test_the_table_decides_membership_when_installed(self) -> None:
+        """A community package the table pins is managed; an unrelated one is not."""
+        declared = {"expo": "57.0.25", "react-native-web": "0.21.2", "lodash": "4.0.0"}
+        table = {"react-native-web": "~0.21.0"}
+        assert _sdk_managed_names(declared, table) == {"expo", "react-native-web"}
+
+    def test_the_fallback_covers_expo_names_only(self) -> None:
+        """Without an install, only expo, expo-* and @expo/* are recognisable."""
+        declared = {
+            "expo": "1.0.0",
+            "expo-asset": "1.0.0",
+            "@expo/metro-runtime": "1.0.0",
+            "react-native-web": "0.21.2",
+            "expo_fake": "1.0.0",
+        }
+        assert _sdk_managed_names(declared, None) == {"expo", "expo-asset", "@expo/metro-runtime"}
+
+    def test_a_range_is_inexact_and_a_bare_version_is_not(self) -> None:
+        """``~`` and ``^`` fire; a bare version stays quiet."""
+        declared = {"expo": "~57.0.25", "netinfo": "^12.0.1", "expo-asset": "57.0.18"}
+        assert _inexact(declared, set(declared)) == {"expo": "~57.0.25", "netinfo": "^12.0.1"}
+
+    def test_a_pin_behind_the_lock_is_off_lock(self) -> None:
+        """expo-file-system 57.0.4 declared, 57.0.7 installed: flagged."""
+        lock: dict[str, object] = {
+            "packages": {
+                "node_modules/expo-file-system": {"version": "57.0.7"},
+                "node_modules/expo": {"version": "57.0.25"},
+            }
+        }
+        declared = {"expo-file-system": "57.0.4", "expo": "57.0.25"}
+        assert _off_lock(declared, lock, set(declared)) == {
+            "expo-file-system": ("57.0.4", "57.0.7")
+        }
+
+    def test_a_lock_root_that_lags_the_manifest_is_drift(self) -> None:
+        """A spec changed in package.json alone is caught; a mirrored one is not."""
+        manifest: dict[str, object] = {
+            "dependencies": {"expo": "57.0.25"},
+            "devDependencies": {"typescript": "~6.0.3"},
+        }
+        lagging: dict[str, object] = {
+            "packages": {
+                "": {
+                    "dependencies": {"expo": "~57.0.25"},
+                    "devDependencies": {"typescript": "~6.0.3"},
+                }
+            }
+        }
+        mirrored: dict[str, object] = {
+            "packages": {"": {k: manifest[k] for k in _DEPENDENCY_SECTIONS}}
+        }
+        assert _root_drift(manifest, lagging)
+        assert not _root_drift(manifest, mirrored)
