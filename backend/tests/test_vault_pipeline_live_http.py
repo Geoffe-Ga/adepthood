@@ -51,6 +51,14 @@ _HOST = "127.0.0.1"
 _API_KEY = "live-boundary-key"  # pragma: allowlist secret
 _PASSWORD = "correct-horse-battery-staple-42"  # pragma: allowlist secret
 _CLASSIFICATION_SECONDS = 10.2
+# The foreground stage clock the converging journey runs under, and how long its
+# peers hold each accepted classification's 202. The hold spans two whole clocks
+# on purpose (#2933): the budget is armed before the submit is sent and the hold
+# starts only once Creek has created the job, so the clock always expires inside
+# a submit that was already accepted, on every runner, rather than only on a slow
+# one.
+_FOREGROUND_BUDGET_SECONDS = 0.5
+_ACCEPTED_ANSWER_HOLD_SECONDS = _FOREGROUND_BUDGET_SECONDS * 2
 _JOURNAL_TEXT = "We are caring, sharing, and building momentum together."
 _DOCUMENT_TEXT = "Community, equality, empathy, inclusion, and collaboration are kindling."
 
@@ -77,7 +85,12 @@ class _Job:
 class _SlowCreekPeer:
     """A 0.16 Creek HTTP peer whose LLM job really takes longer than ten seconds."""
 
-    def __init__(self, *, classification_release: asyncio.Event | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        classification_release: asyncio.Event | None = None,
+        accepted_answer_hold: float = 0.0,
+    ) -> None:
         """Create the observable state and mount the published routes."""
         self.app = FastAPI()
         self.fragments: dict[str, _Fragment] = {}
@@ -87,6 +100,7 @@ class _SlowCreekPeer:
         self.classification_elapsed: float | None = None
         self.maximum_active_classifications = 0
         self.classification_release = classification_release
+        self.accepted_answer_hold = accepted_answer_hold
         self._mount()
 
     def _mount(self) -> None:
@@ -192,7 +206,11 @@ class _SlowCreekPeer:
             self.maximum_active_classifications,
             active + 1,
         )
-        return self._accepted("llm", fragment_ids=tuple(self.fragments))
+        accepted = self._accepted("llm", fragment_ids=tuple(self.fragments))
+        # The job exists from here on, answered or not: this is the window a
+        # cancelled submit would lose it in.
+        await asyncio.sleep(self.accepted_answer_hold)
+        return accepted
 
     async def _link(self, request: Request) -> Mapping[str, object] | JSONResponse:
         """Answer short links inline and the published embeddings method by job."""
@@ -444,13 +462,18 @@ async def test_slow_creek_jobs_converge_journal_and_import_over_live_http(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both writes answer before their real ten-second jobs land, then converge."""
-    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.5)
-    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.5)
+    """Both writes answer before their real ten-second jobs land, then converge.
+
+    Each peer answers its accepted classification only after the foreground
+    clock has expired, so both journeys cross the #2933 window every run: a
+    clock that cancelled the submit would lose the job and classify twice.
+    """
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", _FOREGROUND_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", _FOREGROUND_BUDGET_SECONDS)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
     monkeypatch.setattr(pipeline, "_JOB_POLL_MAX_SECONDS", 1.0)
-    journal_peer = _SlowCreekPeer()
-    import_peer = _SlowCreekPeer()
+    journal_peer = _SlowCreekPeer(accepted_answer_hold=_ACCEPTED_ANSWER_HOLD_SECONDS)
+    import_peer = _SlowCreekPeer(accepted_answer_hold=_ACCEPTED_ANSWER_HOLD_SECONDS)
 
     async with (
         _serve_tcp(app) as adepthood_url,
