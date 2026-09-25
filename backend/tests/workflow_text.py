@@ -4,7 +4,9 @@ Three test modules here grade GitHub Actions configuration, and each of them had
 grown its own copy of the same handful of readers: strip the comment lines, pull
 out the ``on:`` block, split ``jobs:`` into one body per job, read one step's
 ``run:`` command. Copies drift, and a drifted copy of a guard is a guard that
-passes for a reason nobody checked. So they live here once and are imported.
+passes for a reason nobody checked. So they live here once and are imported --
+including the ones added since, such as :func:`job_mapping`, which reads a
+job-level block like ``strategy:`` for the backend-compat matrix guard.
 
 Everything takes and returns plain text. Parsing with PyYAML is deliberately not
 an option: PyYAML is absent from ``requirements.txt``, ``requirements-lock.txt``
@@ -273,18 +275,81 @@ def step_inputs(workflow_text: str, step_name: str) -> dict[str, str]:
     return {}
 
 
-def _mapping(lines: list[str], key_indent: int) -> dict[str, str]:
+def job_mapping(job_body: str, key: str) -> dict[str, str]:
+    """Return the scalar entries directly under one of a job's own keys.
+
+    This is how a guard reads job-level configuration such as ``strategy:`` as
+    data: ``fail-fast: false`` counts only when it is a direct child of the
+    job's ``strategy:``. The same characters under a step's ``with:``, under a
+    nested ``matrix:``, or after the block has dedented all configure something
+    else, and a substring search cannot tell them apart.
+
+    Only block style is read. A flow-style ``strategy: {fail-fast: false}`` is
+    not parsed and reads as empty, so a guard built on this fails loud as
+    "missing" rather than passing on text it did not understand.
+
+    Args:
+        job_body: One job's body as :func:`jobs` returns it. Callers pass it
+            through :func:`without_comment_lines` first, so a commented-out key
+            is not read as a live one.
+        key: A key at the job's own indentation, e.g. ``"strategy"``.
+
+    Returns:
+        Each direct child entry that carries a scalar value, with surrounding
+        quotes stripped. Nested mappings such as ``matrix:`` have no scalar
+        value and are left out, as is everything inside them. Empty when the
+        job declares no such block.
+    """
+    lines = job_body.splitlines()
+    filled = [_leading_spaces(line) for line in lines if line.strip()]
+    if not filled:
+        return {}
+    key_indent = min(filled)
+    start = _line_index(lines, f"{' ' * key_indent}{key}:")
+    if start is None:
+        return {}
+    return _mapping(lines[start + 1 :], key_indent, direct_children_only=True)
+
+
+def _mapping(
+    lines: list[str],
+    key_indent: int,
+    *,
+    direct_children_only: bool = False,
+) -> dict[str, str]:
     """Read the ``key: value`` entries indented under a mapping key.
 
     Args:
         lines: The lines following the mapping key, within the same step.
         key_indent: Indentation of the mapping key itself; the block is whatever
             is indented further than that.
+        direct_children_only: Keep only entries at the block's first child
+            indentation that carry a scalar value, so a nested mapping's key and
+            everything inside it are left out.
 
     Returns:
         One entry per live line, with surrounding quotes stripped from values.
     """
-    entries: dict[str, str] = {}
+    entries = _block_entries(lines, key_indent)
+    if not direct_children_only or not entries:
+        return {key: value for _, key, value in entries}
+    child_indent = entries[0][0]
+    return {key: value for indent, key, value in entries if indent == child_indent and value}
+
+
+def _block_entries(lines: list[str], key_indent: int) -> list[tuple[int, str, str]]:
+    """Return every live ``key: value`` entry in a block, with its indentation.
+
+    Args:
+        lines: The lines following the mapping key.
+        key_indent: Indentation of the mapping key itself; the block ends at the
+            first live line indented no further than that.
+
+    Returns:
+        ``(indent, key, value)`` per entry, in file order, values stripped of
+        surrounding quotes. Comment and blank lines are skipped.
+    """
+    entries: list[tuple[int, str, str]] = []
     for line in lines:
         if not line.strip() or line.strip().startswith("#"):
             continue
@@ -292,7 +357,8 @@ def _mapping(lines: list[str], key_indent: int) -> dict[str, str]:
             break
         entry = _MAPPING_ENTRY.match(line)
         if entry is not None:
-            entries[entry.group("key")] = entry.group("value").strip("\"'")
+            value = entry.group("value").strip("\"'")
+            entries.append((len(entry.group("indent")), entry.group("key"), value))
     return entries
 
 
