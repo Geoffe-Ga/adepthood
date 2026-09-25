@@ -50,7 +50,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 
@@ -62,6 +67,7 @@ from tests.integration.pg_lane import (
     integration_database_name,
     resolve_integration_database_url,
 )
+from tests.integration.session_per_request import SessionPerRequest
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _ALEMBIC_INI = _BACKEND_ROOT / "alembic.ini"
@@ -311,3 +317,29 @@ async def pg_client(pg_session: AsyncSession) -> AsyncGenerator[AsyncClient, Non
     finally:
         app.dependency_overrides.clear()
         assert not app.dependency_overrides, "dependency_overrides leaked between tests"
+
+
+@pytest_asyncio.fixture
+async def pair(pg_database_url: str) -> AsyncGenerator[SessionPerRequest, None]:
+    """A client whose requests each get their own PostgreSQL session.
+
+    Writes are committed for real -- two transactions cannot interleave inside
+    one rolled-back outer transaction -- so teardown truncates every table.
+    """
+    engine: AsyncEngine = create_async_engine(pg_database_url)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _per_request_session() -> AsyncGenerator[AsyncSession, None]:
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _per_request_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield SessionPerRequest(factory, client)
+    finally:
+        app.dependency_overrides.clear()
+        names = ", ".join(f'"{table.name}"' for table in SQLModel.metadata.sorted_tables)
+        async with engine.begin() as connection:
+            await connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+        await engine.dispose()

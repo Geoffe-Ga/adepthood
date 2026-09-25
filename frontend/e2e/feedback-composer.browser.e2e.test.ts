@@ -1,6 +1,22 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  asShown,
+  captureFeedbackPosts,
+  feedbackControl,
+  fillBrokenReport,
+  HTTP_OK,
+  NARROW_VIEWPORT,
+  openComposerFrom,
+  plantJournalFailure,
+  readPreviewContext,
+  readReference,
+  tabTo,
+  typeInto,
+  WIDE_VIEWPORT,
+  type OriginPath,
+} from './feedbackBrowserSupport';
+import { backendUrl, bearer, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
  * Issue #2898 — "Send feedback" is obvious and usable at both viewport profiles,
@@ -19,16 +35,41 @@ import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupp
  * magnifier and the Habits first-use action -- because a header control that
  * overlaps one of them is exactly the kind of regression a component test
  * cannot see.
+ *
+ * #2899 adds the epic's exit journeys: an origin matrix across all five tabs
+ * and Settings, a compact report filed from a Journal that has just failed --
+ * double-clicked, and proven to put exactly one request on the wire whose
+ * context is exactly what the preview showed -- and a keyboard-only
+ * "confusing" report from the wide Map.
  */
 
-const WIDE_VIEWPORT = { width: 1280, height: 720 };
-const NARROW_VIEWPORT = { width: 390, height: 844 };
 /** Bounding boxes are sub-pixel; a fraction of a pixel is not an overlap. */
 const SUBPIXEL_TOLERANCE = 1;
-/** Upper bound on Tab presses to reach a control, so a lost focus fails fast. */
-const MAX_TAB_PRESSES = 60;
-const PUBLIC_ID = /^FB-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/;
-const HTTP_OK = 200;
+/** A double click is two presses; the in-flight guard must make it one request. */
+const ONE_REQUEST = 1;
+/** Long enough for a second, unguarded request to have left after the first. */
+const SETTLE_MS = 1_500;
+
+const HEADER_CONTROL = 'shell.header.send_feedback';
+const SETTINGS_CONTROL = 'settings.row.send_feedback';
+
+interface Origin {
+  path: OriginPath;
+  screen: string;
+  control: string;
+}
+
+/** Every place the composer opens from, and the envelope each must attach. */
+const ORIGINS: readonly Origin[] = [
+  { path: 'journal', screen: 'journal.shelf', control: HEADER_CONTROL },
+  { path: 'habits', screen: 'habits.grid', control: HEADER_CONTROL },
+  { path: 'practice', screen: 'practice.player', control: HEADER_CONTROL },
+  { path: 'course', screen: 'course.reader', control: HEADER_CONTROL },
+  { path: 'map', screen: 'map.stages', control: HEADER_CONTROL },
+  { path: 'settings', screen: 'settings.hub', control: SETTINGS_CONTROL },
+];
+/** The two origins the epic names at both viewport profiles. */
+const COMPACT_ORIGINS = ORIGINS.filter((origin) => ['journal', 'map'].includes(origin.path));
 
 interface Box {
   x: number;
@@ -50,11 +91,6 @@ function overlaps(a: Box, b: Box): boolean {
     a.y + a.height - SUBPIXEL_TOLERANCE > b.y &&
     b.y + b.height - SUBPIXEL_TOLERANCE > a.y
   );
-}
-
-/** The visible header control on the focused screen. */
-function feedbackControl(page: Page): Locator {
-  return page.getByRole('button', { name: 'Send feedback' }).filter({ visible: true });
 }
 
 async function expectClearOf(page: Page, others: ReadonlyArray<[Locator, string]>): Promise<void> {
@@ -95,24 +131,27 @@ async function expectNoOverlapAcrossScreens(page: Page): Promise<void> {
   await openScreen(page, 'Map', 'Journal');
 }
 
-/** Press Tab until `target` holds focus. Keyboard only; bounded so it cannot spin. */
-async function tabTo(page: Page, target: Locator): Promise<void> {
-  for (let presses = 0; presses < MAX_TAB_PRESSES; presses += 1) {
-    if (await target.evaluate((node) => node === document.activeElement)) return;
-    await page.keyboard.press('Tab');
+/** Open the composer from each origin and read the envelope it would attach. */
+async function expectOrigins(
+  page: Page,
+  origins: readonly Origin[],
+  viewportClass: string,
+): Promise<void> {
+  for (const origin of origins) {
+    await openComposerFrom(page, origin.path);
+    // The preview renders once a category is chosen; the envelope does not depend on which.
+    await page.getByRole('radio', { name: 'Something worked well' }).click();
+    const preview = page.getByTestId('feedback-attached-preview');
+    await expect(preview.getByTestId('feedback-attached-screen'), origin.path).toHaveText(
+      `Screen: ${origin.screen}`,
+    );
+    await expect(preview.getByTestId('feedback-attached-control'), origin.path).toHaveText(
+      `Control: ${origin.control}`,
+    );
+    await expect(preview.getByTestId('feedback-attached-viewport_class'), origin.path).toHaveText(
+      `Viewport class: ${viewportClass}`,
+    );
   }
-  throw new Error(`Tab never reached ${target.toString()}`);
-}
-
-async function typeInto(page: Page, testID: string, text: string): Promise<void> {
-  await tabTo(page, page.getByTestId(testID));
-  await page.keyboard.type(text);
-}
-
-async function readReference(page: Page): Promise<string> {
-  const reference = page.getByTestId('feedback-reference');
-  await expect(reference).toHaveText(PUBLIC_ID);
-  return (await reference.textContent()) ?? '';
 }
 
 test('keyboard-only at 1280x720: open, report something broken, read back the reference', async ({
@@ -203,4 +242,100 @@ test('at 390x844: find the control by name and send a report', async ({ page }) 
   await page.getByTestId('feedback-send').click();
 
   await readReference(page);
+});
+
+test('at 1280x720 every origin attaches its own screen and control', async ({ page }) => {
+  await page.setViewportSize(WIDE_VIEWPORT);
+  await signUp(page, 'feedback-origins-wide');
+
+  await expectOrigins(page, ORIGINS, 'expanded');
+});
+
+test('at 390x844 Journal and Map attach their screens as compact', async ({ page }) => {
+  await page.setViewportSize(NARROW_VIEWPORT);
+  await signUp(page, 'feedback-origins-narrow');
+
+  await expectOrigins(page, COMPACT_ORIGINS, 'compact');
+});
+
+test('at 390x844 a failed Journal is reported once, with exactly the context shown', async ({
+  page,
+}) => {
+  await page.setViewportSize(NARROW_VIEWPORT);
+  const email = await signUp(page, 'feedback-journal-broken');
+  await plantJournalFailure(page);
+  await page.reload();
+  await expect(page.getByTestId('journal-shelf-error')).toBeVisible();
+
+  const posts = captureFeedbackPosts(page);
+  await page.getByRole('button', { name: 'Send feedback' }).filter({ visible: true }).click();
+  await fillBrokenReport(page, 'The journal shelf would not load');
+  const preview = page.getByTestId('feedback-attached-preview');
+  await expect(preview.getByTestId('feedback-attached-screen')).toHaveText('Screen: journal.shelf');
+  await expect(preview.getByTestId('feedback-attached-viewport_class')).toHaveText(
+    'Viewport class: compact',
+  );
+  const shown = await readPreviewContext(page);
+
+  await page.getByTestId('feedback-send').dblclick();
+  const publicId = await readReference(page);
+  await page.waitForTimeout(SETTLE_MS);
+
+  expect(posts).toHaveLength(ONE_REQUEST);
+  const sent = posts[0]?.body.context ?? {};
+  // The preview claims exactly what the request carries: same keys, same values, no extras.
+  expect(Object.keys(sent).sort()).toEqual(Object.keys(shown).sort());
+  expect(asShown(sent)).toEqual(shown);
+
+  const token = await tokenFor(page.request, email);
+  const receipt = await page.request.get(`${backendUrl()}/feedback/${publicId}/receipt`, {
+    headers: bearer(token),
+  });
+  expect(receipt.status()).toBe(HTTP_OK);
+  expect(await receipt.json()).toMatchObject({ public_id: publicId, category: 'broken' });
+});
+
+test('keyboard-only at 1280x720: report something confusing from the Map', async ({ page }) => {
+  await page.setViewportSize(WIDE_VIEWPORT);
+  const email = await signUp(page, 'feedback-map-confusing');
+  await page.goto(`${frontendUrl()}/map`);
+  await expect(page.getByRole('button', { name: 'Open Map menu' })).toBeVisible();
+
+  const control = feedbackControl(page);
+  await tabTo(page, control);
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('feedback-composer-heading')).toBeFocused();
+
+  await tabTo(page, page.getByRole('radio', { name: 'Something was confusing' }));
+  await page.keyboard.press('Enter');
+  await typeInto(page, 'feedback-field-summary', 'I could not tell which stage I was on');
+  await typeInto(page, 'feedback-field-intent', 'Where the current stage begins');
+  await typeInto(page, 'feedback-field-actual', 'Two stages looked equally highlighted');
+  await typeInto(page, 'feedback-field-expected', 'One clearly marked current stage');
+  await tabTo(page, page.getByRole('radio', { name: 'I could carry on' }));
+  await page.keyboard.press('Enter');
+
+  const preview = page.getByTestId('feedback-attached-preview');
+  await expect(preview.getByTestId('feedback-attached-screen')).toHaveText('Screen: map.stages');
+  await expect(preview.getByTestId('feedback-attached-viewport_class')).toHaveText(
+    'Viewport class: expanded',
+  );
+
+  await tabTo(page, page.getByTestId('feedback-send'));
+  await page.keyboard.press('Enter');
+  const publicId = await readReference(page);
+
+  const token = await tokenFor(page.request, email);
+  const receipt = await page.request.get(`${backendUrl()}/feedback/${publicId}/receipt`, {
+    headers: bearer(token),
+  });
+  expect(await receipt.json()).toMatchObject({
+    public_id: publicId,
+    category: 'confusing',
+    impact: 'can_continue',
+  });
+
+  await tabTo(page, page.getByTestId('feedback-done'));
+  await page.keyboard.press('Enter');
+  await expect(feedbackControl(page)).toBeFocused();
 });

@@ -20,11 +20,19 @@ export const FEEDBACK_CONTROL_MAX_LENGTH = 64;
 export const FEEDBACK_BUILD_MAX_LENGTH = 32;
 export const FEEDBACK_LOCALE_MAX_LENGTH = 16;
 
-/** A canonical dotted screen token: `journal.shelf`. */
+/**
+ * The grammar a screen token is spelled in: `journal.shelf`. The server accepts
+ * only its closed `FeedbackScreen` vocabulary, which is narrower; the client's
+ * copy of that vocabulary is `SCREEN_TOKEN_BY_ROUTE` plus `UNKNOWN_SCREEN_TOKEN`.
+ */
 export const SCREEN_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,3}$/;
 /** The originating control, or a stable error code, in the same token shape. */
 export const CONTROL_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,3}$/;
-/** A build identifier: `1.4.2`, `1.4.2+318`, `2026.09.17-beta`. */
-export const BUILD_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/;
+/**
+ * A build identifier: `1.4.2`, `1.4.2+318`, `2026.09.17-beta`. Numbers and dots,
+ * then at most a numeric build or a named prerelease stage -- no free-form
+ * suffix and no commit hash, either of which could carry a word.
+ */
+export const BUILD_PATTERN = /^[0-9]+(\.[0-9]+){1,3}(\+[0-9]+|-(alpha|beta|rc)(\.[0-9]+)?)?$/;
 /** A BCP-47 tag narrowed to language plus an optional two-letter region. */
 export const LOCALE_PATTERN = /^[a-z]{2,3}(-[A-Z]{2})?$/;

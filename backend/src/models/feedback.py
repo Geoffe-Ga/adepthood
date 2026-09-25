@@ -87,6 +87,38 @@ class FeedbackViewportClass(enum.StrEnum):
     REGULAR = "regular"
 
 
+class FeedbackScreen(enum.StrEnum):
+    """Where a report was filed from: the shipped screen vocabulary, and no other word.
+
+    A closed set rather than a token grammar. ``SCREEN_PATTERN`` alone admits
+    ``journal.i_miss_my_father``, which is prose wearing a token's clothes; only
+    a finite vocabulary makes that unspellable. The members are exactly the
+    client's ``SCREEN_TOKEN_BY_ROUTE`` values plus its unknown-route fallback,
+    and ``feedbackBoundsDrift.test.ts`` fails the moment either side moves alone.
+    A new origin screen is added here and there together.
+    """
+
+    APP_UNKNOWN = "app.unknown"
+    COURSE_READER = "course.reader"
+    HABITS_GRID = "habits.grid"
+    JOURNAL_SHELF = "journal.shelf"
+    MAP_STAGES = "map.stages"
+    PRACTICE_PLAYER = "practice.player"
+    SETTINGS_HUB = "settings.hub"
+
+
+class FeedbackControl(enum.StrEnum):
+    """The control that opened the composer, from the shipped vocabulary only.
+
+    Closed for the same reason as :class:`FeedbackScreen`. Mirrors the client's
+    ``FEEDBACK_CONTROL_TOKENS``; a later error-state deep link (#2898 AC24) adds
+    its stable error codes here rather than widening the check.
+    """
+
+    SETTINGS_ROW_SEND_FEEDBACK = "settings.row.send_feedback"
+    SHELL_HEADER_SEND_FEEDBACK = "shell.header.send_feedback"
+
+
 class FeedbackStatus(enum.StrEnum):
     """Where a report stands in the operator's triage, and nothing more.
 

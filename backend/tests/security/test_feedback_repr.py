@@ -10,21 +10,30 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from http import HTTPStatus
 from typing import Any
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import sentry as error_monitoring
+from database import get_session
+from main import app
 from models._prose_repr import REDACTED
 from models.feedback import FeedbackReport
 from models.feedback_triage import FeedbackNote
+from routers import feedback as feedback_router
 from schemas.feedback import FeedbackCreate
 from schemas.feedback_admin import AddNoteCommand, FeedbackIssueDraft, FeedbackReporterSaid
 from sentry import scrub_event
+from services import feedback_triage
 from services.journal_encryption import EncryptedString
+from tests.helpers.feedback_triage import DRAFT_BODY, make_account, seed_report
+from tests.helpers.sentry_capture import CapturedEvent, capturing_sentry
 
 _PROSE_SENTINEL = "SENTINEL_PROSE_XYZ"
 _PUBLIC_ID = "FB-7K3M9Q2B"
@@ -293,3 +302,169 @@ def test_an_error_monitoring_event_carrying_a_triage_command_is_scrubbed() -> No
     }
 
     assert _PROSE_SENTINEL not in json.dumps(scrub_event(event, {}))
+
+
+# ── A real Sentry client and every INFO+ record, on the real routes (#2899) ──
+#
+# The tests above prove the scrubber on a hand-built event and the log line on a
+# happy path. These drive the production app into a forced failure on both
+# feedback routes -- intake and the operator's draft -- through a real
+# ``sentry_sdk`` client built by the production initialiser, with only the
+# transport swapped for a list.
+#
+# What is asserted *present* is asserted on log records: ``SentryContext`` is a
+# closed allowlist (request id, path, method) by design, so a report id on the
+# Sentry event would be a new product decision rather than something this suite
+# may assume. The event is asserted to carry the allowlisted request context and
+# nothing the reporter or operator wrote.
+
+# Defined far from any ``raise``: Sentry's frames carry the source lines around
+# the raise, and a sentinel written beside one would be found as *source code*.
+_SEND_SENTINEL = "SENTINEL_SEND_i_miss_my_father_every_morning"
+_DRAFT_SENTINEL = "SENTINEL_DRAFT_operator_quoted_the_reporter"
+_FEEDBACK_PATH = "/feedback/"
+
+
+def _sentinel_payload() -> dict[str, object]:
+    """A report whose four prose slots all hold the send sentinel."""
+    return {
+        "category": "confusing",
+        "impact": "can_continue",
+        "summary": _SEND_SENTINEL,
+        "intent": _SEND_SENTINEL,
+        "expected": _SEND_SENTINEL,
+        "actual": _SEND_SENTINEL,
+        "context": {
+            "screen": "map.stages",
+            "control": "shell.header.send_feedback",
+            "platform": "web",
+            "app_build": "1.4.2",
+            "viewport_class": "expanded",
+        },
+    }
+
+
+async def _explode(*_args: object, **_kwargs: object) -> None:
+    """Stand in for a storage or rendering failure the route did not anticipate."""
+    raise RuntimeError("feedback_path_failed")
+
+
+@pytest_asyncio.fixture
+async def failing_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """The production app, answering an unhandled error with its 500 envelope.
+
+    ``raise_app_exceptions=False`` lets the global handler's response reach the
+    test instead of the exception it also re-raises to the server.
+    """
+
+    async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_session] = _override_get_session
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _assert_one_clean_event(events: list[CapturedEvent], path: str, sentinel: str) -> None:
+    """Exactly one event, naming the route through the allowlist and nothing written."""
+    assert len(events) == 1
+    event = events[0]
+    assert sentinel not in json.dumps(event, default=str)
+    context = event["contexts"]
+    assert isinstance(context, dict)
+    assert context[error_monitoring.REQUEST_CONTEXT_KEY]["request_path"] == path
+
+
+def _emitted(records: list[logging.LogRecord]) -> str:
+    """Every record's message and attributes, as one searchable string."""
+    return "\n".join(f"{record.getMessage()} {record.__dict__}" for record in records)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_submission_ships_no_prose_to_error_monitoring(
+    failing_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Intake fails after validation: the 500 is reported, the words are not."""
+    reporter = await make_account(db_session, "sentry_send@example.com")
+    monkeypatch.setattr(feedback_router, "_insert_with_fresh_public_id", _explode)
+
+    with capturing_sentry(monkeypatch) as events, caplog.at_level(logging.INFO):
+        resp = await failing_client.post(
+            _FEEDBACK_PATH, json=_sentinel_payload(), headers=reporter.headers
+        )
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    _assert_one_clean_event(events, _FEEDBACK_PATH, _SEND_SENTINEL)
+    assert _SEND_SENTINEL not in _emitted(caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_draft_ships_no_prose_to_error_monitoring(
+    failing_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The draft fails mid-render: neither the reporter's words nor the operator's leave."""
+    admin = await make_account(db_session, "sentry_admin@example.com", admin=True)
+    reporter = await make_account(db_session, "sentry_reporter@example.com")
+    report = await seed_report(
+        db_session,
+        reporter.user_id,
+        summary=_DRAFT_SENTINEL,
+        intent=_DRAFT_SENTINEL,
+        expected=_DRAFT_SENTINEL,
+        actual=_DRAFT_SENTINEL,
+    )
+    monkeypatch.setattr(feedback_triage, "build_draft", _explode)
+    path = f"/admin/feedback/{report.public_id}/draft"
+
+    with capturing_sentry(monkeypatch) as events, caplog.at_level(logging.INFO):
+        resp = await failing_client.post(
+            path, json={**DRAFT_BODY, "summary": _DRAFT_SENTINEL}, headers=admin.headers
+        )
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    _assert_one_clean_event(events, path, _DRAFT_SENTINEL)
+    assert _DRAFT_SENTINEL not in _emitted(caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_submission_and_a_draft_log_ids_and_enums_and_no_words(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Across every INFO+ record of a real submit and a real draft: ids yes, words no."""
+    reporter = await make_account(db_session, "logs_reporter@example.com")
+    admin = await make_account(db_session, "logs_admin@example.com", admin=True)
+
+    with caplog.at_level(logging.INFO):
+        filed = await async_client.post(
+            _FEEDBACK_PATH, json=_sentinel_payload(), headers=reporter.headers
+        )
+        public_id = filed.json()["public_id"]
+        drafted = await async_client.post(
+            f"/admin/feedback/{public_id}/draft",
+            json={**DRAFT_BODY, "summary": _DRAFT_SENTINEL},
+            headers=admin.headers,
+        )
+
+    assert filed.status_code == HTTPStatus.CREATED
+    assert drafted.status_code == HTTPStatus.OK
+    emitted = _emitted(caplog.records)
+    assert _SEND_SENTINEL not in emitted
+    assert _DRAFT_SENTINEL not in emitted
+    submitted = next(r for r in caplog.records if r.message == "feedback_submitted")
+    assert isinstance(submitted.__dict__["report_id"], int)
+    assert submitted.__dict__["public_id"] == public_id
+    assert submitted.__dict__["category"] == "confusing"
+    assert submitted.__dict__["impact"] == "can_continue"
+    assert submitted.__dict__["screen"] == "map.stages"

@@ -9,7 +9,12 @@ about their own experience would be the wrong kind of safety.
 The **envelope** is an allowlist. :class:`FeedbackContext` carries exactly seven
 fields, each typed narrowly enough that the shapes the issue forbids cannot be
 spelled in them: a URL with a query string, a stack trace, a request or response
-body, a header map, a vault address, a log bundle. ``extra="forbid"`` publishes
+body, a header map, a vault address, a log bundle -- and prose disguised as a
+token. ``screen`` and ``control`` are closed vocabularies
+(:class:`models.feedback.FeedbackScreen`, :class:`models.feedback.FeedbackControl`)
+rather than a token grammar, because the grammar alone admits
+``journal.i_miss_my_father``; ``app_build`` is a version shape whose only
+alphabetic suffixes are ``alpha``, ``beta`` and ``rc``. ``extra="forbid"`` publishes
 ``additionalProperties: false``, so the document itself says an eighth key is out
 of contract and a client that adds one is refused rather than quietly trimmed.
 
@@ -33,32 +38,44 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from models.feedback import (
     FEEDBACK_ANSWER_MAX_LENGTH,
     FEEDBACK_BUILD_MAX_LENGTH,
-    FEEDBACK_CONTROL_MAX_LENGTH,
     FEEDBACK_LOCALE_MAX_LENGTH,
-    FEEDBACK_SCREEN_MAX_LENGTH,
     FEEDBACK_SUMMARY_MAX_LENGTH,
     PUBLIC_ID_MAX_LENGTH,
     FeedbackCategory,
+    FeedbackControl,
     FeedbackImpact,
     FeedbackPlatform,
+    FeedbackScreen,
     FeedbackViewportClass,
 )
 from schemas._base import OwnedResourcePublic
 from security.text_sanitize import sanitize_user_text
 
-# A canonical dotted screen token: ``journal.shelf``, ``habits.detail.goals``.
-# One expression rejects every unsafe shape at once -- ``https://…`` fails on the
-# colon and the slashes, ``?token=…`` on the question mark, a screen title on the
-# spaces, and a pasted body on all three.
+# The grammar every screen token is spelled in: ``journal.shelf``. The request
+# field is the closed :class:`FeedbackScreen` vocabulary, which is narrower; this
+# pattern stays as the shape each member must satisfy (pinned by
+# ``test_every_closed_token_satisfies_its_grammar``) and as the admin inbox's
+# filter grammar, which must still match rows stored before the vocabulary
+# closed.
 SCREEN_PATTERN: Final = r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,3}$"
 
-# The control that originated the report, or a stable error code, in the same
-# token shape. A stack trace carries spaces, colons, parentheses and newlines,
-# so it cannot be spelled here either.
+# The grammar every control token is spelled in. The request field is the closed
+# :class:`FeedbackControl` vocabulary; see ``SCREEN_PATTERN``.
 CONTROL_PATTERN: Final = r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,3}$"
 
-# A build identifier: ``1.4.2``, ``1.4.2+318``, ``2026.09.17-beta``.
-BUILD_PATTERN: Final = r"^[0-9A-Za-z][0-9A-Za-z._+-]*$"
+# A build identifier: ``1.4.2``, ``1.4.2+318``, ``2026.09.17-beta``, ``1.4``.
+# Numbers and dots, then at most a numeric build or one of three named
+# prerelease stages. No free-form suffix and no commit hash: either would let a
+# word (``1.0.0-imissyoudad``) ride along in a field that is meant to name a
+# release. Length is bounded separately, by FEEDBACK_BUILD_MAX_LENGTH.
+BUILD_PATTERN: Final = r"^[0-9]+(\.[0-9]+){1,3}(\+[0-9]+|-(alpha|beta|rc)(\.[0-9]+)?)?$"
+
+# The grammar the admin inbox's build filter accepts: the wider shape intake
+# took before the build was narrowed to a version (#2899). The filter reads
+# stored rows, and rows stored under the wider grammar -- a commit hash, a
+# free-suffix release -- are still shown in the inbox, so the filter must be
+# able to name them. Same reasoning as SCREEN_PATTERN for the screen filter.
+BUILD_FILTER_PATTERN: Final = r"^[0-9A-Za-z][0-9A-Za-z._+-]*$"
 
 # A BCP-47 language tag narrowed to language plus optional region. Enough to
 # know which translation the person was reading; not enough to be a fingerprint.
@@ -85,12 +102,10 @@ class FeedbackContext(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    screen: Annotated[str, Field(pattern=SCREEN_PATTERN, max_length=FEEDBACK_SCREEN_MAX_LENGTH)] = (
-        Field(description="Canonical dotted screen token, e.g. ``journal.shelf``.")
+    screen: FeedbackScreen = Field(description="The screen the report was filed from.")
+    control: FeedbackControl | None = Field(
+        default=None, description="The control that opened the composer."
     )
-    control: Annotated[
-        str | None, Field(pattern=CONTROL_PATTERN, max_length=FEEDBACK_CONTROL_MAX_LENGTH)
-    ] = Field(default=None, description="Originating control or stable error code.")
     platform: FeedbackPlatform = Field(description="Which client the report came from.")
     app_build: Annotated[
         str, Field(pattern=BUILD_PATTERN, max_length=FEEDBACK_BUILD_MAX_LENGTH)

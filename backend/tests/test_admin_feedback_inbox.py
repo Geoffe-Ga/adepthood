@@ -259,6 +259,31 @@ async def test_an_unknown_reference_is_404(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stored_build", ["3f9c2e1", "1.4.2-hotfix"])
+async def test_a_build_stored_before_intake_narrowed_can_still_be_filtered_on(
+    async_client: AsyncClient, db_session: AsyncSession, stored_build: str
+) -> None:
+    """The filter reads stored rows, so it keeps the grammar they were stored under.
+
+    Intake once accepted any build matching the wider pre-#2899 grammar -- a commit
+    hash, a free-suffix release -- and those rows are still shown in the inbox. A
+    filter narrowed along with intake would answer 422 for the very value the
+    operator is looking at.
+    """
+    admin = await _admin(db_session)
+    reporter = await make_account(db_session, "reporter@example.com")
+    stored = await seed_report(db_session, reporter.user_id, app_build=stored_build)
+    await seed_report(db_session, reporter.user_id, app_build="1.4.2")
+
+    response = await async_client.get(
+        "/admin/feedback", params={"app_build": stored_build}, headers=admin.headers
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    assert [item["public_id"] for item in response.json()["items"]] == [stored.public_id]
+
+
+@pytest.mark.asyncio
 async def test_siblings_share_the_fingerprint_and_nothing_else(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

@@ -1357,6 +1357,26 @@ export const feedbackImpactSchema = z.enum([
 ]);
 
 /**
+ * The screen a report was filed from. Mirrors the closed ``FeedbackScreen``
+ * component; the server refuses any other token.
+ */
+export const feedbackScreenSchema = z.enum([
+  'app.unknown',
+  'course.reader',
+  'habits.grid',
+  'journal.shelf',
+  'map.stages',
+  'practice.player',
+  'settings.hub',
+]);
+
+/** The control that opened the composer. Mirrors the closed ``FeedbackControl`` component. */
+export const feedbackControlSchema = z.enum([
+  'settings.row.send_feedback',
+  'shell.header.send_feedback',
+]);
+
+/**
  * A report's public reference: ``FB-`` plus eight characters from an alphabet
  * with the misread pairs (and ``U``) removed. Mirrors ``PUBLIC_ID_PATTERN`` in
  * ``backend/src/models/feedback.py``; ``feedbackBoundsDrift.test.ts`` composes the

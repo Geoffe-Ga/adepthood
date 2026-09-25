@@ -17,7 +17,12 @@ import { z } from 'zod';
 import { serialize } from './serializedWrite';
 import { scopedKey } from './userScope';
 
-import { feedbackCategorySchema, feedbackImpactSchema } from '@/api/schemas';
+import {
+  feedbackCategorySchema,
+  feedbackControlSchema,
+  feedbackImpactSchema,
+  feedbackScreenSchema,
+} from '@/api/schemas';
 
 export const FEEDBACK_DRAFT_KEY = '@adepthood/feedback_draft';
 
@@ -37,8 +42,8 @@ const frozenPayloadSchema = z.object({
   expected: z.string().optional(),
   actual: z.string().optional(),
   context: z.object({
-    screen: z.string(),
-    control: z.string().optional(),
+    screen: feedbackScreenSchema,
+    control: feedbackControlSchema.optional(),
     platform: z.enum(['android', 'ios', 'web']),
     app_build: z.string(),
     viewport_class: z.enum(['compact', 'expanded', 'regular']),
