@@ -1126,6 +1126,18 @@
     "coveredBy": "frontend/e2e/vault-connection.e2e.test.ts"
   },
   {
+    "id": "vault.disconnect-or-replace-confirmed",
+    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["PUT /vault/connection", "DELETE /vault/connection"],
+      "tables": ["uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 2934
+  },
+  {
     "id": "vault.activate-provider-managed",
     "description": "An authenticated, server-eligible user chooses managed-vault activation from Settings after signup, sees on web, iOS, and Android that ordinary Fly custody is provider-managed/operator-readable, not confidential compute, and still excludes INTIMATE content, then explicitly starts an allocation. The production client crosses the live Adepthood API and Postgres lifecycle into an isolated fake Creek 2.0 control plane, progresses directly through pending and provisioning, receives the authenticated one-way connection handoff, and reaches ready with an explicit provider_managed custody value. Unit journeys beside PrivateVaultActivationScreen pin the optional consent, unavailable/ineligible state, emergency-disable replay, truthful custody copy, absence of ceremony controls, retry behavior, and legacy wrapped-artifact wording; this seam spec pins every live route and schema between that screen and the two services.",
     "crosses": {
