@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AspectChordValue } from './AspectChordControl';
 import {
   NO_PENDING_RETRY,
+  decideStep,
   deriveHintState,
   hasPendingRetry,
   planRetry,
@@ -111,17 +112,27 @@ async function runStep(step: RetryStep, ports: SaveRetryPorts): Promise<void> {
   }
 }
 
+/** Run one planned step as the state stands now (see ``decideStep``). */
+async function runDecidedStep(planned: RetryStep, ports: SaveRetryPorts): Promise<void> {
+  const { reporter, pendingRef } = ports.ledger;
+  const decision = decideStep(planned, pendingRef.current, ports.displayedTier());
+  if (decision === null) return;
+  if ('drop' in decision) reporter.succeed(decision.drop);
+  else await runStep(decision.run, ports);
+}
+
 /**
  * Re-send whatever failed, one step at a time (the tier/chord persisters assume
- * one PATCH in flight). Ends on a truthful "Saved" when nothing is left owed
- * and no step published an outcome of its own (a dropped tier, or a body that
- * turned out to be durable already, so the writer sent nothing).
+ * one PATCH in flight), deciding each step only when its turn comes. Ends on a
+ * truthful "Saved" when nothing is left owed and no step published an outcome
+ * of its own (a dropped tier, or a body that turned out to be durable already,
+ * so the writer sent nothing).
  */
 async function dispatchRetry(ports: SaveRetryPorts, trigger: RetryTrigger): Promise<void> {
   const { reporter, pendingRef, publishedRef } = ports.ledger;
   const plan = planRetry(pendingRef.current, trigger, ports.displayedTier());
   for (const lane of plan.dropped) reporter.succeed(lane);
-  for (const step of plan.steps) await runStep(step, ports);
+  for (const step of plan.steps) await runDecidedStep(step, ports);
   if (!hasPendingRetry(pendingRef.current) && publishedRef.current === 'idle') {
     reporter.publish('saved');
   }

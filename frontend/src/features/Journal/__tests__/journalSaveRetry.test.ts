@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   NO_PENDING_RETRY,
+  decideStep,
   deriveHintState,
   hasPendingRetry,
   isTierLooser,
@@ -187,5 +188,40 @@ describe('shouldRetryOnReconnect (#2930)', () => {
 
   it('does not fire while a retry is already dispatching', () => {
     expect(shouldRetryOnReconnect({ ...ready, dispatching: true })).toBe(false);
+  });
+});
+
+describe('decideStep re-decides a planned step when it runs (#2930)', () => {
+  const plannedTier = { lane: 'classification', value: 'personal' } as const;
+  const plannedChord = { lane: 'chord', value: CHORD } as const;
+
+  it('runs body and Finish steps as planned', () => {
+    expect(decideStep({ lane: 'body' }, NO_PENDING_RETRY, 'personal')).toEqual({
+      run: { lane: 'body' },
+    });
+    expect(decideStep({ lane: 'finish' }, NO_PENDING_RETRY, 'personal')).toEqual({
+      run: { lane: 'finish' },
+    });
+  });
+
+  it('skips a tier or chord step whose lane has since cleared', () => {
+    expect(decideStep(plannedTier, NO_PENDING_RETRY, 'public')).toBeNull();
+    expect(decideStep(plannedChord, NO_PENDING_RETRY, 'public')).toBeNull();
+  });
+
+  it('drops a pending tier that is now looser than the one displayed', () => {
+    expect(decideStep(plannedTier, pending({ classification: 'personal' }), 'intimate')).toEqual({
+      drop: 'classification',
+    });
+  });
+
+  it('sends the CURRENT pending tier and chord, not the planned ones', () => {
+    const later = { primary: 7, secondary: null };
+    expect(decideStep(plannedTier, pending({ classification: 'intimate' }), 'public')).toEqual({
+      run: { lane: 'classification', value: 'intimate' },
+    });
+    expect(decideStep(plannedChord, pending({ chord: later }), 'public')).toEqual({
+      run: { lane: 'chord', value: later },
+    });
   });
 });

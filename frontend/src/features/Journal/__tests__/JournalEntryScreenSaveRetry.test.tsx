@@ -247,7 +247,7 @@ describe('writing on settles a failed body save without a tap (#2930)', () => {
   });
 });
 
-describe('a retry runs its steps one at a time (#2930)', () => {
+describe('a retry decides each tier and chord step when it runs (#2930)', () => {
   /** Loaded Public; a body write and a move to Personal both fail. */
   async function bodyAndTierOwed() {
     const screen = await openLoaded({ classification: 'public' } as Partial<JournalMessage>);
@@ -259,6 +259,50 @@ describe('a retry runs its steps one at a time (#2930)', () => {
     expect(hint(screen)).toBe(SAVE_ERROR_HINT);
     return screen;
   }
+
+  async function tightenToIntimateWhileBodyHeld(
+    screen: Screen,
+    start: () => Promise<void>,
+  ): Promise<void> {
+    const heldBody = deferred<JournalMessage>();
+    mockUpdate.mockReturnValueOnce(heldBody.promise);
+    await start();
+    expect(updatesCarrying('message')).toHaveLength(2);
+    // While the body retry is on the wire the writer makes the page Intimate.
+    await pressTier(screen, 'intimate');
+    expect(tierSelected(screen, 'intimate')).toBe(true);
+    await act(async () => {
+      heldBody.resolve(entry());
+    });
+    await settle();
+  }
+
+  it('does not send a tier planned before the writer tightened it (tap)', async () => {
+    const screen = await bodyAndTierOwed();
+    await tightenToIntimateWhileBodyHeld(screen, () => pressRetry(screen));
+
+    expect(updatesCarrying('classification').map(([, patch]) => patch)).toEqual([
+      { classification: 'personal' },
+      { classification: 'intimate' },
+    ]);
+    expect(tierSelected(screen, 'intimate')).toBe(true);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('does not send a tier planned before the writer tightened it (reconnect)', async () => {
+    const screen = await bodyAndTierOwed();
+    await net.emit(false);
+    await tightenToIntimateWhileBodyHeld(screen, async () => {
+      await net.emit(true);
+      await settle();
+    });
+
+    expect(updatesCarrying('classification').map(([, patch]) => patch)).toEqual([
+      { classification: 'personal' },
+      { classification: 'intimate' },
+    ]);
+    expect(tierSelected(screen, 'intimate')).toBe(true);
+  });
 
   it('sends the tier only after the body retry has landed', async () => {
     const screen = await bodyAndTierOwed();

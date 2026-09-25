@@ -158,6 +158,43 @@ export function planRetry(
   return { steps, dropped };
 }
 
+/** What a planned step becomes when its turn comes: run it, drop its lane, or skip it. */
+export type StepDecision = { run: RetryStep } | { drop: RetryLane } | null;
+
+function decideTier(pending: PendingRetry, displayedTier: JournalClassification): StepDecision {
+  const tier = pending.classification;
+  if (tier === null) return null;
+  if (isTierLooser(tier, displayedTier)) return { drop: 'classification' };
+  return { run: { lane: 'classification', value: tier } };
+}
+
+/**
+ * Re-decide a planned step against the state as it is NOW, just before it runs.
+ *
+ * A retry awaits each step in turn, and the body and Finish steps each take a
+ * network round trip, during which the writer may change the tier or chord.
+ * A tier or chord value captured when the plan was drawn up is therefore stale
+ * by the time it runs: re-sending it could loosen a page the writer has just
+ * made stricter. So the tier and chord steps re-read the pending record and
+ * the displayed tier: a lane since cleared is skipped (null), a tier now
+ * looser than the one shown is dropped, and otherwise the CURRENT pending
+ * value is sent. Body and Finish steps carry no value and run as planned.
+ */
+export function decideStep(
+  planned: RetryStep,
+  pending: PendingRetry,
+  displayedTier: JournalClassification,
+): StepDecision {
+  switch (planned.lane) {
+    case 'classification':
+      return decideTier(pending, displayedTier);
+    case 'chord':
+      return pending.chord === null ? null : { run: { lane: 'chord', value: pending.chord } };
+    default:
+      return { run: planned };
+  }
+}
+
 export interface ReconnectGate {
   wasOnline: boolean;
   isOnline: boolean;
