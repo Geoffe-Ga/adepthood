@@ -11,10 +11,17 @@ device, after merge -- which is how the same upgrade has had to be redone more
 than once.
 
 ``expo install --check`` is the one command that reads that table: it exits 1
-when ``frontend/package.json`` has drifted from the SDK's expected versions and
-0 when it is aligned. Both outcomes were measured before this guard was
-written, so the check is known to have a failing mode rather than being assumed
-to.
+when the installed tree has drifted from the SDK's expected versions and 0 when
+it is aligned. Both outcomes were measured before this guard was written, so
+the check is known to have a failing mode rather than being assumed to.
+
+It runs with ``EXPO_OFFLINE=1`` at both call sites (#2918). Online, the CLI
+overlays the live api.expo.dev answer on the installed expo's table, so the
+verdict changed whenever Expo published; offline, it compares the installed
+tree with ``node_modules/expo/bundledNativeModules.json``, and both come from
+the lockfile. ``TestTheOfflineGateStillFails`` proves the offline gate still
+rings on a planted drift, and ``TestTheSdkPinsAreExact`` holds the owner's
+ruling that the SDK-managed specs are exact and equal to the locked versions.
 
 A check with no call site enforces nothing, so this module pins all three
 places it has to appear: the CI workflow (the authority), ``check-all.sh`` (so
