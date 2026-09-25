@@ -26,6 +26,8 @@ from services.botmason import LLMProviderError, LLMVisionUnsupportedError
 from tests.provider_transport import OPENAI_KEY, use_openai
 from tests.transcription_helpers import JPEG_BYTES as _JPEG_BYTES
 from tests.transcription_helpers import PNG_BYTES as _PNG_BYTES
+from tests.transcription_helpers import REPORTED_REFUSAL as _REPORTED_REFUSAL
+from tests.transcription_helpers import REPORTED_REFUSAL_CURLY as _REPORTED_REFUSAL_CURLY
 from tests.transcription_helpers import SENTINEL_TEXT as _SENTINEL_TEXT
 from tests.transcription_helpers import WEBP_BYTES as _WEBP_BYTES
 from tests.transcription_helpers import b64 as _b64
@@ -510,3 +512,101 @@ async def test_a_real_provider_quota_refusal_reaches_the_caller_as_402(
     after = await _wallet_snapshot(db_session, "scan_real@example.com")
     assert _units_spent(before, after) == 0
     assert await _usage_row_count(db_session) == 0
+
+
+# --- A refusal or an empty read is not the page's text (#2851) --------------
+
+
+@pytest.mark.asyncio
+async def test_refusal_reply_is_422_transcription_refused_and_uncharged(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported refusal is a typed 422, and neither the debit nor a usage row persists."""
+    _patch_generate_response(monkeypatch, _priced_response(_REPORTED_REFUSAL))
+    headers = await _signup(async_client, "refusal_check")
+    before = await _wallet_snapshot(db_session, "refusal_check@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "transcription_refused"
+    after = await _wallet_snapshot(db_session, "refusal_check@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+_UNUSABLE_REPLIES = (
+    pytest.param(_REPORTED_REFUSAL, "transcription_refused", id="refusal-ascii"),
+    pytest.param(_REPORTED_REFUSAL_CURLY, "transcription_refused", id="refusal-curly"),
+    pytest.param("  [no text found]\n", "no_text_found", id="no-text-sentinel"),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("reply", "detail"), _UNUSABLE_REPLIES)
+async def test_unusable_reply_on_server_key_is_422_and_uncharged(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+    detail: str,
+) -> None:
+    """Server-paid: an unusable reply rolls the staged debit and usage row back."""
+    _patch_generate_response(monkeypatch, _priced_response(reply))
+    headers = await _signup(async_client, "unusable_server")
+    before = await _wallet_snapshot(db_session, "unusable_server@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == detail
+    after = await _wallet_snapshot(db_session, "unusable_server@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+@pytest.mark.parametrize(("reply", "detail"), _UNUSABLE_REPLIES)
+async def test_unusable_reply_on_byok_is_422_and_writes_no_usage_row(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+    detail: str,
+) -> None:
+    """Caller-paid: an unusable reply leaves both buckets alone and meters nothing."""
+    _patch_generate_response(monkeypatch, _priced_response(reply))
+    headers = await _signup(async_client, "unusable_byok")
+    before = await _wallet_snapshot(db_session, "unusable_byok@example.com")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json=_payload(_JPEG_BYTES),
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == detail
+    after = await _wallet_snapshot(db_session, "unusable_byok@example.com")
+    assert after == before
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_journal_page_opening_with_i_cant_is_transcribed_and_charged(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real page that starts "I can't" is the writer's words, not a refusal."""
+    page = "I can't sleep again tonight."
+    _patch_generate_response(monkeypatch, _priced_response(page))
+    headers = await _signup(async_client, "i_cant_page")
+    before = await _wallet_snapshot(db_session, "i_cant_page@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["text"] == page
+    after = await _wallet_snapshot(db_session, "i_cant_page@example.com")
+    assert _units_spent(before, after) == 1
+    assert await _usage_row_count(db_session) == 1

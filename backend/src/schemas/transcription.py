@@ -1,7 +1,8 @@
 """Request/response DTOs for the stateless single-page transcription endpoint.
 
-The Journal Photographer sends one photographed page as base64 image bytes and
-receives back the faithful transcribed body text. The contract is deliberately
+The Journal Photographer sends one captured image of text (a page, a screenshot,
+a photo of a screen) as base64 image bytes and receives back the faithful
+transcribed body text. The contract is deliberately
 *stateless*: nothing on either DTO is persisted as a journal entry. The endpoint
 runs the vision LLM and returns the text for the client to place into a draft;
 no row is written for the image or its transcription, and no ``journal_entry_id``
@@ -22,7 +23,7 @@ TranscribeMediaType = Literal["image/jpeg", "image/png", "image/webp"]
 
 
 class TranscribePageRequest(BaseModel):
-    """One photographed handwritten page submitted for transcription.
+    """One captured image of text (a page, screenshot, or screen) to transcribe.
 
     ``image_base64`` is the base64-encoded image bytes and ``media_type`` its
     declared MIME type. Neither field is stored: the request is stateless, so
