@@ -38,8 +38,8 @@ import GetResonanceButton, {
 import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
+import LiveMarkdownBody from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
-import { continueMarkdownEdit, type MarkdownSelection } from './markdownEditing';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
@@ -49,6 +49,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
+import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
@@ -218,10 +219,6 @@ interface SaveContext {
 
 /** HTTP status the backend returns when a reflection already exists for the scope. */
 const REFLECTION_CONFLICT_STATUS = 409;
-/** Give the blank writing page most of the viewport before prose begins to grow it. */
-const BODY_VIEWPORT_FRACTION = 0.6;
-const BODY_MIN_HEIGHT = 320;
-
 /**
  * Warm, declinable hint shown when a folded quote could not be marked included.
  * The quote stays pending and the entry is safe — the writer can simply try
@@ -1491,21 +1488,6 @@ function EntryTagControls({
   );
 }
 
-interface ContentSizeEvent {
-  nativeEvent: { contentSize: { height: number } };
-}
-
-/** Make a multiline field part of the page flow instead of an inner scroll pane. */
-function useGrowingFieldHeight(minHeight = 0) {
-  const [contentHeight, setContentHeight] = useState(0);
-  const onContentSizeChange = useCallback((event: ContentSizeEvent) => {
-    const nextHeight = Math.ceil(event.nativeEvent.contentSize.height);
-    setContentHeight((current) => (current === nextHeight ? current : nextHeight));
-  }, []);
-  const height = contentHeight > 0 ? Math.max(minHeight, contentHeight) : minHeight || undefined;
-  return { style: { minHeight: minHeight || undefined, height }, onContentSizeChange };
-}
-
 /** The wrapping title grows with its lines so none are hidden in an inner textarea. */
 function GrowingTitle({
   title,
@@ -1535,70 +1517,6 @@ function GrowingTitle({
   );
 }
 
-/** Transform Return at the native caret and briefly control the adjusted selection. */
-function useMarkdownBodyBindings(
-  body: string,
-  onChangeBody: WritingColumnProps['onChangeBody'],
-  onBodySelectionChange: WritingColumnProps['onBodySelectionChange'],
-) {
-  const [selection, setSelection] = useState<MarkdownSelection>();
-  const nativeSelectionRef = useRef<MarkdownSelection>({ start: body.length, end: body.length });
-  const changeBody = useCallback(
-    (next: string) => {
-      const edit = continueMarkdownEdit(body, next, nativeSelectionRef.current);
-      if (edit.selection) nativeSelectionRef.current = edit.selection;
-      setSelection(edit.selection);
-      onChangeBody(edit.text);
-    },
-    [body, onChangeBody],
-  );
-  const changeSelection = useCallback(
-    (event: SelectionChangeEvent) => {
-      nativeSelectionRef.current = event.nativeEvent.selection;
-      setSelection(undefined);
-      onBodySelectionChange?.(event);
-    },
-    [onBodySelectionChange],
-  );
-  return { selection, changeBody, changeSelection };
-}
-
-/** The prose field starts generous and grows into the page-level scroll surface. */
-function GrowingBody({
-  body,
-  onChangeBody,
-  onBodySelectionChange,
-  bodyPlaceholder,
-  inputRef,
-}: Pick<WritingColumnProps, 'body' | 'onChangeBody' | 'onBodySelectionChange'> & {
-  bodyPlaceholder: string;
-  inputRef: React.RefObject<TextInput | null>;
-}) {
-  const viewportHeight = useWindowDimensions().height;
-  const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
-  const growth = useGrowingFieldHeight(minimumBodyHeight);
-  const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange);
-  return (
-    <TextInput
-      ref={inputRef}
-      style={[styles.bodyInput, writingFieldFocus, growth.style]}
-      value={body}
-      onChangeText={markdown.changeBody}
-      onContentSizeChange={growth.onContentSizeChange}
-      selection={markdown.selection}
-      onSelectionChange={markdown.changeSelection}
-      placeholder={bodyPlaceholder}
-      placeholderTextColor={colors.paper.inkSoft}
-      selectionColor={writingField.caret}
-      cursorColor={writingField.caret}
-      multiline
-      scrollEnabled={false}
-      accessibilityLabel="Entry body"
-      testID="journal-body-input"
-    />
-  );
-}
-
 /** The title + growing body inputs (the raw editable text of the entry). */
 function WritingFields(
   props: Pick<
@@ -1615,7 +1533,7 @@ function WritingFields(
         onSubmit={() => bodyInputRef.current?.focus()}
       />
       <View style={styles.hairline} />
-      <GrowingBody
+      <LiveMarkdownBody
         body={props.body}
         onChangeBody={props.onChangeBody}
         onBodySelectionChange={props.onBodySelectionChange}

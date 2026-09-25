@@ -1,5 +1,5 @@
 /* eslint-env jest */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from '@jest/globals';
@@ -61,11 +61,27 @@ function siblingsOf(edges: ImportEdge[]): string[] {
     .filter((name): name is string => name != null);
 }
 
-/** The model's transitive closure: every module reachable from the root. */
-function walkModel(): { modules: string[]; edges: ImportEdge[] } {
+/**
+ * Pure editor modules that sit BESIDE the facade rather than under it -- the
+ * edit operations the text field calls. They are found by name, not listed, for
+ * the same reason the model is walked rather than declared: a new
+ * ``markdownSomething.ts`` is checked the moment it exists. View helpers that
+ * may import React Native are therefore never named ``markdown*`` or
+ * ``journalMarkdown*``.
+ */
+const EDITOR_ROOT = /^(?:journalMarkdown|markdown)\w*\.ts$/u;
+
+function editorRoots(): string[] {
+  return readdirSync(join(__dirname, '..'))
+    .filter((name) => EDITOR_ROOT.test(name))
+    .sort();
+}
+
+/** The transitive closure of relative imports from ``roots``. */
+function walkModel(roots: string[] = [MODEL_ROOT]): { modules: string[]; edges: ImportEdge[] } {
   const edges: ImportEdge[] = [];
   const seen = new Set<string>();
-  const queue = [MODEL_ROOT];
+  const queue = [...roots];
   while (queue.length > 0) {
     const name = queue.pop()!;
     if (seen.has(name)) continue;
@@ -114,6 +130,31 @@ describe('the Markdown model stays free of the renderer', () => {
   it.each(MODEL.modules)('%s names no sibling that does not exist', (name) => {
     for (const specifier of specifiersOf(moduleSource(name))) {
       expect(resolveSibling(specifier)).not.toBeNull();
+    }
+  });
+
+  it('discovers every pure editor module by name, the Return handler among them', () => {
+    // Not vacuous: the pattern must actually find the editor half of the model.
+    expect(editorRoots()).toEqual(
+      expect.arrayContaining([
+        'journalMarkdown.ts',
+        'markdownCommands.ts',
+        'markdownEditing.ts',
+        'markdownIndent.ts',
+        'markdownInlineToggle.ts',
+        'markdownMirror.ts',
+      ]),
+    );
+    expect(editorRoots().every((name) => !name.endsWith('.test.ts'))).toBe(true);
+  });
+
+  it('reaches no host module from any pure editor module, at any depth', () => {
+    const editor = walkModel(editorRoots());
+    expect(editor.edges.filter(([, specifier]) => HOST_MODULES.test(specifier))).toEqual([]);
+    for (const name of editor.modules) {
+      for (const specifier of specifiersOf(moduleSource(name))) {
+        expect(specifier.startsWith('./')).toBe(true);
+      }
     }
   });
 

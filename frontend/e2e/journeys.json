@@ -235,7 +235,7 @@
   },
   {
     "id": "journal.write-markdown-read-reload",
-    "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, ==equals-delimited== underline, adjacent -/*/+ lines as one list block, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
+    "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, <u>tag-delimited</u> underline (a retired ==equals== spelling stays literal prose), adjacent -/*/+ lines as one list block, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -247,15 +247,27 @@
   },
   {
     "id": "journal.live-markdown-edit",
-    "description": "A writer sees the journal's Markdown rendered while they are still typing in it -- emphasis styled in place, block markers dimmed rather than deleted, and the delimiters of the span under the caret revealed -- with the stored body still byte-identical to what they typed and every marginalia / promoted-quote anchor still addressing the same code points. The anchor-safe model this needs (exact source round trip, one code-point coordinate space, bullet blocks, caret and reveal geometry) has landed; the live editing surface that consumes it has not.",
+    "description": "A writer sees the journal's Markdown rendered while they are still typing it -- a styled mirror over the real textarea draws bold, italics, <u>underline</u> and quote lines in place, block markers and delimiters dimmed rather than deleted and revealed around the caret -- and formats with Cmd/Ctrl+B/I/U or the toolbar. Browser undo and redo take a shortcut back, pasted Markdown is kept verbatim, and the stored body stays byte-identical to what was typed, so every marginalia / promoted-quote anchor still addresses the same code points. The spec types with the keyboard, checks the title is never intercepted, lets the page save, reloads into read mode, and separately probes that clicking a mirror glyph puts the textarea caret on that exact character at 390/768/1024/1440px in light and dark.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
       "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
       "tables": ["journalentry"]
     },
-    "status": "uncovered",
-    "issue": 2889
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-live-markdown.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.list-indent",
+    "description": "A writer nests a list from the keyboard: Tab indents the list item under the caret by the document's own unit, Shift+Tab outdents it, Return on an empty nested item steps out one level (and leaves the list at level 0), and Backspace at a nested item's content start steps out one level too. Tab on prose and Shift+Tab at level 0 are left to the browser, so focus always moves on. On a list line the toolbar offers Indent and Outdent. The stored body is exactly the indentation typed, and read mode draws the same nesting after a cold reload.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-list-indent.browser.e2e.test.ts"
   },
   {
     "id": "journal.close-fresh-page-after-save-settles",

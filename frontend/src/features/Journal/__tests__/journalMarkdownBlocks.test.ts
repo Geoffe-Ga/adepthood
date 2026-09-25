@@ -1,7 +1,12 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
-import { markdownRuns, parseJournalMarkdown } from '../journalMarkdown';
+import {
+  INLINE_DELIMITERS,
+  UNDERLINE_DELIMITER,
+  markdownRuns,
+  parseJournalMarkdown,
+} from '../journalMarkdown';
 
 describe('bullet blocks', () => {
   it('groups adjacent bullet lines into one block without swallowing its neighbours', () => {
@@ -44,18 +49,27 @@ describe('bullet blocks', () => {
 });
 
 describe('underline', () => {
-  it('renders ==x== as an underlined run, leaving the other delimiters alone', () => {
-    const body = 'a ==und== b';
+  it('renders <u>x</u> as an underlined run, leaving the other delimiters alone', () => {
+    const body = 'a <u>und</u> b';
     const document = parseJournalMarkdown(body);
 
-    expect(document.formats[2]!.visible).toBe(false);
-    expect(document.formats[3]!.visible).toBe(false);
+    expect(document.formats.slice(2, 5).map((format) => format.visible)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(document.formats.slice(8, 12).map((format) => format.visible)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
     expect(markdownRuns(document, 0, document.chars.length)).toEqual([
       { start: 0, end: 2, text: 'a ', visible: true, bold: false, italic: false, underline: false },
-      { start: 4, end: 7, text: 'und', visible: true, bold: false, italic: false, underline: true },
+      { start: 5, end: 8, text: 'und', visible: true, bold: false, italic: false, underline: true },
       {
-        start: 9,
-        end: 11,
+        start: 12,
+        end: 14,
         text: ' b',
         visible: true,
         bold: false,
@@ -63,6 +77,46 @@ describe('underline', () => {
         underline: false,
       },
     ]);
+  });
+
+  it('spells the underline pair with the one exported constant', () => {
+    expect(UNDERLINE_DELIMITER).toEqual({ open: '<u>', close: '</u>' });
+    expect(INLINE_DELIMITERS.underline).toBe(UNDERLINE_DELIMITER);
+    const { open, close } = UNDERLINE_DELIMITER;
+    const document = parseJournalMarkdown(`${open}x${close}`);
+    expect(document.formats[open.length]).toMatchObject({ visible: true, underline: true });
+  });
+
+  it.each(['a ==und== b', '==und==', '*==und==*'])(
+    'reads the retired %j spelling as plain prose, never underline',
+    (body) => {
+      const document = parseJournalMarkdown(body);
+      expect(document.formats.some((format) => format.underline)).toBe(false);
+      const equalsSigns = Array.from(body).flatMap((char, index) => (char === '=' ? [index] : []));
+      expect(equalsSigns.every((index) => document.formats[index]!.visible)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['an escaped opener', 'a \\<u>x</u> b'],
+    ['an escaped closer', 'a <u>x\\</u> b'],
+    ['an opener followed by whitespace', 'a <u> x</u> b'],
+    ['a closer preceded by whitespace', 'a <u>x </u> b'],
+    ['an empty pair', 'a <u></u> b'],
+    ['an unclosed opener', 'a <u>x b'],
+    ['an upper-case tag', 'a <U>x</U> b'],
+    ['a pair split across lines', 'a <u>x\ny</u> b'],
+    ['any other HTML-looking tag', 'a <b>x</b> b'],
+  ])('leaves %s plain: %j', (_rule, body) => {
+    const document = parseJournalMarkdown(body);
+    expect(document.formats.some((format) => format.underline)).toBe(false);
+    expect(document.formats.every((format) => format.visible)).toBe(true);
+  });
+
+  it('pairs each opener with the nearest usable closer on its line', () => {
+    const document = parseJournalMarkdown('<u>a</u> b <u>c</u>');
+    expect(document.inlineSpans.filter((span) => span.style === 'underline')).toHaveLength(2);
+    expect(document.formats[9]).toMatchObject({ visible: true, underline: false });
   });
 
   it.each([
@@ -80,7 +134,12 @@ describe('underline', () => {
   });
 
   it('composes underline with bold and italic independently', () => {
-    const document = parseJournalMarkdown('*_==all==_*');
+    const document = parseJournalMarkdown('*_<u>all</u>_*');
     expect(document.formats[5]).toMatchObject({ bold: true, italic: true, underline: true });
+    expect(parseJournalMarkdown('<u>*_all_*</u>').formats[5]).toMatchObject({
+      bold: true,
+      italic: true,
+      underline: true,
+    });
   });
 });

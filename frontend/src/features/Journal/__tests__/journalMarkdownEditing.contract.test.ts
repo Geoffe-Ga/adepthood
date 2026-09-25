@@ -4,6 +4,7 @@ import { describe, expect, it } from '@jest/globals';
 import { parseJournalMarkdown } from '../journalMarkdown';
 import { BULLET_MARKERS } from '../journalMarkdownLines';
 import { continueMarkdownEdit } from '../markdownEditing';
+import { buildMirrorModel } from '../markdownMirror';
 
 /**
  * Read mode and edit mode must agree about what a bullet is.
@@ -37,6 +38,28 @@ describe('bullet marker contract between the parser and the editor', () => {
       text: `${line}\n${marker} `,
       selection: { start: caret + 3, end: caret + 3 },
     });
+  });
+
+  it.each([...BULLET_MARKERS])(
+    'steps an empty nested %j item out one level on Return',
+    (marker) => {
+      const previous = `${marker} a\n  ${marker} `;
+      expect(
+        continueMarkdownEdit(previous, `${previous}\n`, {
+          start: previous.length,
+          end: previous.length,
+        }),
+      ).toEqual({ text: `${marker} a\n${marker} `, selection: { start: 6, end: 6 } });
+    },
+  );
+
+  it.each([...BULLET_MARKERS])('draws a %j item as a bullet in the live mirror', (marker) => {
+    const [line] = buildMirrorModel(parseJournalMarkdown(`${marker} a`), { start: 0, end: 0 });
+    expect(line!.kind).toBe('bullet');
+    expect(line!.runs.map((run) => [run.text, run.role])).toEqual([
+      [`${marker} `, 'marker'],
+      ['a', 'content'],
+    ]);
   });
 
   it.each([...BULLET_MARKERS])('exits an empty %j item on Return', (marker) => {
