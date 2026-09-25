@@ -11,6 +11,12 @@ import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /** Where inside a character the geometry probe clicks: its left quarter, so the caret lands before it. */
 const CARET_PROBE_FRACTION = 0.25;
+/**
+ * How far, in px, a mirror glyph's centre may sit from the middle of the
+ * field's matching line box. Sub-pixel rounding only: a mirror inset missing
+ * from its block box (the 12px drift this caught) is far outside it.
+ */
+const OVERLAY_ALIGNMENT_TOLERANCE_PX = 3;
 /** The widths the editor is checked at: phone, tablet, laptop, desktop. */
 const PROBE_WIDTHS = [390, 768, 1024, 1440] as const;
 const PROBE_HEIGHT = 900;
@@ -40,7 +46,12 @@ async function selectRange(field: Locator, start: number, end: number): Promise<
   );
 }
 
-/** The viewport rect of the mirror character that draws body index ``index``. */
+/**
+ * The viewport rect of the mirror character that draws body index ``index``,
+ * scrolled to the middle of the viewport first: a point below the fold hits no
+ * element at all, so a click there would leave the caret where it was and read
+ * as a false mismatch.
+ */
 async function mirrorCharRect(
   page: Page,
   index: number,
@@ -54,6 +65,7 @@ async function mirrorCharRect(
         const range = document.createRange();
         range.setStart(node, target - offset);
         range.setEnd(node, target - offset + 1);
+        node.parentElement?.scrollIntoView({ block: 'center' });
         const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
         return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
       }
@@ -63,11 +75,39 @@ async function mirrorCharRect(
   }, index);
 }
 
-/** Click the mirror's glyph for ``index``: the real textarea must put its caret there. */
+/**
+ * Where the glyph's vertical centre falls inside the textarea's own line box,
+ * as a distance from that line's middle. The two layers share a line height,
+ * so a glyph drawn in register sits at the middle of the field's line.
+ */
+async function offsetFromFieldLineMiddle(page: Page, centreY: number): Promise<number> {
+  return body(page).evaluate((element, y) => {
+    const style = getComputedStyle(element);
+    const lineHeight = Number.parseFloat(style.lineHeight);
+    const firstLineTop =
+      element.getBoundingClientRect().top +
+      Number.parseFloat(style.borderTopWidth) +
+      Number.parseFloat(style.paddingTop);
+    const intoLine = (((y - firstLineTop) % lineHeight) + lineHeight) % lineHeight;
+    return Math.abs(intoLine - lineHeight / 2);
+  }, centreY);
+}
+
+/**
+ * Click the mirror's glyph for ``index``: it must be on screen, sit at the
+ * middle of the field's own line box, and the real textarea must put its
+ * caret on exactly that character.
+ */
 async function expectCaretLandsOn(page: Page, index: number): Promise<void> {
   const rect = await mirrorCharRect(page, index);
   expect(rect.width).toBeGreaterThan(0);
-  await page.mouse.click(rect.left + rect.width * CARET_PROBE_FRACTION, rect.top + rect.height / 2);
+  const centreY = rect.top + rect.height / 2;
+  expect(centreY).toBeGreaterThan(0);
+  expect(centreY).toBeLessThan(page.viewportSize()?.height ?? 0);
+  expect(await offsetFromFieldLineMiddle(page, centreY)).toBeLessThanOrEqual(
+    OVERLAY_ALIGNMENT_TOLERANCE_PX,
+  );
+  await page.mouse.click(rect.left + rect.width * CARET_PROBE_FRACTION, centreY);
   expect(await selection(body(page))).toEqual([index, index]);
 }
 

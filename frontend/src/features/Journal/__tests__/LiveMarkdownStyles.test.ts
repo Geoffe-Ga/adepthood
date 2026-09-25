@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
-import { StyleSheet, type TextStyle } from 'react-native';
+import { StyleSheet, type TextStyle, type ViewStyle } from 'react-native';
 
+import entryStyles from '../JournalEntry.styles';
 import liveStyles from '../LiveMarkdownStyles';
 
 import { colors } from '@/design/tokens';
@@ -43,5 +44,68 @@ describe('live mirror text contrast', () => {
     // Revealed delimiters come up to the content's full ink.
     expect(color('revealed')).toBe(color('mirrorText'));
     expect(color('italic')).not.toBe(color('mirrorText'));
+  });
+});
+
+/**
+ * The properties that decide where a glyph lands. The mirror and the field must
+ * agree on every one of them, or the mirror's glyphs drift out from under the
+ * textarea's caret.
+ */
+const FONT_METRICS = [
+  'fontFamily',
+  'fontSize',
+  'lineHeight',
+  'fontWeight',
+  'fontStyle',
+  'letterSpacing',
+] as const;
+
+/** The only properties a mirror run may set: none of them moves a glyph. */
+const ADVANCE_NEUTRAL = new Set([
+  'color',
+  'backgroundColor',
+  'textShadowColor',
+  'textShadowOffset',
+  'textShadowRadius',
+  'textDecorationLine',
+  'textDecorationColor',
+]);
+
+const BOX_PROPERTY = /^(?:padding|margin|border)/u;
+
+describe('live mirror metrics match the field by construction', () => {
+  const field = StyleSheet.flatten<TextStyle>([entryStyles.bodyInput, liveStyles.inputMirrored]);
+  const mirrorText = StyleSheet.flatten<TextStyle>(liveStyles.mirrorText);
+
+  it.each(FONT_METRICS)('gives the mirror text the field’s own %s', (property) => {
+    expect(field[property]).toBeDefined();
+    expect(mirrorText[property]).toBe(field[property]);
+  });
+
+  it.each(['dimmed', 'revealed', 'bold', 'italic', 'underline', 'quoteLine'] as const)(
+    'styles %s runs only with advance-neutral properties',
+    (name) => {
+      const keys = Object.keys(StyleSheet.flatten<TextStyle>(liveStyles[name]));
+      expect(keys.filter((key) => !ADVANCE_NEUTRAL.has(key))).toEqual([]);
+    },
+  );
+
+  it('keeps box spacing off the mirror’s INLINE text, where the browser would ignore it', () => {
+    // react-native-web renders a top-level Text as display:inline, so vertical
+    // padding on it moves no line: it has to sit on the block container.
+    expect(Object.keys(mirrorText).filter((key) => BOX_PROPERTY.test(key))).toEqual([]);
+  });
+
+  it('insets the mirror’s block container by exactly the field’s padding', () => {
+    const mirror = StyleSheet.flatten<ViewStyle>(liveStyles.mirror);
+    for (const side of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'] as const) {
+      expect(mirror[side] ?? 0).toBe(field[side] ?? 0);
+    }
+    expect(field.paddingTop).toBeGreaterThan(0);
+  });
+
+  it('never lets the field reserve a scrollbar gutter the mirror lacks', () => {
+    expect(field.overflow).toBe('hidden');
   });
 });
