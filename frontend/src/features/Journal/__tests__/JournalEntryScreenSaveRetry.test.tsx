@@ -247,6 +247,83 @@ describe('writing on settles a failed body save without a tap (#2930)', () => {
   });
 });
 
+describe('a retry runs its steps one at a time (#2930)', () => {
+  /** Loaded Public; a body write and a move to Personal both fail. */
+  async function bodyAndTierOwed() {
+    const screen = await openLoaded({ classification: 'public' } as Partial<JournalMessage>);
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A page about rivers, and the sea.');
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    await pressTier(screen, 'personal');
+    expect(tierSelected(screen, 'public')).toBe(true);
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+    return screen;
+  }
+
+  it('sends the tier only after the body retry has landed', async () => {
+    const screen = await bodyAndTierOwed();
+    const heldBody = deferred<JournalMessage>();
+    mockUpdate.mockReturnValueOnce(heldBody.promise);
+    await pressRetry(screen);
+    expect(updatesCarrying('message')).toHaveLength(2);
+    expect(updatesCarrying('classification')).toHaveLength(1);
+
+    await act(async () => {
+      heldBody.resolve(entry());
+    });
+    await settle();
+
+    expect(updatesCarrying('classification')).toHaveLength(2);
+    expect(mockUpdate).toHaveBeenLastCalledWith(7, { classification: 'personal' });
+    expect(hint(screen)).toBe('Saved');
+  });
+});
+
+describe('Finish settles or keeps what it owes (#2930)', () => {
+  it('keeps a Finish that failed after the writer typed on, and Retry finishes it', async () => {
+    const screen = await openLoaded();
+    const heldFinish = deferred<JournalMessage>();
+    mockUpdate.mockReturnValueOnce(heldFinish.promise);
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+    // A keystroke during the Finish write makes its outcome stale.
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), 'One more line.');
+    await act(async () => {
+      heldFinish.reject(new Error('network'));
+    });
+    await settle();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(AUTOSAVE_MS);
+    });
+    await settle();
+
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+    expect(screen.queryByTestId('journal-save-retry')).not.toBeNull();
+
+    await pressRetry(screen);
+    expect(mockUpdate).toHaveBeenLastCalledWith(
+      7,
+      expect.objectContaining({ message: 'One more line.', status: 'finished' }),
+    );
+    expect(screen.getByTestId('journal-edit-button')).toBeTruthy();
+  });
+
+  it('a Finish that lands settles a body save that failed before it', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A page about rivers, and the sea.');
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+    fireEvent.press(screen.getByTestId('journal-edit-button'));
+    fireEvent.press(screen.getByTestId('edit-confirm-edit'));
+
+    expect(hint(screen)).toBe('Saved');
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+  });
+});
+
 describe('Retry sends the writing on screen now (#2930)', () => {
   it('re-sends the latest body, not the text whose write first failed', async () => {
     const screen = await openLoaded();
@@ -321,29 +398,30 @@ describe('coming back online retries once (#2930)', () => {
     expect(mockUpdate).toHaveBeenCalledTimes(2);
   });
 
-  it('does not stack a reconnect retry on a Retry that is still running', async () => {
-    const screen = await openLoaded();
+  it('does not retry on reconnect while a Finish write holds the writer', async () => {
+    // A tier failure during an in-flight Finish leaves the hint on "Couldn't
+    // save" while the Finish still holds the writer's slot: only the
+    // write-in-flight gate keeps a reconnect from racing it.
+    const screen = await openLoaded({ classification: 'personal' } as Partial<JournalMessage>);
+    const heldFinish = deferred<JournalMessage>();
+    mockUpdate.mockReturnValueOnce(heldFinish.promise);
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
     mockUpdate.mockRejectedValueOnce(new Error('network'));
-    await typeBody(screen, 'Written on the train.');
+    await pressTier(screen, 'intimate');
     expect(hint(screen)).toBe(SAVE_ERROR_HINT);
-
-    const held = deferred<JournalMessage>();
-    mockUpdate.mockReturnValueOnce(held.promise);
-    await pressRetry(screen);
-    expect(mockUpdate).toHaveBeenCalledTimes(2);
-    expect(hint(screen)).toBe('Saving…');
+    expect(updatesCarrying('classification')).toHaveLength(1);
 
     await net.emit(false);
     await net.emit(true);
     await settle();
-    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(updatesCarrying('classification')).toHaveLength(1);
 
     await act(async () => {
-      held.resolve(entry());
+      heldFinish.resolve(entry({ status: 'finished' }));
     });
     await settle();
-    expect(hint(screen)).toBe('Saved');
-    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(updatesCarrying('classification')).toHaveLength(1);
   });
 
   it('joins a tier Retry still on the wire rather than PATCHing it twice', async () => {
