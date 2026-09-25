@@ -279,6 +279,109 @@ describe('JournalEntryScreen Finish — failure is visible and safe', () => {
   });
 });
 
+describe('JournalEntryScreen Finish — the footer Retry re-sends a failed Finish (#2930)', () => {
+  const SAVE_ERROR_HINT = "Couldn't save — keep writing, we'll retry";
+
+  async function settle() {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function deferred<T>() {
+    let resolve: (_value: T) => void = () => undefined;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it('re-sends the full Finish write once, clears the Finish error and flips to finished', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, queryByTestId, getByRole } = renderScreen(undefined, {
+        autosaveDelayMs: 100,
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), LONG_BODY);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      mockUpdate.mockReset();
+      mockUpdate.mockRejectedValueOnce(new Error('network down'));
+
+      fireEvent.press(getByTestId('journal-finish-button'));
+      await settle();
+      // The body autosave already landed, so only the Finish is owed — yet the
+      // footer still says so and offers Retry (it used to be a silent no-op).
+      expect(getByTestId('journal-save-hint').props.children).toBe(SAVE_ERROR_HINT);
+      expect(queryByTestId('journal-finish-error')).not.toBeNull();
+
+      const held = deferred<JournalMessage>();
+      mockUpdate.mockReturnValueOnce(held.promise);
+      fireEvent.press(getByRole('button', { name: 'Retry saving this entry' }));
+      await settle();
+
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenLastCalledWith(42, {
+        message: LONG_BODY,
+        title: null,
+        status: 'finished',
+      });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saving…');
+      expect(queryByTestId('journal-finish-error')).toBeNull();
+
+      await act(async () => {
+        held.resolve(entry({ id: 42, status: 'finished' }));
+      });
+      await settle();
+
+      expect(getByTestId('journal-edit-button')).toBeTruthy();
+      expect(queryByTestId('journal-finish-error')).toBeNull();
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+
+      // Back in the editor, the footer reads Saved with nothing left owed.
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-edit'));
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(queryByTestId('journal-save-retry')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('re-sends status finished against the created id without a second create', async () => {
+    jest.useFakeTimers();
+    try {
+      // Long debounce: Finish must create the entry, then flip its status.
+      const { getByTestId, getByRole, findByTestId } = renderScreen(undefined, {
+        autosaveDelayMs: 1500,
+      });
+      fireEvent.changeText(getByTestId('journal-body-input'), LONG_BODY);
+      mockUpdate.mockReset();
+      mockUpdate.mockResolvedValue(entry({ id: 42, status: 'finished' }));
+      mockUpdate.mockRejectedValueOnce(new Error('network down'));
+
+      fireEvent.press(getByTestId('journal-finish-button'));
+      await settle();
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(getByTestId('journal-save-hint').props.children).toBe(SAVE_ERROR_HINT);
+
+      fireEvent.press(getByRole('button', { name: 'Retry saving this entry' }));
+      expect(await findByTestId('journal-edit-button')).toBeTruthy();
+
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockUpdate).toHaveBeenLastCalledWith(
+        42,
+        expect.objectContaining({ status: 'finished' }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('JournalEntryScreen Finish — busy state', () => {
   it('marks the Finish control busy/disabled while the write is in flight and ignores a second press', async () => {
     jest.useFakeTimers();

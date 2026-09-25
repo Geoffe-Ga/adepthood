@@ -38,6 +38,7 @@ import GetResonanceButton, {
 import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
+import type { RetryFailure, SaveState } from './journalSaveRetry';
 import LiveMarkdownBody from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
@@ -55,6 +56,14 @@ import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
 import { useResonance } from './useResonance';
 import { useResonanceExplainer } from './useResonanceExplainer';
+import {
+  useReconnectRetry,
+  useSaveLedger,
+  useSaveRetry,
+  type LedgerPorts,
+  type SaveReporter,
+  type SaveRetry,
+} from './useSaveRetry';
 import { countWords, wordCountLabel } from './wordCount';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -144,9 +153,6 @@ const LOAD_ERROR_MESSAGE =
  */
 const FINISH_ERROR_MESSAGE =
   "We couldn't finish this entry. Check your connection and tap Finish again — your writing is safe here and still saving.";
-
-type SaveState =
-  'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken' | 'vaultWithdrawalPending';
 
 export type JournalEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'JournalEntry'> & {
   /** Overridable for tests; defaults to {@link AUTOSAVE_DELAY_MS}. */
@@ -386,6 +392,28 @@ interface AutosaveApi {
   /** Saved reflection identity, hydrated when an entry is reopened from the shelf. */
   reflectionLevel?: ReflectionLevel;
   reflectionScopeKey?: string;
+  /** What the footer's Retry and the reconnect retry re-send through (#2930). */
+  retrySource: RetrySource;
+}
+
+/**
+ * The writers a save retry re-sends through, plus the ledger recording what
+ * failed. Each lane goes back through its ORDINARY writer, so single-flight,
+ * the generation gate and revert-on-failure all still hold on a retry.
+ */
+interface RetrySource {
+  ledger: LedgerPorts;
+  /** The tier the persister currently holds (what the control shows once settled). */
+  displayedTier: () => JournalClassification;
+  /**
+   * Re-run the body writer on the text on screen NOW (not the text that failed);
+   * the writer itself settles the body lane.
+   */
+  retryBody: () => Promise<unknown>;
+  applyClassification: (_tier: JournalClassification) => Promise<void>;
+  applyChord: (_chord: AspectChordValue) => Promise<void>;
+  /** True while a body or Finish write holds the single-flight slot. */
+  isWriteInFlight: () => boolean;
 }
 
 /** Load an existing entry once (by route id) and hand it to ``apply``. */
@@ -423,7 +451,8 @@ function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setT
   );
 }
 
-type PersistState = Extract<SaveState, 'saved' | 'error' | 'vaultWithdrawalPending'> | null;
+/** A tier/chord PATCH's result; null when nothing was sent or a later change superseded it. */
+type PersistState = 'saved' | 'failed' | 'vaultWithdrawalPending' | null;
 
 interface PersistResult<T> {
   revertTo: T | null;
@@ -486,7 +515,7 @@ function useRefPersist<T>(
           return { revertTo: null, state: 'vaultWithdrawalPending' };
         }
         ref.current = previous;
-        return { revertTo: previous, state: 'error' };
+        return { revertTo: previous, state: 'failed' };
       }
     },
     [entryIdRef, entryUnsettledRef, toPatch],
@@ -568,26 +597,43 @@ function useSaveTimer(
 }
 
 /**
- * Wrap a revert-on-failure persister so a failed PATCH also surfaces the shared
- * save-error hint (used identically by the privacy-tier and chord controls).
+ * Wrap a revert-on-failure persister so its outcome lands in its OWN retry
+ * lane: a failure records the attempted value for the footer's Retry, and a
+ * success clears only that lane (a body or Finish failure stays owed). Used
+ * identically by the privacy-tier and chord controls; ``toFailure`` must be
+ * referentially stable.
  */
-function useErrorSurfacingPersist<T>(
+function useLanePersist<T>(
   change: (_value: T) => Promise<PersistResult<T>>,
-  setSaveState: (_state: SaveState) => void,
+  reporter: SaveReporter,
+  toFailure: (_value: T) => RetryFailure,
 ): (_value: T) => Promise<T | null> {
   return useCallback(
     async (value: T): Promise<T | null> => {
       const { revertTo, state } = await change(value);
-      if (state != null) setSaveState(state);
+      const failure = toFailure(value);
+      if (state === 'failed') {
+        reporter.fail(failure);
+        reporter.publish('idle');
+      } else if (state != null) {
+        reporter.succeed(failure.lane);
+        reporter.publish(state);
+      }
       return revertTo;
     },
-    [change, setSaveState],
+    [change, reporter, toFailure],
   );
 }
 
+const classificationFailure = (tier: JournalClassification): RetryFailure => ({
+  lane: 'classification',
+  value: tier,
+});
+const chordFailure = (chord: AspectChordValue): RetryFailure => ({ lane: 'chord', value: chord });
+
 interface WriteOutcome {
   durable: boolean;
-  state: Extract<SaveState, 'saved' | 'error' | 'weekTaken'>;
+  state: 'saved' | 'failed' | 'weekTaken';
 }
 
 /** Persist once; report its terminal state without publishing a stale result. */
@@ -612,7 +658,7 @@ function trackedWrite(
       // existing entry); every other failure keeps the plain save-error hint.
       // This never rejects, so the single-flight drain loops stay safe.
       if (isCreateConflict(error)) onConflict?.();
-      return { durable: false, state: weekTaken ? 'weekTaken' : 'error' };
+      return { durable: false, state: weekTaken ? 'weekTaken' : 'failed' };
     }
   })();
 }
@@ -629,7 +675,13 @@ type SaveRunnerRefs = WriteEntryRefs & {
   durableTextRef: React.MutableRefObject<DraftText | null>;
 };
 
-/** Record a write's truth, but publish it only if no newer edit superseded it. */
+/**
+ * Record a write's truth, but publish it only if no newer edit superseded it.
+ * The body's retry lane is recorded either way: a failure stays owed until a
+ * later write of the body lands, even when a newer keystroke hid its hint. A
+ * week-taken conflict clears the lane — no retry can land it — and names
+ * itself in the hint instead.
+ */
 function settleTrackedWrite(
   generationRef: React.MutableRefObject<number>,
   durableTextRef: React.MutableRefObject<DraftText | null>,
@@ -638,22 +690,40 @@ function settleTrackedWrite(
   body: string,
   generation: number,
   outcome: WriteOutcome,
-  setSaveState: (_state: SaveState) => void,
+  reporter: SaveReporter,
 ): void {
   if (outcome.durable) durableTextRef.current = { title, body };
+  if (outcome.state === 'failed') reporter.fail({ lane: 'body' });
+  else reporter.succeed('body');
   if (generationRef.current !== generation) return;
-  setSaveState(outcome.state);
+  reporter.publish(outcome.state === 'failed' ? 'idle' : outcome.state);
   if (outcome.durable) onSavedRef.current?.();
+}
+
+/** Nothing is owed for the body; always true, for the runner's early returns. */
+function settledBody(reporter: SaveReporter): true {
+  reporter.succeed('body');
+  return true;
+}
+
+/** True when ``title``/``body`` already landed; settles the body lane if so. */
+function alreadyDurable(
+  durableTextRef: React.MutableRefObject<DraftText | null>,
+  title: string,
+  body: string,
+  reporter: SaveReporter,
+): boolean {
+  return sameDraft(durableTextRef.current, title, body) && settledBody(reporter);
 }
 
 function rejectSecondPromptEdit(
   ctx: SaveContext,
   responded: boolean,
   isCurrent: boolean,
-  setSaveState: (_state: SaveState) => void,
+  reporter: SaveReporter,
 ): boolean {
   if (ctx.weekNumber == null || !responded) return false;
-  if (isCurrent) setSaveState('weekTaken');
+  if (isCurrent) reporter.publish('weekTaken');
   return true;
 }
 
@@ -662,21 +732,21 @@ function rejectSecondPromptEdit(
  * awaits it (letting a pending create set ``entryIdRef``) before starting, so two
  * overlapping saves of an id-less entry never each fire ``journal.create``.
  */
-function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) => void): RunSave {
+function useSaveRunner(refs: SaveRunnerRefs, reporter: SaveReporter): RunSave {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
   const { entryUnsettledRef, ctxRef, onSavedRef, onConflictRef } = refs;
   const { inFlightRef, generationRef, durableTextRef } = refs;
   return useCallback<RunSave>(
     async (title, body, generation) => {
       if (entryUnsettledRef.current) return false;
-      if (!body.trim()) return true; // an empty draft has nothing to lose
+      if (!body.trim()) return settledBody(reporter); // an empty draft has nothing to lose
       while (inFlightRef.current) await inFlightRef.current;
-      if (sameDraft(durableTextRef.current, title, body)) return true;
+      if (alreadyDurable(durableTextRef, title, body, reporter)) return true;
       // Never bless a later edit that the create-once prompt endpoint cannot persist.
       const isCurrent = generationRef.current === generation;
-      if (rejectSecondPromptEdit(ctxRef.current, respondedRef.current, isCurrent, setSaveState))
+      if (rejectSecondPromptEdit(ctxRef.current, respondedRef.current, isCurrent, reporter))
         return false;
-      if (isCurrent) setSaveState('saving');
+      if (isCurrent) reporter.publish('saving');
       const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
       const task = trackedWrite(writeRefs, title, body, ctxRef.current, onConflictRef.current);
       inFlightRef.current = task;
@@ -690,7 +760,7 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
           body,
           generation,
           outcome,
-          setSaveState,
+          reporter,
         );
         return outcome.durable;
       } finally {
@@ -709,7 +779,7 @@ function useSaveRunner(refs: SaveRunnerRefs, setSaveState: (_state: SaveState) =
       inFlightRef,
       generationRef,
       durableTextRef,
-      setSaveState,
+      reporter,
     ],
   );
 }
@@ -733,11 +803,11 @@ type RunFinish = (_title: string, _body: string) => Promise<number>;
  * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
  * shorter one can't land after us, then issue the single atomic Finish write.
  * Tracks the save state and rethrows on failure so the caller keeps the draft.
+ * A failure is recorded in the Finish retry lane whatever the generation, so a
+ * keystroke during the write cannot lose it; a success also settles the body,
+ * whose full text the Finish write carried.
  */
-function useFinishWriter(
-  refs: FinishRunnerRefs,
-  setSaveState: (_state: SaveState) => void,
-): RunFinish {
+function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFinish {
   const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
   const { entryUnsettledRef, ctxRef, inFlightRef, timerRef, generationRef, durableTextRef } = refs;
   return useCallback<RunFinish>(
@@ -749,7 +819,7 @@ function useFinishWriter(
       // slower, shorter autosave can't overwrite the body after the Finish write.
       while (inFlightRef.current) await inFlightRef.current;
       if (entryUnsettledRef.current) throw new Error(UNSETTLED_FINISH_ERROR);
-      setSaveState('saving');
+      reporter.publish('saving');
       const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
       const task = finishWrite(writeRefs, title, body, ctxRef.current);
       // Register a never-rejecting shadow in the single-flight slot so a keystroke
@@ -763,10 +833,13 @@ function useFinishWriter(
       try {
         const id = await task;
         durableTextRef.current = { title, body };
-        if (generationRef.current === generation) setSaveState('saved');
+        reporter.succeed('finish');
+        reporter.succeed('body');
+        if (generationRef.current === generation) reporter.publish('saved');
         return id;
       } catch (error) {
-        if (generationRef.current === generation) setSaveState('error');
+        reporter.fail({ lane: 'finish' });
+        if (generationRef.current === generation) reporter.publish('idle');
         throw error;
       } finally {
         if (inFlightRef.current === shadow) inFlightRef.current = null;
@@ -783,7 +856,7 @@ function useFinishWriter(
       timerRef,
       generationRef,
       durableTextRef,
-      setSaveState,
+      reporter,
     ],
   );
 }
@@ -794,7 +867,7 @@ function useFinishWriter(
  */
 function usePersistControls(
   entryIdRef: React.MutableRefObject<number | null>,
-  setSaveState: (_state: SaveState) => void,
+  reporter: SaveReporter,
   entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
   const {
@@ -823,8 +896,8 @@ function usePersistControls(
     classificationRef,
     chordRef,
     seedPersist,
-    persistClassification: useErrorSurfacingPersist(changeClassification, setSaveState),
-    persistChord: useErrorSurfacingPersist(changeChord, setSaveState),
+    persistClassification: useLanePersist(changeClassification, reporter, classificationFailure),
+    persistChord: useLanePersist(changeChord, reporter, chordFailure),
   };
 }
 
@@ -835,10 +908,10 @@ type DraftWriters = SaveTimer & { finish: (_title: string, _body: string) => Pro
 function useDraftWriters(
   refs: SaveRunnerRefs & FinishRunnerRefs,
   delayMs: number,
-  setSaveState: (_state: SaveState) => void,
+  reporter: SaveReporter,
 ): DraftWriters {
-  const setTyping = useCallback(() => setSaveState('typing'), [setSaveState]);
-  const run = useSaveRunner(refs, setSaveState);
+  const setTyping = useCallback(() => reporter.publish('typing'), [reporter]);
+  const run = useSaveRunner(refs, reporter);
   const { save, flush } = useSaveTimer(
     run,
     refs.timerRef,
@@ -847,7 +920,7 @@ function useDraftWriters(
     delayMs,
     setTyping,
   );
-  const finish = useFinishWriter(refs, setSaveState);
+  const finish = useFinishWriter(refs, reporter);
   return { save, flush, finish };
 }
 
@@ -933,6 +1006,16 @@ function useDurableTextSeeder(durableTextRef: React.MutableRefObject<DraftText |
   );
 }
 
+/** Stable reads a save retry makes of the writer's live refs. */
+function useRetryProbes(
+  inFlightRef: React.MutableRefObject<Promise<unknown> | null>,
+  classificationRef: React.MutableRefObject<JournalClassification>,
+): Pick<RetrySource, 'isWriteInFlight' | 'displayedTier'> {
+  const isWriteInFlight = useCallback(() => inFlightRef.current != null, [inFlightRef]);
+  const displayedTier = useCallback(() => classificationRef.current, [classificationRef]);
+  return { isWriteInFlight, displayedTier };
+}
+
 /** Debounced create-then-update draft saver; tracks the save state. */
 function useDebouncedSave(
   routeEntryId: number | null,
@@ -942,16 +1025,17 @@ function useDebouncedSave(
   onSaved?: () => void,
   onConflict?: () => void,
 ) {
-  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const ledger = useSaveLedger();
+  const { reporter } = ledger.ports;
   const [entryId, setEntryId] = useState<number | null>(routeEntryId);
   const refs = useDraftRefs(routeEntryId, { onSaved, onConflict, ctx, entryUnsettled });
-  const persist = usePersistControls(refs.entryIdRef, setSaveState, refs.entryUnsettledRef);
+  const persist = usePersistControls(refs.entryIdRef, reporter, refs.entryUnsettledRef);
   useTimerCleanup(refs.timerRef);
 
   const { save, flush, finish } = useDraftWriters(
     { ...refs, classificationRef: persist.classificationRef, chordRef: persist.chordRef },
     delayMs,
-    setSaveState,
+    reporter,
   );
   const flushAndTrack = useCallback(
     async (...args: Parameters<typeof flush>) => {
@@ -973,7 +1057,9 @@ function useDebouncedSave(
 
   return {
     entryId,
-    saveState,
+    saveState: ledger.hint,
+    ledger: ledger.ports,
+    ...useRetryProbes(refs.inFlightRef, persist.classificationRef),
     save,
     flush: flushAndTrack,
     finish: finishAndTrack,
@@ -1241,35 +1327,49 @@ interface ChoiceHandlers {
   onChangeChord: (_next: AspectChordValue) => void;
 }
 
+/** The awaitable forms a save retry re-applies a tier or chord through. */
+interface ChoiceAppliers {
+  applyClassification: (_tier: JournalClassification) => Promise<void>;
+  applyChord: (_chord: AspectChordValue) => Promise<void>;
+}
+
+/**
+ * Reflect a choice optimistically, then persist it (create-time ref or PATCH);
+ * a failed PATCH resolves to the prior value so the control reverts to the
+ * truth, unless a later change superseded it (then it resolves null and we keep
+ * that). Resolves once the write settles, so a retry can run choices in order.
+ */
+function useChoiceApplier<T>(
+  setValue: (_value: T) => void,
+  change: (_value: T) => Promise<T | null>,
+): (_value: T) => Promise<void> {
+  return useCallback(
+    async (value: T) => {
+      setValue(value);
+      const revertTo = await change(value);
+      if (revertTo != null) setValue(revertTo);
+    },
+    [change, setValue],
+  );
+}
+
 /** Reflect a privacy/chord choice in local state, then persist it (ref or PATCH). */
 function useChoiceHandlers(
   entry: EntryState,
   changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>,
   changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>,
-): ChoiceHandlers {
-  const { setClassification, setChord } = entry;
-  // Reflect the choice optimistically, then persist it (create-time ref or PATCH);
-  // a failed PATCH resolves to the prior tier so the control reverts to the truth,
-  // unless a later change superseded it (then it resolves null and we keep that).
+): ChoiceHandlers & ChoiceAppliers {
+  const applyClassification = useChoiceApplier(entry.setClassification, changeClassification);
+  const applyChord = useChoiceApplier(entry.setChord, changeChord);
   const onChangeClassification = useCallback(
-    (tier: JournalClassification) => {
-      setClassification(tier);
-      void changeClassification(tier).then((revertTo) => {
-        if (revertTo != null) setClassification(revertTo);
-      });
-    },
-    [changeClassification, setClassification],
+    (tier: JournalClassification) => void applyClassification(tier),
+    [applyClassification],
   );
   const onChangeChord = useCallback(
-    (next: AspectChordValue) => {
-      setChord(next);
-      void changeChord(next).then((revertTo) => {
-        if (revertTo != null) setChord(revertTo);
-      });
-    },
-    [changeChord, setChord],
+    (next: AspectChordValue) => void applyChord(next),
+    [applyChord],
   );
-  return { onChangeClassification, onChangeChord };
+  return { onChangeClassification, onChangeChord, applyClassification, applyChord };
 }
 
 /**
@@ -1326,6 +1426,7 @@ function useSeedPersistOnNew(
 interface AutosaveBindings extends ChoiceHandlers {
   entryId: number | null;
   saveState: SaveState;
+  retrySource: RetrySource;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   flush: () => Promise<number | null>;
@@ -1356,6 +1457,19 @@ function buildAutosaveApi(
   };
 }
 
+/** Gather the writers a save retry re-sends through into one stable object. */
+function useRetrySource(
+  saving: Pick<RetrySource, 'ledger' | 'displayedTier' | 'isWriteInFlight'>,
+  retryBody: () => Promise<unknown>,
+  { applyClassification, applyChord }: ChoiceAppliers,
+): RetrySource {
+  const { ledger, displayedTier, isWriteInFlight } = saving;
+  return useMemo(
+    () => ({ ledger, displayedTier, retryBody, applyClassification, applyChord, isWriteInFlight }),
+    [ledger, displayedTier, retryBody, applyClassification, applyChord, isWriteInFlight],
+  );
+}
+
 /** Bind the draft writer to the entry's live fields and local choice state. */
 function useAutosaveBindings(
   entry: EntryState,
@@ -1374,10 +1488,16 @@ function useAutosaveBindings(
     entry.titleRef,
     entry.bodyRef,
   );
-  const choices = useChoiceHandlers(entry, saving.changeClassification, saving.changeChord);
+  const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
+    entry,
+    saving.changeClassification,
+    saving.changeChord,
+  );
+  const retrySource = useRetrySource(saving, flushNow, { applyClassification, applyChord });
   return {
     entryId: saving.entryId,
     saveState: saving.saveState,
+    retrySource,
     onChangeTitle,
     onChangeBody,
     flush: flushNow,
@@ -1427,7 +1547,8 @@ interface WritingColumnProps {
   onChangeBody: (_next: string) => void;
   onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
-  onRetrySave: () => Promise<number | null>;
+  /** Re-send whatever failed to save (#2930). */
+  onRetrySave: () => Promise<void>;
   onFinish?: () => void;
   /** True while the Finish write is in flight; drives the busy/disabled control. */
   finishing: boolean;
@@ -1561,7 +1682,7 @@ function WritingFooter({
 }: {
   body: string;
   saveState: SaveState;
-  onRetry: () => Promise<number | null>;
+  onRetry: () => Promise<void>;
 }) {
   const words = useMemo(() => countWords(body), [body]);
   return (
@@ -2483,6 +2604,25 @@ function useWritingSeams(navigation: ScreenNavigation, autosave: AutosaveApi, bu
   return { handleTitle, handleBody, reflection, photograph };
 }
 
+/**
+ * The save-recovery seam (#2930): the footer's Retry and the reconnect retry
+ * re-send every failed write through its ordinary writer, and Finish through
+ * the edit gate so the status flips and the Finish error clears.
+ */
+function useEntrySaveRetry(autosave: AutosaveApi, retryFinish: () => Promise<void>): SaveRetry {
+  const source = autosave.retrySource;
+  const retry = useSaveRetry({
+    ledger: source.ledger,
+    displayedTier: source.displayedTier,
+    retryFinish,
+    retryBody: source.retryBody,
+    applyClassification: source.applyClassification,
+    applyChord: source.applyChord,
+  });
+  useReconnectRetry({ hint: autosave.saveState, isWriteInFlight: source.isWriteInFlight, retry });
+  return retry;
+}
+
 /** The finished-entry edit gate wired from the autosave's status + finish write. */
 function useEntryEditGate(
   autosave: AutosaveApi,
@@ -2582,6 +2722,7 @@ function useJournalEntryController(
   refreshRef.current = resonance.refresh;
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
+  const saveRetry = useEntrySaveRetry(autosave, editGate.markFinished);
   const writing = useWritingSeams(navigation, autosave, bump);
 
   return {
@@ -2596,6 +2737,7 @@ function useJournalEntryController(
     ...writing,
     modal,
     editGate,
+    saveRetry,
     justSaved,
     // Weekly-prompt compose withholds Finish (no local id); title stays editable.
     isPromptCompose: ctx.weekNumber != null,
@@ -2646,7 +2788,7 @@ function PageBodyColumn({
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
       onChangeChord={ctl.autosave.onChangeChord}
-      onRetrySave={ctl.autosave.flush}
+      onRetrySave={() => ctl.saveRetry.retryFailedSave('tap')}
       onFinish={canOfferFinish ? markFinished : undefined}
       finishing={ctl.editGate.finishing}
       finishError={ctl.editGate.finishError}

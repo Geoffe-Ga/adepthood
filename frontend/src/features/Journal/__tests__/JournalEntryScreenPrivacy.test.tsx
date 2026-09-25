@@ -452,6 +452,84 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
 // 3. Load reflects server value
 // ---------------------------------------------------------------------------
 
+describe('JournalEntryScreen — footer Retry re-sends a failed tier change (#2930)', () => {
+  const SAVE_ERROR_HINT = "Couldn't save — keep writing, we'll retry";
+
+  async function openLoaded(classification: 'public' | 'personal' | 'intimate') {
+    mockGet.mockResolvedValue(entry({ id: 7, classification }));
+    const screen = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+    await waitFor(() => {
+      expect(screen.getByTestId('journal-body-input').props.value).toBeTruthy();
+    });
+    mockUpdate.mockClear();
+    return screen;
+  }
+
+  async function flushMicrotasks() {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('re-PATCHes the chosen tier when Retry is pressed after a failed tier PATCH, ending in Saved', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, getByRole, queryByTestId } = await openLoaded('personal');
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      const page = within(getByTestId('journal-page'));
+      fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+      await flushMicrotasks();
+
+      expect(getByTestId('journal-save-hint').props.children).toBe(SAVE_ERROR_HINT);
+      expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(
+        true,
+      );
+
+      mockUpdate.mockResolvedValueOnce(entry({ id: 7, classification: 'intimate' }));
+      fireEvent.press(getByRole('button', { name: 'Retry saving this entry' }));
+      await flushMicrotasks();
+
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenLastCalledWith(7, { classification: 'intimate' });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(queryByTestId('journal-save-retry')).toBeNull();
+      expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+        true,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('never sends a looser tier on Retry: a failed move to public is dropped and ends Saved', async () => {
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, getByRole, queryByTestId } = await openLoaded('personal');
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      const page = within(getByTestId('journal-page'));
+      fireEvent.press(page.getByTestId('privacy-tier-public'));
+      await flushMicrotasks();
+      expect(getByTestId('journal-save-hint').props.children).toBe(SAVE_ERROR_HINT);
+      expect(mockUpdate).toHaveBeenCalledTimes(1);
+
+      fireEvent.press(getByRole('button', { name: 'Retry saving this entry' }));
+      await flushMicrotasks();
+
+      expect(mockUpdate).toHaveBeenCalledTimes(1);
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(queryByTestId('journal-save-retry')).toBeNull();
+      expect(page.getByTestId('privacy-tier-personal').props.accessibilityState.selected).toBe(
+        true,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('JournalEntryScreen — loads server classification into the control (#896)', () => {
   it('pre-selects intimate when the loaded entry has classification="intimate"', async () => {
     mockGet.mockResolvedValue(entry({ id: 7, classification: 'intimate' }));
