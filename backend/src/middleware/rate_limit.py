@@ -64,12 +64,16 @@ Three residuals, recorded here rather than left to be rediscovered:
   Moving this layer above CORS would strip the CORS headers off every 429, so
   preflight needs a control of its own rather than a reordering.
 
-Version pins this was measured against (``backend/requirements.txt``): fastapi
-0.141.1, starlette 1.6.0, slowapi 0.1.10. Nothing below depends on any of the
-three -- it needs a request and a clock. What does depend on them is the claim
-that slowapi's middleware cannot do this job, so a later upgrade may well make
-that middleware work again. That would not be a reason to hand this invariant
-back to it.
+Version pins this was measured against (``backend/requirements-lock.txt``,
+where starlette's adopted version lives): fastapi 0.141.1, starlette 1.7.0,
+slowapi 0.1.10. First measured on starlette 1.6.0 and re-measured on 1.7.0
+(#2923) by ``test_slowapi_middleware_still_cannot_see_included_router_routes``
+in ``tests/middleware/test_ambient_rate_limit.py``, which re-takes the
+measurement on every run. Nothing below depends on any of the three -- it needs
+a request and a clock. What does depend on them is the claim that slowapi's
+middleware cannot do this job, so a later upgrade may well make that middleware
+work again, and that test is where it would show. That would not be a reason to
+hand this invariant back to it.
 """
 
 from __future__ import annotations

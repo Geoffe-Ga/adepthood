@@ -1,12 +1,22 @@
-# Only used by pip-audit hook in CI; adjust based on your actual deps.
-# All entries carry exact (==) pins matching CI's resolved set (see
-# requirements-lock.txt) so local dev, the compat matrix, and pip-audit all
-# install one identical set. Dependabot's pip ecosystem entry proposes upgrades.
+# The backend's direct runtime dependencies, each with an exact (==) pin.
+# requirements-lock.txt is their full transitive resolve (regenerate it with
+# the command in its header) and every pin here must appear there at the same
+# version -- backend/tests/scripts/test_backend_lock_consistency.py enforces it.
+# Every CI job installs the lock except backend-compat, which installs this
+# file unresolved: direct pins are identical, but transitives deliberately float
+# to their newest compatible release there, so that job canaries upstream
+# releases before the lock adopts them (#2923). Dependabot's pip ecosystem
+# entry proposes upgrades here.
 cachetools==7.1.8
 # Validates backend/content/manifest.json against the frozen contract at
 # startup (issues #389/#390); the >=4.0 floor (JSON Schema draft 2020-12) is
 # preserved by this pin, which is >= 4.0.
 jsonschema==4.26.0
+# Starlette arrives through fastapi and is deliberately NOT pinned here: a pin
+# would stop backend-compat from seeing a new Starlette release. The adopted
+# version lives in requirements-lock.txt; when the canary goes red on a new
+# release, the answer is to adopt it there (uv pip compile ... --upgrade-package
+# starlette) or fix the app, not to pin it here (#2923).
 fastapi==0.141.1
 uvicorn==0.52.4
 pydantic==2.13.5
