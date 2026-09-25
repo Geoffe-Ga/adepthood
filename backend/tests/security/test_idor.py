@@ -1595,6 +1595,58 @@ async def test_idor_reflection_sources_never_serve_another_users_material(
 
 
 @pytest.mark.asyncio
+async def test_idor_reflection_current_never_reports_another_users_review(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``GET /reflections/current`` names only the caller's own review per scope.
+
+    Like ``/sources`` it takes no ``*_id`` parameter, so ownership rides on the
+    ``user_id`` predicate of the existing-review lookup. Bob holds a live
+    ``c1:w2`` review; Alice, on the same day of the same week, must see that
+    scope as open (``existing_entry_id`` null) while Bob sees his own id -- so
+    the null cannot be satisfied by a lookup that finds nothing for anyone.
+    Neither payload carries a ``user_id`` anywhere.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_reflection_current")
+    bob_headers, bob_id = await _signup(async_client, "bob_reflection_current")
+    anchor = (datetime.now(UTC) - timedelta(days=8)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    for owner in (alice_id, bob_id):
+        db_session.add(
+            StageProgress(
+                user_id=owner,
+                current_stage=1,
+                completed_stages=[],
+                stage_started_at=anchor,
+                program_started_at=anchor,
+            )
+        )
+    await db_session.commit()
+    bobs_review = await _seed_reflection_source(
+        db_session,
+        bob_id,
+        "Bob's second week, begun early",
+        anchor + timedelta(days=8),
+        reflection_level="week",
+        reflection_scope_key="c1:w2",
+    )
+
+    alice = await async_client.get("/reflections/current", headers=alice_headers)
+    bob = await async_client.get("/reflections/current", headers=bob_headers)
+
+    assert alice.status_code == HTTPStatus.OK, alice.text
+    assert bob.status_code == HTTPStatus.OK, bob.text
+    alice_ids = {s["scope_key"]: s["existing_entry_id"] for s in alice.json()["scopes"]}
+    bob_ids = {s["scope_key"]: s["existing_entry_id"] for s in bob.json()["scopes"]}
+    assert alice_ids["c1:w2"] is None
+    assert bob_ids["c1:w2"] == bobs_review.id
+    assert bobs_review.id not in alice_ids.values()
+    assert "user_id" not in alice.text
+    assert "user_id" not in bob.text
+
+
+@pytest.mark.asyncio
 async def test_idor_wide_scope_sources_never_serve_another_users_material(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:

@@ -297,6 +297,8 @@ def due_reflection(
     anchor: datetime,
     now: datetime | None = None,
     cycle: int = 1,
+    *,
+    tz: str | None = None,
 ) -> DueReflection | None:
     """Return the review that comes due on the day ``now`` falls in, if any.
 
@@ -306,13 +308,16 @@ def due_reflection(
     yields None, as does any clock skew that puts ``now`` before ``anchor``
     (:func:`domain.program_calendar.elapsed_days` floors at zero) and every day
     once the program is over. ``now`` defaults to the current UTC wall clock.
+    The day is counted in ``tz`` (UTC when None), so a review comes due at the
+    caller's own midnight -- the same clock :func:`current_scopes` and the
+    window helpers read (issue #2867).
 
     The returned ``week`` is the program week the day itself falls in, counted
     from the anchor — including on a day-before-close, where it is the final
     week the returned key names.
     """
     reference = now if now is not None else datetime.now(UTC)
-    elapsed = elapsed_days(anchor, reference)
+    elapsed = elapsed_days(anchor, reference, tz=tz)
     position = stage_position(elapsed)
     if position is None:
         return None
@@ -326,6 +331,51 @@ def due_reflection(
         key=_key(f"c{cycle}", level, index),
         week=elapsed // DAYS_PER_WEEK + 1,
     )
+
+
+def current_scopes(
+    anchor: datetime,
+    now: datetime | None = None,
+    cycle: int = 1,
+    *,
+    tz: str | None = None,
+) -> tuple[tuple[ReflectionLevel, str], ...]:
+    """Return the ``(level, key)`` scopes in progress on the day ``now`` falls in.
+
+    Ordered narrowest first -- week, stage, section, course -- so a writer who
+    wants to begin a review early is offered every layer that is still open
+    (issue #2867). The day is counted in ``tz`` (UTC when None), exactly as
+    :func:`due_reflection` counts it, so the early-review picker and the due
+    invitation cannot disagree about which week it is at the caller's midnight.
+
+    Two shapes are not the full four:
+
+    * throughout the section-less remainder stage (Clear Light), no SECTION is
+      in progress, so none is listed rather than a null placeholder;
+    * once the program is over no week, stage or section is in progress, but
+      the COURSE is still listed on its own, so a late Course Review stays
+      writable for someone who finished the days before the words.
+
+    Every key is composed by :func:`_key`; ``now`` defaults to the UTC wall clock.
+    """
+    reference = now if now is not None else datetime.now(UTC)
+    elapsed = elapsed_days(anchor, reference, tz=tz)
+    prefix = f"c{cycle}"
+    course = (ReflectionLevel.COURSE, _key(prefix, ReflectionLevel.COURSE, 0))
+    position = stage_position(elapsed)
+    if position is None:
+        return (course,)
+    stage_number, _ = position
+    week = elapsed // DAYS_PER_WEEK + 1
+    scopes = [
+        (ReflectionLevel.WEEK, _key(prefix, ReflectionLevel.WEEK, week)),
+        (ReflectionLevel.STAGE, _key(prefix, ReflectionLevel.STAGE, stage_number)),
+    ]
+    section = (stage_number - 1) // STAGES_PER_SECTION + 1
+    if section <= SECTION_COUNT:
+        scopes.append((ReflectionLevel.SECTION, _key(prefix, ReflectionLevel.SECTION, section)))
+    scopes.append(course)
+    return tuple(scopes)
 
 
 def _token_to_level_index(token: str) -> tuple[ReflectionLevel, int]:

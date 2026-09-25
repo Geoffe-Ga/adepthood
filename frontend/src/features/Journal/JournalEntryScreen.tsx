@@ -2363,20 +2363,32 @@ function useRefreshAfterEdit(): RefreshAfterEdit {
 
 /** Compose the autosave + idle + resonance hooks into the screen's view-model. */
 /**
- * A reflection-scope create can 409 because the reflection already exists.
- * Consult the due window and, when it points at an existing reflection for the
- * same scope, route there instead of leaving a dead-ended save error.
+ * The live review claiming ``scopeKey``, or null. Every scope that can be
+ * composed — the due one, and any begun early from the picker — is in progress
+ * today, so ``/reflections/current`` is asked first; ``/reflections/due`` is
+ * the fallback should that read fail.
+ */
+async function liveReviewFor(scopeKey: string): Promise<number | null> {
+  const { scopes } = await reflections.current().catch(() => ({ scopes: [] }));
+  const open = scopes.find((scope) => scope.scope_key === scopeKey);
+  if (open?.existing_entry_id != null) return open.existing_entry_id;
+  const { due } = await reflections.due();
+  return due != null && due.scope_key === scopeKey ? due.existing_entry_id : null;
+}
+
+/**
+ * A reflection-scope create can 409 because the reflection already exists —
+ * begun in another tab, or from a picker row read before it was claimed.
+ * Find the live review for the same scope and route there instead of leaving
+ * a dead-ended save error that no retry could ever clear.
  */
 function useCreateConflictHandler(ctx: SaveContext, navigation: ScreenNavigation): () => void {
   return useCallback(() => {
     const scopeKey = ctx.reflectionScopeKey;
     if (scopeKey == null) return;
-    void reflections
-      .due()
-      .then(({ due }) => {
-        if (due != null && due.scope_key === scopeKey && due.existing_entry_id != null) {
-          navigation.replace('JournalEntry', { entryId: due.existing_entry_id });
-        }
+    void liveReviewFor(scopeKey)
+      .then((entryId) => {
+        if (entryId != null) navigation.replace('JournalEntry', { entryId });
       })
       .catch(() => {
         // Fall back to the plain save-error hint; the draft is safe and retryable.

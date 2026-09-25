@@ -1,10 +1,13 @@
 """Hierarchical-reflection API — what is due, and the material that composes it.
 
-Two read surfaces over the nested APTITUDE reflection calendar:
+Three read surfaces over the nested APTITUDE reflection calendar:
 
 * ``GET /reflections/due`` peeks at the widest layer that has just closed for the
   caller (if any) and hands back its calendar window plus any reflection already
   claiming that scope.
+* ``GET /reflections/current`` lists every layer still in progress today, each
+  shaped exactly like the due peek, so a writer can begin a review early — on
+  any day, not only a review day (issue #2867).
 * ``GET /reflections/sources`` returns the ordered source material feeding a
   reflection at a given ``(level, scope_key)`` — child reflections standing in for
   their spans, and the raw daily entries of every gap — alongside the calendar
@@ -14,7 +17,11 @@ All schedule math lives in :mod:`domain.reflection_hierarchy`; this router only
 turns program weeks into datetime windows and shuttles rows to and from it. Those
 windows come from one helper, :func:`domain.program_calendar.program_week_bounds`,
 counted in the caller's own timezone — a program week is seven LOCAL midnights,
-never an offset from whatever o'clock the user happened to sign up at.
+never an offset from whatever o'clock the user happened to sign up at. The
+same holds for deciding what day it IS: ``/due`` and ``/current`` both read the
+caller's clock through :func:`domain.dates.now_in_tz` and count days in their
+zone, so the due invitation and the early-review picker turn over together at
+the caller's own midnight rather than UTC's.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ from sqlmodel import col, select
 from database import get_session
 from domain.constants import DAYS_PER_WEEK
 from domain.cycle_calendar import CycleAnchorStatus, cycle_week_bounds, resolve_cycle_window
-from domain.dates import ensure_aware, to_user_date
+from domain.dates import ensure_aware, now_in_tz, to_user_date
 from domain.program_calendar import (
     calendar_week,
     elapsed_days,
@@ -44,6 +51,7 @@ from domain.reflection_hierarchy import (
     ReflectionRef,
     SourceItem,
     SourceKind,
+    current_scopes,
     due_reflection,
     resolve_sources,
     scope_cycle,
@@ -58,6 +66,8 @@ from models.stage_progress import StageProgress
 from routers.auth import get_current_user
 from schemas.reflection import (
     PromotedQuoteSummary,
+    ReflectionCurrentResponse,
+    ReflectionCurrentScope,
     ReflectionDue,
     ReflectionDueResponse,
     ReflectionSourceItem,
@@ -106,6 +116,26 @@ async def _existing_scope_entry_id(
     return result.scalars().first()
 
 
+async def _scope_payload(
+    session: AsyncSession,
+    user_id: int,
+    anchor: datetime,
+    scope: tuple[ReflectionLevel, str],
+    tz: str,
+) -> tuple[datetime, datetime, int | None]:
+    """One scope's window and live claiming review, as ``/due`` and ``/current`` report it.
+
+    One helper for both surfaces, so a scope offered as due and the same scope
+    offered in the picker declare the same period and the same review. Returns
+    a neutral tuple rather than either wire type so neither schema is coupled
+    to the other through it.
+    """
+    level, key = scope
+    window_start, window_end = _due_window(anchor, level, key, tz)
+    existing_entry_id = await _existing_scope_entry_id(session, user_id, key)
+    return window_start, window_end, existing_entry_id
+
+
 @router.get("/due", response_model=ReflectionDueResponse)
 async def get_due_reflection(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -113,21 +143,22 @@ async def get_due_reflection(
 ) -> ReflectionDueResponse:
     """Return the reflection that has just come due for the caller, if any.
 
-    A user with no program progress, or whose current day is not a week-closing
-    day, has nothing due (``due`` is ``None``). Otherwise the widest layer that
+    A user with no program progress, or whose current day is not a review day,
+    has nothing due (``due`` is ``None``). Otherwise the widest layer that
     closes today wins, carried with its calendar window and any reflection
-    already claiming its scope.
+    already claiming its scope. "Today" is the caller's own calendar day.
     """
     progress = await get_user_progress(session, current_user)
     if progress is None:
         return ReflectionDueResponse(due=None)
+    tz = await get_user_timezone(session, current_user)
     anchor = resolve_program_anchor(progress)
-    due = due_reflection(anchor, cycle=progress.cycle_number)
+    due = due_reflection(anchor, now_in_tz(tz), cycle=progress.cycle_number, tz=tz)
     if due is None:
         return ReflectionDueResponse(due=None)
-    tz = await get_user_timezone(session, current_user)
-    window_start, window_end = _due_window(anchor, due.level, due.key, tz)
-    existing_entry_id = await _existing_scope_entry_id(session, current_user, due.key)
+    window_start, window_end, existing_entry_id = await _scope_payload(
+        session, current_user, anchor, (due.level, due.key), tz
+    )
     return ReflectionDueResponse(
         due=ReflectionDue(
             level=due.level.value,
@@ -137,6 +168,41 @@ async def get_due_reflection(
             existing_entry_id=existing_entry_id,
         )
     )
+
+
+@router.get("/current", response_model=ReflectionCurrentResponse)
+async def get_current_reflections(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReflectionCurrentResponse:
+    """Return every reflection scope in progress for the caller today.
+
+    Lets a writer open a review on any day rather than only the day it falls
+    due (issue #2867). Each scope carries the same window ``/due`` and
+    ``/sources`` declare for it and the caller's own live review claiming it,
+    if any. A caller who has not started the program has nothing in progress;
+    past the program's end only the course remains open.
+    """
+    progress = await get_user_progress(session, current_user)
+    if progress is None:
+        return ReflectionCurrentResponse(scopes=[])
+    tz = await get_user_timezone(session, current_user)
+    anchor = resolve_program_anchor(progress)
+    scopes: list[ReflectionCurrentScope] = []
+    for level, key in current_scopes(anchor, now_in_tz(tz), progress.cycle_number, tz=tz):
+        window_start, window_end, existing_entry_id = await _scope_payload(
+            session, current_user, anchor, (level, key), tz
+        )
+        scopes.append(
+            ReflectionCurrentScope(
+                level=level.value,
+                scope_key=key,
+                window_start=window_start,
+                window_end=window_end,
+                existing_entry_id=existing_entry_id,
+            )
+        )
+    return ReflectionCurrentResponse(scopes=scopes)
 
 
 def _validated_scope_weeks(level: ReflectionLevel, scope_key: str) -> range:

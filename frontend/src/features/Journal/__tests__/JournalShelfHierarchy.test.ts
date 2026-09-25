@@ -35,8 +35,10 @@ const HOME_STACK = [
   'JournalHero.styles.ts',
   'StatTile.styles.ts',
   'JournalShelf.styles.ts',
+  'JournalPrimaryInvitation.tsx',
   'MorningPagesTip.tsx',
   'ReflectionInvitationBand.tsx',
+  'ReviewScopePicker.tsx',
   'JournalShelfScreen.tsx',
 ];
 
