@@ -25,6 +25,17 @@
 # before this runner was written, so the gate is known to have a failing mode
 # rather than assumed to.
 #
+# It runs with EXPO_OFFLINE=1, and that is what makes the verdict a function of
+# the repository. Online, the CLI takes the installed expo's table and then
+# overwrites it with whatever api.expo.dev's /versions endpoint says today --
+# so the same commit went red three times in eight days (#2918) because Expo
+# published a patch, not because anything here changed. Offline, the expected
+# versions come from node_modules/expo/bundledNativeModules.json. That file and
+# the tree it is compared against are both installed from package-lock.json, so
+# the answer can only change when a commit changes the lockfile. A new SDK patch
+# reaches this repo as a Dependabot `expo-sdk` group PR instead, and this gate
+# judges that PR against the new expo's own table.
+#
 # This is NOT a native build and does not pretend to be one: there is no
 # frontend/ios or frontend/android directory, so a version the SDK expects for
 # native reasons is checked here as a number, never as compiled behaviour.
@@ -53,7 +64,9 @@ while [[ $# -gt 0 ]]; do
 Usage: $(basename "$0") [OPTIONS]
 
 Compare the installed frontend dependencies against the pinned Expo SDK's
-compatibility table, via 'expo install --check'.
+compatibility table, via 'EXPO_OFFLINE=1 expo install --check'. The table is
+read from the installed expo package, so the verdict needs no network and
+changes only when the lockfile does.
 
 This is the only frontend gate that reads that table. It is not a native
 build: a version the SDK expects for native reasons is checked as a number,
@@ -82,19 +95,20 @@ cd "$PROJECT_ROOT"
 # runs, resolved from disk with no network. This turns the resulting bare
 # `command not found` into a message that names the install. See the helper.
 #
-# That sentence is about resolving the *binary*, and the distinction matters
-# here more than it does in the other runners: `expo install --check` itself
-# consults Expo's published compatibility data, so unlike lint or typecheck
-# this stage does need the network to reach a verdict. An offline run fails
-# rather than reporting a false clean, which is the right direction to fail,
-# but it means a failure here is worth reading before it is believed.
+# The check itself needs no network either: under EXPO_OFFLINE=1 it reads the
+# compatibility table out of the installed expo package. The CLI prints
+# "Dependency validation is unreliable in offline-mode" on every run; that
+# banner is expected, and does not mean the check was skipped. A drifted tree
+# still exits 1 offline -- backend/tests/scripts/test_sdk_alignment_gate.py
+# plants a one-patch drift on react-native-svg against the real table and
+# asserts exactly that.
 "$SCRIPT_DIR/require-node-modules.sh" --verify-lockfile
 
 if $VERBOSE; then
     set -x
 fi
 
-echo "=== Expo SDK alignment (expo install --check) ==="
+echo "=== Expo SDK alignment (expo install --check, against the installed SDK table) ==="
 
 # The remedy is deliberately NOT the Expo installer's realignment mode, which
 # this line used to offer unconditionally. Two reasons, both measured here.
@@ -118,7 +132,7 @@ echo "=== Expo SDK alignment (expo install --check) ==="
 # against a real node_modules, with the resulting lockfile reviewed.
 REMEDY_HINT="./scripts/frontend/require-node-modules.sh --verify-lockfile"
 
-./node_modules/.bin/expo install --check || { echo "✗ Dependencies drifted from the pinned Expo SDK. Check whether the INSTALL is stale before touching any pin: $REMEDY_HINT -- if that reports drift, reinstall from the lockfile rather than editing package.json. If the install is clean, the pins genuinely need realigning to the SDK table; do that in its own PR from the main checkout." >&2; exit 1; }
+EXPO_OFFLINE=1 ./node_modules/.bin/expo install --check || { echo "✗ Dependencies drifted from the pinned Expo SDK (the table in node_modules/expo/bundledNativeModules.json). Check whether the INSTALL is stale before touching any pin: $REMEDY_HINT -- if that reports drift, reinstall from the lockfile rather than editing package.json. If the install is clean, the pins genuinely need realigning to the SDK table; do that in its own PR from the main checkout." >&2; exit 1; }
 
 echo "✓ Dependencies match the pinned Expo SDK"
 exit 0

@@ -32,14 +32,24 @@ the same rule ``test_pre_push_hook_installation`` documents.
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "frontend-ci.yml"
 _FRONTEND_SCRIPT_DIR = _REPO_ROOT / "scripts" / "frontend"
 _CHECK_ALL = _FRONTEND_SCRIPT_DIR / "check-all.sh"
 _SDK_ALIGN = _FRONTEND_SCRIPT_DIR / "sdk-align.sh"
+_FRONTEND = _REPO_ROOT / "frontend"
+_INSTALLED_EXPO = _FRONTEND / "node_modules" / "expo"
+_SDK_TABLE = _INSTALLED_EXPO / "bundledNativeModules.json"
+_INSTALLED_EXPO_BIN = _FRONTEND / "node_modules" / ".bin" / "expo"
 
 # The runner's basename, as check-all.sh spells it when it dispatches.
 _SDK_ALIGN_SCRIPT = "sdk-align.sh"
@@ -54,6 +64,21 @@ _LOCAL_EXPO_BIN = "./node_modules/.bin/expo"
 # The gate itself. Spelled loosely on whitespace so a reformatting of the call
 # site does not silently disarm the detector.
 _EXPO_CHECK_RE = re.compile(r"\bexpo\s+install\s+--check\b")
+
+# The prefix that makes the gate's verdict a function of the repository alone.
+# Without it the CLI overlays the live api.expo.dev ``/versions`` answer on the
+# installed expo's own table, so a tree nobody touched goes red the day Expo
+# publishes a patch. With it, the expected versions come from
+# ``node_modules/expo/bundledNativeModules.json`` -- installed from the lockfile,
+# exactly like the tree it is compared against.
+_EXPO_OFFLINE = "EXPO_OFFLINE=1"
+
+# The flag as an inline environment assignment, bounded so ``EXPO_OFFLINE=10``
+# or ``MY_EXPO_OFFLINE=1`` does not pass for it.
+_OFFLINE_PREFIX_RE = re.compile(r"(?:^|\s)" + re.escape(_EXPO_OFFLINE) + r"\s")
+
+# The sentence sdk-align.sh used to carry, which the offline mode made false.
+_STALE_NETWORK_CLAIM = "does need the network"
 
 # ``npx`` in *command* position: at the start of a line, or after a shell
 # separator. Not a bare substring match -- ``node_modules/.bin/npx`` would be
@@ -75,6 +100,24 @@ _INLINE_RUN_RE = re.compile(r"^\s*(?:-\s+)?run:\s*(?![|>])(\S.*)$")
 
 # A ``run:`` step whose command is a block scalar on the following lines.
 _BLOCK_RUN_RE = re.compile(r"^(\s*)(?:-\s+)?run:\s*[|>][-+]?\s*$")
+
+# A bare exact semver: no ``~``, ``^``, range, or tag.
+_EXACT_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+# The package the drift fixture moves. Its table entry is an exact version (not
+# a ``~`` range), so "one patch past the table" is unambiguously outside it.
+_DRIFT_PACKAGE = "react-native-svg"
+
+# A cold ``expo`` CLI start plus the check measures a few seconds here; this is
+# the ceiling past which a hung run is a failure rather than a slow pass.
+_CHECK_TIMEOUT_S = 120
+
+# Why the subprocess tests cannot run: the backend CI job has no frontend
+# install, and the real table is the whole point of the fixture.
+_NO_FRONTEND_INSTALL = (
+    "frontend/node_modules is not installed; run npm ci in frontend/ (outside a "
+    "Ralph lane) to exercise the offline SDK gate"
+)
 
 # A check-all.sh dispatch: run_check "<label>" "<script>".
 _RUN_CHECK_RE = re.compile(r'^\s*run_check\s+"([^"]+)"\s+"([^"]+)"', re.MULTILINE)
@@ -133,6 +176,11 @@ def _command_lines(text: str) -> list[str]:
 def _gate_invocations(lines: list[str]) -> list[str]:
     """Return the lines that invoke ``expo install --check``."""
     return [line for line in lines if _EXPO_CHECK_RE.search(line)]
+
+
+def _offline_invocations(lines: list[str]) -> list[str]:
+    """Return the gate invocations that run with ``EXPO_OFFLINE=1`` set inline."""
+    return [line for line in _gate_invocations(lines) if _OFFLINE_PREFIX_RE.search(line)]
 
 
 def _swallowed_exits(lines: list[str]) -> list[str]:
@@ -205,6 +253,18 @@ class TestTheDetectorsAreNonVacuous:
         assert _bare_npx_lines(["cd frontend && npx expo install --check"])
         assert not _bare_npx_lines([f"{_LOCAL_EXPO_BIN} install --check"])
 
+    def test_the_offline_prefix_is_detected_on_the_gate_line(self) -> None:
+        """An unprefixed check reads the live API; a prefixed one does not."""
+        assert not _offline_invocations(["npx expo install --check"])
+        assert not _offline_invocations([f"{_LOCAL_EXPO_BIN} install --check"])
+        assert _offline_invocations([f"{_EXPO_OFFLINE} npx expo install --check"])
+        assert _offline_invocations([f"{_EXPO_OFFLINE} {_LOCAL_EXPO_BIN} install --check"])
+
+    def test_a_disabled_offline_flag_is_not_the_offline_prefix(self) -> None:
+        """``EXPO_OFFLINE=0`` reads the live API just as an absent flag does."""
+        assert not _offline_invocations(["EXPO_OFFLINE=0 npx expo install --check"])
+        assert not _offline_invocations(["EXPO_OFFLINE=10 npx expo install --check"])
+
     def test_comments_are_not_executable_lines(self) -> None:
         """A script must be able to name the hazard in prose."""
         assert _command_lines("# never use npx here\n\nexpo install --check\n") == [
@@ -230,6 +290,17 @@ class TestCiGatesSdkAlignment:
             "frontend-ci.yml has no `run:` step invoking `expo install --check`, so "
             "a package.json that has drifted from the pinned Expo SDK's compatibility "
             "table merges green."
+        )
+
+    def test_the_ci_check_reads_the_installed_sdk_table(self) -> None:
+        """Offline, so CI's verdict cannot change without a commit of ours."""
+        invocations = _gate_invocations(_workflow_run_commands(_read(_WORKFLOW)))
+        assert invocations
+        unpinned = [line for line in invocations if line not in _offline_invocations(invocations)]
+        assert not unpinned, (
+            f"frontend-ci.yml runs `expo install --check` without {_EXPO_OFFLINE}: "
+            f"{unpinned}. The CLI then prefers the live api.expo.dev table over the "
+            f"lockfile-installed one, and the gate goes red when Expo publishes."
         )
 
     def test_the_ci_check_does_not_swallow_its_exit_code(self) -> None:
@@ -284,6 +355,27 @@ class TestTheSdkAlignmentRunner:
             f"version the lockfile pins is the version that answers."
         )
 
+    def test_the_runner_reads_the_installed_sdk_table(self) -> None:
+        """Local Gate 2 asks the same offline question CI asks."""
+        # Only the lines that execute the pinned binary: the help heredoc and
+        # the echo banner name the check in prose, and run nothing.
+        executed = [
+            line
+            for line in _gate_invocations(_command_lines(_read(_SDK_ALIGN)))
+            if _LOCAL_EXPO_BIN in line
+        ]
+        assert executed
+        unpinned = [line for line in executed if line not in _offline_invocations(executed)]
+        assert not unpinned, (
+            f"scripts/frontend/{_SDK_ALIGN_SCRIPT} runs the check without "
+            f"{_EXPO_OFFLINE}: {unpinned}. Its verdict would follow the live API "
+            f"instead of the lockfile, and would disagree with CI."
+        )
+
+    def test_the_runner_no_longer_claims_it_needs_the_network(self) -> None:
+        """Offline, the check reaches a verdict from disk; the prose must say so."""
+        assert _STALE_NETWORK_CLAIM not in _read(_SDK_ALIGN)
+
     def test_the_runner_clears_the_node_modules_guard(self) -> None:
         """Otherwise a missing install fails as an opaque `command not found`."""
         assert _GUARD_SCRIPT in _read(_SDK_ALIGN), (
@@ -298,3 +390,118 @@ class TestTheSdkAlignmentRunner:
             f"scripts/frontend/{_SDK_ALIGN_SCRIPT} discards the exit code that is the "
             f"entire signal: {swallowed}. Branch on the code and propagate a failure."
         )
+
+
+def _table() -> dict[str, str]:
+    """Return the installed expo's own compatibility table."""
+    table: dict[str, str] = json.loads(_SDK_TABLE.read_text(encoding="utf-8"))
+    return table
+
+
+def _installed_expo_version() -> str:
+    """Return the version of expo the lockfile installed."""
+    manifest = json.loads((_INSTALLED_EXPO / "package.json").read_text(encoding="utf-8"))
+    version: str = manifest["version"]
+    return version
+
+
+def _bumped_patch(version: str) -> str:
+    """Return ``version`` one patch later, refusing anything but exact semver."""
+    match = _EXACT_SEMVER_RE.fullmatch(version)
+    assert match, f"{version!r} is not an exact version, so a one-patch drift is ambiguous"
+    major, minor, patch = match.groups()
+    return f"{major}.{minor}.{int(patch) + 1}"
+
+
+def _scratch_project(root: Path, drift_version: str) -> Path:
+    """Build a project that declares the real expo plus ``_DRIFT_PACKAGE``.
+
+    ``node_modules/expo`` is a symlink to the real install, so the table the
+    check reads is the one the lockfile pins; ``_DRIFT_PACKAGE`` is a stub
+    whose only content is the version it claims to be.
+    """
+    manifest = {
+        "name": "sdk-drift-fixture",
+        "version": "0.0.0",
+        "private": True,
+        "dependencies": {"expo": _installed_expo_version(), _DRIFT_PACKAGE: drift_version},
+    }
+    (root / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    modules = root / "node_modules"
+    modules.mkdir()
+    (modules / "expo").symlink_to(_INSTALLED_EXPO, target_is_directory=True)
+    stub = modules / _DRIFT_PACKAGE
+    stub.mkdir()
+    stub_manifest = {"name": _DRIFT_PACKAGE, "version": drift_version}
+    (stub / "package.json").write_text(json.dumps(stub_manifest), encoding="utf-8")
+    return root
+
+
+def _run_offline_check(cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run the gate exactly as sdk-align.sh does, in ``cwd``."""
+    env = {**os.environ, "EXPO_OFFLINE": "1", "CI": "1", "EXPO_NO_TELEMETRY": "1"}
+    return subprocess.run(
+        [str(_INSTALLED_EXPO_BIN), "install", "--check"],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_CHECK_TIMEOUT_S,
+        check=False,
+    )
+
+
+_FRONTEND_INSTALLED = (
+    _SDK_TABLE.is_file() and _INSTALLED_EXPO_BIN.is_file() and shutil.which("node") is not None
+)
+
+
+@pytest.mark.skipif(not _FRONTEND_INSTALLED, reason=_NO_FRONTEND_INSTALL)
+class TestTheOfflineGateStillFails:
+    """The playbook rule for gates: prove the offline check rings on real drift.
+
+    Taking the live API out of the comparison is only safe if what is left is
+    still a gate. These run the pinned binary against the real installed table,
+    once on a tree one patch past it (must fail), once on a tree exactly on it
+    (must pass -- otherwise the first proves nothing), and once on the committed
+    frontend itself. The drift version is computed from the table at run time,
+    so an SDK bump that moves the table's entry cannot turn the drifted fixture
+    into the aligned one.
+    """
+
+    def test_the_offline_gate_fails_on_a_drifted_tree(self, tmp_path: Path) -> None:
+        """One patch past the table is drift, and the gate must exit non-zero."""
+        drifted = _bumped_patch(_table()[_DRIFT_PACKAGE])
+        result = _run_offline_check(_scratch_project(tmp_path, drifted))
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, (
+            f"{_EXPO_OFFLINE} expo install --check exited 0 with {_DRIFT_PACKAGE} at "
+            f"{drifted}, past the table's {_table()[_DRIFT_PACKAGE]}: the offline gate "
+            f"cannot see drift.\n{output}"
+        )
+        assert _DRIFT_PACKAGE in output, output
+
+    def test_the_offline_gate_passes_an_aligned_tree(self, tmp_path: Path) -> None:
+        """The control: the same fixture exactly on the table must pass."""
+        result = _run_offline_check(_scratch_project(tmp_path, _table()[_DRIFT_PACKAGE]))
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_the_committed_frontend_passes_offline(self) -> None:
+        """The repository's own tree is aligned, with no network consulted."""
+        result = _run_offline_check(_FRONTEND)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+class TestTheDriftFixtureHelpers:
+    """The fixture's arithmetic, driven without a frontend install."""
+
+    def test_a_patch_is_bumped_by_exactly_one(self) -> None:
+        """15.15.4 -> 15.15.5: past the exact table value, and nothing else."""
+        assert _bumped_patch("15.15.4") == "15.15.5"
+        assert _bumped_patch("0.10.9") == "0.10.10"
+
+    @pytest.mark.parametrize("spec", ["~57.0.7", "^12.0.1", "15.15", "1.2.3-rc.1"])
+    def test_a_range_is_refused(self, spec: str) -> None:
+        """A range has no single "one patch past", so the fixture must refuse it."""
+        with pytest.raises(AssertionError, match="not an exact version"):
+            _bumped_patch(spec)
