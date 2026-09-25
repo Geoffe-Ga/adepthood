@@ -53,6 +53,8 @@ _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "frontend-ci.yml"
 _FRONTEND_SCRIPT_DIR = _REPO_ROOT / "scripts" / "frontend"
 _CHECK_ALL = _FRONTEND_SCRIPT_DIR / "check-all.sh"
 _SDK_ALIGN = _FRONTEND_SCRIPT_DIR / "sdk-align.sh"
+_BACKEND_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "backend-ci.yml"
+_DEPENDABOT_CONFIG = _REPO_ROOT / ".github" / "dependabot.yml"
 _FRONTEND = _REPO_ROOT / "frontend"
 _MANIFEST = _FRONTEND / "package.json"
 _LOCKFILE = _FRONTEND / "package-lock.json"
@@ -121,6 +123,22 @@ _SDK_NAME_FALLBACK_RE = re.compile(r"^(?:expo|expo-.*|@expo/.*)$")
 
 # The two sections of a manifest whose specs the lockfile's root entry mirrors.
 _DEPENDENCY_SECTIONS = ("dependencies", "devDependencies")
+
+# The events whose ``paths`` filter decides whether backend-ci -- the only
+# workflow that runs these guards -- starts at all.
+_GUARD_TRIGGER_EVENTS = ("push", "pull_request")
+
+# ``on:`` at column 0 up to the next top-level key; within it, each event two
+# spaces in; within that, ``paths:`` four in; and each quoted glob beneath it.
+# Comment and blank lines are part of a body, and the item regex skips them.
+_ON_BLOCK_RE = re.compile(r"^on:[ \t]*\n(?P<body>(?:(?:[ \t].*|[ \t]*|#.*)\n)*)", re.MULTILINE)
+_EVENT_BLOCK_RE = re.compile(
+    r"^  (?P<event>[a-z_]+):[ \t]*\n(?P<body>(?:(?:    .*|[ \t]*|\s*#.*)\n)*)", re.MULTILINE
+)
+_PATHS_BLOCK_RE = re.compile(
+    r"^    paths:[ \t]*\n(?P<body>(?:(?:      .*|[ \t]*)\n)*)", re.MULTILINE
+)
+_PATH_ITEM_RE = re.compile(r'^      -[ \t]*"([^"]+)"[ \t]*$', re.MULTILINE)
 
 # The package the drift fixture moves. Its table entry is an exact version (not
 # a ``~`` range), so "one patch past the table" is unambiguously outside it.
@@ -684,3 +702,105 @@ class TestThePinDetectorsAreNonVacuous:
         }
         assert _root_drift(manifest, lagging)
         assert not _root_drift(manifest, mirrored)
+
+
+def _trigger_paths(workflow: str) -> dict[str, list[str]]:
+    """Map each ``on:`` event to the ``paths`` globs that filter it."""
+    on_block = _ON_BLOCK_RE.search(workflow + "\n")
+    if on_block is None:
+        return {}
+    paths: dict[str, list[str]] = {}
+    for event in _EVENT_BLOCK_RE.finditer(on_block.group("body")):
+        filtered = _PATHS_BLOCK_RE.search(event.group("body"))
+        if filtered:
+            paths[event.group("event")] = _PATH_ITEM_RE.findall(filtered.group("body"))
+    return paths
+
+
+def _glob_regex(glob: str) -> re.Pattern[str]:
+    """Translate a GitHub Actions path glob: ``**`` crosses ``/``, ``*`` does not."""
+    parts = (re.escape(part).replace(r"\*", "[^/]*") for part in glob.split("**"))
+    return re.compile(".*".join(parts) + r"\Z")
+
+
+def _untriggered(inputs: list[str], globs: list[str]) -> list[str]:
+    """Return the repo-relative inputs that no glob in ``globs`` matches."""
+    return [path for path in inputs if not any(_glob_regex(g).match(path) for g in globs)]
+
+
+def _guard_inputs() -> list[str]:
+    """Every committed file these guards and test_dependabot_ignores.py read."""
+    files = (
+        _WORKFLOW,
+        _SDK_ALIGN,
+        _CHECK_ALL,
+        _MANIFEST,
+        _LOCKFILE,
+        _DEPENDABOT_CONFIG,
+        _BACKEND_WORKFLOW,
+        Path(__file__),
+    )
+    return [str(path.relative_to(_REPO_ROOT)) for path in files]
+
+
+class TestEveryGuardInputTriggersTheGuard:
+    """A guard whose input can change without running it guards nothing (#2679).
+
+    These guards run only in backend-ci. A PR touching only frontend-ci.yml,
+    the frontend manifest or lockfile, or dependabot.yml must still start it,
+    or reverting EXPO_OFFLINE / loosening a pin merges green and main goes red
+    on the next unrelated backend PR.
+    """
+
+    def test_every_guard_input_triggers_backend_ci(self) -> None:
+        """Each input matches a ``paths`` glob on both push and pull_request."""
+        triggers = _trigger_paths(_read(_BACKEND_WORKFLOW))
+        for event in _GUARD_TRIGGER_EVENTS:
+            assert triggers.get(event), f"backend-ci.yml has no {event} paths filter parsed"
+            missing = _untriggered(_guard_inputs(), triggers[event])
+            assert not missing, (
+                f"backend-ci.yml's {event} paths do not cover {missing}, which the SDK "
+                f"and Dependabot guards read: a PR touching only those never runs them."
+            )
+
+
+class TestTheTriggerReaderIsNonVacuous:
+    """The trigger parser and glob matcher, driven with fabricated input."""
+
+    _WORKFLOW_TEXT = (
+        "name: X\n"
+        "on:\n"
+        "  push:\n"
+        "    branches: [main]\n"
+        "    paths:\n"
+        '      - "backend/**"\n'
+        "      # a comment between items\n"
+        '      - ".github/dependabot.yml"\n'
+        "  pull_request:\n"
+        "    paths:\n"
+        '      - "backend/**"\n'
+        "jobs:\n"
+        "  build:\n"
+        "    steps:\n"
+        '      - "not-a-path"\n'
+    )
+
+    def test_paths_are_read_per_event(self) -> None:
+        """Each event keeps its own globs; nothing under ``jobs:`` leaks in."""
+        assert _trigger_paths(self._WORKFLOW_TEXT) == {
+            "push": ["backend/**", ".github/dependabot.yml"],
+            "pull_request": ["backend/**"],
+        }
+
+    def test_an_input_outside_every_glob_is_reported(self) -> None:
+        """The violating case: the manifest is not in the filter."""
+        globs = ["backend/**", ".github/dependabot.yml"]
+        assert _untriggered(["frontend/package.json"], globs) == ["frontend/package.json"]
+        assert _untriggered(["backend/tests/x.py", ".github/dependabot.yml"], globs) == []
+
+    def test_a_single_star_does_not_cross_directories(self) -> None:
+        """``scripts/*`` covers scripts/a.sh, not scripts/frontend/a.sh."""
+        assert _glob_regex("scripts/*").match("scripts/a.sh")
+        assert not _glob_regex("scripts/*").match("scripts/frontend/a.sh")
+        assert _glob_regex("scripts/**").match("scripts/frontend/a.sh")
+        assert not _glob_regex("frontend/package.json").match("frontend/package.json.bak")
