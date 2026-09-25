@@ -22,20 +22,25 @@ export const REVIEW_RESUME_SUBLINE = 'Pick up where you left off.';
 /** The decline affordance on a due review. */
 export const REVIEW_DISMISS = 'Not now';
 
-/** The accessibility label for declining a due review. */
-export const REVIEW_DISMISS_A11Y = 'Set this reflection invitation aside';
+/**
+ * The accessibility label for declining a due review. Every accessible name in
+ * this module OPENS with the words the control shows (WCAG 2.5.3, label in
+ * name), so a voice-control user can say what they see.
+ */
+export const REVIEW_DISMISS_A11Y = 'Not now, set this reflection invitation aside';
 
 /** The quiet link that opens the early-review picker, present every day. */
 export const REVIEW_EARLY_LINK = 'Start a review early';
 
 /** The accessibility label for opening the early-review picker. */
-export const REVIEW_EARLY_A11Y = 'Choose a review to begin before it comes round';
+export const REVIEW_EARLY_A11Y = 'Start a review early, choose one to begin before it comes round';
 
 /** The same link once the picker is open, offering to fold it away again. */
 export const REVIEW_EARLY_CLOSE = 'Fold the reviews away';
 
 /** The accessibility label for folding the picker away. */
-export const REVIEW_EARLY_CLOSE_A11Y = 'Close the list of reviews you could begin early';
+export const REVIEW_EARLY_CLOSE_A11Y =
+  'Fold the reviews away, close the list of reviews you could begin early';
 
 /** Shown in the picker when nothing is open yet — before the program begins. */
 export const PICKER_EMPTY = 'No review is open yet. They open once your program begins.';
@@ -62,14 +67,22 @@ export function continueReviewLabel(title: string): string {
   return `Continue — ${title}`;
 }
 
-/** The accessibility label for starting a fresh review. */
+/** The accessibility label for a picker row that starts a fresh review; it shows ``title``. */
 export function beginReviewA11y(title: string): string {
-  return `Begin your ${title}`;
+  return `${title}, begin this review`;
 }
 
-/** The accessibility label for returning to a review already begun. */
+/** The accessibility label for a picker row returning to a review already begun. */
 export function continueReviewA11y(title: string): string {
-  return `Continue your ${title}`;
+  return `${continueReviewLabel(title)}, reopen the review you began`;
+}
+
+/**
+ * The due card's accessibility label: its visible CTA first ("Write your
+ * Weekly Review"), then which scope it begins or continues.
+ */
+export function reviewCtaA11y(level: ReflectionLevel, title: string, resuming: boolean): string {
+  return `${writeReviewCta(level)}, ${resuming ? 'continue' : 'begin'} your ${title}`;
 }
 
 /** Every user-facing review-invitation string, gathered for the balance-not-altitude sweep. */

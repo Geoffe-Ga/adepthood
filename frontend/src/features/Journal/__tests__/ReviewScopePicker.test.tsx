@@ -90,10 +90,10 @@ describe('ReviewScopePicker', () => {
     const rows = getAllByRole('button');
     expect(rows.map((row) => row.props.testID)).toEqual(ROW_IDS);
     expect(rows.map((row) => row.props.accessibilityLabel)).toEqual([
-      'Begin your Weekly Review — Week 2',
-      'Begin your Stage Review — Survival',
-      'Begin your Section Review — Red',
-      'Begin your Course Review',
+      'Weekly Review — Week 2, begin this review',
+      'Stage Review — Survival, begin this review',
+      'Section Review — Red, begin this review',
+      'Course Review, begin this review',
     ]);
     expect(mockStagesListAll).toHaveBeenCalledTimes(1);
   });
@@ -120,7 +120,7 @@ describe('ReviewScopePicker', () => {
 
     expect(await findByText('Continue — Weekly Review — Week 2')).toBeTruthy();
     expect(getByTestId('journal-review-scope-week').props.accessibilityLabel).toBe(
-      'Continue your Weekly Review — Week 2',
+      'Continue — Weekly Review — Week 2, reopen the review you began',
     );
     fireEvent.press(getByTestId('journal-review-scope-week'));
     expect(onChoose).toHaveBeenCalledWith({ entryId: 31 });

@@ -6,6 +6,7 @@ import {
   beginReviewA11y,
   continueReviewA11y,
   continueReviewLabel,
+  reviewCtaA11y,
   writeReviewCta,
 } from '../reviewInvitationCopy';
 
@@ -23,9 +24,20 @@ describe('reviewInvitationCopy — the review CTA names its layer', () => {
     expect(writeReviewCta(level)).toBe(expected);
   });
 
+  it('names the review CTA by its visible words, then the scope it opens', () => {
+    expect(reviewCtaA11y('week', 'Weekly Review — Week 1', false)).toBe(
+      'Write your Weekly Review, begin your Weekly Review — Week 1',
+    );
+    expect(reviewCtaA11y('week', 'Weekly Review — Week 1', true)).toBe(
+      'Write your Weekly Review, continue your Weekly Review — Week 1',
+    );
+  });
+
   it('frames beginning and continuing a review distinctly for assistive tech', () => {
-    expect(beginReviewA11y('Course Review')).toBe('Begin your Course Review');
-    expect(continueReviewA11y('Course Review')).toBe('Continue your Course Review');
+    expect(beginReviewA11y('Course Review')).toBe('Course Review, begin this review');
+    expect(continueReviewA11y('Course Review')).toBe(
+      'Continue — Course Review, reopen the review you began',
+    );
     expect(continueReviewLabel('Course Review')).toBe('Continue — Course Review');
   });
 });

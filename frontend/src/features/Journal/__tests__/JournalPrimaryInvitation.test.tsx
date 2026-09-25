@@ -159,7 +159,7 @@ describe('JournalPrimaryInvitation on a review day', () => {
       // One primary invitation: the daily page steps aside for the review.
       expect(queryByTestId('journal-morning-pages-tip')).toBeNull();
       expect(getByTestId('journal-reflection-band').props.accessibilityLabel).toBe(
-        `Begin your ${title}`,
+        `${cta}, begin your ${title}`,
       );
 
       fireEvent.press(getByTestId('journal-reflection-band'));
@@ -177,7 +177,7 @@ describe('JournalPrimaryInvitation on a review day', () => {
     const { findByTestId, getByTestId, getByText } = renderInvitation();
     await findByTestId('journal-reflection-band');
     expect(getByTestId('journal-reflection-band').props.accessibilityLabel).toBe(
-      'Continue your Weekly Review — Week 1',
+      'Write your Weekly Review, continue your Weekly Review — Week 1',
     );
     expect(getByText('Pick up where you left off.')).toBeTruthy();
 
@@ -242,7 +242,7 @@ describe('JournalPrimaryInvitation on any other day', () => {
     expect(getByText('Begin a page')).toBeTruthy();
     expect(queryByTestId('journal-reflection-band')).toBeNull();
     expect(getByTestId('journal-review-early').props.accessibilityLabel).toBe(
-      'Choose a review to begin before it comes round',
+      'Start a review early, choose one to begin before it comes round',
     );
   });
 
@@ -296,7 +296,7 @@ describe('the early-review link', () => {
     fireEvent.press(getByTestId('journal-review-early'));
     await findByTestId('journal-review-scope-week');
     expect(getByTestId('journal-review-early').props.accessibilityLabel).toBe(
-      'Close the list of reviews you could begin early',
+      'Fold the reviews away, close the list of reviews you could begin early',
     );
 
     fireEvent.press(getByTestId('journal-review-scope-week'));
@@ -308,5 +308,61 @@ describe('the early-review link', () => {
     });
     // Choosing folds the list away, so a return to the shelf finds it closed.
     await waitFor(() => expect(queryByTestId('journal-review-scope-week')).toBeNull());
+  });
+});
+
+/** A rendered host node, as RNTL's queries hand it back. */
+type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+/** Every string a sighted reader sees inside a pressable, in render order. */
+function visibleText(node: RenderedNode): string[] {
+  return node
+    .findAll((child: RenderedNode) => child.type === 'Text')
+    .flatMap((text: RenderedNode) =>
+      text.children.filter((c: RenderedNode | string): c is string => typeof c === 'string'),
+    );
+}
+
+describe('every invitation control is named by the words it shows (WCAG 2.5.3)', () => {
+  it.each([
+    ['a fresh review', null],
+    ['a review already begun', 99],
+  ])(
+    'names %s by its visible CTA, and every other control by its own label',
+    async (_case, entryId) => {
+      mockDue.mockResolvedValue({ due: due({ existing_entry_id: entryId }) });
+      mockCurrent.mockResolvedValue({
+        scopes: [
+          due({ scope_key: 'c1:w2' }),
+          due({ level: 'course', scope_key: 'c1:course', existing_entry_id: 5 }),
+        ],
+      });
+      const { findByTestId, getByTestId, getAllByRole } = renderInvitation();
+      await findByTestId('journal-reflection-band');
+      fireEvent.press(getByTestId('journal-review-early'));
+      await findByTestId('journal-review-scope-course');
+
+      const band = getByTestId('journal-reflection-band');
+      expect(band.props.accessibilityLabel).toContain('Write your Weekly Review');
+      const buttons = getAllByRole('button').filter((b) => b !== band);
+      expect(buttons.length).toBeGreaterThanOrEqual(4);
+      for (const button of buttons) {
+        const [label] = visibleText(button);
+        expect(label).toBeDefined();
+        expect(button.props.accessibilityLabel).toContain(label);
+      }
+    },
+  );
+
+  it('keeps the folded link named by its visible words too', async () => {
+    mockDue.mockResolvedValue({ due: null });
+    const { findByTestId, getByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+    const link = getByTestId('journal-review-early');
+    expect(link.props.accessibilityLabel).toContain(visibleText(link)[0]);
+    fireEvent.press(link);
+    const folded = getByTestId('journal-review-early');
+    expect(visibleText(folded)[0]).toBe('Fold the reviews away');
+    expect(folded.props.accessibilityLabel).toContain('Fold the reviews away');
   });
 });

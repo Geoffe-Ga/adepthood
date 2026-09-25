@@ -18,8 +18,7 @@ import {
   REVIEW_DISMISS_A11Y,
   REVIEW_INVITE_SUBLINE,
   REVIEW_RESUME_SUBLINE,
-  beginReviewA11y,
-  continueReviewA11y,
+  reviewCtaA11y,
   writeReviewCta,
 } from './reviewInvitationCopy';
 import { reviewTitle } from './reviewScopes';
@@ -65,7 +64,7 @@ function ReflectionInvitationBand({
         style={styles.openArea}
         onPress={onOpen}
         accessibilityRole="button"
-        accessibilityLabel={resuming ? continueReviewA11y(title) : beginReviewA11y(title)}
+        accessibilityLabel={reviewCtaA11y(scope.level, title, resuming)}
         testID="journal-reflection-band"
       >
         <Text style={styles.label}>{REVIEW_BAND_LABEL}</Text>
