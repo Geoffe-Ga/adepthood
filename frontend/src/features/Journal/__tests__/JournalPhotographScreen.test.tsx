@@ -503,7 +503,21 @@ const RETRY_KINDS: TranscriptionErrorKind[] = [
   'timeout',
   'rate_limited',
 ];
-const RETAKE_KINDS: TranscriptionErrorKind[] = ['invalid_image', 'image_too_large'];
+const RETAKE_KINDS: TranscriptionErrorKind[] = [
+  'invalid_image',
+  'image_too_large',
+  'no_text_found',
+  'transcription_refused',
+];
+
+/** The reply was read but held nothing usable (#2851): exact copy per kind. */
+const UNUSABLE_READ_COPY: Array<[TranscriptionErrorKind, string]> = [
+  ['no_text_found', "We couldn't find any text in that photo. Retake it, or remove this page."],
+  [
+    'transcription_refused',
+    'The helper declined to read that page. Try once more, or type it in by hand.',
+  ],
+];
 
 describe('JournalPhotographScreen — single-page error recovery', () => {
   it.each(RETRY_KINDS)('offers Retry (not Retake) on the block for a %s failure', async (kind) => {
@@ -524,6 +538,30 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
     expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
     expect(queryByTestId('photograph-block-1-retry')).toBeNull();
     expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
+  });
+
+  it.each(UNUSABLE_READ_COPY)(
+    'shows the %s copy with Retake and Remove, never the terminal offramp',
+    async (kind, copy) => {
+      mockPick.mockResolvedValueOnce(picked());
+      mockTranscribe.mockRejectedValueOnce(new TranscriptionError(kind, 422));
+      const { findByTestId, queryByTestId } = renderScreen();
+      fireEvent.press(await findByTestId('capture-transcribe'));
+      expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(copy);
+      expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+      expect(await findByTestId('photograph-block-1-remove')).toBeTruthy();
+      expect(queryByTestId('photograph-typed-entry')).toBeNull();
+    },
+  );
+
+  it('asks for a retake with the text clearer, not clearer handwriting', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('invalid_image', 422));
+    const { findByTestId } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    expect(await findByTestId('photograph-block-1-error')).toHaveTextContent(
+      "We couldn't quite read that page. Retake it with the text clearer.",
+    );
   });
 
   it('shows the wallet-exhausted copy on the block, with Retry offered', async () => {
@@ -871,6 +909,18 @@ describe('JournalPhotographScreen — save gate across the run', () => {
       expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
     );
   });
+
+  it.each(['no_text_found', 'transcription_refused'] as const)(
+    'keeps Save disabled while the only page failed with %s',
+    async (kind) => {
+      mockPick.mockResolvedValueOnce(picked());
+      mockTranscribe.mockRejectedValueOnce(new TranscriptionError(kind, 422));
+      const { findByTestId } = renderScreen();
+      fireEvent.press(await findByTestId('capture-transcribe'));
+      await findByTestId('photograph-block-1-error');
+      expect((await findByTestId('photograph-save')).props.accessibilityState.disabled).toBe(true);
+    },
+  );
 
   it('unblocks Save when a failed page is removed rather than retried', async () => {
     mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));

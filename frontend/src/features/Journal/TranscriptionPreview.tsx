@@ -53,7 +53,10 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
   network: "We couldn't reach the transcription helper. Check your connection and try again.",
   timeout: "That took longer than expected. Try again whenever you're ready.",
   rate_limited: 'The transcription helper is catching its breath. Try again in a moment.',
-  invalid_image: "We couldn't quite read that page. Retake it with clearer handwriting.",
+  invalid_image: "We couldn't quite read that page. Retake it with the text clearer.",
+  no_text_found: "We couldn't find any text in that photo. Retake it, or remove this page.",
+  transcription_refused:
+    'The helper declined to read that page. Try once more, or type it in by hand.',
   image_too_large:
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
   wallet_exhausted: '',
@@ -70,6 +73,8 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
 const RETAKE_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<TranscriptionErrorKind>([
   'invalid_image',
   'image_too_large',
+  'no_text_found',
+  'transcription_refused',
 ]);
 
 /** The user-facing copy for a failed page, sourcing wallet copy from the 402 message. */

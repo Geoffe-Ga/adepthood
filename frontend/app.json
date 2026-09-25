@@ -20,7 +20,7 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Allow Adepthood to use the camera to photograph handwritten journal pages for transcription.",
+          "cameraPermission": "Allow Adepthood to use the camera to photograph pages and screens for transcription.",
           "photosPermission": "Allow Adepthood to access your photos so you can add them as meditation cards."
         }
       ],

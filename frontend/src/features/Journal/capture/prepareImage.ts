@@ -26,8 +26,8 @@ import { decodedBase64ByteLength } from '@/utils/base64Size';
 export const TRANSCRIBE_LONG_EDGE_PX = 1568;
 
 /**
- * JPEG compression for the prepared page: visually lossless for legible
- * handwriting while keeping the inline upload small.
+ * JPEG compression for the prepared page: visually lossless for fine text
+ * while keeping the inline upload small.
  */
 export const TRANSCRIBE_JPEG_QUALITY = 0.8;
 

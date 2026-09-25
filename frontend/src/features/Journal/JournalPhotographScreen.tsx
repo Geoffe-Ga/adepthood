@@ -1,5 +1,5 @@
 /**
- * Photograph handwritten journal pages, transcribe them, and save them as one
+ * Photograph or capture pages of text, transcribe them, and save them as one
  * finished entry. The flow auto-launches the photo picker on mount into an ordered,
  * multi-page capture session: the writer collects pages from the library
  * (multi-select) or photographs them one at a time with the camera — a take-another

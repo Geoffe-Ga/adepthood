@@ -547,7 +547,9 @@ state, error state, and destructive confirmation encountered later.
 - [ ] Camera permission allow, deny, deny-permanently, and later-enable paths explain what
       the user can do next.
 - [ ] Capture/retake/retry/remove works for portrait, landscape, rotated, blurry, dark,
-      multi-block, blank, handwriting, and unsupported images.
+      multi-block, blank, handwriting, typed or printed, message-thread screenshot, photo of
+      a screen, and unsupported images. A blank image shows the no-text copy and a declined
+      read shows the declined copy, each with Retake and Remove and no charge.
 - [ ] Image pixels are not persisted or transmitted beyond the documented local boundary.
 - [ ] Transcription blocks preserve order and allow editing/removing before save.
 - [ ] “Type it instead” opens an Intimate entry when required and carries no image bytes.

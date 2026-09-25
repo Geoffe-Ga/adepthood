@@ -111,8 +111,7 @@ const COMPACT_WRITING_CONTROLS_BREAKPOINT = NARROW_BREAKPOINT + 120;
 /** The photograph affordance, offered while writing — including to a Course
  *  reflection, which is an ordinary journal page opened with a title. */
 const PHOTOGRAPH_PAGE_LABEL = 'Photograph a page';
-const PHOTOGRAPH_PAGE_HINT =
-  'Photograph a handwritten page and add the transcription to this entry';
+const PHOTOGRAPH_PAGE_HINT = 'Photograph a page or screenshot and add its text to this entry';
 
 /** Body-field placeholder for a free-write with no prompt to echo. */
 const DEFAULT_BODY_PLACEHOLDER = 'Begin writing…';
