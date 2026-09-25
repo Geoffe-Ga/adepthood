@@ -2,11 +2,18 @@
 # requirements-lock.txt is their full transitive resolve (regenerate it with
 # the command in its header) and every pin here must appear there at the same
 # version -- backend/tests/scripts/test_backend_lock_consistency.py enforces it.
-# Every CI job installs the lock except backend-compat, which installs this
-# file unresolved: direct pins are identical, but transitives deliberately float
-# to their newest compatible release there, so that job canaries upstream
-# releases before the lock adopts them (#2923). Dependabot's pip ecosystem
-# entry proposes upgrades here.
+# The backend test, drift, e2e and DAST jobs install the lock. The exceptions
+# read this file unresolved, so their transitives float to the newest
+# compatible release:
+#   * backend-ci.yml backend-compat -- deliberately: it canaries upstream
+#     releases (e.g. Starlette) before the lock adopts them (#2923);
+#   * _claude-scan.yml and deslop.yml -- their "Install backend toolbox" steps
+#     pip install this file with requirements-dev.txt for read-only analysis;
+#   * creek-contract-drift.yml -- uses this file only as a constraints file.
+# backend-ci.yml's "Security (pip-audit)" step also runs against this file:
+# it audits the unresolved direct pins and whatever it resolves for them then,
+# not the locked transitive set in requirements-lock.txt.
+# Dependabot's pip ecosystem entry proposes upgrades here.
 cachetools==7.1.8
 # Validates backend/content/manifest.json against the frozen contract at
 # startup (issues #389/#390); the >=4.0 floor (JSON Schema draft 2020-12) is

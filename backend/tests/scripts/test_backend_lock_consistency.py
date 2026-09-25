@@ -2,7 +2,11 @@
 
 The backend has two dependency files. ``requirements.txt`` declares the direct
 dependencies with exact pins; ``requirements-lock.txt`` is the full transitive
-resolve of it, and every CI job except ``backend-compat`` installs the lock.
+resolve of it, and the backend test, drift, e2e and DAST jobs install the lock.
+``backend-compat`` installs ``requirements.txt`` unresolved on purpose, as the
+canary; the scan workflows' analyzer toolboxes (``_claude-scan.yml``,
+``deslop.yml``) and CI's pip-audit step also read the unresolved file -- see its
+header for the full list.
 Until #2923 the requirements header claimed the two "install one identical set".
 That held for the direct pins and was false for every transitive, and nothing
 checked either half -- a prose claim that survived until an upstream Starlette

@@ -1,9 +1,12 @@
 """backend-compat must report every Python leg, and must keep canarying transitives.
 
-``backend-compat`` is the one backend job that installs ``requirements.txt``
-unresolved rather than ``requirements-lock.txt``. Transitives such as Starlette
-float to their newest compatible release there, so this job is where an upstream
-release that breaks the app shows up first -- it is the dependency canary.
+``backend-compat`` is the one job that installs ``requirements.txt`` unresolved
+rather than ``requirements-lock.txt`` *and then runs the backend test suite*.
+(The scan workflows' analyzer toolboxes also install the unresolved file, but
+run no tests; the header of ``requirements.txt`` lists every such reader.)
+Transitives such as Starlette float to their newest compatible release there, so
+this job is where an upstream release that breaks the app shows up first -- it is
+the dependency canary.
 
 In #2923 that is exactly what happened: Starlette 1.7.0 began adding ``Origin``
 to ``Vary``, the 3.11 leg went red, and GitHub's default ``fail-fast: true``
@@ -244,6 +247,6 @@ def test_backend_compat_installs_the_unpinned_requirements_not_the_lock() -> Non
         f"to their newest release (#2923); its install step runs {command!r}"
     )
     assert _LOCK_FILE not in command, (
-        f"backend-compat must not install {_LOCK_FILE}: every other job already "
-        f"tests the lock, and the canary would stop seeing new transitives (#2923)"
+        f"backend-compat must not install {_LOCK_FILE}: the other backend test jobs "
+        f"already test the lock, and the canary would stop seeing new transitives (#2923)"
     )
