@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Geoffe-Ga/adepthood/backend/src/curriculum/stage_correspondence.schema.json",
+  "title": "APTITUDE stage correspondence",
+  "description": "Schema 1.0.0 for the generated stage-correspondence artifact (#2664). Written by backend/scripts/build_stage_correspondence.py from the vendored Complete Map CSV plus stage_correspondence_supersessions.json; never hand-edited. The ten stages are fixed by position (prefixItems + const), so a duplicate, missing, extra or reordered stage is rejected by the schema itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "supersessions",
+    "stages"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "sha",
+        "csv_path",
+        "sha256"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$"
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "csv_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "supersessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stage_id",
+          "field",
+          "csv_value",
+          "value",
+          "authority"
+        ],
+        "properties": {
+          "stage_id": {
+            "enum": [
+              "beige",
+              "purple",
+              "red",
+              "blue",
+              "orange",
+              "green",
+              "yellow",
+              "teal",
+              "ultraviolet",
+              "clearlight"
+            ]
+          },
+          "field": {
+            "enum": [
+              "category",
+              "aspect",
+              "spiral_dynamics_color",
+              "growing_up_stage",
+              "divine_gender_polarity",
+              "relationship_to_free_will",
+              "free_will_description"
+            ]
+          },
+          "csv_value": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/trimmed_string"
+          },
+          "authority": {
+            "type": "string",
+            "pattern": "^markdown/(?!backup/).+\\.md$"
+          }
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 10,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "beige"
+                },
+                "stage_number": {
+                  "const": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "purple"
+                },
+                "stage_number": {
+                  "const": 2
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "red"
+                },
+                "stage_number": {
+                  "const": 3
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "blue"
+                },
+                "stage_number": {
+                  "const": 4
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "orange"
+                },
+                "stage_number": {
+                  "const": 5
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "green"
+                },
+                "stage_number": {
+                  "const": 6
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "yellow"
+                },
+                "stage_number": {
+                  "const": 7
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "teal"
+                },
+                "stage_number": {
+                  "const": 8
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "ultraviolet"
+                },
+                "stage_number": {
+                  "const": 9
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stage"
+            },
+            {
+              "properties": {
+                "id": {
+                  "const": "clearlight"
+                },
+                "stage_number": {
+                  "const": 10
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "trimmed_string": {
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "stage_number",
+        "start_week",
+        "category",
+        "aspect",
+        "spiral_dynamics_color",
+        "growing_up_stage",
+        "divine_gender_polarity",
+        "relationship_to_free_will",
+        "free_will_description"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "beige",
+            "purple",
+            "red",
+            "blue",
+            "orange",
+            "green",
+            "yellow",
+            "teal",
+            "ultraviolet",
+            "clearlight"
+          ]
+        },
+        "stage_number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "start_week": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "category": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "aspect": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "spiral_dynamics_color": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "growing_up_stage": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "divine_gender_polarity": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "relationship_to_free_will": {
+          "$ref": "#/$defs/trimmed_string"
+        },
+        "free_will_description": {
+          "$ref": "#/$defs/trimmed_string"
+        }
+      }
+    }
+  }
+}
