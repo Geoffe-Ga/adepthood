@@ -487,8 +487,12 @@ def _entry(**overrides: str) -> list[dict[str, str]]:
         (_entry(csv_value="Cosmic Love"), "stale"),
         (_entry(authority="markdown/04-blue/99-missing.md"), "does not exist"),
         (_entry(authority="markdown/backup/old.md"), "backup"),
-        (_entry(authority="resources/community-love.md"), "markdown/"),
-        (_entry(authority="markdown/../CONTENT_VERSION"), "markdown/"),
+        (_entry(authority="resources/community-love.md"), "must be under markdown/"),
+        # Escapes then re-enters markdown/: only the traversal rule rejects it.
+        (
+            _entry(authority="markdown/../markdown/04-blue/02-community-love.md"),
+            "must be under markdown/",
+        ),
         (_entry(authority="markdown/08-teal/02-wisdom.md"), "does not contain"),
         (
             [
