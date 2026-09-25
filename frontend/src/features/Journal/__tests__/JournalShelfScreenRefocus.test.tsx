@@ -2,7 +2,13 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
-import type { JournalListResponse, JournalMessage, PromptDetail, ReflectionDue } from '@/api';
+import type {
+  JournalListResponse,
+  JournalMessage,
+  PromptDetail,
+  ReflectionCurrentScope,
+  ReflectionDue,
+} from '@/api';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -11,6 +17,9 @@ const mockDelete = jest.fn() as jest.MockedFunction<(_id: number) => Promise<voi
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
 const mockDue = jest.fn() as jest.MockedFunction<() => Promise<{ due: ReflectionDue | null }>>;
+const mockCurrent = jest.fn() as jest.MockedFunction<
+  () => Promise<{ scopes: ReflectionCurrentScope[] }>
+>;
 
 // Every mounted focus effect, as a "run its cleanup then run it again" thunk.
 // Firing these is this suite's stand-in for leaving the shelf and coming back.
@@ -27,7 +36,7 @@ jest.mock('@/api', () => ({
   },
   reflections: {
     due: (...a: unknown[]) => (mockDue as unknown as (...x: unknown[]) => unknown)(...a),
-    current: jest.fn(() => Promise.resolve({ scopes: [] })),
+    current: (...a: unknown[]) => (mockCurrent as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -129,6 +138,8 @@ beforeEach(() => {
   mockPromptCurrent.mockReset();
   mockDue.mockReset();
   mockDue.mockResolvedValue({ due: null });
+  mockCurrent.mockReset();
+  mockCurrent.mockResolvedValue({ scopes: [] });
   mockList.mockResolvedValue(page([]));
   mockDelete.mockResolvedValue(undefined);
   mockPromptCurrent.mockResolvedValue({
@@ -229,5 +240,29 @@ describe('the shelf when the writer comes back to it', () => {
 
     expect(await findByTestId('morning-pages-tip-stub')).toBeTruthy();
     expect(queryByTestId('journal-reflection-band')).toBeNull();
+  });
+
+  it('re-reads the open early-review picker, so a review begun elsewhere is offered to continue', async () => {
+    const weekTwo: ReflectionCurrentScope = {
+      level: 'week',
+      scope_key: 'c1:w2',
+      window_start: '2026-07-08T00:00:00Z',
+      window_end: '2026-07-15T00:00:00Z',
+      existing_entry_id: null,
+    };
+    mockCurrent.mockResolvedValue({ scopes: [weekTwo] });
+    const { findByTestId, findByText, getByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('morning-pages-tip-stub');
+    fireEvent.press(getByTestId('journal-review-early'));
+    expect(await findByText('Weekly Review — Week 2')).toBeTruthy();
+
+    // The writer leaves with the picker still open and claims week 2 elsewhere
+    // (the due card, another tab). Coming back must not offer a second page.
+    mockCurrent.mockResolvedValue({ scopes: [{ ...weekTwo, existing_entry_id: 77 }] });
+    await returnToTheShelf();
+
+    expect(await findByText('Continue — Weekly Review — Week 2')).toBeTruthy();
+    fireEvent.press(getByTestId('journal-review-scope-week'));
+    expect(mockNavigate).toHaveBeenLastCalledWith('JournalEntry', { entryId: 77 });
   });
 });

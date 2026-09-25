@@ -57,10 +57,21 @@ async function loadPickableScopes(): Promise<PickableScope[]> {
 }
 
 /**
- * The scopes in progress today, fetched each time ``enabled`` turns true.
- * Exported so a screen with its own layout can list them without this view.
+ * The scopes in progress today, fetched each time ``enabled`` turns true AND
+ * each time ``refreshKey`` changes while enabled. The host bumps
+ * ``refreshKey`` when its screen regains focus: a review begun elsewhere in the
+ * meantime must come back as "continue", never as a second fresh page. While a
+ * re-read is out the rows are withdrawn rather than left pressable with stale
+ * entry ids. Exported so a screen with its own layout can list them without
+ * this view.
  */
-export function useCurrentReviewScopes({ enabled }: { enabled: boolean }): {
+export function useCurrentReviewScopes({
+  enabled,
+  refreshKey = 0,
+}: {
+  enabled: boolean;
+  refreshKey?: number;
+}): {
   status: ReviewScopesStatus;
   scopes: PickableScope[];
 } {
@@ -86,7 +97,7 @@ export function useCurrentReviewScopes({ enabled }: { enabled: boolean }): {
     return () => {
       active = false;
     };
-  }, [enabled]);
+  }, [enabled, refreshKey]);
 
   return { status, scopes };
 }
@@ -94,6 +105,8 @@ export function useCurrentReviewScopes({ enabled }: { enabled: boolean }): {
 export interface ReviewScopePickerProps {
   /** Whether the list is open; nothing is fetched or shown until it is. */
   enabled: boolean;
+  /** Change it (e.g. on screen focus) to re-read the open scopes. */
+  refreshKey?: number;
   /** Receives where the chosen review should open. */
   onChoose: (_params: ReviewEntryParams) => void;
 }
@@ -122,9 +135,10 @@ function ScopeRow({
 
 function ReviewScopePicker({
   enabled,
+  refreshKey,
   onChoose,
 }: ReviewScopePickerProps): React.JSX.Element | null {
-  const { status, scopes } = useCurrentReviewScopes({ enabled });
+  const { status, scopes } = useCurrentReviewScopes({ enabled, refreshKey });
   if (!enabled || status === 'idle' || status === 'loading') return null;
   if (status === 'error') return <Text style={styles.note}>{PICKER_UNAVAILABLE}</Text>;
   if (scopes.length === 0) return <Text style={styles.note}>{PICKER_EMPTY}</Text>;

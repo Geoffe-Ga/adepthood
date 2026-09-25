@@ -17,7 +17,7 @@
  * meanwhile and swapping it for the review would put a mis-tap one network
  * round-trip wide on the first screenful.
  */
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -69,6 +69,14 @@ function JournalPrimaryInvitation({
   const due = useDueReview();
   const { review } = due;
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Bumped on every focus so an open picker re-reads /reflections/current: a
+  // scope claimed while the writer was away must be offered to continue.
+  const [focusCount, setFocusCount] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setFocusCount((count) => count + 1);
+    }, []),
+  );
 
   const openReview = useCallback(() => {
     if (review == null) return;
@@ -96,7 +104,7 @@ function JournalPrimaryInvitation({
         onPress={togglePicker}
         style={styles.earlyLink}
       />
-      <ReviewScopePicker enabled={pickerOpen} onChoose={chooseEarly} />
+      <ReviewScopePicker enabled={pickerOpen} refreshKey={focusCount} onChoose={chooseEarly} />
     </View>
   );
 }
