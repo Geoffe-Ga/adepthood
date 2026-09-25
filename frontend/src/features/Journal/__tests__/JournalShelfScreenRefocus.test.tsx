@@ -2,7 +2,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
-import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import type { JournalListResponse, JournalMessage, PromptDetail, ReflectionDue } from '@/api';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -10,6 +10,7 @@ const mockList = jest.fn() as jest.MockedFunction<
 const mockDelete = jest.fn() as jest.MockedFunction<(_id: number) => Promise<void>>;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
+const mockDue = jest.fn() as jest.MockedFunction<() => Promise<{ due: ReflectionDue | null }>>;
 
 // Every mounted focus effect, as a "run its cleanup then run it again" thunk.
 // Firing these is this suite's stand-in for leaving the shelf and coming back.
@@ -24,6 +25,15 @@ jest.mock('@/api', () => ({
     current: (...a: unknown[]) =>
       (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
   },
+  reflections: {
+    due: (...a: unknown[]) => (mockDue as unknown as (...x: unknown[]) => unknown)(...a),
+    current: jest.fn(() => Promise.resolve({ scopes: [] })),
+  },
+}));
+
+jest.mock('@/storage/reflectionDismissalStorage', () => ({
+  loadReflectionDismissed: jest.fn(() => Promise.resolve(false)),
+  saveReflectionDismissed: jest.fn(() => Promise.resolve()),
 }));
 
 // A focus effect that can be re-fired, unlike the mount-only stand-in the other
@@ -81,11 +91,6 @@ jest.mock('../MorningPagesTip', () => {
   const Stub = () => <View testID="morning-pages-tip-stub" />;
   return { __esModule: true, default: Stub };
 });
-jest.mock('../ReflectionInvitationBand', () => {
-  const { View } = require('react-native');
-  const Stub = () => <View testID="reflection-band-stub" />;
-  return { __esModule: true, default: Stub };
-});
 
 const JournalShelfScreen = require('../JournalShelfScreen').default;
 
@@ -122,6 +127,8 @@ beforeEach(() => {
   mockDelete.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
+  mockDue.mockReset();
+  mockDue.mockResolvedValue({ due: null });
   mockList.mockResolvedValue(page([]));
   mockDelete.mockResolvedValue(undefined);
   mockPromptCurrent.mockResolvedValue({
@@ -194,5 +201,33 @@ describe('the shelf when the writer comes back to it', () => {
 
     expect(queryByTestId('journal-shelf-card-2')).toBeNull();
     expect(mockList).toHaveBeenCalledTimes(callsBefore);
+  });
+
+  it('re-reads which review is due, so a shelf left open overnight offers today’s', async () => {
+    const { findByTestId, findByText, queryByTestId } = render(<JournalShelfScreen />);
+    // Yesterday: nothing due, so the daily page holds the primary slot.
+    await findByTestId('morning-pages-tip-stub');
+    expect(queryByTestId('journal-reflection-band')).toBeNull();
+
+    mockDue.mockResolvedValue({
+      due: {
+        level: 'week',
+        scope_key: 'c1:w1',
+        window_start: '2026-07-01T00:00:00Z',
+        window_end: '2026-07-08T00:00:00Z',
+        existing_entry_id: null,
+      },
+    });
+    await returnToTheShelf();
+
+    expect(await findByText('Write your Weekly Review')).toBeTruthy();
+    expect(queryByTestId('morning-pages-tip-stub')).toBeNull();
+
+    // And the day after, when it has closed, the review goes away again.
+    mockDue.mockResolvedValue({ due: null });
+    await returnToTheShelf();
+
+    expect(await findByTestId('morning-pages-tip-stub')).toBeTruthy();
+    expect(queryByTestId('journal-reflection-band')).toBeNull();
   });
 });

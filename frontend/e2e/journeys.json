@@ -317,6 +317,24 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.review-from-the-shelf-cta",
+    "description": "On a review day the Journal shelf's one call to write is the due review -- 'Write your Weekly Review' -- rather than the morning-pages tip beside it, and it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On any other day the daily page holds that slot, and a quiet 'Start a review early' link beneath it opens a picker of every scope still in progress (GET /reflections/current: week, stage, section, course); choosing the week on program day 9 opens 'Weekly Review -- Week 2', and the saved page carries that scope (c1:w2) so the picker then offers to continue it rather than start a second. The composer reads the in-progress scope's sources so far. Declining a review sets aside only that scope; the no-flash rule (no card while /due is out), the four level CTAs, the stage-10 section omission and the tz-local day count are pinned by the Jest and pytest suites beside JournalPrimaryInvitation and routers/reflections.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["reflections", "journal", "stages"],
+      "routes": [
+        "GET /reflections/due",
+        "GET /reflections/current",
+        "GET /reflections/sources",
+        "POST /journal/",
+        "GET /journal/"
+      ],
+      "tables": ["journalentry", "stageprogress"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-review-from-shelf.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.reopen-past-cycle-review-sees-its-own-sources",
     "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass, at any level of the cadence -- a week, a stage, a section of three stages, or the whole course. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. Uncovered because driving it end to end needs a browser-lane arrange that completes a cycle and presses begin-again, and no begin-again journey exists yet; pinned meanwhile by test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py and ReflectionSourcesPanel.test.tsx.",
     "crosses": {

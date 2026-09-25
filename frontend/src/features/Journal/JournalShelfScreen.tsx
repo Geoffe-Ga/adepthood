@@ -2,9 +2,10 @@
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * "New entry" action row, the current stage's prompts, a ``ReflectionInvitationBand``, a
- * ``VoiceReadinessBand``, a
- * ``MorningPagesTip``, and ``SearchBar`` on the warm palette. Below it, entries group by recency (This
+ * "New entry" action row, the current stage's prompts, the
+ * ``JournalPrimaryInvitation`` (a due review or the daily page, plus the
+ * early-review link), a ``VoiceReadinessBand``, and ``SearchBar`` on the warm
+ * palette. Below it, entries group by recency (This
  * week / This month / Earlier) as lifted paper tiles with a reading-time +
  * "saved … ago" caption, over an inviting empty state with a call to action.
  * Tapping a page opens the entry screen by id.
@@ -21,13 +22,12 @@ import DeleteEntryDialog from './DeleteEntryDialog';
 import { excerpt } from './excerpt';
 import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
+import JournalPrimaryInvitation from './JournalPrimaryInvitation';
 import styles from './JournalShelf.styles';
-import MorningPagesTip from './MorningPagesTip';
 import { usePressScale } from './motion';
 import PromptHistoryModal from './PromptHistoryModal';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
 import ReflectionDismiss from './ReflectionDismiss';
-import ReflectionInvitationBand from './ReflectionInvitationBand';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
@@ -703,9 +703,8 @@ function ShelfTopMatter({
         <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
       </View>
       <StagePromptSection band={stagePrompts} onOpen={onPrompt} />
-      <ReflectionInvitationBand />
+      <JournalPrimaryInvitation onBeginPage={onMorningPage} />
       <VoiceReadinessBand />
-      <MorningPagesTip onBegin={onMorningPage} />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
       </View>

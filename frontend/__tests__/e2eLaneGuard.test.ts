@@ -67,6 +67,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-resonance-refill.browser.e2e.test.ts',
   'journal-return-offer.browser.e2e.test.ts',
+  'journal-review-from-shelf.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'journal-title-single-line.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',

@@ -1,25 +1,30 @@
 /**
- * ``ReflectionInvitationBand`` — the 7th-day reflection invitation on the
- * Journal shelf. Self-contained like ``ReturnStack`` / ``InvitationStack``: it
- * takes no props, fetches its own "is a reflection due?" state, and quietly
- * renders nothing when nothing is due, when the scope was set aside, or on any
- * fetch error.
+ * ``ReflectionInvitationBand`` — the card that offers a review on the day it
+ * comes round. Presentational since issue #2867: ``JournalPrimaryInvitation``
+ * decides WHETHER a review is the shelf's call to write (and fetches it); this
+ * only draws it, under the same testIDs the browser specs press.
  *
- * "You choose your depth": this is a warm, one-tap-declinable invitation — never
- * a gate and never gamified. There is deliberately no streak, no count, and no
- * guilt copy. Declining persists per scope key, so the same window stays quiet
- * while a genuinely new scope still surfaces its own invitation.
+ * "You choose your depth": a warm, one-tap-declinable invitation — never a gate
+ * and never gamified. There is deliberately no streak, no count, and no guilt
+ * copy.
  */
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useEffect, useState } from 'react';
+import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { reflectionTitle } from './reflectionCopy';
 import ReflectionDismiss from './ReflectionDismiss';
+import {
+  REVIEW_BAND_LABEL,
+  REVIEW_DISMISS,
+  REVIEW_DISMISS_A11Y,
+  REVIEW_INVITE_SUBLINE,
+  REVIEW_RESUME_SUBLINE,
+  beginReviewA11y,
+  continueReviewA11y,
+  writeReviewCta,
+} from './reviewInvitationCopy';
+import { reviewTitle } from './reviewScopes';
+import type { DueReview } from './useDueReview';
 
-import { reflections, stages } from '@/api';
-import type { ReflectionDue } from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -31,105 +36,24 @@ import {
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
-import type { RootStackParamList } from '@/navigation/RootStack';
-import {
-  loadReflectionDismissed,
-  saveReflectionDismissed,
-} from '@/storage/reflectionDismissalStorage';
-
-/** Extracts the stage ordinal from a stage scope key (``c1:s1`` → ``1``). */
-const STAGE_SCOPE_KEY = /^c\d+:s(\d+)$/;
 
 /** The band's identifying warm left rule (matches the weekly-prompt band), in dp. */
 const ACCENT_BAR_WIDTH = 3;
 
-/** Warm, declinable copy — no streaks, no counts, no guilt. */
-const BAND_LABEL = 'A reflection has come round';
-const INVITE_SUBLINE = 'A quiet space to look back — only if you like.';
-const DISMISS_LABEL = 'Not now';
-const DISMISS_A11Y = 'Set this reflection invitation aside';
-
-type BandNavigation = NativeStackNavigationProp<RootStackParamList>;
-
-/** A due reflection plus the stage title resolved for stage-level copy. */
-interface DueBand {
-  due: ReflectionDue;
-  stageTitle: string | null;
+export interface ReflectionInvitationBandProps {
+  review: DueReview;
+  onOpen: () => void;
+  onDismiss: () => void;
 }
 
-/** Resolve the stage title for a stage scope key, or null when unavailable. */
-async function resolveStageTitle(scopeKey: string): Promise<string | null> {
-  const captured = STAGE_SCOPE_KEY.exec(scopeKey)?.[1];
-  const stageNumber = captured == null ? Number.NaN : Number.parseInt(captured, 10);
-  if (Number.isNaN(stageNumber)) return null;
-  const all = await stages.listAll();
-  const found = all.find((stage) => stage.stage_number === stageNumber);
-  return found?.title ?? null;
-}
-
-/**
- * Fetch the due window and derive the band, or null when there is nothing to
- * show. Any failure resolves null so the shelf never sees an error from a
- * background poll — the invitation simply stays quiet.
- */
-async function resolveDueBand(): Promise<DueBand | null> {
-  try {
-    const { due } = await reflections.due();
-    if (due == null) return null;
-    if (await loadReflectionDismissed(due.scope_key)) return null;
-    const stageTitle = due.level === 'stage' ? await resolveStageTitle(due.scope_key) : null;
-    return { due, stageTitle };
-  } catch {
-    return null;
-  }
-}
-
-/** Owns the due-band state, the fetch-on-mount, and the open/dismiss actions. */
-function useReflectionInvitation(navigation: BandNavigation) {
-  const [band, setBand] = useState<DueBand | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    void resolveDueBand().then((resolved) => {
-      if (active && resolved != null) setBand(resolved);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const onOpen = useCallback(() => {
-    if (band == null) return;
-    const { due, stageTitle } = band;
-    if (due.existing_entry_id != null) {
-      navigation.navigate('JournalEntry', { entryId: due.existing_entry_id });
-      return;
-    }
-    navigation.navigate('JournalEntry', {
-      reflectionLevel: due.level,
-      reflectionScopeKey: due.scope_key,
-      prefillTitle: reflectionTitle(due.level, due.scope_key, stageTitle ?? undefined),
-    });
-  }, [band, navigation]);
-
-  const onDismiss = useCallback(() => {
-    if (band == null) return;
-    void saveReflectionDismissed(band.due.scope_key, true);
-    setBand(null);
-  }, [band]);
-
-  return { band, onOpen, onDismiss };
-}
-
-function ReflectionInvitationBand(): React.JSX.Element | null {
-  const navigation = useNavigation<BandNavigation>();
-  const { band, onOpen, onDismiss } = useReflectionInvitation(navigation);
-  if (band == null) return null;
-
-  const { due, stageTitle } = band;
-  const title = reflectionTitle(due.level, due.scope_key, stageTitle ?? undefined);
-  const resuming = due.existing_entry_id != null;
-  const accessibilityLabel = resuming ? `Continue your ${title}` : `Begin your ${title}`;
+function ReflectionInvitationBand({
+  review,
+  onOpen,
+  onDismiss,
+}: ReflectionInvitationBandProps): React.JSX.Element {
+  const { scope, stageTitle } = review;
+  const title = reviewTitle(scope, stageTitle);
+  const resuming = scope.existing_entry_id != null;
 
   // A plain container, not a pressable, so the inner "open" and "decline"
   // buttons stay independently reachable by assistive tech (a pressable wrapper
@@ -141,18 +65,19 @@ function ReflectionInvitationBand(): React.JSX.Element | null {
         style={styles.openArea}
         onPress={onOpen}
         accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
+        accessibilityLabel={resuming ? continueReviewA11y(title) : beginReviewA11y(title)}
         testID="journal-reflection-band"
       >
-        <Text style={styles.label}>{BAND_LABEL}</Text>
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.label}>{REVIEW_BAND_LABEL}</Text>
+        <Text style={styles.title}>{writeReviewCta(scope.level)}</Text>
+        <Text style={styles.scope}>{title}</Text>
         <Text style={styles.subline}>
-          {resuming ? 'Pick up where you left off.' : INVITE_SUBLINE}
+          {resuming ? REVIEW_RESUME_SUBLINE : REVIEW_INVITE_SUBLINE}
         </Text>
       </TouchableOpacity>
       <ReflectionDismiss
-        label={DISMISS_LABEL}
-        accessibilityLabel={DISMISS_A11Y}
+        label={REVIEW_DISMISS}
+        accessibilityLabel={REVIEW_DISMISS_A11Y}
         testID="journal-reflection-dismiss"
         onPress={onDismiss}
       />
@@ -165,8 +90,8 @@ const styles = StyleSheet.create({
     marginTop: SPACING.lg,
     padding: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
-    // A raised sheet with the same warm accent rule as the weekly-prompt band,
-    // so the two invitations read as a matched pair on the shelf.
+    // A raised sheet with the same warm accent rule as the morning-pages tip it
+    // stands in for, so the shelf's primary invitation keeps one treatment.
     backgroundColor: surface.raised,
     borderLeftWidth: ACCENT_BAR_WIDTH,
     borderLeftColor: accent.primary,
@@ -181,6 +106,11 @@ const styles = StyleSheet.create({
   },
   title: {
     ...editorialType.heading,
+    color: ink.primary,
+    paddingTop: spacing(0.5),
+  },
+  scope: {
+    ...editorialType.body,
     color: ink.primary,
     paddingTop: spacing(0.5),
   },

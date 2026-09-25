@@ -1,7 +1,7 @@
 /**
  * ``VoiceReadinessBand`` — a quiet note on the Journal shelf saying where the
  * reflections a person reads are actually coming from. Self-contained like
- * ``ReflectionInvitationBand``: it takes no props, fetches its own state, and
+ * ``ReturnStack``: it takes no props, fetches its own state, and
  * renders nothing while that is resolving, on any fetch error, once the corpus
  * is grounding the voice, and once the note has been set aside.
  *

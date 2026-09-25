@@ -27,6 +27,13 @@ const mockPromptBringBack = jest.fn() as jest.MockedFunction<
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
+  // The shelf's primary invitation asks what review is due; answer "none" so
+  // the daily-page fallback runs through a real resolved null, not a caught
+  // TypeError from a client this mock forgot.
+  reflections: {
+    due: jest.fn(() => Promise.resolve({ due: null })),
+    current: jest.fn(() => Promise.resolve({ scopes: [] })),
+  },
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     update: jest.fn(),
