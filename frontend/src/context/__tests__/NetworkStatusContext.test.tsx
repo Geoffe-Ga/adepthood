@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, it, expect, beforeEach, jest */
+/* global describe, it, expect, beforeEach, afterEach, jest */
 import NetInfo from '@react-native-community/netinfo';
 import { render, act, waitFor } from '@testing-library/react-native';
 import React from 'react';
@@ -18,6 +18,7 @@ type NetInfoState = { isConnected: boolean; isInternetReachable: boolean | null 
 const mockedNetInfo = NetInfo as unknown as {
   fetch: jest.Mock;
   addEventListener: jest.Mock;
+  refresh: jest.Mock;
 };
 
 function StatusText(): React.JSX.Element {
@@ -92,5 +93,52 @@ describe('NetworkStatusContext', () => {
       listener?.({ isConnected: false, isInternetReachable: null });
     });
     expect(await findByTestId('offline-banner')).toBeTruthy();
+  });
+});
+
+/**
+ * #2930 — NetInfo's web module listens only to the NetworkInformation `change`
+ * event when the browser has that API, and Chromium fires it going offline but
+ * not coming back. Without a nudge the app believes it is offline forever, the
+ * banner never clears and nothing that waits for reconnect ever runs.
+ */
+describe('NetworkStatusContext — window online events (#2930)', () => {
+  type WindowEvents = {
+    addEventListener?: (_type: string, _listener: () => void) => void;
+    removeEventListener?: (_type: string, _listener: () => void) => void;
+  };
+  const win = window as unknown as WindowEvents;
+  let onlineListener: (() => void) | null = null;
+
+  beforeEach(() => {
+    onlineListener = null;
+    win.addEventListener = jest.fn((type: string, listener: () => void) => {
+      if (type === 'online') onlineListener = listener;
+    });
+    win.removeEventListener = jest.fn((type: string, listener: () => void) => {
+      if (type === 'online' && onlineListener === listener) onlineListener = null;
+    });
+  });
+
+  afterEach(() => {
+    delete win.addEventListener;
+    delete win.removeEventListener;
+  });
+
+  it('re-reads NetInfo when the window reports it is back online', async () => {
+    const { unmount } = render(
+      <NetworkStatusProvider>
+        <StatusText />
+      </NetworkStatusProvider>,
+    );
+    expect(mockedNetInfo.refresh).not.toHaveBeenCalled();
+
+    await act(async () => {
+      onlineListener?.();
+    });
+    expect(mockedNetInfo.refresh).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(onlineListener).toBeNull();
   });
 });
