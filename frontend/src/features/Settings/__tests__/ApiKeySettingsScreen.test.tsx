@@ -1,8 +1,8 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
-import { Alert, Linking } from 'react-native';
+import { Linking } from 'react-native';
 
 import ApiKeySettingsScreen, {
   SECURE_STORAGE_WARNING,
@@ -12,6 +12,7 @@ import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 
 import { useApiKey } from '@/context/ApiKeyContext';
+import habitStyles from '@/features/Habits/Habits.styles';
 
 jest.mock('@/context/ApiKeyContext', () => ({
   useApiKey: jest.fn(),
@@ -37,6 +38,18 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
 beforeEach(() => {
   jest.clearAllMocks();
 });
+
+/** Presses Remove, then the rendered dialog's destructive confirm (#2928). */
+async function confirmRemoval(
+  getByTestId: ReturnType<typeof render>['getByTestId'],
+): Promise<void> {
+  await act(async () => {
+    fireEvent.press(getByTestId('remove-key-button'));
+  });
+  await act(async () => {
+    fireEvent.press(getByTestId('remove-key-confirm'));
+  });
+}
 
 describe('validateUserApiKey', () => {
   test('accepts a well-formed OpenAI key', () => {
@@ -208,38 +221,52 @@ describe('ApiKeySettingsScreen', () => {
     expect(input.props.secureTextEntry).toBe(false);
   });
 
-  test('remove button asks for confirmation before clearing', async () => {
+  test('removes the key through the rendered confirm dialog without Alert (web-safe)', async () => {
     const state = setApiKeyState({ apiKey: VALID_KEY });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      // Simulate the user tapping the destructive "Remove" button.
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
+    const view = render(<ApiKeySettingsScreen />);
 
-    const { getByTestId } = render(<ApiKeySettingsScreen />);
     await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
+      fireEvent.press(view.getByTestId('remove-key-button'));
     });
 
-    await waitFor(() => expect(state.clearApiKey).toHaveBeenCalled());
-    alertSpy.mockRestore();
+    const dialog = view.getByTestId('remove-key-dialog');
+    expect(within(dialog).getByText('Remove API key?')).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        'BotMason will fall back to the shared server key (if configured). You can add your own key again at any time.',
+      ),
+    ).toBeTruthy();
+    const buttons = within(dialog).getAllByRole('button');
+    expect(buttons.map((button) => within(button).getByText(/./).props.children)).toEqual([
+      'Cancel',
+      'Remove',
+    ]);
+    expect(within(dialog).getByText('Remove').props.style).toEqual(habitStyles.discardExitText);
+    expect(state.clearApiKey).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('remove-key-confirm'));
+    });
+
+    expect(state.clearApiKey).toHaveBeenCalledTimes(1);
+    expect(view.queryByTestId('remove-key-dialog')).toBeNull();
+    expect(await view.findByText('API key removed from this device.')).toBeTruthy();
   });
 
-  test('dismissing the remove confirmation does not clear the key', async () => {
+  test('cancel closes the remove dialog and keeps the key', async () => {
     const state = setApiKeyState({ apiKey: VALID_KEY });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      // Simulate the user tapping "Cancel" instead of the destructive action.
-      const cancel = buttons?.find((b) => b.style === 'cancel');
-      cancel?.onPress?.();
-    });
+    const view = render(<ApiKeySettingsScreen />);
 
-    const { getByTestId } = render(<ApiKeySettingsScreen />);
     await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
+      fireEvent.press(view.getByTestId('remove-key-button'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('remove-key-cancel'));
     });
 
     expect(state.clearApiKey).not.toHaveBeenCalled();
-    alertSpy.mockRestore();
+    expect(view.queryByTestId('remove-key-dialog')).toBeNull();
+    expect(view.getByTestId('stored-key-card')).toBeTruthy();
   });
 
   test('shows an error banner when saving a well-formed key fails', async () => {
@@ -263,36 +290,20 @@ describe('ApiKeySettingsScreen', () => {
       apiKey: VALID_KEY,
       clearApiKey: jest.fn(() => Promise.reject(new Error('keychain locked'))),
     });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
-
     const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
-    await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
-    });
+    await confirmRemoval(getByTestId);
 
     const error = await findByTestId('api-key-error');
     expect(error.props.children).toContain('keychain locked');
-    alertSpy.mockRestore();
   });
 
   test('confirms with a status banner when the stored key is removed', async () => {
     setApiKeyState({ apiKey: VALID_KEY });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
-
     const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
-    await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
-    });
+    await confirmRemoval(getByTestId);
 
     const status = await findByTestId('api-key-status');
     expect(status.props.children).toContain('removed from this device');
-    alertSpy.mockRestore();
   });
 
   test('shows only the storage warning, not the removed status, when the delete does not clear', async () => {
@@ -301,21 +312,13 @@ describe('ApiKeySettingsScreen', () => {
       loadError: new Error('locked'),
       clearApiKey: jest.fn(() => Promise.resolve({ cleared: false })),
     });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
-
     const { getByTestId, findByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
-    await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
-    });
+    await confirmRemoval(getByTestId);
 
     await waitFor(() => expect(state.clearApiKey).toHaveBeenCalled());
     expect(await findByTestId('api-key-storage-error')).toBeTruthy();
     expect(queryByTestId('api-key-status')).toBeNull();
     expect(queryByTestId('api-key-error')).toBeNull();
-    alertSpy.mockRestore();
   });
 
   test('falls back to a default message when saving fails with a blank error', async () => {
@@ -336,19 +339,11 @@ describe('ApiKeySettingsScreen', () => {
       apiKey: VALID_KEY,
       clearApiKey: jest.fn(() => Promise.reject(new Error(''))),
     });
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
-
     const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
-    await act(async () => {
-      fireEvent.press(getByTestId('remove-key-button'));
-    });
+    await confirmRemoval(getByTestId);
 
     const error = await findByTestId('api-key-error');
     expect(error.props.children).toContain('Could not remove the API key.');
-    alertSpy.mockRestore();
   });
 
   test('masks a short stored key entirely rather than partially revealing it', () => {
