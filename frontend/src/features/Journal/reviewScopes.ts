@@ -5,8 +5,10 @@
  *
  * ``reviewEntryParams`` is the single home of the navigation contract — a
  * scope already claimed by a live review reopens THAT entry, and any other
- * opens a fresh page carrying the scope and its program title — so no caller
- * can start a second review on a scope the writer has already begun.
+ * opens a fresh page carrying the scope and its program title. It is only as
+ * fresh as the scope it is handed, so the picker re-reads on focus, and a
+ * composer whose first save still collides (409, another tab) is rerouted to
+ * the live review by ``JournalEntryScreen``'s conflict handler.
  */
 import { reflectionTitle } from './reflectionCopy';
 
