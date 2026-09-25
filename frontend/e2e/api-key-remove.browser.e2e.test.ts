@@ -13,13 +13,21 @@ import { readLaneState } from './laneState';
  * rendered confirm is really there and really answers.
  *
  * Removal itself is device-local; no route is called. So the seam this spec
- * proves is what removal is *for*: the next resonance pass leaves the browser
- * without the `X-LLM-API-Key` header and draws on the shared allowance instead.
- * A control pass made while the key is stored proves the header recorder can
- * see the header at all, so its later absence is an observation rather than a
- * recorder that never looked. A spec that only checked the card disappeared
- * would pass against a build that hid the card while an in-memory getter kept
- * sending the key.
+ * proves is what removal is *for*, on both ways the client picks a key:
+ *
+ * - The resonance pass pins the payer it disclosed and passes that key
+ *   explicitly. After removal it is disclosed as, billed as, and sent as the
+ *   shared allowance: no `X-LLM-API-Key` header, one monthly message drawn.
+ *   This catches a build that hid the card while the key stayed in context.
+ * - The margin-note essay passes no key, so it reads the session getter that
+ *   `ApiKeyContext` registers. After removal, in the same session and before
+ *   any reload, it too leaves without the header. This catches a build whose
+ *   in-memory getter kept returning the removed key -- the resonance pass alone
+ *   cannot, because an explicit key never consults the getter.
+ *
+ * Controls made while the key is stored -- the pass, and the completion check
+ * the refused pass runs through the same getter -- carry the header, so its
+ * later absence is an observation rather than a recorder that never looked.
  */
 
 const READABLE_PAGE =
@@ -33,12 +41,13 @@ interface Usage {
   offering_balance: number;
 }
 
-/** Every resonance pass this browser sends for `entryId`, in order. */
-function recordPasses(page: Page, entryId: number): Request[] {
+/** Every POST this browser sends whose path matches `route`, in order. */
+function recordPosts(page: Page, route: RegExp): Request[] {
   const sent: Request[] = [];
-  const route = `/journal/${String(entryId)}/resonance`;
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().endsWith(route)) sent.push(request);
+    if (request.method() === 'POST' && route.test(new URL(request.url()).pathname)) {
+      sent.push(request);
+    }
   });
   return sent;
 }
@@ -91,7 +100,12 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   const email = await signUp(page, 'api-key-remove');
   const token = await tokenFor(page.request, email);
   const entryId = await writeFinishedPage(page, token);
-  const passes = recordPasses(page, entryId);
+  const passes = recordPosts(page, new RegExp(`/journal/${String(entryId)}/resonance$`, 'u'));
+  const detections = recordPosts(
+    page,
+    new RegExp(`/journal/${String(entryId)}/suggestions/detect$`, 'u'),
+  );
+  const essays = recordPosts(page, /\/journal\/marginalia\/\d+\/essay$/u);
   const key = laneKey();
 
   // 1. Control: with the key stored, a pass carries it. The lane's fake provider
@@ -106,6 +120,10 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   expect(passes[0]?.headers()[LLM_KEY_HEADER]).toBe(key);
   await expect(page.getByTestId('journal-resonance-error')).toContainText('your API key');
   expect(await usage(page, token)).toEqual(walletWithKey);
+  // The refused pass still runs the completion check, which passes no key and
+  // so reads the session getter: while the key is stored, the getter sends it.
+  await expect.poll(() => detections.length).toBe(1);
+  expect(detections[0]?.headers()[LLM_KEY_HEADER]).toBe(key);
 
   // 2. From the entry's own shortcut -- in-app navigation, so the session that
   //    held the key stays alive -- cancelling the rendered confirm keeps it.
@@ -147,7 +165,17 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
     .poll(async () => (await usage(page, token)).monthly_messages_used)
     .toBe(walletBefore.monthly_messages_used + 1);
 
-  // 5. And it stays removed across a reload.
+  // 5. The getter, still in the same session: opening a margin note the shared
+  //    pass wrote asks for its essay with no explicit key, so the request's
+  //    header comes from the getter alone -- and it no longer carries the key.
+  const note = page.locator('[data-testid^="margin-note-"]:not([data-testid*="stale"])').first();
+  await note.click();
+  await expect.poll(() => essays.length).toBe(1);
+  expect(essays[0]?.headers()[LLM_KEY_HEADER]).toBeUndefined();
+  await expect(page.getByTestId('essay-text')).toBeVisible();
+  await page.getByTestId('essay-close').click();
+
+  // 6. And it stays removed across a reload.
   await page.goto(`${frontendUrl()}/api-key-settings`);
   await expect(page.getByTestId('no-key-hint')).toBeVisible();
   await expect(page.getByTestId('stored-key-card')).toHaveCount(0);

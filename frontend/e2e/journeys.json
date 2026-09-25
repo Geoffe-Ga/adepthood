@@ -797,12 +797,17 @@
   },
   {
     "id": "account.byok-key-can-be-removed",
-    "description": "Someone who saved their own model key on this device removes it from Settings. The press opens a rendered confirmation (not Alert.alert, which react-native-web ships as an empty method and which left the key irremovable on web, #2928); Cancel keeps the key and Remove clears it, and it is still gone after a reload. Removal itself is device-local and calls no route, so the seam this journey proves is what removal is for: reached from the entry's own API-key shortcut in the same browser session, the next resonance pass is disclosed as drawing on the shared allowance, leaves the browser without the X-LLM-API-Key header, and raises monthly_messages_used by one. A control pass made while the key is stored carries the header and moves neither BotMason bucket, so the header's later absence is observed rather than assumed. A spec that only watched the key card disappear would pass against a build that hid the card while still sending the key.",
+    "description": "Someone who saved their own model key on this device removes it from Settings. The press opens a rendered confirmation (not Alert.alert, which react-native-web ships as an empty method and which left the key irremovable on web, #2928); Cancel keeps the key and Remove clears it, and it is still gone after a reload. Removal itself is device-local and calls no route, so the journey proves what removal is for, on both ways the client picks a key, reached from the entry's own API-key shortcut in the same browser session. The resonance pass passes its disclosed payer explicitly: after removal it is disclosed as the shared allowance, leaves without the X-LLM-API-Key header, and raises monthly_messages_used by one, which catches a build that hid the card while the key stayed in context. The margin-note essay passes no key and so reads the session getter ApiKeyContext registers: opened after removal and before any reload, it too leaves without the header, which catches a build whose in-memory getter kept returning the removed key (the explicit-key pass cannot, since it never consults the getter). Controls made while the key is stored carry the header -- the pass itself, and the completion check the refused pass runs through the getter -- so the header's later absence is observed rather than assumed.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
-      "client": ["resonance", "botmasonUsage"],
-      "routes": ["POST /journal/{entry_id}/resonance", "GET /user/usage"],
-      "tables": ["user"]
+      "client": ["resonance", "completionSuggestions", "botmasonUsage"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /user/usage"
+      ],
+      "tables": ["user", "marginalia"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/api-key-remove.browser.e2e.test.ts"
