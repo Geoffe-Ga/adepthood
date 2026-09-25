@@ -42,7 +42,30 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     # Batch patch + minor into one PR per run; majors stay individual.
+    #
+    # expo-sdk is listed FIRST on purpose: Dependabot puts a dependency in the
+    # first group whose rules match, so below npm-patch-minor it would never
+    # receive a package. It exists because the "Dependencies match the pinned
+    # Expo SDK" step in .github/workflows/frontend-ci.yml runs with
+    # EXPO_OFFLINE=1 (#2918): it judges the installed tree against the
+    # installed expo's own compatibility table, so a new SDK patch no longer
+    # turns main red on its own -- it arrives HERE, as one PR moving expo and
+    # its modules together, and the gate judges that PR against the new
+    # expo's table. The package.json pins are exact, so the PR's diff is the
+    # SDK move and nothing else. If the new table also moves a community
+    # package it pins (react-native-screens, -svg, -web, netinfo, ...), that
+    # PR goes red on the gate and must realign those siblings in the same PR,
+    # rather than any one of them riding the generic batch. SDK majors are a
+    # migration and stay individual.
     groups:
+      expo-sdk:
+        patterns:
+          - "expo"
+          - "expo-*"
+          - "@expo/*"
+        update-types:
+          - "patch"
+          - "minor"
       npm-patch-minor:
         update-types:
           - "patch"

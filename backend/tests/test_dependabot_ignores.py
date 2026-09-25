@@ -36,6 +36,19 @@ _NPM_FRONTEND_BLOCK = re.compile(
     r'^  - package-ecosystem: "npm"\n(?P<body>(?:.*\n)*?)(?=^  - package-ecosystem:|\Z)',
     re.MULTILINE,
 )
+# The group every Expo SDK package lands in, and the catch-all it must precede:
+# Dependabot assigns a dependency to the FIRST group whose rules match, so an
+# expo-sdk group listed after npm-patch-minor would never receive anything.
+_EXPO_SDK_GROUP = "expo-sdk"
+_GENERIC_GROUP = "npm-patch-minor"
+_EXPO_SDK_PATTERNS = ("expo", "expo-*", "@expo/*")
+# SDK patches and minors are batched; a major is a migration and stays its own PR.
+_EXPO_SDK_UPDATE_TYPES = ("patch", "minor")
+_MAJOR_UPDATE_TYPE = "major"
+
+# ``groups:`` inside an ecosystem block, then each group key one level deeper.
+_GROUPS_KEY = re.compile(r"^    groups:\n(?P<groups>(?:(?:      .*)?\n)*)", re.MULTILINE)
+_GROUP_KEY = re.compile(r"^      (?P<name>[A-Za-z0-9_-]+):\s*$", re.MULTILINE)
 _IGNORE_ENTRY = re.compile(
     r'-\s*dependency-name:\s*"(?P<name>[^"]+)"\s*\n\s*versions:\s*\[">=(?P<floor>[^"]+)"\]',
 )
@@ -73,6 +86,27 @@ def parse_ignore_rules(config: str) -> dict[str, str]:
         "the npm section no longer points at /frontend; this guard is reading the wrong block"
     )
     return {m.group("name"): m.group("floor") for m in _IGNORE_ENTRY.finditer(block.group("body"))}
+
+
+def group_bodies(config: str) -> dict[str, str]:
+    """Map each frontend npm group to its body text, in document order.
+
+    Pure and order-preserving, because order is the point: Dependabot puts a
+    dependency in the first group that matches it.
+    """
+    block = _NPM_FRONTEND_BLOCK.search(config)
+    assert block is not None, 'no `- package-ecosystem: "npm"` section in dependabot.yml'
+    groups = _GROUPS_KEY.search(block.group("body"))
+    assert groups is not None, "the /frontend npm section declares no `groups:`"
+    text = groups.group("groups")
+    keys = list(_GROUP_KEY.finditer(text))
+    ends = [key.start() for key in keys[1:]] + [len(text)]
+    return {key.group("name"): text[key.end() : end] for key, end in zip(keys, ends, strict=True)}
+
+
+def group_order(config: str) -> list[str]:
+    """Return the frontend npm group names in the order Dependabot tries them."""
+    return list(group_bodies(config))
 
 
 def find_stale_rules(rules: dict[str, str], installed: dict[str, str]) -> list[str]:
@@ -168,6 +202,38 @@ updates:
 """
 
 
+def test_the_expo_sdk_group_precedes_the_generic_group() -> None:
+    """Expo packages arrive as one SDK PR, not scattered through the generic batch.
+
+    The SDK gate judges installed versions against the installed expo's own
+    table (``EXPO_OFFLINE=1``), so a new SDK patch is only ever seen through a
+    Dependabot PR. Grouped, that PR moves expo and its modules together, and the
+    gate judges it against the new expo's table.
+    """
+    order = group_order(DEPENDABOT_CONFIG.read_text(encoding="utf-8"))
+    assert _EXPO_SDK_GROUP in order, f"no {_EXPO_SDK_GROUP} group; groups are {order}"
+    assert _GENERIC_GROUP in order, f"no {_GENERIC_GROUP} group; groups are {order}"
+    assert order.index(_EXPO_SDK_GROUP) < order.index(_GENERIC_GROUP), (
+        f"{_EXPO_SDK_GROUP} must precede {_GENERIC_GROUP}: the first matching group "
+        f"wins, so after it the Expo group never receives a package. Order: {order}"
+    )
+
+
+def test_the_expo_sdk_group_matches_every_expo_package() -> None:
+    """The expo package itself, every expo-* module, and the @expo scope."""
+    body = group_bodies(DEPENDABOT_CONFIG.read_text(encoding="utf-8"))[_EXPO_SDK_GROUP]
+    missing = [pattern for pattern in _EXPO_SDK_PATTERNS if f'- "{pattern}"' not in body]
+    assert not missing, f"the {_EXPO_SDK_GROUP} group does not match {missing}"
+
+
+def test_the_expo_sdk_group_leaves_majors_individual() -> None:
+    """An SDK major is a migration, reviewed alone rather than batched."""
+    body = group_bodies(DEPENDABOT_CONFIG.read_text(encoding="utf-8"))[_EXPO_SDK_GROUP]
+    for update_type in _EXPO_SDK_UPDATE_TYPES:
+        assert f'- "{update_type}"' in body, f"{_EXPO_SDK_GROUP} does not batch {update_type}"
+    assert f'- "{_MAJOR_UPDATE_TYPE}"' not in body
+
+
 def test_the_parser_reads_a_config_it_has_not_seen() -> None:
     """Parsing is exercised against something other than the committed file."""
     assert parse_ignore_rules(_SYNTHETIC_CONFIG) == {
@@ -231,3 +297,41 @@ def test_an_orphaned_rule_is_reported() -> None:
 def test_an_installed_package_is_not_reported_as_orphaned() -> None:
     """The healthy case, again -- both detectors have a proven quiet side."""
     assert find_orphaned_rules({"left-pad": "2.0.0"}, {"left-pad": "~1.0.0"}) == []
+
+
+_SYNTHETIC_GROUPS = """version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    groups:
+      npm-patch-minor:
+        update-types:
+          - "patch"
+      expo-sdk:
+        patterns:
+          - "expo"
+        update-types:
+          - "minor"
+    open-pull-requests-limit: 15
+
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    groups:
+      pip-patch-minor:
+        update-types:
+          - "patch"
+"""
+
+
+def test_group_order_reads_a_config_it_has_not_seen() -> None:
+    """Document order, not sorted order -- this fabricated config is reversed."""
+    assert group_order(_SYNTHETIC_GROUPS) == [_GENERIC_GROUP, _EXPO_SDK_GROUP]
+
+
+def test_group_bodies_stop_at_the_group_boundary() -> None:
+    """Each body is its own group's text; the ecosystem's other keys are excluded."""
+    bodies = group_bodies(_SYNTHETIC_GROUPS)
+    assert '- "expo"' in bodies[_EXPO_SDK_GROUP]
+    assert '- "expo"' not in bodies[_GENERIC_GROUP]
+    assert "open-pull-requests-limit" not in bodies[_EXPO_SDK_GROUP]
+    assert "pip-patch-minor" not in bodies
