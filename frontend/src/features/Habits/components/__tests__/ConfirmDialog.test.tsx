@@ -63,6 +63,14 @@ describe('ConfirmDialog', () => {
     expect(label.props.style).toEqual(styles.discardButtonText);
   });
 
+  it('exposes cancel then confirm as buttons to assistive tech', () => {
+    const { getAllByRole } = render(
+      <ConfirmDialog visible {...defaultProps} cancelLabel="Keep" confirmLabel="Delete" />,
+    );
+    const buttons = getAllByRole('button');
+    expect(buttons.map((button) => button.props.testID)).toEqual(['confirm-cancel', 'confirm-ok']);
+  });
+
   it('does not render its body when visible is false', () => {
     const { queryByTestId, queryByText } = render(
       <ConfirmDialog visible={false} {...defaultProps} />,
