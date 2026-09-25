@@ -21,6 +21,13 @@ on:
       - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
+      # The Expo SDK and Dependabot guards (#2918) read these; without them a
+      # PR reverting EXPO_OFFLINE or loosening an SDK pin never runs them.
+      # tests/scripts/test_sdk_alignment_gate.py pins this list.
+      - ".github/workflows/frontend-ci.yml"
+      - ".github/dependabot.yml"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
   pull_request:
     paths:
       - "backend/**"
@@ -33,6 +40,10 @@ on:
       - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/frontend-ci.yml"
+      - ".github/dependabot.yml"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
 
 # One in-flight run per PR. A Ralph lane pushing a fix while CI is still
 # grinding on the previous commit used to leave the stale run to burn to
