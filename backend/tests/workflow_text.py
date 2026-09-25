@@ -46,6 +46,16 @@ _WITH_KEY = re.compile(r"^(?P<indent>\s*)with:\s*$")
 # One ``key: value`` entry inside such a mapping.
 _MAPPING_ENTRY = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w.-]*):\s*(?P<value>.*?)\s*$")
 
+# A YAML comment trailing a line: ``#`` counts only after whitespace, so a
+# ``#`` glued to a value (``e#f``) is data, as YAML itself reads it.
+_TRAILING_COMMENT = re.compile(r"\s+#.*$")
+
+# A mapping value: a single- or double-quoted scalar, or a plain one, followed
+# by an optional trailing comment. A ``#`` inside quotes is part of the value.
+_SCALAR_VALUE = re.compile(
+    r"""^(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<plain>.*?))(?:\s+#.*)?$"""
+)
+
 # The workflow's own display name: ``name:`` at column zero. A job's ``name:``
 # is indented, and conflating the two is the whole hazard this anchor avoids.
 _WORKFLOW_NAME = re.compile(r"^name:\s*(?P<name>.+?)\s*$")
@@ -357,13 +367,13 @@ def _block_entries(lines: list[str], key_indent: int) -> list[tuple[int, str, st
             break
         entry = _MAPPING_ENTRY.match(line)
         if entry is not None:
-            value = entry.group("value").strip("\"'")
+            value = _scalar(entry.group("value"))
             entries.append((len(entry.group("indent")), entry.group("key"), value))
     return entries
 
 
 def _line_index(lines: list[str], key: str) -> int | None:
-    """Return the index of the first line equal to a key, ignoring trailing space.
+    """Return the index of the first line equal to a key, ignoring a trailing comment.
 
     Args:
         lines: The workflow's lines.
@@ -373,9 +383,32 @@ def _line_index(lines: list[str], key: str) -> int | None:
         That line's index, or ``None`` when no line matches.
     """
     for index, line in enumerate(lines):
-        if line.rstrip() == key:
+        if _TRAILING_COMMENT.sub("", line.rstrip()) == key:
             return index
     return None
+
+
+def _scalar(raw: str) -> str:
+    """Return a mapping value without its quotes or its trailing comment.
+
+    Mirrors how ``_USES_KEY`` tolerates the version comment beside a pin:
+    ``fail-fast: false  # why`` is ``false``, while ``"a # b"`` keeps its ``#``
+    because it sits inside quotes.
+
+    Args:
+        raw: Everything after ``key:`` on the line, already stripped.
+
+    Returns:
+        The quoted scalar's contents, or the plain scalar with any trailing
+        comment dropped and surrounding quotes stripped.
+    """
+    found = _SCALAR_VALUE.match(raw)
+    # The plain alternative matches any text, so this only narrows the type.
+    assert found is not None, f"unreadable mapping value {raw!r}"
+    for group in ("double", "single"):
+        if found.group(group) is not None:
+            return found.group(group)
+    return found.group("plain").strip("\"'")
 
 
 def _indented_run(lines: list[str], start: int) -> list[str]:

@@ -147,6 +147,64 @@ def test_job_mapping_does_not_match_a_nested_key_of_the_same_name() -> None:
     assert job_mapping(_compat_body(nested_only), "strategy") == {}
 
 
+def test_job_mapping_drops_a_trailing_comment_from_a_value() -> None:
+    """``fail-fast: false  # why`` configures ``false``; the comment is not the value."""
+    commented_value = textwrap.dedent(
+        """\
+        jobs:
+          compat:
+            strategy:
+              fail-fast: false  # keep every leg
+              max-parallel: "2"  # quoted, then commented
+              matrix:
+                python-version: ["3.11", "3.13"]
+        """
+    )
+
+    assert job_mapping(_compat_body(commented_value), "strategy") == {
+        "fail-fast": "false",
+        "max-parallel": "2",
+    }
+
+
+def test_job_mapping_finds_a_key_line_carrying_a_trailing_comment() -> None:
+    """``strategy:  # canary`` still opens the strategy block."""
+    commented_key = textwrap.dedent(
+        """\
+        jobs:
+          compat:
+            strategy:  # canary
+              fail-fast: false
+        """
+    )
+
+    assert job_mapping(_compat_body(commented_key), "strategy") == {"fail-fast": "false"}
+    # Without whitespace before it, ``#`` is not a comment: YAML reads
+    # ``strategy:#x`` as one plain scalar, not as the strategy key.
+    glued = commented_key.replace("strategy:  # canary", "strategy:#x")
+    assert job_mapping(_compat_body(glued), "strategy") == {}
+
+
+def test_job_mapping_keeps_a_hash_that_is_part_of_the_value() -> None:
+    """A ``#`` inside quotes, or not preceded by a space, is data rather than a comment."""
+    hashes_in_values = textwrap.dedent(
+        """\
+        jobs:
+          compat:
+            strategy:
+              double: "a # b"  # trailing
+              single: 'c # d'
+              bare: e#f
+        """
+    )
+
+    assert job_mapping(_compat_body(hashes_in_values), "strategy") == {
+        "double": "a # b",
+        "single": "c # d",
+        "bare": "e#f",
+    }
+
+
 def test_job_mapping_returns_nothing_for_an_absent_or_flow_style_block() -> None:
     """Absent and flow-style ``strategy: {...}`` both read as empty, i.e. "missing"."""
     flow_style = textwrap.dedent(
