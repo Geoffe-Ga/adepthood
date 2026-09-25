@@ -754,15 +754,23 @@ async def _perform_within_budget(
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
     """Perform and, when admitted, durably follow one stage under its clock.
 
-    The clock owns network waiting, not the commit that makes an accepted job
-    recoverable.  Creek may accept a job at the last instant of the foreground
-    budget; cancelling ``session.commit`` then would lose its handle and make a
-    continuation submit duplicate work.  Persist the handle outside the
-    timeout, then spend only the genuinely remaining budget polling it.
+    The clock owns *polling*, never the submit and never the commit that makes
+    an accepted job recoverable. Creek creates a job before it answers, so a
+    submit cancelled mid-flight may already have been accepted, and nothing on
+    this side can tell whether it was: the handle is simply gone, the row reads
+    as "did not land", and the continuation pays for the same classification a
+    second time (#2933). Cancelling ``session.commit`` loses the handle the same
+    way (#2674).
+
+    So the submit runs to its own answer, bounded by the adapter's whole-request
+    deadline -- a wall clock of its own -- and inside the caller's egress
+    ordering, which it therefore never outlives. Whatever handle comes back is
+    committed first. Only then is the stage clock consulted: an overrun raises
+    ``TimeoutError`` and the continuation polls the recorded job, and otherwise
+    only the genuinely remaining budget is spent polling it here.
     """
     deadline = time.monotonic() + budget
-    async with asyncio.timeout(budget):
-        result = await _perform(client, stage)
+    result = await _perform(client, stage)
     if not isinstance(result, VaultPipelineJob):
         return result
 
@@ -805,7 +813,9 @@ async def _run_stage(
     ``budget`` bounds the foreground wait in elapsed time. Accepted long work is
     not cancelled with it: the job id is already committed, so a continuation
     polls the same pass instead of guessing whether it landed or submitting a
-    concurrent duplicate.
+    concurrent duplicate. Nor is the submit itself, which Creek may have
+    accepted before answering; the adapter's whole-request deadline bounds that
+    one call instead (see :func:`_perform_within_budget`).
     """
     if context.stage is VaultPipelineStage.CLASSIFY:
         await _lock_classification_scheduler(session, context.user_id)
