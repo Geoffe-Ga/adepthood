@@ -282,6 +282,18 @@
     "coveredBy": "frontend/e2e/journal-close-save.browser.e2e.test.ts"
   },
   {
+    "id": "journal.save-recovers-after-reconnect",
+    "description": "A writer's page fails to save while the device is offline: an edited body and a stricter privacy tier both fail, the tier control reverts to what the server holds, and the footer says Couldn't save with a Retry. Coming back online re-sends both with no tap, the hint settles on Saved, and the server row and the reopened page carry the new body and tier. Online, a failed tier PATCH is recovered by pressing Retry. A tier looser than the one shown is never sent by a retry: it is dropped on reconnect and the page stays at its stricter tier until the writer chooses Public again. Jest seam suites (JournalEntryScreenSaveRetry, and the #2930 cases in JournalEntryScreenPrivacy, JournalEntryScreenChord and JournalEntryScreenFinish) pin the lanes the browser cannot isolate: Finish retried through the edit gate and never on reconnect, one lane's success never clearing another's failure, the single-flight create (#1144), and the retry's own single-flight.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-save-retry.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-a-single-line-title",
     "description": "A writer opens a fresh Journal page whose title occupies one line before they type. A long title can still wrap visually, pasted line breaks collapse to spaces, and Return moves the caret into the body without becoming stored title data. Closing crosses the production client and create route, and the returned durable row carries the exact single-line title; schema tests separately pin the server-side defence for non-UI create and update callers.",
     "crosses": {
