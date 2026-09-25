@@ -494,9 +494,11 @@ describe('JournalShelfScreen', () => {
 
   it('keeps the stage prompts on the shelf even once the week\u2019s own is answered', async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
-    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId, findAllByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-shelf-empty');
-    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
+    // The stage prompts arrive on their own fetch, so await them rather than
+    // assuming they resolved before the empty state rendered.
+    expect(await findAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
   });
 
   // Warm first-prompt affordance — true-empty branch only.
