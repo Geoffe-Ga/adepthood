@@ -318,16 +318,16 @@
   },
   {
     "id": "journal.review-from-the-shelf-cta",
-    "description": "On a review day the Journal shelf's one call to write is the due review -- 'Write your Weekly Review' -- rather than the morning-pages tip beside it, and it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On any other day the daily page holds that slot, and a quiet 'Start a review early' link beneath it opens a picker of every scope still in progress (GET /reflections/current: week, stage, section, course); choosing the week on program day 9 opens 'Weekly Review -- Week 2', and the saved page carries that scope (c1:w2) so the picker then offers to continue it rather than start a second. The composer reads the in-progress scope's sources so far. Declining a review sets aside only that scope; the no-flash rule (no card while /due is out), the four level CTAs, the stage-10 section omission and the tz-local day count are pinned by the Jest and pytest suites beside JournalPrimaryInvitation and routers/reflections.py.",
+    "description": "On a review day the Journal shelf's one call to write is the due review -- a button named by its visible words, 'Write your Weekly Review' -- and the daily-page tip steps aside; pressing it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On day 9, when nothing is due, the daily page holds that slot and the quiet 'Start a review early' link opens a picker of the scopes still in progress (GET /reflections/current); choosing the week opens 'Weekly Review -- Week 2', and the saved page carries scope c1:w2. Closing it and reopening the picker offers 'Continue -- Weekly Review -- Week 2', which reopens that same page (same body, still exactly one c1:w2 entry). Not asserted in the browser, and pinned only by Jest and pytest: the stage, section and course CTAs, dismissing a review, the no-card-while-loading rule, the picker re-reading on refocus, the 409 reroute to the live review, the stage-10 section omission, and the timezone-local day count. The review composer's sources feed is covered by journal.fold-promoted-quote-into-reopened-reflection, not here.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
-      "client": ["reflections", "journal", "stages"],
+      "client": ["reflections", "journal"],
       "routes": [
         "GET /reflections/due",
         "GET /reflections/current",
-        "GET /reflections/sources",
         "POST /journal/",
-        "GET /journal/"
+        "GET /journal/",
+        "GET /journal/{entry_id}"
       ],
       "tables": ["journalentry", "stageprogress"]
     },

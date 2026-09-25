@@ -24,8 +24,8 @@ test('on a review day the shelf’s one call to write is the Weekly Review', asy
   setProgramAnchorDaysAgo(email, DAY_SEVEN);
   await page.reload();
 
-  const cta = page.getByTestId('journal-reflection-band');
-  await expect(cta).toContainText('Write your Weekly Review');
+  const cta = page.getByRole('button', { name: /^Write your Weekly Review/ });
+  await expect(cta).toBeVisible();
   // One primary invitation: the daily page steps aside while the review is offered.
   await expect(page.getByRole('button', { name: 'Begin a morning page' })).toHaveCount(0);
   await cta.click();
@@ -46,7 +46,7 @@ test('a review can be begun early from the shelf on a day nothing is due', async
   await expect(page.getByRole('button', { name: 'Begin a morning page' })).toBeVisible();
   await expect(page.getByTestId('journal-reflection-band')).toHaveCount(0);
 
-  await page.getByTestId('journal-review-early').click();
+  await page.getByRole('button', { name: /^Start a review early/ }).click();
   await expect(page.getByTestId('journal-review-scope-section')).toBeVisible();
   await page.getByTestId('journal-review-scope-week').click();
 
@@ -57,16 +57,27 @@ test('a review can be begun early from the shelf on a day nothing is due', async
 
   const saved = await page.request.get(`${backendUrl()}/journal/`, { headers });
   const { items } = (await saved.json()) as { items: SavedEntry[] };
-  expect(items.find((entry) => entry.reflection_scope_key === 'c1:w2')).toEqual(
+  const review = items.find((entry) => entry.reflection_scope_key === 'c1:w2');
+  expect(review).toEqual(
     expect.objectContaining({ tag: 'hierarchical_reflection', reflection_level: 'week' }),
   );
 
-  // Back on the shelf the picker offers to continue that review, not start a second.
-  const current = await page.request.get(`${backendUrl()}/reflections/current`, { headers });
-  const { scopes } = (await current.json()) as {
-    scopes: Array<{ scope_key: string; existing_entry_id: number | null }>;
-  };
-  expect(scopes.find((scope) => scope.scope_key === 'c1:w2')?.existing_entry_id).toEqual(
-    expect.any(Number),
+  // Back on the shelf, the picker offers to CONTINUE that review rather than
+  // start a second one, and pressing it reopens the very page just written.
+  await page.getByTestId('journal-close-entry').click();
+  await page.getByRole('button', { name: /^Start a review early/ }).click();
+  const continueRow = page.getByRole('button', { name: /^Continue — Weekly Review — Week 2/ });
+  await expect(continueRow).toBeVisible();
+  await continueRow.click();
+  await expect(page.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
+    'Halfway through week two.',
   );
+  await expect(page.getByRole('textbox', { name: 'Entry title' })).toHaveValue(
+    'Weekly Review — Week 2',
+  );
+  const after = await page.request.get(`${backendUrl()}/journal/`, { headers });
+  const { items: afterItems } = (await after.json()) as { items: SavedEntry[] };
+  expect(afterItems.filter((entry) => entry.reflection_scope_key === 'c1:w2')).toEqual([
+    expect.objectContaining({ id: review?.id }),
+  ]);
 });
