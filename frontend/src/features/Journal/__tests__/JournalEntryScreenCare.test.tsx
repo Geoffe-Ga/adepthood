@@ -280,4 +280,40 @@ describe('JournalEntryScreen — care-support surface placement (issue #891)', (
       jest.useRealTimers();
     }
   });
+  it('the X leaves only the reopen line on screen, still outside the page (#2862)', async () => {
+    jest.useFakeTimers();
+    try {
+      mockCreate.mockResolvedValue(entry({ id: 42 }));
+      mockGenerate.mockResolvedValue(resonancePayload(carePayload()));
+
+      const { getByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Today felt very dark.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(DEFAULT_IDLE_DELAY_MS);
+      });
+      await act(async () => {
+        fireEvent.press(getByTestId('get-resonance-button'));
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(getByTestId('care-support-card')).toBeTruthy());
+
+      fireEvent.press(getByTestId('care-dismiss'));
+
+      // Jest has no layout, so the page's rise is asserted structurally here and
+      // measured in the browser lane (journal-care-support.browser.e2e).
+      const surface = within(getByTestId('care-support'));
+      expect(surface.queryByTestId('care-support-card')).toBeNull();
+      expect(surface.queryAllByTestId(/^care-resource-/)).toHaveLength(0);
+      expect(surface.queryByRole('header')).toBeNull();
+      expect(surface.getByTestId('care-reopen')).toBeTruthy();
+      expect(within(getByTestId('journal-page')).queryByTestId('care-reopen')).toBeNull();
+      expect(within(getByTestId('journal-margin-column')).queryByTestId('care-reopen')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
