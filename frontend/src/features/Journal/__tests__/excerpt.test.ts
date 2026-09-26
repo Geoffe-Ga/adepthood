@@ -2,7 +2,7 @@
 import { describe, it, expect } from '@jest/globals';
 
 // RED: `excerpt.ts` doesn't exist yet -- pins excerpt(body, maxLength) as a code-point-safe truncator.
-import { excerpt } from '../excerpt';
+import { excerpt, plainText } from '../excerpt';
 
 describe('excerpt', () => {
   it('flattens all whitespace to single spaces and trims both edges', () => {
@@ -51,5 +51,36 @@ describe('excerpt', () => {
   it('appends no ellipsis when the code-point count fits despite a longer UTF-16 length', () => {
     // Five code points (one astral) fit maxLength 5, though the UTF-16 length is 6.
     expect(excerpt('abcd\u{1F600}', 5)).toBe('abcd\u{1F600}');
+  });
+});
+
+describe('plainText', () => {
+  it('drops emphasis markers the way read mode hides them', () => {
+    expect(plainText('**Me:** hi')).toBe('Me: hi');
+    expect(plainText('*a* __b__ _c_')).toBe('a b c');
+    expect(plainText('<u>u</u>')).toBe('u');
+  });
+
+  it('keeps prose underscores and escaped markers', () => {
+    expect(plainText('snake_case_name')).toBe('snake_case_name');
+    expect(plainText('\\*kept\\*')).toBe('\\*kept\\*');
+  });
+
+  it('hides block prefixes but keeps the line feed', () => {
+    expect(plainText('- item\n> quoted')).toBe('item\nquoted');
+  });
+
+  it('returns an empty string for an empty body', () => {
+    expect(plainText('')).toBe('');
+  });
+});
+
+describe('excerpt strips markers before it cuts', () => {
+  it('previews a chat transcript without its speaker markers', () => {
+    expect(excerpt('**Me:** Idk if I told you', 100)).toBe('Me: Idk if I told you');
+  });
+
+  it('does not count hidden markers toward the cut', () => {
+    expect(excerpt(`**${'a'.repeat(10)}**`, 5)).toBe('aaaaa…');
   });
 });

@@ -20,10 +20,12 @@
 // panel in a bottom-sheet `Modal` (testID `reflection-sources-sheet`); >= 600
 // renders an inline side pane (testID `reflection-sources-pane`).
 import { jest, describe, it, expect } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import { editorialType, ink, touchTarget } from '@/design/tokens';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
 
@@ -524,5 +526,126 @@ describe('ReflectionSourcesPanel -- the review period', () => {
     );
     expect(getByText('Entry title')).toBeTruthy();
     expect(getByTestId('source-date-4').props.children).toMatch(/Jun 1, 2026/);
+  });
+});
+
+describe('ReflectionSourcesPanel -- source bodies are rendered, never raw Markdown', () => {
+  // A Creek chat transcript: the corpus stores speaker prefixes as bold.
+  const CHAT_BODY =
+    '**Me:** Idk if I told you but I am leaving today\n**Jonathon:** is it travel anxiety? i get that';
+
+  it('strips the ** speaker markers from the collapsed excerpt', () => {
+    const { getByText, queryByText } = render(
+      <ReflectionSourcesPanel
+        items={[item({ id: 1, body: CHAT_BODY })]}
+        onInsertQuote={jest.fn()}
+      />,
+    );
+    expect(getByText(/^Me: Idk if I told you/)).toBeTruthy();
+    expect(queryByText(/\*\*/)).toBeNull();
+  });
+
+  it('renders the speaker label bold in the expanded body and shows no marker characters', () => {
+    const { getByTestId, queryByText, queryByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[item({ id: 1, body: CHAT_BODY })]}
+        onInsertQuote={jest.fn()}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    const bold = getByTestId('journal-markdown-bold-2');
+    expect(bold.props.children).toBe('Me:');
+    expect(StyleSheet.flatten(bold.props.style).fontWeight).toBe('700');
+    expect(queryByText(/\*\*/)).toBeNull();
+    expect(getByTestId('source-body-1')).toBeTruthy();
+    // The reader's own body container must not be duplicated inside the sheet.
+    expect(queryByTestId('journal-body-read')).toBeNull();
+  });
+
+  it('keeps promote offsets computed against the RAW body', async () => {
+    const onPromoteSpan = jest.fn(() => Promise.resolve(true));
+    const sourceItem = item({ id: 1, body: CHAT_BODY });
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[sourceItem]}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={onPromoteSpan}
+      />,
+    );
+    fireEvent.press(getByTestId('entry-source-1'));
+    fireEvent.press(getByTestId('source-promote-entry-1'));
+    // The surface edits the raw string, markers and all, so it must hold them.
+    expect(getByTestId('source-select-entry-1-input').props.value).toBe(CHAT_BODY);
+    fireEvent(getByTestId('source-select-entry-1-input'), 'selectionChange', {
+      nativeEvent: { selection: { start: 2, end: 9 } },
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+    });
+    // UTF-16 2..9 of the RAW body is 'Me:** I' -- offsets never shift for display.
+    expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 9 });
+    expect(CHAT_BODY.slice(2, 9)).toBe('Me:** I');
+  });
+
+  it('closes with an icon-only X whose accessible name is Done, and no visible Done text', () => {
+    const { getByTestId, queryByText } = render(
+      <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} onClose={jest.fn()} />,
+    );
+    const close = getByTestId('reflection-sources-close');
+    expect(close.props.accessibilityRole).toBe('button');
+    expect(close.props.accessibilityLabel).toBe('Done');
+    expect(queryByText('Done')).toBeNull();
+    const style = StyleSheet.flatten(close.props.style);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+  });
+
+  it('renders no close control at all when onClose is not given (wide pane callers)', () => {
+    const { queryByTestId, getByText } = render(
+      <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} />,
+    );
+    expect(queryByTestId('reflection-sources-close')).toBeNull();
+    expect(getByText('Sources').props.accessibilityRole).toBe('header');
+  });
+
+  it('puts the X in the heading row beside the Sources header, with the period still beneath the title', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = render(
+      <ReflectionSourcesPanel
+        items={[item()]}
+        onInsertQuote={jest.fn()}
+        onClose={onClose}
+        window={{ start: '2026-06-01T04:00:00Z', end: '2026-06-08T04:00:00Z' }}
+      />,
+    );
+    const heading = getByTestId('reflection-sources-heading');
+    expect(within(heading).getByText('Sources').props.accessibilityRole).toBe('header');
+    expect(within(heading).getByTestId('reflection-sources-period').props.children).toMatch(
+      /Jun 1.*Jun 7, 2026/,
+    );
+    fireEvent.press(within(heading).getByTestId('reflection-sources-close'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ReflectionSourcesPanel -- one eyebrow face', () => {
+  it('sets the group heading and the reflection level label in the same upper-cased caption', () => {
+    const items = [
+      item({
+        kind: 'reflection',
+        id: 2,
+        reflection_level: 'week',
+        promoted_quotes: [quote({ id: 90, pending: true })],
+      }),
+    ];
+    const { getByText } = render(
+      <ReflectionSourcesPanel items={items} onInsertQuote={jest.fn()} />,
+    );
+    for (const label of ['Quotes to fold in', 'Week reflection']) {
+      const style = StyleSheet.flatten(getByText(label).props.style);
+      expect(style.textTransform).toBe('uppercase');
+      expect(style.fontSize).toBe(editorialType.caption.fontSize);
+      expect(style.color).toBe(ink.muted);
+    }
   });
 });
