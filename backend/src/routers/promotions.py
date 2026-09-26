@@ -3,32 +3,51 @@
 Promoting a quote anchors a character span of a source journal entry; the server
 slices and snapshots the text (the client sends only offsets) so the quote
 survives later edits. A promotion can then be folded into a hierarchical
-reflection or returned to pending. ``user_id`` is never returned.
+reflection or returned to pending. ``GET /promotions`` lists every quote the
+caller has promoted, across entries, for the Promoted quotes screen (#2865).
+``user_id`` is never returned.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Annotated, cast
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Annotated, Any, cast
 
-from fastapi import Depends, Response, status
+from fastapi import Depends, Query, Request, Response, status
+from sqlalchemy import ColumnElement, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.sql import Select
 from sqlmodel import col, select
 
-from bounds import RowIdPath
+from bounds import MAX_PAGE_OFFSET, RowIdPath
 from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from error_responses import build_router
 from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote
+from rate_limit import limiter
 from routers.auth import get_current_user
-from schemas.promotion import PromotedQuoteResponse, PromoteQuoteCreate, PromotionUpdate
+from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, count_query_total, page_has_more
+from schemas.promotion import (
+    PromotedQuoteListItemResponse,
+    PromotedQuoteListResponse,
+    PromotedQuoteResponse,
+    PromoteQuoteCreate,
+    PromotionStatusFilter,
+    PromotionUpdate,
+)
 from security import TextTooLongError, sanitize_user_text
 
 logger = logging.getLogger(__name__)
 
 router = build_router(tags=["promotions"])
+
+# A list read, limited like the journal list it sits beside (#2865).
+LIST_PROMOTIONS_RATE_LIMIT = "30/minute"
 
 
 def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
@@ -201,3 +220,104 @@ async def update_promotion(
         "quote_promotion_updated", extra={"user_id": current_user, "quote_id": promotion_id}
     )
     return _quote_response(quote)
+
+
+# The two aliases keep the source and inclusion-target joins on ``journalentry``
+# apart. Both are scoped to the caller and to live rows *in the join itself*:
+# the source join is INNER so a quote whose source was deleted (or is somehow
+# foreign) drops out of items and total alike, and the target join is OUTER so a
+# deleted or foreign review hides only its title, never the quote.
+_Source = aliased(JournalEntry, name="source_entry")
+_Target = aliased(JournalEntry, name="included_entry")
+
+_STATUS_PREDICATES: dict[PromotionStatusFilter, tuple[ColumnElement[bool], ...]] = {
+    PromotionStatusFilter.PENDING: (col(PromotedQuote.included_in_entry_id).is_(None),),
+    PromotionStatusFilter.INCLUDED: (col(PromotedQuote.included_in_entry_id).is_not(None),),
+    PromotionStatusFilter.ALL: (),
+}
+
+
+def _all_promotions_query(user_id: int, status_filter: PromotionStatusFilter) -> Select[Any]:
+    """Select the caller's quotes with their live source and (visible) review titles."""
+    return (
+        select(PromotedQuote, _Source.title, _Source.timestamp, _Target.title)
+        .join(
+            _Source,
+            and_(
+                col(_Source.id) == col(PromotedQuote.source_entry_id),
+                col(_Source.user_id) == user_id,
+                col(_Source.deleted_at).is_(None),
+            ),
+        )
+        .outerjoin(
+            _Target,
+            and_(
+                col(_Target.id) == col(PromotedQuote.included_in_entry_id),
+                col(_Target.user_id) == user_id,
+                col(_Target.deleted_at).is_(None),
+            ),
+        )
+        .where(PromotedQuote.user_id == user_id, *_STATUS_PREDICATES[status_filter])
+    )
+
+
+def _list_item(
+    quote: PromotedQuote,
+    source_title: str | None,
+    source_timestamp: datetime,
+    included_in_title: str | None,
+) -> PromotedQuoteListItemResponse:
+    """Map one joined row to its user_id-free list item."""
+    return PromotedQuoteListItemResponse(
+        **_quote_response(quote).model_dump(),
+        source_title=source_title,
+        source_timestamp=source_timestamp,
+        included_in_entry_id=quote.included_in_entry_id,
+        included_in_title=included_in_title,
+        created_at=quote.created_at,
+    )
+
+
+@dataclass
+class _ListAllParams:
+    """Query parameters for ``GET /promotions``: a status filter and an offset page."""
+
+    status: PromotionStatusFilter = PromotionStatusFilter.ALL
+    limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
+    offset: int = Query(default=0, ge=0, le=MAX_PAGE_OFFSET)
+
+
+@router.get("/promotions", response_model=PromotedQuoteListResponse)
+@limiter.limit(LIST_PROMOTIONS_RATE_LIMIT)
+async def list_all_promotions(
+    request: Request,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    params: Annotated[_ListAllParams, Depends()],
+) -> PromotedQuoteListResponse:
+    """List every quote the caller has promoted, across entries, newest first.
+
+    The route takes no id, so ownership rides on ``user_id`` predicates: on the
+    quote, on the source join, and on the inclusion-target join. A quote whose
+    source entry was soft-deleted is excluded; a quote folded into a review that
+    was since deleted stays listed with ``included_in_title`` null. Ordered by
+    ``(created_at DESC, id DESC)`` so ties page stably.
+    """
+    query = _all_promotions_query(current_user, params.status)
+    total = await count_query_total(session, query)
+    page = await session.execute(
+        query.order_by(col(PromotedQuote.created_at).desc(), col(PromotedQuote.id).desc())
+        .offset(params.offset)
+        .limit(params.limit)
+    )
+    # ``request`` is what ``@limiter.limit`` keys on; naming the path it served
+    # keeps the read observable beside the write events above.
+    logger.info(
+        "promoted_quotes_listed",
+        extra={"user_id": current_user, "status": params.status.value, "path": request.url.path},
+    )
+    return PromotedQuoteListResponse(
+        items=[_list_item(*row) for row in page.all()],
+        total=total,
+        has_more=page_has_more(params.offset, params.limit, total),
+    )
