@@ -6,6 +6,7 @@ import AdminFeedbackScreen from '../features/AdminFeedback/AdminFeedbackScreen';
 import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
+import PromotedQuotesScreen from '../features/Journal/PromotedQuotesScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
@@ -61,6 +62,8 @@ export type RootStackParamList = {
   Feedback: { control?: string } | undefined;
   /** The shelf of expanded margin notes. No params: it is a place, not a query. */
   VoiceDrafts: undefined;
+  /** Every quote the writer has promoted, across entries (#2865). A place, no params. */
+  PromotedQuotes: undefined;
   /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
   AdminFeedback: undefined;
   JournalPhotograph:
@@ -172,6 +175,11 @@ const JournalScreens = (): React.JSX.Element => (
       name="VoiceDrafts"
       component={VoiceDraftsShelfScreen}
       options={{ title: 'Voice drafts' }}
+    />
+    <Stack.Screen
+      name="PromotedQuotes"
+      component={PromotedQuotesScreen}
+      options={{ title: 'Promoted quotes' }}
     />
   </>
 );

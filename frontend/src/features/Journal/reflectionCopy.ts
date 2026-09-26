@@ -91,7 +91,7 @@ export function formatQuotePrefill(text: string, sourceTitle: string): string {
  * label exists to close, reintroduced on the display layer. Omitted, it falls
  * back to the device zone, which is what the written-attribution path wants.
  */
-function formatSourceDate(timestamp: string, timeZone?: string): string {
+export function formatSourceDate(timestamp: string, timeZone?: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleDateString(undefined, {

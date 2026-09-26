@@ -911,6 +911,35 @@ export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
 export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
 export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
 
+/** Which quotes ``GET /promotions`` returns (mirrors ``PromotionStatusFilter``). */
+export const promotionStatusFilterSchema = z.enum(['pending', 'included', 'all']);
+
+/**
+ * A promoted quote as listed across every entry (mirrors the backend
+ * ``PromotedQuoteListItemResponse``, which extends ``PromotedQuoteResponse``, so
+ * this extends ``promotedQuoteSchema`` and the two cannot drift). The server
+ * nulls ``included_in_title`` when the review it was folded into was deleted,
+ * while ``included_in_entry_id`` still says the quote was used.
+ */
+export const promotedQuoteListItemSchema = promotedQuoteSchema.extend({
+  source_title: z.string().nullable(),
+  source_timestamp: z.string(),
+  included_in_entry_id: z.number().int().nullable(),
+  included_in_title: z.string().nullable(),
+  created_at: z.string(),
+});
+
+/** One offset page of ``GET /promotions`` (mirrors ``PromotedQuoteListResponse``). */
+export const promotedQuoteListResponseSchema = z.object({
+  items: z.array(promotedQuoteListItemSchema),
+  total: z.number().int(),
+  has_more: z.boolean(),
+});
+
+export type PromotionStatusFilterT = z.infer<typeof promotionStatusFilterSchema>;
+export type PromotedQuoteListItemT = z.infer<typeof promotedQuoteListItemSchema>;
+export type PromotedQuoteListResponseT = z.infer<typeof promotedQuoteListResponseSchema>;
+
 export const careKindSchema = z.enum(['hotline', 'text_line', 'human', 'professional']);
 
 /** One support pointer (mirrors the backend ``CareResourceResponse``). */

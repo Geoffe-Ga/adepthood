@@ -6,8 +6,8 @@
 // hook, which lives above the ScreenDrawer panel so its cache survives
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Camera, Library, ScrollText, SquarePen } from 'lucide-react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
@@ -67,6 +67,7 @@ interface DrawerHarness {
   onPhotograph?: () => void;
   onOpenCorpus?: () => void;
   onOpenVoiceDrafts?: () => void;
+  onOpenPromotedQuotes?: () => void;
   corpusOpenState?: 'idle' | 'pending' | 'error';
 }
 
@@ -77,11 +78,13 @@ function drawerCallbacks(props: Partial<DrawerHarness>) {
     onNewEntry: props.onNewEntry ?? jest.fn(),
     onOpenCorpus: props.onOpenCorpus ?? jest.fn(),
     onOpenVoiceDrafts: props.onOpenVoiceDrafts ?? jest.fn(),
+    onOpenPromotedQuotes: props.onOpenPromotedQuotes ?? jest.fn(),
   };
 }
 
 function renderDrawer(props: Partial<DrawerHarness> = {}) {
-  const { onRowPress, onNewEntry, onOpenCorpus, onOpenVoiceDrafts } = drawerCallbacks(props);
+  const { onRowPress, onNewEntry, onOpenCorpus, onOpenVoiceDrafts, onOpenPromotedQuotes } =
+    drawerCallbacks(props);
   const onLoadMore = jest.fn();
   const onRetry = jest.fn();
   const onConfirmBodySearch = jest.fn();
@@ -98,6 +101,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onPhotograph={props.onPhotograph}
       onOpenCorpus={onOpenCorpus}
       onOpenVoiceDrafts={onOpenVoiceDrafts}
+      onOpenPromotedQuotes={onOpenPromotedQuotes}
       corpusOpenState={props.corpusOpenState ?? 'idle'}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
@@ -110,6 +114,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
     onNewEntry,
     onOpenCorpus,
     onOpenVoiceDrafts,
+    onOpenPromotedQuotes,
     onLoadMore,
     onRetry,
     onConfirmBodySearch,
@@ -301,6 +306,27 @@ describe('JournalDrawer (presentational)', () => {
     expect(icon.props.color).toBe(ink.muted);
   });
 
+  it('offers Promoted quotes as a door with no count, after Voice drafts', () => {
+    // The same rule as Voice drafts: a number beside a row is neither resonant
+    // nor declinable (NORTH-STAR §3/§6), so the counts live on the screen.
+    const onOpenPromotedQuotes = jest.fn();
+    const { getByRole, getByTestId, toJSON } = renderDrawer({ items: [], onOpenPromotedQuotes });
+
+    const row = getByRole('button', { name: 'Promoted quotes' });
+    expect(row).toBeTruthy();
+    expect(within(row).getByText(/^Promoted quotes$/)).toBeTruthy();
+    expect(within(row).queryByText(/\d/)).toBeNull();
+    const order = JSON.stringify(toJSON());
+    expect(order.indexOf('journal-drawer-voice-drafts')).toBeLessThan(
+      order.indexOf('journal-drawer-promoted-quotes'),
+    );
+    fireEvent.press(getByTestId('journal-drawer-promoted-quotes'));
+    expect(onOpenPromotedQuotes).toHaveBeenCalledTimes(1);
+    expect(getByTestId('journal-drawer-promoted-quotes').findByType(Quote).props.color).toBe(
+      ink.muted,
+    );
+  });
+
   it('fires onPhotograph when the Photograph row is pressed', () => {
     const onPhotograph = jest.fn();
     const { getByTestId } = renderDrawer({ items: [], onPhotograph });
@@ -332,6 +358,7 @@ function Harness(): React.JSX.Element {
           onNewEntry={() => undefined}
           onOpenCorpus={() => undefined}
           onOpenVoiceDrafts={() => undefined}
+          onOpenPromotedQuotes={() => undefined}
           corpusOpenState="idle"
           onLoadMore={loadMore}
           onRetry={retry}

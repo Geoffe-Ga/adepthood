@@ -3180,6 +3180,7 @@ interface EntryScreenDrawer {
   onNewEntry: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
   onOpenVoiceDrafts: () => void;
+  onOpenPromotedQuotes: () => void;
 }
 
 /**
@@ -3210,7 +3211,19 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
     navigation.navigate('VoiceDrafts');
     drawer.close();
   }, [navigation, drawer]);
-  return { drawer, onSelectEntry, onNewEntry, onOpenCorpus, onOpenVoiceDrafts };
+  // Promoted quotes is a place beside the entry too, so it navigates in place.
+  const onOpenPromotedQuotes = useCallback(() => {
+    navigation.navigate('PromotedQuotes');
+    drawer.close();
+  }, [navigation, drawer]);
+  return {
+    drawer,
+    onSelectEntry,
+    onNewEntry,
+    onOpenCorpus,
+    onOpenVoiceDrafts,
+    onOpenPromotedQuotes,
+  };
 }
 
 /** A modal owned by this entry must never outlive the route's foreground turn. */
@@ -3298,6 +3311,7 @@ function EntryOverlays({
         onNewEntry={entryDrawer.onNewEntry}
         onOpenCorpus={entryDrawer.onOpenCorpus}
         onOpenVoiceDrafts={entryDrawer.onOpenVoiceDrafts}
+        onOpenPromotedQuotes={entryDrawer.onOpenPromotedQuotes}
       />
     </>
   );

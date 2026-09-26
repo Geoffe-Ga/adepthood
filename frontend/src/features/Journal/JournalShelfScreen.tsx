@@ -721,6 +721,7 @@ interface ShelfNav {
   openWithPrompt: () => void;
   openCorpus: (_destination: CorpusDestination) => void;
   openVoiceDrafts: () => void;
+  openPromotedQuotes: () => void;
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
@@ -742,6 +743,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     [navigation],
   );
   const openVoiceDrafts = useCallback(() => navigation.navigate('VoiceDrafts'), [navigation]);
+  const openPromotedQuotes = useCallback(() => navigation.navigate('PromotedQuotes'), [navigation]);
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
@@ -773,6 +775,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     openWithPrompt,
     openCorpus,
     openVoiceDrafts,
+    openPromotedQuotes,
   };
 }
 
@@ -791,6 +794,7 @@ interface ShelfDrawer {
   onPhotograph: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
   onOpenVoiceDrafts: () => void;
+  onOpenPromotedQuotes: () => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -816,6 +820,10 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openVoiceDrafts();
     drawer.close();
   }, [nav, drawer]);
+  const onOpenPromotedQuotes = useCallback(() => {
+    nav.openPromotedQuotes();
+    drawer.close();
+  }, [nav, drawer]);
   return {
     drawer,
     onSelectEntry,
@@ -823,6 +831,7 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     onPhotograph,
     onOpenCorpus: nav.openCorpus,
     onOpenVoiceDrafts,
+    onOpenPromotedQuotes,
   };
 }
 
@@ -949,6 +958,7 @@ function JournalShelfScreen(): React.JSX.Element {
         onPhotograph={shelfDrawer.onPhotograph}
         onOpenCorpus={shelfDrawer.onOpenCorpus}
         onOpenVoiceDrafts={shelfDrawer.onOpenVoiceDrafts}
+        onOpenPromotedQuotes={shelfDrawer.onOpenPromotedQuotes}
       />
       <DeleteEntryDialog
         visible={deletion.pending !== null}
