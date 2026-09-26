@@ -254,7 +254,12 @@ describe('LiveMarkdownBody on web', () => {
       StyleSheet.flatten(getByTestId('journal-live-delimiter-2').props.style).color;
     expect(inkOf()).toBe(colors.paper.inkSoft);
 
-    (fieldRef as { current: unknown }).current = { selectionStart: 4, selectionEnd: 4 };
+    // A handle drag happens in the focused field.
+    (fieldRef as { current: unknown }).current = {
+      selectionStart: 4,
+      selectionEnd: 4,
+      isFocused: () => true,
+    };
     act(() => {
       globalThis.document.dispatchEvent(new Event('selectionchange'));
     });
@@ -273,11 +278,42 @@ describe('LiveMarkdownBody on web', () => {
         onBodySelectionChange={onBodySelectionChange}
       />,
     );
-    (fieldRef as { current: unknown }).current = { selectionStart: 4, selectionEnd: 6 };
+    (fieldRef as { current: unknown }).current = {
+      selectionStart: 4,
+      selectionEnd: 6,
+      isFocused: () => true,
+    };
     act(() => {
       globalThis.document.dispatchEvent(new Event('selectionchange'));
     });
     expect(onBodySelectionChange).toHaveBeenLastCalledWith({ start: 4, end: 6 });
+    delete (globalThis as MutableGlobal).document;
+  });
+
+  it('ignores a document selectionchange while the field is not focused', () => {
+    // Clicking a quote in the Sources panel moves the page's selection; the
+    // unfocused field's own selectionStart is then not where the writer left
+    // off, and must not become the next fold-in's insertion point.
+    (globalThis as MutableGlobal).document = new EventTarget() as unknown as Document;
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const onBodySelectionChange = jest.fn();
+    render(
+      <Harness
+        initial="a **b** c"
+        fieldRef={fieldRef}
+        onBodySelectionChange={onBodySelectionChange}
+      />,
+    );
+    onBodySelectionChange.mockClear();
+    (fieldRef as { current: unknown }).current = {
+      selectionStart: 0,
+      selectionEnd: 0,
+      isFocused: () => false,
+    };
+    act(() => {
+      globalThis.document.dispatchEvent(new Event('selectionchange'));
+    });
+    expect(onBodySelectionChange).not.toHaveBeenCalled();
     delete (globalThis as MutableGlobal).document;
   });
 
