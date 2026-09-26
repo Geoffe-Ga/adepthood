@@ -240,7 +240,7 @@ describe('findSeamOverlap — never a false merge', () => {
 
   it('measures the single-line minimum on the shorter of the two matched lines', () => {
     // 24 vs 23 normalized characters, similarity 23/24 ≥ 0.9: still too short.
-    const long = `${run('q', MIN_SINGLE_LINE_OVERLAP_CHARS - 1)}.`;
+    const long = `${run('q', MIN_SINGLE_LINE_OVERLAP_CHARS - 1)}x`;
     const short = run('q', MIN_SINGLE_LINE_OVERLAP_CHARS - 1);
     expect(findSeamOverlap(lines(LINE_A, long), lines(short, LINE_E))).toBeNull();
   });
@@ -285,6 +285,92 @@ describe('findSeamOverlap — never a false merge', () => {
     expect(
       findSeamOverlap(lines(LINE_A, LINE_B, '', LINE_C), lines(LINE_B, '', LINE_C, LINE_E)),
     ).toBeNull();
+  });
+});
+
+describe('findSeamOverlap — a different value is never a repeat', () => {
+  // Each pair is ≥ 0.9 similar by edit distance alone, but says something
+  // different: merging would silently swap the later page's value for the earlier.
+  it.each([
+    [
+      'a number',
+      'Day 14: walked 3 miles along the river path.\nSlept well after the long day out.',
+      'Day 12: walked 3 miles along the river path.\nSlept well after the long day out.',
+    ],
+    [
+      'a time',
+      'Sam: Dinner is at 7:30 at the usual place, ok?\nMe: Sounds good, see you there then.',
+      'Sam: Dinner is at 6:30 at the usual place, ok?\nMe: Sounds good, see you there then.',
+    ],
+    [
+      'an emoji',
+      'Sam: I cannot believe what happened today \u{1F602}\nMe: Tell me everything tonight please',
+      'Sam: I cannot believe what happened today \u{1F62D}\nMe: Tell me everything tonight please',
+    ],
+    [
+      'a symbol',
+      'Me: The total came to about forty dollars %\nSam: Fine, I will pay you back later on.',
+      'Me: The total came to about forty dollars $\nSam: Fine, I will pay you back later on.',
+    ],
+  ])('keeps two lines that differ only in %s', (_label, tail, head) => {
+    expect(
+      lineSimilarity(
+        normalizeTranscriptLine(tail.split('\n')[0] ?? ''),
+        normalizeTranscriptLine(head.split('\n')[0] ?? ''),
+      ),
+    ).toBeGreaterThanOrEqual(LINE_SIMILARITY_THRESHOLD);
+    expect(
+      findSeamOverlap(lines('Opening line of the page.', tail), lines(head, 'Fresh line.')),
+    ).toBeNull();
+  });
+
+  it('still merges a genuine letter-level OCR slip', () => {
+    const tail = 'Day 14: walked 3 miles along the river path.\nSlept well after the long day out.';
+    const head = 'Day 14: walkcd 3 miles along the rivcr path.\nSlept well after the long day out.';
+    expect(
+      findSeamOverlap(lines('Opening line of the page.', tail), lines(head, 'Fresh line.')),
+    ).toEqual({ laterLinesToDrop: 2, earlierLinesToReplace: 0, noticeLineCount: 2 });
+  });
+
+  it('keeps two lines whose values match but in a different order', () => {
+    const tail = 'Me: I got there at 3 and left again at 5 today.\nSam: Long afternoon, then.';
+    const head = 'Me: I got there at 5 and left again at 3 today.\nSam: Long afternoon, then.';
+    expect(
+      findSeamOverlap(lines('Opening line of the page.', tail), lines(head, 'Fresh line.')),
+    ).toBeNull();
+  });
+
+  it('treats a slipped vowel sign as a letter slip, not a different value', () => {
+    // Devanagari vowel signs are combining marks that NFKC does not fold away.
+    const tail =
+      'Me: \u0906\u091C \u0926\u093F\u0928 \u092C\u0939\u0941\u0924 \u0905\u091A\u094D\u091B\u093E \u0925\u093E \u0926\u094B\u0938\u094D\u0924\u0964\nSam: Lovely, we should go back.';
+    const head =
+      'Me: \u0906\u091C \u0926\u0940\u0928 \u092C\u0939\u0941\u0924 \u0905\u091A\u094D\u091B\u093E \u0925\u093E \u0926\u094B\u0938\u094D\u0924\u0964\nSam: Lovely, we should go back.';
+    expect(
+      findSeamOverlap(lines('Opening line of the page.', tail), lines(head, 'Fresh line.')),
+    ).toEqual({ laterLinesToDrop: 2, earlierLinesToReplace: 0, noticeLineCount: 2 });
+  });
+
+  it('treats an accented letter as a letter, not a symbol', () => {
+    // NFKC composes it, and a combining mark still counts as part of a letter.
+    const tail =
+      'Me: the cafe\u0301 was quiet this morning again.\nSam: Lovely, we should go back.';
+    const head =
+      'Me: the cafe\u0301 was quiot this morning again.\nSam: Lovely, we should go back.';
+    expect(
+      findSeamOverlap(lines('Opening line of the page.', tail), lines(head, 'Fresh line.')),
+    ).toEqual({ laterLinesToDrop: 2, earlierLinesToReplace: 0, noticeLineCount: 2 });
+  });
+
+  it('replaces a letter-cropped tail even though it is fuzzily similar to its whole line', () => {
+    // 'me: sure, how many bag' is a 0.96-similar prefix with the same symbols as
+    // its whole partner: only the cropped-tail rule stops it being kept.
+    expect(
+      findSeamOverlap(
+        lines(LINE_A, LINE_B, LINE_C, 'Me: Sure, how many bag'),
+        lines(LINE_B, LINE_C, 'Me: Sure, how many bags', LINE_D),
+      ),
+    ).toEqual({ laterLinesToDrop: 2, earlierLinesToReplace: 1, noticeLineCount: 3 });
   });
 });
 

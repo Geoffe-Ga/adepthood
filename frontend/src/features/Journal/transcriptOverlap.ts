@@ -21,7 +21,8 @@
  */
 
 /** Normalized edit-distance similarity at or above which two lines are "the same"
- *  (one OCR slip in ten characters) — lower starts matching genuinely new replies. */
+ *  (one OCR letter slip in ten characters, with every digit and symbol equal) —
+ *  lower starts matching genuinely new replies. */
 export const LINE_SIMILARITY_THRESHOLD = 0.9;
 
 /** Full matching lines a seam needs, so one coincidental repeat is never dropped. */
@@ -124,10 +125,26 @@ export function lineSimilarity(a: string, b: string): number {
   return IDENTICAL - levenshtein(a, b) / longest;
 }
 
+/** Every run of characters that is neither a letter (with its combining marks)
+ *  nor whitespace: digits, punctuation, symbols, emoji. */
+const VALUE_RUN = /[^\p{L}\p{M}\s]+/gu;
+
+/**
+ * The line's values, in order: every digit run and every symbol or emoji
+ * sequence. Two lines that differ here say different things ("Day 14" vs
+ * "Day 12", "7:30" vs "6:30", one emoji vs another), however similar the rest.
+ */
+function valueRuns(line: string): string {
+  return (line.match(VALUE_RUN) ?? []).join(' ');
+}
+
 /** Whether two normalized lines are one line read twice. Blank lines and service
- *  markers never match, so they break a run rather than extend it. */
+ *  markers never match, so they break a run rather than extend it; and their
+ *  values must agree exactly, so the fuzzy threshold only ever forgives a slip
+ *  in the letters — never a different number, time, symbol, or emoji. */
 function linesMatch(a: string, b: string): boolean {
   if (a === '' || b === '' || MARKER_LINES.has(a) || MARKER_LINES.has(b)) return false;
+  if (valueRuns(a) !== valueRuns(b)) return false;
   return lineSimilarity(a, b) >= LINE_SIMILARITY_THRESHOLD;
 }
 
