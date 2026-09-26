@@ -884,6 +884,38 @@ describe('mergeBlocks — overlapping screenshots merge once', () => {
   });
 });
 
+describe('mergeBlocks — a hand edit always wins at a seam', () => {
+  // The writer corrects a repeated line on one page; the correction is still
+  // ≥ 0.9 similar to the other page's copy, so the matcher alone would call it a
+  // repeat and the merge would quietly keep the uncorrected copy instead.
+  const CORRECTED = THREAD_2.replace('second line', 'second lime');
+
+  it('emits both pages whole once the later page is hand-edited', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2 });
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p2', text: CORRECTED });
+    const pages = idsToPages(['p1', 'p2']);
+    expect(mergeBlocks(state, pages)).toBe(`${THREAD_1}\n\n${CORRECTED}`);
+    expect(mergeBlocks(state, pages)).toContain('second lime');
+    expect(selectSeamOverlaps(state, pages)[0]?.overlap).toBeNull();
+  });
+
+  it('emits both pages whole once the earlier page is hand-edited', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2 });
+    const edited = THREAD_1.replace('second line', 'second lime');
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p1', text: edited });
+    const pages = idsToPages(['p1', 'p2']);
+    expect(mergeBlocks(state, pages)).toBe(`${edited}\n\n${THREAD_2}`);
+    expect(selectSeamOverlaps(state, pages)[0]?.overlap).toBeNull();
+  });
+
+  it('still dedupes the other seams of a run', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 });
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p3', text: THREAD_3 });
+    const seams = selectSeamOverlaps(state, idsToPages(['p1', 'p2', 'p3']));
+    expect(seams.map((seam) => seam.overlap === null)).toEqual([false, true]);
+  });
+});
+
 describe('selectSeamOverlaps — only adjacent, both-read pages', () => {
   it('reports one seam per adjacent pair, positioned by the earlier page', () => {
     const state = resolvedRun({ p1: SAM_PAGE_1, p2: SAM_PAGE_2 });

@@ -506,9 +506,20 @@ function doneBlock(state: TranscriptionRunState, id: string): TranscriptionBlock
 }
 
 /**
+ * Whether the writer has hand-edited either page at a seam. Their text is then
+ * authoritative: a corrected line can still be ≥ 0.9 similar to the other page's
+ * uncorrected copy, and deduplicating would keep the copy and drop the fix. So an
+ * edited seam is never deduplicated — both pages merge whole, and no notice shows.
+ */
+function isHandEdited(earlier: TranscriptionBlock, later: TranscriptionBlock): boolean {
+  return earlier.edited || later.edited;
+}
+
+/**
  * Every seam between neighbouring pages in session order where BOTH have landed
  * their text. A pending or failed page between two read pages means those two are
- * not neighbours yet, so they are never compared. Each seam is computed on the
+ * not neighbours yet, so they are never compared; and a seam with a hand-edited
+ * page on either side is left whole (hand edits win). Each seam is computed on the
  * blocks' full stored text, so one seam never depends on another.
  */
 export function selectSeamOverlaps(
@@ -526,7 +537,8 @@ export function selectSeamOverlaps(
       earlierId: earlier.id,
       laterId: later.id,
       earlierPosition: index,
-      overlap: kept ? null : findSeamOverlap(earlier.text, later.text),
+      overlap:
+        kept || isHandEdited(earlier, later) ? null : findSeamOverlap(earlier.text, later.text),
       kept,
     });
   });
@@ -585,7 +597,8 @@ function mergePiece(
 
 /**
  * The one editable entry: every `done` page's text, in session order, joined by a
- * blank line. Hand edits win (they live in the block's text), and pages without a
+ * blank line. Hand edits win (they live in the block's text, and a seam next to
+ * an edited page is never deduplicated), and pages without a
  * landed read are simply skipped — no placeholders, no page markers.
  *
  * Where adjacent pages overlap (see {@link selectSeamOverlaps}), the repeated

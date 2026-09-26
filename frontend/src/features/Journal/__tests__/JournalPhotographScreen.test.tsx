@@ -2062,6 +2062,39 @@ describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
     );
   });
 
+  it('saves a hand correction to a repeated line, and drops the notice', async () => {
+    const corrected = PAGE_TWO.replace('grab ice', 'grab rice');
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 43, message: corrected }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 43, status: 'finished' }));
+    const screen = renderScreen();
+    await readOverlappingPages(screen);
+
+    fireEvent.changeText(screen.getByTestId('photograph-block-2-input'), corrected);
+    expect(screen.queryByTestId('photograph-block-2-overlap')).toBeNull();
+    fireEvent.press(await screen.findByTestId('photograph-save'));
+
+    await waitFor(() =>
+      expect(mockCreate).toHaveBeenCalledWith({
+        message: `${PAGE_ONE}\n\n${corrected}`,
+        classification: 'personal',
+      }),
+    );
+  });
+
+  it('hands the open entry a hand correction to a repeated line in append mode', async () => {
+    const corrected = PAGE_TWO.replace('grab ice', 'grab rice');
+    const screen = renderAppendScreen();
+    await readOverlappingPages(screen);
+    fireEvent.changeText(screen.getByTestId('photograph-block-2-input'), corrected);
+    fireEvent.press(await screen.findByTestId('photograph-append'));
+
+    await waitFor(() =>
+      expect(useCapturedTranscriptStore.getState().pending?.text).toBe(
+        `${PAGE_ONE}\n\n${corrected}`,
+      ),
+    );
+  });
+
   it('hands the open entry every line after Keep them in append mode', async () => {
     const screen = renderAppendScreen();
     await readOverlappingPages(screen);

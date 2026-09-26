@@ -281,6 +281,16 @@ describe('useTranscriptionRun — overlapping screenshots', () => {
     expect(mockTranscribe).toHaveBeenCalledTimes(2);
   });
 
+  it('lets a hand edit on the later page reach the merge, and drops the notice', async () => {
+    const { result } = await readTwoOverlappingPages();
+    const corrected = PAGE_TWO.replace('grab ice', 'grab rice');
+    act(() => {
+      result.current.editBlock('page-2', corrected);
+    });
+    expect(result.current.overlaps).toEqual({});
+    expect(result.current.mergedText).toBe(`${PAGE_ONE}\n\n${corrected}`);
+  });
+
   it('reports no overlap for pages that share nothing', async () => {
     mockTranscribe.mockResolvedValueOnce({ text: 'Page one.' });
     mockTranscribe.mockResolvedValueOnce({ text: 'Page two.' });
