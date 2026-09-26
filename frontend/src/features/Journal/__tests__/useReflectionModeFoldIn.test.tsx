@@ -160,4 +160,12 @@ describe('useReflectionMode fold-in -- a failed inclusion mark (#2891)', () => {
     await insert();
     expect(occurrences(bodyRef.current, BLOCK)).toBe(2);
   });
+
+  it('lands the quote at the caret the body last reported', async () => {
+    mockSetIncluded.mockResolvedValue({});
+    const { bodyRef, insert, result } = setup();
+    act(() => result.current.onBodySelectionChange({ start: 2, end: 2 }));
+    await insert();
+    expect(bodyRef.current.startsWith(`My\n\n${BLOCK}\n\n`)).toBe(true);
+  });
 });

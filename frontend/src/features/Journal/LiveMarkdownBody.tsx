@@ -49,8 +49,12 @@ const BODY_MIN_HEIGHT = 320;
 export interface LiveMarkdownBodyProps {
   body: string;
   onChangeBody: (_next: string) => void;
-  /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
-  onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  /**
+   * Reflection mode: every caret the field reports (UTF-16), from its own
+   * selection event, the document ``selectionchange`` a handle drag fires on
+   * iOS web, or an edit that moves it, so a folded quote lands at the cursor.
+   */
+  onBodySelectionChange?: (_selection: MarkdownSelection) => void;
   bodyPlaceholder: string;
   inputRef: React.RefObject<TextInput | null>;
 }
@@ -68,6 +72,27 @@ function useTrackedCaret(body: string) {
       current.start === next.start && current.end === next.end ? current : next,
     );
   }, []);
+  return { caret, nativeSelectionRef, trackCaret };
+}
+
+/**
+ * The tracked caret, with every position it learns of -- the field's own
+ * selection event, the document ``selectionchange``, an edit that moves it --
+ * also handed to ``onBodySelectionChange``: that is the caret a folded quote
+ * must land at.
+ */
+function useReportedCaret(
+  body: string,
+  onBodySelectionChange: LiveMarkdownBodyProps['onBodySelectionChange'],
+) {
+  const { caret, nativeSelectionRef, trackCaret: trackOwnCaret } = useTrackedCaret(body);
+  const trackCaret = useCallback(
+    (next: MarkdownSelection) => {
+      trackOwnCaret(next);
+      onBodySelectionChange?.({ start: next.start, end: next.end });
+    },
+    [onBodySelectionChange, trackOwnCaret],
+  );
   return { caret, nativeSelectionRef, trackCaret };
 }
 
@@ -123,7 +148,7 @@ function useMarkdownBodyBindings(
   inputRef: LiveMarkdownBodyProps['inputRef'],
 ) {
   const [selection, setSelection] = useState<MarkdownSelection>();
-  const { caret, nativeSelectionRef, trackCaret } = useTrackedCaret(body);
+  const { caret, nativeSelectionRef, trackCaret } = useReportedCaret(body, onBodySelectionChange);
   // True while a command is being applied through the browser: the input
   // event it fires is the command's own text and must pass through verbatim.
   const applyingCommandRef = useRef(false);
@@ -150,9 +175,8 @@ function useMarkdownBodyBindings(
     (event: SelectionChangeEvent) => {
       trackCaret(event.nativeEvent.selection);
       setSelection(undefined);
-      onBodySelectionChange?.(event);
     },
-    [onBodySelectionChange, trackCaret],
+    [trackCaret],
   );
   const applyEdit = useApplyEdit(inputRef, applyingCommandRef, commit, trackCaret);
   return {

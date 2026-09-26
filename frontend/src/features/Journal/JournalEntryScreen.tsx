@@ -17,8 +17,6 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
-  type NativeSyntheticEvent,
-  type TextInputSelectionChangeEventData,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -39,7 +37,7 @@ import HighlightedBody from './HighlightedBody';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import type { RetryFailure, SaveState } from './journalSaveRetry';
-import LiveMarkdownBody from './LiveMarkdownBody';
+import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
@@ -1598,7 +1596,7 @@ interface WritingColumnProps {
    */
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
-  onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  onBodySelectionChange?: LiveMarkdownBodyProps['onBodySelectionChange'];
   /** Opens the rereadable source feed while composing a reflection. */
   onOpenSources?: () => void;
   /** Opens the shared capture route to add a photographed page to this entry. */
@@ -1942,8 +1940,6 @@ function NoNotesNotice({ message }: { message: string | null }) {
     </Text>
   );
 }
-
-type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
 
 /** The read-mode quote surface: the promoted-quote list plus its UI gestures. */
 interface QuotePromotion {

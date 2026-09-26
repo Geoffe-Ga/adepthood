@@ -51,11 +51,17 @@ function testIDsUnder(node: RenderedNode): string[] {
 interface HarnessProps {
   initial: string;
   onChangeBody?: (next: string) => void;
+  onBodySelectionChange?: (selection: { start: number; end: number }) => void;
   fieldRef?: React.RefObject<TextInput | null>;
 }
 
 /** The body field as the entry screen owns it: parent state fed back as the value. */
-function Harness({ initial, onChangeBody, fieldRef }: HarnessProps): React.JSX.Element {
+function Harness({
+  initial,
+  onChangeBody,
+  onBodySelectionChange,
+  fieldRef,
+}: HarnessProps): React.JSX.Element {
   const [body, setBody] = useState(initial);
   const ownRef = useRef<TextInput>(null);
   const inputRef = fieldRef ?? ownRef;
@@ -66,6 +72,7 @@ function Harness({ initial, onChangeBody, fieldRef }: HarnessProps): React.JSX.E
         onChangeBody?.(next);
         setBody(next);
       }}
+      onBodySelectionChange={onBodySelectionChange}
       bodyPlaceholder="Write"
       inputRef={inputRef}
     />
@@ -253,6 +260,36 @@ describe('LiveMarkdownBody on web', () => {
     });
     expect(inkOf()).toBe(colors.paper.ink);
     delete (globalThis as MutableGlobal).document;
+  });
+
+  it('reports a caret only the document selectionchange saw to the fold-in (#2891)', () => {
+    (globalThis as MutableGlobal).document = new EventTarget() as unknown as Document;
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const onBodySelectionChange = jest.fn();
+    render(
+      <Harness
+        initial="a **b** c"
+        fieldRef={fieldRef}
+        onBodySelectionChange={onBodySelectionChange}
+      />,
+    );
+    (fieldRef as { current: unknown }).current = { selectionStart: 4, selectionEnd: 6 };
+    act(() => {
+      globalThis.document.dispatchEvent(new Event('selectionchange'));
+    });
+    expect(onBodySelectionChange).toHaveBeenLastCalledWith({ start: 4, end: 6 });
+    delete (globalThis as MutableGlobal).document;
+  });
+
+  it("reports the field's own selection event to the fold-in as a plain span", () => {
+    const onBodySelectionChange = jest.fn();
+    const { getByTestId } = render(
+      <Harness initial="a **b** c" onBodySelectionChange={onBodySelectionChange} />,
+    );
+    fireEvent(getByTestId('journal-body-input'), 'selectionChange', {
+      nativeEvent: { selection: { start: 2, end: 2 } },
+    });
+    expect(onBodySelectionChange).toHaveBeenLastCalledWith({ start: 2, end: 2 });
   });
 
   it('inserts typing inside a span at the exact source position', () => {

@@ -24,7 +24,6 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
-import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
 import {
   formatBlockquote,
@@ -45,7 +44,8 @@ import type {
   ReflectionSourcesResponse,
 } from '@/api';
 
-type SelectionEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+/** A caret the body field reported, in UTF-16 code units. */
+type BodyCaret = { start: number; end: number };
 
 export interface UseReflectionModeArgs {
   reflectionLevel?: ReflectionLevel;
@@ -97,7 +97,7 @@ export interface UseReflectionModeResult {
    */
   foldingIn: boolean;
   /** Track the body caret so an inserted quote lands where the writer is. */
-  onBodySelectionChange: (_e: SelectionEvent) => void;
+  onBodySelectionChange: (_caret: BodyCaret) => void;
   /** Fold a chosen pending quote in; resolves true when it was marked included. */
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
@@ -303,7 +303,7 @@ function useFoldIn(
 ): {
   inclusionHint: boolean;
   foldingIn: boolean;
-  onBodySelectionChange: (_e: SelectionEvent) => void;
+  onBodySelectionChange: (_caret: BodyCaret) => void;
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
     _sourceItem: ReflectionSourceItem,
@@ -313,8 +313,8 @@ function useFoldIn(
   const { anyInFlight, track } = useInFlightTally();
   const caretRef = useRef<number | null>(null);
 
-  const onBodySelectionChange = useCallback((event: SelectionEvent) => {
-    caretRef.current = event.nativeEvent.selection.start;
+  const onBodySelectionChange = useCallback((caret: BodyCaret) => {
+    caretRef.current = caret.start;
   }, []);
 
   const ledger = useFoldLedger();
