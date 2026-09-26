@@ -33,10 +33,17 @@ export const WRITING_TIMER_STOP_A11Y = 'Stop the writing timer and keep the time
 export const WRITING_SESSION_DISMISS = 'Close';
 export const WRITING_SESSION_DISMISS_A11Y = 'Close the writing session note';
 
-/** A preset's face label: the length, short enough for a row of four. */
+/**
+ * A preset's face label: the bare number. Four "NN min" chips truncated to
+ * "20 m…" on a 390pt phone (#2949), so the unit is said once, after the row
+ * (``WRITING_TIMER_PRESET_UNIT``), and each chip carries only its length.
+ */
 export function writingTimerPresetLabel(minutes: number): string {
-  return `${minutes} min`;
+  return `${minutes}`;
 }
+
+/** The one unit caption at the end of the preset row. */
+export const WRITING_TIMER_PRESET_UNIT = 'min';
 
 /** The same preset said in full, since "10 min" reads poorly aloud. */
 export function writingTimerPresetA11yLabel(minutes: number): string {
@@ -71,6 +78,7 @@ export const WRITING_TIMER_COPY_ENTRIES: readonly string[] = [
   WRITING_TIMER_STOP_A11Y,
   WRITING_SESSION_DISMISS,
   WRITING_SESSION_DISMISS_A11Y,
+  WRITING_TIMER_PRESET_UNIT,
   ...WRITING_DURATION_PRESET_MINUTES.map(writingTimerPresetLabel),
   ...WRITING_DURATION_PRESET_MINUTES.map(writingTimerPresetA11yLabel),
   ...WRITING_DURATION_PRESET_MINUTES.map(writingSessionSummary),

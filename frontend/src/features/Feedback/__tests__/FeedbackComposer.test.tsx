@@ -8,6 +8,7 @@ import { renderComposer } from './composerHarness';
 
 import * as api from '@/api';
 import { ApiError, ApiValidationError, type FeedbackCreate, type FeedbackReceipt } from '@/api';
+import { focusHostStyle } from '@/design/tokens';
 import { FEEDBACK_COMPOSER_COPY, FEEDBACK_CONTEXT_LABELS } from '@/features/Feedback/feedbackCopy';
 import { rememberFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 import {
@@ -355,6 +356,8 @@ describe('FeedbackComposerScreen — success', () => {
 
     const status = screen.getByTestId(IDS.status);
     expect(status.props.accessibilityLiveRegion).toBe('polite');
+    expect(status.props.style).toBe(focusHostStyle);
+    expect(screen.queryByText(FEEDBACK_COMPOSER_COPY.title)).toBeNull();
     expect(screen.getByTestId(IDS.reference).props.children).toBe('FB-7K3M9Q2B');
     expect(within(status).queryByText(/within|hours|days|soon/i)).toBeNull();
     expect(within(status).getByText(/your report was sent/)).toBeTruthy();
@@ -725,13 +728,33 @@ describe('FeedbackComposerScreen — iOS announcements (review [11])', () => {
   });
 });
 
-describe('FeedbackComposerScreen — the heading is only the title (review [15])', () => {
-  it('names the heading "Send feedback" and keeps the lead outside it', async () => {
+describe('FeedbackComposerScreen — one title (#2951)', () => {
+  it('does not repeat the stack title in the body and names the focus host "Send feedback"', async () => {
     await openComposer();
-    const heading = screen.getByTestId(IDS.heading);
-    expect(within(heading).getByText(FEEDBACK_COMPOSER_COPY.title)).toBeTruthy();
-    expect(within(heading).queryByText(FEEDBACK_COMPOSER_COPY.lead)).toBeNull();
-    expect(screen.getByText(FEEDBACK_COMPOSER_COPY.lead)).toBeTruthy();
+    expect(screen.queryByText(FEEDBACK_COMPOSER_COPY.title)).toBeNull();
+    const host = screen.getByTestId(IDS.heading);
+    expect(host.props.accessibilityLabel).toBe(FEEDBACK_COMPOSER_COPY.title);
+    expect(host.props.accessibilityRole).toBe('header');
+    expect(within(host).getByText(FEEDBACK_COMPOSER_COPY.lead)).toBeTruthy();
+  });
+
+  it("carries the lead as the host's hint so native screen readers still hear it", async () => {
+    await openComposer();
+    expect(screen.getByTestId(IDS.heading).props.accessibilityHint).toBe(
+      FEEDBACK_COMPOSER_COPY.lead,
+    );
+  });
+
+  it('styles the host with the focus-host token, which drops the ring on web', async () => {
+    // The token's per-platform value is pinned in design/__tests__/writingFieldFocus.test.ts;
+    // here the contract is that the host -- and only the host -- carries it.
+    await openComposer();
+    const host = screen.getByTestId(IDS.heading);
+    expect(host.props.style).toBeDefined();
+    expect(host.props.style).toBe(focusHostStyle);
+    expect(screen.getByTestId(IDS.categoryOption('broken')).props.style).not.toContain(
+      focusHostStyle,
+    );
   });
 });
 

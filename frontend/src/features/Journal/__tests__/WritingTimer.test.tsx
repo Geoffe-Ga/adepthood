@@ -1,11 +1,11 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import { Minus, Pause, Play, Square } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 
-import { DEFAULT_WRITING_MINUTES } from '../writingSession';
+import { DEFAULT_WRITING_MINUTES, WRITING_DURATION_PRESET_MINUTES } from '../writingSession';
 import type { WritingSessionResult } from '../writingSession';
 import WritingTimer from '../WritingTimer';
 
@@ -394,6 +394,36 @@ describe('WritingTimer — leaving the page', () => {
 
     tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
     expect(onComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe('WritingTimer — the preset row fits four lengths on a phone', () => {
+  it('shows each length as a bare number with one trailing unit', () => {
+    const { getByTestId, getAllByTestId } = renderTimer(jest.fn());
+
+    for (const minutes of WRITING_DURATION_PRESET_MINUTES) {
+      const chip = getByTestId(`writing-timer-preset-${minutes}`);
+      const label = within(chip).getByText(String(minutes));
+      // Nothing is truncated away: the chip carries the whole (short) string.
+      expect(label.props.numberOfLines).toBeUndefined();
+      expect(chip.props.accessibilityRole).toBe('radio');
+      expect(chip.props.accessibilityLabel).toBe(`Write for ${minutes} minutes`);
+    }
+
+    // Hidden from assistive tech on purpose, so the query must opt back in.
+    const units = getAllByTestId('writing-timer-preset-unit', { includeHiddenElements: true });
+    expect(units).toHaveLength(1);
+    const [unit] = units;
+    expect(unit?.props.children).toBe('min');
+    // Read-only metadata beside the radios, so it takes the caption face and
+    // stays out of the radiogroup's name.
+    expect(unit?.props.accessible).toBe(false);
+    expect(unit?.props.accessibilityElementsHidden).toBe(true);
+    expect(unit?.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(StyleSheet.flatten(unit?.props.style).fontSize).toBe(editorialType.caption.fontSize);
+    expect(getByTestId('writing-timer-row-presets').props.accessibilityLabel).toBe(
+      'How long to write for',
+    );
   });
 });
 

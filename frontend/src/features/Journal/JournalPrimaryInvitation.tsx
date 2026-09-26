@@ -110,10 +110,14 @@ function JournalPrimaryInvitation({
 }
 
 const styles = StyleSheet.create({
+  // The link sits on the section's left edge, level with the prompt band's
+  // eyebrow above it (#2949). Button.base pads the row by SPACING.xl and
+  // centres its label, so both are overridden here: no side padding, and the
+  // row leads from the left rather than floating its label mid-column.
   earlyLink: {
-    alignSelf: 'flex-start',
     marginTop: SPACING.sm,
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: 0,
+    justifyContent: 'flex-start',
   },
 });
 

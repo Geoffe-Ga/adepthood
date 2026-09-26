@@ -10,12 +10,14 @@
  * failure) is asserted here through the component that decides.
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import { morningPageTitle } from '../morningPagesCopy';
 
 import type { ReflectionCurrentScope, ReflectionDue, ReflectionLevel, Stage } from '@/api';
+import { uiType } from '@/design/tokens';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 const mockDue = jest.fn() as jest.MockedFunction<() => Promise<{ due: ReflectionDue | null }>>;
@@ -255,6 +257,25 @@ describe('JournalPrimaryInvitation on any other day', () => {
 });
 
 describe('the early-review link', () => {
+  it('sits on the section edge in the button face, level with the set-aside count', async () => {
+    mockDue.mockResolvedValue({ due: null });
+    const { findByTestId, getByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+    const link = getByTestId('journal-review-early');
+
+    // No self-indent and no side padding: the label starts where the eyebrow
+    // above it starts. Button.base centres its label, so the row must be told
+    // to lead from the left or the link would float mid-column.
+    const control = StyleSheet.flatten(link.props.style);
+    expect(control.alignSelf).toBeUndefined();
+    expect(control.paddingHorizontal).toBe(0);
+    expect(control.justifyContent).toBe('flex-start');
+
+    const label = StyleSheet.flatten(within(link).getByText('Start a review early').props.style);
+    expect(label.fontSize).toBe(uiType.button.fontSize);
+    expect(label.fontWeight).toBe(uiType.button.fontWeight);
+  });
+
   it('is present on a review day', async () => {
     const { findByTestId, getByTestId } = renderInvitation();
     await findByTestId('journal-reflection-band');

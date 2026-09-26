@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect, jest, afterEach */
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Dimensions, Platform, TouchableOpacity, View } from 'react-native';
 
 import { RadioGroup, RadioOption } from '@/components/RadioOption';
@@ -167,6 +167,36 @@ describe('the composer on the web (review [14])', () => {
     for (const category of FEEDBACK_CATEGORY_ORDER) {
       const description = screen.getByText(FEEDBACK_CATEGORY_CONFIG[category].description);
       expect(description.props.nativeID).toBe(IDS.categoryDescription(category));
+    }
+  });
+
+  it('describes each option by the hint that lives inside it, on the web (#2951)', () => {
+    Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+    try {
+      render(<CategoryStep selected={null} onSelect={jest.fn()} disabled={false} />);
+      for (const category of FEEDBACK_CATEGORY_ORDER) {
+        const { description } = FEEDBACK_CATEGORY_CONFIG[category];
+        const option = screen.getByTestId(IDS.categoryOption(category));
+        // RN's Touchable consumes aria-* before the host; read it on the touchable.
+        const touchable = screen
+          .UNSAFE_getAllByType(TouchableOpacity)
+          .find((node) => node.props.testID === IDS.categoryOption(category));
+        expect(touchable?.props['aria-describedby']).toBe(IDS.categoryDescription(category));
+        expect(within(option).getByText(description).props.nativeID).toBe(
+          IDS.categoryDescription(category),
+        );
+        expect(option.props.accessibilityHint).toBe(description);
+      }
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+    }
+  });
+
+  it('keeps the label as the only accessible name of each option (#2951)', () => {
+    render(<CategoryStep selected={null} onSelect={jest.fn()} disabled={false} />);
+    for (const category of FEEDBACK_CATEGORY_ORDER) {
+      const option = screen.getByRole('radio', { name: FEEDBACK_CATEGORY_CONFIG[category].label });
+      expect(option.props.testID).toBe(IDS.categoryOption(category));
     }
   });
 

@@ -13,6 +13,7 @@ import {
   surface,
   surfaceShadow,
   touchTarget,
+  uiType,
 } from '@/design/tokens';
 
 const PROMPT_ACCENT_BAR = 3; // a stage prompt's identifying left rule
@@ -131,10 +132,37 @@ const styles = StyleSheet.create({
   promptSection: {
     marginTop: SPACING.lg,
   },
+  // The band's eyebrow row: the stage's name on the left, and, when some
+  // prompts are set aside, the count as a compact control in the trailing slot
+  // (#2949). Both sit on the section's edge, level with each other.
+  promptSectionEyebrow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: spacing(0.5),
+  },
+  // Sentence-case caption, deliberately not the tracked small-caps of the
+  // recency spine: JournalShelfHierarchy pins that role to ``sectionHeading``
+  // alone so the bands stop announcing themselves. Same size, same ink.
   promptSectionLabel: {
     ...editorialType.caption,
     color: ink.muted,
-    paddingBottom: spacing(0.5),
+  },
+  // The set-aside count is a pressed thing, so it takes the button face (the
+  // same face as the "Start a review early" link beneath the band) at the
+  // touch floor, never the caption its row-mate is set in.
+  promptSetAsideControl: {
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: SPACING.xs,
+  },
+  promptSetAsideLabel: {
+    fontSize: uiType.button.fontSize,
+    fontWeight: uiType.button.fontWeight,
+    color: accent.primary,
   },
   promptSectionNote: {
     ...editorialType.caption,
