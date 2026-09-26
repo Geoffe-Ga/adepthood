@@ -2041,6 +2041,7 @@ describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
 
     fireEvent.press(screen.getByTestId('photograph-block-2-overlap-keep'));
     expect(screen.queryByTestId('photograph-block-2-overlap')).toBeNull();
+    expect(screen.getByTestId('photograph-block-2-overlap-kept')).toBeTruthy();
     fireEvent.press(await screen.findByTestId('photograph-save'));
 
     await waitFor(() =>

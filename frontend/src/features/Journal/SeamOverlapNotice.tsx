@@ -7,7 +7,7 @@
  * PRIVACY: the copy, testIDs, and accessibility labels carry only counts and page
  * positions — never a word of the transcript.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import styles from './JournalPhotograph.styles';
@@ -17,6 +17,9 @@ import { Button } from '@/components/Button';
 
 /** The Keep action's visible label. */
 export const KEEP_OVERLAP_LABEL = 'Keep them';
+
+/** What replaces the notice once the writer keeps both copies. */
+export const OVERLAP_KEPT_COPY = 'Both copies kept.';
 
 /** The notice copy: counts and positions only. */
 export function overlapNoticeCopy(lineCount: number, earlierPosition: number): string {
@@ -58,6 +61,49 @@ export function SeamOverlapNotice({
         onPress={onKeep}
       />
     </View>
+  );
+}
+
+interface SeamOverlapSlotProps {
+  position: number;
+  /** This page's repeated-lines notice, or `undefined` when there is none. */
+  overlap: BlockOverlapNotice | undefined;
+  onKeep: (_overlap: BlockOverlapNotice) => void;
+}
+
+/**
+ * The place on a page where its repeated-lines notice lives. Pressing Keep them
+ * removes the notice — and with it the focused button — so a short confirmation
+ * takes its place and is announced politely, rather than focus vanishing in
+ * silence. If the seam repeats again (a reorder away and back), the notice
+ * returns in place of the confirmation.
+ */
+export function SeamOverlapSlot({
+  position,
+  overlap,
+  onKeep,
+}: SeamOverlapSlotProps): React.JSX.Element | null {
+  const [justKept, setJustKept] = useState(false);
+  useEffect(() => {
+    if (overlap) setJustKept(false);
+  }, [overlap]);
+  if (overlap) {
+    const keep = (): void => {
+      setJustKept(true);
+      onKeep(overlap);
+    };
+    return <SeamOverlapNotice position={position} overlap={overlap} onKeep={keep} />;
+  }
+  if (!justKept) return null;
+  return (
+    <Text
+      testID={`photograph-block-${position}-overlap-kept`}
+      style={styles.notice}
+      accessibilityRole="text"
+      accessibilityLiveRegion="polite"
+    >
+      {OVERLAP_KEPT_COPY}
+    </Text>
   );
 }
 

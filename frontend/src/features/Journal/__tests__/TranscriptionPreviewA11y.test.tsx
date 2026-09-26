@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { describe, it, expect, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
-import React from 'react';
+import { act, fireEvent, render } from '@testing-library/react-native';
+import React, { useState } from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { CapturePage } from '../captureSession';
@@ -187,5 +187,93 @@ describe('TranscriptionPreview — the repeated-lines notice', () => {
         for (const word of risky) expect(value).not.toContain(word);
       }
     }
+  });
+});
+
+describe('TranscriptionPreview — after Keep them', () => {
+  /** A preview whose overlaps react to Keep them, the way the live run does:
+   *  keeping a seam removes its notice. `restore` puts the notice back. */
+  function KeepHarness({
+    onReady,
+  }: {
+    onReady: (_restore: () => void, _clear: () => void) => void;
+  }): React.JSX.Element {
+    const [overlaps, setOverlaps] = useState<Record<string, BlockOverlapNotice>>(P2_REPEATS_THREE);
+    onReady(
+      () => setOverlaps(P2_REPEATS_THREE),
+      () => setOverlaps({}),
+    );
+    const pages = [page('p1'), page('p2'), page('p3')];
+    return (
+      <TranscriptionPreview
+        pages={pages}
+        blocks={{
+          p1: doneBlock('p1', PAGE_TEXT.p1),
+          p2: doneBlock('p2', PAGE_TEXT.p2),
+          p3: doneBlock('p3', PAGE_TEXT.p3),
+        }}
+        onEdit={jest.fn()}
+        onRetry={jest.fn()}
+        onConfirmRedo={jest.fn()}
+        onRetake={jest.fn()}
+        onRemove={jest.fn()}
+        isConfirmingRedo={() => false}
+        overlaps={overlaps}
+        onKeepSeam={() => setOverlaps({})}
+      />
+    );
+  }
+
+  function renderHarness() {
+    let restore: () => void = () => undefined;
+    let clear: () => void = () => undefined;
+    const rendered = render(
+      <KeepHarness
+        onReady={(restoreFn, clearFn) => {
+          restore = restoreFn;
+          clear = clearFn;
+        }}
+      />,
+    );
+    return { ...rendered, restore: () => restore(), clear: () => clear() };
+  }
+
+  it('says nothing about keeping before anything is kept', () => {
+    const { queryByTestId } = renderHarness();
+    expect(queryByTestId('photograph-block-2-overlap-kept')).toBeNull();
+  });
+
+  it('replaces the notice with a politely announced confirmation in the same place', () => {
+    const { getByTestId, queryByTestId } = renderHarness();
+    fireEvent.press(getByTestId('photograph-block-2-overlap-keep'));
+
+    expect(queryByTestId('photograph-block-2-overlap')).toBeNull();
+    expect(queryByTestId('photograph-block-2-overlap-keep')).toBeNull();
+    const kept = getByTestId('photograph-block-2-overlap-kept');
+    expect(kept.props.children).toBe('Both copies kept.');
+    expect(kept.props.accessibilityLiveRegion).toBe('polite');
+    expect(kept.props.accessibilityRole).toBe('text');
+    expect(StyleSheet.flatten(kept.props.style).color).toBe(colors.paper.inkSoft);
+    expect(queryByTestId('photograph-block-1-overlap-kept')).toBeNull();
+    expect(queryByTestId('photograph-block-3-overlap-kept')).toBeNull();
+  });
+
+  it('shows the notice again, not the confirmation, if the seam repeats again', () => {
+    const { getByTestId, queryByTestId, restore } = renderHarness();
+    fireEvent.press(getByTestId('photograph-block-2-overlap-keep'));
+    act(() => restore());
+    expect(getByTestId('photograph-block-2-overlap')).toBeTruthy();
+    expect(queryByTestId('photograph-block-2-overlap-kept')).toBeNull();
+  });
+
+  it('does not announce an old keep when a repeated seam goes quiet for another reason', () => {
+    // Kept, then the seam repeats again, then the notice leaves because of, say, a
+    // hand edit: nothing was kept this time, so nothing is confirmed.
+    const { getByTestId, queryByTestId, restore, clear } = renderHarness();
+    fireEvent.press(getByTestId('photograph-block-2-overlap-keep'));
+    act(() => restore());
+    act(() => clear());
+    expect(queryByTestId('photograph-block-2-overlap')).toBeNull();
+    expect(queryByTestId('photograph-block-2-overlap-kept')).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
 import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
-import { SeamOverlapNotice } from './SeamOverlapNotice';
+import { SeamOverlapSlot } from './SeamOverlapNotice';
 import { TERMINAL_ERROR_KINDS } from './transcriptionRun';
 import type { TranscriptionBlock } from './transcriptionRun';
 import type { BlockOverlapNotice } from './useTranscriptionRun';
@@ -178,13 +178,11 @@ function DoneBlock({
         multiline
         accessibilityLabel={blockInputA11y(position)}
       />
-      {overlap ? (
-        <SeamOverlapNotice
-          position={position}
-          overlap={overlap}
-          onKeep={() => onKeepSeam(overlap.earlierId, block.id)}
-        />
-      ) : null}
+      <SeamOverlapSlot
+        position={position}
+        overlap={overlap}
+        onKeep={(kept) => onKeepSeam(kept.earlierId, block.id)}
+      />
       <RedoActions
         position={position}
         block={block}
