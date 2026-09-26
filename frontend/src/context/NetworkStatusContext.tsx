@@ -13,7 +13,8 @@ import { setNetworkOnlineGetter } from '@/api';
  *  - Render a global offline banner (see ``OfflineBanner``).
  *  - Let the API client short-circuit known-offline reads so they fail fast
  *    instead of stalling for the 30s timeout (``setNetworkOnlineGetter``).
- *  - Build per-feature queue/replay flows (follow-up work).
+ *  - Retry a failed save when the device comes back online (the journal
+ *    page's ``useReconnectRetry``, #2930).
  */
 
 interface NetworkStatusContextValue {
@@ -33,6 +34,39 @@ function isStateOnline(state: NetInfoState): boolean {
   if (state.isConnected === false) return false;
   if (state.isInternetReachable === false) return false;
   return true;
+}
+
+/** The slice of a browser ``window`` this module listens on; absent on native. */
+interface WindowEventTarget {
+  addEventListener?: (_type: 'online', _listener: () => void) => void;
+  removeEventListener?: (_type: 'online', _listener: () => void) => void;
+}
+
+/**
+ * Re-read NetInfo when a browser window says it is back online (#2930).
+ *
+ * NetInfo's web module listens only to the NetworkInformation ``change`` event
+ * whenever the browser has that API, and Chromium fires it going offline but
+ * not always coming back. NetInfo then stops probing and reports offline until
+ * some other change arrives, so the banner never clears and nothing waiting on
+ * reconnect runs. The window's own ``online`` event is reliable; on it,
+ * ``NetInfo.refresh()`` re-reads the state and restarts the reachability probe,
+ * delivering the result through the ordinary listener. Native has no
+ * ``window.addEventListener``, so this is a no-op there.
+ */
+function useWindowOnlineRefresh(): void {
+  useEffect(() => {
+    const target = (typeof window === 'undefined' ? {} : window) as WindowEventTarget;
+    const { addEventListener, removeEventListener } = target;
+    if (typeof addEventListener !== 'function') return undefined;
+    const refresh = (): void => {
+      NetInfo.refresh().catch(() => {
+        /* keep the last known state */
+      });
+    };
+    addEventListener.call(target, 'online', refresh);
+    return () => removeEventListener?.call(target, 'online', refresh);
+  }, []);
 }
 
 export function NetworkStatusProvider({ children }: { children: React.ReactNode }) {
@@ -61,6 +95,8 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
       setNetworkOnlineGetter(null);
     };
   }, []);
+
+  useWindowOnlineRefresh();
 
   const value = useMemo(() => ({ isOnline }), [isOnline]);
 

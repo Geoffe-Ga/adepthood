@@ -2,7 +2,6 @@
 /* global describe, test, expect, beforeEach, jest */
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
-import { Alert, type AlertButton } from 'react-native';
 
 import {
   VAULT_ADDRESS_EXTRA_PARTS,
@@ -13,9 +12,11 @@ import {
   VAULT_ADDRESS_PRIVATE,
   VAULT_ADDRESS_UNREADABLE,
   VAULT_ADD_HEADING,
+  VAULT_CANCEL,
   VAULT_CONNECTION_UNKNOWN,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
+  VAULT_DISCONNECT_BUTTON,
   VAULT_DISCONNECT_CONFIRM_BODY,
   VAULT_DISCONNECT_CONFIRM_TITLE,
   VAULT_EYEBROW,
@@ -27,6 +28,7 @@ import {
   VAULT_LOAD_FAILED,
   VAULT_NONE_CONNECTED,
   VAULT_PROMISE,
+  VAULT_REPLACE_BUTTON,
   VAULT_REPLACE_CONFIRM_BODY,
   VAULT_REPLACE_CONFIRM_TITLE,
   VAULT_REPLACE_HEADING,
@@ -46,6 +48,7 @@ import {
   type VaultActivation,
   type VaultConnection,
 } from '@/api';
+import habitStyles from '@/features/Habits/Habits.styles';
 
 /**
  * The private-vault screen, now that there is something behind it.
@@ -169,58 +172,85 @@ async function submitConnection(view: Rendered, address: string, key: string): P
 }
 
 /** How a test answers the confirmation a press may raise. */
-type AlertAnswer = 'confirm' | 'cancel' | 'none';
+type DialogAnswer = 'confirm' | 'cancel' | 'none';
 
-/** What one raised confirmation was asked with. */
-type AlertArgs = [string, string | undefined, AlertButton[] | undefined];
+/** What one rendered confirmation asked, read off the dialog itself. */
+interface RaisedDialog {
+  title: string;
+  body: string;
+  /** The button labels in on-screen order. */
+  labels: string[];
+  destructive: boolean;
+}
 
-// Both confirmations on this screen offer [cancel, confirm] in that order, so
-// the answer is chosen by position rather than by style: the connect dialog's
-// affirmative button is not destructive, and picking it by style would need a
-// second copy of this helper for the sake of one word.
-const CANCEL_INDEX = 0;
-const CONFIRM_INDEX = 1;
+const DIALOG_TEST_ID = 'vault-confirm-dialog';
+const ANSWER_TEST_IDS: Record<Exclude<DialogAnswer, 'none'>, string> = {
+  cancel: 'vault-confirm-cancel',
+  confirm: 'vault-confirm-confirm',
+};
+
+/** Read the title, body, button order and confirm styling off the open dialog. */
+function readDialog(view: Rendered): RaisedDialog | null {
+  const dialog = view.queryByTestId(DIALOG_TEST_ID);
+  if (dialog === null) return null;
+  const buttonTexts = within(dialog)
+    .getAllByRole('button')
+    .map((button) => within(button).getByText(/./u));
+  const [title, body] = within(dialog)
+    .getAllByText(/./u)
+    .filter((text) => !buttonTexts.includes(text))
+    .map((text) => String(text.props.children));
+  const confirmText = buttonTexts[buttonTexts.length - 1];
+  return {
+    title: title ?? '',
+    body: body ?? '',
+    labels: buttonTexts.map((text) => String(text.props.children)),
+    destructive: confirmText?.props.style === habitStyles.discardExitText,
+  };
+}
 
 /**
- * Press ``testID``, answer whatever confirmation it raises, and report what it
- * was asked with.
+ * Press ``testID``, answer whatever rendered confirmation it raises, and report
+ * what that dialog asked.
  *
+ * The dialog is the real ``ConfirmDialog`` the screen renders (#2928), not a
+ * spied ``Alert.alert``: react-native-web ships Alert as an empty method, so a
+ * spy that fires the button by hand would pass while the web build does nothing.
  * ``'none'`` leaves the dialog standing, which is how a test asserts that a
- * press asked rather than acted. An empty return says no dialog was raised at
- * all -- the assertion the anti-over-confirmation cases turn on.
+ * press asked rather than acted. ``null`` says no dialog was raised at all --
+ * the assertion the anti-over-confirmation cases turn on.
  */
-async function pressThroughAlert(
+async function pressThroughDialog(
   view: Rendered,
   testID: string,
-  answer: AlertAnswer,
-): Promise<AlertArgs[]> {
-  const raised: AlertArgs[] = [];
-  const spy = jest.spyOn(Alert, 'alert').mockImplementation((title, body, buttons) => {
-    raised.push([title, body, buttons]);
-    if (answer === 'none') return;
-    buttons?.[answer === 'cancel' ? CANCEL_INDEX : CONFIRM_INDEX]?.onPress?.();
-  });
+  answer: DialogAnswer,
+): Promise<RaisedDialog | null> {
   await act(async () => {
     fireEvent.press(view.getByTestId(testID));
   });
-  spy.mockRestore();
+  const raised = readDialog(view);
+  if (raised !== null && answer !== 'none') {
+    await act(async () => {
+      fireEvent.press(view.getByTestId(ANSWER_TEST_IDS[answer]));
+    });
+  }
   return raised;
 }
 
 /** Press disconnect and answer its confirmation. */
-async function pressDisconnect(view: Rendered, answer: AlertAnswer): Promise<void> {
-  await pressThroughAlert(view, 'disconnect-vault-button', answer);
+async function pressDisconnect(view: Rendered, answer: DialogAnswer): Promise<RaisedDialog | null> {
+  return pressThroughDialog(view, 'disconnect-vault-button', answer);
 }
 
 /** Fill both fields, press Connect, and answer any confirmation that follows. */
-async function pressConnectThroughAlert(
+async function pressConnectThroughDialog(
   view: Rendered,
   fields: { address: string; key: string },
-  answer: AlertAnswer,
-): Promise<AlertArgs[]> {
+  answer: DialogAnswer,
+): Promise<RaisedDialog | null> {
   fireEvent.changeText(view.getByTestId('vault-address-input'), fields.address);
   fireEvent.changeText(view.getByTestId('vault-key-input'), fields.key);
-  return pressThroughAlert(view, 'connect-vault-button', answer);
+  return pressThroughDialog(view, 'connect-vault-button', answer);
 }
 
 beforeEach(() => {
@@ -456,18 +486,18 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
   test('asks before replacing a connected vault', async () => {
     const view = await renderVault(CONNECTED);
 
-    const raised = await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
       'none',
     );
 
-    expect(raised).toHaveLength(1);
-    expect(raised[0]).toEqual([
-      VAULT_REPLACE_CONFIRM_TITLE,
-      VAULT_REPLACE_CONFIRM_BODY,
-      expect.anything(),
-    ]);
+    expect(raised).toEqual({
+      title: VAULT_REPLACE_CONFIRM_TITLE,
+      body: VAULT_REPLACE_CONFIRM_BODY,
+      labels: [VAULT_CANCEL, VAULT_REPLACE_BUTTON],
+      destructive: false,
+    });
     expect(mockConnect).not.toHaveBeenCalled();
   });
 
@@ -475,13 +505,14 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
     const view = await renderVault(CONNECTED);
     mockConnect.mockResolvedValue(REPLACED);
 
-    const raised = await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
       'confirm',
     );
 
-    expect(raised).toHaveLength(1);
+    expect(raised?.labels).toEqual([VAULT_CANCEL, VAULT_REPLACE_BUTTON]);
+    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
     expect(mockConnect).toHaveBeenCalledTimes(1);
     expect(mockConnect).toHaveBeenCalledWith({
       vault_url: REPLACEMENT_VAULT_URL,
@@ -495,12 +526,14 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
   test('leaves the old vault and the typed key alone on cancel', async () => {
     const view = await renderVault(CONNECTED);
 
-    await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
       'cancel',
     );
 
+    expect(raised).not.toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
     expect(mockConnect).not.toHaveBeenCalled();
     expect(within(view.getByTestId('vault-connected-card')).getByText(VAULT_URL)).toBeTruthy();
     // Nothing was sent, so nothing was cleared and nothing was re-masked.
@@ -510,18 +543,18 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
   test('asks before connecting when it could not check', async () => {
     const view = await renderUnreachable();
 
-    const raised = await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: VAULT_URL, key: TYPED_KEY },
       'confirm',
     );
 
-    expect(raised).toHaveLength(1);
-    expect(raised[0]).toEqual([
-      VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE,
-      VAULT_REPLACE_UNKNOWN_CONFIRM_BODY,
-      expect.anything(),
-    ]);
+    expect(raised).toEqual({
+      title: VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE,
+      body: VAULT_REPLACE_UNKNOWN_CONFIRM_BODY,
+      labels: [VAULT_CANCEL, VAULT_REPLACE_BUTTON],
+      destructive: false,
+    });
     expect(mockConnect).toHaveBeenCalledTimes(1);
   });
 
@@ -530,22 +563,22 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
     // a replacement that cannot be happening.
     const view = await renderVault(NOT_CONNECTED);
 
-    const raised = await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: VAULT_URL, key: TYPED_KEY },
       'none',
     );
 
-    expect(raised).toHaveLength(0);
+    expect(raised).toBeNull();
     expect(mockConnect).toHaveBeenCalledTimes(1);
   });
 
   test('does not ask about replacing when there is nothing to send', async () => {
     const view = await renderVault(CONNECTED);
 
-    const raised = await pressConnectThroughAlert(view, { address: '', key: TYPED_KEY }, 'none');
+    const raised = await pressConnectThroughDialog(view, { address: '', key: TYPED_KEY }, 'none');
 
-    expect(raised).toHaveLength(0);
+    expect(raised).toBeNull();
     expect(within(view.getByTestId('vault-error')).getByText(VAULT_ADDRESS_MISSING)).toBeTruthy();
     expect(mockConnect).not.toHaveBeenCalled();
   });
@@ -624,17 +657,16 @@ describe('VaultSettingsScreen — what the server refused', () => {
 describe('VaultSettingsScreen — disconnecting', () => {
   test('asks before it disconnects', async () => {
     const view = await renderVault(CONNECTED);
-    const spy = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
 
-    fireEvent.press(view.getByTestId('disconnect-vault-button'));
+    const raised = await pressDisconnect(view, 'none');
 
-    expect(spy).toHaveBeenCalledWith(
-      VAULT_DISCONNECT_CONFIRM_TITLE,
-      VAULT_DISCONNECT_CONFIRM_BODY,
-      expect.anything(),
-    );
+    expect(raised).toEqual({
+      title: VAULT_DISCONNECT_CONFIRM_TITLE,
+      body: VAULT_DISCONNECT_CONFIRM_BODY,
+      labels: [VAULT_CANCEL, VAULT_DISCONNECT_BUTTON],
+      destructive: true,
+    });
     expect(mockDisconnect).not.toHaveBeenCalled();
-    spy.mockRestore();
   });
 
   test('disconnects once on the destructive answer and says the writing stays', async () => {
@@ -643,6 +675,7 @@ describe('VaultSettingsScreen — disconnecting', () => {
 
     await pressDisconnect(view, 'confirm');
 
+    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
     expect(
       within(view.getByTestId('vault-status')).getByText(VAULT_STATUS_DISCONNECTED),
@@ -654,8 +687,10 @@ describe('VaultSettingsScreen — disconnecting', () => {
   test('does nothing at all on cancel', async () => {
     const view = await renderVault(CONNECTED);
 
-    await pressDisconnect(view, 'cancel');
+    const raised = await pressDisconnect(view, 'cancel');
 
+    expect(raised).not.toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
     expect(mockDisconnect).not.toHaveBeenCalled();
     expect(view.getByTestId('disconnect-vault-button')).toBeTruthy();
   });
@@ -736,12 +771,13 @@ describe('VaultSettingsScreen — the key is write-only', () => {
     const view = await renderVault(CONNECTED);
     fireEvent.press(view.getByText(VAULT_KEY_SHOW));
 
-    await pressConnectThroughAlert(
+    const raised = await pressConnectThroughDialog(
       view,
       { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
       'cancel',
     );
 
+    expect(raised).not.toBeNull();
     expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(false);
     expect(view.getByTestId('vault-key-input').props.value).toBe(TYPED_KEY);
     expect(mockConnect).not.toHaveBeenCalled();

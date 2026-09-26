@@ -41,9 +41,7 @@ cryptography==50.0.1
 deprecated==1.3.1
     # via limits
 distro==1.9.0
-    # via
-    #   anthropic
-    #   openai
+    # via anthropic
 dnspython==2.8.0
     # via email-validator
 docstring-parser==0.18.0
@@ -145,10 +143,8 @@ sqlalchemy==2.0.52
     #   sqlmodel
 sqlmodel==0.0.42
     # via -r backend/requirements.txt
-starlette==1.6.0
+starlette==1.7.0
     # via fastapi
-tqdm==4.70.0
-    # via openai
 truststore==0.10.4
     # via
     #   httpcore2
@@ -157,13 +153,18 @@ typing-extensions==4.16.0
     # via
     #   alembic
     #   anthropic
+    #   anyio
     #   fastapi
+    #   httpx2
     #   limits
     #   openai
     #   pydantic
     #   pydantic-core
+    #   pytest-asyncio
+    #   referencing
     #   sqlalchemy
     #   sqlmodel
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
     # via

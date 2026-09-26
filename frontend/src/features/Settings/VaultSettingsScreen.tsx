@@ -32,8 +32,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  type AlertButton,
   StyleSheet,
   Text,
   TextInput,
@@ -41,6 +39,8 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+
+import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
@@ -526,12 +526,22 @@ function useDisconnectSubmit(
   return useSettingsSubmit(form, { validate, perform, onError });
 }
 
+/** A confirmation that has been asked and not yet answered. */
+interface PendingConfirm {
+  readonly prompt: ConfirmPrompt;
+  readonly confirmLabel: string;
+  readonly destructive: boolean;
+  readonly onConfirm: () => Promise<void>;
+}
+
 interface ConfirmedActionArgs {
   /** What to ask, or ``undefined`` when this press needs no asking. */
   prompt: ConfirmPrompt | undefined;
   confirmLabel: string;
   destructive: boolean;
   onConfirm: () => Promise<void>;
+  /** Raises the screen's one rendered dialog with this question. */
+  ask: (_pending: PendingConfirm) => void;
 }
 
 /**
@@ -543,6 +553,9 @@ interface ConfirmedActionArgs {
  * whether there is anything to confirm is a fact about the data, not a second
  * code path for each caller to carry.
  *
+ * The question is answered in the screen's one rendered ``ConfirmDialog``
+ * rather than ``Alert.alert``, which react-native-web ships as an empty method:
+ * on web its buttons never appear, so neither action could ever run (#2928).
  * The buttons are always [cancel, confirm] in that order, so the way out sits
  * in the same place on every dialog this screen raises.
  */
@@ -551,18 +564,33 @@ function useConfirmedAction({
   confirmLabel,
   destructive,
   onConfirm,
+  ask,
 }: ConfirmedActionArgs): () => void {
   return useCallback(() => {
     if (prompt === undefined) {
       void onConfirm();
       return;
     }
-    const confirmStyle: AlertButton['style'] = destructive ? 'destructive' : 'default';
-    Alert.alert(prompt.title, prompt.body, [
-      { text: VAULT_CANCEL, style: 'cancel' },
-      { text: confirmLabel, style: confirmStyle, onPress: () => void onConfirm() },
-    ]);
-  }, [prompt, confirmLabel, destructive, onConfirm]);
+    ask({ prompt, confirmLabel, destructive, onConfirm });
+  }, [prompt, confirmLabel, destructive, onConfirm, ask]);
+}
+
+interface PendingConfirmState {
+  pendingConfirm: PendingConfirm | null;
+  onCancelConfirm: () => void;
+  onAcceptConfirm: () => void;
+  ask: (_pending: PendingConfirm) => void;
+}
+
+/** The one open question, and the two ways of answering it. */
+function usePendingConfirm(): PendingConfirmState {
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const onCancelConfirm = useCallback(() => setPendingConfirm(null), []);
+  const onAcceptConfirm = useCallback(() => {
+    setPendingConfirm(null);
+    if (pendingConfirm !== null) void pendingConfirm.onConfirm();
+  }, [pendingConfirm]);
+  return { pendingConfirm, onCancelConfirm, onAcceptConfirm, ask: setPendingConfirm };
 }
 
 interface VaultController {
@@ -576,6 +604,9 @@ interface VaultController {
   onToggleReveal: () => void;
   onConnect: () => void;
   onRequestDisconnect: () => void;
+  pendingConfirm: PendingConfirm | null;
+  onCancelConfirm: () => void;
+  onAcceptConfirm: () => void;
 }
 
 type FieldEdits = Pick<VaultController, 'onChangeAddress' | 'onChangeSecret'>;
@@ -629,17 +660,20 @@ function useVaultConnection(): VaultController {
   const { state, setState, loading } = useConnectionRead(setError);
   const performConnect = useConnectSubmit({ form, secret, setSecret, setReveal, setState });
   const performDisconnect = useDisconnectSubmit(form, setState);
+  const { ask, ...confirmation } = usePendingConfirm();
   const onConnect = useConfirmedAction({
     prompt: replacementPrompt(state, form.draft, secret),
     confirmLabel: VAULT_REPLACE_BUTTON,
     destructive: false,
     onConfirm: performConnect,
+    ask,
   });
   const onRequestDisconnect = useConfirmedAction({
     prompt: DISCONNECT_PROMPT,
     confirmLabel: VAULT_DISCONNECT_BUTTON,
     destructive: true,
     onConfirm: performDisconnect,
+    ask,
   });
   const edits = useFieldEdits(form, setSecret);
   const onToggleReveal = useCallback(() => setReveal((previous) => !previous), []);
@@ -653,6 +687,7 @@ function useVaultConnection(): VaultController {
     onToggleReveal,
     onConnect,
     onRequestDisconnect,
+    ...confirmation,
     ...edits,
   };
 }
@@ -823,6 +858,26 @@ const VaultConnectionSection = ({
   );
 };
 
+/** The screen's one confirmation, showing whichever question is open. */
+const VaultConfirmDialog = ({ controller }: { controller: VaultController }): React.JSX.Element => {
+  const { pendingConfirm } = controller;
+  return (
+    <ConfirmDialog
+      visible={pendingConfirm !== null}
+      title={pendingConfirm?.prompt.title ?? ''}
+      message={pendingConfirm?.prompt.body}
+      cancelLabel={VAULT_CANCEL}
+      confirmLabel={pendingConfirm?.confirmLabel}
+      destructive={pendingConfirm?.destructive}
+      testID="vault-confirm-dialog"
+      cancelTestID="vault-confirm-cancel"
+      confirmTestID="vault-confirm-confirm"
+      onCancel={controller.onCancelConfirm}
+      onConfirm={controller.onAcceptConfirm}
+    />
+  );
+};
+
 const VaultSettingsScreen = ({
   navigation,
 }: {
@@ -844,6 +899,7 @@ const VaultSettingsScreen = ({
           managedActivation={managedActivation}
         />
       )}
+      <VaultConfirmDialog controller={controller} />
     </ScreenScaffold>
   );
 };

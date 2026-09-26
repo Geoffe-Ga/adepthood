@@ -20,7 +20,10 @@ from __future__ import annotations
 import time
 
 import pytest
+from fastapi import APIRouter, FastAPI
 from limits import parse
+from slowapi import Limiter
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -97,6 +100,13 @@ _CLIENT = "198.51.100.7"
 _OTHER_CLIENT = "203.0.113.9"
 _PATH = "/anything"
 _OTHER_PATH = "/anything-else"
+
+# The slowapi characterization below. One request per window is enough to prove
+# a limit is enforced, and three attempts are enough to prove one is not.
+_SLOWAPI_DEFAULT_LIMIT = "1/minute"
+_SLOWAPI_ATTEMPTS = 3
+_DIRECT_ROUTE = "/direct"
+_INCLUDED_ROUTE = "/included"
 
 
 @pytest.fixture
@@ -558,3 +568,73 @@ def test_the_retry_after_never_falls_below_one_second() -> None:
 
     retry_after = throttle.charge(_CLIENT, _PATH)
     assert retry_after == _MIN_RETRY_AFTER_SECONDS
+
+
+def _one_client() -> str:
+    """Key every request to one client; slowapi calls a parameterless key_func bare."""
+    return _CLIENT
+
+
+def _slowapi_app(*, wired: bool = True) -> TestClient:
+    """An app enforcing an ambient limit the way #2909 removed: via ``SlowAPIMiddleware``.
+
+    One handler is registered directly on the app and one arrives through
+    ``include_router``, the shape every production route has. Neither carries
+    ``@limiter.limit``: that decorator enforces inside the endpoint whatever the
+    middleware does, so it would answer a different question. No exception
+    handler is registered: the middleware answers 429 with slowapi's own
+    default, and registering one was measured to change nothing. ``wired=False``
+    leaves out the limiter and its middleware -- the harness a negative
+    assertion could pass on by accident.
+    """
+    app = FastAPI()
+    if wired:
+        app.state.limiter = Limiter(key_func=_one_client, default_limits=[_SLOWAPI_DEFAULT_LIMIT])
+        app.add_middleware(SlowAPIMiddleware)
+
+    @app.get(_DIRECT_ROUTE)
+    def direct() -> dict[str, str]:
+        return {"route": "direct"}
+
+    router = APIRouter()
+
+    @router.get(_INCLUDED_ROUTE)
+    def included() -> dict[str, str]:
+        return {"route": "included"}
+
+    app.include_router(router)
+    return TestClient(app)
+
+
+def _statuses(client: TestClient, path: str) -> list[int]:
+    """Return the status of each of ``_SLOWAPI_ATTEMPTS`` requests to ``path``."""
+    return [client.get(path).status_code for _ in range(_SLOWAPI_ATTEMPTS)]
+
+
+def test_slowapi_middleware_still_cannot_see_included_router_routes() -> None:
+    """The version-bound claim in ``rate_limit.py``, re-measured on every run.
+
+    The ambient floor exists because ``SlowAPIMiddleware`` resolves a request
+    to its handler by walking ``app.routes`` for ``.endpoint``, and FastAPI's
+    ``_IncludedRouter`` wrappers expose none -- so every included route was
+    exempt. The docstrings cite the fastapi/starlette/slowapi versions that was
+    measured on; this test is that measurement, so a dependency bump re-takes
+    it rather than re-typing it (#2923).
+
+    The direct route is the positive control: it must be refused, which proves
+    the harness limits at all. Without it, "the included route was never
+    refused" would also pass on a limiter that was never wired up.
+    """
+    client = _slowapi_app()
+
+    assert _statuses(client, _DIRECT_ROUTE) == [_OK] + [_TOO_MANY_REQUESTS] * (
+        _SLOWAPI_ATTEMPTS - 1
+    )
+    assert _statuses(client, _INCLUDED_ROUTE) == [_OK] * _SLOWAPI_ATTEMPTS
+
+
+def test_the_slowapi_positive_control_fails_without_the_wiring() -> None:
+    """Unwired, the control route is never refused -- so its 429 above is the limiter's."""
+    client = _slowapi_app(wired=False)
+
+    assert _statuses(client, _DIRECT_ROUTE) == [_OK] * _SLOWAPI_ATTEMPTS
