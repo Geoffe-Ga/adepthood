@@ -341,6 +341,30 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.live-edit-keeps-quote-and-margin-anchors",
+    "description": "A writer types formatted Unicode into the live editor -- a decomposed accent, a ZWJ emoji sequence the server strips, bold typed key by key, italics, underline, an escaped marker, a nested bullet, a leading newline and trailing spaces -- and finishes. Read mode promotes into the body the server STORED, not the typed one, and a selection's trailing space never reaches the stored span, so anchor_end - anchor_start equals the length of anchor_text. A resonance pass anchors a margin note. Two quotes folded into the due week review render as quote blocks in the live mirror at once, with exactly one blank line between them. The source is then edited before every anchor by typing formatting and by a list indent; on reopen the pending quote and the note each still address exactly their own text at the new code-point offset, and the folded quotes (whose offsets the server freezes) are listed apart rather than washed over other words. The review still renders both blocks after reopening.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "promotions", "reflections", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "POST /journal/{entry_id}/promote",
+        "GET /journal/{entry_id}/promotions",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia",
+        "GET /reflections/due",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}"
+      ],
+      "tables": ["journalentry", "promotedquote", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-live-edit-anchors.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.review-from-the-shelf-cta",
     "description": "On a review day the Journal shelf's one call to write is the due review -- a button named by its visible words, 'Write your Weekly Review' -- and the daily-page tip steps aside; pressing it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On day 9, when nothing is due, the daily page holds that slot and the quiet 'Start a review early' link opens a picker of the scopes still in progress (GET /reflections/current); choosing the week opens 'Weekly Review -- Week 2', and the saved page carries scope c1:w2. Closing it and reopening the picker offers 'Continue -- Weekly Review -- Week 2', which reopens that same page (same body, still exactly one c1:w2 entry). Not asserted in the browser, and pinned only by Jest and pytest: the stage, section and course CTAs, dismissing a review, the no-card-while-loading rule, the picker re-reading on refocus, the 409 reroute to the live review, the stage-10 section omission, and the timezone-local day count. The review composer's sources feed is covered by journal.fold-promoted-quote-into-reopened-reflection, not here.",
     "crosses": {
