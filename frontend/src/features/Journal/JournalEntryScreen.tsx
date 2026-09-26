@@ -1088,6 +1088,34 @@ function useDebouncedSave(
 
 type StrRef = React.MutableRefObject<string>;
 
+/** Raised when text changed during Finish could not then be saved. */
+const UNSAVED_AFTER_FINISH_ERROR = 'Text changed during Finish could not be saved.';
+
+/**
+ * The body the server holds once every change made during the Finish write is
+ * durable. The Finish response only knows the text it carried; if the body
+ * changed while it was out, that newer text is saved (``flushForExit`` loops
+ * until what it wrote is what the page holds) and the entry is re-read for the
+ * server's sanitized copy -- again, if the body moved during the read. A save
+ * that fails rejects, so the caller keeps the writer in the editor, never on a
+ * read view of text the server does not hold.
+ */
+function useSettleStoredBody(bodyRef: StrRef, flushForExit: () => Promise<boolean>) {
+  return useCallback(
+    async (finished: FinishedEntry, sent: string): Promise<string> => {
+      let stored = finished.message;
+      let settled = sent;
+      while (bodyRef.current !== settled) {
+        if (!(await flushForExit())) throw new Error(UNSAVED_AFTER_FINISH_ERROR);
+        settled = bodyRef.current;
+        stored = (await journal.get(finished.id)).message;
+      }
+      return stored;
+    },
+    [bodyRef, flushForExit],
+  );
+}
+
 /** Bind flush + finish to the latest title/body refs so callers pass no args. */
 function useBoundWriters(
   flush: (_title: string, _body: string) => Promise<FlushResult>,
@@ -1112,15 +1140,16 @@ function useBoundWriters(
       if (sameDraft(requested, titleRef.current, bodyRef.current)) return true;
     }
   }, [flush, titleRef, bodyRef]);
-  // Read mode shows, and promotes offsets into, the body as STORED. It is adopted
-  // only when nothing was typed while the write was out: a later keystroke is the
-  // writer's own newer text and its autosave supersedes the stored copy anyway.
+  const settleStoredBody = useSettleStoredBody(bodyRef, flushForExitNow);
+  // Read mode shows, and promotes offsets into, the body as STORED, so it adopts
+  // the server's copy of the latest text before it opens -- including text the
+  // writer typed (or a fold-in added) while the Finish write was out.
   const finishNow = useCallback(async () => {
     const sent = bodyRef.current;
     const finished = await finish(titleRef.current, sent);
-    if (bodyRef.current === sent) adoptStoredBody(finished.message);
+    adoptStoredBody(await settleStoredBody(finished, sent));
     return finished.id;
-  }, [finish, titleRef, bodyRef, adoptStoredBody]);
+  }, [finish, titleRef, bodyRef, adoptStoredBody, settleStoredBody]);
   return { flushNow, flushForExitNow, finishNow };
 }
 
