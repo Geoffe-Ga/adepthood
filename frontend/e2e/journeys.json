@@ -1361,5 +1361,26 @@
     },
     "status": "uncovered",
     "issue": 2926
+  },
+  {
+    "id": "design.text-is-in-order",
+    "description": "Every screen's text is in order: each string sits inside the component it describes, groups share one edge, a region uses few faces, and no raw Markdown reaches the screen (epic #2946; the reviewer's protocol is prompts/scans/text-order.md, landed by #2947). The covering Playwright spec signs up through the UI, seeds ten habits, one adopted practice with a share link and one journal entry over the API, then walks every reachable route -- the five tabs (Journal, Habits, Practice, Course, Map) and every RootStack screen a lane account can open -- at 390x844 and 1280x720, screenshots each and reduces it to a census of every visible text node (string, face, size, weight, colour, box, nearest testID) written under e2e/artifacts/text-order/ and published by CI as text-order-census. Three rules are asserted mechanically per screen because geometry can hold them: (A) no text box leaves its closest testID ancestor by more than a pixel, measured against the ancestor's scroll extent when it scrolls; (B) no two unrelated text boxes overlap by more than a pixel, nested Text spans excluded; (C) no visible string carries **, __, ## or [text](. Off-ramp font sizes -- sizes outside the set computed from type(width), editorialType and uiType, which a Jest bridge pins to the tokens -- are reported per screen and written to the JSON but deliberately not asserted: hundreds of fontSize literals outside the tokens would red the lane at HEAD, and promoting that column to a gate is the exit criterion of the per-screen remediation issues. Everything that needs judgement -- one edge, one face per role, scope, glyph over word, eyebrows -- is printed as the per-screen summary line (distinct left edges, distinct faces) and is a review step per the protocol, not an assertion. AdminFeedback (admin gate), JournalPhotograph (no camera in headless Chromium; a read page would be a paid transcription), Get resonance and voice transcription are named in SKIPPED and logged on every run; nothing the walk does spends.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "habits", "practices", "userPractices", "practiceShare", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "POST /practices/{practice_id}/share-link",
+        "GET /practices/share/{token}",
+        "POST /journal/"
+      ],
+      "tables": ["user", "habit", "practice", "userpractice", "practicesharelink", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/text-order.browser.e2e.test.ts"
   }
 ]
