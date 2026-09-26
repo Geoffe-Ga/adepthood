@@ -15,23 +15,27 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 
-import { optimisticRemove } from './optimisticRemove';
 import styles from './PromotedQuotes.styles';
 import { QuoteRow } from './QuoteRow';
 import { formatSourceDate } from './reflectionCopy';
 import ReviewScopePicker from './ReviewScopePicker';
 import type { ReviewEntryParams } from './reviewScopes';
+import {
+  PROMOTED_QUOTES_PAGE_SIZE,
+  reinsertByCreatedDesc,
+  usePromotedQuoteSection,
+  type QuoteSection,
+  type SectionStatus,
+} from './usePromotedQuoteSection';
 
-import { promotions, type PromotedQuoteListItem, type PromotionStatusFilter } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
+import type { PromotedQuoteListItem } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
-/** How many quotes each section reads per page (the server's default page). */
-export const PROMOTED_QUOTES_PAGE_SIZE = 50;
+export { PROMOTED_QUOTES_PAGE_SIZE, reinsertByCreatedDesc };
 
 export const EMPTY_COPY =
   'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.';
@@ -49,7 +53,6 @@ const USED_FALLBACK = 'Used in a review';
 const STALE_NOTE = 'Passage since edited';
 const CAPTION_SEPARATOR = ' · ';
 
-type SectionStatus = Extract<PromotionStatusFilter, 'pending' | 'included'>;
 type ScreenNavigation = NativeStackNavigationProp<RootStackParamList>;
 
 /** Each section's header, by status, carrying the server's total. */
@@ -62,24 +65,6 @@ const SECTION_EMPTY: Record<SectionStatus, string> = {
   pending: 'Nothing is waiting right now.',
   included: 'None has gone into a review yet.',
 };
-
-/** ``created_at`` desc, then ``id`` desc -- the server's own order. */
-function newerFirst(a: PromotedQuoteListItem, b: PromotedQuoteListItem): number {
-  return b.created_at.localeCompare(a.created_at) || b.id - a.id;
-}
-
-/**
- * Put a quote back where the server's order places it, for the revert of a
- * failed remove. A quote already present is left alone, never duplicated.
- */
-export function reinsertByCreatedDesc(
-  items: PromotedQuoteListItem[],
-  quote: PromotedQuoteListItem,
-): PromotedQuoteListItem[] {
-  if (items.some((row) => row.id === quote.id)) return items;
-  const at = items.findIndex((row) => newerFirst(quote, row) < 0);
-  return at === -1 ? [...items, quote] : [...items.slice(0, at), quote, ...items.slice(at)];
-}
 
 /** The source a quote came from: its title, else the day it was written. */
 function sourceLabel(quote: PromotedQuoteListItem): string {
@@ -100,141 +85,31 @@ export function quoteCaption(quote: PromotedQuoteListItem): string {
 
 /** The row's accessible name: the quote and its source, and its review if used. */
 export function quoteA11yLabel(quote: PromotedQuoteListItem): string {
-  const base = `“${quote.anchor_text}” from ${sourceLabel(quote)}`;
-  if (quote.included_in_entry_id == null) return base;
-  return `${base}, used in ${quote.included_in_title ?? 'a review'}`;
+  const from = `“${quote.anchor_text}” from ${sourceLabel(quote)}`;
+  const used =
+    quote.included_in_entry_id == null
+      ? from
+      : `${from}, used in ${quote.included_in_title ?? 'a review'}`;
+  // Label-in-name: the caption's visible stale note is part of the row's name.
+  return quote.stale ? `${used}. ${STALE_NOTE}` : used;
 }
 
-interface SectionState {
-  items: PromotedQuoteListItem[];
-  total: number;
-  loading: boolean;
-  /** Null until a read fails; holds the sentence the reader is shown. */
-  error: string | null;
-  hasMore: boolean;
-  /** False until the first read settles, so an empty section is never shown early. */
-  settled: boolean;
-}
-
-const INITIAL_SECTION: SectionState = {
-  items: [],
-  total: 0,
-  loading: true,
-  error: null,
-  hasMore: false,
-  settled: false,
-};
-
-export interface QuoteSection extends SectionState {
-  status: SectionStatus;
-  loadMore: () => void;
-  /** Re-read from the top, abandoning any read in flight. */
-  reload: () => void;
-  setItems: React.Dispatch<React.SetStateAction<PromotedQuoteListItem[]>>;
-  /** Move the section total by ``delta`` (an optimistic remove, or its revert). */
-  adjustTotal: (_delta: number) => void;
-}
-
-/** Updater landing one page: the first replaces the section, a later one appends. */
-function pageLanded(
-  page: { items: PromotedQuoteListItem[]; total: number; has_more: boolean },
-  offset: number,
-) {
-  return (previous: SectionState): SectionState => ({
-    items: offset === 0 ? page.items : [...previous.items, ...page.items],
-    total: page.total,
-    loading: false,
-    error: null,
-    hasMore: page.has_more,
-    settled: true,
-  });
-}
-
-/** Updater recording a failed read without discarding what was already read. */
-function readFailed(error: string) {
-  return (previous: SectionState): SectionState => ({
-    ...previous,
-    loading: false,
-    error,
-    settled: true,
-  });
-}
-
-/** Read one section's pages; a generation counter drops a page a reload overtook. */
-function useSectionReader(status: SectionStatus) {
-  const [state, setState] = useState<SectionState>(INITIAL_SECTION);
-  const generation = useRef(0);
-  const inFlight = useRef(false);
-
-  const read = useCallback(
-    (offset: number) => {
-      if (inFlight.current) return;
-      inFlight.current = true;
-      const mine = generation.current;
-      setState((previous) => ({ ...previous, loading: true, error: null }));
-      promotions
-        .listAll({ status, limit: PROMOTED_QUOTES_PAGE_SIZE, offset })
-        .then((page) => {
-          if (mine === generation.current) setState(pageLanded(page, offset));
-        })
-        .catch((failure: unknown) => {
-          if (mine === generation.current) setState(readFailed(formatApiError(failure)));
-        })
-        .finally(() => {
-          if (mine === generation.current) inFlight.current = false;
-        });
-    },
-    [status],
-  );
-
-  const reload = useCallback(() => {
-    generation.current += 1;
-    inFlight.current = false;
-    read(0);
-  }, [read]);
-
-  return { state, setState, read, reload };
-}
-
-/** One section's pages, plus the setters an optimistic remove needs. */
-function useQuoteSection(status: SectionStatus): QuoteSection {
-  const { state, setState, read, reload } = useSectionReader(status);
-
-  useEffect(() => {
-    read(0);
-  }, [read]);
-
-  const { hasMore, loading, items } = state;
-  const loadMore = useCallback(() => {
-    if (hasMore && !loading) read(items.length);
-  }, [hasMore, loading, items.length, read]);
-  const setItems = useCallback<QuoteSection['setItems']>(
-    (next) =>
-      setState((previous) => ({
-        ...previous,
-        items: typeof next === 'function' ? next(previous.items) : next,
-      })),
-    [setState],
-  );
-  const adjustTotal = useCallback(
-    (delta: number) => setState((previous) => ({ ...previous, total: previous.total + delta })),
-    [setState],
-  );
-
-  return { ...state, status, loadMore, reload, setItems, adjustTotal };
-}
-
-/** Re-read both sections whenever the screen regains focus -- but not on the first. */
-function useReloadOnRefocus(navigation: ScreenNavigation, reload: () => void): void {
+/**
+ * Re-read both sections whenever the screen regains focus -- but not on the
+ * first -- and count those refocuses, so the review picker re-reads too.
+ */
+function useReloadOnRefocus(navigation: ScreenNavigation, reload: () => void): number {
   const focusedOnce = useRef(false);
-  useEffect(
-    () =>
-      navigation.addListener('focus', () => {
-        if (focusedOnce.current) reload();
-        focusedOnce.current = true;
-      }),
-    [navigation, reload],
-  );
+  const [refocusCount, setRefocusCount] = useState(0);
+  const onFocus = useCallback(() => {
+    if (focusedOnce.current) {
+      reload();
+      setRefocusCount((count) => count + 1);
+    }
+    focusedOnce.current = true;
+  }, [reload]);
+  useEffect(() => navigation.addListener('focus', onFocus), [navigation, onFocus]);
+  return refocusCount;
 }
 
 /** The inline "Remove this quote?" step: web-safe, unlike a native alert. */
@@ -326,11 +201,7 @@ function SectionError({ section }: { section: QuoteSection }): React.JSX.Element
       <Text style={styles.errorText} accessibilityRole="alert">
         {section.error}
       </Text>
-      <TouchableOpacity
-        accessibilityRole="button"
-        onPress={section.reload}
-        style={styles.actionRow}
-      >
+      <TouchableOpacity accessibilityRole="button" onPress={section.retry} style={styles.actionRow}>
         <Text style={styles.actionText}>{RETRY_LABEL}</Text>
       </TouchableOpacity>
     </View>
@@ -345,6 +216,10 @@ function SectionFooter({ section }: { section: QuoteSection }): React.JSX.Elemen
     <TouchableOpacity
       testID={`promoted-quotes-${section.status}-load-more`}
       accessibilityRole="button"
+      // Paging waits for any remove in flight: until it settles, the list is a
+      // row short of the server's and its length is not the next page's offset.
+      accessibilityState={{ disabled: section.removing > 0 }}
+      disabled={section.removing > 0}
       onPress={section.loadMore}
       style={styles.actionRow}
     >
@@ -448,7 +323,6 @@ function ScreenBody({
 function useRowActions(navigation: ScreenNavigation): RowActions & { removeError: string | null } {
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const pendingIds = useRef(new Set<number>()).current;
 
   const onOpen = useCallback(
     (quote: PromotedQuoteListItem) =>
@@ -459,27 +333,10 @@ function useRowActions(navigation: ScreenNavigation): RowActions & { removeError
     [navigation],
   );
   const onKeep = useCallback(() => setConfirmingId(null), []);
-  const onConfirmRemove = useCallback(
-    (section: QuoteSection, id: number) => {
-      setConfirmingId(null);
-      void optimisticRemove(id, {
-        pendingIds,
-        current: section.items,
-        setItems: section.setItems,
-        removeRemote: (quoteId) => promotions.remove(quoteId),
-        reinsert: reinsertByCreatedDesc,
-        beforeStart: () => {
-          setRemoveError(null);
-          section.adjustTotal(-1);
-        },
-        onError: (message) => {
-          section.adjustTotal(1);
-          setRemoveError(message);
-        },
-      });
-    },
-    [pendingIds],
-  );
+  const onConfirmRemove = useCallback((section: QuoteSection, id: number) => {
+    setConfirmingId(null);
+    void section.remove(id, { onStart: () => setRemoveError(null), onError: setRemoveError });
+  }, []);
 
   return {
     confirmingId,
@@ -493,8 +350,8 @@ function useRowActions(navigation: ScreenNavigation): RowActions & { removeError
 
 const PromotedQuotesScreen = (): React.JSX.Element => {
   const navigation = useNavigation<ScreenNavigation>();
-  const pending = useQuoteSection('pending');
-  const included = useQuoteSection('included');
+  const pending = usePromotedQuoteSection('pending');
+  const included = usePromotedQuoteSection('included');
   const actions = useRowActions(navigation);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -504,7 +361,7 @@ const PromotedQuotesScreen = (): React.JSX.Element => {
     reloadPending();
     reloadIncluded();
   }, [reloadPending, reloadIncluded]);
-  useReloadOnRefocus(navigation, reloadAll);
+  const refocusCount = useReloadOnRefocus(navigation, reloadAll);
   const chooseReview = useCallback(
     (params: ReviewEntryParams) => {
       setPickerOpen(false);
@@ -524,7 +381,7 @@ const PromotedQuotesScreen = (): React.JSX.Element => {
         onPress={() => setPickerOpen((open) => !open)}
         style={styles.writeReview}
       />
-      <ReviewScopePicker enabled={pickerOpen} onChoose={chooseReview} />
+      <ReviewScopePicker enabled={pickerOpen} refreshKey={refocusCount} onChoose={chooseReview} />
       {actions.removeError !== null ? (
         <Text
           style={styles.errorText}

@@ -178,6 +178,10 @@ describe('PromotedQuotesScreen sections', () => {
     expect((await findByTestId('promoted-quote-1-caption')).props.children).toBe(
       'Rain · Passage since edited',
     );
+    // Label-in-name: what the row visibly says is part of what it is called.
+    expect((await findByTestId('promoted-quote-1')).props.accessibilityLabel).toBe(
+      '“the anger was grief” from Rain. Passage since edited',
+    );
   });
 
   it('opens the source entry at the quote', async () => {
