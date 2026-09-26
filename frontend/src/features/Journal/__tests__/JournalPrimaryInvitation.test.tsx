@@ -18,6 +18,7 @@ import { morningPageTitle } from '../morningPagesCopy';
 
 import type { ReflectionCurrentScope, ReflectionDue, ReflectionLevel, Stage } from '@/api';
 import { uiType } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 const mockDue = jest.fn() as jest.MockedFunction<() => Promise<{ due: ReflectionDue | null }>>;
@@ -77,6 +78,9 @@ jest.mock('@react-navigation/native', () => {
     },
   };
 });
+
+jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
+const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
 const JournalPrimaryInvitation = require('../JournalPrimaryInvitation').default;
 
@@ -329,6 +333,41 @@ describe('the early-review link', () => {
     });
     // Choosing folds the list away, so a return to the shelf finds it closed.
     await waitFor(() => expect(queryByTestId('journal-review-scope-week')).toBeNull());
+  });
+});
+
+describe('setting the morning-pages tip aside (#2860)', () => {
+  beforeEach(() => {
+    mockMoveFocus.mockReset();
+    mockDue.mockResolvedValue({ due: null });
+  });
+
+  it('hands focus to the early-review link rather than dropping it with the card', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-morning-pages-dismiss'));
+    });
+
+    expect(mockSaveTipDismissed).toHaveBeenCalledWith(true);
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const [target] = mockMoveFocus.mock.calls[0] ?? [];
+    expect(target).not.toBeNull();
+    expect((target as unknown as { props: { testID?: string } }).props.testID).toBe(
+      'journal-review-early',
+    );
+    await waitFor(() => expect(queryByTestId('journal-morning-pages-tip')).toBeNull());
+    expect(getByTestId('journal-review-early')).toBeTruthy();
+  });
+
+  it('moves no focus when the tip was already set aside on an earlier visit', async () => {
+    mockLoadTipDismissed.mockResolvedValue(true);
+    const { getByTestId } = renderInvitation();
+    await settle();
+    expect(getByTestId('journal-review-early')).toBeTruthy();
+    expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });
 

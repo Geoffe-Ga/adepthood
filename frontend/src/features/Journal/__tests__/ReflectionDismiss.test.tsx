@@ -2,7 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, TouchableOpacity } from 'react-native';
 import type { TextStyle, ViewStyle } from 'react-native';
 
 /**
@@ -12,7 +12,13 @@ import type { TextStyle, ViewStyle } from 'react-native';
  * its absolute placement or the optional ``textStyle`` into the text variants
  * every other card relies on.
  */
-import ReflectionDismiss, { CLOSE_ICON_SIZE } from '../ReflectionDismiss';
+import ReflectionDismiss, {
+  CLOSE_ACTIVE_OPACITY,
+  CLOSE_ICON_SIZE,
+  CLOSE_PRESSED_COLOR,
+  CLOSE_REST_COLOR,
+  closeCornerReserve,
+} from '../ReflectionDismiss';
 
 import { SPACING, accent, editorialType, ink, touchTarget } from '@/design/tokens';
 
@@ -125,5 +131,44 @@ describe('ReflectionDismiss — close variant (icon-only X, #2862)', () => {
     const onPress = jest.fn();
     fireEvent.press(renderClose(onPress).getByTestId('x'));
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('tints the X accent while pressed and returns to soft ink on release (#2860)', () => {
+    const view = renderClose();
+    const iconColor = (): unknown => view.UNSAFE_getByType(X).props.color;
+    expect(CLOSE_REST_COLOR).toBe(ink.soft);
+    expect(CLOSE_PRESSED_COLOR).toBe(accent.primary);
+    expect(iconColor()).toBe(ink.soft);
+    fireEvent(view.getByTestId('x'), 'pressIn');
+    expect(iconColor()).toBe(accent.primary);
+    fireEvent(view.getByTestId('x'), 'pressOut');
+    expect(iconColor()).toBe(ink.soft);
+  });
+
+  it('keeps the X fully opaque while held, so the accent is not faded to a wash', () => {
+    // RNTL's fireEvent skips Pressability's opacity path, so this pins the prop;
+    // the browser spec measures the held control's computed opacity.
+    expect(CLOSE_ACTIVE_OPACITY).toBe(1);
+    expect(renderClose().UNSAFE_getByType(TouchableOpacity).props.activeOpacity).toBe(1);
+  });
+
+  it('does not treat a press-in alone as the press', () => {
+    const onPress = jest.fn();
+    fireEvent(renderClose(onPress).getByTestId('x'), 'pressIn');
+    expect(onPress).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeCornerReserve — the room a card keeps clear of its corner X', () => {
+  it('is the part of the 44dp hit area that reaches past the card padding', () => {
+    expect(closeCornerReserve(SPACING.lg)).toBe(touchTarget.minimum - SPACING.lg);
+  });
+
+  it('is the whole hit area on an unpadded card', () => {
+    expect(closeCornerReserve(0)).toBe(touchTarget.minimum);
+  });
+
+  it('never goes negative when the padding already clears the hit area', () => {
+    expect(closeCornerReserve(touchTarget.minimum + SPACING.lg)).toBe(0);
   });
 });
