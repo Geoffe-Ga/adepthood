@@ -292,7 +292,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
           compact ? null : expect.anything(),
         );
         expect(within(sources).queryByText('Sources')).toEqual(compact ? null : expect.anything());
-        expect(photograph.props.accessibilityLabel).toMatch(/Photograph a handwritten page/);
+        expect(photograph.props.accessibilityLabel).toMatch(/Photograph a page or screenshot/);
         expect(sources.props.accessibilityLabel).toMatch(/Open the sources/);
         screen.unmount();
       } finally {

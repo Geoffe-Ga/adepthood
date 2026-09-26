@@ -1,7 +1,7 @@
 /**
  * The pure state machine behind a multi-page transcription run.
  *
- * A run reads several handwritten pages at once under a small concurrency bound,
+ * A run reads several captured pages at once under a small concurrency bound,
  * lands each page's text under its own stable id (out of order is fine), lets the
  * writer hand-edit or explicitly redo any page, and finally merges the pages, in
  * session order, into one editable entry.

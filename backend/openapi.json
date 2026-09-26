@@ -7332,7 +7332,7 @@
         "type": "object"
       },
       "TranscribePageRequest": {
-        "description": "One photographed handwritten page submitted for transcription.\n\n``image_base64`` is the base64-encoded image bytes and ``media_type`` its\ndeclared MIME type. Neither field is stored: the request is stateless, so\nthe bytes live only for the duration of the single vision call.",
+        "description": "One captured image of text (a page, screenshot, or screen) to transcribe.\n\n``image_base64`` is the base64-encoded image bytes and ``media_type`` its\ndeclared MIME type. Neither field is stored: the request is stateless, so\nthe bytes live only for the duration of the single vision call.",
         "properties": {
           "image_base64": {
             "description": "Base64-encoded image bytes.",
@@ -16602,7 +16602,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one page, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills. Usage is metered (one row per real, non-stub call)\nand committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {

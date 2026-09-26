@@ -1,5 +1,5 @@
 /**
- * Join a transcribed handwritten page onto the writing already on an entry.
+ * Join a transcribed page of photographed or captured text onto the writing already on an entry.
  *
  * The rule is deliberately conservative. Transcription is a real-money read the
  * writer paid for, and the prose above it is theirs: neither is reformatted,

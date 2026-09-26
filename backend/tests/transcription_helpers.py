@@ -20,6 +20,23 @@ from services.botmason import LLMResponse
 #: Marker text a stubbed provider response returns so tests can grep logs for it.
 SENTINEL_TEXT = "SENTINEL_TRANSCRIPTION_TEXT_9f3c2a"
 
+#: The refusal a real vision model returned for a text-message screenshot
+#: (#2851), completed past the ellipsis the report truncated it at. One
+#: paragraph, ASCII apostrophes -- the shape the server must classify as a
+#: refusal rather than return (and bill) as the page's text.
+REPORTED_REFUSAL = (
+    "I'm not able to help with this request \u2014 the image you've shared "
+    "appears to be a screenshot of a text message conversation, not a "
+    "handwritten journal page. I'm set up specifically to transcribe "
+    "photographed handwritten journal entries into digital text. If you meant "
+    "to share a journal page, feel free to upload that photo and I'll "
+    "transcribe it faithfully, keeping every word exactly as you wrote it."
+)
+#: The same refusal as providers actually emit it, with typographic apostrophes.
+REPORTED_REFUSAL_CURLY = REPORTED_REFUSAL.replace("'", "\u2019")
+#: A short refusal carrying a grep-able marker, for the privacy log tripwires.
+REFUSAL_MARKER_TEXT = "I can't help with this image. PRIVACY_REFUSAL_MARKER_3b8e"
+
 #: Minimal valid JPEG magic-byte prefix padded to a plausible body length.
 JPEG_BYTES = b"\xff\xd8\xff" + b"\x00" * 64
 #: Minimal valid PNG magic-byte prefix padded to a plausible body length.

@@ -43,13 +43,20 @@ from domain.creek_vault import (
 from models.user import User
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services import creek_vault_client
 from services import creek_vault_pipeline as pipeline
+from services.creek_vault_client import (
+    _VAULT_TOTAL_DEADLINE_SECONDS as PRODUCTION_ADAPTER_DEADLINE_SECONDS,
+)
 from services.creek_vault_client import (
     CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
 from services.creek_vault_pipeline import _BACKGROUND_TASKS as BACKGROUND_TASKS
+from services.creek_vault_pipeline import (
+    _JOURNAL_RUN_BUDGET_SECONDS as PRODUCTION_JOURNAL_BUDGET_SECONDS,
+)
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_pipeline import _commit_finished_run as commit_finished_run
 from services.creek_vault_pipeline import _PipelinePlan as PipelinePlan
@@ -82,6 +89,17 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 # never reached httpx and the feature is a no-op.
 _ORDINARY_READ_BUDGET_SECONDS = 10.0
 _CONCURRENT_RACE_SETTLE_SECONDS = 2.0
+
+# #2933: a stage clock short enough to expire inside a submit, and a submit
+# held for several whole clocks after Creek has already accepted its job.
+_SUBMIT_BUDGET_SECONDS = 0.005
+_SUBMIT_HELD_PAST_BUDGET_SECONDS = _SUBMIT_BUDGET_SECONDS * 10
+
+# How many journal budgets the adapter's whole-request deadline spans in
+# production, so a scaled-down test keeps the real relationship between them.
+_PRODUCTION_ADAPTER_DEADLINE_TO_JOURNAL_BUDGET = (
+    PRODUCTION_ADAPTER_DEADLINE_SECONDS / PRODUCTION_JOURNAL_BUDGET_SECONDS
+)
 
 
 def _example(capability: str, cell: str) -> dict[str, Any]:
@@ -163,9 +181,19 @@ class _SlowRecorder:
     is not a compatible signature. Wrapping one keeps both handlers honest.
     """
 
-    def __init__(self, *, delay: float) -> None:
-        """Bind how long each answer should take, and the recorder behind it."""
+    def __init__(
+        self,
+        *,
+        delay: float,
+        slow_link: str | None = None,
+    ) -> None:
+        """Bind how long each answer should take, and the recorder behind it.
+
+        ``slow_link`` narrows the delay to one linker method, so a test can
+        trickle a synchronous rung while every other exchange answers at once.
+        """
         self._delay = delay
+        self._slow_link = slow_link
         self._inner = _Recorder()
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -177,8 +205,18 @@ class _SlowRecorder:
         short" indistinguishable from "no call was ever made".
         """
         response = self._inner(request)
-        await asyncio.sleep(self._delay)
+        if self._is_slow(request):
+            await asyncio.sleep(self._delay)
         return response
+
+    def _is_slow(self, request: httpx.Request) -> bool:
+        """Whether this exchange is one the test asked to trickle."""
+        if self._slow_link is None:
+            return True
+        return (
+            request.url.path == _LINKS_PATH
+            and json.loads(request.content)["method"] == self._slow_link
+        )
 
     @property
     def requests(self) -> list[httpx.Request]:
@@ -781,6 +819,141 @@ async def test_a_journal_clock_expires_without_abandoning_the_accepted_job(
     assert [(row.stage, row.outcome) for row in landed] == [
         ("classify", VaultPipelineOutcome.COMPLETED),
         ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_submit_the_vault_accepted_is_not_abandoned_when_the_budget_expires_during_it(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage clock never cancels a submit Creek may already have accepted (#2933).
+
+    Creek creates the job and only then answers, so a clock that cancels the
+    submit in between discards a handle that already exists. The continuation
+    then finds no ``job_id`` and pays for a second LLM classification of the
+    same content. The fake vault below accepts the job, then holds its ``202``
+    for several whole budgets, which puts the budget's expiry inside the
+    submit on every run. That ordering is deterministic: the budget timer is
+    armed before the request is sent and the hold starts only once it arrives.
+    """
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    accepted = asyncio.Event()
+    terminal_release = asyncio.Event()
+
+    async def _accept_then_answer_late(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            accepted.set()
+            await asyncio.sleep(_SUBMIT_HELD_PAST_BUDGET_SECONDS)
+        elif (
+            request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}"
+            and response.json().get("state") == "succeeded"
+        ):
+            await terminal_release.wait()
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_accept_then_answer_late))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with concurrent_session_factory() as session:
+        # Bounded because the terminal status is held: a foreground that waited
+        # for the job instead of honouring its clock would never return.
+        await asyncio.wait_for(
+            drive_vault_pipeline(
+                session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+            ),
+            timeout=_CONCURRENT_RACE_SETTLE_SECONDS,
+        )
+    assert accepted.is_set()
+    async with concurrent_session_factory() as session:
+        immediate = await _rows(session)
+    # The terminal status is still held, so this is the foreground's own record:
+    # the accepted handle is durable and the clock still returned the save.
+    assert [(row.stage, row.outcome, row.job_id) for row in immediate] == [
+        ("classify", VaultPipelineOutcome.ATTEMPTED, recorder.CLASSIFICATION_JOB)
+    ]
+
+    terminal_release.set()
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    polled = {
+        request.url.path.removeprefix(_JOBS_PREFIX)
+        for request in recorder.requests
+        if request.url.path.startswith(_JOBS_PREFIX)
+    }
+    assert polled == {recorder.CLASSIFICATION_JOB}
+    async with concurrent_session_factory() as session:
+        landed = await _rows(session)
+    assert [(row.stage, row.outcome) for row in landed] == [
+        ("classify", VaultPipelineOutcome.COMPLETED),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert landed[0].attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_embedding_job_is_not_abandoned_when_the_budget_expires_during_it(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedding preparation is the other job-admitting submit, and keeps its handle too.
+
+    Both admissions are held for ten budgets after Creek accepts them. The
+    held classification guarantees the foreground hands off at its first rung,
+    so the embeddings submit is always made by the continuation under the
+    background stage budget, and that budget always expires inside it.
+    Cancelling the submit would lose the job and make reconciliation admit a
+    second one.
+    """
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_BACKGROUND_STAGE_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    embedding_accepted = asyncio.Event()
+
+    async def _accept_embeddings_then_answer_late(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        is_embeddings = request.url.path == _LINKS_PATH and json.loads(request.content) == {
+            "method": VaultLinkStage.EMBEDDINGS.value
+        }
+        if is_embeddings:
+            embedding_accepted.set()
+        if is_embeddings or request.url.path == _CLASSIFICATIONS_PATH:
+            await asyncio.sleep(_SUBMIT_HELD_PAST_BUDGET_SECONDS)
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_accept_embeddings_then_answer_late))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+        )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert embedding_accepted.is_set()
+    assert recorder.bodies.count({"method": VaultLinkStage.EMBEDDINGS.value}) == 1
+    async with concurrent_session_factory() as session:
+        landed = await _rows(session)
+    embeddings = [row for row in landed if row.stage == VaultPipelineStage.EMBEDDINGS.value]
+    assert [(row.outcome, row.attempt_count, row.job_id) for row in embeddings] == [
+        (VaultPipelineOutcome.COMPLETED, 1, recorder.EMBEDDING_JOB)
     ]
 
 
@@ -2472,6 +2645,89 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     would pass unchanged while a trickling vault held somebody's journal save
     open for minutes. Elapsed wall-clock time is the only assertion that can
     support "the write path acquires no new latency class".
+
+    The trickling rung is temporal linking: a synchronous stage with no job
+    handle to lose, so the journal budget itself must cut it. The adapter's
+    deadline keeps production's ratio to that budget, which puts it beyond the
+    trickle -- only the stage clock can make this assertion pass.
+    """
+    budget = 0.2
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", budget)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
+    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.TEMPORAL.value)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    monkeypatch.setattr(
+        creek_vault_client,
+        "_VAULT_TOTAL_DEADLINE_SECONDS",
+        budget * _PRODUCTION_ADAPTER_DEADLINE_TO_JOURNAL_BUDGET,
+    )
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    elapsed = time.monotonic() - started
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert elapsed < 0.45
+    # Non-vacuous: the bound cut a call short rather than declining to make one.
+    assert any(
+        request.url.path == _LINKS_PATH
+        and json.loads(request.content)["method"] == VaultLinkStage.TEMPORAL.value
+        for request in slow.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A synchronous cold-embedding rung stays under the deep run's clock (#2933).
+
+    Eddies has no durable handle, so nothing is lost by cutting it, and its
+    adapter deadline is the long cold-embedding one. Were the stage clock lifted
+    from every submit rather than only from the job-admitting ones, a document
+    import would wait out that whole deadline in the foreground.
+    """
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.EDDIES.value)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+    elapsed = time.monotonic() - started
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert elapsed < 0.45
+    assert any(
+        request.url.path == _LINKS_PATH
+        and json.loads(request.content)["method"] == VaultLinkStage.EDDIES.value
+        for request in slow.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one call the stage clock does not cut is still cut by a wall clock.
+
+    Classification may already have been accepted when its answer trickles, so
+    the stage budget lets it finish (#2933). What bounds it instead is the
+    adapter's whole-request deadline, lowered here only after the handshake,
+    which it also governs.
     """
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.2)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
@@ -2479,6 +2735,7 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
+    monkeypatch.setattr(creek_vault_client, "_VAULT_TOTAL_DEADLINE_SECONDS", 0.2)
 
     started = time.monotonic()
     await drive_vault_pipeline(
@@ -2488,7 +2745,6 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     await http.aclose()
 
     assert elapsed < 0.45
-    # Non-vacuous: the bound cut a call short rather than declining to make one.
     assert any(request.url.path == _CLASSIFICATIONS_PATH for request in slow.requests)
 
 

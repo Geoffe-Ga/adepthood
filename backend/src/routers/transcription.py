@@ -1,11 +1,13 @@
-"""Journal transcription API — stateless single-page handwriting transcription.
+"""Journal transcription API — stateless single-image text transcription.
 
-The Journal Photographer posts one photographed page (base64 image bytes) and
-receives back the faithful transcribed body text for a draft entry. The endpoint
-is deliberately stateless: it writes no journal row and associates the metered
-LLM call with no ``journal_entry_id``. Ordering is strict — validate the image
+The Journal Photographer posts one captured image (base64 image bytes) — a
+handwritten or printed page, a screenshot, a photo of a screen — and receives
+back the faithful transcribed body text for a draft entry. The endpoint is
+deliberately stateless: it writes no journal row and associates the metered LLM
+call with no ``journal_entry_id``. Ordering is strict — validate the image
 before charging, charge before the LLM call, and roll the charge back on any
-provider failure — so a rejected or failed request never bills the wallet.
+provider failure or unusable reply (no text found, or a refusal) — so a
+rejected, failed, or refused request never bills the wallet.
 
 Privacy invariant: the base64 payload and the transcribed text are never logged,
 interpolated into an exception message, or otherwise emitted anywhere. Only
@@ -24,10 +26,15 @@ from fastapi import Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from domain.transcription import build_transcription_prompt
+from domain.transcription import (
+    TranscriptionVerdict,
+    build_transcription_prompt,
+    classify_transcription,
+)
 from error_responses import build_router
 from errors import bad_gateway, unprocessable
 from rate_limit import limiter
+from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
@@ -71,6 +78,12 @@ _MAX_TRANSCRIBE_BASE64_CHARS = (MAX_TRANSCRIBE_IMAGE_BYTES * 4) // 3 + 4
 # to ~10 page calls, so the transcription limit is doubled to admit one whole
 # session without throttling while still bounding abuse.
 TRANSCRIBE_RATE_LIMIT = "20/minute"
+
+# The same budget again, keyed on the account rather than the address. An
+# unusable read (no text found, or a refusal) is rolled back uncharged (#2851),
+# so the per-address limit alone would let one user buy unmetered provider
+# calls by rotating addresses; this axis follows the identity instead.
+TRANSCRIBE_USER_RATE_LIMIT = "20/minute"
 
 # Magic-byte signatures used to confirm the decoded bytes match the declared
 # media type. Literal byte prefixes keep the sniff dependency-free (no
@@ -184,8 +197,42 @@ async def _run_transcription(
         raise bad_gateway("llm_provider_error") from exc
 
 
+async def _reject_unusable_reply(
+    session: AsyncSession, response: LLMResponse, user_id: int
+) -> None:
+    """Refuse a reply that is not page text, before it is metered or billed.
+
+    A ``[no text found]`` sentinel (or an empty reply) and a short refusal are
+    typed 422s (``no_text_found`` / ``transcription_refused``), never the page's
+    text. The transaction is rolled back, discarding the server-path debit that
+    ``preflight_deduction`` staged; the usage row has not been staged yet. This
+    is a plain rollback rather than ``wallet.refund_one_message``: the writer is
+    charged nothing and no usage row is kept, and the metadata-only log line
+    below keeps the token count as the provider-cost trace. Only the verdict and
+    metadata are logged — never the reply text or the image (privacy invariant).
+    """
+    verdict = classify_transcription(response.text)
+    if verdict is TranscriptionVerdict.TRANSCRIBED:
+        return
+    await session.rollback()
+    logger.info(
+        "journal_page_transcription_unusable",
+        extra={
+            "user_id": user_id,
+            "verdict": verdict.value,
+            "total_tokens": response.total_tokens,
+        },
+    )
+    raise unprocessable(verdict.value)
+
+
 @router.post("/transcribe-page", response_model=TranscribePageResponse)
+# Account axis registered first (decorators register bottom-up), as on
+# ``POST /feedback/``: slowapi bills each bucket until one refuses, so an
+# account that has spent its own budget stops draining the address budget it
+# shares with everyone else behind that address.
 @limiter.limit(TRANSCRIBE_RATE_LIMIT)
+@limiter.limit(TRANSCRIBE_USER_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def transcribe_page(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: TranscribePageRequest,
@@ -195,7 +242,7 @@ async def transcribe_page(
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
 ) -> TranscribePageResponse:
-    """Transcribe one page, charging BotMason only when it pays the provider.
+    """Transcribe one image of text, charging BotMason only when it pays the provider.
 
     Stateless: no journal row is written and the metered call carries no
     ``journal_entry_id``. Strict ordering — the image is validated first (422
@@ -203,8 +250,9 @@ async def transcribe_page(
     A production stub is refused before the wallet is touched. A valid caller
     key bypasses both BotMason buckets; otherwise the wallet is deducted (402
     when out of capacity). A provider failure rolls the transaction back so a
-    failed pass never bills. Usage is metered (one row per real, non-stub call)
-    and committed atomically with any charge.
+    failed pass never bills, and so does a reply that is no text or a refusal
+    (422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one
+    row per real, non-stub call) and committed atomically with any charge.
 
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
@@ -216,6 +264,7 @@ async def transcribe_page(
     if byok_key is None:
         await preflight_deduction(session, current_user)
     response = await _run_transcription(session, image, byok_key)
+    await _reject_unusable_reply(session, response, current_user)
     await record_llm_usage(
         session, user_id=current_user, journal_entry_id=None, responses=[response]
     )
