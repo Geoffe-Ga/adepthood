@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from domain.care import CARE_MESSAGE, CARE_TITLE
 from domain.frequencies import Frequency
 from domain.resonance import NO_NOTES_MESSAGES, DropReason, NoNotesReason
 from models.completion_suggestion import CompletionSuggestion
@@ -443,10 +444,9 @@ _DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight.
 
 def _assert_care_routes_to_human_and_professional(care: dict[str, object]) -> None:
     """Assert the care payload carries the human + professional pointers + a warm note."""
-    assert isinstance(care["message"], str)
-    lowered = care["message"].lower()
-    # Warm and non-shaming: names that distress is not a failure.
-    assert "failure" in lowered
+    # The short heading and the two-sentence body both reach the client (#2862).
+    assert care["title"] == CARE_TITLE
+    assert care["message"] == CARE_MESSAGE
     blob = json.dumps(care).lower()
     assert "988" in blob  # immediate crisis line (human counselor)
     assert "741741" in blob  # crisis text line

@@ -31,6 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from domain.care import CARE_TITLE
 from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
@@ -495,7 +496,8 @@ _DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight.
 
 
 def _assert_local_care_shape(care: dict[str, object]) -> None:
-    """Assert the care payload carries the human + professional pointers."""
+    """Assert the care payload carries its title and the human + professional pointers."""
+    assert care["title"] == CARE_TITLE
     resources = care["resources"]
     assert isinstance(resources, list)
     kinds = {r["kind"] for r in resources if isinstance(r, dict)}

@@ -277,9 +277,9 @@ def _creek_escalation() -> CreekVaultCareEscalationError:
 
 
 def _care_texts() -> tuple[str, ...]:
-    """Return adepthood's own reviewed care copy: the message plus every resource field."""
+    """Return adepthood's own reviewed care copy: title, message, every resource field."""
     payload = build_care_payload()
-    texts = [payload.message]
+    texts = [payload.title, payload.message]
     for resource in payload.resources:
         texts += [resource.name, resource.contact, resource.what_it_is]
     return tuple(texts)
@@ -549,6 +549,7 @@ async def test_vault_escalation_returns_adepthoods_own_care_surface(
     care = body["care"]
     payload = build_care_payload()
     assert care is not None
+    assert care["title"] == payload.title
     assert care["message"] == payload.message
     assert [(item["kind"], item["name"], item["contact"]) for item in care["resources"]] == [
         (resource.kind, resource.name, resource.contact) for resource in payload.resources

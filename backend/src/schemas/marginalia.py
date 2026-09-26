@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from domain.care import CareKind
 from domain.contraction import ContractionVariant
@@ -81,12 +81,14 @@ class CareResourceResponse(BaseModel):
 class CareResponse(BaseModel):
     """The care surface returned when an entry screens as acute distress.
 
-    A warm, non-shaming message plus structured human + professional support
-    pointers (NORTH-STAR §10). Present only on an elevated signal; ``None`` on
-    every ordinary entry. It accompanies the reflection — never replaces it — so
-    a distressed person is never left alone with only AI-generated text.
+    A short heading (``title``), a warm, non-shaming message, and structured
+    human + professional support pointers (NORTH-STAR §10). Present only on an
+    elevated signal; ``None`` on every ordinary entry. It accompanies the
+    reflection — never replaces it — so a distressed person is never left alone
+    with only AI-generated text.
     """
 
+    title: str = Field(min_length=1)
     message: str
     resources: list[CareResourceResponse]
 

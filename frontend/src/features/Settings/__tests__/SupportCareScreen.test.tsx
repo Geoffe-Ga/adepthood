@@ -23,6 +23,7 @@ import { render, within } from '@testing-library/react-native';
 // fixtures so tests still fail on rendering gaps, not on mock gaps.
 jest.mock('../careResources', () => ({
   STANDING_CARE: {
+    title: 'Standing care title',
     message: 'Support is available whenever you need it. Here are some people who can help.',
     resources: [
       {
@@ -138,6 +139,13 @@ describe('SupportCareScreen — header message', () => {
       'Support is available whenever you need it. Here are some people who can help.',
     );
     expect(messageEl.props.accessibilityRole).toBe('header');
+  });
+});
+
+describe('SupportCareScreen — eyebrow', () => {
+  it('renders STANDING_CARE.title as the eyebrow, so the title field is live copy', () => {
+    const { getByText } = render(<SupportCareScreen />);
+    expect(getByText('STANDING CARE TITLE')).toBeTruthy();
   });
 });
 
