@@ -40,6 +40,22 @@ async function writeSavedPage(page: Page): Promise<number> {
   return entryId;
 }
 
+/**
+ * Take the device offline and wait until the app itself says so. The reconnect
+ * retry acts on the app's offline → online edge, so reconnecting before the
+ * app has registered the outage would test nothing.
+ */
+async function goOffline(page: Page): Promise<void> {
+  await page.context().setOffline(true);
+  await expect(page.getByTestId('offline-banner')).toBeVisible();
+}
+
+/** Bring the device back online and wait until the app has registered it. */
+async function goOnline(page: Page): Promise<void> {
+  await page.context().setOffline(false);
+  await expect(page.getByTestId('offline-banner')).toHaveCount(0);
+}
+
 async function storedEntry(
   request: APIRequestContext,
   email: string,
@@ -68,7 +84,7 @@ test('writing that failed offline is re-sent on reconnect, with no tap', async (
   const email = await signUp(page, 'journal-save-retry-reconnect');
   const entryId = await writeSavedPage(page);
 
-  await page.context().setOffline(true);
+  await goOffline(page);
   await page.getByTestId('journal-body-input').fill(OFFLINE_BODY);
   await expect(page.getByTestId('journal-save-hint')).toHaveText(SAVE_ERROR);
   await tier(page, 'intimate').click();
@@ -78,7 +94,7 @@ test('writing that failed offline is re-sent on reconnect, with no tap', async (
 
   // Back online: the body, then the (stricter) tier, are re-sent by themselves.
   const resent = patchesLanded(page, 2);
-  await page.context().setOffline(false);
+  await goOnline(page);
   await resent;
   await expect(page.getByTestId('journal-save-hint')).toHaveText(SAVED);
   await expect(page.getByRole('button', { name: RETRY_NAME })).toHaveCount(0);
@@ -125,12 +141,12 @@ test('a reconnect never makes a page more public than the control shows', async 
   const email = await signUp(page, 'journal-save-retry-privacy');
   const entryId = await writeSavedPage(page);
 
-  await page.context().setOffline(true);
+  await goOffline(page);
   await tier(page, 'public').click();
   await expect(page.getByTestId('journal-save-hint')).toHaveText(SAVE_ERROR);
   await expect(tier(page, 'personal')).toHaveAttribute('aria-checked', 'true');
 
-  await page.context().setOffline(false);
+  await goOnline(page);
   // The looser tier is dropped rather than sent: the hint settles truthfully.
   await expect(page.getByTestId('journal-save-hint')).toHaveText(SAVED);
   await expect(tier(page, 'personal')).toHaveAttribute('aria-checked', 'true');
