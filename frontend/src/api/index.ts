@@ -33,6 +33,7 @@ import {
   practiceSessionResponseSchema,
   practiceTagSchema,
   programCalendarSchema,
+  promotedQuoteListResponseSchema,
   promotedQuoteSchema,
   promptListResponseSchema,
   reflectionCurrentResponseSchema,
@@ -84,7 +85,10 @@ import {
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
   type StagePromptsResponseT,
+  type PromotedQuoteListItemT,
+  type PromotedQuoteListResponseT,
   type PromotedQuoteT,
+  type PromotionStatusFilterT,
   type PromotedQuoteSummaryT,
   type ReflectionAnchorStatusT,
   type ReflectionCurrentScopeT,
@@ -1588,6 +1592,19 @@ export interface Marginalia {
 export type PromotedQuote = PromotedQuoteT;
 /** A promoted quote in the cross-entry sources feed (no ``source_entry_id``). */
 export type PromotedQuoteSummary = PromotedQuoteSummaryT;
+/** Which quotes ``promotions.listAll`` asks for: waiting, used, or both. */
+export type PromotionStatusFilter = PromotionStatusFilterT;
+/** A promoted quote listed across entries, with its source and review titles. */
+export type PromotedQuoteListItem = PromotedQuoteListItemT;
+/** One offset page of ``GET /promotions``. */
+export type PromotedQuoteListResponse = PromotedQuoteListResponseT;
+
+/** Optional filters and page window for ``promotions.listAll``. */
+export interface PromotionListParams {
+  status?: PromotionStatusFilter;
+  limit?: number;
+  offset?: number;
+}
 
 /** One of the four non-clinical care routings (mirrors ``domain.care.CareKind``). */
 export type CareKind = CareKindT;
@@ -1969,7 +1986,8 @@ export interface PromoteQuoteSpan {
  * ``422 quote_too_long`` as an ``ApiError``); ``remove`` un-promotes it; and
  * ``setIncluded`` folds a quote into another entry (or returns it to pending
  * with ``null``); ``list`` fetches every quote anchored in an entry so a
- * reopened entry can rehydrate its highlights.
+ * reopened entry can rehydrate its highlights; ``listAll`` pages every quote the
+ * writer has promoted, across entries, for the Promoted quotes screen.
  */
 export const promotions = {
   /** Promote a reader-selected span of an entry into the corpus. */
@@ -2000,6 +2018,23 @@ export const promotions = {
       token,
       schema: z.array(promotedQuoteSchema) as unknown as z.ZodType<PromotedQuote[]>,
     });
+  },
+  /** Page every quote the writer has promoted, newest first, optionally by status. */
+  listAll(params: PromotionListParams = {}, token?: string): Promise<PromotedQuoteListResponse> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.limit != null) query.set('limit', String(params.limit));
+    if (params.offset != null) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    const options = {
+      token,
+      schema: promotedQuoteListResponseSchema as unknown as z.ZodType<PromotedQuoteListResponse>,
+    };
+    // Two literal call sites, as ``prompts.history`` explains: the journey
+    // ledger reads a `${...}` glued onto the last segment as part of it.
+    return qs.length > 0
+      ? request<PromotedQuoteListResponse>(`/promotions?${qs}`, options)
+      : request<PromotedQuoteListResponse>('/promotions', options);
   },
 };
 

@@ -206,6 +206,22 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
+  it('opens Promoted quotes in place from the entry drawer and closes the drawer', async () => {
+    const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-promoted-quotes')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-promoted-quotes'));
+    });
+
+    expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
+    expect(navigation.push).not.toHaveBeenCalledWith('PromotedQuotes');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
   it('routes a consented account from Your corpus to the import surface', async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());

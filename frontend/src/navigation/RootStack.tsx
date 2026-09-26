@@ -6,6 +6,7 @@ import AdminFeedbackScreen from '../features/AdminFeedback/AdminFeedbackScreen';
 import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
+import PromotedQuotesScreen from '../features/Journal/PromotedQuotesScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
@@ -61,6 +62,8 @@ export type RootStackParamList = {
   Feedback: { control?: string } | undefined;
   /** The shelf of expanded margin notes. No params: it is a place, not a query. */
   VoiceDrafts: undefined;
+  /** Every quote the writer has promoted, across entries (#2865). A place, no params. */
+  PromotedQuotes: undefined;
   /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
   AdminFeedback: undefined;
   JournalPhotograph:
@@ -99,6 +102,14 @@ export type RootStackParamList = {
         reflectionScopeKey?: string;
         /** A passage folded in from the reader; seeds the body as a blockquote. */
         prefillQuote?: { text: string; sourceTitle: string };
+        /**
+         * A promoted quote the reader arrived to see (from the Promoted quotes
+         * screen, #2865), as code-point offsets into the body -- the anchor
+         * API's own units. Read mode scrolls it into view and underlines it; a
+         * span that no longer matches a live quote (stale, or out of range)
+         * opens the page at the top.
+         */
+        highlightSpan?: { start: number; end: number };
         /**
          * A timed writing session this page was OPENED in order to run — the
          * quick launch from a saved ``Journaling`` practice. The timer opens at
@@ -164,6 +175,11 @@ const JournalScreens = (): React.JSX.Element => (
       name="VoiceDrafts"
       component={VoiceDraftsShelfScreen}
       options={{ title: 'Voice drafts' }}
+    />
+    <Stack.Screen
+      name="PromotedQuotes"
+      component={PromotedQuotesScreen}
+      options={{ title: 'Promoted quotes' }}
     />
   </>
 );

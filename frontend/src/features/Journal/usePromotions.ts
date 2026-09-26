@@ -11,7 +11,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
+import { mergeByIdSorted, mergeSnapshotUnder, useHydrateOnOpen } from './entryList';
 import { optimisticRemove } from './optimisticRemove';
 
 import { promotions } from '@/api';
@@ -48,6 +48,13 @@ export interface UsePromotionsResult {
    * recent promote failed. Cleared once a subsequent promote succeeds.
    */
   retryPromote: (() => Promise<void>) | null;
+  /**
+   * Re-read the entry's quotes from the server, whose copy wins. Called after an
+   * edited entry saves: the PATCH re-anchored each pending quote (or marked it
+   * stale), and the list held here still carries the pre-edit offsets. Never
+   * rejects; a failure keeps the list and raises the usual content-free hint.
+   */
+  refresh: () => Promise<void>;
 }
 
 /** The list's canonical order: by anchor offset, then id as a stable tiebreak. */
@@ -67,6 +74,33 @@ function insertSorted(quotes: PromotedQuote[], quote: PromotedQuote): PromotedQu
  */
 function listPromotions(entryId: number): Promise<{ items: PromotedQuote[] }> {
   return promotions.list(entryId).then((items) => ({ items }));
+}
+
+/** The sentinel id for an unsaved entry: there is nothing on the server to re-read. */
+const UNSAVED_ENTRY_ID = 0;
+
+/**
+ * Re-read one entry's quotes, letting the server copy win every id collision.
+ * ``entryIdRef`` is the live id: a response for an entry the screen has since
+ * left is dropped rather than unioned into the new entry's list.
+ */
+function useRefreshPromotions(
+  entryId: number,
+  setQuotes: Dispatch<SetStateAction<PromotedQuote[]>>,
+  setHint: (_hint: string | null) => void,
+): () => Promise<void> {
+  const entryIdRef = useRef(entryId);
+  entryIdRef.current = entryId;
+  return useCallback(async (): Promise<void> => {
+    if (entryId <= UNSAVED_ENTRY_ID) return;
+    try {
+      const { items } = await listPromotions(entryId);
+      if (entryIdRef.current !== entryId) return;
+      setQuotes(mergeSnapshotUnder(items, byAnchorThenId, 'snapshot'));
+    } catch (err) {
+      if (entryIdRef.current === entryId) setHint(formatApiError(err));
+    }
+  }, [entryId, setQuotes, setHint]);
 }
 
 /** The span most recently handed to ``promote`` — held so a retry re-posts it. */
@@ -181,6 +215,7 @@ export function usePromotions({
     setQuotes,
     setHint,
   );
+  const refresh = useRefreshPromotions(entryId, setQuotes, setHint);
 
   const removePromotion = useCallback(
     (id: number): Promise<void> =>
@@ -201,5 +236,5 @@ export function usePromotions({
     [clearRetry],
   );
 
-  return { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote };
+  return { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh };
 }

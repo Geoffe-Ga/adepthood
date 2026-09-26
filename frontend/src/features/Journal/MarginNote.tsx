@@ -9,6 +9,7 @@ import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import { usePressScale } from './motion';
 import { paperMarginCard } from './noteCards';
+import { STALE_OPACITY } from './staleTreatment';
 
 import type { Marginalia } from '@/api';
 import { colors, editorialType, spacing } from '@/design/tokens';
@@ -54,7 +55,7 @@ const styles = StyleSheet.create({
   // default hairline stripe; overridden per kind inline at the callsite
   card: paperMarginCard(colors.paper.hairline),
   cardStale: {
-    opacity: 0.55,
+    opacity: STALE_OPACITY,
   },
   kind: {
     ...editorialType.caption,

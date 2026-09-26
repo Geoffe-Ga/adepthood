@@ -3,6 +3,8 @@
  * note and/or promoted quote. Pure offset math — no React — so the highlight
  * logic is unit-testable apart from the ``<Text>`` tree that consumes it.
  */
+import { trimAnchorEdges } from './anchorSpan';
+
 import type { Marginalia, PromotedQuote } from '@/api';
 
 export interface HighlightSegment {
@@ -56,23 +58,60 @@ function noteAnchors(length: number, notes: Marginalia[]): Anchor[] {
     }));
 }
 
-/** In-range quote anchors (quotes have no stale status to filter on). */
-function quoteAnchors(length: number, quotes: PromotedQuote[]): Anchor[] {
-  return quotes
-    .filter((q) => inRange(length, q.anchor_start, q.anchor_end))
-    .map((q) => ({
-      start: q.anchor_start,
-      end: q.anchor_end,
-      order: QUOTE_ORDER,
-      id: q.id,
-      note: null,
-      quote: q,
-    }));
+/** A quote list split by whether its offsets still address its own text. */
+export interface QuotePartition {
+  /** Quotes whose offsets still spell their text in this body: drawn inline. */
+  live: PromotedQuote[];
+  /** Quotes that must not be drawn inline: shown apart, still removable. */
+  detached: PromotedQuote[];
+}
+
+/**
+ * True when ``quote``'s offsets still spell its snapshot text in ``chars``.
+ * The slice is compared after the server's own edge trim, so a quote promoted
+ * over "word " (stored text "word") still counts as in place.
+ */
+function spellsItsText(chars: string[], quote: PromotedQuote): boolean {
+  const { anchor_start: start, anchor_end: end } = quote;
+  if (!inRange(chars.length, start, end)) return false;
+  return trimAnchorEdges(chars.slice(start, end).join('')) === quote.anchor_text;
+}
+
+/**
+ * Split quotes into live and detached, each keeping its input order.
+ *
+ * A quote is detached -- never washed inline -- when the server marked it stale
+ * (its text is gone after an edit; its offsets are the pre-edit ones) OR when
+ * its offsets no longer spell its text in this body. The second case is real:
+ * the server re-anchors only PENDING quotes on an edit, so a quote already
+ * folded into a review keeps offsets that, once the writer inserts text before
+ * it, address other words. Drawing either would attach the quote to a passage
+ * it never quoted; relocating it by searching for its text would be a guess.
+ */
+export function partitionQuotes(quotes: PromotedQuote[], body: string): QuotePartition {
+  const chars = Array.from(body);
+  const inPlace = (q: PromotedQuote): boolean => !q.stale && spellsItsText(chars, q);
+  return {
+    live: quotes.filter(inPlace),
+    detached: quotes.filter((q) => !inPlace(q)),
+  };
+}
+
+/** Anchors for quotes still in place; detached quotes are shown apart, not inline. */
+function quoteAnchors(chars: string[], quotes: PromotedQuote[]): Anchor[] {
+  return partitionQuotes(quotes, chars.join('')).live.map((q) => ({
+    start: q.anchor_start,
+    end: q.anchor_end,
+    order: QUOTE_ORDER,
+    id: q.id,
+    note: null,
+    quote: q,
+  }));
 }
 
 /** Merge + sort by (anchor_start, note-before-quote at equal start, then id). */
-function usableAnchors(length: number, notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
-  return [...noteAnchors(length, notes), ...quoteAnchors(length, quotes)].sort(
+function usableAnchors(chars: string[], notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
+  return [...noteAnchors(chars.length, notes), ...quoteAnchors(chars, quotes)].sort(
     (a, b) => a.start - b.start || a.order - b.order || a.id - b.id,
   );
 }
@@ -94,7 +133,7 @@ export function buildAnchoredSegments(
   const chars = Array.from(body);
   const segments: AnchoredSegment[] = [];
   let cursor = 0;
-  for (const anchor of usableAnchors(chars.length, notes, quotes)) {
+  for (const anchor of usableAnchors(chars, notes, quotes)) {
     if (anchor.start < cursor) continue; // overlaps a committed range — skip it
     if (anchor.start > cursor) {
       segments.push({
@@ -117,4 +156,41 @@ export function buildAnchoredSegments(
   }
   if (segments.length === 0) segments.push({ start: 0, text: body, note: null, quote: null });
   return segments;
+}
+
+/** A code-point span the reader arrived to see (e.g. from the Promoted quotes screen). */
+export interface FocusSpan {
+  start: number;
+  end: number;
+}
+
+/** A focus span resolved against the body and the entry's own loaded quotes. */
+export interface ResolvedFocusSpan extends FocusSpan {
+  /** The live promoted quote whose anchors are exactly this span. */
+  quoteId: number;
+}
+
+/**
+ * Resolve the span a reader arrived to see, or null when the page should simply
+ * open at the top.
+ *
+ * The span is honoured only when it is in range for the body (in code points,
+ * the anchor contract) AND one of the entry's own loaded quotes is anchored at
+ * exactly it and is live by {@link partitionQuotes}: not stale, and its offsets
+ * still spell its text in this body. A detached quote is drawn apart from the
+ * text, never inline, so a span naming one -- or one whose offsets no longer fit
+ * the body -- falls back quietly: the page never scrolls to words that are not
+ * the quote.
+ */
+export function resolveFocusSpan(
+  body: string,
+  span: FocusSpan | undefined,
+  quotes: readonly PromotedQuote[],
+): ResolvedFocusSpan | null {
+  if (span == null) return null;
+  if (!inRange(Array.from(body).length, span.start, span.end)) return null;
+  const match = partitionQuotes([...quotes], body).live.find(
+    (q) => q.anchor_start === span.start && q.anchor_end === span.end,
+  );
+  return match == null ? null : { start: span.start, end: span.end, quoteId: match.id };
 }

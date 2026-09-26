@@ -8,7 +8,7 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
-import { Camera, Library, ScrollText, SquarePen } from 'lucide-react-native';
+import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -52,6 +52,14 @@ const CORPUS_LABEL = 'Your corpus';
  * neither. The shelf is retrieval, reached because someone went looking.
  */
 const VOICE_DRAFTS_LABEL = 'Voice drafts';
+/**
+ * Permanent door to every quote the writer has promoted, across entries (#2865).
+ *
+ * A door with no count, for the reason ``VOICE_DRAFTS_LABEL`` gives: the
+ * listing's totals are spent on the screen's own section headers, reached
+ * because the writer went looking, and never on a number beside this row.
+ */
+const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
 const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
@@ -421,6 +429,8 @@ export interface JournalDrawerProps {
   onOpenCorpus: () => void;
   /** Open the Voice Drafts shelf. Carries no count — see ``VOICE_DRAFTS_LABEL``. */
   onOpenVoiceDrafts: () => void;
+  /** Open the Promoted quotes screen. Carries no count — see ``PROMOTED_QUOTES_LABEL``. */
+  onOpenPromotedQuotes: () => void;
   /** Status of the readiness lookup started by the corpus row. */
   corpusOpenState: CorpusOpenState;
   /** Fetch and append the next older page. */
@@ -481,12 +491,14 @@ function DrawerActions({
   onPhotograph,
   onOpenCorpus,
   onOpenVoiceDrafts,
+  onOpenPromotedQuotes,
   corpusOpenState,
 }: {
   onNewEntry: () => void;
   onPhotograph?: () => void;
   onOpenCorpus: () => void;
   onOpenVoiceDrafts: () => void;
+  onOpenPromotedQuotes: () => void;
   corpusOpenState: CorpusOpenState;
 }): React.JSX.Element {
   return (
@@ -511,6 +523,12 @@ function DrawerActions({
         label={VOICE_DRAFTS_LABEL}
         icon={<ScrollText color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
         onPress={onOpenVoiceDrafts}
+      />
+      <DrawerItem
+        testID="journal-drawer-promoted-quotes"
+        label={PROMOTED_QUOTES_LABEL}
+        icon={<Quote color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
+        onPress={onOpenPromotedQuotes}
       />
     </>
   );
@@ -565,6 +583,7 @@ export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Elem
         onPhotograph={props.onPhotograph}
         onOpenCorpus={props.onOpenCorpus}
         onOpenVoiceDrafts={props.onOpenVoiceDrafts}
+        onOpenPromotedQuotes={props.onOpenPromotedQuotes}
         corpusOpenState={props.corpusOpenState}
       />
       <DrawerSearchField
@@ -614,6 +633,8 @@ export interface JournalScreenDrawerProps {
   onOpenCorpus: (_destination: CorpusDestination) => void;
   /** Open the Voice Drafts shelf, closing the drawer behind it. */
   onOpenVoiceDrafts: () => void;
+  /** Open the Promoted quotes screen, closing the drawer behind it. */
+  onOpenPromotedQuotes: () => void;
 }
 
 type CorpusOpenState = 'idle' | 'pending' | 'error';
@@ -677,6 +698,7 @@ export function JournalScreenDrawer({
   onPhotograph,
   onOpenCorpus,
   onOpenVoiceDrafts,
+  onOpenPromotedQuotes,
 }: JournalScreenDrawerProps): React.JSX.Element {
   const { items, loading, error, hasMore, loadMore, retry, confirmBodySearch } =
     useJournalDrawerEntries(drawer.isOpen);
@@ -702,6 +724,7 @@ export function JournalScreenDrawer({
         onPhotograph={onPhotograph}
         onOpenCorpus={corpusAction.open}
         onOpenVoiceDrafts={onOpenVoiceDrafts}
+        onOpenPromotedQuotes={onOpenPromotedQuotes}
         corpusOpenState={corpusAction.state}
         onLoadMore={loadMore}
         onRetry={retry}

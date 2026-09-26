@@ -334,6 +334,18 @@
     "coveredBy": "frontend/e2e/journal-promote-quote.browser.e2e.test.ts"
   },
   {
+    "id": "journal.find-promoted-quotes-any-day",
+    "description": "On any day, not only inside a review composer, a writer opens the Journal drawer's 'Promoted quotes' door (a door with no count) and sees every quote they have promoted, grouped by status: 'Waiting for your next review (n)' above 'Used in a review (m)', each header carrying the server's total for its own section. A quote seeded through the real promote route near the end of a long finished page is listed verbatim with its source title; tapping it opens that page in read mode scrolled to the passage, which is underlined and asserted in the viewport. Back on the screen, Remove asks first, the confirmed remove issues DELETE /promotions/{promotion_id}, and after a cold reload the screen shows the exact empty copy and GET /promotions returns nothing. Not asserted in the browser, and pinned only by Jest and pytest: the Write a review picker hand-off, per-section paging, the revert-in-place of a refused remove, the stale and deleted-review captions, refetch on refocus, and the cross-tenant and soft-delete exclusions of GET /promotions.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PromotedQuotesScreen.tsx",
+      "client": ["promotions"],
+      "routes": ["GET /promotions", "DELETE /promotions/{promotion_id}"],
+      "tables": ["promotedquote", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promoted-quotes-screen.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
     "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text; the stage, section and course invitations, and the review titles in the program's words, are declared separately under journal.section-and-course-review-invitations. The sheet renders each source body through the journal Markdown model -- a '**Me:**' speaker prefix reads as bold 'Me:' and no raw marker ever appears in the collapsed excerpt or the expanded body -- and closes with an icon-only X whose accessible name is 'Done'.",
     "crosses": {
@@ -351,6 +363,30 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.live-edit-keeps-quote-and-margin-anchors",
+    "description": "A writer types formatted Unicode into the live editor -- a decomposed accent, a ZWJ emoji sequence the server strips, bold typed key by key, italics, underline, an escaped marker, a nested bullet, a leading newline and trailing spaces -- and finishes. Read mode promotes into the body the server STORED, not the typed one, and a selection's trailing space never reaches the stored span, so anchor_end - anchor_start equals the length of anchor_text. A resonance pass anchors a margin note. Two quotes folded into the due week review render as quote blocks in the live mirror at once, with exactly one blank line between them. The source is then edited before every anchor by typing formatting and by a list indent; on reopen the pending quote and the note each still address exactly their own text at the new code-point offset, and the folded quotes (whose offsets the server freezes) are listed apart rather than washed over other words. The review still renders both blocks after reopening.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "promotions", "reflections", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "POST /journal/{entry_id}/promote",
+        "GET /journal/{entry_id}/promotions",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia",
+        "GET /reflections/due",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}"
+      ],
+      "tables": ["journalentry", "promotedquote", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-live-edit-anchors.browser.e2e.test.ts"
   },
   {
     "id": "journal.review-from-the-shelf-cta",

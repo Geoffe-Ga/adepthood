@@ -5461,6 +5461,125 @@
         "title": "PromoteQuoteCreate",
         "type": "object"
       },
+      "PromotedQuoteListItemResponse": {
+        "description": "A promoted quote as listed across every entry, with where it came from.\n\nExtends :class:`PromotedQuoteResponse` so the two quote shapes cannot drift.\n``source_title`` and ``source_timestamp`` describe the live source entry.\n``included_in_title`` is null unless the review the quote was folded into is\nthe caller's own and still live -- a deleted review's title is never shown,\nthough ``included_in_entry_id`` still records that the quote was used.",
+        "properties": {
+          "anchor_end": {
+            "title": "Anchor End",
+            "type": "integer"
+          },
+          "anchor_start": {
+            "title": "Anchor Start",
+            "type": "integer"
+          },
+          "anchor_text": {
+            "title": "Anchor Text",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "included_in_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included In Entry Id"
+          },
+          "included_in_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included In Title"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "source_entry_id": {
+            "title": "Source Entry Id",
+            "type": "integer"
+          },
+          "source_timestamp": {
+            "format": "date-time",
+            "title": "Source Timestamp",
+            "type": "string"
+          },
+          "source_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Title"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "source_entry_id",
+          "anchor_start",
+          "anchor_end",
+          "anchor_text",
+          "pending",
+          "stale",
+          "source_title",
+          "source_timestamp",
+          "included_in_entry_id",
+          "included_in_title",
+          "created_at"
+        ],
+        "title": "PromotedQuoteListItemResponse",
+        "type": "object"
+      },
+      "PromotedQuoteListResponse": {
+        "description": "One offset page of the caller's promoted quotes, newest first.",
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PromotedQuoteListItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "has_more"
+        ],
+        "title": "PromotedQuoteListResponse",
+        "type": "object"
+      },
       "PromotedQuoteResponse": {
         "description": "A promoted quote as returned to its owner.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity and exposing surrogate keys aids enumeration.",
         "properties": {
@@ -5538,6 +5657,16 @@
         ],
         "title": "PromotedQuoteSummary",
         "type": "object"
+      },
+      "PromotionStatusFilter": {
+        "description": "Which promoted quotes ``GET /promotions`` returns, by fold state.\n\n``pending`` quotes still wait for a review, ``included`` ones were folded\ninto one, and ``all`` (the default) returns both.",
+        "enum": [
+          "pending",
+          "included",
+          "all"
+        ],
+        "title": "PromotionStatusFilter",
+        "type": "string"
       },
       "PromotionUpdate": {
         "description": "Payload for (un)folding a promoted quote into a reflection.\n\n``included_in_entry_id`` is required with no default, so an empty ``{}`` body\nis a 422. A ``null`` value is valid and returns the quote to pending.",
@@ -22216,6 +22345,139 @@
         "summary": "List Share Links",
         "tags": [
           "practice-share"
+        ]
+      }
+    },
+    "/promotions": {
+      "get": {
+        "description": "List every quote the caller has promoted, across entries, newest first.\n\nThe route takes no id, so ownership rides on ``user_id`` predicates: on the\nquote, on the source join, and on the inclusion-target join. A quote whose\nsource entry was soft-deleted is excluded; a quote folded into a review that\nwas since deleted stays listed with ``included_in_title`` null. Ordered by\n``(created_at DESC, id DESC)`` so ties page stably.",
+        "operationId": "list_all_promotions_promotions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PromotionStatusFilter",
+              "default": "all"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1000000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotedQuoteListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List All Promotions",
+        "tags": [
+          "promotions"
         ]
       }
     },
