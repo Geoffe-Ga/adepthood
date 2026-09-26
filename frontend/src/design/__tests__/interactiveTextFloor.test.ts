@@ -134,12 +134,14 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/MarginNote.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
   'features/Journal/ReflectionInvitationBand.tsx::label',
-  'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',
+  // The sheet's one eyebrow face: the "Quotes to fold in" group heading and a
+  // reflection row's level label, both read and never tapped.
+  'features/Journal/ReflectionSourcesPanel.tsx::eyebrow',
   // The review period beneath the Sources heading: a label naming the dates the
   // feed was drawn from. Nothing tappable -- the panel's own affordances are the
-  // Done link, the pending quotes, and the rows.
+  // icon-only X close control (accessible name "Done"), the pending quotes, and
+  // the rows.
   'features/Journal/ReflectionSourcesPanel.tsx::headingPeriod',
-  'features/Journal/ReflectionSourcesPanel.tsx::levelLabel',
   'features/Journal/ReflectionSourcesPanel.tsx::promoteHint',
   // A source row's date, printed beside its title. It sits inside the row's own
   // tappable header (as rowExcerpt already does) but is not itself an
