@@ -185,16 +185,21 @@ async function assertHeldInk(page: Page): Promise<void> {
   const close = page.getByTestId('journal-morning-pages-band').getByRole('button', {
     name: DISMISS_NAME,
   });
-  await close.scrollIntoViewIfNeeded();
-  const box = await close.boundingBox();
-  if (box === null) throw new Error('the corner X has no layout box');
+  // The shelf keeps settling above the card as its entries and prompts land
+  // (see `snapshotCard`), so a box read and then pressed can be a stale
+  // coordinate by the time the pointer goes down. Let the shelf finish
+  // loading, then let `hover` place the pointer: it waits for the X to be
+  // stable and aims at where it is at that moment.
+  await page.waitForLoadState('networkidle');
   expect(await closeInk(close)).toEqual({ opacity: '1', stroke: INK_SOFT_RGB });
+  await close.hover();
 
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await expect.poll(async () => (await closeInk(close)).stroke).toBe(ACCENT_PRIMARY_RGB);
   expect((await closeInk(close)).opacity).toBe('1');
 
+  const box = await close.boundingBox();
+  if (box === null) throw new Error('the corner X has no layout box');
   await page.mouse.move(box.x - CANCEL_OFFSET, box.y + CANCEL_OFFSET);
   await page.mouse.up();
   await expect.poll(async () => (await closeInk(close)).stroke).toBe(INK_SOFT_RGB);
