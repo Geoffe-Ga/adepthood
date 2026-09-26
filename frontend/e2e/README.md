@@ -42,6 +42,18 @@ it explicitly:
 E2E_PYTHON=/path/to/adepthood/.venv/bin/python npm run test:e2e
 ```
 
+The browser lane also takes the text census (#2948): `text-order.browser.e2e.test.ts`
+walks every reachable route at 390x844 and 1280x720 and writes
+`e2e/artifacts/text-order/<WxH>/<Route>.png` and `.json` -- one screenshot and
+one record per visible text node (string, face, size, weight, colour, box,
+nearest `testID`). The folder is gitignored; CI publishes it as the
+`text-order-census` artifact on every run, green or red. The PNG shows only the
+viewport fold, because the web root is `height: 100%` with inner scrollers, so
+read the JSON (measured against scroll extents) as the complete record. The
+run log carries one summary line per screen (`390x844  Journal shelf  text
+nodes=N  left edges={...}  faces=N ...`); `prompts/scans/text-order.md` is the
+review step that reads it.
+
 `test:e2e:web` uses the same backend launcher, database contract, and Python
 selection. It additionally starts the production Expo web entry point at
 `http://127.0.0.1:3000`, the explicit development-CORS origin, and drives it

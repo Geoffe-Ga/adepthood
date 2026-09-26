@@ -60,8 +60,11 @@ impressions. A run that finds none is a valid, successful, zero-finding run.
   `AdminFeedback` — plus each bottom tab `Tabs` registers
   (`frontend/src/navigation/BottomTabs.tsx`): `Habits`, `Practice`, `Course`,
   `Journal`, `Map`. There is no `Today` tab (root `CLAUDE.md`'s tab line is
-  stale). Tabs are depth-gated by `useDepthPreferencesStore`, so the lane
-  account must have every depth enabled or the gated tabs never render.
+  stale). Only `Habits`, `Practice` and `Course` carry a `ring` in
+  `frontend/src/navigation/destinations.ts` and are hidden when
+  `useDepthPreferencesStore` has that depth off; `Journal` and `Map` always
+  render. The lane account must still have every depth enabled or the three
+  gated tabs never render.
 - **Skipped as paid** (never open them; list them as skipped in the run
   summary): `Get Resonance` on `JournalEntry`, `JournalPhotograph`
   (transcription), `VoiceDrafts` (voice transcription).
