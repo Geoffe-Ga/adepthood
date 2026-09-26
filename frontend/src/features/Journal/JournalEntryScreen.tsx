@@ -30,12 +30,14 @@ import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
 import EditConfirmDialog from './EditConfirmDialog';
+import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
 import GetResonanceButton, {
   shouldShowResonance,
   type ResonanceButtonLayout,
 } from './GetResonanceButton';
 import HighlightedBody from './HighlightedBody';
+import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import type { RetryFailure, SaveState } from './journalSaveRetry';
@@ -2852,11 +2854,58 @@ function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
   );
 }
 
-function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
+/** The paper page inside the scroller: the body column and its margin. */
+function JournalPageSurface({
+  ctl,
+  bodyPlaceholder,
+  narrow,
+  compactControls,
+  focus,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  narrow: boolean;
+  compactControls: boolean;
+  focus: FocusScrollHost;
+}): React.JSX.Element {
+  return (
+    <View
+      ref={focus.pageRef}
+      onLayout={focus.onPageLayout}
+      style={[
+        styles.page,
+        narrow && styles.pageNarrow,
+        ctl.editGate.editMode && styles.pageWithFloatingAction,
+      ]}
+      testID="journal-page"
+    >
+      <FocusScrollProvider value={focus.value}>
+        <PageBodyColumn
+          ctl={ctl}
+          bodyPlaceholder={bodyPlaceholder}
+          compactControls={compactControls}
+        />
+      </FocusScrollProvider>
+      <JournalMargin ctl={ctl} narrow={narrow} />
+    </View>
+  );
+}
+
+function JournalPage({
+  ctl,
+  bodyPlaceholder,
+  focusSpan,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  /** A quote the reader arrived to see; read mode scrolls it into view. */
+  focusSpan?: FocusSpan;
+}) {
   const viewportWidth = useWindowDimensions().width;
   const narrow = viewportWidth < NARROW_BREAKPOINT;
   const compactControls = viewportWidth < COMPACT_WRITING_CONTROLS_BREAKPOINT;
   const settle = useEntrance();
+  const focus = useFocusScrollHost(focusSpan);
   return (
     <View style={styles.desk}>
       <Animated.View
@@ -2864,26 +2913,19 @@ function JournalPage({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholde
         testID="journal-sheet"
       >
         <ScrollView
+          ref={focus.scrollRef}
           style={styles.pageScroll}
           contentContainerStyle={styles.pageScrollContent}
           keyboardShouldPersistTaps="handled"
           testID="journal-page-scroll"
         >
-          <View
-            style={[
-              styles.page,
-              narrow && styles.pageNarrow,
-              ctl.editGate.editMode && styles.pageWithFloatingAction,
-            ]}
-            testID="journal-page"
-          >
-            <PageBodyColumn
-              ctl={ctl}
-              bodyPlaceholder={bodyPlaceholder}
-              compactControls={compactControls}
-            />
-            <JournalMargin ctl={ctl} narrow={narrow} />
-          </View>
+          <JournalPageSurface
+            ctl={ctl}
+            bodyPlaceholder={bodyPlaceholder}
+            narrow={narrow}
+            compactControls={compactControls}
+            focus={focus}
+          />
         </ScrollView>
       </Animated.View>
     </View>
@@ -3444,7 +3486,11 @@ function JournalEntryScreen({
         flushForExit={ctl.autosave.flushForExit}
         onOpenApiKey={openApiKey}
       />
-      <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+      <JournalPage
+        ctl={ctl}
+        bodyPlaceholder={bodyPlaceholder}
+        focusSpan={route.params?.highlightSpan}
+      />
       <ReflectionComposer reflection={ctl.reflection} />
       <EntryWritingSurfaces ctl={ctl} launch={route.params?.writingSession} />
       <EntryOverlays

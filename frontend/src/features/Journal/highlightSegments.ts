@@ -118,3 +118,38 @@ export function buildAnchoredSegments(
   if (segments.length === 0) segments.push({ start: 0, text: body, note: null, quote: null });
   return segments;
 }
+
+/** A code-point span the reader arrived to see (e.g. from the Promoted quotes screen). */
+export interface FocusSpan {
+  start: number;
+  end: number;
+}
+
+/** A focus span resolved against the body and the entry's own loaded quotes. */
+export interface ResolvedFocusSpan extends FocusSpan {
+  /** The live promoted quote whose anchors are exactly this span. */
+  quoteId: number;
+}
+
+/**
+ * Resolve the span a reader arrived to see, or null when the page should simply
+ * open at the top.
+ *
+ * The span is honoured only when it is in range for the body (in code points,
+ * the anchor contract) AND one of the entry's own loaded quotes is anchored at
+ * exactly it and is not stale. So a span whose passage was since edited away, or
+ * whose offsets no longer fit the body, falls back quietly -- the page never
+ * scrolls to words that are not the quote.
+ */
+export function resolveFocusSpan(
+  body: string,
+  span: FocusSpan | undefined,
+  quotes: readonly PromotedQuote[],
+): ResolvedFocusSpan | null {
+  if (span == null) return null;
+  if (!inRange(Array.from(body).length, span.start, span.end)) return null;
+  const match = quotes.find(
+    (q) => !q.stale && q.anchor_start === span.start && q.anchor_end === span.end,
+  );
+  return match == null ? null : { start: span.start, end: span.end, quoteId: match.id };
+}

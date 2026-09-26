@@ -100,6 +100,14 @@ export type RootStackParamList = {
         /** A passage folded in from the reader; seeds the body as a blockquote. */
         prefillQuote?: { text: string; sourceTitle: string };
         /**
+         * A promoted quote the reader arrived to see (from the Promoted quotes
+         * screen, #2865), as code-point offsets into the body -- the anchor
+         * API's own units. Read mode scrolls it into view and underlines it; a
+         * span that no longer matches a live quote (stale, or out of range)
+         * opens the page at the top.
+         */
+        highlightSpan?: { start: number; end: number };
+        /**
          * A timed writing session this page was OPENED in order to run — the
          * quick launch from a saved ``Journaling`` practice. The timer opens at
          * ``minutes`` and is already running, and the finished session is
