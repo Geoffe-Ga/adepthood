@@ -1430,5 +1430,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/text-order.browser.e2e.test.ts"
+  },
+  {
+    "id": "navigation.stage-deep-link-opens-that-stage",
+    "description": "Someone opens a stage deep link -- /practice/1 or /course/1, typed, bookmarked or tapped from outside the app -- and lands on that stage. React Navigation hands a path segment to the screen as a string while the screens compare stage numbers strictly, so before #2958 the linking config's missing parse step made /practice/1 show 'No practice set for this stage yet.' to an account whose adopted practice is stage 1 (the #2948 census finding), and made /course/1 render with no stage cover, no metadata and no stage chip selected. The spec seeds a fresh account's stage-1 adoption over the API, loads /practice/1 and asserts the adopted practice's name and Begin control with no empty state, then loads /course/1 (the course half: GET /course/stages/{stage_number}/content) and asserts the stage cover, the stage metadata and stage-pill-1 carrying aria-selected=true. Only the browser takes the URL from the address bar through the web linking layer to the screen and on to a real server.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practices", "userPractices", "stages", "course"],
+      "routes": [
+        "GET /stages",
+        "GET /practices/",
+        "GET /user-practices/",
+        "POST /user-practices/",
+        "GET /course/stages/{stage_number}/content"
+      ],
+      "tables": ["coursestage", "userpractice"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-deep-link.browser.e2e.test.ts"
   }
 ]
