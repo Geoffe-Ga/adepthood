@@ -10,6 +10,8 @@ import {
   progressLabel,
   mergeBlocks,
   hasTerminalError,
+  selectSeamOverlaps,
+  EMPTY_RUN_STATE,
 } from '../transcriptionRun';
 import type { TranscriptionBlock, TranscriptionRunState } from '../transcriptionRun';
 
@@ -17,7 +19,7 @@ import type { TranscriptionErrorKind } from '@/api';
 
 // The driver hook owns image lookups and the actual transcribePage calls; this
 // state only ever holds per-page status/text/edit/error, keyed by stable id.
-const emptyState: TranscriptionRunState = { order: [], blocks: {}, orphans: [] };
+const emptyState: TranscriptionRunState = EMPTY_RUN_STATE;
 
 function idsToPages(ids: readonly string[]): { id: string }[] {
   return ids.map((id) => ({ id }));
@@ -763,5 +765,327 @@ describe('transcriptionRunReducer — a page removed mid-flight keeps holding it
     }
     expect(state.order).toEqual([]);
     expect(inFlightCount(state)).toBe(0);
+  });
+});
+
+// --- Overlapping screenshots (#2929) ------------------------------------------
+
+const SAM_PAGE_1 = [
+  'Sam: Are you still coming tonight?',
+  'Me: Yes — leaving at 6.',
+  'Sam: Can you grab ice on the way?',
+  'Me: Sure, how many bags',
+].join('\n');
+const SAM_PAGE_2 = [
+  'leaving at 6.',
+  'Sam: Can you grab ice on the way?',
+  'Me: Sure, how many bags?',
+  'Sam: Two should do it. Thank you!',
+].join('\n');
+const SAM_MERGED = [
+  'Sam: Are you still coming tonight?',
+  'Me: Yes — leaving at 6.',
+  'Sam: Can you grab ice on the way?',
+  'Me: Sure, how many bags?',
+  'Sam: Two should do it. Thank you!',
+].join('\n');
+
+// A three-page thread: each seam repeats two whole lines.
+const THREAD_1 =
+  'One: the first line of the thread.\nTwo: the second line of it.\nThree: the third line here.';
+const THREAD_2 =
+  'Two: the second line of it.\nThree: the third line here.\nFour: the fourth line now.\nFive: the fifth line after.';
+const THREAD_3 =
+  'Four: the fourth line now.\nFive: the fifth line after.\nSix: and the sixth to end.';
+const THREAD_MERGED = [
+  'One: the first line of the thread.',
+  'Two: the second line of it.',
+  'Three: the third line here.',
+  'Four: the fourth line now.',
+  'Five: the fifth line after.',
+  'Six: and the sixth to end.',
+].join('\n');
+
+/** Seed `ids` and land each page's text, in order. */
+function resolvedRun(texts: Record<string, string>): TranscriptionRunState {
+  const ids = Object.keys(texts);
+  let state = initState(ids);
+  for (const id of ids) {
+    state = transcriptionRunReducer(state, { type: 'start', id, attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id,
+      attempt: 1,
+      text: texts[id] ?? '',
+    });
+  }
+  return state;
+}
+
+describe('mergeBlocks — overlapping screenshots merge once', () => {
+  it('mergeBlocks emits overlapping lines once across a seam', () => {
+    const state = resolvedRun({ p1: SAM_PAGE_1, p2: SAM_PAGE_2 });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2']))).toBe(SAM_MERGED);
+  });
+
+  it('mergeBlocks keeps a repeated short reply at a seam', () => {
+    const state = resolvedRun({ p1: 'Sam: See you there?\nMe: ok', p2: 'Me: ok\nSam: Great.' });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2']))).toBe(
+      'Sam: See you there?\nMe: ok\n\nMe: ok\nSam: Great.',
+    );
+  });
+
+  it('merges a three-page thread with each seam applied once', () => {
+    const state = resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2', 'p3']))).toBe(THREAD_MERGED);
+  });
+
+  it('leaves no stray separator when a middle page is wholly consumed by its seams', () => {
+    const state = resolvedRun({
+      p1: 'Alpha: the opening line here.\nBeta: the second line here.\nGamma: the third line here.',
+      p2: 'Beta: the second line here.\nGamma: the third line here.',
+      p3: 'Beta: the second line here.\nGamma: the third line here.\nDelta: the closing line.',
+    });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2', 'p3']))).toBe(
+      'Alpha: the opening line here.\nBeta: the second line here.\nGamma: the third line here.\nDelta: the closing line.',
+    );
+  });
+
+  it('joins the page after a wholly repeated page by that page’s own seam', () => {
+    const state = resolvedRun({
+      p1: 'Alpha: the opening line here.\nBeta: the second line here.\nGamma: the third line here.',
+      p2: 'Beta: the second line here.\nGamma: the third line here.',
+      p3: 'A new screenshot with nothing repeated.',
+    });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2', 'p3']))).toBe(
+      'Alpha: the opening line here.\nBeta: the second line here.\nGamma: the third line here.\n\nA new screenshot with nothing repeated.',
+    );
+  });
+
+  it('passes a page with no applied seam through byte for byte', () => {
+    const state = resolvedRun({ p1: ' A page. \n', p2: '\n\tAnother page.' });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2']))).toBe(' A page. \n\n\n\n\tAnother page.');
+  });
+
+  it('never changes either page’s stored text', () => {
+    const state = resolvedRun({ p1: SAM_PAGE_1, p2: SAM_PAGE_2 });
+    mergeBlocks(state, idsToPages(['p1', 'p2']));
+    expect(blockAt(state, 'p1').text).toBe(SAM_PAGE_1);
+    expect(blockAt(state, 'p2').text).toBe(SAM_PAGE_2);
+  });
+
+  it('brings every line back once a hand edit breaks the run', () => {
+    let state = resolvedRun({ p1: SAM_PAGE_1, p2: SAM_PAGE_2 });
+    const rewritten = 'A different page entirely.\nWith nothing repeated.';
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p2', text: rewritten });
+    const pages = idsToPages(['p1', 'p2']);
+    expect(mergeBlocks(state, pages)).toBe(`${SAM_PAGE_1}\n\n${rewritten}`);
+    expect(selectSeamOverlaps(state, pages)[0]?.overlap).toBeNull();
+  });
+});
+
+describe('mergeBlocks — a hand edit always wins at a seam', () => {
+  // The writer corrects a repeated line on one page; the correction is still
+  // ≥ 0.9 similar to the other page's copy, so the matcher alone would call it a
+  // repeat and the merge would quietly keep the uncorrected copy instead.
+  const CORRECTED = THREAD_2.replace('second line', 'second lime');
+
+  it('emits both pages whole once the later page is hand-edited', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2 });
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p2', text: CORRECTED });
+    const pages = idsToPages(['p1', 'p2']);
+    expect(mergeBlocks(state, pages)).toBe(`${THREAD_1}\n\n${CORRECTED}`);
+    expect(mergeBlocks(state, pages)).toContain('second lime');
+    expect(selectSeamOverlaps(state, pages)[0]?.overlap).toBeNull();
+  });
+
+  it('emits both pages whole once the earlier page is hand-edited', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2 });
+    const edited = THREAD_1.replace('second line', 'second lime');
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p1', text: edited });
+    const pages = idsToPages(['p1', 'p2']);
+    expect(mergeBlocks(state, pages)).toBe(`${edited}\n\n${THREAD_2}`);
+    expect(selectSeamOverlaps(state, pages)[0]?.overlap).toBeNull();
+  });
+
+  it('still dedupes the other seams of a run', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 });
+    state = transcriptionRunReducer(state, { type: 'edit', id: 'p3', text: THREAD_3 });
+    const seams = selectSeamOverlaps(state, idsToPages(['p1', 'p2', 'p3']));
+    expect(seams.map((seam) => seam.overlap === null)).toEqual([false, true]);
+  });
+});
+
+describe('selectSeamOverlaps — only adjacent, both-read pages', () => {
+  it('reports one seam per adjacent pair, positioned by the earlier page', () => {
+    const state = resolvedRun({ p1: SAM_PAGE_1, p2: SAM_PAGE_2 });
+    expect(selectSeamOverlaps(state, idsToPages(['p1', 'p2']))).toEqual([
+      {
+        earlierId: 'p1',
+        laterId: 'p2',
+        earlierPosition: 1,
+        overlap: { laterLinesToDrop: 2, earlierLinesToReplace: 1, noticeLineCount: 3 },
+        kept: false,
+      },
+    ]);
+  });
+
+  it.each([
+    ['failed', 'reject'],
+    ['pending', 'none'],
+  ])('never compares pages either side of a %s page', (_label, how) => {
+    let state = initState(['p1', 'p2', 'p3']);
+    for (const id of ['p1', 'p3']) {
+      state = transcriptionRunReducer(state, { type: 'start', id, attempt: 1 });
+      state = transcriptionRunReducer(state, { type: 'resolve', id, attempt: 1, text: THREAD_1 });
+    }
+    if (how === 'reject') {
+      state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+      state = transcriptionRunReducer(state, {
+        type: 'reject',
+        id: 'p2',
+        attempt: 1,
+        error: 'network',
+      });
+    }
+    const pages = idsToPages(['p1', 'p2', 'p3']);
+    expect(selectSeamOverlaps(state, pages)).toEqual([]);
+    expect(mergeBlocks(state, pages)).toBe(`${THREAD_1}\n\n${THREAD_1}`);
+
+    // Once the page between them is removed, the two become neighbours.
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1', 'p3'] });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p3']))).toBe(THREAD_1);
+  });
+});
+
+describe('keepSeam — the writer declines one dedupe', () => {
+  it('restores the full text for that seam only', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 });
+    state = transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'p1', laterId: 'p2' });
+    const pages = idsToPages(['p1', 'p2', 'p3']);
+    expect(mergeBlocks(state, pages)).toBe(
+      `${THREAD_1}\n\n${THREAD_2}\n${'Six: and the sixth to end.'}`,
+    );
+    const seams = selectSeamOverlaps(state, pages);
+    expect(seams.map((seam) => [seam.kept, seam.overlap === null])).toEqual([
+      [true, true],
+      [false, false],
+    ]);
+  });
+
+  it('never touches order, blocks, orphans, or what the run would start next', () => {
+    let state = initState(['p1', 'p2', 'p3']);
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id: 'p1',
+      attempt: 1,
+      text: THREAD_1,
+    });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2', attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id: 'p2',
+      attempt: 1,
+      text: THREAD_2,
+    });
+    const before = state;
+    const after = transcriptionRunReducer(state, {
+      type: 'keepSeam',
+      earlierId: 'p1',
+      laterId: 'p2',
+    });
+    expect(after.order).toBe(before.order);
+    expect(after.blocks).toBe(before.blocks);
+    expect(after.orphans).toBe(before.orphans);
+    expect(selectStartable(after)).toEqual(selectStartable(before));
+    expect(selectStartable(after)).toEqual(['p3']);
+    expect(after.keptSeams).toEqual([{ earlierId: 'p1', laterId: 'p2' }]);
+  });
+
+  it('applies a keep only to its exact pair, even before a sync has landed', () => {
+    // The pages prop can move ahead of the reducer for one render; a keep for
+    // (p1, p2) must not be read as a keep for whatever now precedes p2.
+    const state = transcriptionRunReducer(
+      resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_1 }),
+      {
+        type: 'keepSeam',
+        earlierId: 'p1',
+        laterId: 'p2',
+      },
+    );
+    const [seam] = selectSeamOverlaps(state, idsToPages(['p3', 'p2']));
+    expect(seam?.kept).toBe(false);
+    expect(seam?.overlap).not.toBeNull();
+  });
+
+  it('ignores a keep for pages that are not neighbours, or one already kept', () => {
+    let state = resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 });
+    expect(
+      transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'p1', laterId: 'p3' }),
+    ).toBe(state);
+    expect(
+      transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'p2', laterId: 'p1' }),
+    ).toBe(state);
+    expect(
+      transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'ghost', laterId: 'p1' }),
+    ).toBe(state);
+    state = transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'p1', laterId: 'p2' });
+    expect(
+      transcriptionRunReducer(state, { type: 'keepSeam', earlierId: 'p1', laterId: 'p2' }),
+    ).toBe(state);
+  });
+});
+
+describe('keepSeam — a kept seam never leaks onto a new adjacency', () => {
+  const keptRun = (): TranscriptionRunState =>
+    transcriptionRunReducer(resolvedRun({ p1: THREAD_1, p2: THREAD_2, p3: THREAD_3 }), {
+      type: 'keepSeam',
+      earlierId: 'p1',
+      laterId: 'p2',
+    });
+
+  it('forgets the keep when the pages are reordered away and back', () => {
+    let state = keptRun();
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p2', 'p1', 'p3'] });
+    expect(state.keptSeams).toEqual([]);
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1', 'p2', 'p3'] });
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2', 'p3']))).toBe(THREAD_MERGED);
+  });
+
+  it('does not carry the keep onto a retaken later page', () => {
+    let state = keptRun();
+    state = transcriptionRunReducer(state, {
+      type: 'pagesSynced',
+      orderedIds: ['p1', 'p2b', 'p3'],
+    });
+    state = transcriptionRunReducer(state, { type: 'start', id: 'p2b', attempt: 1 });
+    state = transcriptionRunReducer(state, {
+      type: 'resolve',
+      id: 'p2b',
+      attempt: 1,
+      text: THREAD_2,
+    });
+    expect(state.keptSeams).toEqual([]);
+    expect(mergeBlocks(state, idsToPages(['p1', 'p2b', 'p3']))).toBe(THREAD_MERGED);
+  });
+
+  it('does not carry the keep onto the adjacency a removal creates', () => {
+    let state = transcriptionRunReducer(
+      resolvedRun({ p1: THREAD_1, p2: 'Unrelated: nothing shared.\nAt all.', p3: THREAD_1 }),
+      { type: 'keepSeam', earlierId: 'p1', laterId: 'p2' },
+    );
+    state = transcriptionRunReducer(state, { type: 'pagesSynced', orderedIds: ['p1', 'p3'] });
+    expect(state.keptSeams).toEqual([]);
+    expect(mergeBlocks(state, idsToPages(['p1', 'p3']))).toBe(THREAD_1);
+  });
+
+  it('keeps a keep whose pages are still neighbours after a sync', () => {
+    let state = keptRun();
+    state = transcriptionRunReducer(state, {
+      type: 'pagesSynced',
+      orderedIds: ['p1', 'p2', 'p3', 'p4'],
+    });
+    expect(state.keptSeams).toEqual([{ earlierId: 'p1', laterId: 'p2' }]);
   });
 });

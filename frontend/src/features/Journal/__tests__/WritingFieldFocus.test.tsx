@@ -69,6 +69,8 @@ describe('transcribed page editor', () => {
         onRetake={jest.fn()}
         onRemove={jest.fn()}
         isConfirmingRedo={() => false}
+        overlaps={{}}
+        onKeepSeam={jest.fn()}
       />,
     );
   }

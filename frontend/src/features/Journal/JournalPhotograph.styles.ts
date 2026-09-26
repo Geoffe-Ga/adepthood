@@ -143,6 +143,11 @@ const styles = StyleSheet.create({
   block: {
     gap: SPACING.sm,
   },
+  /** A later page's repeated-lines notice, stacked over its quiet Keep them action. */
+  overlapNotice: {
+    gap: SPACING.xs,
+    alignItems: 'flex-start',
+  },
   /** A done block's editable body: its text field over its redo affordances. */
   blockBody: {
     gap: SPACING.sm,
