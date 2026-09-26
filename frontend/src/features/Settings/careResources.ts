@@ -15,6 +15,9 @@
  */
 import type { CareResource, CareResponse } from '@/api';
 
+/** The standing surface's short heading, rendered as the screen's eyebrow. */
+const STANDING_CARE_TITLE = 'You are not alone';
+
 /**
  * A warm, non-shaming standing invitation. It names reaching out to a person as
  * a sign of strength and makes clear that support is here whenever it is wanted —
@@ -64,6 +67,7 @@ const STANDING_CARE_RESOURCES: CareResource[] = [
 
 /** The always-available Support & care surface (static, not resonance-driven). */
 export const STANDING_CARE: CareResponse = {
+  title: STANDING_CARE_TITLE,
   message: STANDING_CARE_MESSAGE,
   resources: STANDING_CARE_RESOURCES,
 };
