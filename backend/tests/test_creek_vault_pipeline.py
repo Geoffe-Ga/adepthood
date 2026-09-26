@@ -46,11 +46,17 @@ from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_client
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import (
+    _VAULT_TOTAL_DEADLINE_SECONDS as PRODUCTION_ADAPTER_DEADLINE_SECONDS,
+)
+from services.creek_vault_client import (
     CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
 from services.creek_vault_pipeline import _BACKGROUND_TASKS as BACKGROUND_TASKS
+from services.creek_vault_pipeline import (
+    _JOURNAL_RUN_BUDGET_SECONDS as PRODUCTION_JOURNAL_BUDGET_SECONDS,
+)
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_pipeline import _commit_finished_run as commit_finished_run
 from services.creek_vault_pipeline import _PipelinePlan as PipelinePlan
@@ -88,6 +94,12 @@ _CONCURRENT_RACE_SETTLE_SECONDS = 2.0
 # held for several whole clocks after Creek has already accepted its job.
 _SUBMIT_BUDGET_SECONDS = 0.005
 _SUBMIT_HELD_PAST_BUDGET_SECONDS = _SUBMIT_BUDGET_SECONDS * 10
+
+# How many journal budgets the adapter's whole-request deadline spans in
+# production, so a scaled-down test keeps the real relationship between them.
+_PRODUCTION_ADAPTER_DEADLINE_TO_JOURNAL_BUDGET = (
+    PRODUCTION_ADAPTER_DEADLINE_SECONDS / PRODUCTION_JOURNAL_BUDGET_SECONDS
+)
 
 
 def _example(capability: str, cell: str) -> dict[str, Any]:
@@ -169,9 +181,19 @@ class _SlowRecorder:
     is not a compatible signature. Wrapping one keeps both handlers honest.
     """
 
-    def __init__(self, *, delay: float) -> None:
-        """Bind how long each answer should take, and the recorder behind it."""
+    def __init__(
+        self,
+        *,
+        delay: float,
+        slow_link: str | None = None,
+    ) -> None:
+        """Bind how long each answer should take, and the recorder behind it.
+
+        ``slow_link`` narrows the delay to one linker method, so a test can
+        trickle a synchronous rung while every other exchange answers at once.
+        """
         self._delay = delay
+        self._slow_link = slow_link
         self._inner = _Recorder()
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -183,8 +205,18 @@ class _SlowRecorder:
         short" indistinguishable from "no call was ever made".
         """
         response = self._inner(request)
-        await asyncio.sleep(self._delay)
+        if self._is_slow(request):
+            await asyncio.sleep(self._delay)
         return response
+
+    def _is_slow(self, request: httpx.Request) -> bool:
+        """Whether this exchange is one the test asked to trickle."""
+        if self._slow_link is None:
+            return True
+        return (
+            request.url.path == _LINKS_PATH
+            and json.loads(request.content)["method"] == self._slow_link
+        )
 
     @property
     def requests(self) -> list[httpx.Request]:
@@ -2558,11 +2590,88 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     open for minutes. Elapsed wall-clock time is the only assertion that can
     support "the write path acquires no new latency class".
 
-    The clock that cuts a trickling *submit* is the adapter's whole-request
-    deadline, not the stage budget: a submit may already have been accepted,
-    and the stage budget cancelling it would lose the job and pay for it twice
-    (#2933). Both are wall clocks, so the bound asserted here is unchanged; the
-    deadline is lowered only after the handshake, which it also governs.
+    The trickling rung is temporal linking: a synchronous stage with no job
+    handle to lose, so the journal budget itself must cut it. The adapter's
+    deadline keeps production's ratio to that budget, which puts it beyond the
+    trickle -- only the stage clock can make this assertion pass.
+    """
+    budget = 0.2
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", budget)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
+    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.TEMPORAL.value)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    monkeypatch.setattr(
+        creek_vault_client,
+        "_VAULT_TOTAL_DEADLINE_SECONDS",
+        budget * _PRODUCTION_ADAPTER_DEADLINE_TO_JOURNAL_BUDGET,
+    )
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    elapsed = time.monotonic() - started
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert elapsed < 0.45
+    # Non-vacuous: the bound cut a call short rather than declining to make one.
+    assert any(
+        request.url.path == _LINKS_PATH
+        and json.loads(request.content)["method"] == VaultLinkStage.TEMPORAL.value
+        for request in slow.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A synchronous cold-embedding rung stays under the deep run's clock (#2933).
+
+    Eddies has no durable handle, so nothing is lost by cutting it, and its
+    adapter deadline is the long cold-embedding one. Were the stage clock lifted
+    from every submit rather than only from the job-admitting ones, a document
+    import would wait out that whole deadline in the foreground.
+    """
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.EDDIES.value)
+    http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    started = time.monotonic()
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+    )
+    elapsed = time.monotonic() - started
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert elapsed < 0.45
+    assert any(
+        request.url.path == _LINKS_PATH
+        and json.loads(request.content)["method"] == VaultLinkStage.EDDIES.value
+        for request in slow.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one call the stage clock does not cut is still cut by a wall clock.
+
+    Classification may already have been accepted when its answer trickles, so
+    the stage budget lets it finish (#2933). What bounds it instead is the
+    adapter's whole-request deadline, lowered here only after the handshake,
+    which it also governs.
     """
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.2)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
@@ -2580,7 +2689,6 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     await http.aclose()
 
     assert elapsed < 0.45
-    # Non-vacuous: the bound cut a call short rather than declining to make one.
     assert any(request.url.path == _CLASSIFICATIONS_PATH for request in slow.requests)
 
 
