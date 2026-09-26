@@ -320,11 +320,23 @@ async function writeEntry(
   }
 }
 
+/** What the Finish write left on the server: the entry id and its stored body. */
+interface FinishedEntry {
+  id: number;
+  /**
+   * The body exactly as stored. The server sanitizes it (NFC, zero-width marks
+   * stripped, edges trimmed), so it can differ from the text that was sent, and
+   * every anchor offset promoted from read mode indexes THIS string.
+   */
+  message: string;
+}
+
 /**
  * The single authoritative Finish write: one atomic update that carries the FULL
  * body + title alongside the ``finished`` status flip, so an earlier, shorter
  * autosave can never win. Rejects on failure (never swallows) so the caller keeps
- * the entry a draft and surfaces a retry. Resolves to the finished entry's id.
+ * the entry a draft and surfaces a retry. Resolves to the finished entry's id
+ * and the body the server stored.
  *
  * Weekly-prompt compose has no local id to finish, so the Finish affordance is
  * withheld there and this path handles only plain/practice entries.
@@ -334,17 +346,21 @@ async function finishWrite(
   title: string,
   body: string,
   ctx: SaveContext,
-): Promise<number> {
+): Promise<FinishedEntry> {
   const finishTitle = titleOrNull(title);
   const id = refs.entryIdRef.current;
   if (id == null) {
     const created = await createEntry(refs, title, body, ctx);
     refs.entryIdRef.current = created;
-    await journal.update(created, { title: finishTitle, status: 'finished' });
-    return created;
+    const finished = await journal.update(created, { title: finishTitle, status: 'finished' });
+    return { id: created, message: finished.message };
   }
-  await journal.update(id, { message: body, title: finishTitle, status: 'finished' });
-  return id;
+  const finished = await journal.update(id, {
+    message: body,
+    title: finishTitle,
+    status: 'finished',
+  });
+  return { id, message: finished.message };
 }
 
 interface AutosaveApi {
@@ -797,7 +813,7 @@ type FinishRunnerRefs = WriteEntryRefs & {
 /** Raised when Finish is pressed before an existing entry's load has settled. */
 const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loading.';
 
-type RunFinish = (_title: string, _body: string) => Promise<number>;
+type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
 
 /**
  * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
@@ -831,12 +847,14 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
       );
       inFlightRef.current = shadow;
       try {
-        const id = await task;
-        durableTextRef.current = { title, body };
+        const finished = await task;
+        // What is durable is the body the server STORED, not the one sent: the
+        // caller adopts it for read mode, and must not then re-save it as an edit.
+        durableTextRef.current = { title, body: finished.message };
         reporter.succeed('finish');
         reporter.succeed('body');
         if (generationRef.current === generation) reporter.publish('saved');
-        return id;
+        return finished;
       } catch (error) {
         reporter.fail({ lane: 'finish' });
         if (generationRef.current === generation) reporter.publish('idle');
@@ -902,7 +920,7 @@ function usePersistControls(
 }
 
 /** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
-type DraftWriters = SaveTimer & { finish: (_title: string, _body: string) => Promise<number> };
+type DraftWriters = SaveTimer & { finish: RunFinish };
 
 /** Wire the three writers (debounced save, flush, atomic finish) over shared refs. */
 function useDraftWriters(
@@ -1047,9 +1065,9 @@ function useDebouncedSave(
   );
   const finishAndTrack = useCallback(
     async (...args: Parameters<typeof finish>) => {
-      const id = await finish(...args);
-      setEntryId(id);
-      return id;
+      const finished = await finish(...args);
+      setEntryId(finished.id);
+      return finished;
     },
     [finish],
   );
@@ -1075,9 +1093,10 @@ type StrRef = React.MutableRefObject<string>;
 /** Bind flush + finish to the latest title/body refs so callers pass no args. */
 function useBoundWriters(
   flush: (_title: string, _body: string) => Promise<FlushResult>,
-  finish: (_title: string, _body: string) => Promise<number>,
+  finish: RunFinish,
   titleRef: StrRef,
   bodyRef: StrRef,
+  adoptStoredBody: (_stored: string) => void,
 ): {
   flushNow: () => Promise<number | null>;
   flushForExitNow: () => Promise<boolean>;
@@ -1095,10 +1114,15 @@ function useBoundWriters(
       if (sameDraft(requested, titleRef.current, bodyRef.current)) return true;
     }
   }, [flush, titleRef, bodyRef]);
-  const finishNow = useCallback(
-    () => finish(titleRef.current, bodyRef.current),
-    [finish, titleRef, bodyRef],
-  );
+  // Read mode shows, and promotes offsets into, the body as STORED. It is adopted
+  // only when nothing was typed while the write was out: a later keystroke is the
+  // writer's own newer text and its autosave supersedes the stored copy anyway.
+  const finishNow = useCallback(async () => {
+    const sent = bodyRef.current;
+    const finished = await finish(titleRef.current, sent);
+    if (bodyRef.current === sent) adoptStoredBody(finished.message);
+    return finished.id;
+  }, [finish, titleRef, bodyRef, adoptStoredBody]);
   return { flushNow, flushForExitNow, finishNow };
 }
 
@@ -1470,6 +1494,17 @@ function useRetrySource(
   );
 }
 
+/** Replace the local body with the server's stored copy (after Finish only). */
+function useAdoptStoredBody(bodyRef: StrRef, setBody: (_v: string) => void) {
+  return useCallback(
+    (stored: string) => {
+      bodyRef.current = stored;
+      setBody(stored);
+    },
+    [bodyRef, setBody],
+  );
+}
+
 /** Bind the draft writer to the entry's live fields and local choice state. */
 function useAutosaveBindings(
   entry: EntryState,
@@ -1482,11 +1517,13 @@ function useAutosaveBindings(
     entry.setTitle,
     entry.setBody,
   );
+  const adoptStoredBody = useAdoptStoredBody(entry.bodyRef, entry.setBody);
   const { flushNow, flushForExitNow, finishNow } = useBoundWriters(
     saving.flush,
     saving.finish,
     entry.titleRef,
     entry.bodyRef,
+    adoptStoredBody,
   );
   const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
     entry,

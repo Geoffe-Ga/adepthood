@@ -511,3 +511,100 @@ describe('JournalEntryScreen -- promotions follow the server after an edited sav
     }
   });
 });
+
+/**
+ * The server's ``sanitize_user_text``, as far as a body is concerned: NFC, the
+ * zero-width / directional marks U+200B-U+200F stripped, edges trimmed.
+ */
+function serverStored(typed: string): string {
+  return typed
+    .normalize('NFC')
+    .replace(/[\u200B-\u200F]/gu, '')
+    .trim();
+}
+
+describe('JournalEntryScreen -- read mode adopts the server-stored body after Finish (#2891)', () => {
+  const FAMILY = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+  const CASES: { name: string; typed: string; quoted: string }[] = [
+    { name: 'a decomposed combining mark', typed: 'Cafe\u0301 by the river.', quoted: 'river' },
+    { name: 'a ZWJ emoji sequence', typed: `${FAMILY} walked to the river.`, quoted: 'river' },
+    { name: 'a leading nested bullet', typed: '  - by the river\n  - and back', quoted: 'river' },
+    { name: 'a leading newline', typed: '\n> a quote\n\nby the river', quoted: 'river' },
+  ];
+
+  it.each(CASES)('promotes offsets into the stored body after $name', async ({ typed, quoted }) => {
+    jest.useFakeTimers();
+    try {
+      const stored = serverStored(typed);
+      expect(stored).not.toBe(typed); // the case really exercises sanitize
+      mockUpdate.mockImplementation((id: number) =>
+        Promise.resolve(entry({ id, message: stored, status: 'finished' })),
+      );
+      mockPromote.mockResolvedValue(promotedQuote({ id: 91, source_entry_id: 42 }));
+      const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), typed);
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-finish-button'));
+      });
+      fireEvent.press(await findByTestId('promote-quote-button'));
+      const input = getByTestId('quote-select-input');
+      expect(input.props.value).toBe(stored);
+
+      const startUtf16 = stored.indexOf(quoted);
+      fireEvent(input, 'selectionChange', {
+        nativeEvent: { selection: { start: startUtf16, end: startUtf16 + quoted.length } },
+      });
+      await act(async () => {
+        fireEvent.press(getByTestId('quote-select-confirm'));
+      });
+      const [, span] = mockPromote.mock.calls[0]!;
+      expect(Array.from(stored).slice(span.anchor_start, span.anchor_end).join('')).toBe(quoted);
+
+      // Adopting the stored body is not an edit: no further write follows it.
+      const writes = mockUpdate.mock.calls.length + mockCreate.mock.calls.length;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1000);
+      });
+      // Closing flushes only what is not yet durable; the stored body already is.
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-close-entry'));
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(navigation.navigate).toHaveBeenCalled();
+      expect(mockUpdate.mock.calls.length + mockCreate.mock.calls.length).toBe(writes);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps text typed while the Finish write was out instead of the stored copy', async () => {
+    let resolveFinish: (_value: JournalMessage) => void = () => {};
+    mockUpdate.mockImplementation(
+      () =>
+        new Promise<JournalMessage>((resolve) => {
+          resolveFinish = resolve;
+        }),
+    );
+    const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+    const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+    const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+    const { getByTestId, findByTestId } = render(
+      <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+    );
+    fireEvent.changeText(getByTestId('journal-body-input'), 'by the river ');
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-finish-button'));
+    });
+    fireEvent.changeText(getByTestId('journal-body-input'), 'by the river and back');
+    await act(async () => {
+      resolveFinish(entry({ id: 42, message: 'by the river', status: 'finished' }));
+    });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    expect(getByTestId('quote-select-input').props.value).toBe('by the river and back');
+  });
+});
