@@ -25,6 +25,9 @@ export const CLOSE_REST_COLOR = ink.soft;
 /** The close X's ink while pressed: the accent, so the press is felt before the card goes. */
 export const CLOSE_PRESSED_COLOR = accent.primary;
 
+/** The close X's opacity while held: fully opaque, so the accent reads at full strength. */
+export const CLOSE_ACTIVE_OPACITY = 1;
+
 /**
  * How far a card's content must keep off its right edge so nothing lies under
  * the corner X. The X is pinned to the card's padding-box corner with a
@@ -72,6 +75,8 @@ function CloseControl({
     <TouchableOpacity
       ref={ref}
       style={[styles.control, styles.closeControl]}
+      // The accent tint IS the press feedback; the default 0.2 fade would wash it out.
+      activeOpacity={CLOSE_ACTIVE_OPACITY}
       onPress={onPress}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}

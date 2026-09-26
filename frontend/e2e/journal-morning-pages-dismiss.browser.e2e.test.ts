@@ -21,6 +21,7 @@ import { signUp } from './journalHabitsBrowserSupport';
  *  3. ONE EDGE -- the card's text, the "Begin a page" CTA included, shares one
  *     left edge: the only action in the card starts where its words do.
  *
+ * Holding the X shows the accent at full strength, not faded by the touchable.
  * It then declines by keyboard and asserts the two things a person feels: the
  * focus lands on the "Start a review early" link rather than on `<body>`, and
  * the tip is still gone after a reload.
@@ -38,6 +39,11 @@ const TOUCH_TARGET_MIN = 44;
 /** The key the tip's dismissal is persisted under (`src/storage/morningPagesTipStorage.ts`). */
 const TIP_DISMISSED_KEY = '@adepthood/morning_pages_tip_dismissed';
 const DISMISS_NAME = 'Set the morning-pages tip aside';
+/** `accent.primary` and `ink.soft` in `src/design/tokens.ts`, as the browser computes them. */
+const ACCENT_PRIMARY_RGB = 'rgb(165, 87, 47)';
+const INK_SOFT_RGB = 'rgb(90, 80, 70)';
+/** How far outside the X the pointer goes to cancel a held press without firing it. */
+const CANCEL_OFFSET = 200;
 /** The card's text runs, top to bottom: label, title, body, CTA. */
 const CARD_TEXT = [
   'A practice to try',
@@ -155,6 +161,46 @@ async function assertCardGeometry(page: Page, viewport: string): Promise<void> {
   await expect(band.getByText('Not now', { exact: true })).toHaveCount(0);
 }
 
+/** The X's own opacity and its glyph's stroke, once any press transition has run out. */
+async function closeInk(close: Locator): Promise<{ opacity: string; stroke: string }> {
+  return close.evaluate(async (element) => {
+    await Promise.all(element.getAnimations({ subtree: true }).map((a) => a.finished));
+    const glyph = element.querySelector('svg');
+    if (glyph === null) throw new Error('the X has no glyph');
+    return {
+      opacity: getComputedStyle(element).opacity,
+      stroke: getComputedStyle(glyph).stroke,
+    };
+  });
+}
+
+/**
+ * While the X is held, the press feedback IS the accent: the control stays fully
+ * opaque and the glyph turns accent. Jest cannot see this -- RNTL's `fireEvent`
+ * skips Pressability's opacity path -- so a TouchableOpacity left at its default
+ * `activeOpacity` of 0.2 faded the accent to a faint wash unnoticed. The press
+ * is then cancelled by sliding off, so nothing is dismissed.
+ */
+async function assertHeldInk(page: Page): Promise<void> {
+  const close = page.getByTestId('journal-morning-pages-band').getByRole('button', {
+    name: DISMISS_NAME,
+  });
+  await close.scrollIntoViewIfNeeded();
+  const box = await close.boundingBox();
+  if (box === null) throw new Error('the corner X has no layout box');
+  expect(await closeInk(close)).toEqual({ opacity: '1', stroke: INK_SOFT_RGB });
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect.poll(async () => (await closeInk(close)).stroke).toBe(ACCENT_PRIMARY_RGB);
+  expect((await closeInk(close)).opacity).toBe('1');
+
+  await page.mouse.move(box.x - CANCEL_OFFSET, box.y + CANCEL_OFFSET);
+  await page.mouse.up();
+  await expect.poll(async () => (await closeInk(close)).stroke).toBe(INK_SOFT_RGB);
+  await expect(page.getByTestId('journal-morning-pages-band')).toHaveCount(1);
+}
+
 for (const viewport of VIEWPORTS) {
   test(`at ${viewport.width}x${viewport.height} the morning-pages tip declines with a corner X and hands focus on`, async ({
     page,
@@ -163,6 +209,7 @@ for (const viewport of VIEWPORTS) {
     await signUp(page, `morning-pages-x-${viewport.name}`);
 
     await assertCardGeometry(page, `${viewport.width}x${viewport.height}`);
+    await assertHeldInk(page);
 
     // Decline by keyboard: the X unmounts with the card, so focus must be handed on.
     await page.getByRole('button', { name: DISMISS_NAME }).focus();

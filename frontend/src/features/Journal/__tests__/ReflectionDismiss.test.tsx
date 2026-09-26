@@ -2,7 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, TouchableOpacity } from 'react-native';
 import type { TextStyle, ViewStyle } from 'react-native';
 
 /**
@@ -13,6 +13,7 @@ import type { TextStyle, ViewStyle } from 'react-native';
  * every other card relies on.
  */
 import ReflectionDismiss, {
+  CLOSE_ACTIVE_OPACITY,
   CLOSE_ICON_SIZE,
   CLOSE_PRESSED_COLOR,
   CLOSE_REST_COLOR,
@@ -142,6 +143,13 @@ describe('ReflectionDismiss — close variant (icon-only X, #2862)', () => {
     expect(iconColor()).toBe(accent.primary);
     fireEvent(view.getByTestId('x'), 'pressOut');
     expect(iconColor()).toBe(ink.soft);
+  });
+
+  it('keeps the X fully opaque while held, so the accent is not faded to a wash', () => {
+    // RNTL's fireEvent skips Pressability's opacity path, so this pins the prop;
+    // the browser spec measures the held control's computed opacity.
+    expect(CLOSE_ACTIVE_OPACITY).toBe(1);
+    expect(renderClose().UNSAFE_getByType(TouchableOpacity).props.activeOpacity).toBe(1);
   });
 
   it('does not treat a press-in alone as the press', () => {
