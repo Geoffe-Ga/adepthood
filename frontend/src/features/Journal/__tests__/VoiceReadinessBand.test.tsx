@@ -11,6 +11,7 @@
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -234,15 +235,38 @@ describe('VoiceReadinessBand — where it goes', () => {
 });
 
 describe('VoiceReadinessBand — declining it', () => {
-  it('keeps the one-tap decline large and legible', async () => {
-    const { findByTestId, getByText } = render(<VoiceReadinessBand />);
+  it('declines with an icon-only X in the top-right corner, not a "Not now" text row', async () => {
+    const { findByTestId, queryByText, UNSAFE_getAllByType } = render(<VoiceReadinessBand />);
     const dismiss = await findByTestId(DISMISS);
-    const controlStyle = StyleSheet.flatten(dismiss.props.style);
-    const textStyle = StyleSheet.flatten(getByText('Not now').props.style);
+    // The word moves into the accessible name; the sighted reader gets the glyph.
+    expect(queryByText('Not now')).toBeNull();
+    const icons = UNSAFE_getAllByType(X);
+    expect(icons).toHaveLength(1);
+    expect(icons[0]?.props.color).toBe(ink.soft);
+    expect(icons[0]?.props.accessible).toBe(false);
 
-    expect(controlStyle.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
-    expect(controlStyle.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
-    expect(textStyle.color).toBe(ink.soft);
+    const control = StyleSheet.flatten(dismiss.props.style);
+    expect(control.position).toBe('absolute');
+    expect(control.top).toBe(0);
+    expect(control.right).toBe(0);
+    expect(control.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(control.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(dismiss.props.accessibilityRole).toBe('button');
+    expect(dismiss.props.accessibilityLabel).toMatch(/aside|Not now/);
+
+    // The text column steps clear of the X so the CTA never runs under it.
+    const openArea = StyleSheet.flatten((await findByTestId(BAND)).props.style);
+    expect(openArea.paddingRight).toBeGreaterThanOrEqual(touchTarget.minimum);
+  });
+
+  it('keeps the CTA as the only visible text action in the band', async () => {
+    const { findByTestId, getAllByRole } = render(<VoiceReadinessBand />);
+    await findByTestId(BAND);
+    const buttons = getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    const [open, dismiss] = buttons;
+    expect(open?.props.testID).toBe(BAND);
+    expect(dismiss?.props.testID).toBe(DISMISS);
   });
 
   it('retires on one tap and does not come back on a later visit', async () => {

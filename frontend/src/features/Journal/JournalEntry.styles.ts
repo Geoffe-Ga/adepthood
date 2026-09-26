@@ -13,6 +13,7 @@ import {
   accent,
   colors,
   editorialType,
+  ink,
   journalLayout,
   journalSheet,
   paperShadow,
@@ -476,15 +477,29 @@ const styles = StyleSheet.create({
   aspectChordControl: {
     paddingBottom: spacing(1),
   },
-  /** The collapsed, declinable trigger that reveals the Aspect chips. */
+  /**
+   * The collapsed, declinable trigger that reveals the Aspect chips, framed
+   * like the page's text fields (the same border, radius, height and inset
+   * ``TextField`` uses) so the invitation reads as the field it names rather
+   * than a line floating between the privacy control and the title (#2949).
+   */
   aspectChordTrigger: {
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
-    paddingHorizontal: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    borderWidth: 1,
+    borderColor: colors.paper.hairline,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: colors.paper.background,
   },
   aspectChordTriggerLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
+  },
+  /** The untagged trigger's invitation, set as a placeholder: muted, not soft. */
+  aspectChordTriggerPlaceholder: {
+    ...editorialType.action,
+    color: ink.muted,
   },
   /** Section label above a row of Aspect chips (primary / secondary). */
   aspectChordSectionLabel: {

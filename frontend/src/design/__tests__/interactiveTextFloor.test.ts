@@ -154,6 +154,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // text beside the rows, never pressed — every affordance in that step is an
   // OfferAction, which takes editorialType.action.
   'features/Journal/WritingSessionOffer.tsx::help',
+  // Audited: the "min" unit said once at the end of the timer's preset row.
+  // Plain Text hidden from the a11y tree, never pressed — the radios beside it
+  // carry the action face and "Write for N minutes" as their names.
+  'features/Journal/WritingTimer.tsx::presetUnit',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
   // Metadata inside a card whose whole surface is the tap target (the anchor

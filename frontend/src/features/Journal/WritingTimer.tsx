@@ -41,6 +41,7 @@ import {
   WRITING_TIMER_PAUSE,
   WRITING_TIMER_PAUSE_A11Y,
   WRITING_TIMER_PRESET_GROUP_LABEL,
+  WRITING_TIMER_PRESET_UNIT,
   WRITING_TIMER_RESUME,
   WRITING_TIMER_RESUME_A11Y,
   WRITING_TIMER_START,
@@ -121,11 +122,18 @@ function PresetRow({
           accessibilityState={{ selected: option === minutes }}
           testID={`writing-timer-preset-${option}`}
         >
-          <Text style={styles.presetLabel} numberOfLines={1}>
-            {writingTimerPresetLabel(option)}
-          </Text>
+          <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
         </TouchableOpacity>
       ))}
+      <Text
+        style={styles.presetUnit}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        testID="writing-timer-preset-unit"
+      >
+        {WRITING_TIMER_PRESET_UNIT}
+      </Text>
     </View>
   );
 }
@@ -682,6 +690,17 @@ const styles = StyleSheet.create({
   presetLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
+  },
+  /**
+   * The unit, said once after the four numbers. Read-only metadata beside the
+   * radios (each of which carries "Write for N minutes" as its name), so the
+   * caption face is the right one here; it is hidden from the a11y tree.
+   */
+  presetUnit: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingLeft: SPACING.xs,
+    alignSelf: 'center',
   },
   control: {
     minHeight: touchTarget.minimum,
