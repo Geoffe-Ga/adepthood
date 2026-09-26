@@ -910,15 +910,34 @@ describe('JournalPhotographScreen — save gate across the run', () => {
     );
   });
 
+  // Kind-dependent: an unusable read is a recoverable, per-page failure. It
+  // holds Save only until that page is dealt with, offers Retake, and never
+  // raises the hand-typed offramp a terminal (key/model) failure does.
   it.each(['no_text_found', 'transcription_refused'] as const)(
-    'keeps Save disabled while the only page failed with %s',
+    'holds Save on a %s page, offers Retake without the offramp, and frees Save on Remove',
     async (kind) => {
-      mockPick.mockResolvedValueOnce(picked());
-      mockTranscribe.mockRejectedValueOnce(new TranscriptionError(kind, 422));
-      const { findByTestId } = renderScreen();
+      mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+      const handles = queueDeferredTranscriptions(2);
+      const { findByTestId, getByTestId, queryByTestId } = renderScreen();
       fireEvent.press(await findByTestId('capture-transcribe'));
-      await findByTestId('photograph-block-1-error');
-      expect((await findByTestId('photograph-save')).props.accessibilityState.disabled).toBe(true);
+      await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+
+      await act(async () => {
+        handles[0]?.reject(new TranscriptionError(kind, 422));
+      });
+      await act(async () => {
+        handles[1]?.resolve('page two');
+      });
+      expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(true);
+      expect(await findByTestId('photograph-block-1-retake')).toBeTruthy();
+      expect(queryByTestId('photograph-typed-entry')).toBeNull();
+
+      fireEvent.press(await findByTestId('photograph-block-1-remove'));
+      await waitFor(() =>
+        expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(false),
+      );
+      expect(queryByTestId('photograph-typed-entry')).toBeNull();
+      expect(mockTranscribe).toHaveBeenCalledTimes(2);
     },
   );
 
