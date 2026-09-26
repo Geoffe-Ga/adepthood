@@ -902,6 +902,62 @@ async def test_a_submit_the_vault_accepted_is_not_abandoned_when_the_budget_expi
 
 
 @pytest.mark.asyncio
+async def test_an_accepted_embedding_job_is_not_abandoned_when_the_budget_expires_during_it(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedding preparation is the other job-admitting submit, and keeps its handle too.
+
+    Both admissions are held for ten budgets after Creek accepts them. The
+    held classification guarantees the foreground hands off at its first rung,
+    so the embeddings submit is always made by the continuation under the
+    background stage budget, and that budget always expires inside it.
+    Cancelling the submit would lose the job and make reconciliation admit a
+    second one.
+    """
+    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_BACKGROUND_STAGE_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder()
+    embedding_accepted = asyncio.Event()
+
+    async def _accept_embeddings_then_answer_late(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        is_embeddings = request.url.path == _LINKS_PATH and json.loads(request.content) == {
+            "method": VaultLinkStage.EMBEDDINGS.value
+        }
+        if is_embeddings:
+            embedding_accepted.set()
+        if is_embeddings or request.url.path == _CLASSIFICATIONS_PATH:
+            await asyncio.sleep(_SUBMIT_HELD_PAST_BUDGET_SECONDS)
+        return response
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_accept_embeddings_then_answer_late))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+    recorder.bodies.clear()
+
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+        )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert embedding_accepted.is_set()
+    assert recorder.bodies.count({"method": VaultLinkStage.EMBEDDINGS.value}) == 1
+    async with concurrent_session_factory() as session:
+        landed = await _rows(session)
+    embeddings = [row for row in landed if row.stage == VaultPipelineStage.EMBEDDINGS.value]
+    assert [(row.outcome, row.attempt_count, row.job_id) for row in embeddings] == [
+        (VaultPipelineOutcome.COMPLETED, 1, recorder.EMBEDDING_JOB)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_an_accepted_job_resumes_after_the_adepthood_process_restarts(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
