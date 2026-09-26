@@ -3,12 +3,13 @@
  * place, listed under the prose instead of inside it.
  *
  * Two cases put a quote here (see ``partitionQuotes``). After an edit the
- * server re-anchors each PENDING quote by its snapshot text (``reanchor_one``)
- * and, when that text is gone, marks it ``stale`` with its offsets left where
- * they were. A quote already folded into a review is not re-anchored at all,
- * so an edit before it leaves its offsets addressing other words. Either way,
- * washing those offsets inline would attach the quote to words it never
- * quoted, and searching for its text would be a guess. This footer keeps such
+ * server re-anchors each PENDING quote by the edit window (``reanchor_one``)
+ * and, when its text is gone or repeats so that its own copy is unprovable,
+ * marks it ``stale`` with its offsets left where they were. A quote already
+ * folded into a review is not re-anchored at all, so an edit before it leaves
+ * its offsets addressing other words. Either way, washing those offsets
+ * inline would attach the quote to words it never quoted, and searching for
+ * its text would be a guess. This footer keeps such
  * a quote visible and honest -- its own snapshot text, dimmed like a stale
  * margin note, labelled stale for a screen reader -- and still removable: a
  * press hands it back through the same ``onQuotePress`` the inline span uses,
