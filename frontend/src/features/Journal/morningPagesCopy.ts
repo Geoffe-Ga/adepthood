@@ -31,10 +31,10 @@ export const MORNING_PAGES_CTA = 'Begin a page';
 /** The accessibility label for beginning a morning page. */
 export const MORNING_PAGES_CTA_A11Y = 'Begin a morning page';
 
-/** The decline affordance label. */
-export const MORNING_PAGES_DISMISS = 'Not now';
-
-/** The accessibility label for declining the tip. */
+/**
+ * The only name the decline has: it is an icon-only X in the card's corner
+ * (#2860), so this label is what a screen reader speaks and a voice user says.
+ */
 export const MORNING_PAGES_DISMISS_A11Y = 'Set the morning-pages tip aside';
 
 /** Every user-facing morning-pages string, gathered for the balance-not-altitude sweep. */
@@ -45,6 +45,5 @@ export const MORNING_PAGES_COPY_ENTRIES: readonly string[] = [
   MORNING_PAGES_BODY,
   MORNING_PAGES_CTA,
   MORNING_PAGES_CTA_A11Y,
-  MORNING_PAGES_DISMISS,
   MORNING_PAGES_DISMISS_A11Y,
 ];

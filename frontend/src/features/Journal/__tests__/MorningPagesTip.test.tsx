@@ -1,15 +1,26 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
+import type { ViewStyle } from 'react-native';
 
-import { morningPageTitle } from '../morningPagesCopy';
+import {
+  MORNING_PAGES_COPY_ENTRIES,
+  MORNING_PAGES_DISMISS_A11Y,
+  MORNING_PAGES_TITLE_SUFFIX,
+  morningPageTitle,
+} from '../morningPagesCopy';
+import { CLOSE_ICON_SIZE } from '../ReflectionDismiss';
 
+import { SPACING, ink, touchTarget } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockLoad = jest.fn() as jest.MockedFunction<() => Promise<boolean>>;
 const mockSave = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockOnBegin = jest.fn();
+const mockOnDismissed = jest.fn();
 let mockUserTimezone = 'America/Los_Angeles';
 
 jest.mock('@/context/AuthContext', () => ({
@@ -30,6 +41,21 @@ type RenderedNode = {
   props?: { accessibilityLabel?: unknown };
 };
 
+/** A rendered host node, as RNTL's queries hand it back. */
+type HostNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+function flatStyle(node: { props: { style?: unknown } }): ViewStyle {
+  return (StyleSheet.flatten(node.props.style as ViewStyle) ?? {}) as ViewStyle;
+}
+
+/** Every string the rendered tree carries, visible text and accessibility labels alike. */
+function renderedStrings(view: ReturnType<typeof render>): string[] {
+  const json = view.toJSON() as unknown as RenderedNode | RenderedNode[] | null;
+  if (json === null) return [];
+  const roots = Array.isArray(json) ? json : [json];
+  return roots.flatMap((root) => collectRenderedStrings(root));
+}
+
 function collectRenderedStrings(node: RenderedNode | string): string[] {
   if (typeof node === 'string') {
     return [node];
@@ -49,6 +75,7 @@ beforeEach(() => {
   mockLoad.mockReset();
   mockSave.mockReset();
   mockOnBegin.mockReset();
+  mockOnDismissed.mockReset();
   mockLoad.mockResolvedValue(false);
   mockSave.mockResolvedValue(undefined);
   mockUserTimezone = 'America/Los_Angeles';
@@ -177,19 +204,100 @@ describe('MorningPagesTip', () => {
     const view = render(<MorningPagesTip onBegin={mockOnBegin} />);
     await view.findByTestId('journal-morning-pages-tip');
 
-    const json = view.toJSON() as unknown as RenderedNode | RenderedNode[] | null;
-    let roots: RenderedNode[] = [];
-    if (Array.isArray(json)) {
-      roots = json;
-    } else if (json !== null) {
-      roots = [json];
-    }
-    const strings = roots.flatMap((root) => collectRenderedStrings(root));
+    const strings = renderedStrings(view);
 
     expect(strings.length).toBeGreaterThan(0);
     for (const copy of strings) {
       expect(ranksOrShames(copy)).toBe(false);
     }
     expect(view.queryByText(/streak/i)).toBeNull();
+  });
+});
+
+describe('MorningPagesTip — the decline is a corner X (#2860)', () => {
+  it("declines with an icon-only X pinned in the band's top-right corner, leaving 'Begin a page' as the only text action", async () => {
+    const view = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    await view.findByTestId('journal-morning-pages-tip');
+
+    expect(view.queryByText('Not now')).toBeNull();
+
+    const dismiss = view.getByTestId('journal-morning-pages-dismiss');
+    expect(dismiss.props.accessibilityRole).toBe('button');
+    expect(dismiss.props.accessibilityLabel).toBe(MORNING_PAGES_DISMISS_A11Y);
+    expect(within(dismiss).queryAllByText(/.+/)).toHaveLength(0);
+
+    const icons = view.UNSAFE_getAllByType(X);
+    expect(icons).toHaveLength(1);
+    expect(icons[0]?.props.size).toBe(CLOSE_ICON_SIZE);
+    expect(icons[0]?.props.color).toBe(ink.soft);
+
+    const corner = flatStyle(dismiss);
+    expect(corner).toMatchObject({ position: 'absolute', top: 0, right: 0 });
+    expect(corner.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(corner.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+
+    // Inside the card's box, and last, so a screen reader meets the invitation first.
+    const band = view.getByTestId('journal-morning-pages-band');
+    expect(within(band).getByTestId('journal-morning-pages-dismiss')).toBe(dismiss);
+    const childIds = band.children.map((child: HostNode | string) =>
+      typeof child === 'string' ? child : child.props.testID,
+    );
+    expect(childIds).toEqual(['journal-morning-pages-tip', 'journal-morning-pages-dismiss']);
+
+    const textActions = within(band)
+      .getAllByRole('button')
+      .filter((button) => within(button).queryAllByText(/.+/).length > 0);
+    expect(textActions.map((button) => button.props.testID)).toEqual(['journal-morning-pages-tip']);
+    expect(within(textActions[0]!).getByText('Begin a page')).toBeTruthy();
+  });
+
+  it('keeps the begin area clear of the corner X', async () => {
+    const view = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    const begin = await view.findByTestId('journal-morning-pages-tip');
+    const band = flatStyle(view.getByTestId('journal-morning-pages-band'));
+    expect(band.padding).toBe(SPACING.lg);
+    expect(flatStyle(begin).marginRight).toBe(touchTarget.minimum - SPACING.lg);
+  });
+
+  it('calls onDismissed once, after persisting the decline — never on begin', async () => {
+    const order: string[] = [];
+    mockSave.mockImplementation(() => {
+      order.push('save');
+      return Promise.resolve();
+    });
+    mockOnDismissed.mockImplementation(() => {
+      order.push('dismissed');
+    });
+
+    const begun = render(<MorningPagesTip onBegin={mockOnBegin} onDismissed={mockOnDismissed} />);
+    const begin = await begun.findByTestId('journal-morning-pages-tip');
+    await act(async () => {
+      fireEvent.press(begin);
+    });
+    expect(mockOnDismissed).not.toHaveBeenCalled();
+    begun.unmount();
+
+    const declined = render(
+      <MorningPagesTip onBegin={mockOnBegin} onDismissed={mockOnDismissed} />,
+    );
+    await declined.findByTestId('journal-morning-pages-tip');
+    await act(async () => {
+      fireEvent.press(declined.getByTestId('journal-morning-pages-dismiss'));
+    });
+    expect(mockOnDismissed).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['save', 'dismissed']);
+  });
+
+  it('renders every string its copy sweep lists, so the sweep never vouches for unshown copy', async () => {
+    // A guard, not a red test: it passes before and after #2860. It exists so
+    // that retiring the visible "Not now" also retires it from the sweep list.
+    const view = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    await view.findByTestId('journal-morning-pages-tip');
+    const strings = renderedStrings(view);
+    for (const entry of MORNING_PAGES_COPY_ENTRIES) {
+      // The suffix is only ever shown inside the dated title a begun page carries.
+      if (entry === MORNING_PAGES_TITLE_SUFFIX) continue;
+      expect(strings).toContain(entry);
+    }
   });
 });
