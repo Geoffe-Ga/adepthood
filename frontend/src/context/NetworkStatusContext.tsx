@@ -13,7 +13,8 @@ import { setNetworkOnlineGetter } from '@/api';
  *  - Render a global offline banner (see ``OfflineBanner``).
  *  - Let the API client short-circuit known-offline reads so they fail fast
  *    instead of stalling for the 30s timeout (``setNetworkOnlineGetter``).
- *  - Build per-feature queue/replay flows (follow-up work).
+ *  - Retry a failed save when the device comes back online (the journal
+ *    page's ``useReconnectRetry``, #2930).
  */
 
 interface NetworkStatusContextValue {
@@ -33,6 +34,50 @@ function isStateOnline(state: NetInfoState): boolean {
   if (state.isConnected === false) return false;
   if (state.isInternetReachable === false) return false;
   return true;
+}
+
+/** The browser events that say the device's connectivity changed. */
+const WINDOW_CONNECTIVITY_EVENTS = ['online', 'offline'] as const;
+
+type WindowConnectivityEvent = (typeof WINDOW_CONNECTIVITY_EVENTS)[number];
+
+/** The slice of a browser ``window`` this module listens on; absent on native. */
+interface WindowEventTarget {
+  addEventListener?: (_type: WindowConnectivityEvent, _listener: () => void) => void;
+  removeEventListener?: (_type: WindowConnectivityEvent, _listener: () => void) => void;
+}
+
+/**
+ * Re-read NetInfo whenever a browser window says it went online or offline (#2930).
+ *
+ * NetInfo's web module listens only to the NetworkInformation ``change`` event
+ * whenever the browser has that API, and browsers are inconsistent about
+ * firing it: the local Chromium build fires it going offline but not coming
+ * back, and the build CI pins fires it in neither direction for an emulated
+ * outage. Relying on it left the app either stuck offline (the banner never
+ * cleared) or never offline at all, so there was no offline → online edge for
+ * anything waiting on a reconnect to act on. The window's own ``online`` and
+ * ``offline`` events are reliable; on either, ``NetInfo.refresh()`` re-reads
+ * ``navigator.onLine`` (and restarts the reachability probe when online),
+ * delivering the result through the ordinary listener. Native has no
+ * ``window.addEventListener``, so this is a no-op there.
+ */
+function useWindowConnectivityRefresh(): void {
+  useEffect(() => {
+    const target = (typeof window === 'undefined' ? {} : window) as WindowEventTarget;
+    const { addEventListener, removeEventListener } = target;
+    if (typeof addEventListener !== 'function') return undefined;
+    const refresh = (): void => {
+      NetInfo.refresh().catch(() => {
+        /* keep the last known state */
+      });
+    };
+    for (const type of WINDOW_CONNECTIVITY_EVENTS) addEventListener.call(target, type, refresh);
+    return () => {
+      for (const type of WINDOW_CONNECTIVITY_EVENTS)
+        removeEventListener?.call(target, type, refresh);
+    };
+  }, []);
 }
 
 export function NetworkStatusProvider({ children }: { children: React.ReactNode }) {
@@ -61,6 +106,8 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
       setNetworkOnlineGetter(null);
     };
   }, []);
+
+  useWindowConnectivityRefresh();
 
   const value = useMemo(() => ({ isOnline }), [isOnline]);
 

@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   StyleSheet,
   Text,
@@ -10,6 +9,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+
+import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
@@ -159,18 +160,54 @@ const KeyInputRow = ({
   </View>
 );
 
-function useRemoveConfirmation(performClear: () => Promise<void>): () => void {
-  return useCallback(() => {
-    Alert.alert(
-      'Remove API key?',
-      'BotMason will fall back to the shared server key (if configured). You can add your own key again at any time.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => void performClear() },
-      ],
-    );
-  }, [performClear]);
+const REMOVE_KEY_DIALOG_TITLE = 'Remove API key?';
+const REMOVE_KEY_DIALOG_BODY =
+  'BotMason will fall back to the shared server key (if configured). You can add your own key again at any time.';
+const REMOVE_KEY_CANCEL_LABEL = 'Cancel';
+const REMOVE_KEY_CONFIRM_LABEL = 'Remove';
+
+interface RemoveConfirmation {
+  request: () => void;
+  visible: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
 }
+
+/**
+ * Drives the rendered "Remove API key?" dialog. `Alert.alert` is a no-op on
+ * react-native-web (#2928), so the confirm is a `ConfirmDialog` whose
+ * visibility lives here rather than a native alert whose buttons never fire.
+ */
+function useRemoveConfirmation(performClear: () => Promise<void>): RemoveConfirmation {
+  const [visible, setVisible] = useState(false);
+  const request = useCallback(() => setVisible(true), []);
+  const onCancel = useCallback(() => setVisible(false), []);
+  const onConfirm = useCallback(() => {
+    setVisible(false);
+    void performClear();
+  }, [performClear]);
+  return { request, visible, onCancel, onConfirm };
+}
+
+const RemoveKeyDialog = ({
+  confirmation,
+}: {
+  confirmation: RemoveConfirmation;
+}): React.JSX.Element => (
+  <ConfirmDialog
+    visible={confirmation.visible}
+    title={REMOVE_KEY_DIALOG_TITLE}
+    message={REMOVE_KEY_DIALOG_BODY}
+    cancelLabel={REMOVE_KEY_CANCEL_LABEL}
+    confirmLabel={REMOVE_KEY_CONFIRM_LABEL}
+    destructive
+    testID="remove-key-dialog"
+    cancelTestID="remove-key-cancel"
+    confirmTestID="remove-key-confirm"
+    onCancel={confirmation.onCancel}
+    onConfirm={confirmation.onConfirm}
+  />
+);
 
 interface ScreenBodyProps {
   apiKey: string | null;
@@ -386,7 +423,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   const [reveal, setReveal] = useState(false);
   const handleSave = useSaveKeyHandler(form, setReveal, saveApiKey);
   const performClear = useClearKeyHandler(form, clearApiKey);
-  const handleRequestRemove = useRemoveConfirmation(performClear);
+  const removeConfirmation = useRemoveConfirmation(performClear);
 
   const { setDraft, setError, setStatus } = form;
   const onChangeDraft = useCallback(
@@ -420,11 +457,12 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         storageWarning={storageWarning}
         onChangeDraft={onChangeDraft}
         onToggleReveal={toggleReveal}
-        onRequestRemove={handleRequestRemove}
+        onRequestRemove={removeConfirmation.request}
         onSave={handleSave}
         onBack={onBack}
         onOpenTimezone={onOpenTimezone}
       />
+      <RemoveKeyDialog confirmation={removeConfirmation} />
     </ScreenScaffold>
   );
 }

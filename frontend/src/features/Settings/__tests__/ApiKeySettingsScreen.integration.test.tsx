@@ -2,7 +2,6 @@
 /* global describe, test, expect, jest, beforeEach */
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Alert } from 'react-native';
 
 import ApiKeySettingsScreen, { SECURE_STORAGE_WARNING } from '../ApiKeySettingsScreen';
 
@@ -95,10 +94,6 @@ describe('ApiKeySettingsScreen integration with a failing SecureStore delete', (
     mockStorage.loadLlmApiKey.mockResolvedValueOnce(VALID_KEY);
     mockStorage.clearLlmApiKey.mockRejectedValueOnce(new Error('keychain locked'));
     const warnSpy = jest.spyOn(globalThis.console, 'warn').mockImplementation(() => undefined);
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
 
     const { getByTestId, findByTestId, queryByTestId } = render(
       <ApiKeyProvider>
@@ -109,22 +104,20 @@ describe('ApiKeySettingsScreen integration with a failing SecureStore delete', (
     await waitFor(() => expect(queryByTestId('api-key-loading')).toBeNull());
     await act(async () => {
       fireEvent.press(getByTestId('remove-key-button'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-confirm'));
     });
 
     const warning = await findByTestId('api-key-storage-error');
     expect(warning.props.children).toBe(SECURE_STORAGE_WARNING);
     expect(queryByTestId('api-key-status')).toBeNull();
     expect(queryByTestId('api-key-error')).toBeNull();
-    alertSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
   test('shows the removed status and no storage warning when the clear delete succeeds', async () => {
     mockStorage.loadLlmApiKey.mockResolvedValueOnce(VALID_KEY);
-    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((_t, _m, buttons) => {
-      const destructive = buttons?.find((b) => b.style === 'destructive');
-      destructive?.onPress?.();
-    });
 
     const { getByTestId, findByTestId, queryByTestId } = render(
       <ApiKeyProvider>
@@ -136,10 +129,15 @@ describe('ApiKeySettingsScreen integration with a failing SecureStore delete', (
     await act(async () => {
       fireEvent.press(getByTestId('remove-key-button'));
     });
+    await act(async () => {
+      fireEvent.press(getByTestId('remove-key-confirm'));
+    });
 
     const status = await findByTestId('api-key-status');
-    expect(status).toBeTruthy();
+    expect(status.props.children).toBe('API key removed from this device.');
     expect(queryByTestId('api-key-storage-error')).toBeNull();
-    alertSpy.mockRestore();
+    expect(getByTestId('no-key-hint')).toBeTruthy();
+    expect(queryByTestId('stored-key-card')).toBeNull();
+    expect(mockStorage.clearLlmApiKey).toHaveBeenCalledTimes(1);
   });
 });

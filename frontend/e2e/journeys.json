@@ -282,6 +282,18 @@
     "coveredBy": "frontend/e2e/journal-close-save.browser.e2e.test.ts"
   },
   {
+    "id": "journal.save-recovers-after-reconnect",
+    "description": "A writer's page fails to save while the device is offline: an edited body and a stricter privacy tier both fail, the tier control reverts to what the server holds, and the footer says Couldn't save with a Retry. Coming back online re-sends both with no tap, the hint settles on Saved, and the server row and the reopened page carry the new body and tier. Online, a failed tier PATCH is recovered by pressing Retry. A tier looser than the one shown is never sent by a retry: it is dropped on reconnect and the page stays at its stricter tier until the writer chooses Public again. Jest seam suites (JournalEntryScreenSaveRetry, and the #2930 cases in JournalEntryScreenPrivacy, JournalEntryScreenChord and JournalEntryScreenFinish) pin the lanes the browser cannot isolate: Finish retried through the edit gate and never on reconnect, one lane's success never clearing another's failure, the single-flight create (#1144), and the retry's own single-flight.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-save-retry.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-a-single-line-title",
     "description": "A writer opens a fresh Journal page whose title occupies one line before they type. A long title can still wrap visually, pasted line breaks collapse to spaces, and Return moves the caret into the body without becoming stored title data. Closing crosses the production client and create route, and the returned durable row carries the exact single-line title; schema tests separately pin the server-side defence for non-UI create and update callers.",
     "crosses": {
@@ -796,6 +808,23 @@
     "issue": 2660
   },
   {
+    "id": "account.byok-key-can-be-removed",
+    "description": "Someone who saved their own model key on this device removes it from Settings. The press opens a rendered confirmation (not Alert.alert, which react-native-web ships as an empty method and which left the key irremovable on web, #2928); Cancel keeps the key and Remove clears it, and it is still gone after a reload. Removal itself is device-local and calls no route, so the journey proves what removal is for, on both ways the client picks a key, reached from the entry's own API-key shortcut in the same browser session. The resonance pass passes its disclosed payer explicitly: after removal it is disclosed as the shared allowance, leaves without the X-LLM-API-Key header, and raises monthly_messages_used by one, which catches a build that hid the card while the key stayed in context. The margin-note essay passes no key and so reads the session getter ApiKeyContext registers: opened after removal and before any reload, it too leaves without the header, which catches a build whose in-memory getter kept returning the removed key (the explicit-key pass cannot, since it never consults the getter). Controls made while the key is stored carry the header -- the pass itself, and the completion check the refused pass runs through the getter -- so the header's later absence is observed rather than assumed. The controls are answered in the browser and never reach a server, and the spec asserts the lane fake provider's shared attempt counters are unchanged at its end, because later specs require them to start at zero.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["resonance", "completionSuggestions", "botmasonUsage"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /user/usage"
+      ],
+      "tables": ["user", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/api-key-remove.browser.e2e.test.ts"
+  },
+  {
     "id": "corpus.decide-what-may-be-sorted",
     "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. A provider that refuses to bill now ends that reach rather than consuming the queue, and never costs the person the permission they just gave -- the switch still answers granted and the entries it did not get to keep their place. The backend pins it at backend/tests/test_corpus_consent_api.py.",
     "crosses": {
@@ -1112,6 +1141,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/vault-connection.e2e.test.ts"
+  },
+  {
+    "id": "vault.disconnect-or-replace-confirmed",
+    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["PUT /vault/connection", "DELETE /vault/connection"],
+      "tables": ["uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 2934
   },
   {
     "id": "vault.activate-provider-managed",

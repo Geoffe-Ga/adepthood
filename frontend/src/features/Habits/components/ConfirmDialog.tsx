@@ -46,13 +46,19 @@ export const ConfirmDialog = ({
           <Text style={styles.discardTitle}>{title}</Text>
           {message && <Text style={styles.discardMessage}>{message}</Text>}
           <View style={styles.discardActions}>
-            <TouchableOpacity onPress={onCancel} style={styles.discardButton} testID={cancelTestID}>
+            <TouchableOpacity
+              onPress={onCancel}
+              style={styles.discardButton}
+              testID={cancelTestID}
+              accessibilityRole="button"
+            >
               <Text style={styles.discardButtonText}>{cancelLabel}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={onConfirm}
               style={styles.discardButton}
               testID={confirmTestID}
+              accessibilityRole="button"
             >
               <Text style={destructive ? styles.discardExitText : styles.discardButtonText}>
                 {confirmLabel}

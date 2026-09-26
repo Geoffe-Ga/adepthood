@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, it, expect, beforeEach, jest */
+/* global describe, it, expect, beforeEach, afterEach, jest */
 import NetInfo from '@react-native-community/netinfo';
 import { render, act, waitFor } from '@testing-library/react-native';
 import React from 'react';
@@ -18,6 +18,7 @@ type NetInfoState = { isConnected: boolean; isInternetReachable: boolean | null 
 const mockedNetInfo = NetInfo as unknown as {
   fetch: jest.Mock;
   addEventListener: jest.Mock;
+  refresh: jest.Mock;
 };
 
 function StatusText(): React.JSX.Element {
@@ -92,5 +93,96 @@ describe('NetworkStatusContext', () => {
       listener?.({ isConnected: false, isInternetReachable: null });
     });
     expect(await findByTestId('offline-banner')).toBeTruthy();
+  });
+});
+
+/**
+ * #2930 — NetInfo's web module listens only to the NetworkInformation `change`
+ * event when the browser has that API, and Chromium fires it going offline but
+ * not coming back. Without a nudge the app believes it is offline forever, the
+ * banner never clears and nothing that waits for reconnect ever runs.
+ */
+describe('NetworkStatusContext — window online and offline events (#2930)', () => {
+  type Listener = () => void;
+  type WindowEvents = {
+    addEventListener?: (_type: string, _listener: Listener) => void;
+    removeEventListener?: (_type: string, _listener: Listener) => void;
+  };
+  const win = window as unknown as WindowEvents;
+  const listeners = new Map<string, Listener>();
+
+  function fire(type: 'online' | 'offline'): Promise<void> {
+    return act(async () => {
+      listeners.get(type)?.();
+    });
+  }
+
+  beforeEach(() => {
+    listeners.clear();
+    win.addEventListener = jest.fn((type: string, listener: Listener) => {
+      listeners.set(type, listener);
+    });
+    win.removeEventListener = jest.fn((type: string, listener: Listener) => {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    });
+    // NetInfo.refresh re-reads the device and reports through the listener.
+    mockedNetInfo.refresh.mockImplementation(() => Promise.resolve({}));
+  });
+
+  afterEach(() => {
+    delete win.addEventListener;
+    delete win.removeEventListener;
+  });
+
+  it.each(['online', 'offline'] as const)(
+    're-reads NetInfo when the window reports it went %s',
+    async (type) => {
+      const { unmount } = render(
+        <NetworkStatusProvider>
+          <StatusText />
+        </NetworkStatusProvider>,
+      );
+      expect(mockedNetInfo.refresh).not.toHaveBeenCalled();
+
+      await fire(type);
+      expect(mockedNetInfo.refresh).toHaveBeenCalledTimes(1);
+
+      unmount();
+      expect(listeners.has(type)).toBe(false);
+    },
+  );
+
+  /**
+   * Some Chromium builds emit no NetworkInformation ``change`` for an
+   * emulated offline, and NetInfo's web module listens only to that event
+   * when the API exists. The window's own event must still take the app
+   * offline, or there is no offline → online edge for anything to retry on.
+   */
+  it('goes offline and back online from window events alone', async () => {
+    let netInfoListener: ((state: NetInfoState) => void) | null = null;
+    mockedNetInfo.addEventListener.mockImplementation((fn: (s: NetInfoState) => void) => {
+      netInfoListener = fn;
+      return () => undefined;
+    });
+    let deviceOnline = true;
+    mockedNetInfo.refresh.mockImplementation(() => {
+      const state = { isConnected: deviceOnline, isInternetReachable: deviceOnline ? null : false };
+      netInfoListener?.(state);
+      return Promise.resolve(state);
+    });
+    const { getByTestId } = render(
+      <NetworkStatusProvider>
+        <StatusText />
+      </NetworkStatusProvider>,
+    );
+    await waitFor(() => expect(getByTestId('network-text').props.children).toBe('online'));
+
+    deviceOnline = false;
+    await fire('offline');
+    expect(getByTestId('network-text').props.children).toBe('offline');
+
+    deviceOnline = true;
+    await fire('online');
+    expect(getByTestId('network-text').props.children).toBe('online');
   });
 });

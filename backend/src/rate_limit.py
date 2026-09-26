@@ -476,12 +476,15 @@ def reset_invalid_license_attempts() -> None:
 # next time the framework changes how routes are stored.
 #
 # Version pins this was measured against, so the next upgrade knows what has to
-# be re-checked and what does not (``backend/requirements.txt``): fastapi
-# 0.141.1, starlette 1.6.0, slowapi 0.1.10. Nothing here depends on any of the
-# three: the floor needs a request object and a clock. What *does* depend on
-# them is the claim that slowapi's own middleware cannot do this job -- so an
-# upgrade may make that middleware work again, and must not be taken as a
-# reason to hand this invariant back to it.
+# be re-checked and what does not (``backend/requirements-lock.txt``, where
+# starlette's adopted version lives): fastapi 0.141.1, starlette 1.7.0, slowapi
+# 0.1.10. First measured on starlette 1.6.0; re-measured on 1.7.0 (#2923) by
+# ``test_slowapi_middleware_still_cannot_see_included_router_routes`` in
+# ``tests/middleware/test_ambient_rate_limit.py``, which re-takes it on every
+# run. Nothing here depends on any of the three: the floor needs a request
+# object and a clock. What *does* depend on them is the claim that slowapi's own
+# middleware cannot do this job -- so an upgrade may make that middleware work
+# again, and must not be taken as a reason to hand this invariant back to it.
 
 # Parsed once, from the same constant the decorated limits inherit, so an
 # override set for the DAST contract-fuzz job moves the floor with everything

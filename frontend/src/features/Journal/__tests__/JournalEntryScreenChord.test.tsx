@@ -250,6 +250,48 @@ describe('JournalEntryScreen — chord change PATCH failure', () => {
 // Chord chosen before the entry exists — rides the first create, no PATCH yet
 // ---------------------------------------------------------------------------
 
+describe('JournalEntryScreen — footer Retry re-sends a failed chord change (#2930)', () => {
+  it('re-PATCHes the chosen chord on Retry, ending in Saved with the chord selected', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue(entry({ id: 7, primary_aspect: null, secondary_aspect: null }));
+      const { getByTestId, getByRole, queryByTestId } = renderScreen(
+        { entryId: 7 },
+        { autosaveDelayMs: 100 },
+      );
+      await waitFor(() => {
+        expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+      });
+      mockUpdate.mockClear();
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-chord-trigger'));
+      fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-5'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(getByTestId('journal-save-hint').props.children).toBe(ERROR_HINT);
+
+      fireEvent.press(getByRole('button', { name: 'Retry saving this entry' }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenLastCalledWith(7, { primary_aspect: 5, secondary_aspect: null });
+      expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
+      expect(queryByTestId('journal-save-retry')).toBeNull();
+      expect(
+        within(getByTestId('journal-page')).getByTestId('aspect-primary-5').props.accessibilityState
+          .selected,
+      ).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('JournalEntryScreen — chord chosen before the first save', () => {
   it('creates with the chosen aspect chord when set before the first save', async () => {
     jest.useFakeTimers();
