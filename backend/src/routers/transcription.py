@@ -34,6 +34,7 @@ from domain.transcription import (
 from error_responses import build_router
 from errors import bad_gateway, unprocessable
 from rate_limit import limiter
+from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
@@ -77,6 +78,12 @@ _MAX_TRANSCRIBE_BASE64_CHARS = (MAX_TRANSCRIBE_IMAGE_BYTES * 4) // 3 + 4
 # to ~10 page calls, so the transcription limit is doubled to admit one whole
 # session without throttling while still bounding abuse.
 TRANSCRIBE_RATE_LIMIT = "20/minute"
+
+# The same budget again, keyed on the account rather than the address. An
+# unusable read (no text found, or a refusal) is rolled back uncharged (#2851),
+# so the per-address limit alone would let one user buy unmetered provider
+# calls by rotating addresses; this axis follows the identity instead.
+TRANSCRIBE_USER_RATE_LIMIT = "20/minute"
 
 # Magic-byte signatures used to confirm the decoded bytes match the declared
 # media type. Literal byte prefixes keep the sniff dependency-free (no
@@ -220,7 +227,12 @@ async def _reject_unusable_reply(
 
 
 @router.post("/transcribe-page", response_model=TranscribePageResponse)
+# Account axis registered first (decorators register bottom-up), as on
+# ``POST /feedback/``: slowapi bills each bucket until one refuses, so an
+# account that has spent its own budget stops draining the address budget it
+# shares with everyone else behind that address.
 @limiter.limit(TRANSCRIBE_RATE_LIMIT)
+@limiter.limit(TRANSCRIBE_USER_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def transcribe_page(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     payload: TranscribePageRequest,

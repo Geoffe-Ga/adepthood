@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from client_ip import TRUSTED_PROXIES_ENV_VAR
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from services import botmason as botmason_service
@@ -386,6 +387,83 @@ async def test_rate_limit_pinned_at_20_per_minute(async_client: AsyncClient) -> 
     throttled = await send()
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == "rate_limit_exceeded"
+
+
+# The in-process test transport reports this socket peer; trusting it as a
+# proxy lets a test choose each request's client address via X-Forwarded-For.
+_TEST_TRANSPORT_PEER_NET = "127.0.0.1/32"
+
+
+def _from_address(headers: dict[str, str], address: str) -> dict[str, str]:
+    """Return ``headers`` sent as if from client ``address`` behind the trusted proxy."""
+    return {**headers, "X-Forwarded-For": address}
+
+
+@pytest.mark.asyncio
+async def test_rotating_client_addresses_does_not_buy_a_user_more_transcriptions(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The budget follows the account: a fresh address per request is still refused.
+
+    An unusable read is uncharged (#2851), so the per-address limit alone would
+    let one user buy unmetered provider calls by rotating addresses. A second
+    account behind the address the first one moved to is unaffected.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TEST_TRANSPORT_PEER_NET)
+    greedy = await _signup(async_client, "rotating_transcriber")
+
+    for index in range(_RATE_LIMIT):
+        admitted = await async_client.post(
+            _ENDPOINT,
+            json=_payload(_JPEG_BYTES),
+            headers=_from_address(greedy, f"203.0.113.{index + 1}"),
+        )
+        assert admitted.status_code != HTTPStatus.TOO_MANY_REQUESTS
+
+    rotated = await async_client.post(
+        _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "198.51.100.7")
+    )
+    assert rotated.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert rotated.json()["detail"] == "rate_limit_exceeded"
+
+    neighbour = await _signup(async_client, "neighbour_transcriber")
+    unaffected = await async_client.post(
+        _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(neighbour, "198.51.100.7")
+    )
+    assert unaffected.status_code == HTTPStatus.OK
+
+
+_REFUSED_RETRIES = 5
+
+
+@pytest.mark.asyncio
+async def test_a_refused_account_retry_does_not_spend_the_shared_address_budget(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The account axis is evaluated first, so its refusals cost the address nothing.
+
+    slowapi bills each bucket until one refuses. An account out of budget that
+    keeps retrying from a shared address must not eat that address's budget, or
+    the next person behind it is throttled for someone else's loop.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TEST_TRANSPORT_PEER_NET)
+    greedy = await _signup(async_client, "greedy_transcriber")
+    for _ in range(_RATE_LIMIT):
+        await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "203.0.113.9")
+        )
+    for _ in range(_REFUSED_RETRIES):
+        refused = await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "198.51.100.9")
+        )
+        assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await _signup(async_client, "shared_address_transcriber")
+    for _ in range(_RATE_LIMIT):
+        admitted = await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(neighbour, "198.51.100.9")
+        )
+        assert admitted.status_code == HTTPStatus.OK
 
 
 @pytest.mark.asyncio
