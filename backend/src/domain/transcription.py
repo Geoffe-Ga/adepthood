@@ -175,8 +175,8 @@ def _normalise(reply: str) -> str:
 
 
 def _is_no_text(normalised: str) -> bool:
-    """Return True for an empty reply or the bare sentinel (trailing period allowed)."""
-    return normalised.rstrip(".") in {"", NO_TEXT_SENTINEL}
+    """Return True for an empty reply or the sentinel in any case (trailing period allowed)."""
+    return normalised.rstrip(".").casefold() in {"", NO_TEXT_SENTINEL}
 
 
 def _first_sentence(normalised: str) -> str:
