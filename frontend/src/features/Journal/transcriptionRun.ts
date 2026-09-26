@@ -19,10 +19,18 @@
  * whatever the page list now says, so the run keeps counting it — as an
  * {@link OrphanedRequest} — until it settles. See {@link applyPagesSynced}.
  *
+ * OVERLAPPING SCREENSHOTS: the merge is derived, so it may emit a line two
+ * adjacent pages both show only once (see {@link selectSeamOverlaps}) — but it
+ * never writes a block's stored text, and a writer who says "Keep them" for a
+ * seam (`keepSeam`) gets both copies back for exactly that seam.
+ *
  * PRIVACY: a block carries status/text/edit/error only — never the page image. The
  * driver hook cross-references the live {@link CapturePage} by id at call time, so
  * no base64 ever lands in this state (and thus never in a log, error, or testID).
  */
+import { findSeamOverlap, seamLines } from './transcriptOverlap';
+import type { SeamOverlap } from './transcriptOverlap';
+
 import type { TranscriptionErrorKind } from '@/api';
 
 /** How many pages a run may have in flight at once — each slot is one live charge. */
@@ -33,6 +41,10 @@ const FIRST_ATTEMPT = 1;
 
 /** How merged pages are joined: a blank line between pages, no page markers. */
 const BLOCK_SEPARATOR = '\n\n';
+
+/** How a seam whose repeated lines were dropped is joined: the thread simply
+ *  continues onto the next line, as one screenshot of it would. */
+const SEAM_SEPARATOR = '\n';
 
 /**
  * Failure kinds no per-page gesture can clear: the configured model cannot read
@@ -78,14 +90,34 @@ export interface OrphanedRequest {
 }
 
 /**
- * The whole run: the session's start-priority order, the keyed blocks, and the
- * requests still outstanding for pages that have left (see {@link OrphanedRequest}).
+ * A seam the writer chose to keep whole ("Keep them"), keyed by the exact pair of
+ * neighbours it was offered for — so it can never leak onto a different seam after
+ * a reorder, retake, or removal.
+ */
+export interface KeptSeam {
+  earlierId: string;
+  laterId: string;
+}
+
+/**
+ * The whole run: the session's start-priority order, the keyed blocks, the
+ * requests still outstanding for pages that have left (see {@link OrphanedRequest}),
+ * and the seams the writer has asked to keep whole (see {@link KeptSeam}).
  */
 export interface TranscriptionRunState {
   order: string[];
   blocks: Record<string, TranscriptionBlock>;
   orphans: OrphanedRequest[];
+  keptSeams: readonly KeptSeam[];
 }
+
+/** An empty run — the reducer's initial state before any page is seeded. */
+export const EMPTY_RUN_STATE: TranscriptionRunState = {
+  order: [],
+  blocks: {},
+  orphans: [],
+  keptSeams: [],
+};
 
 /** The minimal shape the `pages`-taking selectors need: a page is just its id. */
 export interface PageRef {
@@ -104,6 +136,11 @@ export interface PageRef {
  *                    this alone seeds a fresh run (from the empty state) and drops a
  *                    page that leaves the session (its late reply lands nowhere,
  *                    though a read still running for it keeps holding its slot).
+ *                    It also forgets any kept seam whose pages are no longer
+ *                    neighbours.
+ *  - `keepSeam`    — keep one seam's repeated lines in the merge. It touches only
+ *                    `keptSeams` — never a block, the order, or an orphan — so it
+ *                    can never make a page startable (WALLET INTEGRITY).
  */
 export type TranscriptionRunAction =
   | { type: 'start'; id: string; attempt: number }
@@ -111,7 +148,8 @@ export type TranscriptionRunAction =
   | { type: 'reject'; id: string; attempt: number; error: TranscriptionErrorKind }
   | { type: 'edit'; id: string; text: string }
   | { type: 'retry'; id: string }
-  | { type: 'pagesSynced'; orderedIds: readonly string[] };
+  | { type: 'pagesSynced'; orderedIds: readonly string[] }
+  | { type: 'keepSeam'; earlierId: string; laterId: string };
 
 /** A brand-new page, waiting its turn. */
 function pendingBlock(id: string, attempt: number = FIRST_ATTEMPT): TranscriptionBlock {
@@ -124,11 +162,7 @@ function withBlock(
   id: string,
   next: TranscriptionBlock,
 ): TranscriptionRunState {
-  return {
-    order: state.order,
-    blocks: { ...state.blocks, [id]: next },
-    orphans: state.orphans,
-  };
+  return { ...state, blocks: { ...state.blocks, [id]: next } };
 }
 
 /** Whether this reply belongs to a request whose page has left the run. */
@@ -148,8 +182,7 @@ function releaseOrphan(
   attempt: number,
 ): TranscriptionRunState {
   return {
-    order: state.order,
-    blocks: state.blocks,
+    ...state,
     orphans: state.orphans.filter((orphan) => orphan.id !== id || orphan.attempt !== attempt),
   };
 }
@@ -277,7 +310,51 @@ function applyPagesSynced(
   for (const id of orderedIds) {
     blocks[id] = state.blocks[id] ?? pendingBlock(id, seedAttempt(id, orphans));
   }
-  return { order: [...orderedIds], blocks, orphans };
+  return {
+    order: [...orderedIds],
+    blocks,
+    orphans,
+    keptSeams: keptSeamsAfterSync(state.keptSeams, orderedIds),
+  };
+}
+
+/** Whether `laterId` sits directly after `earlierId` in `orderedIds`. */
+function areNeighbours(orderedIds: readonly string[], earlierId: string, laterId: string): boolean {
+  const earlierIndex = orderedIds.indexOf(earlierId);
+  return earlierIndex >= 0 && orderedIds[earlierIndex + 1] === laterId;
+}
+
+/** Whether this exact pair has already been kept. */
+function isKept(kept: readonly KeptSeam[], earlierId: string, laterId: string): boolean {
+  return kept.some((seam) => seam.earlierId === earlierId && seam.laterId === laterId);
+}
+
+/**
+ * The kept seams that survive a sync: only pairs that are still neighbours. A
+ * reorder, retake (a fresh id), or removal forms a new seam, and the writer's
+ * "Keep them" was an answer about the old one — so the new seam is offered afresh
+ * rather than silently inheriting it.
+ */
+function keptSeamsAfterSync(
+  kept: readonly KeptSeam[],
+  orderedIds: readonly string[],
+): readonly KeptSeam[] {
+  return kept.filter((seam) => areNeighbours(orderedIds, seam.earlierId, seam.laterId));
+}
+
+/**
+ * `keepSeam`: keep one seam's repeated lines in the merge. Inert (the same state)
+ * unless the pair are neighbours right now and not already kept — so a stale tap
+ * from before a reorder records nothing. Touches only `keptSeams`.
+ */
+function applyKeepSeam(
+  state: TranscriptionRunState,
+  earlierId: string,
+  laterId: string,
+): TranscriptionRunState {
+  if (!areNeighbours(state.order, earlierId, laterId)) return state;
+  if (isKept(state.keptSeams, earlierId, laterId)) return state;
+  return { ...state, keptSeams: [...state.keptSeams, { earlierId, laterId }] };
 }
 
 /** Advance a run by one action. */
@@ -298,6 +375,8 @@ export function transcriptionRunReducer(
       return applyRetry(state, action.id);
     case 'pagesSynced':
       return applyPagesSynced(state, action.orderedIds);
+    case 'keepSeam':
+      return applyKeepSeam(state, action.earlierId, action.laterId);
     default:
       return state;
   }
@@ -407,15 +486,128 @@ export function hasTerminalError(state: TranscriptionRunState): boolean {
 }
 
 /**
+ * One seam between two adjacent session pages that have both landed their text:
+ * the overlap the merge applies there (`null` when there is none, or when the
+ * writer kept the seam whole), and the earlier page's 1-based position for the
+ * notice. Counts, ids and positions only — never transcript text.
+ */
+export interface SeamInfo {
+  earlierId: string;
+  laterId: string;
+  earlierPosition: number;
+  overlap: SeamOverlap | null;
+  kept: boolean;
+}
+
+/** A block that has landed its text, or `undefined`. */
+function doneBlock(state: TranscriptionRunState, id: string): TranscriptionBlock | undefined {
+  const block = state.blocks[id];
+  return block?.status === 'done' ? block : undefined;
+}
+
+/**
+ * Every seam between neighbouring pages in session order where BOTH have landed
+ * their text. A pending or failed page between two read pages means those two are
+ * not neighbours yet, so they are never compared. Each seam is computed on the
+ * blocks' full stored text, so one seam never depends on another.
+ */
+export function selectSeamOverlaps(
+  state: TranscriptionRunState,
+  pages: readonly PageRef[],
+): SeamInfo[] {
+  const seams: SeamInfo[] = [];
+  pages.forEach((page, index) => {
+    const earlierPage = pages[index - 1];
+    const earlier = earlierPage && doneBlock(state, earlierPage.id);
+    const later = doneBlock(state, page.id);
+    if (!earlier || !later) return;
+    const kept = isKept(state.keptSeams, earlier.id, later.id);
+    seams.push({
+      earlierId: earlier.id,
+      laterId: later.id,
+      earlierPosition: index,
+      overlap: kept ? null : findSeamOverlap(earlier.text, later.text),
+      kept,
+    });
+  });
+  return seams;
+}
+
+/**
+ * One page's contribution to the merge. With no overlap applied on either side it
+ * is the stored text byte for byte; otherwise its lines, minus the head a previous
+ * page already showed and the cropped tail the next page shows whole.
+ */
+function pageSegment(
+  text: string,
+  incoming: SeamOverlap | null,
+  outgoing: SeamOverlap | null,
+): string {
+  if (!incoming && !outgoing) return text;
+  const lines = seamLines(text);
+  const end = lines.length - (outgoing?.earlierLinesToReplace ?? 0);
+  return lines.slice(incoming?.laterLinesToDrop ?? 0, end).join(SEAM_SEPARATOR);
+}
+
+/** The applied overlap on the seam a page sits after / before, keyed by page id. */
+function overlapsBySide(seams: readonly SeamInfo[]): {
+  incoming: Map<string, SeamOverlap>;
+  outgoing: Map<string, SeamOverlap>;
+} {
+  const incoming = new Map<string, SeamOverlap>();
+  const outgoing = new Map<string, SeamOverlap>();
+  for (const seam of seams) {
+    if (!seam.overlap) continue;
+    incoming.set(seam.laterId, seam.overlap);
+    outgoing.set(seam.earlierId, seam.overlap);
+  }
+  return { incoming, outgoing };
+}
+
+/** One read page's part of the merge, and whether it continues the page before. */
+interface MergePiece {
+  text: string;
+  continues: boolean;
+}
+
+/** The merge piece for one page, or `null` while it has no landed read. */
+function mergePiece(
+  state: TranscriptionRunState,
+  id: string,
+  sides: ReturnType<typeof overlapsBySide>,
+): MergePiece | null {
+  const block = doneBlock(state, id);
+  if (!block) return null;
+  const before = sides.incoming.get(id) ?? null;
+  const after = sides.outgoing.get(id) ?? null;
+  return { text: pageSegment(block.text, before, after), continues: before !== null };
+}
+
+/**
  * The one editable entry: every `done` page's text, in session order, joined by a
  * blank line. Hand edits win (they live in the block's text), and pages without a
  * landed read are simply skipped — no placeholders, no page markers.
+ *
+ * Where adjacent pages overlap (see {@link selectSeamOverlaps}), the repeated
+ * lines appear once and the seam joins with a single newline, because the thread
+ * simply continues. A page wholly repeated by the page before it contributes
+ * nothing, and the next page joins according to its own seam. Stored text is
+ * never written: this is a view over it.
  */
-export function mergeBlocks(state: TranscriptionRunState, pages: readonly PageRef[]): string {
-  const texts: string[] = [];
+export function mergeBlocks(
+  state: TranscriptionRunState,
+  pages: readonly PageRef[],
+  seams: readonly SeamInfo[] = selectSeamOverlaps(state, pages),
+): string {
+  const sides = overlapsBySide(seams);
+  let merged: string | null = null;
   for (const page of pages) {
-    const block = state.blocks[page.id];
-    if (block && block.status === 'done') texts.push(block.text);
+    const piece = mergePiece(state, page.id, sides);
+    // A page wholly repeated by the one before it adds nothing, and the seam
+    // after it is judged on its own: the next page joins as it would have.
+    if (!piece || (piece.continues && piece.text === '')) continue;
+    const separator = piece.continues ? SEAM_SEPARATOR : BLOCK_SEPARATOR;
+    merged = merged === null ? piece.text : `${merged}${separator}${piece.text}`;
   }
-  return texts.join(BLOCK_SEPARATOR);
+  return merged ?? '';
 }

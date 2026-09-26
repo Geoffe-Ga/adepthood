@@ -1980,3 +1980,96 @@ describe('JournalPhotographScreen — append into the open entry', () => {
     });
   });
 });
+
+describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
+  const PAGE_ONE = [
+    'Sam: Are you still coming tonight?',
+    'Me: Yes — leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags',
+  ].join('\n');
+  const PAGE_TWO = [
+    'leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags?',
+    'Sam: Two should do it. Thank you!',
+  ].join('\n');
+  const MERGED_ONCE = [
+    'Sam: Are you still coming tonight?',
+    'Me: Yes — leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags?',
+    'Sam: Two should do it. Thank you!',
+  ].join('\n');
+  const KEPT_WHOLE = `${PAGE_ONE}\n\n${PAGE_TWO}`;
+
+  /** Pick two overlapping screenshots and let both land their text. */
+  async function readOverlappingPages(screen: ReturnType<typeof renderScreen>): Promise<void> {
+    fireEvent.press(await screen.findByTestId('capture-transcribe'));
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(2));
+    await screen.findByTestId('photograph-block-2-input');
+  }
+
+  beforeEach(() => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    mockTranscribe.mockResolvedValueOnce({ text: PAGE_ONE });
+    mockTranscribe.mockResolvedValueOnce({ text: PAGE_TWO });
+  });
+
+  it('saves a new entry with the repeated lines once, and says so on page 2', async () => {
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 41, message: MERGED_ONCE }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 41, status: 'finished' }));
+    const screen = renderScreen();
+    await readOverlappingPages(screen);
+
+    expect(screen.getByTestId('photograph-block-2-overlap')).toBeTruthy();
+    expect(screen.queryByTestId('photograph-block-1-overlap')).toBeNull();
+    // The page's own text is untouched: only the merge is derived.
+    expect(screen.getByTestId('photograph-block-2-input').props.value).toBe(PAGE_TWO);
+    fireEvent.press(await screen.findByTestId('photograph-save'));
+
+    await waitFor(() =>
+      expect(mockCreate).toHaveBeenCalledWith({ message: MERGED_ONCE, classification: 'personal' }),
+    );
+  });
+
+  it('saves every line after the writer keeps them', async () => {
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 42, message: KEPT_WHOLE }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 42, status: 'finished' }));
+    const screen = renderScreen();
+    await readOverlappingPages(screen);
+
+    fireEvent.press(screen.getByTestId('photograph-block-2-overlap-keep'));
+    expect(screen.queryByTestId('photograph-block-2-overlap')).toBeNull();
+    fireEvent.press(await screen.findByTestId('photograph-save'));
+
+    await waitFor(() =>
+      expect(mockCreate).toHaveBeenCalledWith({ message: KEPT_WHOLE, classification: 'personal' }),
+    );
+    expect(mockTranscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands the open entry the repeated lines once in append mode', async () => {
+    const screen = renderAppendScreen();
+    await readOverlappingPages(screen);
+    fireEvent.press(await screen.findByTestId('photograph-append'));
+
+    await waitFor(() =>
+      expect(useCapturedTranscriptStore.getState().pending).toEqual({
+        token: APPEND_TOKEN,
+        text: MERGED_ONCE,
+      }),
+    );
+  });
+
+  it('hands the open entry every line after Keep them in append mode', async () => {
+    const screen = renderAppendScreen();
+    await readOverlappingPages(screen);
+    fireEvent.press(screen.getByTestId('photograph-block-2-overlap-keep'));
+    fireEvent.press(await screen.findByTestId('photograph-append'));
+
+    await waitFor(() =>
+      expect(useCapturedTranscriptStore.getState().pending?.text).toBe(KEPT_WHOLE),
+    );
+  });
+});
