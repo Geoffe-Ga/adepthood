@@ -56,10 +56,30 @@ function noteAnchors(length: number, notes: Marginalia[]): Anchor[] {
     }));
 }
 
-/** In-range quote anchors (quotes have no stale status to filter on). */
+/** A quote list split by whether the server still finds its text in the body. */
+export interface QuotePartition {
+  /** Quotes whose anchors still spell their text: drawn inline. */
+  live: PromotedQuote[];
+  /** Quotes the server marked stale after an edit: never drawn inline. */
+  stale: PromotedQuote[];
+}
+
+/**
+ * Split quotes into live and stale, each keeping its input order. A stale quote's
+ * offsets are the PRE-edit ones (``reanchor_one`` leaves them unchanged when the
+ * text is gone), so drawing it inline would wash whatever text sits there now.
+ */
+export function partitionQuotes(quotes: PromotedQuote[]): QuotePartition {
+  return {
+    live: quotes.filter((q) => !q.stale),
+    stale: quotes.filter((q) => q.stale),
+  };
+}
+
+/** In-range anchors for LIVE quotes only; stale quotes are shown apart, not inline. */
 function quoteAnchors(length: number, quotes: PromotedQuote[]): Anchor[] {
-  return quotes
-    .filter((q) => inRange(length, q.anchor_start, q.anchor_end))
+  return partitionQuotes(quotes)
+    .live.filter((q) => inRange(length, q.anchor_start, q.anchor_end))
     .map((q) => ({
       start: q.anchor_start,
       end: q.anchor_end,

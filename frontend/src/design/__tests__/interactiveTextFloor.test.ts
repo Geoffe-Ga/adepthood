@@ -132,6 +132,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
   'features/Journal/MarginNote.tsx::staleCaption',
+  // The stale-quote row's caption is metadata beside the snapshot text; the
+  // tap target is the whole row (touchTarget.minimum), as with MarginNote.
+  'features/Journal/StaleQuoteNotes.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',

@@ -2,7 +2,7 @@
 import { describe, it, expect } from '@jest/globals';
 
 // Segments the body against a merged note + promoted-quote anchor stream.
-import { buildAnchoredSegments } from '../highlightSegments';
+import { buildAnchoredSegments, partitionQuotes } from '../highlightSegments';
 
 import type { Marginalia, PromotedQuote } from '@/api';
 
@@ -184,5 +184,43 @@ describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
     for (const segment of segments) {
       expect(hasUnpairedSurrogate(segment.text)).toBe(false);
     }
+  });
+});
+
+describe('stale promoted quotes (#2891)', () => {
+  const HELLO = 'hello world';
+
+  it('does not draw a stale promoted quote inline at its pre-edit offsets', () => {
+    const staleQuote = quote({
+      id: 1,
+      anchor_start: 0,
+      anchor_end: 5,
+      anchor_text: 'hello',
+      pending: true,
+      stale: true,
+    });
+    const segs = buildAnchoredSegments(HELLO, [], [staleQuote]);
+    expect(segs.every((s) => s.quote === null)).toBe(true);
+    expect(segs.map((s) => s.text).join('')).toBe(HELLO);
+  });
+
+  it('still draws a live quote beside a stale one', () => {
+    const staleQuote = quote({ id: 1, anchor_start: 0, anchor_end: 5, stale: true });
+    const live = quote({ id: 2, anchor_start: 6, anchor_end: 11, stale: false });
+    const segs = buildAnchoredSegments(HELLO, [], [staleQuote, live]);
+    const quoted = segs.filter((s) => s.quote != null);
+    expect(quoted).toHaveLength(1);
+    expect(quoted[0]!.quote!.id).toBe(2);
+    expect(quoted[0]!.text).toBe('world');
+  });
+
+  it('partitions quotes into live and stale, preserving order', () => {
+    const a = quote({ id: 1, stale: false });
+    const b = quote({ id: 2, stale: true });
+    const c = quote({ id: 3, stale: false });
+    const d = quote({ id: 4, stale: true });
+    const { live, stale } = partitionQuotes([a, b, c, d]);
+    expect(live.map((q) => q.id)).toEqual([1, 3]);
+    expect(stale.map((q) => q.id)).toEqual([2, 4]);
   });
 });

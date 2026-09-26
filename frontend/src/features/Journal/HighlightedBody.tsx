@@ -7,7 +7,7 @@
 import React from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import { buildAnchoredSegments, type AnchoredSegment } from './highlightSegments';
+import { buildAnchoredSegments, partitionQuotes, type AnchoredSegment } from './highlightSegments';
 import entryStyles from './JournalEntry.styles';
 import {
   markdownRuns,
@@ -17,6 +17,7 @@ import {
   type JournalMarkdownLine,
   type JournalMarkdownRun,
 } from './journalMarkdown';
+import StaleQuoteNotes from './StaleQuoteNotes';
 
 import type { Marginalia, PromotedQuote } from '@/api';
 import { Button } from '@/components/Button';
@@ -99,16 +100,20 @@ function QuoteSpan({
 /**
  * The anchor text of the promoted quote whose remove card is revealed, or null.
  * Located through the built segment stream (so an out-of-range quote — one with
- * no drawn span, hence untappable — never yields a card), and read from the
+ * no drawn span, hence untappable — never yields a card) or among the stale
+ * quotes listed under the prose (each tappable there), and read from the
  * quote's own ``anchor_text`` rather than a re-slice of the body.
  */
 function findRemoveQuoteText(
   segments: AnchoredSegment[],
+  staleQuotes: PromotedQuote[],
   removeTargetId: number | null,
 ): string | null {
   if (removeTargetId == null) return null;
   const match = segments.find((s) => s.quote != null && s.quote.id === removeTargetId);
-  return match != null && match.quote != null ? match.quote.anchor_text : null;
+  if (match != null && match.quote != null) return match.quote.anchor_text;
+  const stale = staleQuotes.find((q) => q.id === removeTargetId);
+  return stale != null ? stale.anchor_text : null;
 }
 
 /** Anchored card echoing a tapped quote's text with a Remove-promotion action. */
@@ -361,7 +366,8 @@ function HighlightedBody({
     [body, notes, quotes],
   );
   const document = React.useMemo(() => parseJournalMarkdown(body), [body]);
-  const removeText = findRemoveQuoteText(segments, removeTargetId);
+  const staleQuotes = React.useMemo(() => partitionQuotes(quotes).stale, [quotes]);
+  const removeText = findRemoveQuoteText(segments, staleQuotes, removeTargetId);
   return (
     <>
       <BodyView
@@ -372,6 +378,7 @@ function HighlightedBody({
       >
         {renderDocumentBlocks(document, segments, onOpen, onQuotePress)}
       </BodyView>
+      <StaleQuoteNotes quotes={staleQuotes} onQuotePress={onQuotePress} />
       {removeTargetId != null && removeText != null ? (
         <RemoveQuoteCard id={removeTargetId} text={removeText} onConfirm={onConfirmRemove} />
       ) : null}
