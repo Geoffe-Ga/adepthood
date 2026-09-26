@@ -50,7 +50,10 @@ const PROFESSIONAL_RESOURCE = {
   what_it_is: 'An ongoing therapeutic relationship with a credentialed clinician.',
 };
 
+const CARE_TITLE = "You're not alone in this";
+
 const FULL_CARE_RESPONSE = {
+  title: CARE_TITLE,
   message: 'What you shared sounds heavy. Here are some people who can help right now.',
   resources: [HOTLINE_RESOURCE, TEXT_LINE_RESOURCE, HUMAN_RESOURCE, PROFESSIONAL_RESOURCE],
 };
@@ -128,6 +131,19 @@ describe('careResponseSchema', () => {
     expect(() => careResponseSchema.parse(FULL_CARE_RESPONSE)).not.toThrow();
   });
 
+  it('round-trips the title string', () => {
+    const parsed = careResponseSchema.parse(FULL_CARE_RESPONSE);
+    expect(parsed.title).toBe(CARE_TITLE);
+  });
+
+  it('rejects a missing title field (the heading is required, #2862)', () => {
+    expect(() => careResponseSchema.parse(omitKey(FULL_CARE_RESPONSE, 'title'))).toThrow();
+  });
+
+  it('rejects an empty title (a blank header would announce nothing)', () => {
+    expect(() => careResponseSchema.parse({ ...FULL_CARE_RESPONSE, title: '' })).toThrow();
+  });
+
   it('round-trips the message string', () => {
     const parsed = careResponseSchema.parse(FULL_CARE_RESPONSE);
     expect(parsed.message).toBe(FULL_CARE_RESPONSE.message);
@@ -143,7 +159,9 @@ describe('careResponseSchema', () => {
   });
 
   it('accepts an empty resources array (degenerate backend response)', () => {
-    expect(() => careResponseSchema.parse({ message: 'Reach out.', resources: [] })).not.toThrow();
+    expect(() =>
+      careResponseSchema.parse({ title: CARE_TITLE, message: 'Reach out.', resources: [] }),
+    ).not.toThrow();
   });
 
   it('rejects when resources contains an invalid kind', () => {
@@ -160,11 +178,13 @@ describe('careResponseSchema', () => {
   });
 
   it('rejects a missing resources field', () => {
-    expect(() => careResponseSchema.parse({ message: 'Reach out.' })).toThrow();
+    expect(() => careResponseSchema.parse({ title: CARE_TITLE, message: 'Reach out.' })).toThrow();
   });
 
   it('rejects a non-array resources field (type drift)', () => {
-    expect(() => careResponseSchema.parse({ message: 'Reach out.', resources: null })).toThrow();
+    expect(() =>
+      careResponseSchema.parse({ title: CARE_TITLE, message: 'Reach out.', resources: null }),
+    ).toThrow();
   });
 });
 
@@ -177,6 +197,7 @@ describe('resonanceResponseSchema — care field', () => {
     const payload = { ...BASE_RESONANCE_PAYLOAD, care: FULL_CARE_RESPONSE };
     const parsed = resonanceResponseSchema.parse(payload);
     expect(parsed.care).not.toBeNull();
+    expect(parsed.care!.title).toBe(CARE_TITLE);
     expect(parsed.care!.message).toBe(FULL_CARE_RESPONSE.message);
     expect(parsed.care!.resources).toHaveLength(4);
   });
@@ -221,6 +242,7 @@ describe('resonanceResponseSchema — care field', () => {
 
   it('rejects a care object with an invalid kind inside resources', () => {
     const badCare = {
+      title: CARE_TITLE,
       message: 'Reach out.',
       resources: [{ ...HOTLINE_RESOURCE, kind: 'robot' }],
     };
@@ -230,7 +252,7 @@ describe('resonanceResponseSchema — care field', () => {
   });
 
   it('rejects a care object missing the message field', () => {
-    const badCare = { resources: [HOTLINE_RESOURCE] };
+    const badCare = { title: CARE_TITLE, resources: [HOTLINE_RESOURCE] };
     expect(() =>
       resonanceResponseSchema.parse({ ...BASE_RESONANCE_PAYLOAD, care: badCare }),
     ).toThrow();

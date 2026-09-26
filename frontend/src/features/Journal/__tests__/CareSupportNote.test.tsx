@@ -25,6 +25,7 @@ import { touchTarget } from '@/design/tokens';
 
 function carePayload(overrides: Partial<CareResponse> = {}): CareResponse {
   return {
+    title: "You're not alone in this",
     message: 'What you shared sounds heavy. Here are some people who can help right now.',
     resources: [
       {
