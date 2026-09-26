@@ -26,9 +26,10 @@ export function overlapNoticeCopy(lineCount: number, earlierPosition: number): s
   return `The first ${lineCount} lines repeat page ${earlierPosition}, so they'll appear once when these pages merge.`;
 }
 
-/** The Keep action's accessible name, naming the page it belongs to. */
+/** The Keep action's accessible name: its visible label first (so a voice-control
+ *  user can say what they see, WCAG 2.5.3), then the page it belongs to. */
 export function keepOverlapA11y(position: number): string {
-  return `Keep the repeated lines on page ${position}`;
+  return `${KEEP_OVERLAP_LABEL}: the repeated lines on page ${position}`;
 }
 
 interface SeamOverlapNoticeProps {

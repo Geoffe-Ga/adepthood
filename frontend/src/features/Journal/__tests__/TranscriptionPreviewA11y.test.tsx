@@ -5,6 +5,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { CapturePage } from '../captureSession';
+import { KEEP_OVERLAP_LABEL } from '../SeamOverlapNotice';
 import TranscriptionPreview from '../TranscriptionPreview';
 import type { TranscriptionBlock } from '../transcriptionRun';
 import type { BlockOverlapNotice } from '../useTranscriptionRun';
@@ -148,10 +149,18 @@ describe('TranscriptionPreview — the repeated-lines notice', () => {
   it('offers Keep them as a button named for its page, keeping that exact seam', () => {
     const onKeepSeam = jest.fn();
     const { getByRole } = renderWithOverlaps(P2_REPEATS_THREE, onKeepSeam);
-    const keep = getByRole('button', { name: 'Keep the repeated lines on page 2' });
+    const keep = getByRole('button', { name: 'Keep them: the repeated lines on page 2' });
     fireEvent.press(keep);
     expect(onKeepSeam).toHaveBeenCalledTimes(1);
     expect(onKeepSeam).toHaveBeenCalledWith('p1', 'p2');
+  });
+
+  it('starts the Keep action\u2019s accessible name with its visible label (WCAG 2.5.3)', () => {
+    const { getByTestId } = renderWithOverlaps(P2_REPEATS_THREE);
+    const keep = getByTestId('photograph-block-2-overlap-keep');
+    const name = keep.props.accessibilityLabel as string;
+    expect(name.startsWith(KEEP_OVERLAP_LABEL)).toBe(true);
+    expect(name).toContain('page 2');
   });
 
   it('lets a screen reader reach the notice itself', () => {
