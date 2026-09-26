@@ -168,7 +168,7 @@ jobs:
         # Thirteen producer scans share this core and are currently paused. Doing
         # this here rather than in each wrapper means they come back inoculated.
         continue-on-error: true
-        uses: anthropics/claude-code-action@fa2b2666b747000bf42767d1f332065b375e3c8f  # v1.0.214
+        uses: anthropics/claude-code-action@8cf3482550831fb35a4fc3fbf7ca139cf8028b4c  # v1.0.233
         env:
           # The scan-issue-writer skill files issues via gh; the action injects
           # GITHUB_TOKEN, but gh reads GH_TOKEN — bind it to the job token whose
