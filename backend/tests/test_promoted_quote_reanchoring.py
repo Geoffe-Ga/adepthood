@@ -277,15 +277,28 @@ async def test_stale_quote_stays_stale_after_passage_returns(
     assert reloaded.stale is True
 
 
+_THREE_COPIES = f"First {_ANCHOR} bent, then {_ANCHOR} broke, and {_ANCHOR} fell."
+
+
+def _nth(body: str, copy: int) -> int:
+    """Start of the ``copy``-th (0-based) occurrence of ``_ANCHOR`` in ``body``."""
+    start = -1
+    for _ in range(copy + 1):
+        start = body.index(_ANCHOR, start + 1)
+    return start
+
+
 @pytest.mark.asyncio
-async def test_duplicate_anchor_text_reanchors_to_first_occurrence(
+async def test_insert_before_repeated_passage_keeps_quote_on_its_own_copy(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A body containing the anchor text twice re-anchors to the first occurrence."""
+    """Prepending text shifts a quote on a later copy; it never jumps to an earlier one."""
     headers, user_id = await _signup(async_client, "duplicate")
-    entry = await _seed_entry(db_session, user_id)
-    quote = await _seed_quote(db_session, user_id, entry.id)
-    new_body = f"{_ANCHOR} ... and again {_ANCHOR}."
+    two_copies = f"{_ANCHOR} bent. Later {_ANCHOR} broke."
+    second = two_copies.rindex(_ANCHOR)
+    entry = await _seed_entry(db_session, user_id, two_copies)
+    quote = await _seed_quote(db_session, user_id, entry.id, anchor_start=second)
+    new_body = "Morning: " + two_copies
 
     resp = await async_client.patch(
         f"/journal/{entry.id}", json={"message": new_body}, headers=headers
@@ -294,6 +307,30 @@ async def test_duplicate_anchor_text_reanchors_to_first_occurrence(
 
     reloaded = await db_session.get(PromotedQuote, quote.id)
     assert reloaded is not None
-    assert reloaded.anchor_start == 0
-    assert reloaded.anchor_end == len(_ANCHOR)
+    assert reloaded.anchor_start == second + len("Morning: ")
+    assert reloaded.anchor_end == reloaded.anchor_start + len(_ANCHOR)
+    assert new_body[reloaded.anchor_start : reloaded.anchor_end] == _ANCHOR
     assert reloaded.stale is False
+
+
+@pytest.mark.asyncio
+async def test_edit_inside_repeated_anchor_goes_stale_not_to_sibling(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Editing the middle of three copies leaves two siblings: stale, offsets unchanged."""
+    headers, user_id = await _signup(async_client, "middlecopy")
+    middle = _nth(_THREE_COPIES, 1)
+    entry = await _seed_entry(db_session, user_id, _THREE_COPIES)
+    quote = await _seed_quote(db_session, user_id, entry.id, anchor_start=middle)
+    new_body = _THREE_COPIES[:middle] + "the old oak" + _THREE_COPIES[middle + len(_ANCHOR) :]
+
+    resp = await async_client.patch(
+        f"/journal/{entry.id}", json={"message": new_body}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    reloaded = await db_session.get(PromotedQuote, quote.id)
+    assert reloaded is not None
+    assert reloaded.anchor_start == middle
+    assert reloaded.anchor_end == middle + len(_ANCHOR)
+    assert reloaded.stale is True
