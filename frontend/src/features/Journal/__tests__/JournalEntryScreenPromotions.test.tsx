@@ -590,6 +590,43 @@ describe('JournalEntryScreen -- read mode adopts the server-stored body after Fi
     }
   });
 
+  it('adopts the stored body when Finish updates an entry an autosave already created', async () => {
+    jest.useFakeTimers();
+    try {
+      const typed = 'Cafe\u0301 by the river.  ';
+      mockCreate.mockResolvedValue(entry({ id: 42, message: typed, status: 'draft' }));
+      mockUpdate.mockImplementation((id: number, patch: unknown) =>
+        Promise.resolve(
+          entry({
+            id,
+            message: serverStored((patch as { message: string }).message),
+            status: 'finished',
+          }),
+        ),
+      );
+      const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), typed);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-finish-button'));
+      });
+      // The UPDATE branch of the Finish write: the id already existed.
+      expect(mockUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ status: 'finished' }));
+      fireEvent.press(await findByTestId('promote-quote-button'));
+      expect(getByTestId('quote-select-input').props.value).toBe(serverStored(typed));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows the stored body, not the typed one, when text is typed during the Finish write', async () => {
     // The server keeps one copy of the body: whatever it stored last, sanitized.
     let stored = '';
