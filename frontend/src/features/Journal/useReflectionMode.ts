@@ -25,7 +25,12 @@ import {
 } from 'react';
 import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
-import { formatBlockquote, sourceAttribution, type ReviewWindow } from './reflectionCopy';
+import {
+  formatBlockquote,
+  sourceAttribution,
+  spliceQuoteBlock,
+  type ReviewWindow,
+} from './reflectionCopy';
 import type { SourcesFeedStatus } from './ReflectionSourcesPanel';
 
 import { promotions, reflections } from '@/api';
@@ -99,20 +104,6 @@ export interface UseReflectionModeResult {
   ) => Promise<boolean>;
   /** Promote a freshly selected span of a source; resolves true on success. */
   onPromoteSpan: (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean>;
-}
-
-/**
- * Splice ``block`` into ``body`` at ``caret`` (or the end when untracked),
- * returning the new text and the caret position just past the inserted block so
- * a second fold-in lands after the first rather than re-splitting it.
- */
-function spliceAtCaret(
-  body: string,
-  block: string,
-  caret: number | null,
-): { text: string; nextCaret: number } {
-  const at = caret == null ? body.length : Math.min(caret, body.length);
-  return { text: body.slice(0, at) + block + body.slice(at), nextCaret: at + block.length };
 }
 
 /** True when ``item`` is the source a created quote belongs to (kind + id). */
@@ -285,7 +276,7 @@ function useFoldIn(
   const foldQuoteIn = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
       const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
-      const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
+      const { text, nextCaret } = spliceQuoteBlock(bodyRef.current, block, caretRef.current);
       onChangeBody(text);
       caretRef.current = nextCaret;
       const entryId = await flush();
