@@ -234,6 +234,18 @@
     "coveredBy": "frontend/e2e/journal-morning-page-title.browser.e2e.test.ts"
   },
   {
+    "id": "journal.morning-pages-tip-declines-with-corner-x",
+    "description": "A writer on a day with no review due sees the morning-pages tip with one text action, Begin a page, and an icon-only X in the card's top-right corner named Set the morning-pages tip aside (#2860). At 390x844 and 1280x720 the real browser measures the X flush with the band's top-right corner and inside it, at least 44px square, clear of the Begin a page button's box and of every line of card text, and the card's label, title, body and CTA on one left edge, with no visible Not now. Declining by keyboard removes the card, lands focus on the Start a review early link rather than the page body, persists the decline, and the tip stays gone after a reload. Component tests pin the close variant's accent-while-pressed tint, the begin area's corner reserve, and the focus handoff's target.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/signup"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-morning-pages-dismiss.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-markdown-read-reload",
     "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, <u>tag-delimited</u> underline (a retired ==equals== spelling stays literal prose), adjacent -/*/+ lines as one list block, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
     "crosses": {

@@ -17,7 +17,7 @@ test('morning pages open dated and editable while ordinary new entries stay unti
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
   });
-  await page.getByRole('button', { name: 'Begin a morning page' }).click();
+  await page.getByRole('button', { name: 'Begin a page of morning pages' }).click();
 
   // React Navigation keeps the prior entry mounted under the active route;
   // the accessibility tree selects the one the writer can actually reach.
