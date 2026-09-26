@@ -469,7 +469,9 @@ def reset_invalid_license_attempts() -> None:
 #
 # So the floor below does not resolve anything. It consults no ``app.routes``,
 # no ``scope["route"]``, no ``.endpoint``, no ``_route_limits``, and no
-# ``_IncludedRouter``. It charges one bucket per ``(client, path)`` and answers.
+# ``_IncludedRouter``. It charges one bucket per ``(client, path)``, and one
+# per-client ceiling across every path (#2913, :class:`ClientCeiling`), and
+# answers.
 # That is the invariant, and it is the whole fix: **this layer must never
 # consult route identity.** Route identity is not available to a middleware
 # under this stack, and a layer that needs it is a layer that fails open the
