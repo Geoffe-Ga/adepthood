@@ -81,6 +81,69 @@ base as `typography()`:
   fails if a new `editorialType.caption` usage appears without being audited as
   non-interactive, so caption sizing cannot silently reach tappable text again.
 
+## Text in order (epic #2946)
+
+The app exists to get a life in order. An interface that is not itself in
+order cannot promote that — the medium is the message — so every string on a
+screen has one place it belongs, one edge it shares with its siblings, and one
+face for its role. Buttons and their rows are governed by the forthcoming
+`## Action rows` section (#2860); this section governs text and does not
+restate it.
+
+Seven rules, each one a reviewer can answer yes or no:
+
+- **Scope.** A string lives inside the component whose subject it describes —
+  a hint about an option sits inside that option's box, a page's word count
+  sits in the page's footer rail, a note about the whole corpus is its own card
+  — and a string that does not describe the component it is in is moved or
+  given a component.
+- **One edge.** Sibling strings in a group share one left edge (or one right
+  edge) and, on one row, one baseline; indenting a lone line by a padding value
+  is not alignment.
+- **One face per role.** Within one screen region a role (eyebrow / link /
+  meta) is set in one face, one size and one colour, a region shows at most
+  **three** sizes of the `type(width)` ramp, and `editorialType.caption` styles
+  non-interactive metadata only (the `INTERACTIVE_TEXT_MIN` floor above), in
+  `ink.muted` or `ink.soft`.
+- **Glyph over word.** An action whose meaning is universal (close, dismiss,
+  back, camera, search, add, play, minimise) is a `lucide-react-native` icon
+  with the word kept as its `accessibilityLabel` and a hit area of at least
+  `touchTarget.minimum`, never a text link; words are for actions that need
+  them (Finish, Get Resonance, Begin a page).
+- **Eyebrows are eyebrows.** A screen spends its one small-caps (upper-cased
+  caption) role on its screen or section heading — `ScreenHeader`'s `eyebrow`
+  (`type(width).caption` in `accent.primary`) or one list spine such as the
+  journal shelf's `sectionHeading` — while sub-section labels inside a band are
+  sentence-case `editorialType.caption` in `ink.muted` on the band's left edge
+  (or `EditorialSection`'s serif `title`), never a bold serif line that
+  competes with the content it labels; the
+  `features/Journal/__tests__/JournalShelfHierarchy.test.ts` guard, which pins
+  `textTransform: 'uppercase'` to exactly one shelf style, is the precedent.
+- **No raw markup.** Body text that can carry Markdown is rendered through
+  `react-native-markdown-display` (as the Course `ChapterReader` does) or the
+  journal's `LiveMarkdownBody` / `parseJournalMarkdown` pipeline, or has its
+  markers stripped before display; a visible `**` is a bug.
+- **Counts fold into their label.** A string that is a count plus an action
+  ("4 prompts set aside — show them") puts the count in the eyebrow row's
+  trailing slot and makes the action the row's affordance, rather than
+  spelling both out in one link.
+
+**Primitives** — reach for these before adding a bare `<Text>`:
+`components/layout/ScreenHeader.tsx` (eyebrow → title → lead, right `action`
+slot), `components/layout/EditorialSection.tsx` (titled band),
+`components/RadioOption.tsx`, `components/StatRow.tsx`,
+`components/TextField.tsx`, `components/Button.tsx` variants, and
+`features/Journal/ReflectionDismiss.tsx` with `variant="close"` (the icon-only
+X that landed via #2862) as the reference for glyph-over-word.
+
+**How to check** — the text-census harness
+`frontend/e2e/text-order.browser.e2e.test.ts` (#2948) will screenshot every
+route at both viewports and write
+`frontend/e2e/artifacts/text-order/<viewport>/<route>.{png,json}` — one image
+plus one census of every text node's string, size, box and nearest `testID` —
+and the review protocol that reads those artifacts screen by screen is
+`prompts/scans/text-order.md`.
+
 ## Constraints (carried from the epic)
 
 - **No proprietary fonts** — both serif and sans are free/system stacks
