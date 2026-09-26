@@ -14,7 +14,7 @@ import { describe, expect, it } from '@jest/globals';
  *
  * A test that only asserted "the fields are non-empty" would go green on a
  * typo. What actually breaks silently is *disagreement*: the app already ships
- * `adepthood://` deep links in `App.tsx` and in the practice share sheet, and
+ * `adepthood://` deep links in `navigation/linking.ts` and in the practice share sheet, and
  * those resolve to nothing at all unless `app.json` registers the same scheme.
  * So the load-bearing assertions below compare the manifest against the code
  * that depends on it rather than against a literal spelled twice.
@@ -73,10 +73,11 @@ function declaredScheme(source: string, pattern: RegExp): string | null {
   return source.match(pattern)?.[1] ?? null;
 }
 
-const APP_TSX = readFrontendFile('src', 'App.tsx');
+// The linking config (and its ``prefixes``) moved out of App.tsx in #2958.
+const LINKING_CONFIG = readFrontendFile('src', 'navigation', 'linking.ts');
 const SHARE_SHEET = readFrontendFile('src', 'features', 'Practice', 'components', 'ShareSheet.tsx');
 
-const NAVIGATION_SCHEME = declaredScheme(APP_TSX, /prefixes:\s*\[\s*'([a-z0-9+.-]+):\/\//);
+const NAVIGATION_SCHEME = declaredScheme(LINKING_CONFIG, /prefixes:\s*\[\s*'([a-z0-9+.-]+):\/\//);
 const SHARE_LINK_SCHEME = declaredScheme(
   SHARE_SHEET,
   /DEEP_LINK_PREFIX\s*=\s*'([a-z0-9+.-]+):\/\//,
