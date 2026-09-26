@@ -187,3 +187,25 @@ describe('QuoteSelectionSurface -- confirmLabel', () => {
     within(getByTestId('quote-select-confirm')).getByText('Write a note');
   });
 });
+
+describe('QuoteSelectionSurface -- edge whitespace (#2891)', () => {
+  it('emits the trimmed span a double-click "word " stores, and previews that', () => {
+    const { getByTestId, onSelectionChange } = renderSurface();
+    const input = getByTestId('quote-select-input');
+    const start = BODY.indexOf('daily');
+    fireEvent(input, 'selectionChange', {
+      nativeEvent: { selection: { start: start - 1, end: start + 'daily '.length } },
+    });
+    expect(onSelectionChange).toHaveBeenLastCalledWith({ start, end: start + 'daily'.length });
+    expect(getByTestId('quote-select-preview').props.children).toBe('daily');
+  });
+
+  it('treats a whitespace-only selection as nothing chosen', () => {
+    const { getByTestId, queryByTestId } = renderSurface({ body: 'one   two' });
+    fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+      nativeEvent: { selection: { start: 3, end: 6 } },
+    });
+    expect(queryByTestId('quote-select-preview')).toBeNull();
+    expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
+  });
+});

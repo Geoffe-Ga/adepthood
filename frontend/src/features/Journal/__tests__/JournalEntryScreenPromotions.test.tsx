@@ -9,6 +9,7 @@ import { StyleSheet } from 'react-native';
 // TextInput, or promoted-quote spans -- every testID below is missing until
 // the implementation-specialist wires `usePromotions` + the new affordance
 // into `JournalEntryScreen`/`ReadColumn`.
+import { parseJournalMarkdown, sourceToVisible, utf16ToSource } from '../journalMarkdown';
 import { PROMOTED_NOTICE_MS } from '../usePromotions';
 
 import type { JournalMessage, PromotedQuote } from '@/api';
@@ -606,5 +607,40 @@ describe('JournalEntryScreen -- read mode adopts the server-stored body after Fi
     });
     fireEvent.press(await findByTestId('promote-quote-button'));
     expect(getByTestId('quote-select-input').props.value).toBe('by the river and back');
+  });
+});
+
+describe('JournalEntryScreen -- promote posts source offsets, never display offsets (#2891)', () => {
+  const MARKED = '**bo\u{1F600}ld** _x_ tail';
+
+  it('sends utf16ToSource of the selection, which differs from the visible offset', async () => {
+    mockGet.mockResolvedValue(entry({ message: MARKED }));
+    mockPromote.mockResolvedValue(promotedQuote({ id: 92 }));
+    const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const selection = { start: MARKED.indexOf('tail'), end: MARKED.length };
+    const source = {
+      start: utf16ToSource(MARKED, selection.start),
+      end: utf16ToSource(MARKED, selection.end),
+    };
+    const document = parseJournalMarkdown(MARKED);
+    const visible = {
+      start: sourceToVisible(document, source.start),
+      end: sourceToVisible(document, source.end),
+    };
+    // The guard is only meaningful where the coordinate systems really differ.
+    expect(visible.start).not.toBe(source.start);
+    expect(source.start).not.toBe(selection.start);
+
+    fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+      nativeEvent: { selection },
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+    expect(mockPromote).toHaveBeenCalledWith(7, {
+      anchor_start: source.start,
+      anchor_end: source.end,
+    });
   });
 });

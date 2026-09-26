@@ -223,7 +223,9 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     await act(async () => {
       fireEvent.press(getByTestId('source-select-entry-1-confirm'));
     });
-    expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 9 });
+    // "e full " ends in a space; the server would trim it from anchor_text but
+    // keep the offsets, so the span is trimmed to match before it is posted (#2891).
+    expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 8 });
   });
 
   it('pressing the confirm guard on a collapsed selection shows a hint and never calls onPromoteSpan', async () => {
