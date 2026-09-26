@@ -133,6 +133,11 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/MarginNote.tsx::kind',
   'features/Journal/MarginNote.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
+  // A promoted quote's source line (and, once used, its review), beneath the
+  // quote inside the row's own tap target: metadata, as cardDate is below. The
+  // row's accessible name carries the quote and its source; this is not itself
+  // an affordance.
+  'features/Journal/QuoteRow.tsx::caption',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',
   // The review period beneath the Sources heading: a label naming the dates the

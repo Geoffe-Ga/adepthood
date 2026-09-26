@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 
 import { excerpt } from './excerpt';
+import { QUOTE_STRIPE_WIDTH, QuoteRow } from './QuoteRow';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import {
   formatReviewPeriod,
@@ -59,11 +60,8 @@ const NARROW_BREAKPOINT = 600;
 /** Collapsed-row excerpt length before an ellipsis. */
 const EXCERPT_MAX = 120;
 
-/** Warm left rule marking a pending quote / a reflection row, in dp. */
-const STRIPE_WIDTH = 3;
-
-/** Dim a pending quote once it has been folded into the reflection body. */
-const INCLUDED_ROW_OPACITY = 0.5;
+/** Warm left rule marking a reflection row, the same weight as a quote's stripe. */
+const STRIPE_WIDTH = QUOTE_STRIPE_WIDTH;
 
 /** Warm, declinable copy when a re-promotion didn't take; invites a calm retry. */
 const PROMOTE_FAILURE_HINT =
@@ -211,20 +209,16 @@ function PendingQuoteRow({
   onInsert: (_e: PendingEntry) => void;
 }): React.JSX.Element {
   return (
-    <TouchableOpacity
-      style={[styles.pendingRow, included && styles.pendingRowIncluded]}
+    <QuoteRow
+      text={entry.quote.anchor_text}
+      dimmed={included}
       onPress={() => {
         if (!included) onInsert(entry);
       }}
-      accessibilityRole="button"
       accessibilityState={{ disabled: included }}
       accessibilityLabel={`Fold the quote "${entry.quote.anchor_text}" into your reflection`}
       testID={`pending-quote-${entry.quote.id}`}
-    >
-      <Text style={styles.pendingText} numberOfLines={2}>
-        {entry.quote.anchor_text}
-      </Text>
-    </TouchableOpacity>
+    />
   );
 }
 
@@ -695,24 +689,6 @@ const styles = StyleSheet.create({
     color: ink.muted,
     textTransform: 'uppercase',
     marginBottom: SPACING.sm,
-  },
-  pendingRow: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    paddingVertical: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    marginBottom: SPACING.sm,
-    borderRadius: BORDER_RADIUS.md,
-    backgroundColor: colors.paper.quoteHighlight,
-    borderLeftWidth: STRIPE_WIDTH,
-    borderLeftColor: accent.primary,
-  },
-  pendingRowIncluded: {
-    opacity: INCLUDED_ROW_OPACITY,
-  },
-  pendingText: {
-    ...editorialType.note,
-    color: ink.primary,
   },
   row: {
     marginBottom: SPACING.md,
