@@ -1,5 +1,6 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { TextStyle, ViewStyle } from 'react-native';
@@ -11,7 +12,7 @@ import type { TextStyle, ViewStyle } from 'react-native';
  * its absolute placement or the optional ``textStyle`` into the text variants
  * every other card relies on.
  */
-import ReflectionDismiss from '../ReflectionDismiss';
+import ReflectionDismiss, { CLOSE_ICON_SIZE } from '../ReflectionDismiss';
 
 import { SPACING, accent, editorialType, ink, touchTarget } from '@/design/tokens';
 
@@ -94,6 +95,16 @@ describe('ReflectionDismiss — close variant (icon-only X, #2862)', () => {
     expect(control.props.accessibilityRole).toBe('button');
     expect(control.props.accessibilityLabel).toBe('Hide the note');
     expect(queryAllByText(/.+/)).toHaveLength(0);
+  });
+
+  it('draws the lucide X glyph at 20dp in the soft ink, hidden from the a11y tree', () => {
+    const icons = renderClose().UNSAFE_getAllByType(X);
+    expect(icons).toHaveLength(1);
+    const [icon] = icons;
+    expect(CLOSE_ICON_SIZE).toBe(20);
+    expect(icon?.props.size).toBe(CLOSE_ICON_SIZE);
+    expect(icon?.props.color).toBe(ink.soft);
+    expect(icon?.props.accessible).toBe(false);
   });
 
   it('sits absolutely in the top-right corner', () => {
