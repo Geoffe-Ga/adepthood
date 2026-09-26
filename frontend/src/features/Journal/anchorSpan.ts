@@ -68,6 +68,19 @@ function isEdgeWhitespace(ch: string | undefined): boolean {
 }
 
 /**
+ * ``text`` with its edge whitespace removed, by exactly the rule the server
+ * applies to an ``anchor_text`` snapshot.
+ */
+export function trimAnchorEdges(text: string): string {
+  const chars = Array.from(text);
+  let start = 0;
+  let end = chars.length;
+  while (start < end && isEdgeWhitespace(chars[start])) start += 1;
+  while (end > start && isEdgeWhitespace(chars[end - 1])) end -= 1;
+  return chars.slice(start, end).join('');
+}
+
+/**
  * Convert a UTF-16 selection over ``body`` into the code-point span to post,
  * with edge whitespace trimmed. A whitespace-only selection collapses to an
  * empty span at its trimmed start, which the surface treats as "nothing chosen".

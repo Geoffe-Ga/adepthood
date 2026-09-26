@@ -1,15 +1,18 @@
 /**
- * ``StaleQuoteNotes`` -- the promoted quotes whose passage has changed since
- * they were promoted, listed under the prose instead of drawn inside it.
+ * ``StaleQuoteNotes`` -- the promoted quotes that can no longer be drawn in
+ * place, listed under the prose instead of inside it.
  *
- * After an edit the server re-anchors each pending quote by its snapshot text
- * (``reanchor_one``); when that text is gone it marks the quote ``stale`` and
- * leaves its offsets where they were. Those offsets now address whatever the
- * writer typed there, so washing them inline would attach the quote to words it
- * never quoted. This footer keeps such a quote visible and honest -- its own
- * snapshot text, dimmed like a stale margin note, labelled stale for a screen
- * reader -- and still removable: a press hands it back through the same
- * ``onQuotePress`` the inline span uses, which opens the remove card.
+ * Two cases put a quote here (see ``partitionQuotes``). After an edit the
+ * server re-anchors each PENDING quote by its snapshot text (``reanchor_one``)
+ * and, when that text is gone, marks it ``stale`` with its offsets left where
+ * they were. A quote already folded into a review is not re-anchored at all,
+ * so an edit before it leaves its offsets addressing other words. Either way,
+ * washing those offsets inline would attach the quote to words it never
+ * quoted, and searching for its text would be a guess. This footer keeps such
+ * a quote visible and honest -- its own snapshot text, dimmed like a stale
+ * margin note, labelled stale for a screen reader -- and still removable: a
+ * press hands it back through the same ``onQuotePress`` the inline span uses,
+ * which opens the remove card.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -24,7 +27,7 @@ const STALE_QUOTE_MAX_LINES = 3;
 /** A quiet left rule, the same weight as a margin slip's stripe. */
 const STALE_QUOTE_RULE_WIDTH = 3;
 
-export const STALE_QUOTE_CAPTION = 'The passage this quoted has changed.';
+export const STALE_QUOTE_CAPTION = 'This passage has changed or moved since it was promoted.';
 
 export interface StaleQuoteNotesProps {
   quotes: PromotedQuote[];

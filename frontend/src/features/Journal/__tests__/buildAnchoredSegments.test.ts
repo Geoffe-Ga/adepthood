@@ -26,13 +26,20 @@ function note(overrides: Partial<Marginalia>): Marginalia {
   };
 }
 
-function quote(overrides: Partial<PromotedQuote>): PromotedQuote {
+/**
+ * A promoted quote over ``body`` (BODY unless given). Its ``anchor_text`` is the
+ * code-point slice its offsets address, as the server snapshots it, so a quote
+ * is only "out of place" when a test says so.
+ */
+function quote(overrides: Partial<PromotedQuote>, body: string = BODY): PromotedQuote {
+  const start = overrides.anchor_start ?? 0;
+  const end = overrides.anchor_end ?? 1;
   return {
     id: 100,
     source_entry_id: 1,
-    anchor_start: 0,
-    anchor_end: 1,
-    anchor_text: 'x',
+    anchor_start: start,
+    anchor_end: end,
+    anchor_text: Array.from(body).slice(start, end).join(''),
     pending: true,
     stale: false,
     ...overrides,
@@ -159,7 +166,7 @@ describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
   it('slices the exact anchored phrase after a leading emoji using code-point offsets', () => {
     const start = 1; // code-point index right after the emoji, at "w"
     const end = 17; // code-point index right after "went for a daily"
-    const q = quote({ id: 55, anchor_start: start, anchor_end: end });
+    const q = quote({ id: 55, anchor_start: start, anchor_end: end }, LEADING_EMOJI_BODY);
     const segments = buildAnchoredSegments(LEADING_EMOJI_BODY, [], [q]);
     const anchored = segments.find((s) => s.quote?.id === 55);
     expect(anchored?.text).toBe('went for a daily');
@@ -170,7 +177,7 @@ describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
     const tailBody = `went for a walk${EMOJI}`;
     const start = 11; // code-point index of "w" in "walk"
     const end = 16; // the body's code-point length, including the trailing emoji
-    const q = quote({ id: 77, anchor_start: start, anchor_end: end });
+    const q = quote({ id: 77, anchor_start: start, anchor_end: end }, tailBody);
     const segments = buildAnchoredSegments(tailBody, [], [q]);
     const anchored = segments.find((s) => s.quote?.id === 77);
     expect(anchored).toBeDefined();
@@ -179,7 +186,7 @@ describe('buildAnchoredSegments -- non-BMP (astral) code-point anchors', () => {
 
   it('never produces a segment with a lone/unpaired surrogate', () => {
     const tailBody = `went for a walk${EMOJI}`;
-    const q = quote({ id: 77, anchor_start: 11, anchor_end: 16 });
+    const q = quote({ id: 77, anchor_start: 11, anchor_end: 16 }, tailBody);
     const segments = buildAnchoredSegments(tailBody, [], [q]);
     for (const segment of segments) {
       expect(hasUnpairedSurrogate(segment.text)).toBe(false);
@@ -205,8 +212,8 @@ describe('stale promoted quotes (#2891)', () => {
   });
 
   it('still draws a live quote beside a stale one', () => {
-    const staleQuote = quote({ id: 1, anchor_start: 0, anchor_end: 5, stale: true });
-    const live = quote({ id: 2, anchor_start: 6, anchor_end: 11, stale: false });
+    const staleQuote = quote({ id: 1, anchor_start: 0, anchor_end: 5, stale: true }, HELLO);
+    const live = quote({ id: 2, anchor_start: 6, anchor_end: 11 }, HELLO);
     const segs = buildAnchoredSegments(HELLO, [], [staleQuote, live]);
     const quoted = segs.filter((s) => s.quote != null);
     expect(quoted).toHaveLength(1);
@@ -214,13 +221,48 @@ describe('stale promoted quotes (#2891)', () => {
     expect(quoted[0]!.text).toBe('world');
   });
 
-  it('partitions quotes into live and stale, preserving order', () => {
+  it('partitions quotes into live and detached, preserving order', () => {
     const a = quote({ id: 1, stale: false });
     const b = quote({ id: 2, stale: true });
     const c = quote({ id: 3, stale: false });
     const d = quote({ id: 4, stale: true });
-    const { live, stale } = partitionQuotes([a, b, c, d]);
+    const { live, detached } = partitionQuotes([a, b, c, d], BODY);
     expect(live.map((q) => q.id)).toEqual([1, 3]);
-    expect(stale.map((q) => q.id)).toEqual([2, 4]);
+    expect(detached.map((q) => q.id)).toEqual([2, 4]);
+  });
+});
+
+describe('quotes whose offsets no longer spell their text (#2891)', () => {
+  const BEFORE = 'the river ran';
+  const AFTER = 'Now: the river ran';
+
+  it('never draws an included quote whose frozen offsets now address other text', () => {
+    // The server re-anchors only PENDING quotes on an edit; an included one
+    // keeps its offsets, which after an insertion address different words.
+    const included = quote({ id: 5, anchor_start: 0, anchor_end: 9, anchor_text: 'the river' });
+    const frozen = { ...included, pending: false };
+    expect(Array.from(BEFORE).slice(0, 9).join('')).toBe('the river');
+    const segs = buildAnchoredSegments(AFTER, [], [frozen]);
+    expect(segs.every((s) => s.quote === null)).toBe(true);
+    expect(partitionQuotes([frozen], AFTER).detached.map((q) => q.id)).toEqual([5]);
+  });
+
+  it('still draws a quote whose slice equals its text apart from edge whitespace', () => {
+    // A quote promoted before selections were trimmed stores "river " offsets
+    // with the server-trimmed text "river".
+    const legacy = quote({ id: 6, anchor_start: 4, anchor_end: 10, anchor_text: 'river' });
+    const segs = buildAnchoredSegments(BEFORE, [], [legacy]);
+    expect(segs.find((s) => s.quote?.id === 6)?.text).toBe('river ');
+  });
+
+  it('detaches a quote whose offsets fall outside the body instead of dropping it', () => {
+    const outOfRange = quote({ id: 7, anchor_start: 40, anchor_end: 45, anchor_text: 'gone.' });
+    expect(partitionQuotes([outOfRange], BEFORE).detached.map((q) => q.id)).toEqual([7]);
+  });
+
+  it('compares in code points, so an astral character before the anchor does not detach it', () => {
+    const body = '\u{1F30A} the river';
+    const live = quote({ id: 8, anchor_start: 2, anchor_end: 11, anchor_text: 'the river' });
+    expect(partitionQuotes([live], body).live.map((q) => q.id)).toEqual([8]);
   });
 });

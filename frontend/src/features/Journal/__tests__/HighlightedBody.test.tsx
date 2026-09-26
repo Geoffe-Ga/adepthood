@@ -206,11 +206,12 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     ['> quoted', '> '],
     ['- listed', '- '],
   ])('keeps syntax-only promoted quote anchors visible and removable in %j', (body, literal) => {
+    // The server snapshots the span's text with its edges trimmed.
     const anchored = quote({
       id: 93,
       anchor_start: 0,
       anchor_end: 2,
-      anchor_text: literal,
+      anchor_text: literal.trim(),
     });
     const onQuotePress = jest.fn();
     const { getByTestId } = render(
@@ -407,5 +408,17 @@ describe('HighlightedBody -- stale promoted quotes (#2891)', () => {
     expect(getByTestId('promotion-remove-quote-4').props.children).toBe('bygone words');
     fireEvent.press(getByTestId('promotion-remove-4'));
     expect(onConfirmRemove).toHaveBeenCalled();
+  });
+
+  it('lists an included quote whose frozen offsets now address other words, not inline', () => {
+    // BODY with text inserted before the passage: the included quote's offsets
+    // were frozen at their pre-edit values and now address other words.
+    const edited = `Earlier that day, ${BODY}`;
+    const frozen = quote({ id: 5, pending: false });
+    const { getByTestId, queryByTestId } = render(
+      <HighlightedBody body={edited} notes={[]} onOpen={jest.fn()} quotes={[frozen]} />,
+    );
+    expect(queryByTestId('quote-highlight-5')).toBeNull();
+    expect(getByTestId('stale-quote-5').props.accessibilityLabel).toContain('the willow');
   });
 });

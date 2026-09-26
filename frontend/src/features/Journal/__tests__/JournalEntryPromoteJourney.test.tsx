@@ -115,13 +115,20 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
+/**
+ * A promoted quote over BODY whose ``anchor_text`` is the slice its offsets
+ * address, edge-trimmed as the server snapshots it (read mode draws a quote
+ * only where its offsets still spell its text).
+ */
 function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
+  const start = overrides.anchor_start ?? 2;
+  const end = overrides.anchor_end ?? 19;
   return {
     id: 55,
     source_entry_id: 7,
-    anchor_start: 2,
-    anchor_end: 19,
-    anchor_text: 'went for a daily',
+    anchor_start: start,
+    anchor_end: end,
+    anchor_text: Array.from(BODY).slice(start, end).join('').trim(),
     pending: true,
     stale: false,
     ...overrides,
@@ -295,7 +302,9 @@ describe('JournalEntryPromoteJourney -- read-mode journey (finished entry, entry
 
   it('converts a UTF-16 selection over a non-BMP body to code-point anchors', async () => {
     mockGet.mockResolvedValue(entry({ message: EMOJI_BODY }));
-    mockPromote.mockResolvedValue(promotedQuote({ anchor_start: 1, anchor_end: 17, id: 90 }));
+    mockPromote.mockResolvedValue(
+      promotedQuote({ anchor_start: 1, anchor_end: 17, anchor_text: 'went for a daily', id: 90 }),
+    );
     const screen = renderScreen({ entryId: 7 });
     await selectAndConfirmReadMode(screen, { start: 2, end: 18 });
 

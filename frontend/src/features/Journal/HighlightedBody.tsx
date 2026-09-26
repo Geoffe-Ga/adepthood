@@ -100,20 +100,20 @@ function QuoteSpan({
 /**
  * The anchor text of the promoted quote whose remove card is revealed, or null.
  * Located through the built segment stream (so an out-of-range quote — one with
- * no drawn span, hence untappable — never yields a card) or among the stale
+ * no drawn span, hence untappable — never yields a card) or among the detached
  * quotes listed under the prose (each tappable there), and read from the
  * quote's own ``anchor_text`` rather than a re-slice of the body.
  */
 function findRemoveQuoteText(
   segments: AnchoredSegment[],
-  staleQuotes: PromotedQuote[],
+  detachedQuotes: PromotedQuote[],
   removeTargetId: number | null,
 ): string | null {
   if (removeTargetId == null) return null;
   const match = segments.find((s) => s.quote != null && s.quote.id === removeTargetId);
   if (match != null && match.quote != null) return match.quote.anchor_text;
-  const stale = staleQuotes.find((q) => q.id === removeTargetId);
-  return stale != null ? stale.anchor_text : null;
+  const detached = detachedQuotes.find((q) => q.id === removeTargetId);
+  return detached != null ? detached.anchor_text : null;
 }
 
 /** Anchored card echoing a tapped quote's text with a Remove-promotion action. */
@@ -366,8 +366,11 @@ function HighlightedBody({
     [body, notes, quotes],
   );
   const document = React.useMemo(() => parseJournalMarkdown(body), [body]);
-  const staleQuotes = React.useMemo(() => partitionQuotes(quotes).stale, [quotes]);
-  const removeText = findRemoveQuoteText(segments, staleQuotes, removeTargetId);
+  const detachedQuotes = React.useMemo(
+    () => partitionQuotes(quotes, body).detached,
+    [quotes, body],
+  );
+  const removeText = findRemoveQuoteText(segments, detachedQuotes, removeTargetId);
   return (
     <>
       <BodyView
@@ -378,7 +381,7 @@ function HighlightedBody({
       >
         {renderDocumentBlocks(document, segments, onOpen, onQuotePress)}
       </BodyView>
-      <StaleQuoteNotes quotes={staleQuotes} onQuotePress={onQuotePress} />
+      <StaleQuoteNotes quotes={detachedQuotes} onQuotePress={onQuotePress} />
       {removeTargetId != null && removeText != null ? (
         <RemoveQuoteCard id={removeTargetId} text={removeText} onConfirm={onConfirmRemove} />
       ) : null}

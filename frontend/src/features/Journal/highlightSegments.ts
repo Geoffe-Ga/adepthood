@@ -3,6 +3,8 @@
  * note and/or promoted quote. Pure offset math — no React — so the highlight
  * logic is unit-testable apart from the ``<Text>`` tree that consumes it.
  */
+import { trimAnchorEdges } from './anchorSpan';
+
 import type { Marginalia, PromotedQuote } from '@/api';
 
 export interface HighlightSegment {
@@ -56,43 +58,60 @@ function noteAnchors(length: number, notes: Marginalia[]): Anchor[] {
     }));
 }
 
-/** A quote list split by whether the server still finds its text in the body. */
+/** A quote list split by whether its offsets still address its own text. */
 export interface QuotePartition {
-  /** Quotes whose anchors still spell their text: drawn inline. */
+  /** Quotes whose offsets still spell their text in this body: drawn inline. */
   live: PromotedQuote[];
-  /** Quotes the server marked stale after an edit: never drawn inline. */
-  stale: PromotedQuote[];
+  /** Quotes that must not be drawn inline: shown apart, still removable. */
+  detached: PromotedQuote[];
 }
 
 /**
- * Split quotes into live and stale, each keeping its input order. A stale quote's
- * offsets are the PRE-edit ones (``reanchor_one`` leaves them unchanged when the
- * text is gone), so drawing it inline would wash whatever text sits there now.
+ * True when ``quote``'s offsets still spell its snapshot text in ``chars``.
+ * The slice is compared after the server's own edge trim, so a quote promoted
+ * over "word " (stored text "word") still counts as in place.
  */
-export function partitionQuotes(quotes: PromotedQuote[]): QuotePartition {
+function spellsItsText(chars: string[], quote: PromotedQuote): boolean {
+  const { anchor_start: start, anchor_end: end } = quote;
+  if (!inRange(chars.length, start, end)) return false;
+  return trimAnchorEdges(chars.slice(start, end).join('')) === quote.anchor_text;
+}
+
+/**
+ * Split quotes into live and detached, each keeping its input order.
+ *
+ * A quote is detached -- never washed inline -- when the server marked it stale
+ * (its text is gone after an edit; its offsets are the pre-edit ones) OR when
+ * its offsets no longer spell its text in this body. The second case is real:
+ * the server re-anchors only PENDING quotes on an edit, so a quote already
+ * folded into a review keeps offsets that, once the writer inserts text before
+ * it, address other words. Drawing either would attach the quote to a passage
+ * it never quoted; relocating it by searching for its text would be a guess.
+ */
+export function partitionQuotes(quotes: PromotedQuote[], body: string): QuotePartition {
+  const chars = Array.from(body);
+  const inPlace = (q: PromotedQuote): boolean => !q.stale && spellsItsText(chars, q);
   return {
-    live: quotes.filter((q) => !q.stale),
-    stale: quotes.filter((q) => q.stale),
+    live: quotes.filter(inPlace),
+    detached: quotes.filter((q) => !inPlace(q)),
   };
 }
 
-/** In-range anchors for LIVE quotes only; stale quotes are shown apart, not inline. */
-function quoteAnchors(length: number, quotes: PromotedQuote[]): Anchor[] {
-  return partitionQuotes(quotes)
-    .live.filter((q) => inRange(length, q.anchor_start, q.anchor_end))
-    .map((q) => ({
-      start: q.anchor_start,
-      end: q.anchor_end,
-      order: QUOTE_ORDER,
-      id: q.id,
-      note: null,
-      quote: q,
-    }));
+/** Anchors for quotes still in place; detached quotes are shown apart, not inline. */
+function quoteAnchors(chars: string[], quotes: PromotedQuote[]): Anchor[] {
+  return partitionQuotes(quotes, chars.join('')).live.map((q) => ({
+    start: q.anchor_start,
+    end: q.anchor_end,
+    order: QUOTE_ORDER,
+    id: q.id,
+    note: null,
+    quote: q,
+  }));
 }
 
 /** Merge + sort by (anchor_start, note-before-quote at equal start, then id). */
-function usableAnchors(length: number, notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
-  return [...noteAnchors(length, notes), ...quoteAnchors(length, quotes)].sort(
+function usableAnchors(chars: string[], notes: Marginalia[], quotes: PromotedQuote[]): Anchor[] {
+  return [...noteAnchors(chars.length, notes), ...quoteAnchors(chars, quotes)].sort(
     (a, b) => a.start - b.start || a.order - b.order || a.id - b.id,
   );
 }
@@ -114,7 +133,7 @@ export function buildAnchoredSegments(
   const chars = Array.from(body);
   const segments: AnchoredSegment[] = [];
   let cursor = 0;
-  for (const anchor of usableAnchors(chars.length, notes, quotes)) {
+  for (const anchor of usableAnchors(chars, notes, quotes)) {
     if (anchor.start < cursor) continue; // overlaps a committed range — skip it
     if (anchor.start > cursor) {
       segments.push({
