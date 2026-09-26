@@ -923,10 +923,12 @@ export const careResourceSchema = z.object({
 
 /**
  * The care surface returned only on an acute-distress signal (NORTH-STAR §10):
- * a warm, non-shaming message plus the ordered human + professional resources.
- * Mirrors the backend ``CareResponse``; ``null`` on every ordinary entry.
+ * a short, never-blank heading, a warm, non-shaming message, and the ordered
+ * human + professional resources. Mirrors the backend ``CareResponse``; ``null``
+ * on every ordinary entry.
  */
 export const careResponseSchema = z.object({
+  title: z.string().min(1),
   message: z.string(),
   resources: z.array(careResourceSchema),
 });

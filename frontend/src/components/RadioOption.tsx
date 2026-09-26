@@ -4,9 +4,10 @@
  * Adoption criteria — a hand-rolled radio is a clean adopter only when every
  * point below holds. When one does not, keep the control local rather than
  * bending the primitive or weakening its a11y contract:
- * - each option is a single TouchableOpacity wrapping exactly one Text label
- *   (no icons, badges, description lines, or other child nodes);
- * - the visible label doubles as the accessible name (they cannot differ);
+ * - each option is a single TouchableOpacity wrapping one Text label plus an
+ *   optional hint line beneath it (no icons, badges, or other child nodes);
+ * - the visible label doubles as the accessible name (they cannot differ); the
+ *   hint is descriptive only and never contributes to that name;
  * - selection is announced through accessibilityState `selected`, not `checked`;
  * - the selected and unselected looks are expressed purely through the four
  *   style props, with no runtime-injected theme colors.
@@ -33,6 +34,15 @@ export interface RadioOptionProps {
   disabled?: boolean;
   /** Id of visible text that describes the option; linked on the web. */
   describedBy?: string;
+  /**
+   * A descriptive line rendered inside the option beneath the label, sharing
+   * its left edge. It is not part of the accessible name: pair it with
+   * `accessibilityHint` (native) and `describedBy` + `hintNativeID` (web).
+   */
+  hint?: string;
+  /** The `nativeID` the hint text carries, so `describedBy` can point at it. */
+  hintNativeID?: string;
+  hintStyle?: StyleProp<TextStyle>;
   style: StyleProp<ViewStyle>;
   selectedStyle: StyleProp<ViewStyle>;
   labelStyle: StyleProp<TextStyle>;
@@ -50,7 +60,9 @@ export interface RadioGroupProps {
 /**
  * A single radio-like option. The label doubles as the visible text and the
  * screen-reader accessibilityLabel, and the selected state drives both the
- * container and label style overlays as well as the announced selection.
+ * container and label style overlays as well as the announced selection. An
+ * optional hint sits inside the option under the label; it describes the
+ * option but never names it.
  */
 export function RadioOption({
   label,
@@ -60,6 +72,9 @@ export function RadioOption({
   accessibilityHint,
   disabled = false,
   describedBy,
+  hint,
+  hintNativeID,
+  hintStyle,
   style,
   selectedStyle,
   labelStyle,
@@ -81,6 +96,16 @@ export function RadioOption({
       {...webDescribedBy<TouchableOpacityProps>(describedBy)}
     >
       <Text style={[labelStyle, selected && selectedLabelStyle]}>{label}</Text>
+      {hint === undefined ? null : (
+        <Text
+          allowFontScaling
+          nativeID={hintNativeID}
+          importantForAccessibility="no"
+          style={hintStyle}
+        >
+          {hint}
+        </Text>
+      )}
     </TouchableOpacity>
   );
 }

@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect, jest */
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -141,6 +141,62 @@ describe('RadioOption', () => {
       />,
     );
     expect(getByTestId('opt-morning').props.accessibilityHint).toBeUndefined();
+  });
+
+  it('renders the hint inside the option node when provided, without renaming it', () => {
+    const { getByTestId } = render(
+      <RadioOption
+        label="Morning"
+        hint="Sets the window to morning"
+        selected={false}
+        onPress={jest.fn()}
+        testID="opt-morning"
+        style={baseStyle}
+        selectedStyle={selectedStyle}
+        labelStyle={baseLabelStyle}
+        selectedLabelStyle={selectedLabelStyle}
+      />,
+    );
+    const option = getByTestId('opt-morning');
+    expect(within(option).getByText('Sets the window to morning')).toBeTruthy();
+    expect(option.props.accessibilityLabel).toBe('Morning');
+  });
+
+  it('renders no second Text when no hint is given', () => {
+    const { getByTestId } = render(
+      <RadioOption
+        label="Morning"
+        selected={false}
+        onPress={jest.fn()}
+        testID="opt-morning"
+        style={baseStyle}
+        selectedStyle={selectedStyle}
+        labelStyle={baseLabelStyle}
+        selectedLabelStyle={selectedLabelStyle}
+      />,
+    );
+    expect(within(getByTestId('opt-morning')).UNSAFE_getAllByType(Text)).toHaveLength(1);
+  });
+
+  it('gives the hint text the nativeID and style it was handed', () => {
+    const { getByText } = render(
+      <RadioOption
+        label="Morning"
+        hint="Sets the window to morning"
+        hintNativeID="opt-morning-hint"
+        hintStyle={{ color: 'rgb(7, 8, 9)' }}
+        selected={false}
+        onPress={jest.fn()}
+        testID="opt-morning"
+        style={baseStyle}
+        selectedStyle={selectedStyle}
+        labelStyle={baseLabelStyle}
+        selectedLabelStyle={selectedLabelStyle}
+      />,
+    );
+    const hint = getByText('Sets the window to morning');
+    expect(hint.props.nativeID).toBe('opt-morning-hint');
+    expect(StyleSheet.flatten(hint.props.style).color).toBe('rgb(7, 8, 9)');
   });
 
   it('applies the selected container and label styles only when selected', () => {

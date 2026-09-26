@@ -68,4 +68,21 @@ export const reflectionCardStyles = StyleSheet.create({
     color: ink.primary,
     marginBottom: SPACING.md,
   },
+  /**
+   * A short heading-size header for a card whose message is body text (the care
+   * note, #2862). Padded on the right by one touch target so it never runs under
+   * a top-right close X.
+   */
+  heading: {
+    ...editorialType.heading,
+    color: ink.primary,
+    marginBottom: SPACING.sm,
+    paddingRight: touchTarget.minimum,
+  },
+  /** Soft body text beneath a ``heading``. */
+  careBody: {
+    ...editorialType.note,
+    color: ink.soft,
+    marginBottom: SPACING.md,
+  },
 });

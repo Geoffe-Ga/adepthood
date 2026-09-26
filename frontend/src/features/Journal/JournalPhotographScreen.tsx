@@ -997,6 +997,8 @@ function ReviewView({ model }: { model: CaptureModel }): React.JSX.Element {
         onRetake={run.retakeBlock}
         onRemove={run.removeBlock}
         isConfirmingRedo={run.isConfirmingRedo}
+        overlaps={run.overlaps}
+        onKeepSeam={run.keepSeam}
       />
       <Text testID="photograph-run-progress" style={styles.progress}>
         {run.progress}

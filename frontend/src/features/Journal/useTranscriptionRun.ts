@@ -15,25 +15,24 @@
  * launch ledger (a ref) means even a re-entrant effect run cannot fire the same read
  * twice. The only way to re-read a settled page is an explicit `retry`.
  */
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject } from 'react';
 
 import { MAX_TRANSCRIBE_IMAGE_BYTES } from './capture/prepareImage';
 import type { CapturePage } from './captureSession';
 import {
+  EMPTY_RUN_STATE,
   hasTerminalError,
   isRunComplete,
   mergeBlocks,
   progressLabel,
+  selectSeamOverlaps,
   selectStartable,
   transcriptionRunReducer,
 } from './transcriptionRun';
-import type { TranscriptionBlock, TranscriptionRunState } from './transcriptionRun';
+import type { SeamInfo, TranscriptionBlock, TranscriptionRunState } from './transcriptionRun';
 
 import { TranscriptionError, journal } from '@/api';
-
-/** An empty run — the reducer's initial state before any page is seeded. */
-const EMPTY_RUN: TranscriptionRunState = { order: [], blocks: {}, orphans: [] };
 
 /** A stable empty set so the initial redo-confirm state never re-triggers renders. */
 const NO_REDO_CONFIRM: ReadonlySet<string> = new Set();
@@ -65,6 +64,32 @@ export function asTranscriptionError(err: unknown): TranscriptionError {
   return err instanceof TranscriptionError ? err : new TranscriptionError('unknown', null, err);
 }
 
+/**
+ * What a later page's notice needs about the lines it repeats from the page before
+ * it: which page that is (by id, for Keep them, and by position, for the copy) and
+ * how many lines the merge emits once. Counts and positions only — never text.
+ */
+export interface BlockOverlapNotice {
+  earlierId: string;
+  earlierPosition: number;
+  lineCount: number;
+}
+
+/** The notices to show, keyed by the later page's id: every seam with an applied
+ *  overlap (a kept seam, or one with nothing repeated, shows none). */
+function toOverlapNotices(seams: readonly SeamInfo[]): Record<string, BlockOverlapNotice> {
+  const notices: Record<string, BlockOverlapNotice> = {};
+  for (const seam of seams) {
+    if (!seam.overlap) continue;
+    notices[seam.laterId] = {
+      earlierId: seam.earlierId,
+      earlierPosition: seam.earlierPosition,
+      lineCount: seam.overlap.noticeLineCount,
+    };
+  }
+  return notices;
+}
+
 /** What the screen and its preview need from a live run. */
 export interface TranscriptionRunModel {
   blocks: Record<string, TranscriptionBlock>;
@@ -72,6 +97,10 @@ export interface TranscriptionRunModel {
   hasTerminalError: boolean;
   progress: string;
   mergedText: string;
+  /** Per later-page notices for lines the merge emits once, keyed by page id. */
+  overlaps: Readonly<Record<string, BlockOverlapNotice>>;
+  /** Keep one seam's repeated lines in the merge ("Keep them"). */
+  keepSeam: (_earlierId: string, _laterId: string) => void;
   editBlock: (_id: string, _text: string) => void;
   retryBlock: (_block: TranscriptionBlock) => void;
   confirmRedo: (_id: string) => void;
@@ -204,7 +233,7 @@ export function useTranscriptionRun({
   onRemove,
   onPageTranscribed,
 }: UseTranscriptionRunArgs): TranscriptionRunModel {
-  const [runState, dispatch] = useReducer(transcriptionRunReducer, EMPTY_RUN);
+  const [runState, dispatch] = useReducer(transcriptionRunReducer, EMPTY_RUN_STATE);
   const pagesRef = useRef<CapturePage[]>(pages);
   pagesRef.current = pages;
   // The launch ledger only ever grows, and deliberately so: it is bounded by the
@@ -230,14 +259,24 @@ export function useTranscriptionRun({
     dispatch({ type: 'edit', id, text });
   }, []);
 
+  const keepSeam = useCallback((earlierId: string, laterId: string): void => {
+    dispatch({ type: 'keepSeam', earlierId, laterId });
+  }, []);
+
   const { retryBlock, confirmRedo, isConfirmingRedo } = useRedoConfirm(dispatch);
+  // One matcher pass per state change feeds both the merge and the notices, so
+  // they can never disagree about which lines are repeated.
+  const seams = useMemo(() => selectSeamOverlaps(runState, pages), [runState, pages]);
+  const overlaps = useMemo(() => toOverlapNotices(seams), [seams]);
 
   return {
     blocks: runState.blocks,
     isComplete: isRunComplete(runState, pages),
     hasTerminalError: hasTerminalError(runState),
     progress: progressLabel(runState, pages),
-    mergedText: mergeBlocks(runState, pages),
+    mergedText: mergeBlocks(runState, pages, seams),
+    overlaps,
+    keepSeam,
     editBlock,
     retryBlock,
     confirmRedo,

@@ -50,8 +50,10 @@ import {
 const ACCENT_BAR_WIDTH = 3;
 
 const BAND_LABEL = 'Where your reflections come from';
-const DISMISS_LABEL = 'Not now';
-const DISMISS_A11Y = 'Set this note about your corpus aside';
+// The decline is an icon-only X in the card's top-right corner (#2949, the
+// same close variant CareSupportNote adopted in #2862), so the word the sighted
+// reader used to see lives on in the accessible name alone.
+const DISMISS_A11Y = 'Not now — set this note about your corpus aside';
 
 /** The call to action per state, and where it goes. */
 const NOT_CONSENTED_CTA = 'Look at the decision';
@@ -159,7 +161,7 @@ function VoiceReadinessBand(): React.JSX.Element | null {
         <Text style={styles.cta}>{cta}</Text>
       </TouchableOpacity>
       <ReflectionDismiss
-        label={DISMISS_LABEL}
+        variant="close"
         accessibilityLabel={DISMISS_A11Y}
         testID="journal-voice-readiness-dismiss"
         onPress={onDismiss}
@@ -182,6 +184,10 @@ const styles = StyleSheet.create({
   },
   openArea: {
     minHeight: touchTarget.minimum,
+    // The close X is absolutely placed in the band's top-right corner, so the
+    // text column steps clear of its hit area: label, body and CTA never run
+    // under the glyph at any width.
+    paddingRight: touchTarget.minimum,
   },
   label: {
     ...editorialType.caption,

@@ -11,7 +11,9 @@
  * Beneath either — and beneath neither, when both have been set aside — sits a
  * quiet "Start a review early" link that opens the ``ReviewScopePicker`` for
  * every layer still in progress. Nothing is gated: any review can be begun on
- * any day.
+ * any day. Setting the tip aside with its corner X hands focus to that link, so
+ * a keyboard or screen-reader user is not dropped to the top of the page when
+ * the card goes (#2860).
  *
  * No card renders until the due lookup first settles. Showing the daily page
  * meanwhile and swapping it for the review would put a mis-tap one network
@@ -19,7 +21,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import MorningPagesTip from './MorningPagesTip';
@@ -37,6 +39,7 @@ import { useDueReview } from './useDueReview';
 import { Button } from '@/components/Button';
 import { SPACING } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 
 type InvitationNavigation = NativeStackNavigationProp<RootStackParamList>;
 
@@ -49,14 +52,18 @@ export interface JournalPrimaryInvitationProps {
 function PrimaryCard({
   onBeginPage,
   onOpenReview,
+  onTipDismissed,
   due,
 }: {
   onBeginPage: (_prefillTitle: string) => void;
   onOpenReview: () => void;
+  onTipDismissed: () => void;
   due: ReturnType<typeof useDueReview>;
 }): React.JSX.Element | null {
   if (due.status === 'loading') return null;
-  if (due.review == null) return <MorningPagesTip onBegin={onBeginPage} />;
+  if (due.review == null) {
+    return <MorningPagesTip onBegin={onBeginPage} onDismissed={onTipDismissed} />;
+  }
   return (
     <ReflectionInvitationBand review={due.review} onOpen={onOpenReview} onDismiss={due.dismiss} />
   );
@@ -69,6 +76,9 @@ function JournalPrimaryInvitation({
   const due = useDueReview();
   const { review } = due;
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Always mounted, so the tip's X can hand focus here synchronously as it goes.
+  const earlyLinkRef = useRef<View>(null);
+  const focusEarlyLink = useCallback(() => moveAccessibilityFocus(earlyLinkRef.current), []);
   // Bumped on every focus so an open picker re-reads /reflections/current: a
   // scope claimed while the writer was away must be offered to continue.
   const [focusCount, setFocusCount] = useState(0);
@@ -95,8 +105,14 @@ function JournalPrimaryInvitation({
 
   return (
     <View>
-      <PrimaryCard onBeginPage={onBeginPage} onOpenReview={openReview} due={due} />
+      <PrimaryCard
+        onBeginPage={onBeginPage}
+        onOpenReview={openReview}
+        onTipDismissed={focusEarlyLink}
+        due={due}
+      />
       <Button
+        ref={earlyLinkRef}
         variant="tertiary"
         label={pickerOpen ? REVIEW_EARLY_CLOSE : REVIEW_EARLY_LINK}
         accessibilityLabel={pickerOpen ? REVIEW_EARLY_CLOSE_A11Y : REVIEW_EARLY_A11Y}
@@ -110,10 +126,14 @@ function JournalPrimaryInvitation({
 }
 
 const styles = StyleSheet.create({
+  // The link sits on the section's left edge, level with the prompt band's
+  // eyebrow above it (#2949). Button.base pads the row by SPACING.xl and
+  // centres its label, so both are overridden here: no side padding, and the
+  // row leads from the left rather than floating its label mid-column.
   earlyLink: {
-    alignSelf: 'flex-start',
     marginTop: SPACING.sm,
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: 0,
+    justifyContent: 'flex-start',
   },
 });
 

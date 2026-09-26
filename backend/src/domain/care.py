@@ -42,26 +42,33 @@ class CareResource:
 
 @dataclass(frozen=True)
 class CarePayload:
-    """The full care surface: a warm message plus the structured resources.
+    """The full care surface: a short title, a warm message, and the resources.
 
-    Returned alongside (never instead of) the resonance reflection when an entry
-    screens as elevated, so the response is never *only* AI-generated text.
+    ``title`` is the five-word heading the client renders at heading size;
+    ``message`` is the body beneath it. Returned alongside (never instead of) the
+    resonance reflection when an entry screens as elevated, so the response is
+    never *only* AI-generated text.
     """
 
+    title: str
     message: str
     resources: tuple[CareResource, ...]
 
 
-# A warm, non-shaming invitation. It names that reaching a person matters and
-# explicitly does not frame distress as a failure (NORTH-STAR §10). No diagnosis,
-# no medication or treatment advice — only an invitation toward human contact.
+# The card's heading (#2862): short enough to read at a glance, so the resources
+# below it are what fills the space. It carries the "not alone" half of the
+# invitation that the message used to open with.
+CARE_TITLE = "You're not alone in this"
+
+# A warm, non-shaming invitation beneath the title. Warmth now lives in title +
+# message together: the title says the writer is not alone, the message names the
+# feeling as real and reaching a person as strength. The longer "not a failure"
+# reframe was cut by design (#2862) so the note stops pushing the entry off the
+# screen; nothing here frames distress as failing. No diagnosis, no medication or
+# treatment advice -- only an invitation toward human contact (NORTH-STAR §10).
 CARE_MESSAGE = (
-    "Reading this, I want to make sure you're not carrying it alone. "
-    "What you're feeling is real, and it does not make you a failure — "
-    "it makes you human. You don't have to face this moment by yourself, "
-    "and reaching out to a person is a sign of strength, not weakness. "
-    "The people below are there for exactly this, any time, and so is "
-    "someone you trust."
+    "What you're feeling is real, and reaching out to a person is a sign of strength. "
+    "The people below are there for exactly this, any time."
 )
 
 # Human + professional support pointers. Order leads with the immediate crisis
@@ -123,10 +130,10 @@ MEDICATION_GUARDRAIL = (
 
 
 def build_care_payload() -> CarePayload:
-    """Return the care surface (warm message + human and professional pointers).
+    """Return the care surface (title, warm message, human and professional pointers).
 
     Pure and deterministic: the same reviewable, localizable constants every
     time, derived from nothing user-specific so it can never leak across users.
     Contains no diagnosis, no medication guidance, and no treatment advice.
     """
-    return CarePayload(message=CARE_MESSAGE, resources=CARE_RESOURCES)
+    return CarePayload(title=CARE_TITLE, message=CARE_MESSAGE, resources=CARE_RESOURCES)

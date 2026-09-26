@@ -1296,6 +1296,7 @@ def _care_surface(payload: CarePayload) -> CareResponse:
     surface without a cast through an optional.
     """
     return CareResponse(
+        title=payload.title,
         message=payload.message,
         resources=[
             CareResourceResponse(

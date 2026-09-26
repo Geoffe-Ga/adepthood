@@ -7,14 +7,18 @@
  *
  * PRIVACY: a block renders status, text, and a failure's copy only — never the
  * page image — so no base64 reaches the tree, a testID, or the accessibility layer.
+ * A repeated-lines notice carries counts and page positions only, never the
+ * lines themselves.
  */
 import React, { useState } from 'react';
 import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
 import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
+import { SeamOverlapSlot } from './SeamOverlapNotice';
 import { TERMINAL_ERROR_KINDS } from './transcriptionRun';
 import type { TranscriptionBlock } from './transcriptionRun';
+import type { BlockOverlapNotice } from './useTranscriptionRun';
 
 import { TranscriptionError } from '@/api';
 import type { TranscriptionErrorKind } from '@/api';
@@ -106,6 +110,42 @@ interface DoneBlockProps {
   onEdit: (_id: string, _text: string) => void;
   onRetry: (_block: TranscriptionBlock) => void;
   onConfirmRedo: (_id: string) => void;
+  /** The lines this page repeats from the one before it, if any. */
+  overlap: BlockOverlapNotice | undefined;
+  onKeepSeam: (_earlierId: string, _laterId: string) => void;
+}
+
+/** A landed page's explicit re-read, and its inline confirm once hand-edited. */
+function RedoActions({
+  position,
+  block,
+  confirming,
+  onRetry,
+  onConfirmRedo,
+}: Pick<
+  DoneBlockProps,
+  'position' | 'block' | 'confirming' | 'onRetry' | 'onConfirmRedo'
+>): React.JSX.Element {
+  return (
+    <View style={styles.blockActions}>
+      <Button
+        testID={`photograph-block-${position}-redo`}
+        variant="tertiary"
+        label={REDO_LABEL}
+        accessibilityLabel={REDO_LABEL}
+        onPress={() => onRetry(block)}
+      />
+      {confirming ? (
+        <Button
+          testID={`photograph-block-${position}-redo-confirm`}
+          variant="secondary"
+          label={REDO_CONFIRM_LABEL}
+          accessibilityLabel={REDO_CONFIRM_LABEL}
+          onPress={() => onConfirmRedo(block.id)}
+        />
+      ) : null}
+    </View>
+  );
 }
 
 /** A landed page: its editable text, plus an explicit re-read (guarded by an inline
@@ -117,6 +157,8 @@ function DoneBlock({
   onEdit,
   onRetry,
   onConfirmRedo,
+  overlap,
+  onKeepSeam,
 }: DoneBlockProps): React.JSX.Element {
   // The browser's focus ring is dropped on web, and this field's own hairline
   // box does not otherwise react to focus — so it warms its border instead,
@@ -136,24 +178,18 @@ function DoneBlock({
         multiline
         accessibilityLabel={blockInputA11y(position)}
       />
-      <View style={styles.blockActions}>
-        <Button
-          testID={`photograph-block-${position}-redo`}
-          variant="tertiary"
-          label={REDO_LABEL}
-          accessibilityLabel={REDO_LABEL}
-          onPress={() => onRetry(block)}
-        />
-        {confirming ? (
-          <Button
-            testID={`photograph-block-${position}-redo-confirm`}
-            variant="secondary"
-            label={REDO_CONFIRM_LABEL}
-            accessibilityLabel={REDO_CONFIRM_LABEL}
-            onPress={() => onConfirmRedo(block.id)}
-          />
-        ) : null}
-      </View>
+      <SeamOverlapSlot
+        position={position}
+        overlap={overlap}
+        onKeep={(kept) => onKeepSeam(kept.earlierId, block.id)}
+      />
+      <RedoActions
+        position={position}
+        block={block}
+        confirming={confirming}
+        onRetry={onRetry}
+        onConfirmRedo={onConfirmRedo}
+      />
     </View>
   );
 }
@@ -239,6 +275,10 @@ export interface TranscriptionPreviewProps {
   onRetake: (_id: string) => void;
   onRemove: (_id: string) => void;
   isConfirmingRedo: (_id: string) => boolean;
+  /** Repeated-lines notices, keyed by the later page's id (see useTranscriptionRun). */
+  overlaps: Readonly<Record<string, BlockOverlapNotice>>;
+  /** Keep one seam's repeated lines in the merge ("Keep them"). */
+  onKeepSeam: (_earlierId: string, _laterId: string) => void;
 }
 
 /** Pick the right per-status body for one page's block. */
@@ -260,6 +300,8 @@ function BlockContent({
         onEdit={props.onEdit}
         onRetry={props.onRetry}
         onConfirmRedo={props.onConfirmRedo}
+        overlap={props.overlaps[block.id]}
+        onKeepSeam={props.onKeepSeam}
       />
     );
   }

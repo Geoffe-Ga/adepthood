@@ -15,6 +15,7 @@ from __future__ import annotations
 from domain.care import (
     CARE_MESSAGE,
     CARE_RESOURCES,
+    CARE_TITLE,
     MEDICATION_GUARDRAIL,
     CarePayload,
     CareResource,
@@ -28,6 +29,33 @@ def test_payload_carries_the_message_and_all_resources() -> None:
     assert payload.message == CARE_MESSAGE
     assert payload.resources == CARE_RESOURCES
     assert all(isinstance(resource, CareResource) for resource in payload.resources)
+
+
+# The issue's reviewed copy (#2862): a five-word heading and a two-sentence body.
+_EXPECTED_TITLE = "You're not alone in this"
+_EXPECTED_MESSAGE = (
+    "What you're feeling is real, and reaching out to a person is a sign of strength. "
+    "The people below are there for exactly this, any time."
+)
+_MAX_MESSAGE_SENTENCES = 2
+
+
+def test_payload_carries_a_short_title() -> None:
+    payload = build_care_payload()
+    assert CARE_TITLE == _EXPECTED_TITLE
+    assert payload.title == CARE_TITLE
+
+
+def test_message_is_at_most_two_sentences() -> None:
+    assert CARE_MESSAGE == _EXPECTED_MESSAGE
+    assert CARE_MESSAGE.count(".") <= _MAX_MESSAGE_SENTENCES
+
+
+def test_resources_lead_with_the_crisis_lines_in_canonical_order() -> None:
+    kinds = [resource.kind for resource in CARE_RESOURCES]
+    assert kinds == ["hotline", "text_line", "human", "professional"]
+    assert "988" in CARE_RESOURCES[0].contact
+    assert "741741" in CARE_RESOURCES[1].contact
 
 
 def test_routes_to_human_and_professional_support() -> None:
@@ -44,15 +72,18 @@ def test_includes_the_expected_crisis_pointers() -> None:
 
 
 def test_message_is_warm_and_non_shaming() -> None:
-    lowered = CARE_MESSAGE.lower()
-    # Explicitly reframes distress as not a failure; never shaming.
-    assert "failure" in lowered
+    lowered = f"{CARE_TITLE} {CARE_MESSAGE}".lower()
+    # Names that the writer is not alone and that reaching out is strength.
     assert "alone" in lowered
+    assert "strength" in lowered
+    # Never shaming: no framing of distress as weakness or failing.
+    for shaming in ("weak", "fail", "should have"):
+        assert shaming not in lowered
 
 
 def test_contains_no_diagnosis_or_medication_guidance() -> None:
     blob = " ".join(f"{r.name} {r.contact} {r.what_it_is}" for r in (*CARE_RESOURCES,)).lower()
-    blob += " " + CARE_MESSAGE.lower()
+    blob += " " + CARE_TITLE.lower() + " " + CARE_MESSAGE.lower()
     for banned in ("diagnos", "medication", "prescri", "dosage", "pill", "antidepressant"):
         assert banned not in blob
 

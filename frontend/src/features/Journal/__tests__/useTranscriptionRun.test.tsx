@@ -232,3 +232,71 @@ describe('useTranscriptionRun — the concurrency bound survives a mid-flight re
     expect(sentImages().slice(2)).toEqual(['base64-page-3', 'base64-page-4']);
   });
 });
+
+describe('useTranscriptionRun — overlapping screenshots', () => {
+  const PAGE_ONE = [
+    'Sam: Are you still coming tonight?',
+    'Me: Yes — leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags',
+  ].join('\n');
+  const PAGE_TWO = [
+    'leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags?',
+    'Sam: Two should do it. Thank you!',
+  ].join('\n');
+  const MERGED = [
+    'Sam: Are you still coming tonight?',
+    'Me: Yes — leaving at 6.',
+    'Sam: Can you grab ice on the way?',
+    'Me: Sure, how many bags?',
+    'Sam: Two should do it. Thank you!',
+  ].join('\n');
+
+  async function readTwoOverlappingPages() {
+    mockTranscribe.mockResolvedValueOnce({ text: PAGE_ONE });
+    mockTranscribe.mockResolvedValueOnce({ text: PAGE_TWO });
+    const rendered = renderRun([page('page-1'), page('page-2')]);
+    await waitFor(() => expect(rendered.result.current.isComplete).toBe(true));
+    return rendered;
+  }
+
+  it('reports the overlap on the later page and merges it once', async () => {
+    const { result } = await readTwoOverlappingPages();
+    expect(result.current.overlaps).toEqual({
+      'page-2': { earlierId: 'page-1', earlierPosition: 1, lineCount: 3 },
+    });
+    expect(result.current.mergedText).toBe(MERGED);
+  });
+
+  it('keeps both copies once the writer keeps the seam, without reading anything again', async () => {
+    const { result } = await readTwoOverlappingPages();
+    act(() => {
+      result.current.keepSeam('page-1', 'page-2');
+    });
+    expect(result.current.overlaps).toEqual({});
+    expect(result.current.mergedText).toBe(`${PAGE_ONE}\n\n${PAGE_TWO}`);
+    expect(result.current.blocks['page-2']?.text).toBe(PAGE_TWO);
+    expect(mockTranscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets a hand edit on the later page reach the merge, and drops the notice', async () => {
+    const { result } = await readTwoOverlappingPages();
+    const corrected = PAGE_TWO.replace('grab ice', 'grab rice');
+    act(() => {
+      result.current.editBlock('page-2', corrected);
+    });
+    expect(result.current.overlaps).toEqual({});
+    expect(result.current.mergedText).toBe(`${PAGE_ONE}\n\n${corrected}`);
+  });
+
+  it('reports no overlap for pages that share nothing', async () => {
+    mockTranscribe.mockResolvedValueOnce({ text: 'Page one.' });
+    mockTranscribe.mockResolvedValueOnce({ text: 'Page two.' });
+    const { result } = renderRun([page('page-1'), page('page-2')]);
+    await waitFor(() => expect(result.current.isComplete).toBe(true));
+    expect(result.current.overlaps).toEqual({});
+    expect(result.current.mergedText).toBe('Page one.\n\nPage two.');
+  });
+});

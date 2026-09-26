@@ -19,7 +19,7 @@ import { SPACING, editorialType, ink } from '@/design/tokens';
 const SupportCareScreen = (): React.JSX.Element => (
   <ScreenScaffold scroll testID="support-care-screen">
     <ScreenHeader
-      eyebrow="You are not alone"
+      eyebrow={STANDING_CARE.title}
       title="Support & care"
       lead="Support you can reach any time — not just when things are hard."
     />

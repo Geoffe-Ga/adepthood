@@ -551,7 +551,7 @@
         "type": "object"
       },
       "CareResponse": {
-        "description": "The care surface returned when an entry screens as acute distress.\n\nA warm, non-shaming message plus structured human + professional support\npointers (NORTH-STAR §10). Present only on an elevated signal; ``None`` on\nevery ordinary entry. It accompanies the reflection — never replaces it — so\na distressed person is never left alone with only AI-generated text.",
+        "description": "The care surface returned when an entry screens as acute distress.\n\nA short heading (``title``), a warm, non-shaming message, and structured\nhuman + professional support pointers (NORTH-STAR §10). Present only on an\nelevated signal; ``None`` on every ordinary entry. It accompanies the\nreflection — never replaces it — so a distressed person is never left alone\nwith only AI-generated text.",
         "properties": {
           "message": {
             "title": "Message",
@@ -563,9 +563,15 @@
             },
             "title": "Resources",
             "type": "array"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
           }
         },
         "required": [
+          "title",
           "message",
           "resources"
         ],

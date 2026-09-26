@@ -1,16 +1,43 @@
 /**
- * Single source of truth for the collapsed-row / entry-tile excerpt: a pure,
- * whitespace-flattening truncator shared by the journal shelf and the reflection
- * sources feed so both surfaces cut a body identically.
+ * Single source of truth for the collapsed-row / entry-tile excerpt, shared by
+ * the journal shelf, the voice-drafts shelf and the reflection sources feed so
+ * every preview surface cuts a body identically.
+ *
+ * A preview shows a body the way read mode shows it: emphasis markers
+ * (``**``, ``*``, ``__``, ``_``), ``<u>`` tags and the ``> `` / ``- `` block
+ * prefixes are hidden through the journal's own Markdown model — never a
+ * second regex dialect that could disagree with the reader one tap away — and
+ * the remaining text is whitespace-flattened and truncated.
  *
  * Truncation counts Unicode CODE POINTS rather than UTF-16 units so an emoji or
  * other astral character straddling the cut is kept whole or dropped whole,
  * never sheared into a lone surrogate.
  */
+import { markdownRuns, parseJournalMarkdown } from './journalMarkdown';
 
 /**
- * Flatten a body's whitespace, then truncate to ``maxLength`` code points with a
- * trailing ellipsis when it overflows.
+ * The text a reader sees for ``body`` in read mode, with its line feeds kept.
+ *
+ * Walks the model's blocks and lines exactly as the renderer does, so whatever
+ * the reader hides (markers, block prefixes) is hidden here and whatever it
+ * keeps (escaped markers, ``snake_case`` underscores) is kept. Bullet glyphs
+ * are renderer decoration, not source, so they do not appear.
+ */
+export function plainText(body: string): string {
+  const document = parseJournalMarkdown(body);
+  return document.blocks
+    .flatMap((block) => block.lines)
+    .map((line) =>
+      markdownRuns(document, line.start, line.end)
+        .map((run) => run.text)
+        .join(''),
+    )
+    .join('\n');
+}
+
+/**
+ * Hide Markdown markers, flatten the body's whitespace, then truncate to
+ * ``maxLength`` code points with a trailing ellipsis when it overflows.
  *
  * The fast path returns the flattened body untouched when its UTF-16 length is
  * within ``maxLength`` (a code-unit count that small guarantees an equal-or-lower
@@ -26,7 +53,7 @@
  * which would make its branch an untestable dead path.
  */
 export function excerpt(body: string, maxLength: number): string {
-  const flat = body.replace(/\s+/g, ' ').trim();
+  const flat = plainText(body).replace(/\s+/g, ' ').trim();
   if (flat.length <= maxLength) return flat;
   const points = Array.from(flat);
   if (points.length <= maxLength) return flat;

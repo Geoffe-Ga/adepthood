@@ -46,23 +46,32 @@ has to be declared there rather than as a ``@limiter.limit`` on the route,
 because this layer is charged before routing: a declared route limit can only
 tighten what the floor already allowed.
 
-Three residuals, recorded here rather than left to be rediscovered:
+Every request is charged against two budgets in one call: its path's floor,
+and its client's overall ceiling (``rate_limit.ClientCeiling``, #2913), which
+is keyed on the client alone and so consults no route identity either.
 
-* The bucket is keyed on the raw path, so enumerating a ``{param}`` route buys a
-  fresh 60/minute per id (measured: 70 requests across ``/journal/id-0..69``
-  draw no 429). Keying on the route *template* would fix it and is exactly the
-  route identity this layer must not consult, so the answer is a coarse
-  per-client ceiling sized against real traffic -- deliberately not in the same
-  change as this one, because moving bucket granularity and enforcement reach
-  together makes a regression in either indistinguishable.
-* ``MemoryStorage`` is per process, so the effective budget multiplies by
-  replica count. Pre-existing and unchanged by this layer; the fix is shared
-  storage, which needs its own answer for what happens when the store is
-  unreachable.
-* CORS preflight is answered by ``CORSMiddleware`` above this layer and stays
-  unthrottled (measured: 70 preflights never arrive here, before or after).
-  Moving this layer above CORS would strip the CORS headers off every 429, so
-  preflight needs a control of its own rather than a reordering.
+Residuals, recorded here rather than left to be rediscovered:
+
+* Closed by #2913. The path bucket is keyed on the raw path, so enumerating a
+  ``{param}`` route bought a fresh 60/minute per id. The 512-path fan-out
+  ceiling already refused one-shot enumeration from the 573rd distinct path,
+  but repeat hits across fewer ids than that were admitted up to some 30,780 a
+  minute. Keying on the route *template* is the route identity this layer must
+  not consult, so the answer is the per-client ceiling: ``CLIENT_CEILING_LIMIT``
+  (600/minute), sized from the worst legitimate fan-out in the code because no
+  production percentiles were available.
+* Open. All limiter state -- this floor's ``MemoryStorage``, the ceiling and
+  slowapi's declared route limits alike -- is per worker process, so the
+  effective per-deployment budget is ``WEB_CONCURRENCY`` x each limit
+  (``DEPLOYMENT.md``). The fix is a shared store, and it is not built here:
+  whoever adds one must make an asserted decision for an unreachable store --
+  fail closed, or fall back to this in-memory state -- and must never fail
+  open, which would loosen every limit exactly when the store is down.
+* Open, split out of #2913. CORS preflight is answered by ``CORSMiddleware``
+  above this layer and stays unthrottled (measured: 70 preflights never arrive
+  here, before or after). Moving this layer above CORS would strip the CORS
+  headers off every 429, so preflight needs a control of its own -- a new layer
+  inserted above CORS -- rather than a reordering.
 
 Version pins this was measured against (``backend/requirements-lock.txt``,
 where starlette's adopted version lives): fastapi 0.141.1, starlette 1.7.0,
@@ -92,10 +101,10 @@ if TYPE_CHECKING:
 
 
 class AmbientRateLimitMiddleware(BaseHTTPMiddleware):
-    """Charge every request against the ambient floor, whatever it is for."""
+    """Charge every request against its path floor and its client's ceiling, whatever it is for."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Refuse the request when its client has spent this path's budget.
+        """Refuse the request when its client has spent this path's budget or its ceiling.
 
         Args:
             request: The inbound request, read only for its client key and its

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, useWindowDimensions, View } from 'react-native';
+import { Text, useWindowDimensions } from 'react-native';
 
 import { FEEDBACK_CATEGORY_CONFIG, FEEDBACK_CATEGORY_ORDER } from '../feedbackCategories';
 import { FEEDBACK_COMPOSER_COPY } from '../feedbackCopy';
@@ -25,9 +25,10 @@ interface CategoryChoiceProps {
 }
 
 /**
- * One choice and its description. The description is visible text and the
- * web's description of the option: react-native-web drops accessibilityHint,
- * so the hint alone reached nobody there.
+ * One choice and its description. The description is visible text inside the
+ * option -- it describes that option, so it sits in its box -- and the web's
+ * `aria-describedby` target: react-native-web drops accessibilityHint, so the
+ * hint alone reached nobody there.
  */
 function CategoryChoice({
   category,
@@ -40,29 +41,22 @@ function CategoryChoice({
   const config = FEEDBACK_CATEGORY_CONFIG[category];
   const descriptionId = FEEDBACK_TEST_IDS.categoryDescription(category);
   return (
-    <View>
-      <RadioOption
-        label={config.label}
-        accessibilityHint={config.description}
-        describedBy={descriptionId}
-        selected={selected}
-        disabled={disabled}
-        onPress={() => onSelect(category)}
-        testID={FEEDBACK_TEST_IDS.categoryOption(category)}
-        style={optionStyles.option}
-        selectedStyle={optionStyles.optionSelected}
-        labelStyle={optionStyles.label}
-        selectedLabelStyle={optionStyles.labelSelected}
-      />
-      <Text
-        allowFontScaling
-        nativeID={descriptionId}
-        importantForAccessibility="no"
-        style={[t.caption, optionStyles.description]}
-      >
-        {config.description}
-      </Text>
-    </View>
+    <RadioOption
+      label={config.label}
+      accessibilityHint={config.description}
+      describedBy={descriptionId}
+      hint={config.description}
+      hintNativeID={descriptionId}
+      hintStyle={[t.caption, optionStyles.description]}
+      selected={selected}
+      disabled={disabled}
+      onPress={() => onSelect(category)}
+      testID={FEEDBACK_TEST_IDS.categoryOption(category)}
+      style={optionStyles.option}
+      selectedStyle={optionStyles.optionSelected}
+      labelStyle={optionStyles.label}
+      selectedLabelStyle={optionStyles.labelSelected}
+    />
   );
 }
 

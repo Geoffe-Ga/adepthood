@@ -10,12 +10,15 @@
  * failure) is asserted here through the component that decides.
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import { morningPageTitle } from '../morningPagesCopy';
 
 import type { ReflectionCurrentScope, ReflectionDue, ReflectionLevel, Stage } from '@/api';
+import { uiType } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 const mockDue = jest.fn() as jest.MockedFunction<() => Promise<{ due: ReflectionDue | null }>>;
@@ -75,6 +78,9 @@ jest.mock('@react-navigation/native', () => {
     },
   };
 });
+
+jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
+const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
 const JournalPrimaryInvitation = require('../JournalPrimaryInvitation').default;
 
@@ -255,6 +261,25 @@ describe('JournalPrimaryInvitation on any other day', () => {
 });
 
 describe('the early-review link', () => {
+  it('sits on the section edge in the button face, level with the set-aside count', async () => {
+    mockDue.mockResolvedValue({ due: null });
+    const { findByTestId, getByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+    const link = getByTestId('journal-review-early');
+
+    // No self-indent and no side padding: the label starts where the eyebrow
+    // above it starts. Button.base centres its label, so the row must be told
+    // to lead from the left or the link would float mid-column.
+    const control = StyleSheet.flatten(link.props.style);
+    expect(control.alignSelf).toBeUndefined();
+    expect(control.paddingHorizontal).toBe(0);
+    expect(control.justifyContent).toBe('flex-start');
+
+    const label = StyleSheet.flatten(within(link).getByText('Start a review early').props.style);
+    expect(label.fontSize).toBe(uiType.button.fontSize);
+    expect(label.fontWeight).toBe(uiType.button.fontWeight);
+  });
+
   it('is present on a review day', async () => {
     const { findByTestId, getByTestId } = renderInvitation();
     await findByTestId('journal-reflection-band');
@@ -308,6 +333,41 @@ describe('the early-review link', () => {
     });
     // Choosing folds the list away, so a return to the shelf finds it closed.
     await waitFor(() => expect(queryByTestId('journal-review-scope-week')).toBeNull());
+  });
+});
+
+describe('setting the morning-pages tip aside (#2860)', () => {
+  beforeEach(() => {
+    mockMoveFocus.mockReset();
+    mockDue.mockResolvedValue({ due: null });
+  });
+
+  it('hands focus to the early-review link rather than dropping it with the card', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-morning-pages-dismiss'));
+    });
+
+    expect(mockSaveTipDismissed).toHaveBeenCalledWith(true);
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const [target] = mockMoveFocus.mock.calls[0] ?? [];
+    expect(target).not.toBeNull();
+    expect((target as unknown as { props: { testID?: string } }).props.testID).toBe(
+      'journal-review-early',
+    );
+    await waitFor(() => expect(queryByTestId('journal-morning-pages-tip')).toBeNull());
+    expect(getByTestId('journal-review-early')).toBeTruthy();
+  });
+
+  it('moves no focus when the tip was already set aside on an earlier visit', async () => {
+    mockLoadTipDismissed.mockResolvedValue(true);
+    const { getByTestId } = renderInvitation();
+    await settle();
+    expect(getByTestId('journal-review-early')).toBeTruthy();
+    expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });
 

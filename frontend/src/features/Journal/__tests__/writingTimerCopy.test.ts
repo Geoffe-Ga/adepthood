@@ -3,6 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 
 import {
   WRITING_TIMER_COPY_ENTRIES,
+  WRITING_TIMER_PRESET_UNIT,
   writingSessionSummary,
   writingTimerPresetA11yLabel,
   writingTimerPresetLabel,
@@ -39,9 +40,15 @@ describe('writingTimerCopy — balance-not-altitude intent rule', () => {
 });
 
 describe('writingTimerCopy — the strings themselves', () => {
-  it('labels a preset by its length, on the face and to a screen reader', () => {
-    expect(writingTimerPresetLabel(10)).toBe('10 min');
+  it('labels a preset by its bare number on the face, and in full to a screen reader', () => {
+    expect(writingTimerPresetLabel(10)).toBe('10');
+    expect(writingTimerPresetLabel(45)).toBe('45');
     expect(writingTimerPresetA11yLabel(30)).toBe('Write for 30 minutes');
+  });
+
+  it('carries the unit once, at the end of the row, and sweeps it with the rest', () => {
+    expect(WRITING_TIMER_PRESET_UNIT).toBe('min');
+    expect(WRITING_TIMER_COPY_ENTRIES).toContain(WRITING_TIMER_PRESET_UNIT);
   });
 
   it('reports a finished session as a plain account of what happened', () => {

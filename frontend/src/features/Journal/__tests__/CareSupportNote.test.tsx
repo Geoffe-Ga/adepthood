@@ -1,15 +1,17 @@
 /* eslint-env jest */
-import { describe, it, expect } from '@jest/globals';
+import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 /**
  * Specs for ``CareSupportNote`` — the crisis-care surface. It:
- * - Renders a warm ``message`` with ``accessibilityRole="header"``.
- * - Lists every resource with name, contact, and what_it_is text visible.
+ * - Renders a short ``title`` as the header-role heading (heading size, #2862)
+ *   and the warm ``message`` beneath it as soft body text.
+ * - Lists every resource in compact rows: name · contact, then what it is.
  * - Gives each resource a descriptive accessibilityLabel (not just the kind slug).
- * - Collapses the resource list to a compact re-opener via a dismiss control,
- *   and the re-opener brings resources back (not a dead-end).
+ * - An icon-only X removes the whole card, leaving one "Support options" line
+ *   that restores it (never a dead-end); a fresh care object re-shows the card.
  * - Renders nothing when ``care`` is null.
  * - Meets the 44dp ``touchTarget.minimum`` on interactive elements.
  * - Is a static reflection surface (no TextInput composer), not a chatbot.
@@ -17,7 +19,11 @@ import React from 'react';
 import CareSupportNote from '../CareSupportNote';
 
 import type { CareResponse } from '@/api';
-import { touchTarget } from '@/design/tokens';
+import { INTERACTIVE_TEXT_MIN, editorialType, ink, touchTarget } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
+
+jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
+const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -25,6 +31,7 @@ import { touchTarget } from '@/design/tokens';
 
 function carePayload(overrides: Partial<CareResponse> = {}): CareResponse {
   return {
+    title: "You're not alone in this",
     message: 'What you shared sounds heavy. Here are some people who can help right now.',
     resources: [
       {
@@ -66,6 +73,11 @@ function StyleSheetMin(node: { props: { style: unknown } }): number {
   return Math.min(flat.minHeight ?? 0, flat.minWidth ?? 0);
 }
 
+type RenderedTreeNode = {
+  props: { testID?: unknown; accessibilityRole?: unknown; children?: unknown };
+  children: (RenderedTreeNode | string)[];
+};
+
 type RenderedNode = {
   type: string;
   children: (RenderedNode | string)[] | null;
@@ -104,27 +116,49 @@ describe('CareSupportNote — initial render', () => {
     expect(getByTestId('care-support')).toBeTruthy();
   });
 
-  it('renders the message text', () => {
-    const { getByText } = render(<CareSupportNote care={carePayload()} />);
-    expect(
-      getByText('What you shared sounds heavy. Here are some people who can help right now.'),
-    ).toBeTruthy();
+  it('renders the title as the header-role element at heading size, not title size', () => {
+    const care = carePayload();
+    const { getByRole } = render(<CareSupportNote care={care} />);
+    const header = getByRole('header');
+    expect(header.props.children).toBe(care.title);
+    const flat = StyleSheet.flatten(header.props.style);
+    expect(flat.fontSize).toBe(editorialType.heading.fontSize);
+    expect(flat.fontSize).not.toBe(editorialType.title.fontSize);
   });
 
-  it('gives the message element accessibilityRole="header"', () => {
-    const { getByText } = render(<CareSupportNote care={carePayload()} />);
-    const messageEl = getByText(
-      'What you shared sounds heavy. Here are some people who can help right now.',
+  it('keeps the heading clear of the top-right X', () => {
+    const header = render(<CareSupportNote care={carePayload()} />).getByRole('header');
+    expect(StyleSheet.flatten(header.props.style).paddingRight).toBeGreaterThanOrEqual(
+      touchTarget.minimum,
     );
-    expect(messageEl.props.accessibilityRole).toBe('header');
   });
 
-  it('renders name text for all four resource kinds', () => {
+  it('renders the message as soft body text, not a header', () => {
+    const care = carePayload();
+    const { getByText } = render(<CareSupportNote care={care} />);
+    const messageEl = getByText(care.message);
+    expect(messageEl.props.accessibilityRole).toBeUndefined();
+    const flat = StyleSheet.flatten(messageEl.props.style);
+    expect(flat.fontSize).toBe(editorialType.note.fontSize);
+    expect(flat.color).toBe(ink.soft);
+  });
+
+  it('renders name and contact on one compact line for all four resource kinds', () => {
     const { getByText } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByText('988 Suicide & Crisis Lifeline')).toBeTruthy();
-    expect(getByText('Crisis Text Line')).toBeTruthy();
-    expect(getByText('Trusted person in your life')).toBeTruthy();
-    expect(getByText('Licensed therapist')).toBeTruthy();
+    expect(getByText('988 Suicide & Crisis Lifeline · 988')).toBeTruthy();
+    expect(getByText('Crisis Text Line · Text HOME to 741741')).toBeTruthy();
+    expect(getByText('Trusted person in your life · Call, text, or visit')).toBeTruthy();
+    expect(getByText('Licensed therapist · Psychology Today directory')).toBeTruthy();
+  });
+
+  it('leads with the two crisis lines, then a trusted person, then a professional', () => {
+    const { getAllByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(getAllByTestId(/^care-resource-/).map((node) => node.props.testID)).toEqual([
+      'care-resource-hotline',
+      'care-resource-text_line',
+      'care-resource-human',
+      'care-resource-professional',
+    ]);
   });
 
   it('renders contact text for all four resource kinds', () => {
@@ -189,9 +223,48 @@ describe('CareSupportNote — per-resource testIDs', () => {
 // ---------------------------------------------------------------------------
 
 describe('CareSupportNote — dismiss and re-open', () => {
-  it('mounts a dismiss control with testID "care-dismiss"', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
-    expect(getByTestId('care-dismiss')).toBeTruthy();
+  it('mounts an icon-only X with testID "care-dismiss" in the top-right corner', () => {
+    const { getByTestId, queryByText } = render(<CareSupportNote care={carePayload()} />);
+    const dismiss = getByTestId('care-dismiss');
+    expect(dismiss.props.accessibilityRole).toBe('button');
+    expect(dismiss.props.accessibilityLabel).toBe('Hide the support note');
+    expect(queryByText('Dismiss')).toBeNull();
+    const flat = StyleSheet.flatten(dismiss.props.style);
+    expect(flat.position).toBe('absolute');
+    expect(flat.top).toBe(0);
+    expect(flat.right).toBe(0);
+  });
+
+  it('reads title, message, the resources, then the X (focus order)', () => {
+    const care = carePayload();
+    const { getByTestId } = render(<CareSupportNote care={care} />);
+    const order: string[] = [];
+    const walk = (node: RenderedTreeNode | string): void => {
+      if (typeof node === 'string') return;
+      // Classify the outermost node of each landmark, then stop descending.
+      const { testID, accessibilityRole, children } = node.props;
+      let landmark: string | null = null;
+      if (accessibilityRole === 'header') landmark = 'title';
+      else if (children === care.message) landmark = 'message';
+      else if (typeof testID === 'string' && /^care-(resource-|dismiss)/.test(testID)) {
+        landmark = testID;
+      }
+      if (landmark !== null) {
+        order.push(landmark);
+        return;
+      }
+      for (const child of node.children) walk(child);
+    };
+    walk(getByTestId('care-support-card') as unknown as RenderedTreeNode);
+    expect(order).toEqual([
+      'title',
+      'message',
+      'care-resource-hotline',
+      'care-resource-text_line',
+      'care-resource-human',
+      'care-resource-professional',
+      'care-dismiss',
+    ]);
   });
 
   it('hides resource cards after pressing care-dismiss', () => {
@@ -217,13 +290,55 @@ describe('CareSupportNote — dismiss and re-open', () => {
     );
   });
 
-  it('re-shows resources after pressing care-reopen (not a dead-end)', () => {
-    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+  it('labels the re-open line at the interactive text floor, never caption size', () => {
+    const { getByTestId, getByText } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    const label = StyleSheet.flatten(getByText('Support options').props.style);
+    expect(label.fontSize).toBeGreaterThanOrEqual(INTERACTIVE_TEXT_MIN);
+  });
+
+  it('re-shows the whole card after pressing care-reopen (not a dead-end)', () => {
+    const care = carePayload();
+    const { getByTestId, getByRole, getAllByTestId, queryByTestId } = render(
+      <CareSupportNote care={care} />,
+    );
     fireEvent.press(getByTestId('care-dismiss'));
     fireEvent.press(getByTestId('care-reopen'));
-    // Resources reappear.
-    expect(getByTestId('care-resource-hotline')).toBeTruthy();
-    expect(getByTestId('care-resource-professional')).toBeTruthy();
+    expect(getAllByTestId(/^care-resource-/)).toHaveLength(4);
+    expect(getByRole('header').props.children).toBe(care.title);
+    expect(getByTestId('care-support-card')).toBeTruthy();
+    expect(queryByTestId('care-reopen')).toBeNull();
+  });
+
+  it('removes the whole card after pressing care-dismiss, leaving only the reopen line', () => {
+    const care = carePayload();
+    const { getByTestId, queryByTestId, queryByText, queryAllByTestId, queryByRole } = render(
+      <CareSupportNote care={care} />,
+    );
+    fireEvent.press(getByTestId('care-dismiss'));
+
+    expect(queryByRole('header')).toBeNull();
+    expect(queryByText(care.title)).toBeNull();
+    expect(queryByText(care.message)).toBeNull();
+    expect(queryAllByTestId(/^care-resource-/)).toHaveLength(0);
+    expect(queryByTestId('care-support-card')).toBeNull();
+    const reopen = getByTestId('care-reopen');
+    expect(reopen.props.accessibilityLabel).toBe('Show the support options again');
+    expect(queryByText('Support options')).not.toBeNull();
+    // No card chrome survives anywhere between the reopen line and the
+    // care-support wrapper: no raised ground, no accent stripe.
+    let node: typeof reopen | null = reopen.parent;
+    let hops = 0;
+    while (node !== null) {
+      const flat = StyleSheet.flatten(node.props.style) ?? {};
+      expect(flat).not.toHaveProperty('backgroundColor');
+      expect(flat).not.toHaveProperty('borderLeftWidth');
+      hops += 1;
+      if (node.props.testID === 'care-support') break;
+      node = node.parent;
+    }
+    expect(node?.props.testID).toBe('care-support');
+    expect(hops).toBeGreaterThan(1);
   });
 
   it('dismiss control still carries the care-support root after dismissal', () => {
@@ -244,6 +359,7 @@ describe('CareSupportNote — dismiss and re-open', () => {
     rerender(<CareSupportNote care={carePayload({ message: 'second crisis pass' })} />);
 
     expect(getByTestId('care-resource-hotline')).toBeTruthy();
+    expect(getByTestId('care-support-card')).toBeTruthy();
     expect(getByText('second crisis pass')).toBeTruthy();
   });
 });
@@ -253,7 +369,7 @@ describe('CareSupportNote — dismiss and re-open', () => {
 // ---------------------------------------------------------------------------
 
 describe('CareSupportNote — touch-target requirements', () => {
-  it('dismiss control meets the 44dp minimum touch target', () => {
+  it('the X meets the 44dp minimum touch target', () => {
     const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
     const dismiss = getByTestId('care-dismiss');
     expect(StyleSheetMin(dismiss)).toBeGreaterThanOrEqual(touchTarget.minimum);
@@ -298,5 +414,68 @@ describe('CareSupportNote — accessibilityLabel composition', () => {
     const card = getByTestId('care-resource-hotline');
     const expected = `${hotlineResource.name}. ${hotlineResource.contact}. ${hotlineResource.what_it_is}`;
     expect(card.props.accessibilityLabel).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Focus handoff — the X unmounts itself, so focus must land somewhere useful
+// ---------------------------------------------------------------------------
+
+type FocusCallTarget = { props: { testID?: unknown; accessibilityRole?: unknown } } | null;
+
+function focusCall(index: number): { native: FocusCallTarget; web: FocusCallTarget } {
+  const call = mockMoveFocus.mock.calls[index];
+  if (call === undefined) throw new Error(`no focus handoff #${String(index)}`);
+  const [native, web] = call as unknown as [FocusCallTarget, FocusCallTarget | undefined];
+  return { native, web: web ?? native };
+}
+
+describe('CareSupportNote — focus handoff', () => {
+  beforeEach(() => {
+    mockMoveFocus.mockClear();
+  });
+
+  it('does not move focus when the card first appears', () => {
+    render(<CareSupportNote care={carePayload()} />);
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+  });
+
+  it('hands focus to the reopen line when the X hides the card', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const { native, web } = focusCall(0);
+    expect(native?.props.testID).toBe('care-reopen');
+    expect(web?.props.testID).toBe('care-reopen');
+  });
+
+  it('hands focus back to the card heading when the reopen line restores it', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    fireEvent.press(getByTestId('care-reopen'));
+
+    expect(mockMoveFocus).toHaveBeenCalledTimes(2);
+    const { native, web } = focusCall(1);
+    // Native screen readers land on the heading; the web focuses the card,
+    // since a heading is not a focusable element there.
+    expect(native?.props.accessibilityRole).toBe('header');
+    expect(web?.props.testID).toBe('care-support-card');
+  });
+
+  it('makes the card programmatically focusable on the web without adding a tab stop', () => {
+    const card = render(<CareSupportNote care={carePayload()} />).getByTestId('care-support-card');
+    expect(card.props.tabIndex).toBe(-1);
+  });
+
+  it('does not move focus when a fresh signal re-shows the card', () => {
+    const { getByTestId, rerender } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    mockMoveFocus.mockClear();
+
+    rerender(<CareSupportNote care={carePayload({ message: 'second crisis pass' })} />);
+
+    expect(getByTestId('care-support-card')).toBeTruthy();
+    expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });

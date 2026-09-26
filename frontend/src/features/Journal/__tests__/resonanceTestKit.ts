@@ -64,6 +64,7 @@ export function suggestion(overrides: Partial<CompletionSuggestion> = {}): Compl
 /** A two-resource crisis-care payload. */
 export function carePayload(overrides: Partial<CareResponse> = {}): CareResponse {
   return {
+    title: "You're not alone in this",
     message: 'What you shared sounds heavy. Here are some people who can help right now.',
     resources: [
       {

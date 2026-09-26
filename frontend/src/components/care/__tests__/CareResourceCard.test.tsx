@@ -2,6 +2,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 /**
  * RED tests for ``CareResourceCard`` (issue #892 — always-available Support &
@@ -20,9 +21,10 @@ import React from 'react';
  *     existing ``resourceLabel`` helper in ``CareSupportNote``):
  *     ``"{name}. {contact}. {what_it_is}"``.
  */
-import CareResourceCard from '../CareResourceCard';
+import CareResourceCard, { COMPACT_SEPARATOR, resourceLabel } from '../CareResourceCard';
 
 import type { CareResource } from '@/api';
+import { accent } from '@/design/tokens';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -168,5 +170,55 @@ describe('CareResourceCard — no chat UI', () => {
     const resource = makeResource();
     const { queryByTestId } = render(<CareResourceCard resource={resource} />);
     expect(queryByTestId('sender')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compact — the journal care note's tighter row (#2862)
+// ---------------------------------------------------------------------------
+
+describe('CareResourceCard — compact', () => {
+  const HOTLINE = makeResource({
+    name: '988 Suicide & Crisis Lifeline',
+    contact: 'Call or text 988',
+    what_it_is: 'Free, confidential support from a trained human counselor.',
+  });
+
+  it('joins name and contact on one line with the shared separator', () => {
+    const { getByText } = render(<CareResourceCard resource={HOTLINE} compact />);
+    expect(COMPACT_SEPARATOR).toBe(' · ');
+    expect(getByText('988 Suicide & Crisis Lifeline · Call or text 988')).toBeTruthy();
+  });
+
+  it('keeps the contact in the accent tone as its own nested run', () => {
+    const { getByText } = render(<CareResourceCard resource={HOTLINE} compact />);
+    const contact = getByText('Call or text 988');
+    expect(StyleSheet.flatten(contact.props.style).color).toBe(accent.strong);
+  });
+
+  it('wraps rather than truncating, so a long contact is never cut off', () => {
+    const { getByText } = render(<CareResourceCard resource={HOTLINE} compact />);
+    const line = getByText('988 Suicide & Crisis Lifeline · Call or text 988');
+    expect(line.props.numberOfLines).toBeUndefined();
+  });
+
+  it('still shows what the resource is — compact tightens the row, never drops help text', () => {
+    const { getByText } = render(<CareResourceCard resource={HOTLINE} compact />);
+    expect(getByText(HOTLINE.what_it_is)).toBeTruthy();
+  });
+
+  it('keeps the full spoken label', () => {
+    const { getByTestId } = render(<CareResourceCard resource={HOTLINE} compact />);
+    expect(getByTestId('care-resource-hotline').props.accessibilityLabel).toBe(
+      resourceLabel(HOTLINE),
+    );
+  });
+
+  it('defaults to the three-line card (the Settings rendering)', () => {
+    const { getByText, queryByText } = render(<CareResourceCard resource={HOTLINE} />);
+    expect(getByText(HOTLINE.name)).toBeTruthy();
+    expect(getByText(HOTLINE.contact)).toBeTruthy();
+    expect(getByText(HOTLINE.what_it_is)).toBeTruthy();
+    expect(queryByText(`${HOTLINE.name}${COMPACT_SEPARATOR}${HOTLINE.contact}`)).toBeNull();
   });
 });

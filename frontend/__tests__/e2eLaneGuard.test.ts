@@ -58,6 +58,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'feedback-resilience.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
+  'journal-care-support.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',
@@ -67,6 +68,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-live-markdown.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
+  'journal-morning-pages-dismiss.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-resonance-refill.browser.e2e.test.ts',
@@ -82,6 +84,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
+  'text-order.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [

@@ -17,13 +17,23 @@ export function resourceLabel(resource: CareResource): string {
   return `${resource.name}. ${resource.contact}. ${resource.what_it_is}`;
 }
 
+/** Joins the name and the contact on the compact row. */
+export const COMPACT_SEPARATOR = ' · ';
+
 export interface CareResourceCardProps {
   /** The support pointer to render. */
   resource: CareResource;
+  /**
+   * The journal care note's tighter row (#2862): name and contact share one
+   * line that wraps rather than truncates, with what the resource is beneath.
+   * Nothing is dropped — only the name/contact line break goes. Settings keeps
+   * the default three-line card.
+   */
+  compact?: boolean;
 }
 
 /** One support pointer: name, how to reach it, and what it is. */
-function CareResourceCard({ resource }: CareResourceCardProps): React.JSX.Element {
+function CareResourceCard({ resource, compact = false }: CareResourceCardProps): React.JSX.Element {
   return (
     <View
       style={styles.resource}
@@ -31,8 +41,18 @@ function CareResourceCard({ resource }: CareResourceCardProps): React.JSX.Elemen
       accessible
       accessibilityLabel={resourceLabel(resource)}
     >
-      <Text style={styles.resourceName}>{resource.name}</Text>
-      <Text style={styles.resourceContact}>{resource.contact}</Text>
+      {compact ? (
+        <Text style={styles.resourceName}>
+          {resource.name}
+          {COMPACT_SEPARATOR}
+          <Text style={styles.compactContact}>{resource.contact}</Text>
+        </Text>
+      ) : (
+        <>
+          <Text style={styles.resourceName}>{resource.name}</Text>
+          <Text style={styles.resourceContact}>{resource.contact}</Text>
+        </>
+      )}
       <Text style={styles.resourceWhat}>{resource.what_it_is}</Text>
     </View>
   );
@@ -53,6 +73,10 @@ const styles = StyleSheet.create({
     ...editorialType.note,
     color: accent.strong,
     marginTop: spacing(0.25),
+  },
+  compactContact: {
+    color: accent.strong,
+    fontWeight: '400',
   },
   resourceWhat: {
     ...editorialType.caption,

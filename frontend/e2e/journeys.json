@@ -234,6 +234,18 @@
     "coveredBy": "frontend/e2e/journal-morning-page-title.browser.e2e.test.ts"
   },
   {
+    "id": "journal.morning-pages-tip-declines-with-corner-x",
+    "description": "A writer on a day with no review due sees the morning-pages tip with one text action, Begin a page, and an icon-only X in the card's top-right corner named Set the morning-pages tip aside (#2860). At 390x844 and 1280x720 the real browser measures the X flush with the band's top-right corner and inside it, at least 44px square, clear of the Begin a page button's box and of every line of card text, and the card's label, title, body and CTA on one left edge, with no visible Not now. Declining by keyboard removes the card, lands focus on the Start a review early link rather than the page body, persists the decline, and the tip stays gone after a reload. Component tests pin the close variant's accent-while-pressed tint, the begin area's corner reserve, and the focus handoff's target.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/signup"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-morning-pages-dismiss.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-markdown-read-reload",
     "description": "A writer enters the journal's lightweight Markdown dialect, finishes the page, and sees asterisk-delimited bold text, underscore-delimited italics, <u>tag-delimited</u> underline (a retired ==equals== spelling stays literal prose), adjacent -/*/+ lines as one list block, and consecutive > lines as one quote block. The same rendering survives a cold reload while the exact source remains stored for editing and for code-point-based marginalia and promoted-quote anchors. The browser spec crosses the real editor, create/read routes, semantic web elements, and durable journal row; component coverage separately pins malformed text, literal HTML-looking prose, Unicode offsets, and anchors that cross hidden markers.",
     "crosses": {
@@ -323,7 +335,7 @@
   },
   {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
-    "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text; the stage, section and course invitations, and the review titles in the program's words, are declared separately under journal.section-and-course-review-invitations.",
+    "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text; the stage, section and course invitations, and the review titles in the program's words, are declared separately under journal.section-and-course-review-invitations. The sheet renders each source body through the journal Markdown model -- a '**Me:**' speaker prefix reads as bold 'Me:' and no raw marker ever appears in the collapsed excerpt or the expanded body -- and closes with an icon-only X whose accessible name is 'Done'.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "promotions", "reflections"],
@@ -366,7 +378,7 @@
   },
   {
     "id": "journal.review-from-the-shelf-cta",
-    "description": "On a review day the Journal shelf's one call to write is the due review -- a button named by its visible words, 'Write your Weekly Review' -- and the daily-page tip steps aside; pressing it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On day 9, when nothing is due, the daily page holds that slot and the quiet 'Start a review early' link opens a picker of the scopes still in progress (GET /reflections/current); choosing the week opens 'Weekly Review -- Week 2', and the saved page carries scope c1:w2. Closing it and reopening the picker offers 'Continue -- Weekly Review -- Week 2', which reopens that same page (same body, still exactly one c1:w2 entry). Not asserted in the browser, and pinned only by Jest and pytest: the stage, section and course CTAs, dismissing a review, the no-card-while-loading rule, the picker re-reading on refocus, the 409 reroute to the live review, the stage-10 section omission, and the timezone-local day count. The review composer's sources feed is covered by journal.fold-promoted-quote-into-reopened-reflection, not here.",
+    "description": "On a review day the Journal shelf's one call to write is the due review -- a button named by its visible words, 'Write your Weekly Review' -- and the daily-page tip steps aside; pressing it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On day 9, when nothing is due, the daily page holds that slot and the quiet 'Start a review early' link opens a picker of the scopes still in progress (GET /reflections/current); choosing the week opens 'Weekly Review -- Week 2', and the saved page carries scope c1:w2. Closing it and reopening the picker offers 'Continue -- Weekly Review -- Week 2', which reopens that same page (same body, still exactly one c1:w2 entry). Not asserted in the browser, and pinned only by Jest and pytest: the stage, section and course CTAs, dismissing a review, the no-card-while-loading rule, the picker re-reading on refocus, the 409 reroute to the live review, the stage-10 section omission, and the timezone-local day count. The review composer's sources feed is covered by journal.fold-promoted-quote-into-reopened-reflection, not here. The shelf band's eyebrow, its set-aside count and the 'Start a review early' link share one edge and one face (#2949); that alignment is pinned by Jest and its geometry is deferred to the #2948 text-order census.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["reflections", "journal"],
@@ -474,6 +486,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
+  },
+  {
+    "id": "journal.care-support-dismiss-reopen",
+    "description": "A writer's page screens as acute distress, and the resonance pass returns the care surface beside the reading (NORTH-STAR §10). The card opens on a short heading -- \"You're not alone in this\" -- with the four resources in server order, the 988 line first and Crisis Text Line second; the 988 row is asserted as a compact row that joins name and contact on one line and still says what the line is. An icon-only X in the card's corner removes the whole card: the journal page rises by at least the card's height less the one \"Support options\" line that stays in its place, and keyboard focus lands on that line instead of dropping to the page. That line restores all four resources in a single tap and puts focus back inside the card. Dismissing again and running a second distress-flagged pass re-shows the full card, because the dismissal is held in memory against that one care payload. Settings -> Support & care still lists all four resources afterwards. The care copy is the server's own reviewed payload crossing the real route on the lane's stub provider -- nothing about it is mocked -- and the page's rise and the focus handoff are measured in the browser because Jest has no layout or DOM focus.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": ["POST /journal/", "POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-care-support.browser.e2e.test.ts"
   },
   {
     "id": "journal.told-what-resonance-costs-before-it-charges",
@@ -939,7 +963,7 @@
   },
   {
     "id": "journal.photograph-a-page-into-the-open-entry",
-    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps \"Photograph a page\", photographs a page or screenshot of their response -- handwritten, typed, printed, or a screenshot of a message thread, which transcribes as sender-labelled lines -- and the transcription is appended into the entry they already had open rather than being filed as a second one. The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. The outcome also includes a production deployment with no vision model configured: it refuses before billing with model_lacks_vision, shows the terminal copy and hand-typed-entry offramp, and keeps Save disabled (#2849); and an image with no text, or a read the model declines, which the server answers with an uncharged 422 no_text_found / transcription_refused that the page offers to Retake or Remove, never as its text (#2851). Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
+    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps \"Photograph a page\", photographs a page or screenshot of their response -- handwritten, typed, printed, or a screenshot of a message thread, which transcribes as sender-labelled lines -- and the transcription is appended into the entry they already had open rather than being filed as a second one. Overlapping screenshots of one thread merge without repeating the overlap: where two adjacent pages repeat lines at their seam (a cropped line at either edge included), the merged transcript carries them once, a quiet per-page notice counts the repeated lines by page position, and a \"Keep them\" action restores both copies for that seam; each page's stored text is never altered, a short or single coincidental repeat is never dropped, lines whose numbers, times, symbols or emoji differ never count as repeats, and a seam beside a hand-edited page is left whole so the writer's correction always reaches the entry (#2929). The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. The outcome also includes a production deployment with no vision model configured: it refuses before billing with model_lacks_vision, shows the terminal copy and hand-typed-entry offramp, and keeps Save disabled (#2849); and an image with no text, or a read the model declines, which the server answers with an uncharged 422 no_text_found / transcription_refused that the page offers to Retake or Remove, never as its text (#2851). Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -1373,5 +1397,26 @@
     },
     "status": "uncovered",
     "issue": 2926
+  },
+  {
+    "id": "design.text-is-in-order",
+    "description": "Every screen's text is in order: each string sits inside the component it describes, groups share one edge, a region uses few faces, and no raw Markdown reaches the screen (epic #2946; the reviewer's protocol is prompts/scans/text-order.md, landed by #2947). The covering Playwright spec signs up through the UI, seeds ten habits, one adopted practice with a share link and one journal entry over the API, then walks every reachable route -- the five tabs (Journal, Habits, Practice, Course, Map) and every RootStack screen a lane account can open -- at 390x844 and 1280x720, screenshots each and reduces it to a census of every visible text node (string, face, size, weight, colour, box, nearest testID) written under e2e/artifacts/text-order/ and published by CI as text-order-census. Three rules are asserted mechanically per screen because geometry can hold them: (A) no text box leaves its closest testID ancestor by more than a pixel, measured against the ancestor's scroll extent when it scrolls; (B) no two unrelated text boxes overlap by more than a pixel, nested Text spans excluded; (C) no visible string carries **, __, ## or [text](. Off-ramp font sizes -- sizes outside the set computed from type(width), editorialType and uiType, which a Jest bridge pins to the tokens -- are reported per screen and written to the JSON but deliberately not asserted: hundreds of fontSize literals outside the tokens would red the lane at HEAD, and promoting that column to a gate is the exit criterion of the per-screen remediation issues. Everything that needs judgement -- one edge, one face per role, scope, glyph over word, eyebrows -- is printed as the per-screen summary line (distinct left edges, distinct faces) and is a review step per the protocol, not an assertion. AdminFeedback (admin gate), JournalPhotograph (no camera in headless Chromium; a read page would be a paid transcription), Get resonance and voice transcription are named in SKIPPED and logged on every run; nothing the walk does spends.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "habits", "practices", "userPractices", "practiceShare", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "POST /practices/{practice_id}/share-link",
+        "GET /practices/share/{token}",
+        "POST /journal/"
+      ],
+      "tables": ["user", "habit", "practice", "userpractice", "practicesharelink", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/text-order.browser.e2e.test.ts"
   }
 ]

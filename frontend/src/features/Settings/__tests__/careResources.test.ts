@@ -31,6 +31,11 @@ describe('STANDING_CARE — Zod schema compliance', () => {
     expect(result.success).toBe(true);
   });
 
+  it('has a non-empty title string (rendered as the screen eyebrow)', () => {
+    expect(typeof STANDING_CARE.title).toBe('string');
+    expect(STANDING_CARE.title.length).toBeGreaterThan(0);
+  });
+
   it('has a non-empty message string', () => {
     expect(typeof STANDING_CARE.message).toBe('string');
     expect(STANDING_CARE.message.length).toBeGreaterThan(0);
@@ -163,6 +168,12 @@ describe('STANDING_CARE — prohibited clinical wording', () => {
   it('the message does not contain prohibited clinical wording', () => {
     for (const pattern of PROHIBITED) {
       expect(STANDING_CARE.message).not.toMatch(pattern);
+    }
+  });
+
+  it('the title does not contain prohibited clinical wording', () => {
+    for (const pattern of PROHIBITED) {
+      expect(STANDING_CARE.title).not.toMatch(pattern);
     }
   });
 

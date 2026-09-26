@@ -13,6 +13,7 @@
  * Responsive per the margin-column precedent: a bottom-sheet ``Modal`` on a
  * narrow viewport, an inline side pane on a wide one. Reduced-motion safe.
  */
+import { X } from 'lucide-react-native';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -26,12 +27,14 @@ import {
 
 import { excerpt } from './excerpt';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
+import ReadOnlyMarkdownText from './ReadOnlyMarkdownText';
 import {
   formatReviewPeriod,
   sourceAttribution,
   sourceDateLabel,
   type ReviewWindow,
 } from './reflectionCopy';
+import { CLOSE_ICON_SIZE } from './ReflectionDismiss';
 
 import type {
   PromoteQuoteSpan,
@@ -241,7 +244,7 @@ function PendingQuotesGroup({
   if (pending.length === 0) return null;
   return (
     <View style={styles.group}>
-      <Text style={styles.groupHeading}>Quotes to fold in</Text>
+      <Text style={[styles.eyebrow, styles.groupEyebrowSpacing]}>Quotes to fold in</Text>
       {pending.map((entry) => (
         <PendingQuoteRow
           key={entry.quote.id}
@@ -289,9 +292,11 @@ function SourceExpansion({
   }
   return (
     <>
-      <Text style={styles.body} testID={`source-body-${item.id}`}>
-        {item.body}
-      </Text>
+      <ReadOnlyMarkdownText
+        body={item.body}
+        style={styles.body}
+        testID={`source-body-${item.id}`}
+      />
       {controls.canPromote ? (
         <TouchableOpacity
           style={styles.promoteOpener}
@@ -333,7 +338,7 @@ function SourceRow({
         testID={`${item.kind}-source-${item.id}`}
       >
         {isReflection ? (
-          <Text style={styles.levelLabel}>{levelLabel(item.reflection_level)}</Text>
+          <Text style={styles.eyebrow}>{levelLabel(item.reflection_level)}</Text>
         ) : null}
         <Text style={styles.rowTitle}>{sourceAttribution(item)}</Text>
         <Text style={styles.rowDate} testID={`source-date-${item.id}`}>
@@ -510,29 +515,47 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
   return { includedIds, onInsert };
 }
 
-/** The panel's inner content, shared by the sheet and pane containers. */
 /**
- * The panel's heading and, when the server declared one, the period the review
- * covers. Rendered from ``window`` alone — see {@link formatReviewPeriod}.
+ * The panel's heading row: "Sources" (with, when the server declared one, the
+ * period the review covers beneath it — rendered from ``window`` alone, see
+ * {@link formatReviewPeriod}) on the left, and in the trailing slot an
+ * icon-only X that closes the sheet. The X is the word "Done" as a glyph, so it
+ * keeps that word as its accessible name; a pane caller that passes no
+ * ``onClose`` gets the heading without it.
  */
 function SourcesHeading({
   window: reviewWindow,
   timeZone,
+  onClose,
 }: {
   window?: ReviewWindow;
   timeZone?: string;
+  onClose?: () => void;
 }): React.JSX.Element {
   const period =
     reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end, timeZone);
   return (
-    <View style={styles.heading}>
-      <Text style={styles.headingTitle} accessibilityRole="header">
-        Sources
-      </Text>
-      {period === '' ? null : (
-        <Text style={styles.headingPeriod} testID="reflection-sources-period">
-          {period}
+    <View style={styles.heading} testID="reflection-sources-heading">
+      <View style={styles.headingText}>
+        <Text style={styles.headingTitle} accessibilityRole="header">
+          Sources
         </Text>
+        {period === '' ? null : (
+          <Text style={styles.headingPeriod} testID="reflection-sources-period">
+            {period}
+          </Text>
+        )}
+      </View>
+      {onClose == null ? null : (
+        <TouchableOpacity
+          style={styles.closeControl}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Done"
+          testID="reflection-sources-close"
+        >
+          <X color={ink.soft} size={CLOSE_ICON_SIZE} accessible={false} />
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -586,6 +609,7 @@ function EmptyFeed({
   );
 }
 
+/** The panel's inner content, shared by the sheet and pane containers. */
 function SourcesContent({
   items,
   window: reviewWindow,
@@ -606,18 +630,7 @@ function SourcesContent({
       contentContainerStyle={styles.scrollContent}
       keyboardShouldPersistTaps="handled"
     >
-      {onClose == null ? null : (
-        <TouchableOpacity
-          style={styles.action}
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Close the sources"
-          testID="reflection-sources-close"
-        >
-          <Text style={styles.actionLink}>Done</Text>
-        </TouchableOpacity>
-      )}
-      <SourcesHeading window={reviewWindow} timeZone={timeZone} />
+      <SourcesHeading window={reviewWindow} timeZone={timeZone} onClose={onClose} />
       <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
       {feed.length === 0 ? (
         <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
@@ -690,10 +703,14 @@ const styles = StyleSheet.create({
   group: {
     marginBottom: SPACING.lg,
   },
-  groupHeading: {
+  // The one eyebrow face in this sheet: the pending-quotes group heading and a
+  // reflection row's level label both wear it.
+  eyebrow: {
     ...editorialType.caption,
     color: ink.muted,
     textTransform: 'uppercase',
+  },
+  groupEyebrowSpacing: {
     marginBottom: SPACING.sm,
   },
   pendingRow: {
@@ -728,7 +745,19 @@ const styles = StyleSheet.create({
     paddingLeft: SPACING.md,
   },
   heading: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     paddingBottom: spacing(1),
+  },
+  headingText: {
+    flex: 1,
+  },
+  closeControl: {
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headingTitle: {
     ...editorialType.note,
@@ -749,11 +778,6 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: ink.soft,
   },
-  levelLabel: {
-    ...editorialType.caption,
-    color: accent.strong,
-    textTransform: 'uppercase',
-  },
   rowTitle: {
     ...editorialType.note,
     color: ink.primary,
@@ -768,14 +792,6 @@ const styles = StyleSheet.create({
     ...editorialType.body,
     color: ink.primary,
     paddingTop: spacing(1),
-  },
-  action: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-  },
-  actionLink: {
-    ...editorialType.action,
-    color: accent.primary,
   },
   promoteOpener: {
     minHeight: touchTarget.minimum,

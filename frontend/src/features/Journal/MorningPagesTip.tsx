@@ -8,7 +8,9 @@
  * never a gate and never gamified. There is deliberately no streak, no count,
  * and no guilt copy.
  *
- * Only "Not now" retires the tip. Beginning a page hands off to the shelf's
+ * Only the X in the card's top-right corner retires the tip (#2860), which
+ * leaves "Begin a page" as the card's one text action — two controls on two
+ * different left edges read as aligned with nothing. Beginning a page hands off to the shelf's
  * new-entry flow and leaves the tip exactly where it was: taking up an
  * invitation is not declining it, and someone who writes a morning page today
  * is the last person who should lose the reminder tomorrow. (The tip did once
@@ -22,13 +24,12 @@ import {
   MORNING_PAGES_BODY,
   MORNING_PAGES_CTA,
   MORNING_PAGES_CTA_A11Y,
-  MORNING_PAGES_DISMISS,
   MORNING_PAGES_DISMISS_A11Y,
   MORNING_PAGES_LABEL,
   MORNING_PAGES_TITLE,
   morningPageTitle,
 } from './morningPagesCopy';
-import ReflectionDismiss from './ReflectionDismiss';
+import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -51,18 +52,33 @@ import { todayInUserTZ } from '@/utils/dateUtils';
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
 const ACCENT_BAR_WIDTH = 3;
 
+/** The band's inner padding: the gap every edge of the invitation keeps from the card's rim. */
+const BAND_PADDING = SPACING.lg;
+
+/** Right-hand room the begin area keeps so neither its text nor its hit area lies under the X. */
+const CLOSE_CORNER_RESERVE = closeCornerReserve(BAND_PADDING);
+
 export interface MorningPagesTipProps {
   /** Opens the shelf's new-entry flow so the person can start a page right away. */
   onBegin: (_prefillTitle: string) => void;
+  /**
+   * Called once the tip has been set aside, after the decline is persisted, so
+   * the host can hand focus on: the X that held it unmounts with the card.
+   */
+  onDismissed?: () => void;
 }
 
 /**
  * Owns the dismissal state, the load-on-mount, and the begin/dismiss actions.
- * ``dismissed`` starts null while the persisted flag loads. Only dismissal
- * persists/retires the band; ``onBeginPress`` hands the dated
- * title to the shelf without treating acceptance as dismissal.
+ * ``dismissed`` starts null while the persisted flag loads. Only the corner X
+ * persists/retires the band, then tells the host through ``onDismissed``;
+ * ``onBeginPress`` hands the dated title to the shelf without treating
+ * acceptance as dismissal.
  */
-function useMorningPagesTip(onBegin: (_prefillTitle: string) => void) {
+function useMorningPagesTip(
+  onBegin: (_prefillTitle: string) => void,
+  onDismissed: (() => void) | undefined,
+) {
   const { userTimezone } = useAuth();
   const [dismissed, setDismissed] = useState<boolean | null>(null);
 
@@ -83,21 +99,24 @@ function useMorningPagesTip(onBegin: (_prefillTitle: string) => void) {
   const onDismiss = useCallback(() => {
     void saveMorningPagesTipDismissed(true);
     setDismissed(true);
-  }, []);
+    onDismissed?.();
+  }, [onDismissed]);
 
   return { dismissed, onBeginPress, onDismiss };
 }
 
-function MorningPagesTip({ onBegin }: MorningPagesTipProps): React.JSX.Element | null {
-  const { dismissed, onBeginPress, onDismiss } = useMorningPagesTip(onBegin);
+function MorningPagesTip({ onBegin, onDismissed }: MorningPagesTipProps): React.JSX.Element | null {
+  const { dismissed, onBeginPress, onDismiss } = useMorningPagesTip(onBegin, onDismissed);
   // Null while loading (no flash) and true once set aside both stay quiet.
   if (dismissed !== false) return null;
 
   // A plain container, not a pressable, so the inner "begin" and "decline"
   // buttons stay independently reachable by assistive tech (a pressable
-  // wrapper would collapse the subtree and hide the one-tap decline).
+  // wrapper would collapse the subtree and hide the one-tap decline). The X is
+  // last in the tree so a screen reader meets the invitation before the way to
+  // set it aside; absolute placement draws it in the top-right corner.
   return (
-    <View style={styles.band}>
+    <View style={styles.band} testID="journal-morning-pages-band">
       <TouchableOpacity
         style={styles.openArea}
         onPress={onBeginPress}
@@ -111,7 +130,7 @@ function MorningPagesTip({ onBegin }: MorningPagesTipProps): React.JSX.Element |
         <Text style={styles.cta}>{MORNING_PAGES_CTA}</Text>
       </TouchableOpacity>
       <ReflectionDismiss
-        label={MORNING_PAGES_DISMISS}
+        variant="close"
         accessibilityLabel={MORNING_PAGES_DISMISS_A11Y}
         testID="journal-morning-pages-dismiss"
         onPress={onDismiss}
@@ -123,7 +142,7 @@ function MorningPagesTip({ onBegin }: MorningPagesTipProps): React.JSX.Element |
 const styles = StyleSheet.create({
   band: {
     marginTop: SPACING.lg,
-    padding: SPACING.lg,
+    padding: BAND_PADDING,
     borderRadius: BORDER_RADIUS.md,
     // A raised sheet with the same warm accent rule as the shelf's invitation
     // bands, so the tip reads as part of a matched set.
@@ -134,6 +153,7 @@ const styles = StyleSheet.create({
   },
   openArea: {
     minHeight: touchTarget.minimum,
+    marginRight: CLOSE_CORNER_RESERVE,
   },
   label: {
     ...editorialType.caption,
