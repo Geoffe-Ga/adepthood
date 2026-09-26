@@ -134,6 +134,20 @@ REFUSAL_OBJECT_CUES = (
     "the screenshot you",
 )
 
+#: Cues that are word stems rather than whole words: ``transcri`` stands for
+#: transcribe, transcription and the like, so only its start is anchored.
+_OPEN_ENDED_CUES = frozenset({"transcri"})
+
+#: :data:`REFUSAL_OBJECT_CUES` as whole-word matches. A plain substring test
+#: read "this imagery" as "this image" and "this requested" as "this request",
+#: throwing a writer's page away as a refusal.
+_REFUSAL_OBJECT_PATTERN = re.compile(
+    "|".join(
+        rf"\b{re.escape(cue)}" + ("" if cue in _OPEN_ENDED_CUES else r"\b")
+        for cue in REFUSAL_OBJECT_CUES
+    )
+)
+
 #: Longest reply that can still be a refusal. The reported refusal (#2851) is
 #: 401 characters once completed past the ellipsis it was reported with; half
 #: again absorbs a longer apology while keeping most real pages out of reach.
@@ -191,7 +205,7 @@ def _is_refusal(normalised: str) -> bool:
         _PARAGRAPH_BREAK not in normalised
         and len(normalised) <= MAX_REFUSAL_CHARS
         and normalised.startswith(REFUSAL_OPENERS)
-        and any(cue in opening for cue in REFUSAL_OBJECT_CUES)
+        and _REFUSAL_OBJECT_PATTERN.search(opening) is not None
     )
 
 

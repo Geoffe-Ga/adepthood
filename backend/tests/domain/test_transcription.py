@@ -450,6 +450,33 @@ _CLASSIFIER_CASES = (
     pytest.param(
         "I cannot keep doing this.", TranscriptionVerdict.TRANSCRIBED, id="journal-i-cannot"
     ),
+    # A cue matches whole words only: a longer word that merely begins with a
+    # cue is a journal page, not a refusal (#2940 review).
+    pytest.param(
+        "I can't shake this imagery from the trip.",
+        TranscriptionVerdict.TRANSCRIBED,
+        id="cue-inside-imagery",
+    ),
+    pytest.param(
+        "I cannot fulfil this requested favour for her.",
+        TranscriptionVerdict.TRANSCRIBED,
+        id="cue-inside-requested",
+    ),
+    pytest.param(
+        "I'm unable to forget this photographer's smile.",
+        TranscriptionVerdict.TRANSCRIBED,
+        id="cue-inside-photographer",
+    ),
+    pytest.param(
+        "I can't stop staring at the picture your mother kept.",
+        TranscriptionVerdict.TRANSCRIBED,
+        id="cue-inside-your",
+    ),
+    pytest.param(
+        "I can't provide a transcription of this.",
+        TranscriptionVerdict.REFUSED,
+        id="transcri-stem-still-matches",
+    ),
     pytest.param(_LONG_I_CANT_BELIEVE, TranscriptionVerdict.TRANSCRIBED, id="long-i-cant-believe"),
     pytest.param(
         _TWO_PARAGRAPH_I_CANT_BELIEVE, TranscriptionVerdict.TRANSCRIBED, id="two-paragraphs"
