@@ -5,7 +5,7 @@
  * should be imported from this module. Do not define design constants elsewhere.
  */
 
-import { Platform, type TextStyle } from 'react-native';
+import { Platform, type TextStyle, type ViewStyle } from 'react-native';
 
 // ---------------------------------------------------------------------------
 // Colors
@@ -751,6 +751,21 @@ export const writingFieldFocus: TextStyle =
   Platform.OS === 'web'
     ? ({ outlineStyle: 'none', caretColor: writingField.caret } as unknown as TextStyle)
     : {};
+
+/**
+ * Style fragment for a non-interactive host that receives *programmatic*
+ * focus only -- a ``tabIndex={-1}`` View a screen moves focus to on open so a
+ * screen reader announces where it landed (the feedback composer's heading,
+ * its sent confirmation). Browsers paint their default ``:focus`` outline on
+ * such a host exactly as on a control, which reads as a blue box around prose.
+ *
+ * Apply it to those hosts only, never to a Touchable or TextField: keyboard
+ * users still need the ring on every real control. Like ``writingFieldFocus``
+ * it is a react-native-web passthrough typed through a narrowing cast and
+ * resolved from ``Platform.OS`` at module load; native draws no ring to remove.
+ */
+export const focusHostStyle: ViewStyle =
+  Platform.OS === 'web' ? ({ outlineStyle: 'none' } as unknown as ViewStyle) : {};
 
 /**
  * App-wide warm elevation — the generalisation of ``paperShadow`` beyond the

@@ -18,7 +18,7 @@ import { useComposerModel, type ComposerModel } from './useComposerModel';
 import type { FeedbackReceipt } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { accent, ink, rhythm, SPACING, type as typeRamp } from '@/design/tokens';
+import { accent, focusHostStyle, ink, rhythm, SPACING, type as typeRamp } from '@/design/tokens';
 
 /**
  * The beta feedback composer (#2898): choose what kind of report this is, answer
@@ -56,9 +56,12 @@ export default function FeedbackComposerScreen(): React.JSX.Element {
 }
 
 /**
- * The composer's heading and lead. Only the title is the heading -- and the
- * focus target on open -- so a screen reader names it "Send feedback" and reads
- * the lead as ordinary text after it.
+ * The composer's lead, wrapped in the focus host that takes focus on open.
+ * Navigation owns the visible title (the stack header reads "Send feedback"),
+ * so the body does not repeat it: the host is *announced* as the title through
+ * its accessibilityLabel and carries the lead as its hint, because an
+ * accessible View with a label reads only that label on native. On web the
+ * host paints no focus ring -- it is not a control (#2951).
  */
 function ComposerHeading({
   headingRef,
@@ -68,18 +71,16 @@ function ComposerHeading({
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   return (
-    <View>
-      <View
-        ref={headingRef}
-        tabIndex={-1}
-        accessible
-        accessibilityRole="header"
-        testID={FEEDBACK_TEST_IDS.heading}
-      >
-        <Text allowFontScaling style={[t.title, styles.title]}>
-          {FEEDBACK_COMPOSER_COPY.title}
-        </Text>
-      </View>
+    <View
+      ref={headingRef}
+      tabIndex={-1}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={FEEDBACK_COMPOSER_COPY.title}
+      accessibilityHint={FEEDBACK_COMPOSER_COPY.lead}
+      style={focusHostStyle}
+      testID={FEEDBACK_TEST_IDS.heading}
+    >
       <Text allowFontScaling style={[t.body, styles.lead]}>
         {FEEDBACK_COMPOSER_COPY.lead}
       </Text>
@@ -184,6 +185,7 @@ function SentView({ receipt }: { receipt: FeedbackReceipt }): React.JSX.Element 
         accessible
         accessibilityRole="alert"
         accessibilityLiveRegion="polite"
+        style={focusHostStyle}
         testID={FEEDBACK_TEST_IDS.status}
       >
         <Text allowFontScaling style={[t.heading, styles.title]}>
