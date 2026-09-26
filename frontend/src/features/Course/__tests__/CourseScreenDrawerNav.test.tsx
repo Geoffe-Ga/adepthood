@@ -7,6 +7,8 @@ import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
+import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
+import type { RootTabParamList } from '../../../navigation/BottomTabs';
 import CourseScreen from '../CourseScreen';
 
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
@@ -99,8 +101,10 @@ const mockSetOptions = jest.fn((opts: { headerLeft?: () => ReactElement }) => {
   headerLeftStore.current = opts.headerLeft;
   headerLeftStore.listeners.forEach((listener) => listener());
 });
+// Route params are per-test; every suite resets them to "no deep link".
+let mockRouteParams: RootTabParamList['Course'];
 jest.mock('../../../navigation/hooks', () => ({
-  useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: undefined }),
+  useAppRoute: () => ({ key: 'Course-test', name: 'Course', params: mockRouteParams }),
   useAppNavigation: () => ({ navigate: mockNavigate, setOptions: mockSetOptions }),
 }));
 
@@ -133,6 +137,7 @@ const CourseScreenWithHeader = (): ReactElement => {
 describe('Course header drawer nav section', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouteParams = undefined;
     headerLeftStore.current = undefined;
     headerLeftStore.listeners.clear();
     mockStagesList.mockResolvedValue(TEN_STAGES);
@@ -170,6 +175,20 @@ describe('Course header drawer nav section', () => {
     expect(navIndex).toBeGreaterThan(-1);
     expect(stageOneIndex).toBeGreaterThan(-1);
     expect(navIndex).toBeLessThan(stageOneIndex);
+  });
+
+  it('marks the deep-linked stage selected in the drawer (#2958)', async () => {
+    // Resolved through the real linking config; the derived default is stage 1
+    // (the program calendar), so stage 2 can only come from the link itself.
+    mockRouteParams = tabParamsFromPath('course/2', 'Course');
+    const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Course menu'));
+    await waitFor(() => expect(getByTestId('course-drawer-stage-2')).toBeTruthy());
+
+    expect(getByTestId('course-drawer-stage-2').props.accessibilityState.selected).toBe(true);
+    expect(getByTestId('course-drawer-stage-1').props.accessibilityState.selected).toBe(false);
   });
 
   it('marks the Course nav row selected', async () => {
@@ -221,6 +240,7 @@ const readingChapters: ContentItem[] = [
 describe('Course drawer while reading a chapter', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRouteParams = undefined;
     headerLeftStore.current = undefined;
     headerLeftStore.listeners.clear();
     mockStagesList.mockResolvedValue(TEN_STAGES);

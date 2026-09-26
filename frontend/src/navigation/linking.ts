@@ -3,6 +3,11 @@
 import type { LinkingOptions, NavigatorScreenParams } from '@react-navigation/native';
 
 import type { RootTabParamList } from './BottomTabs';
+import {
+  parseContentIdParam,
+  parseScrollOffsetParam,
+  parseStageNumberParam,
+} from './linkingParams';
 import type { RootStackParamList } from './RootStack';
 
 /**
@@ -30,8 +35,21 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
       Tabs: {
         screens: {
           Habits: 'habits',
-          Practice: 'practice/:stageNumber?',
-          Course: 'course/:stageNumber?',
+          // Path segments and query values arrive as strings; ``parse`` turns
+          // them into the numbers ``RootTabParamList`` promises (#2958). No
+          // ``stringify`` is needed: getPathFromState already String()s them.
+          Practice: {
+            path: 'practice/:stageNumber?',
+            parse: { stageNumber: parseStageNumberParam },
+          },
+          Course: {
+            path: 'course/:stageNumber?',
+            parse: {
+              stageNumber: parseStageNumberParam,
+              contentId: parseContentIdParam,
+              scrollOffset: parseScrollOffsetParam,
+            },
+          },
           Journal: 'journal',
           Map: 'map',
         },

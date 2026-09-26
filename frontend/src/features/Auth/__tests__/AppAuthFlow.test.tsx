@@ -31,6 +31,9 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// The ``linking`` prop each NavigationContainer render received (#2958).
+const mockContainerLinking: unknown[] = [];
+
 // Mock navigators to simple pass-through components.  ``useNavigation``
 // is required because ``FeatureErrorBoundary`` calls it for the
 // route-focus auto-reset (BUG-FE-UI-102); returning a stub navigation
@@ -40,7 +43,16 @@ jest.mock('@react-navigation/native', () => {
   // navTheme (via App.tsx) extends DefaultTheme, so the mock must expose it.
   const { mockDefaultTheme, mockDarkTheme } = require('@/test-utils/navMocks');
   return {
-    NavigationContainer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    NavigationContainer: ({
+      children,
+      linking,
+    }: {
+      children: React.ReactNode;
+      linking?: unknown;
+    }) => {
+      mockContainerLinking.push(linking);
+      return <>{children}</>;
+    },
     useNavigation: () => ({
       addListener: () => () => {
         /* unused in this test */
@@ -135,6 +147,7 @@ jest.mock('@/features/Journal/JournalPhotographScreen', () => {
 });
 
 import App, { linking } from '@/App';
+import { linking as navigationLinking } from '@/navigation/linking';
 import { useWelcomeStore } from '@/store/useWelcomeStore';
 
 beforeEach(() => {
@@ -206,6 +219,16 @@ describe('deep linking config', () => {
 
     expect(linking.prefixes).toContain('adepthood://');
     expect(screens?.ApiKeySettings).toBe('api-key-settings');
+  });
+
+  it('hands the navigation/linking config to the container and re-exports it (#2958)', () => {
+    mockAuthState = { token: null, authStatus: 'anonymous' };
+    mockContainerLinking.length = 0;
+    render(<App />);
+
+    expect(mockContainerLinking.length).toBeGreaterThan(0);
+    expect(mockContainerLinking.every((received) => received === navigationLinking)).toBe(true);
+    expect(linking).toBe(navigationLinking);
   });
 
   it('resolves the Settings hub deep link', () => {
