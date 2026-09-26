@@ -48,8 +48,11 @@ function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-function setup(flushResult: () => Promise<number | null> = () => Promise.resolve(42)) {
-  const bodyRef = { current: 'My week.' };
+function setup(
+  flushResult: () => Promise<number | null> = () => Promise.resolve(42),
+  initialBody = 'My week.',
+) {
+  const bodyRef = { current: initialBody };
   const onChangeBody = jest.fn((next: string) => {
     bodyRef.current = next;
   });
@@ -153,12 +156,19 @@ describe('useReflectionMode fold-in -- a failed inclusion mark (#2891)', () => {
     expect(occurrences(bodyRef.current, BLOCK)).toBe(1);
   });
 
-  it('after a successful mark, folding the same quote in again is a fresh insertion', async () => {
-    mockSetIncluded.mockResolvedValue({});
-    const { bodyRef, insert } = setup();
-    await insert();
-    await insert();
-    expect(occurrences(bodyRef.current, BLOCK)).toBe(2);
+  it('does not splice a second copy on a retry after a reopen (#2891)', async () => {
+    mockSetIncluded.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({});
+    const first = setup();
+    await first.insert();
+    expect(occurrences(first.bodyRef.current, BLOCK)).toBe(1);
+    const persisted = first.bodyRef.current;
+    first.unmount();
+
+    // The review is reopened: a fresh screen whose body is the one that was saved.
+    const reopened = setup(() => Promise.resolve(42), persisted);
+    expect(await reopened.insert()).toBe(true);
+    expect(occurrences(reopened.bodyRef.current, BLOCK)).toBe(1);
+    expect(mockSetIncluded).toHaveBeenLastCalledWith(QUOTE.id, 42);
   });
 
   it('lands the quote at the caret the body last reported', async () => {
