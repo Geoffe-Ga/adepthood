@@ -49,8 +49,12 @@ const BODY_MIN_HEIGHT = 320;
 export interface LiveMarkdownBodyProps {
   body: string;
   onChangeBody: (_next: string) => void;
-  /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
-  onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  /**
+   * Reflection mode: every caret the field reports (UTF-16), from its own
+   * selection event, the document ``selectionchange`` a handle drag fires on
+   * iOS web, or an edit that moves it, so a folded quote lands at the cursor.
+   */
+  onBodySelectionChange?: (_selection: MarkdownSelection) => void;
   bodyPlaceholder: string;
   inputRef: React.RefObject<TextInput | null>;
 }
@@ -69,6 +73,27 @@ function useTrackedCaret(body: string) {
     );
   }, []);
   return { caret, nativeSelectionRef, trackCaret };
+}
+
+/**
+ * The tracked caret, with every position it learns of -- the field's own
+ * selection event, the document ``selectionchange``, an edit that moves it --
+ * also handed to ``onBodySelectionChange``: that is the caret a folded quote
+ * must land at.
+ */
+function useReportedCaret(
+  body: string,
+  onBodySelectionChange: LiveMarkdownBodyProps['onBodySelectionChange'],
+) {
+  const { caret, nativeSelectionRef, trackCaret: trackOwnCaret } = useTrackedCaret(body);
+  const trackCaret = useCallback(
+    (next: MarkdownSelection) => {
+      trackOwnCaret(next);
+      onBodySelectionChange?.({ start: next.start, end: next.end });
+    },
+    [onBodySelectionChange, trackOwnCaret],
+  );
+  return { caret, nativeSelectionRef, trackCaret, trackOwnCaret };
 }
 
 /**
@@ -123,7 +148,10 @@ function useMarkdownBodyBindings(
   inputRef: LiveMarkdownBodyProps['inputRef'],
 ) {
   const [selection, setSelection] = useState<MarkdownSelection>();
-  const { caret, nativeSelectionRef, trackCaret } = useTrackedCaret(body);
+  const { caret, nativeSelectionRef, trackCaret, trackOwnCaret } = useReportedCaret(
+    body,
+    onBodySelectionChange,
+  );
   // True while a command is being applied through the browser: the input
   // event it fires is the command's own text and must pass through verbatim.
   const applyingCommandRef = useRef(false);
@@ -150,9 +178,8 @@ function useMarkdownBodyBindings(
     (event: SelectionChangeEvent) => {
       trackCaret(event.nativeEvent.selection);
       setSelection(undefined);
-      onBodySelectionChange?.(event);
     },
-    [onBodySelectionChange, trackCaret],
+    [trackCaret],
   );
   const applyEdit = useApplyEdit(inputRef, applyingCommandRef, commit, trackCaret);
   return {
@@ -161,6 +188,7 @@ function useMarkdownBodyBindings(
     nativeSelectionRef,
     lastKeyRef,
     trackCaret,
+    trackOwnCaret,
     changeBody,
     changeSelection,
     applyEdit,
@@ -231,10 +259,16 @@ function useSourceCaret(
   markdown: BodyBindings,
   inputRef: React.RefObject<TextInput | null>,
 ): SourceSelection {
-  const { trackCaret } = markdown;
+  const { trackCaret, trackOwnCaret } = markdown;
+  // The document event also fires when the writer clicks away (a quote in the
+  // Sources panel, say); the unfocused field's selection is then not where they
+  // left off, so only a focused field's selection is reported onwards.
   const emitWebSelection = useCallback(
-    (start: number, end: number) => trackCaret({ start, end }),
-    [trackCaret],
+    (start: number, end: number) =>
+      inputRef.current?.isFocused() === true
+        ? trackCaret({ start, end })
+        : trackOwnCaret({ start, end }),
+    [inputRef, trackCaret, trackOwnCaret],
   );
   useWebSelectionListener(inputRef, emitWebSelection);
   return {

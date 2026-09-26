@@ -1,7 +1,9 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { ChevronRight } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type {
   JournalListResponse,
@@ -10,6 +12,7 @@ import type {
   StagePromptDetail,
   StagePromptsResponse,
 } from '@/api';
+import { editorialType, ink, touchTarget, uiType } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockList = jest.fn() as jest.MockedFunction<() => Promise<JournalListResponse>>;
@@ -385,8 +388,43 @@ describe('a writer can set a stage prompt aside, and bring it back', () => {
     fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
 
     const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
-    expect(within(footer).getByText('1 prompt set aside — show it')).toBeTruthy();
+    // The count folds into the eyebrow row's trailing slot: a compact label and
+    // a chevron, with the full sentence kept as the accessible name.
+    expect(within(footer).getByText('1 set aside')).toBeTruthy();
+    expect(footer.props.accessibilityRole).toBe('button');
     expect(footer.props.accessibilityLabel).toBe('Show the prompts you have set aside');
+    const chevrons = within(footer).UNSAFE_getAllByType(ChevronRight);
+    expect(chevrons).toHaveLength(1);
+    expect(chevrons[0]?.props.accessible).toBe(false);
+
+    // One link face for the band: the button face, never the caption.
+    const label = StyleSheet.flatten(within(footer).getByText('1 set aside').props.style);
+    expect(label.fontSize).toBe(uiType.button.fontSize);
+    expect(label.fontWeight).toBe(uiType.button.fontWeight);
+    const control = StyleSheet.flatten(footer.props.style);
+    expect(control.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(control.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+  });
+
+  it('names the band as a quiet eyebrow with the count in its trailing slot', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, getByTestId, getByText } = render(<JournalShelfScreen />);
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+
+    // The caption face in sentence case: the shelf's one tracked small-caps
+    // role belongs to the recency spine (JournalShelfHierarchy pins it), so
+    // this eyebrow recedes rather than announcing the band.
+    const eyebrow = getByText('Orange prompts');
+    const eyebrowStyle = StyleSheet.flatten(eyebrow.props.style);
+    expect(eyebrowStyle.fontSize).toBe(editorialType.caption.fontSize);
+    expect(eyebrowStyle.color).toBe(ink.muted);
+    expect(eyebrowStyle.textTransform).toBeUndefined();
+
+    // Label and count share one row: the count control is the label's sibling.
+    const row = getByTestId('journal-stage-prompts-eyebrow');
+    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+    expect(within(row).getByText('Orange prompts')).toBe(eyebrow);
+    expect(within(row).getByTestId('journal-stage-prompts-set-aside-footer')).toBe(footer);
   });
 
   it('counts more than one set-aside prompt in the plural', async () => {
@@ -401,7 +439,7 @@ describe('a writer can set a stage prompt aside, and bring it back', () => {
     const { findByTestId } = render(<JournalShelfScreen />);
 
     const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
-    expect(within(footer).getByText('2 prompts set aside — show them')).toBeTruthy();
+    expect(within(footer).getByText('2 set aside')).toBeTruthy();
   });
 
   it('re-renders the hidden cards in place when the footer is tapped', async () => {

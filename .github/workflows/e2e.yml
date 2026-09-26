@@ -195,3 +195,16 @@ jobs:
           path: frontend/test-results
           if-no-files-found: warn
           retention-days: 14
+
+      # The text census (#2948) is the point of a green run as much as of a red
+      # one: the per-route screenshots and JSON under e2e/artifacts/text-order
+      # are what the epic's review step reads, so they are published whatever
+      # the verdict, separately from the failure-only traces above.
+      - name: Upload the text census
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: text-order-census
+          path: frontend/e2e/artifacts/text-order/**
+          if-no-files-found: warn
+          retention-days: 14

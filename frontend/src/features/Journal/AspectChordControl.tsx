@@ -276,13 +276,19 @@ function triggerLabel(value: AspectChordValue): string {
   return `Aspect: ${named}${CHORD_SEPARATOR}${personaFor(secondary)}`;
 }
 
-/** The collapsed state: a single warm trigger that reveals the chooser. */
+/**
+ * The collapsed state: a framed field that reveals the chooser. Untagged, it
+ * shows the invitation as a placeholder; named, it shows the chord as a value.
+ */
 function CollapsedTrigger({
   label,
+  placeholder,
   onExpand,
   disabled,
 }: {
   label: string;
+  /** True while nothing is named, so the label is set as a placeholder. */
+  placeholder: boolean;
   onExpand: () => void;
   disabled: boolean;
 }): React.JSX.Element {
@@ -296,7 +302,13 @@ function CollapsedTrigger({
         accessibilityState={{ disabled }}
         testID="aspect-chord-trigger"
       >
-        <Text style={styles.aspectChordTriggerLabel}>{label}</Text>
+        <Text
+          style={
+            placeholder ? styles.aspectChordTriggerPlaceholder : styles.aspectChordTriggerLabel
+          }
+        >
+          {label}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -417,7 +429,14 @@ function AspectChordControl({
       setCollapsed(false);
       setUserExpanded(true);
     };
-    return <CollapsedTrigger label={triggerLabel(value)} onExpand={onExpand} disabled={disabled} />;
+    return (
+      <CollapsedTrigger
+        label={triggerLabel(value)}
+        placeholder={value.primary === null}
+        onExpand={onExpand}
+        disabled={disabled}
+      />
+    );
   }
   // Latch the control open once the writer acts inside it, so pressing Clear on
   // an edit-loaded chord leaves them on the chips to re-pick rather than snapping

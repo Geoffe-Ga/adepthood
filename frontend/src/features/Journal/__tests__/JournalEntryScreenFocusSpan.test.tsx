@@ -88,7 +88,8 @@ function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
     source_entry_id: 7,
     anchor_start: 2,
     anchor_end: 19,
-    anchor_text: 'went for a daily',
+    // Must spell its own text in BODY, or the body draws it apart as detached.
+    anchor_text: BODY.slice(2, 19),
     pending: true,
     stale: false,
     ...overrides,

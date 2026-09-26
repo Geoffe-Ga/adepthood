@@ -12,7 +12,9 @@ test('a saved promoted quote can be folded into a reopened reflection', async ({
   const token = await tokenFor(page.request, email);
   const headers = { Authorization: `Bearer ${token}` };
   setProgramAnchorSixDaysAgo(email);
-  const sourceBody = 'I walked beside the river before breakfast.';
+  // A Creek-style transcript body: the speaker prefix is Markdown bold, so the
+  // sheet must render it, never show the raw markers.
+  const sourceBody = '**Me:** I walked beside the river before breakfast.';
   const source = await page.request.post(`${backendUrl()}/journal/`, {
     headers,
     data: { title: 'Morning walk', message: sourceBody },
@@ -24,7 +26,8 @@ test('a saved promoted quote can be folded into a reopened reflection', async ({
   });
   const promoted = await page.request.post(`${backendUrl()}/journal/${sourceId}/promote`, {
     headers,
-    data: { anchor_start: 0, anchor_end: 8 },
+    // Code-point offsets of 'I walked' in the RAW body, markers included.
+    data: { anchor_start: 8, anchor_end: 16 },
   });
   expect(promoted.ok()).toBe(true);
   const quoteId = ((await promoted.json()) as { id: number }).id;
@@ -45,6 +48,20 @@ test('a saved promoted quote can be folded into a reopened reflection', async ({
   await page.getByTestId('journal-close-entry').click();
   await page.getByTestId(`journal-shelf-open-${savedReflection?.id}`).click();
   await page.locator('[data-testid="reflection-sources-toggle"]:visible').click();
+
+  // The source body renders through the journal Markdown model: the collapsed
+  // excerpt and the expanded body both read "Me: I walked", and no raw marker
+  // reaches the screen. The sheet closes with an icon-only X named "Done"; it is
+  // not clicked here because the fold-in below needs the sheet open.
+  const sourceRow = page.locator(`[data-testid="entry-source-${sourceId}"]:visible`);
+  await expect(sourceRow).toContainText('Me: I walked');
+  await expect(sourceRow).not.toContainText('**');
+  await sourceRow.click();
+  const sourceBodyText = page.locator(`[data-testid="source-body-${sourceId}"]:visible`);
+  await expect(sourceBodyText).toContainText('Me: I walked');
+  await expect(sourceBodyText).not.toContainText('**');
+  await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
+
   const pendingQuote = page.locator(`[data-testid="pending-quote-${quoteId}"]:visible`);
   await expect(pendingQuote).toContainText('I walked');
   await pendingQuote.click();

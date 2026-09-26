@@ -17,8 +17,6 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
-  type NativeSyntheticEvent,
-  type TextInputSelectionChangeEventData,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -41,13 +39,14 @@ import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
 import type { RetryFailure, SaveState } from './journalSaveRetry';
-import LiveMarkdownBody from './LiveMarkdownBody';
+import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
+import { useRefreshAfterEdit } from './refreshAfterEdit';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
@@ -321,11 +320,23 @@ async function writeEntry(
   }
 }
 
+/** What the Finish write left on the server: the entry id and its stored body. */
+interface FinishedEntry {
+  id: number;
+  /**
+   * The body exactly as stored. The server sanitizes it (NFC, zero-width marks
+   * stripped, edges trimmed), so it can differ from the text that was sent, and
+   * every anchor offset promoted from read mode indexes THIS string.
+   */
+  message: string;
+}
+
 /**
  * The single authoritative Finish write: one atomic update that carries the FULL
  * body + title alongside the ``finished`` status flip, so an earlier, shorter
  * autosave can never win. Rejects on failure (never swallows) so the caller keeps
- * the entry a draft and surfaces a retry. Resolves to the finished entry's id.
+ * the entry a draft and surfaces a retry. Resolves to the finished entry's id
+ * and the body the server stored.
  *
  * Weekly-prompt compose has no local id to finish, so the Finish affordance is
  * withheld there and this path handles only plain/practice entries.
@@ -335,17 +346,21 @@ async function finishWrite(
   title: string,
   body: string,
   ctx: SaveContext,
-): Promise<number> {
+): Promise<FinishedEntry> {
   const finishTitle = titleOrNull(title);
   const id = refs.entryIdRef.current;
   if (id == null) {
     const created = await createEntry(refs, title, body, ctx);
     refs.entryIdRef.current = created;
-    await journal.update(created, { title: finishTitle, status: 'finished' });
-    return created;
+    const finished = await journal.update(created, { title: finishTitle, status: 'finished' });
+    return { id: created, message: finished.message };
   }
-  await journal.update(id, { message: body, title: finishTitle, status: 'finished' });
-  return id;
+  const finished = await journal.update(id, {
+    message: body,
+    title: finishTitle,
+    status: 'finished',
+  });
+  return { id, message: finished.message };
 }
 
 interface AutosaveApi {
@@ -798,7 +813,7 @@ type FinishRunnerRefs = WriteEntryRefs & {
 /** Raised when Finish is pressed before an existing entry's load has settled. */
 const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loading.';
 
-type RunFinish = (_title: string, _body: string) => Promise<number>;
+type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
 
 /**
  * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
@@ -832,12 +847,14 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
       );
       inFlightRef.current = shadow;
       try {
-        const id = await task;
-        durableTextRef.current = { title, body };
+        const finished = await task;
+        // What is durable is the body the server STORED, not the one sent: the
+        // caller adopts it for read mode, and must not then re-save it as an edit.
+        durableTextRef.current = { title, body: finished.message };
         reporter.succeed('finish');
         reporter.succeed('body');
         if (generationRef.current === generation) reporter.publish('saved');
-        return id;
+        return finished;
       } catch (error) {
         reporter.fail({ lane: 'finish' });
         if (generationRef.current === generation) reporter.publish('idle');
@@ -903,7 +920,7 @@ function usePersistControls(
 }
 
 /** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
-type DraftWriters = SaveTimer & { finish: (_title: string, _body: string) => Promise<number> };
+type DraftWriters = SaveTimer & { finish: RunFinish };
 
 /** Wire the three writers (debounced save, flush, atomic finish) over shared refs. */
 function useDraftWriters(
@@ -1048,9 +1065,9 @@ function useDebouncedSave(
   );
   const finishAndTrack = useCallback(
     async (...args: Parameters<typeof finish>) => {
-      const id = await finish(...args);
-      setEntryId(id);
-      return id;
+      const finished = await finish(...args);
+      setEntryId(finished.id);
+      return finished;
     },
     [finish],
   );
@@ -1073,12 +1090,41 @@ function useDebouncedSave(
 
 type StrRef = React.MutableRefObject<string>;
 
+/** Raised when text changed during Finish could not then be saved. */
+const UNSAVED_AFTER_FINISH_ERROR = 'Text changed during Finish could not be saved.';
+
+/**
+ * The body the server holds once every change made during the Finish write is
+ * durable. The Finish response only knows the text it carried; if the body
+ * changed while it was out, that newer text is saved (``flushForExit`` loops
+ * until what it wrote is what the page holds) and the entry is re-read for the
+ * server's sanitized copy -- again, if the body moved during the read. A save
+ * that fails rejects, so the caller keeps the writer in the editor, never on a
+ * read view of text the server does not hold.
+ */
+function useSettleStoredBody(bodyRef: StrRef, flushForExit: () => Promise<boolean>) {
+  return useCallback(
+    async (finished: FinishedEntry, sent: string): Promise<string> => {
+      let stored = finished.message;
+      let settled = sent;
+      while (bodyRef.current !== settled) {
+        if (!(await flushForExit())) throw new Error(UNSAVED_AFTER_FINISH_ERROR);
+        settled = bodyRef.current;
+        stored = (await journal.get(finished.id)).message;
+      }
+      return stored;
+    },
+    [bodyRef, flushForExit],
+  );
+}
+
 /** Bind flush + finish to the latest title/body refs so callers pass no args. */
 function useBoundWriters(
   flush: (_title: string, _body: string) => Promise<FlushResult>,
-  finish: (_title: string, _body: string) => Promise<number>,
+  finish: RunFinish,
   titleRef: StrRef,
   bodyRef: StrRef,
+  adoptStoredBody: (_stored: string) => void,
 ): {
   flushNow: () => Promise<number | null>;
   flushForExitNow: () => Promise<boolean>;
@@ -1096,10 +1142,16 @@ function useBoundWriters(
       if (sameDraft(requested, titleRef.current, bodyRef.current)) return true;
     }
   }, [flush, titleRef, bodyRef]);
-  const finishNow = useCallback(
-    () => finish(titleRef.current, bodyRef.current),
-    [finish, titleRef, bodyRef],
-  );
+  const settleStoredBody = useSettleStoredBody(bodyRef, flushForExitNow);
+  // Read mode shows, and promotes offsets into, the body as STORED, so it adopts
+  // the server's copy of the latest text before it opens -- including text the
+  // writer typed (or a fold-in added) while the Finish write was out.
+  const finishNow = useCallback(async () => {
+    const sent = bodyRef.current;
+    const finished = await finish(titleRef.current, sent);
+    adoptStoredBody(await settleStoredBody(finished, sent));
+    return finished.id;
+  }, [finish, titleRef, bodyRef, adoptStoredBody, settleStoredBody]);
   return { flushNow, flushForExitNow, finishNow };
 }
 
@@ -1471,6 +1523,17 @@ function useRetrySource(
   );
 }
 
+/** Replace the local body with the server's stored copy (after Finish only). */
+function useAdoptStoredBody(bodyRef: StrRef, setBody: (_v: string) => void) {
+  return useCallback(
+    (stored: string) => {
+      bodyRef.current = stored;
+      setBody(stored);
+    },
+    [bodyRef, setBody],
+  );
+}
+
 /** Bind the draft writer to the entry's live fields and local choice state. */
 function useAutosaveBindings(
   entry: EntryState,
@@ -1483,11 +1546,13 @@ function useAutosaveBindings(
     entry.setTitle,
     entry.setBody,
   );
+  const adoptStoredBody = useAdoptStoredBody(entry.bodyRef, entry.setBody);
   const { flushNow, flushForExitNow, finishNow } = useBoundWriters(
     saving.flush,
     saving.finish,
     entry.titleRef,
     entry.bodyRef,
+    adoptStoredBody,
   );
   const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
     entry,
@@ -1562,7 +1627,7 @@ interface WritingColumnProps {
    */
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
-  onBodySelectionChange?: (_e: SelectionChangeEvent) => void;
+  onBodySelectionChange?: LiveMarkdownBodyProps['onBodySelectionChange'];
   /** Opens the rereadable source feed while composing a reflection. */
   onOpenSources?: () => void;
   /** Opens the shared capture route to add a photographed page to this entry. */
@@ -1907,8 +1972,6 @@ function NoNotesNotice({ message }: { message: string | null }) {
   );
 }
 
-type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
-
 /** The read-mode quote surface: the promoted-quote list plus its UI gestures. */
 interface QuotePromotion {
   quotes: PromotedQuote[];
@@ -1920,6 +1983,8 @@ interface QuotePromotion {
   promoted: boolean;
   /** Re-post the last failed span with the same anchors; null unless a promote failed. */
   retryPromote: (() => Promise<void>) | null;
+  /** Re-read the quotes after an edited save re-anchored or staled them. */
+  refresh: () => Promise<void>;
   /** True while the reader is choosing a span in the selection TextInput. */
   selecting: boolean;
   /** The quote whose "Remove promotion" affordance is currently revealed, if any. */
@@ -1937,7 +2002,7 @@ interface QuotePromotion {
 /** The gesture slice of {@link QuotePromotion} owned by {@link useQuoteInteraction}. */
 type QuoteInteraction = Omit<
   QuotePromotion,
-  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote'
+  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote' | 'refresh'
 >;
 
 /** The read-mode selection/removal gestures over the {@link usePromotions} state. */
@@ -1993,10 +2058,10 @@ function useQuoteInteraction(
 
 /** Compose the promoted-quote state with its read-mode selection gestures. */
 function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
-  const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote } =
+  const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh } =
     usePromotions({ entryId: routeEntryId ?? 0 });
   const interaction = useQuoteInteraction(promote, removePromotion);
-  return { quotes, hint, promoting, promoted, retryPromote, ...interaction };
+  return { quotes, hint, promoting, promoted, retryPromote, refresh, ...interaction };
 }
 
 /**
@@ -2456,33 +2521,6 @@ function deriveResonanceGate(args: ResonanceGateArgs): ResonanceGate {
   };
 }
 
-interface RefreshAfterEdit {
-  refreshRef: React.MutableRefObject<() => Promise<void>>;
-  /** Fires the deferred marginalia refresh after the first post-edit save. */
-  handleSaved: () => void;
-  /** Arms the deferred refresh when the user confirms an edit of a finished entry. */
-  onConfirmEdit: () => void;
-}
-
-/**
- * A finished entry's notes re-anchor/stale on the first save after an edit, so
- * the refresh is deferred: ``onConfirmEdit`` arms it and the next ``handleSaved``
- * fires it once (via ``refreshRef``, wired to resonance.refresh by the caller).
- */
-function useRefreshAfterEdit(): RefreshAfterEdit {
-  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const pendingRefreshRef = useRef(false);
-  const handleSaved = useCallback(() => {
-    if (!pendingRefreshRef.current) return;
-    pendingRefreshRef.current = false;
-    void refreshRef.current();
-  }, []);
-  const onConfirmEdit = useCallback(() => {
-    pendingRefreshRef.current = true;
-  }, []);
-  return { refreshRef, handleSaved, onConfirmEdit };
-}
-
 /** Compose the autosave + idle + resonance hooks into the screen's view-model. */
 /**
  * The live review claiming ``scopeKey``, or null. Every scope that can be
@@ -2700,7 +2738,7 @@ function useJournalEntryController(
   justSaved: boolean,
   initialClassification: JournalClassification,
 ) {
-  const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
+  const { refreshersRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
   const autosave = useJournalAutosave(
     routeEntryId,
@@ -2720,7 +2758,8 @@ function useJournalEntryController(
     justSaved,
   });
   const quote = useQuotePromotion(autosave.entryId);
-  refreshRef.current = resonance.refresh;
+  // The first save after an edit re-anchors notes AND pending quotes server-side.
+  refreshersRef.current = [resonance.refresh, quote.refresh];
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const saveRetry = useEntrySaveRetry(autosave, editGate.markFinished);

@@ -132,6 +132,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
   'features/Journal/MarginNote.tsx::staleCaption',
+  // The stale-quote row's caption is metadata beside the snapshot text; the
+  // tap target is the whole row (touchTarget.minimum), as with MarginNote.
+  'features/Journal/StaleQuoteNotes.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
   // A promoted quote's source line (and, once used, its review), beneath the
   // quote inside the row's own tap target: metadata, as cardDate is below. The
@@ -139,12 +142,14 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // an affordance.
   'features/Journal/QuoteRow.tsx::caption',
   'features/Journal/ReflectionInvitationBand.tsx::label',
-  'features/Journal/ReflectionSourcesPanel.tsx::groupHeading',
+  // The sheet's one eyebrow face: the "Quotes to fold in" group heading and a
+  // reflection row's level label, both read and never tapped.
+  'features/Journal/ReflectionSourcesPanel.tsx::eyebrow',
   // The review period beneath the Sources heading: a label naming the dates the
   // feed was drawn from. Nothing tappable -- the panel's own affordances are the
-  // Done link, the pending quotes, and the rows.
+  // icon-only X close control (accessible name "Done"), the pending quotes, and
+  // the rows.
   'features/Journal/ReflectionSourcesPanel.tsx::headingPeriod',
-  'features/Journal/ReflectionSourcesPanel.tsx::levelLabel',
   'features/Journal/ReflectionSourcesPanel.tsx::promoteHint',
   // A source row's date, printed beside its title. It sits inside the row's own
   // tappable header (as rowExcerpt already does) but is not itself an
@@ -157,6 +162,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // text beside the rows, never pressed — every affordance in that step is an
   // OfferAction, which takes editorialType.action.
   'features/Journal/WritingSessionOffer.tsx::help',
+  // Audited: the "min" unit said once at the end of the timer's preset row.
+  // Plain Text hidden from the a11y tree, never pressed — the radios beside it
+  // carry the action face and "Write for N minutes" as their names.
+  'features/Journal/WritingTimer.tsx::presetUnit',
   'features/Journal/SearchBar.tsx::searchResultCount',
   'features/Journal/StatTile.styles.ts::title',
   // Metadata inside a card whose whole surface is the tap target (the anchor

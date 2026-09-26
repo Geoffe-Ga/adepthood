@@ -5,11 +5,12 @@
  * reader-promoted quote spans share the same body, resolved to one anchor stream.
  */
 import React from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { useFocusScroll, type FocusScrollValue } from './focusSpanScroll';
 import {
   buildAnchoredSegments,
+  partitionQuotes,
   resolveFocusSpan,
   type AnchoredSegment,
   type ResolvedFocusSpan,
@@ -21,8 +22,9 @@ import {
   type JournalMarkdownBlock,
   type JournalMarkdownDocument,
   type JournalMarkdownLine,
-  type JournalMarkdownRun,
 } from './journalMarkdown';
+import { bulletDecoration, renderMarkdownRun, webRole } from './ReadOnlyMarkdownText';
+import StaleQuoteNotes from './StaleQuoteNotes';
 
 import type { Marginalia, PromotedQuote } from '@/api';
 import { Button } from '@/components/Button';
@@ -35,16 +37,6 @@ const NOOP = (): void => {};
 const REMOVE_QUOTE_MAX_LINES = 3;
 /** A visible quotation rule, shared in weight with the course reader's rule. */
 const JOURNAL_QUOTE_RULE_WIDTH = 3;
-/**
- * The bullet glyph a list item renders.
- *
- * Renderer decoration, deliberately NOT a character in the source stream: the
- * writer's own marker stays at its source offset (hidden), so every anchor the
- * backend stores keeps addressing the same code points.
- */
-const JOURNAL_BULLET_GLYPH = '\u2022 ';
-/** One column of rendered bullet indent, matching the measured indent width. */
-const JOURNAL_INDENT_COLUMN = ' ';
 
 // React Native's public ViewProps omit the click callback that both the native
 // host view and React Native Web support. Keeping it on a View avoids Pressable's
@@ -115,16 +107,20 @@ function quoteTestID(id: number, continuation: boolean, focused: boolean): strin
 /**
  * The anchor text of the promoted quote whose remove card is revealed, or null.
  * Located through the built segment stream (so an out-of-range quote — one with
- * no drawn span, hence untappable — never yields a card), and read from the
+ * no drawn span, hence untappable — never yields a card) or among the detached
+ * quotes listed under the prose (each tappable there), and read from the
  * quote's own ``anchor_text`` rather than a re-slice of the body.
  */
 function findRemoveQuoteText(
   segments: AnchoredSegment[],
+  detachedQuotes: PromotedQuote[],
   removeTargetId: number | null,
 ): string | null {
   if (removeTargetId == null) return null;
   const match = segments.find((s) => s.quote != null && s.quote.id === removeTargetId);
-  return match != null && match.quote != null ? match.quote.anchor_text : null;
+  if (match != null && match.quote != null) return match.quote.anchor_text;
+  const detached = detachedQuotes.find((q) => q.id === removeTargetId);
+  return detached != null ? detached.anchor_text : null;
 }
 
 /** Anchored card echoing a tapped quote's text with a Remove-promotion action. */
@@ -155,52 +151,6 @@ function RemoveQuoteCard({
       />
     </View>
   );
-}
-
-/** Semantic roles become matching HTML elements on web; native uses the style. */
-function webRole(role: 'strong' | 'emphasis' | 'blockquote'): never | undefined {
-  return Platform.OS === 'web' ? (role as never) : undefined;
-}
-
-/** Render one visible inline run, composing bold + italic when both apply. */
-function renderMarkdownRun(run: JournalMarkdownRun): React.ReactNode {
-  let node: React.ReactNode = run.text;
-  if (run.italic) {
-    node = (
-      <Text
-        key={`italic-${run.start}`}
-        role={webRole('emphasis')}
-        style={styles.italic}
-        testID={`journal-markdown-italic-${run.start}`}
-      >
-        {node}
-      </Text>
-    );
-  }
-  if (run.underline) {
-    node = (
-      <Text
-        key={`underline-${run.start}`}
-        style={styles.underline}
-        testID={`journal-markdown-underline-${run.start}`}
-      >
-        {node}
-      </Text>
-    );
-  }
-  if (run.bold) {
-    node = (
-      <Text
-        key={`bold-${run.start}`}
-        role={webRole('strong')}
-        style={styles.bold}
-        testID={`journal-markdown-bold-${run.start}`}
-      >
-        {node}
-      </Text>
-    );
-  }
-  return node;
 }
 
 function segmentEnd(segment: AnchoredSegment): number {
@@ -297,12 +247,6 @@ function renderLine(
     rendered.push(renderAnchoredSlice(segment, start, end, render));
   }
   return rendered;
-}
-
-/** The indent and glyph a bullet line draws in front of its anchored text. */
-function bulletDecoration(block: JournalMarkdownBlock, line: JournalMarkdownLine): string[] {
-  if (block.kind !== 'bullet') return [];
-  return [`${JOURNAL_INDENT_COLUMN.repeat(line.indentWidth)}${JOURNAL_BULLET_GLYPH}`];
 }
 
 /** Render every line in a block, restoring only the line feeds between them. */
@@ -466,7 +410,11 @@ function HighlightedBody({
     [body, notes, quotes],
   );
   const document = React.useMemo(() => parseJournalMarkdown(body), [body]);
-  const removeText = findRemoveQuoteText(segments, removeTargetId);
+  const detachedQuotes = React.useMemo(
+    () => partitionQuotes(quotes, body).detached,
+    [quotes, body],
+  );
+  const removeText = findRemoveQuoteText(segments, detachedQuotes, removeTargetId);
   const focus = useBodyFocus(body, quotes);
   const render: RenderContext = {
     document,
@@ -485,6 +433,7 @@ function HighlightedBody({
       >
         {renderDocumentBlocks(segments, render, focus)}
       </BodyView>
+      <StaleQuoteNotes quotes={detachedQuotes} onQuotePress={onQuotePress} />
       {removeTargetId != null && removeText != null ? (
         <RemoveQuoteCard id={removeTargetId} text={removeText} onConfirm={onConfirmRemove} />
       ) : null}
@@ -499,15 +448,6 @@ const styles = StyleSheet.create({
   body: {
     ...editorialType.body,
     color: colors.paper.ink,
-  },
-  bold: {
-    fontWeight: '700',
-  },
-  italic: {
-    fontStyle: 'italic',
-  },
-  underline: {
-    textDecorationLine: 'underline',
   },
   bulletBlock: {
     paddingVertical: SPACING.xs,

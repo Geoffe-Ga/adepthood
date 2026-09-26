@@ -25,7 +25,8 @@ import {
   type TextInputSelectionChangeEventData,
 } from 'react-native';
 
-import { utf16ToCodePoint } from './codePoints';
+import { selectionToAnchorSpan } from './anchorSpan';
+import { codePointToUtf16 } from './codePoints';
 import styles from './JournalEntry.styles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useWebSelectionListener } from './webSelectionListener';
@@ -36,8 +37,9 @@ type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventDa
 
 /**
  * A selection span in Unicode code-point offsets (the anchor API's unit),
- * end-exclusive. This is the single conversion boundary between the native
- * TextInput's UTF-16 selection and the code-point anchors both send flows post.
+ * end-exclusive, with edge whitespace trimmed. It is produced at the single
+ * conversion boundary, ``selectionToAnchorSpan``, between the native TextInput's
+ * UTF-16 selection and the code-point anchors both send flows post.
  */
 export interface CodePointSpan {
   start: number;
@@ -78,9 +80,8 @@ interface SelectionSurfaceState {
 
 /**
  * Own the surface's selection and hint state in one place: hold the raw UTF-16
- * span (so the preview can slice ``body`` verbatim), emit the code-point span at
- * the single conversion boundary, and clear the empty-tap hint the moment a real
- * passage is chosen.
+ * span, emit the trimmed code-point span at the single conversion boundary, and
+ * clear the empty-tap hint the moment a real passage is chosen.
  */
 function useSelectionSurfaceState(
   body: string,
@@ -92,11 +93,9 @@ function useSelectionSurfaceState(
   const emitSpan = useCallback(
     (startUtf16: number, endUtf16: number) => {
       setSpan({ start: startUtf16, end: endUtf16 });
-      onSelectionChange({
-        start: utf16ToCodePoint(body, startUtf16),
-        end: utf16ToCodePoint(body, endUtf16),
-      });
-      if (endUtf16 > startUtf16) {
+      const anchor = selectionToAnchorSpan(body, { start: startUtf16, end: endUtf16 });
+      onSelectionChange(anchor);
+      if (anchor.end > anchor.start) {
         setHintVisible(false);
       }
     },
@@ -113,16 +112,16 @@ function useSelectionSurfaceState(
 
   const showHint = useCallback(() => setHintVisible(true), [setHintVisible]);
 
-  // Gate emptiness on the code-point span the API actually receives (not the raw
-  // UTF-16 span), so the disabled confirm and the posted anchors agree at the
-  // same boundary the rest of this module is careful about. The preview still
-  // slices the raw UTF-16 span to echo exactly what the reader highlighted.
-  const codePointStart = utf16ToCodePoint(body, span.start);
-  const codePointEnd = utf16ToCodePoint(body, span.end);
-  const isEmpty = codePointEnd <= codePointStart;
+  // Gate emptiness on the span the API actually receives (trimmed, in code
+  // points), so the disabled confirm and the posted anchors agree at the same
+  // boundary. The preview echoes that same span: exactly what will be stored.
+  const anchor = selectionToAnchorSpan(body, span);
+  const isEmpty = anchor.end <= anchor.start;
   return {
     isEmpty,
-    previewSlice: isEmpty ? '' : body.slice(span.start, span.end),
+    previewSlice: isEmpty
+      ? ''
+      : body.slice(codePointToUtf16(body, anchor.start), codePointToUtf16(body, anchor.end)),
     hintVisible,
     emitSpan,
     handleSelectionChange,
