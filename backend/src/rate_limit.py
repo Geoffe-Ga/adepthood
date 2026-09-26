@@ -508,7 +508,8 @@ AMBIENT_LIMIT_ITEM = parse(DEFAULT_RATE_LIMIT)
 # a tool to use on everybody else. The unit a ceiling may bound is the unit the
 # attacker already owns.
 #
-# Sized well above the 118 distinct paths the API actually mounts, so no
+# Sized well above the 124 distinct paths the API actually mounts (pinned as
+# ``_DISTINCT_MOUNTED_PATHS`` in ``tests/test_rate_limits.py``), so no
 # legitimate client can approach it by using the product, and above the fan-out
 # a client can reach by enumerating ids on a handful of ``{param}`` routes
 # inside one window before the sweep starts reclaiming.
@@ -572,8 +573,10 @@ class AmbientThrottle(_MovingWindowThrottle):
     keeps one runaway screen from taking the whole API away from the client
     running it -- including the health probes an operator would read to find out
     why. The cost of that choice is recorded in the residuals: enumerating a
-    ``{param}`` route buys a fresh budget per id, which is why the ceiling below
-    exists and why a coarse per-client limit is the named follow-up.
+    ``{param}`` route buys a fresh budget per id, which is why the fan-out
+    ceiling below exists and why :class:`ClientCeiling` (#2913) bounds each
+    client's *overall* rate on top of it -- charged in the same call, keyed on
+    the client alone, and so still consulting no route identity.
 
     The ceiling bounds one client's fan-out and is reached independently by each
     client, so saturating is something a client can only do to itself. Reaching
@@ -632,6 +635,35 @@ class AmbientThrottle(_MovingWindowThrottle):
         """
         bucket = self._bucket_for(throttle_key, path)
         if self.record(bucket):
+            return None
+        return self.retry_after(bucket)
+
+    def wait_for(self, throttle_key: str, path: str) -> int | None:
+        """Peek at how long ``path`` would make ``throttle_key`` wait, consuming nothing.
+
+        Answers for the bucket :meth:`charge` would bill, without doing any of
+        what choosing it can do: it mints no bucket, records no attempt, runs no
+        reclaim and schedules no sweep. A client at its fan-out ceiling is
+        answered from its overflow bucket even where a reclaim would have freed
+        room, which can only lengthen a wait that is being reported on a request
+        refused anyway -- never shorten one.
+
+        Args:
+            throttle_key: Grouped client key.
+            path: Raw request path.
+
+        Returns:
+            The whole seconds the bucket still needs when it is spent, or None
+            when it would admit (including when no bucket exists to be spent).
+        """
+        bucket = (throttle_key, path)
+        if bucket not in self.last_attempt:
+            if self._has_room(throttle_key):
+                return None
+            bucket = (throttle_key, _OVERFLOW_PATH_MARKER)
+            if bucket not in self.last_attempt:
+                return None
+        if not self.exhausted(bucket):
             return None
         return self.retry_after(bucket)
 
@@ -769,7 +801,177 @@ class AmbientThrottle(_MovingWindowThrottle):
         return (throttle_key, _OVERFLOW_PATH_MARKER)
 
 
+# ── The per-client ceiling: every path a client asks for, in one budget ──
+#
+# #2913. The floor above is keyed on ``(client, raw path)``, so enumerating a
+# ``{param}`` route buys a fresh 60/minute per id. The fan-out ceiling already
+# caps *one-shot* enumeration: past 512 distinct paths every unseen one is
+# billed to the client's overflow bucket, so single hits across distinct ids are
+# refused from the 573rd. What it did not cap is *repeat* hits across fewer ids
+# than that -- up to 512 x 60 + 60, some 30,780 admitted requests a minute per
+# client per worker. This ceiling is the aggregate that closes it: one bucket
+# per client key, charged in the same call as the floor, reading nothing but
+# the client key. Keyed on the client alone and never on route identity, for
+# exactly the reason the floor is.
+#
+# Sized from code, because no production traffic percentiles were available to
+# size it from. The worst legitimate burst one user can produce inside a minute:
+#
+# * a habit insert or reorder, which ``habitManager.ts`` (insert / reorder /
+#   ``syncRevealState``) fans out as one POST plus a PUT to every other
+#   server-backed habit under a single ``Promise.all`` -- 1 + up to
+#   ``_MAX_HABITS_PER_USER`` - 1 (``routers/habits.py``: 100) distinct paths;
+# * a full quick-log burst at ``_QUICK_LOG_BURST_LIMIT`` (180/minute) on its
+#   one path;
+# * ordinary screen loads on top, of the order of a hundred requests.
+#
+# That is some 300-400 requests. 600 sits well above it, leaving headroom for
+# a shared NAT or an IPv6 prefix grouped onto one key -- and it is ten times the
+# ambient floor, which is the multiple an override scales it by. A ceiling at or
+# under the worst burst would silently narrow the quick-log burst floor or break
+# a reorder; ``tests/middleware/test_ambient_rate_limit.py`` drives that burst
+# against the shipped value, and ``_MAX_HABITS_PER_USER`` is tied to it there
+# rather than imported here, which would make this module import a router.
+#
+# Two operator caveats (``DEPLOYMENT.md``). Like every limit in this module it
+# is per worker process, so the effective per-deployment ceiling is
+# ``WEB_CONCURRENCY`` x 600. And with ``TRUSTED_PROXY_CIDRS`` unset every
+# request collapses onto the proxy's key, which makes this a site-wide
+# 600/minute across the whole API rather than a per-client one.
+CLIENT_CEILING_LIMIT = "600/minute"
+
+# How far above the ambient floor the ceiling always sits.
+# ``ADEPTHOOD_DEFAULT_RATE_LIMIT`` widens the floor for the DAST jobs to
+# thousands per minute; a fixed ceiling would quietly undercut that override
+# on every path at once, so the ceiling scales with it instead.
+_CLIENT_CEILING_FLOOR_MULTIPLE = 10
+
+
+def resolve_client_ceiling(ambient: RateLimitItem | None = None) -> RateLimitItem:
+    """Return the per-client ceiling for a given ambient floor.
+
+    Args:
+        ambient: The ambient floor to scale against. Defaults to
+            ``AMBIENT_LIMIT_ITEM``, read at call time.
+
+    Returns:
+        The wider, as a rate, of :data:`CLIENT_CEILING_LIMIT` and
+        ``_CLIENT_CEILING_FLOOR_MULTIPLE`` times the ambient floor. Only ever the
+        wider: the ceiling exists to bound enumeration and must never become the
+        thing that undercuts an override. At the shipped default the two agree
+        and the literal is returned.
+    """
+    floor = AMBIENT_LIMIT_ITEM if ambient is None else ambient
+    literal = parse(CLIENT_CEILING_LIMIT)
+    scaled = type(floor)(
+        floor.amount * _CLIENT_CEILING_FLOOR_MULTIPLE,
+        floor.multiples,
+        floor.namespace,
+    )
+    return max((literal, scaled), key=_requests_per_second)
+
+
+class ClientCeiling(_MovingWindowThrottle):
+    """One moving-window budget per client key, whatever paths it spends it on.
+
+    Keyed ``(client,)``, so its key space is the client population and nothing
+    an attacker can spell into a request line. It inherits the base class's
+    sweep, so rolled-off clients leave the store the same way ambient buckets
+    do.
+    """
+
+    def charge(self, throttle_key: str) -> int | None:
+        """Charge one request against ``throttle_key``'s overall budget.
+
+        Args:
+            throttle_key: Grouped client key.
+
+        Returns:
+            None while the client is under its ceiling, or the whole seconds it
+            must wait once the ceiling is spent.
+        """
+        bucket = (throttle_key,)
+        if self.record(bucket):
+            return None
+        return self.retry_after(bucket)
+
+    def wait_for(self, throttle_key: str) -> int | None:
+        """Peek at the client's wait without charging, minting or sweeping anything.
+
+        Args:
+            throttle_key: Grouped client key.
+
+        Returns:
+            The whole seconds until the ceiling admits again, or None while it
+            still has room.
+        """
+        bucket = (throttle_key,)
+        if not self.exhausted(bucket):
+            return None
+        return self.retry_after(bucket)
+
+    def tracked_clients(self) -> frozenset[str]:
+        """Return the client keys currently holding a ceiling bucket."""
+        return frozenset(key[_CLIENT_COMPONENT] for key in self.last_attempt)
+
+
+def _longest_wait(*waits: int | None) -> int | None:
+    """Return the longest of the waits that refuse, or None when none does.
+
+    Args:
+        *waits: Each bucket's wait, None where that bucket would admit.
+
+    Returns:
+        The longest wait: a client told the shorter one would retry into the
+        bucket that is still spent.
+    """
+    refusing = [wait for wait in waits if wait is not None]
+    return max(refusing) if refusing else None
+
+
+def _charge_floor_and_ceiling(
+    floor: AmbientThrottle,
+    ceiling: ClientCeiling,
+    throttle_key: str,
+    path: str,
+) -> int | None:
+    """Charge one request to its path floor and its client ceiling, in that order.
+
+    The order is what keeps the two budgets from spending each other:
+
+    * A spent ceiling refuses before the floor is touched, so a ceiling refusal
+      consumes no path budget. Its answer is the longer of the two waits, both
+      read by non-consuming peeks.
+    * A request its path floor refuses is never billed to the ceiling. Billing
+      it would let one runaway screen retrying one path spend the client's
+      whole ceiling and take every other path away from it -- health probes
+      included -- which is the property per-path keying exists to protect.
+    * Only a request the floor admitted is billed to the ceiling.
+
+    Synchronous, with nothing awaited between the peek and the charges, so no
+    other request's charge can interleave with them.
+
+    Args:
+        floor: The throttle owning ``path``'s floor.
+        ceiling: The per-client ceiling.
+        throttle_key: Grouped client key.
+        path: Raw request path.
+
+    Returns:
+        None when admitted, or the ``Retry-After`` seconds when refused.
+    """
+    ceiling_wait = ceiling.wait_for(throttle_key)
+    if ceiling_wait is not None:
+        return _longest_wait(ceiling_wait, floor.wait_for(throttle_key, path))
+    path_wait = floor.charge(throttle_key, path)
+    if path_wait is not None:
+        return path_wait
+    return ceiling.charge(throttle_key)
+
+
 _ambient_throttle = AmbientThrottle()
+
+_client_ceiling = ClientCeiling(resolve_client_ceiling(AMBIENT_LIMIT_ITEM))
 
 # One throttle per burst path, rather than a per-bucket cap inside the ambient
 # store. Each holds a single path, so its key space is bounded by the client
@@ -816,7 +1018,7 @@ def floor_for_path(path: str) -> RateLimitItem:
 
 
 def charge_ambient_limit(throttle_key: str, path: str) -> int | None:
-    """Charge one request against the ambient floor.
+    """Charge one request against the ambient floor and the client's ceiling.
 
     Args:
         throttle_key: Grouped client key the request is billed to.
@@ -826,12 +1028,13 @@ def charge_ambient_limit(throttle_key: str, path: str) -> int | None:
         None when the request is admitted, or the ``Retry-After`` seconds to
         answer with when it is refused.
     """
-    return _throttle_for(path).charge(throttle_key, path)
+    return _charge_floor_and_ceiling(_throttle_for(path), _client_ceiling, throttle_key, path)
 
 
 def reset_ambient_limit() -> None:
-    """Clear every ambient bucket (test isolation between cases)."""
+    """Clear every ambient bucket and every client ceiling (test isolation)."""
     _ambient_throttle.reset()
+    _client_ceiling.reset()
     for throttle in _burst_throttles.values():
         throttle.reset()
 
@@ -842,6 +1045,11 @@ def ambient_tracked_paths() -> frozenset[str]:
     for throttle in _burst_throttles.values():
         tracked |= throttle.tracked_paths()
     return tracked
+
+
+def ambient_tracked_clients() -> frozenset[str]:
+    """Return the client keys currently holding a per-client ceiling bucket."""
+    return _client_ceiling.tracked_clients()
 
 
 def declared_limit_retry_after(request: Request, exc: Exception) -> int:

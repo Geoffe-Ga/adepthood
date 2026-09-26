@@ -17,7 +17,11 @@ from "enforced where a handler happens to resolve".
 
 from __future__ import annotations
 
+import importlib.util
 import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -38,15 +42,25 @@ from rate_limit import (
     _SWEEP_MIN_TRACKED,
     AMBIENT_LIMIT_ITEM,
     DEFAULT_RATE_LIMIT,
+    RATE_LIMIT_OVERRIDE_ENV_VAR,
     AmbientThrottle,
+    ClientCeiling,
+    _charge_floor_and_ceiling,
+    _client_ceiling,
     _requests_per_second,
+    ambient_tracked_clients,
     ambient_tracked_paths,
     charge_ambient_limit,
     floor_for_path,
     limiter,
     rate_limit_exceeded_response,
     reset_ambient_limit,
+    resolve_client_ceiling,
 )
+from routers.habits import _MAX_HABITS_PER_USER
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _AMBIENT_ALLOWANCE = 60
 _OK = 200
@@ -108,6 +122,32 @@ _CLIENT_CEILING_PER_MINUTE = 600
 # far below 512 distinct paths, and still spends exactly the ceiling.
 _ENUMERATED_IDS = 20
 _HITS_PER_ID = 30
+_CEILING_WINDOW_SECONDS = 60
+_CLIENT_CEILING_MULTIPLE = 10
+
+# The other override the DAST jobs set, ten times wider again, and one between
+# the default and them, where an all-or-nothing yield would sit only twice the
+# per-path floor.
+_DAST_WIDEST_OVERRIDE = "60000/minute"
+
+# The module's own source, executed afresh under an override.
+_RATE_LIMIT_SOURCE = Path(__file__).resolve().parents[2] / "src" / "rate_limit.py"
+_MID_OVERRIDE = "300/minute"
+# An override *narrower* than the default, where ten times the floor would fall
+# below the shipped ceiling.
+_NARROW_OVERRIDE = "30/minute"
+
+# The Retry-After ordering timeline, on small injected caps so each bucket is
+# spent in a handful of charges. In the path-longer case the ceiling's entries
+# are older than the path's, so the ceiling frees up first; in the
+# ceiling-longer case the ceiling's window is an hour.
+_SMALL_FLOOR = "3/minute"
+_SMALL_CEILING = "4/minute"
+_HOURLY_CEILING = "5/hour"
+_PATH_SPENT_AT = 20.0
+_ASKED_AT = 30.0
+_PATH_LONGER_WAIT = 50
+_CEILING_LONGER_WAIT = 3570
 
 _CLIENT = "198.51.100.7"
 _OTHER_CLIENT = "203.0.113.9"
@@ -681,3 +721,300 @@ def test_a_client_hammering_many_ids_is_refused_at_its_overall_ceiling() -> None
     assert refused >= _MIN_RETRY_AFTER_SECONDS
 
     assert charge_ambient_limit(_OTHER_CLIENT, "/journal/id-0") is None
+
+
+def test_the_route_less_app_refuses_past_the_client_ceiling(route_less_client: TestClient) -> None:
+    """The ceiling holds on an application with zero routes: it reads no route identity."""
+    statuses = [
+        route_less_client.get(f"/journal/id-{index % _ENUMERATED_IDS}").status_code
+        for index in range(_CLIENT_CEILING_PER_MINUTE)
+    ]
+    assert _TOO_MANY_REQUESTS not in statuses
+
+    throttled = route_less_client.get("/journal/id-0")
+    assert throttled.status_code == _TOO_MANY_REQUESTS
+    assert throttled.json()["detail"] == "rate_limit_exceeded"
+    assert int(throttled.headers["retry-after"]) >= _MIN_RETRY_AFTER_SECONDS
+
+
+def test_a_refused_path_request_is_not_billed_to_the_ceiling() -> None:
+    """One runaway screen must not take the rest of the API away from its client.
+
+    A quick-log tile retrying one path after its 429 sends far more refused
+    requests than admitted ones. Billing those refusals to the ceiling would let
+    that one path spend the client's whole overall budget -- and from then on
+    every other path, health probes included, would answer 429.
+    """
+    for _ in range(_AMBIENT_ALLOWANCE + _CLIENT_CEILING_PER_MINUTE):
+        charge_ambient_limit(_CLIENT, _PATH)
+    assert charge_ambient_limit(_CLIENT, _PATH) is not None
+
+    assert charge_ambient_limit(_CLIENT, "/health/live") is None
+
+
+def test_a_ceiling_refusal_consumes_no_path_budget() -> None:
+    """A request the ceiling refuses is charged to no path, minted nowhere."""
+    _hammer_ids(_CLIENT)
+
+    assert charge_ambient_limit(_CLIENT, "/journal/new") is not None
+    assert "/journal/new" not in ambient_tracked_paths()
+    for _ in range(_HITS_PER_ID):
+        assert charge_ambient_limit(_CLIENT, "/journal/id-0") is not None
+
+    _client_ceiling.reset()
+    remaining = [
+        charge_ambient_limit(_CLIENT, "/journal/id-0")
+        for _ in range(_AMBIENT_ALLOWANCE - _HITS_PER_ID)
+    ]
+    assert remaining == [None] * (_AMBIENT_ALLOWANCE - _HITS_PER_ID), (
+        "requests the ceiling refused were charged to the path's own budget"
+    )
+    assert charge_ambient_limit(_CLIENT, "/journal/id-0") is not None
+
+
+def test_another_client_is_untouched_by_a_spent_ceiling() -> None:
+    """One key spending its ceiling narrows nobody else's (no cross-tenant reach)."""
+    _hammer_ids(_CLIENT)
+    assert charge_ambient_limit(_CLIENT, "/journal/id-0") is not None
+
+    ordinary = [
+        charge_ambient_limit(_OTHER_CLIENT, f"/screen-{screen}")
+        for screen in range(_ORDINARY_PATHS)
+        for _ in range(_ORDINARY_REQUESTS_PER_PATH)
+    ]
+    assert ordinary == [None] * (_ORDINARY_PATHS * _ORDINARY_REQUESTS_PER_PATH)
+    assert _hammer_ids(_OTHER_CLIENT)[:_HITS_PER_ID] == [None] * _HITS_PER_ID
+
+
+def test_the_ceiling_admits_the_worst_legitimate_fan_out() -> None:
+    """The heaviest real minute one user can produce draws no 429 (tighten-only).
+
+    A habit insert or reorder fans out one request per habit to distinct
+    ``/habits/{id}`` paths, a full quick-log burst spends the whole declared
+    ``/goal_completions/`` floor, and ordinary screens load on top. If the
+    ceiling were sized at or under that, it would silently narrow the declared
+    burst floor or break a reorder.
+    """
+    quick_log_path = "/goal_completions/"
+    quick_log_burst = _PATH_BURST_FLOORS[quick_log_path].amount
+    ordinary = _ORDINARY_PATHS * _ORDINARY_REQUESTS_PER_PATH
+    assert _MAX_HABITS_PER_USER + quick_log_burst + ordinary <= _CLIENT_CEILING_PER_MINUTE
+
+    reorder = [
+        charge_ambient_limit(_CLIENT, f"/habits/{index}") for index in range(_MAX_HABITS_PER_USER)
+    ]
+    burst = [charge_ambient_limit(_CLIENT, quick_log_path) for _ in range(quick_log_burst)]
+    screens = [
+        charge_ambient_limit(_CLIENT, f"/screen-{screen}")
+        for screen in range(_ORDINARY_PATHS)
+        for _ in range(_ORDINARY_REQUESTS_PER_PATH)
+    ]
+
+    assert reorder == [None] * _MAX_HABITS_PER_USER
+    assert burst == [None] * quick_log_burst
+    assert screens == [None] * ordinary
+
+
+def test_the_ceiling_is_at_least_every_burst_floor() -> None:
+    """The ceiling can never be what narrows a declared burst floor or the ambient one."""
+    ceiling = _requests_per_second(_client_ceiling.item)
+    for floor in _PATH_BURST_FLOORS.values():
+        assert ceiling >= _requests_per_second(floor)
+    assert ceiling > _requests_per_second(AMBIENT_LIMIT_ITEM)
+
+
+def test_the_ceiling_is_pinned_at_its_shipped_literal() -> None:
+    """600/minute, against a literal, and wired from the resolver rather than the raw string."""
+    shipped = _client_ceiling.item
+    assert shipped.amount == _CLIENT_CEILING_PER_MINUTE
+    assert shipped.get_expiry() == _CEILING_WINDOW_SECONDS
+    assert shipped == resolve_client_ceiling(AMBIENT_LIMIT_ITEM)
+
+
+def test_a_wide_ambient_override_scales_the_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ADEPTHOOD_DEFAULT_RATE_LIMIT`` must never be undercut by the ceiling.
+
+    The DAST jobs widen the ambient floor to 6000 and 60000 a minute; a fixed
+    ceiling would cap them at 600 across every path at once. The ceiling scales
+    smoothly with the floor rather than yielding all-or-nothing.
+    """
+    for override in (_MID_OVERRIDE, _DAST_WIDE_OVERRIDE, _DAST_WIDEST_OVERRIDE):
+        floor = parse(override)
+        ceiling = resolve_client_ceiling(floor)
+        widened = _CLIENT_CEILING_MULTIPLE * _requests_per_second(floor)
+        assert _requests_per_second(ceiling) >= widened
+
+    monkeypatch.setattr("rate_limit.AMBIENT_LIMIT_ITEM", parse(_DAST_WIDEST_OVERRIDE))
+    assert _requests_per_second(resolve_client_ceiling()) >= _CLIENT_CEILING_MULTIPLE * (
+        _requests_per_second(parse(_DAST_WIDEST_OVERRIDE))
+    )
+
+
+def test_a_narrow_ambient_override_keeps_the_shipped_ceiling() -> None:
+    """The literal is the ceiling's own floor: a narrower ambient never drags it under 600.
+
+    Without it the ceiling would be the multiple alone, and the literal the
+    module documents -- and sizes against the worst legitimate fan-out -- would
+    be decoration that no value of it could change.
+    """
+    narrow = parse(_NARROW_OVERRIDE)
+    assert _CLIENT_CEILING_MULTIPLE * narrow.amount < _CLIENT_CEILING_PER_MINUTE
+
+    ceiling = resolve_client_ceiling(narrow)
+    assert ceiling.amount == _CLIENT_CEILING_PER_MINUTE
+    assert ceiling.get_expiry() == _CEILING_WINDOW_SECONDS
+
+
+def test_the_dast_override_widens_the_live_ceiling_at_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped singleton is built from the resolver, so the DAST override reaches it.
+
+    The override is applied once, at import, so this executes a *fresh* copy of
+    the module under the override -- never registered in ``sys.modules``, so the
+    application's own limiter is untouched. Building the singleton from the
+    literal instead would agree with the resolver at the default, which is all
+    an in-process check of the live module can see, and cap the fuzz job at 600
+    a minute across every path while it had asked for 6000 on each.
+    """
+    monkeypatch.setenv(RATE_LIMIT_OVERRIDE_ENV_VAR, _DAST_WIDE_OVERRIDE)
+    spec = importlib.util.spec_from_file_location("rate_limit_under_override", _RATE_LIMIT_SOURCE)
+    assert spec is not None
+    assert spec.loader is not None
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+
+    live = fresh.resolve_client_ceiling()
+    assert live.amount == _CLIENT_CEILING_MULTIPLE * parse(_DAST_WIDE_OVERRIDE).amount
+    assert fresh.ambient_tracked_clients() == frozenset()
+    assert fresh.charge_ambient_limit(_CLIENT, _PATH) is None
+    assert fresh.floor_for_path(_PATH).amount == parse(_DAST_WIDE_OVERRIDE).amount
+    for _ in range(_CLIENT_CEILING_PER_MINUTE):
+        fresh.charge_ambient_limit(_CLIENT, _PATH)
+    assert fresh.charge_ambient_limit(_CLIENT, _OTHER_PATH) is None, (
+        "the live ceiling was not widened with the override it was imported under"
+    )
+
+
+def _fake_clock(monkeypatch: pytest.MonkeyPatch) -> tuple[list[float], Callable[[], float]]:
+    """A mutable clock starting at the origin, driving the event store as well.
+
+    ``limits``' ``MemoryStorage`` stamps its window entries from the ``time``
+    module rather than from the throttle's injected clock, so a wait computed
+    from a fake reading would be measured against wall-clock entries. Swapping
+    the store's time source for the same fake makes both halves agree.
+    """
+    now = [0.0]
+
+    def clock() -> float:
+        return now[0]
+
+    monkeypatch.setattr("limits.storage.memory.time", SimpleNamespace(time=clock))
+    return now, clock
+
+
+def test_retry_after_is_the_longer_of_the_two_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With both buckets spent, the client is told the wait that actually frees it."""
+    now, clock = _fake_clock(monkeypatch)
+    floor = AmbientThrottle(item=parse(_SMALL_FLOOR), clock=clock)
+    ceiling = ClientCeiling(parse(_SMALL_CEILING), clock=clock)
+    assert _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _OTHER_PATH) is None
+    now[0] = _PATH_SPENT_AT
+    for _ in range(parse(_SMALL_FLOOR).amount):
+        assert _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _PATH) is None
+    now[0] = _ASKED_AT
+    path_longer = _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _PATH)
+    assert path_longer == _PATH_LONGER_WAIT
+
+    now, clock = _fake_clock(monkeypatch)
+    floor = AmbientThrottle(item=parse(_SMALL_FLOOR), clock=clock)
+    ceiling = ClientCeiling(parse(_HOURLY_CEILING), clock=clock)
+    for _ in range(parse(_SMALL_FLOOR).amount):
+        assert _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _PATH) is None
+    for _ in range(parse(_HOURLY_CEILING).amount - parse(_SMALL_FLOOR).amount):
+        assert _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _OTHER_PATH) is None
+    now[0] = _ASKED_AT
+    ceiling_longer = _charge_floor_and_ceiling(floor, ceiling, _CLIENT, _PATH)
+    assert ceiling_longer == _CEILING_LONGER_WAIT
+    assert ceiling_longer > _CEILING_WINDOW_SECONDS
+
+
+def test_ambient_wait_for_is_a_pure_peek(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Asking how long a refused request must wait mints, records and reclaims nothing."""
+    now, clock = _fake_clock(monkeypatch)
+    throttle = AmbientThrottle(clock=clock, max_paths_per_client=_CEILING_PROBE)
+
+    throttle.charge(_CLIENT, _OTHER_PATH)
+    for _ in range(_AMBIENT_ALLOWANCE):
+        throttle.charge(_CLIENT, _PATH)
+    before = dict(throttle.last_attempt)
+    spent = throttle.wait_for(_CLIENT, _PATH)
+    assert spent is not None
+    assert spent >= _MIN_RETRY_AFTER_SECONDS
+    assert throttle.wait_for(_CLIENT, _OTHER_PATH) is None
+    assert throttle.wait_for(_CLIENT, "/unseen-with-room") is None
+    assert throttle.last_attempt == before
+
+    for index in range(_CEILING_PROBE):
+        throttle.charge(_OTHER_CLIENT, f"/flood-{index}")
+    before = dict(throttle.last_attempt)
+    assert throttle.wait_for(_OTHER_CLIENT, "/brand-new") is None
+    assert throttle.last_attempt == before
+    assert _OTHER_CLIENT not in throttle.reclaim_after
+
+    for index in range(_AMBIENT_ALLOWANCE):
+        throttle.charge(_OTHER_CLIENT, f"/diverted-{index}")
+    before = dict(throttle.last_attempt)
+    booked = dict(throttle.reclaim_after)
+    now[0] = throttle.item.get_expiry() / 2
+    overflow_wait = throttle.wait_for(_OTHER_CLIENT, "/brand-new")
+    assert overflow_wait is not None
+    assert overflow_wait >= _MIN_RETRY_AFTER_SECONDS
+    assert throttle.last_attempt == before
+    assert throttle.reclaim_after == booked
+
+
+def test_the_ceiling_store_is_keyed_on_clients_only_and_reset_clears_it() -> None:
+    """The ceiling's key space is the client population: no path component at all."""
+    charge_ambient_limit(_CLIENT, _PATH)
+    charge_ambient_limit(_OTHER_CLIENT, _OTHER_PATH)
+
+    assert ambient_tracked_clients() == frozenset({_CLIENT, _OTHER_CLIENT})
+    assert all(len(key) == 1 for key in _client_ceiling.last_attempt)
+
+    reset_ambient_limit()
+    assert ambient_tracked_clients() == frozenset()
+
+
+def test_the_ceiling_sweeps_rolled_off_clients_and_refuses_past_its_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rolled-off clients leave the store; a spent client is told how long to wait."""
+    now, clock = _fake_clock(monkeypatch)
+    ceiling = ClientCeiling(parse(_SMALL_CEILING), clock=clock)
+    for index in range(_SWEEP_MIN_TRACKED - 1):
+        ceiling.charge(f"client-{index}")
+
+    now[0] = ceiling.item.get_expiry() * 2 + 1
+    for _ in range(parse(_SMALL_CEILING).amount):
+        assert ceiling.charge(_CLIENT) is None
+    assert ceiling.tracked_clients() == frozenset({_CLIENT})
+
+    refused = ceiling.charge(_CLIENT)
+    assert refused is not None
+    assert refused >= _MIN_RETRY_AFTER_SECONDS
+
+
+def test_disabling_the_limiter_skips_the_ceiling(route_less_client: TestClient) -> None:
+    """The one kill switch silences the ceiling too, and it charges nothing while off."""
+    limiter.enabled = False
+    try:
+        statuses = [
+            route_less_client.get(f"/journal/id-{index % _ENUMERATED_IDS}").status_code
+            for index in range(_CLIENT_CEILING_PER_MINUTE + 1)
+        ]
+    finally:
+        limiter.enabled = True
+
+    assert _TOO_MANY_REQUESTS not in statuses
+    assert ambient_tracked_clients() == frozenset()
