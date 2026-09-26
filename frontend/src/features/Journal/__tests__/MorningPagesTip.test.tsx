@@ -8,6 +8,7 @@ import type { ViewStyle } from 'react-native';
 
 import {
   MORNING_PAGES_COPY_ENTRIES,
+  MORNING_PAGES_CTA,
   MORNING_PAGES_DISMISS_A11Y,
   MORNING_PAGES_TITLE_SUFFIX,
   morningPageTitle,
@@ -249,6 +250,13 @@ describe('MorningPagesTip — the decline is a corner X (#2860)', () => {
       .filter((button) => within(button).queryAllByText(/.+/).length > 0);
     expect(textActions.map((button) => button.props.testID)).toEqual(['journal-morning-pages-tip']);
     expect(within(textActions[0]!).getByText('Begin a page')).toBeTruthy();
+  });
+
+  it('names the begin button by the words it shows, so a voice user can say them (WCAG 2.5.3)', async () => {
+    const view = render(<MorningPagesTip onBegin={mockOnBegin} />);
+    const begin = await view.findByTestId('journal-morning-pages-tip');
+    expect(within(begin).getByText(MORNING_PAGES_CTA)).toBeTruthy();
+    expect(String(begin.props.accessibilityLabel).startsWith(MORNING_PAGES_CTA)).toBe(true);
   });
 
   it('keeps the begin area clear of the corner X', async () => {

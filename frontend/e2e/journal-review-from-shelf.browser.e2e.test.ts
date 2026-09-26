@@ -27,7 +27,7 @@ test('on a review day the shelf’s one call to write is the Weekly Review', asy
   const cta = page.getByRole('button', { name: /^Write your Weekly Review/ });
   await expect(cta).toBeVisible();
   // One primary invitation: the daily page steps aside while the review is offered.
-  await expect(page.getByRole('button', { name: 'Begin a morning page' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Begin a page of morning pages' })).toHaveCount(0);
   await cta.click();
 
   await expect(page.getByRole('textbox', { name: 'Entry title' })).toHaveValue(
@@ -43,7 +43,7 @@ test('a review can be begun early from the shelf on a day nothing is due', async
   await page.reload();
 
   // Nothing is due on day 9, so the daily page holds the primary slot.
-  await expect(page.getByRole('button', { name: 'Begin a morning page' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Begin a page of morning pages' })).toBeVisible();
   await expect(page.getByTestId('journal-reflection-band')).toHaveCount(0);
 
   await page.getByRole('button', { name: /^Start a review early/ }).click();
