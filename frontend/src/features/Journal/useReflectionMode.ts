@@ -17,6 +17,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -251,6 +252,49 @@ function useInFlightTally(): {
   return { anyInFlight: count > 0, track };
 }
 
+/**
+ * Which folded-in quotes have text in the body but no inclusion mark yet, and
+ * which are mid-fold.
+ *
+ * A fold-in is two writes: the quote block lands in the body, then the quote is
+ * marked included. When the mark fails the text has ALREADY landed, so a retry
+ * must mark it without splicing a second copy. The ledger remembers the exact
+ * block each unmarked quote left, and a retry skips the splice only while the
+ * body still contains that block -- if the writer deleted it meanwhile, the
+ * retry puts it back once rather than marking a quote included in an entry that
+ * no longer quotes it. An entry is dropped once its mark succeeds.
+ *
+ * ``begin``/``end`` bracket one fold per quote: a second tap on the same quote
+ * while its first is on the wire is refused rather than racing it.
+ */
+function useFoldLedger() {
+  const landedRef = useRef(new Map<number, string>());
+  const inFlightRef = useRef(new Set<number>());
+  return useMemo(
+    () => ({
+      begin: (id: number): boolean => {
+        if (inFlightRef.current.has(id)) return false;
+        inFlightRef.current.add(id);
+        return true;
+      },
+      end: (id: number): void => {
+        inFlightRef.current.delete(id);
+      },
+      landedIn: (id: number, body: string): boolean => {
+        const block = landedRef.current.get(id);
+        return block !== undefined && body.includes(block);
+      },
+      record: (id: number, block: string): void => {
+        landedRef.current.set(id, block);
+      },
+      settle: (id: number): void => {
+        landedRef.current.delete(id);
+      },
+    }),
+    [],
+  );
+}
+
 /** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
 function useFoldIn(
   bodyRef: MutableRefObject<string>,
@@ -273,21 +317,33 @@ function useFoldIn(
     caretRef.current = event.nativeEvent.selection.start;
   }, []);
 
+  const ledger = useFoldLedger();
+
   const foldQuoteIn = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
-      const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
-      const { text, nextCaret } = spliceQuoteBlock(bodyRef.current, block, caretRef.current);
-      onChangeBody(text);
-      caretRef.current = nextCaret;
-      const entryId = await flush();
-      if (entryId == null) return false;
-      // Set both ways round: a retried fold-in clears the warning an earlier try
-      // left, and a refused one raises it — no crash, no nag either way.
-      const included = await markIncluded(quote.id, entryId);
-      setInclusionHint(!included);
-      return included;
+      if (!ledger.begin(quote.id)) return false;
+      try {
+        if (!ledger.landedIn(quote.id, bodyRef.current)) {
+          const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
+          const { text, nextCaret } = spliceQuoteBlock(bodyRef.current, block, caretRef.current);
+          onChangeBody(text);
+          caretRef.current = nextCaret;
+          // Recorded as soon as the text lands, before any write that can fail.
+          ledger.record(quote.id, block);
+        }
+        const entryId = await flush();
+        if (entryId == null) return false;
+        // Set both ways round: a retried fold-in clears the warning an earlier try
+        // left, and a refused one raises it — no crash, no nag either way.
+        const included = await markIncluded(quote.id, entryId);
+        setInclusionHint(!included);
+        if (included) ledger.settle(quote.id);
+        return included;
+      } finally {
+        ledger.end(quote.id);
+      }
     },
-    [bodyRef, onChangeBody, flush],
+    [bodyRef, onChangeBody, flush, ledger],
   );
 
   // Tracked over the WHOLE act, not just the entry write: the draft save
