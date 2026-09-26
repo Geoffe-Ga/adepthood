@@ -12,6 +12,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { ChevronRight } from 'lucide-react-native';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
@@ -42,6 +43,7 @@ import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { accent, uiType } from '@/design/tokens';
 import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -81,9 +83,17 @@ const BRING_BACK_LABEL = 'Bring it back';
 const BRING_BACK_HINT = 'Bring this prompt back; it will appear with the others again.';
 const SHOW_SET_ASIDE_HINT = 'Show the prompts you have set aside';
 
-/** "1 prompt set aside — show it" / "N prompts set aside — show them". */
-function setAsideFooterLabel(count: number): string {
-  return count === 1 ? '1 prompt set aside — show it' : `${count} prompts set aside — show them`;
+/** The chevron beside the set-aside count, sized to its label's face. */
+const SET_ASIDE_CHEVRON_SIZE = uiType.button.fontSize;
+
+/**
+ * "1 set aside" / "N set aside" — the count folds into the band's eyebrow row
+ * (#2949): the eyebrow already says these are prompts, and the chevron says
+ * it opens, so the label carries only the number. The full sentence is the
+ * control's accessible name (``SHOW_SET_ASIDE_HINT``).
+ */
+function setAsideCountLabel(count: number): string {
+  return `${count} set aside`;
 }
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -605,6 +615,40 @@ function StagePromptCard({
   );
 }
 
+/**
+ * The band's eyebrow row (#2949): the stage's name, upper-cased, on the left,
+ * and — while some prompts are set aside and not yet shown — the count as a
+ * compact control in the trailing slot. The count folds into the row its
+ * label names rather than hanging under the cards as a sentence of its own.
+ */
+function StagePromptEyebrow({
+  stageName,
+  setAsideCount,
+  onReveal,
+}: {
+  stageName: string;
+  setAsideCount: number;
+  onReveal: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.promptSectionEyebrow} testID="journal-stage-prompts-eyebrow">
+      <Text style={styles.promptSectionLabel}>{`${stageName} prompts`}</Text>
+      {setAsideCount === 0 ? null : (
+        <TouchableOpacity
+          style={styles.promptSetAsideControl}
+          onPress={onReveal}
+          accessibilityRole="button"
+          accessibilityLabel={SHOW_SET_ASIDE_HINT}
+          testID="journal-stage-prompts-set-aside-footer"
+        >
+          <Text style={styles.promptSetAsideLabel}>{setAsideCountLabel(setAsideCount)}</Text>
+          <ChevronRight color={accent.primary} size={SET_ASIDE_CHEVRON_SIZE} accessible={false} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
 /** The stage's prompts as one band, in curriculum order — the order matters,
  *  since some stages' prompts are a sequence where each feeds the next. Renders
  *  nothing at all until a stage has loaded, so the shelf never shows a
@@ -629,7 +673,12 @@ function StagePromptSection({
     : stage.prompts.filter((prompt) => prompt.dismissed !== true);
   return (
     <View style={styles.promptSection} testID="journal-stage-prompts">
-      <Text style={styles.promptSectionLabel}>{`${stage.stage_name} prompts`}</Text>
+      <StagePromptEyebrow
+        stageName={stage.stage_name}
+        // Once revealed there is nothing left to offer back, so the slot empties.
+        setAsideCount={revealed ? 0 : setAsideCount}
+        onReveal={reveal}
+      />
       {writable ? null : (
         <Text style={styles.promptSectionNote} testID="journal-stage-prompts-week-written">
           {WEEK_WRITTEN_NOTE}
@@ -646,15 +695,6 @@ function StagePromptSection({
           onBringBack={bringBack}
         />
       ))}
-      {setAsideCount === 0 || revealed ? null : (
-        <ReflectionDismiss
-          variant="reopen"
-          label={setAsideFooterLabel(setAsideCount)}
-          accessibilityLabel={SHOW_SET_ASIDE_HINT}
-          testID="journal-stage-prompts-set-aside-footer"
-          onPress={reveal}
-        />
-      )}
     </View>
   );
 }
