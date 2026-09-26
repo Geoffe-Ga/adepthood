@@ -2,13 +2,16 @@
 
 When a journal entry's body changes, the character spans that marginalia,
 completion suggestions, and promoted quotes anchor to can shift or disappear.
-``reanchor_entry_marginalia`` re-anchors each active note by re-finding its
-snapshot text in the new body (via ``reanchor_one``), updating the anchor span
-when it moves and marking the note stale when the text can no longer be found.
-``reanchor_entry_suggestions`` and ``reanchor_entry_promoted_quotes`` apply the
-same rule to pending suggestions and pending promoted quotes. Nothing is ever
-deleted — a stale row stays for the user to resolve. The PATCH endpoint calls
-these after persisting a body edit.
+``reanchor_entry_marginalia`` places each active note by the edit window between
+the old and new bodies (via ``reanchor_one``): kept when the edit is after it,
+shifted when the edit is before it, relocated only when its passage is unique in
+both bodies, and marked stale otherwise -- including when the passage repeats
+and the edit leaves it ambiguous which copy was meant, so a row never jumps to
+another copy. ``reanchor_entry_suggestions`` and
+``reanchor_entry_promoted_quotes`` apply the same rule to pending suggestions
+and pending promoted quotes. Nothing is ever deleted — a stale row stays for the
+user to resolve. The PATCH endpoint calls these after persisting a body edit,
+passing both bodies by keyword so the two strings cannot be silently swapped.
 """
 
 from __future__ import annotations
@@ -96,12 +99,14 @@ class _AnchoredRow(Protocol):
 
 def _reanchor(
     rows: Iterable[_AnchoredRow],
+    *,
+    old_message: str,
     new_message: str,
     terminal_status: str,
 ) -> None:
-    """Re-anchor each row to ``new_message`` or flip it to ``terminal_status``."""
+    """Re-anchor each row from ``old_message`` to ``new_message`` or flip it terminal."""
     for row in rows:
-        outcome = reanchor_one(row.anchor_text, row.anchor_start, new_message)
+        outcome = reanchor_one(row.anchor_text, row.anchor_start, old_message, new_message)
         if outcome.stale:
             row.status = terminal_status
         else:
@@ -111,15 +116,18 @@ def _reanchor(
 
 async def reanchor_entry_marginalia(
     entry: JournalEntry,
-    new_message: str,
     session: AsyncSession,
+    *,
+    old_message: str,
+    new_message: str,
 ) -> None:
     """Re-anchor (or mark stale) the entry's marginalia after a body edit.
 
-    Each active note re-anchors to its span if its ``anchor_text`` still occurs
-    in ``new_message``; otherwise it is marked stale. Stale notes stay stale and
-    nothing is deleted. Matching is on ``anchor_text`` (the snapshot), never on
-    offsets alone, so the new body is the only input the logic needs.
+    Each active note follows the edit window from ``old_message`` to
+    ``new_message``; when the edit touches it, it relocates only to a passage
+    unique in both bodies. If its text is gone, or two or more copies make the
+    placement ambiguous, it is marked stale with its offsets unchanged. Stale
+    notes stay stale and nothing is deleted.
     """
     result = await session.execute(
         select(Marginalia).where(
@@ -127,21 +135,30 @@ async def reanchor_entry_marginalia(
             Marginalia.status == MarginaliaStatus.ACTIVE,
         )
     )
-    _reanchor(result.scalars().all(), new_message, MarginaliaStatus.STALE)
+    _reanchor(
+        result.scalars().all(),
+        old_message=old_message,
+        new_message=new_message,
+        terminal_status=MarginaliaStatus.STALE,
+    )
 
 
 async def reanchor_entry_suggestions(
     entry: JournalEntry,
-    new_message: str,
     session: AsyncSession,
+    *,
+    old_message: str,
+    new_message: str,
 ) -> None:
     """Re-anchor (or auto-dismiss) the entry's PENDING completion suggestions.
 
-    Mirrors :func:`reanchor_entry_marginalia`: each pending suggestion re-anchors
-    to its span if its ``anchor_text`` still occurs in ``new_message``; if the
-    mention was deleted the suggestion auto-flips to ``dismissed`` (the user never
-    attested to a completion the edited entry no longer claims). Accepted and
-    already-dismissed suggestions are left untouched.
+    Mirrors :func:`reanchor_entry_marginalia`: each pending suggestion follows the
+    edit window from ``old_message`` to ``new_message``. If the mention was
+    deleted the suggestion auto-flips to ``dismissed`` (the user never attested
+    to a completion the edited entry no longer claims) -- and so does one whose
+    edit leaves two or more copies of the mention, since pinning it to another
+    copy would be a guess. Accepted and already-dismissed suggestions are left
+    untouched.
     """
     result = await session.execute(
         select(CompletionSuggestion).where(
@@ -149,21 +166,34 @@ async def reanchor_entry_suggestions(
             CompletionSuggestion.status == SuggestionStatus.PENDING,
         )
     )
-    _reanchor(result.scalars().all(), new_message, SuggestionStatus.DISMISSED)
+    _reanchor(
+        result.scalars().all(),
+        old_message=old_message,
+        new_message=new_message,
+        terminal_status=SuggestionStatus.DISMISSED,
+    )
 
 
 async def reanchor_entry_promoted_quotes(
     entry: JournalEntry,
-    new_message: str,
     session: AsyncSession,
+    *,
+    old_message: str,
+    new_message: str,
 ) -> None:
     """Re-anchor (or mark stale) the entry's pending promoted quotes after a body edit.
 
     Mirrors :func:`reanchor_entry_marginalia` for promoted quotes: each pending
-    quote (not yet folded into a reflection, not already stale) re-anchors to its
-    span if its ``anchor_text`` still occurs in ``new_message``; otherwise the
-    ``stale`` flag flips True. Stale quotes stay stale and nothing is deleted. A
-    quote already included in a reflection has a frozen span and is left untouched.
+    quote (not yet folded into a reflection, not already stale) follows the edit
+    window from ``old_message`` to ``new_message``; when its text is gone or the
+    edit leaves two or more candidate copies, the ``stale`` flag flips True with
+    its offsets unchanged. Stale quotes stay stale and nothing is deleted.
+
+    Folded quotes stay frozen by decision (#2945): a quote already included in a
+    reflection is not re-anchored, because the reflection body carries its text
+    and the client lists a folded quote whose offsets no longer spell it apart
+    from the prose (``partitionQuotes``, #2965). A server-side "detached" marker
+    would need a model and wire change, so it belongs to a separate issue.
 
     A dedicated loop rather than ``_reanchor``: a promoted quote's terminal state
     is a boolean flag, not the string ``status`` field that ``_AnchoredRow`` models.
@@ -176,7 +206,7 @@ async def reanchor_entry_promoted_quotes(
         )
     )
     for quote in result.scalars().all():
-        outcome = reanchor_one(quote.anchor_text, quote.anchor_start, new_message)
+        outcome = reanchor_one(quote.anchor_text, quote.anchor_start, old_message, new_message)
         if outcome.stale:
             quote.stale = True
         else:

@@ -191,28 +191,60 @@ async def test_promote_over_stored_unicode_body_snapshots_its_exact_slice(
     assert quote["anchor_end"] - quote["anchor_start"] == len(quote["anchor_text"])
 
 
+async def _promote_then_prefix(
+    client: AsyncClient, username: str, start_pad: int, end_pad: int
+) -> tuple[dict[str, Any], dict[str, Any], int]:
+    """Promote the second "word" widened by the pads, then PATCH a prefix in.
+
+    Returns the promote response, the quote after the edit, and where the
+    promoted "word" sits in the edited body.
+    """
+    headers, _user_id = await _signup(client, username)
+    entry_id, stored = await _create(client, headers, "word one, and word two")
+    second = stored.rindex("word")
+    quote = await _promote(
+        client, headers, entry_id, second - start_pad, second + len("word") + end_pad
+    )
+    resp = await client.patch(
+        f"/journal/{entry_id}", json={"message": "So: " + stored}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK
+    moved = (await client.get(f"/journal/{entry_id}/promotions", headers=headers)).json()[0]
+    return quote, moved, second + len("So: ")
+
+
 @pytest.mark.asyncio
 async def test_whitespace_edged_span_is_stored_verbatim_but_snapshot_trimmed(
     async_client: AsyncClient,
 ) -> None:
-    """Pin why the client trims a selection's edges before it promotes.
+    """Pin the server half of why the client trims a selection's edges.
 
     The server keeps the posted offsets but trims the snapshot, so a span with a
     trailing space stores ``anchor_end - anchor_start == len(anchor_text) + 1``.
-    The re-anchor fast path then never matches, and the first edit moves the
-    quote to the FIRST occurrence of its text -- here, a different passage.
+    Its start still spells the text, so an edit before it shifts the quote with
+    its own word (#2945 -- it no longer jumps to the FIRST "word") and the
+    re-anchor rewrites the end to ``start + len(anchor_text)``.
     """
-    headers, _user_id = await _signup(async_client, "edge-space")
-    entry_id, stored = await _create(async_client, headers, "word one, and word two")
-    second = stored.rindex("word")
-
-    quote = await _promote(async_client, headers, entry_id, second, second + len("word "))
+    quote, moved, own_word = await _promote_then_prefix(async_client, "edge-space", 0, 1)
     assert quote["anchor_text"] == "word"
     assert quote["anchor_end"] - quote["anchor_start"] == len("word ")
 
-    resp = await async_client.patch(
-        f"/journal/{entry_id}", json={"message": "So: " + stored}, headers=headers
-    )
-    assert resp.status_code == HTTPStatus.OK
-    moved = (await async_client.get(f"/journal/{entry_id}/promotions", headers=headers)).json()[0]
-    assert moved["anchor_start"] == len("So: ")  # the first "word", not the promoted one
+    assert moved["stale"] is False
+    assert (moved["anchor_start"], moved["anchor_end"]) == (own_word, own_word + len("word"))
+
+
+@pytest.mark.asyncio
+async def test_leading_whitespace_span_on_repeated_word_goes_stale_on_edit(
+    async_client: AsyncClient,
+) -> None:
+    """A leading-space span's start does not spell its text, so its copy is unprovable.
+
+    With "word" occurring twice the server cannot tell which copy the quote
+    meant, so the first edit marks it stale rather than guessing -- the reason
+    ``trimAnchorEdges`` must trim the leading edge on the client.
+    """
+    quote, moved, _own_word = await _promote_then_prefix(async_client, "edge-lead", 1, 0)
+    assert quote["anchor_text"] == "word"
+
+    assert moved["stale"] is True
+    assert moved["anchor_start"] == quote["anchor_start"]

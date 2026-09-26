@@ -808,9 +808,15 @@ async def _apply_message_edit(
     new_message = _sanitize_message(payload.message)
     if new_message != old_message:
         entry.message = new_message
-        await reanchor_entry_marginalia(entry, new_message, session)
-        await reanchor_entry_suggestions(entry, new_message, session)
-        await reanchor_entry_promoted_quotes(entry, new_message, session)
+        await reanchor_entry_marginalia(
+            entry, session, old_message=old_message, new_message=new_message
+        )
+        await reanchor_entry_suggestions(
+            entry, session, old_message=old_message, new_message=new_message
+        )
+        await reanchor_entry_promoted_quotes(
+            entry, session, old_message=old_message, new_message=new_message
+        )
 
 
 def _apply_chord_update(entry: JournalEntry, payload: JournalEntryUpdate) -> None:
