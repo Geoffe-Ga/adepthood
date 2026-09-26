@@ -34,6 +34,7 @@ on-topic refusal are typed outcomes, never the page's text (#2851).
 from __future__ import annotations
 
 import enum
+import re
 
 from domain.care import MEDICATION_GUARDRAIL
 
@@ -115,17 +116,32 @@ REFUSAL_OPENERS = (
     "Sorry, I can't",
 )
 
-#: A refusal talks about the request or the image; a journal page that happens
-#: to open with "I can't" ("I can't sleep again tonight.") usually does not.
-#: Requiring one of these keeps the writer's own words from being discarded.
-REFUSAL_TOPIC_CUES = ("image", "photo", "picture", "screenshot", "transcri", "request")
+#: A refusal's *first sentence* names what it declines: the act of
+#: transcribing, or the image/request itself with a pointing determiner ("this
+#: image", "the image you've shared"). Bare nouns are not enough -- a journal
+#: page says "I can't picture my life...", "the photo of Dad", "my request" --
+#: so only these determiner-bound phrases count, and only in the first sentence.
+REFUSAL_OBJECT_CUES = (
+    "transcri",
+    "this image",
+    "this photo",
+    "this picture",
+    "this screenshot",
+    "this request",
+    "the image you",
+    "the photo you",
+    "the picture you",
+    "the screenshot you",
+)
 
 #: Longest reply that can still be a refusal. The reported refusal (#2851) is
-#: ~400 characters and was truncated when reported, so the cap is set at three
-#: times that to absorb a longer apology without reaching real page lengths.
-MAX_REFUSAL_CHARS = 1200
+#: 401 characters once completed past the ellipsis it was reported with; half
+#: again absorbs a longer apology while keeping most real pages out of reach.
+MAX_REFUSAL_CHARS = 600
 
 _PARAGRAPH_BREAK = "\n\n"
+# The first sentence ends at the first terminal punctuation or line break.
+_SENTENCE_END = re.compile(r"[.!?\n]")
 # Providers emit typographic apostrophes ("I\u2019m"); fold them so the ASCII
 # openers still match.
 _APOSTROPHE_FOLD = str.maketrans({"\u2019": "'", "\u2018": "'"})
@@ -163,14 +179,19 @@ def _is_no_text(normalised: str) -> bool:
     return normalised.rstrip(".") in {"", NO_TEXT_SENTINEL}
 
 
+def _first_sentence(normalised: str) -> str:
+    """Return the casefolded text before the first sentence end or line break."""
+    return _SENTENCE_END.split(normalised, maxsplit=1)[0].casefold()
+
+
 def _is_refusal(normalised: str) -> bool:
-    """Return True for a short, single-paragraph, on-topic reply opening like a refusal."""
-    folded = normalised.casefold()
+    """Return True for a short, single-paragraph reply whose first sentence declines the image."""
+    opening = _first_sentence(normalised)
     return (
         _PARAGRAPH_BREAK not in normalised
         and len(normalised) <= MAX_REFUSAL_CHARS
         and normalised.startswith(REFUSAL_OPENERS)
-        and any(cue in folded for cue in REFUSAL_TOPIC_CUES)
+        and any(cue in opening for cue in REFUSAL_OBJECT_CUES)
     )
 
 
@@ -180,7 +201,8 @@ def classify_transcription(reply: str) -> TranscriptionVerdict:
     Pure and never logs: the reply is page content. Only the sentinel or an
     empty reply is :attr:`~TranscriptionVerdict.NO_TEXT_FOUND`; a refusal must
     be one paragraph, at most :data:`MAX_REFUSAL_CHARS` long, open with one of
-    :data:`REFUSAL_OPENERS`, and mention one of :data:`REFUSAL_TOPIC_CUES`.
+    :data:`REFUSAL_OPENERS`, and name one of :data:`REFUSAL_OBJECT_CUES` in its
+    first sentence.
     Everything else -- including a long or multi-paragraph page that opens
     "I can't believe..." -- is :attr:`~TranscriptionVerdict.TRANSCRIBED`.
     """

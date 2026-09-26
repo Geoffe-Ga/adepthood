@@ -26,8 +26,8 @@ from domain.transcription import (
     CONVERSATION_FORMAT_RULE,
     MAX_REFUSAL_CHARS,
     NO_TEXT_SENTINEL,
+    REFUSAL_OBJECT_CUES,
     REFUSAL_OPENERS,
-    REFUSAL_TOPIC_CUES,
     SCREEN_PHOTO_RULE,
     TranscriptionVerdict,
     build_transcription_prompt,
@@ -260,20 +260,35 @@ def test_refusal_openers_are_the_closed_set() -> None:
     )
 
 
-def test_refusal_topic_cues_are_the_closed_set() -> None:
-    """The cues name the request or the image, never everyday journal words."""
-    assert REFUSAL_TOPIC_CUES == ("image", "photo", "picture", "screenshot", "transcri", "request")
+def test_refusal_object_cues_are_the_closed_set() -> None:
+    """The cues are determiner-bound refusal objects, never bare journal nouns."""
+    assert REFUSAL_OBJECT_CUES == (
+        "transcri",
+        "this image",
+        "this photo",
+        "this picture",
+        "this screenshot",
+        "this request",
+        "the image you",
+        "the photo you",
+        "the picture you",
+        "the screenshot you",
+    )
 
 
 # The "~400 characters" cap the issue body proposed; the reported refusal alone
 # overruns it, which is why the real cap is larger.
 _ISSUE_PROPOSED_CAP = 400
+# The chosen cap: the reported refusal plus half again.
+_REFUSAL_CAP = 600
 
 
 def test_max_refusal_chars_leaves_slack_over_the_reported_refusal() -> None:
     """The reported refusal is already past 400 chars; the cap must clear it."""
     assert len(REPORTED_REFUSAL) > _ISSUE_PROPOSED_CAP
     assert len(REPORTED_REFUSAL) < MAX_REFUSAL_CHARS
+    # Pinned: widening the cap lets more real pages be read as refusals.
+    assert MAX_REFUSAL_CHARS == _REFUSAL_CAP
 
 
 def test_verdict_values_are_the_wire_codes() -> None:
@@ -299,6 +314,113 @@ _STUB_VISION_REPLY = (
     'BotMason gazes at your 1 attached image(s) and reflects on your words: "" '
     "— Let the Archetypal Wavelength guide your reflection."
 )
+
+# Real journal pages that open like a refusal and use everyday image/request
+# words later on (review of #2851). Each is the writer's text and must survive.
+_LONG_SLEEPLESS_PAGE = (
+    "I can't sleep. "
+    + "The house settles and the fridge hums and I lie here counting the hours. " * 13
+    + "Maybe I should picture something calm."
+)
+_JOURNAL_PAGES_THAT_OPEN_LIKE_REFUSALS = (
+    pytest.param(
+        "I can't picture my life without her anymore. Today was the first day I noticed the quiet.",
+        id="picture-my-life",
+    ),
+    pytest.param(
+        "I can't stop looking at the photo of Dad from 1987.\nHe looks so young.",
+        id="photo-of-dad",
+    ),
+    pytest.param(
+        "I cannot believe she turned down my request for time off...",
+        id="my-request",
+    ),
+    pytest.param(
+        "I'm unable to shake the image of the accident from my mind.",
+        id="image-of-the-accident",
+    ),
+    pytest.param(_LONG_SLEEPLESS_PAGE, id="long-sleepless-page"),
+    pytest.param(
+        "I can't help with this anymore; Mom needs more than I can give right now.",
+        id="help-with-this",
+    ),
+    pytest.param(
+        "Sorry, I can't keep apologising for everything. That was the photo I "
+        "wanted to take today.",
+        id="sorry-i-cant-keep",
+    ),
+    pytest.param(
+        "I'm not able to run yet, but the physio sent a picture of the stretches.",
+        id="not-able-to-run",
+    ),
+    pytest.param(
+        "I cannot remember the last time I took a picture of the sunset.",
+        id="picture-of-the-sunset",
+    ),
+    pytest.param(
+        "I can't answer her request tonight. Tomorrow, maybe.",
+        id="her-request",
+    ),
+)
+
+
+# The refusal object must sit in the *first* sentence: each of these carries a
+# cue only after a sentence end (., !, ? or a line break), so it is page text.
+_CUE_AFTER_FIRST_SENTENCE = (
+    pytest.param("I can't sleep. This image of the moon keeps me up.", id="after-period"),
+    pytest.param("I can't believe it! This photo is from our first trip.", id="after-bang"),
+    pytest.param("I can't decide? This request from work can wait.", id="after-question"),
+    pytest.param(
+        "I can't stop crying\nthis picture of us is still on the fridge", id="after-newline"
+    ),
+)
+
+
+@pytest.mark.parametrize("page", _CUE_AFTER_FIRST_SENTENCE)
+def test_refusal_cue_after_the_first_sentence_is_transcribed(page: str) -> None:
+    """Only the opening sentence can make a reply a refusal."""
+    assert classify_transcription(page) is TranscriptionVerdict.TRANSCRIBED
+
+
+# One refusal per object cue, so dropping any single cue is caught by behaviour,
+# not only by the tuple-equality test.
+_ONE_REFUSAL_PER_CUE = (
+    pytest.param("I cannot transcribe handwriting from this kind of file.", id="transcri"),
+    pytest.param("I can't read this image.", id="this-image"),
+    pytest.param("I'm unable to make out this photo.", id="this-photo"),
+    pytest.param("I can't describe this picture for you.", id="this-picture"),
+    pytest.param("Sorry, I can't process this screenshot.", id="this-screenshot"),
+    pytest.param("I'm not able to complete this request.", id="this-request"),
+    pytest.param("I can't read the image you've shared.", id="the-image-you"),
+    pytest.param("I cannot work with the photo you sent.", id="the-photo-you"),
+    pytest.param("I'm unable to use the picture you uploaded.", id="the-picture-you"),
+    pytest.param("I can't read the screenshot you attached.", id="the-screenshot-you"),
+)
+
+
+@pytest.mark.parametrize("reply", _ONE_REFUSAL_PER_CUE)
+def test_each_object_cue_marks_a_refusal(reply: str) -> None:
+    """Each determiner-bound object in the opening sentence makes a refusal."""
+    assert classify_transcription(reply) is TranscriptionVerdict.REFUSED
+
+
+def test_refusal_shaped_first_paragraph_followed_by_more_is_transcribed() -> None:
+    """A second paragraph means page text, even under a refusal-shaped opening."""
+    page = "I cannot transcribe this image of my feelings into words.\n\nSo I will just write."
+    assert classify_transcription(page) is TranscriptionVerdict.TRANSCRIBED
+
+
+def test_refusal_cue_match_ignores_case() -> None:
+    """A capitalised refusal object in the first sentence still counts."""
+    reply = "I can't help with This Request."
+    assert classify_transcription(reply) is TranscriptionVerdict.REFUSED
+
+
+@pytest.mark.parametrize("page", _JOURNAL_PAGES_THAT_OPEN_LIKE_REFUSALS)
+def test_journal_page_opening_like_a_refusal_is_transcribed(page: str) -> None:
+    """An image or request word outside a refusal-shaped first sentence is page text."""
+    assert classify_transcription(page) is TranscriptionVerdict.TRANSCRIBED
+
 
 _CLASSIFIER_CASES = (
     pytest.param("[no text found]", TranscriptionVerdict.NO_TEXT_FOUND, id="sentinel"),

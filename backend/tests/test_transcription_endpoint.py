@@ -594,11 +594,23 @@ async def test_unusable_reply_on_byok_is_422_and_writes_no_usage_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param("I can't sleep again tonight.", id="i-cant-sleep"),
+        pytest.param(
+            "I can't stop looking at the photo of Dad from 1987.\nHe looks so young.",
+            id="photo-of-dad",
+        ),
+    ],
+)
 async def test_journal_page_opening_with_i_cant_is_transcribed_and_charged(
-    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    page: str,
 ) -> None:
     """A real page that starts "I can't" is the writer's words, not a refusal."""
-    page = "I can't sleep again tonight."
     _patch_generate_response(monkeypatch, _priced_response(page))
     headers = await _signup(async_client, "i_cant_page")
     before = await _wallet_snapshot(db_session, "i_cant_page@example.com")
