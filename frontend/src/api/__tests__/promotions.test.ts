@@ -135,3 +135,56 @@ describe('promotions.list', () => {
     await expect(promotions.list(7, 'tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 });
+
+describe('promotions.listAll', () => {
+  const listItem = {
+    ...quote({ id: 4, pending: false }),
+    source_title: 'Rain',
+    source_timestamp: '2026-03-01T09:00:00Z',
+    included_in_entry_id: 12,
+    included_in_title: 'The windy week',
+    created_at: '2026-03-02T09:00:00Z',
+  };
+
+  test('GETs /promotions with no query string when called bare', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [], total: 0, has_more: false }));
+    await promotions.listAll({}, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/promotions');
+    expect(init.method ?? 'GET').toBe('GET');
+  });
+
+  test('sends status, limit and offset as the exact query string', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [], total: 0, has_more: false }));
+    await promotions.listAll({ status: 'included', limit: 50, offset: 100 }, 'tok');
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'http://test/promotions?status=included&limit=50&offset=100',
+    );
+  });
+
+  test('keeps an offset of zero rather than dropping it', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [], total: 0, has_more: false }));
+    await promotions.listAll({ status: 'pending', offset: 0 });
+
+    expect(mockFetch.mock.calls[0][0]).toBe('http://test/promotions?status=pending&offset=0');
+  });
+
+  test('parses a page of list items with their sources', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [listItem], total: 3, has_more: true }));
+    const page = await promotions.listAll();
+
+    expect(page.total).toBe(3);
+    expect(page.has_more).toBe(true);
+    expect(page.items[0]).toEqual(listItem);
+  });
+
+  test('rejects an item missing source_timestamp', async () => {
+    const broken: Record<string, unknown> = { ...listItem };
+    delete broken.source_timestamp;
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [broken], total: 1, has_more: false }));
+
+    await expect(promotions.listAll()).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});

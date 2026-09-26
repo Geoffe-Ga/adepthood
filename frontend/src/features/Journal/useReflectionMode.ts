@@ -17,15 +17,20 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
-import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from 'react-native';
 
-import { formatBlockquote, sourceAttribution, type ReviewWindow } from './reflectionCopy';
+import {
+  formatBlockquote,
+  sourceAttribution,
+  spliceQuoteBlock,
+  type ReviewWindow,
+} from './reflectionCopy';
 import type { SourcesFeedStatus } from './ReflectionSourcesPanel';
 
 import { promotions, reflections } from '@/api';
@@ -39,7 +44,8 @@ import type {
   ReflectionSourcesResponse,
 } from '@/api';
 
-type SelectionEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+/** A caret the body field reported, in UTF-16 code units. */
+type BodyCaret = { start: number; end: number };
 
 export interface UseReflectionModeArgs {
   reflectionLevel?: ReflectionLevel;
@@ -91,7 +97,7 @@ export interface UseReflectionModeResult {
    */
   foldingIn: boolean;
   /** Track the body caret so an inserted quote lands where the writer is. */
-  onBodySelectionChange: (_e: SelectionEvent) => void;
+  onBodySelectionChange: (_caret: BodyCaret) => void;
   /** Fold a chosen pending quote in; resolves true when it was marked included. */
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
@@ -99,20 +105,6 @@ export interface UseReflectionModeResult {
   ) => Promise<boolean>;
   /** Promote a freshly selected span of a source; resolves true on success. */
   onPromoteSpan: (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean>;
-}
-
-/**
- * Splice ``block`` into ``body`` at ``caret`` (or the end when untracked),
- * returning the new text and the caret position just past the inserted block so
- * a second fold-in lands after the first rather than re-splitting it.
- */
-function spliceAtCaret(
-  body: string,
-  block: string,
-  caret: number | null,
-): { text: string; nextCaret: number } {
-  const at = caret == null ? body.length : Math.min(caret, body.length);
-  return { text: body.slice(0, at) + block + body.slice(at), nextCaret: at + block.length };
 }
 
 /** True when ``item`` is the source a created quote belongs to (kind + id). */
@@ -260,6 +252,27 @@ function useInFlightTally(): {
   return { anyInFlight: count > 0, track };
 }
 
+/**
+ * The quote folds currently on the wire, one per quote: a second tap on a quote
+ * whose first fold has not settled is refused rather than racing it.
+ */
+function useFoldsInFlight() {
+  const inFlightRef = useRef(new Set<number>());
+  return useMemo(
+    () => ({
+      begin: (id: number): boolean => {
+        if (inFlightRef.current.has(id)) return false;
+        inFlightRef.current.add(id);
+        return true;
+      },
+      end: (id: number): void => {
+        inFlightRef.current.delete(id);
+      },
+    }),
+    [],
+  );
+}
+
 /** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
 function useFoldIn(
   bodyRef: MutableRefObject<string>,
@@ -268,7 +281,7 @@ function useFoldIn(
 ): {
   inclusionHint: boolean;
   foldingIn: boolean;
-  onBodySelectionChange: (_e: SelectionEvent) => void;
+  onBodySelectionChange: (_caret: BodyCaret) => void;
   onInsertQuote: (
     _quote: PromotedQuoteSummary,
     _sourceItem: ReflectionSourceItem,
@@ -278,25 +291,40 @@ function useFoldIn(
   const { anyInFlight, track } = useInFlightTally();
   const caretRef = useRef<number | null>(null);
 
-  const onBodySelectionChange = useCallback((event: SelectionEvent) => {
-    caretRef.current = event.nativeEvent.selection.start;
+  const onBodySelectionChange = useCallback((caret: BodyCaret) => {
+    caretRef.current = caret.start;
   }, []);
+
+  const inFlight = useFoldsInFlight();
 
   const foldQuoteIn = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
-      const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
-      const { text, nextCaret } = spliceAtCaret(bodyRef.current, block, caretRef.current);
-      onChangeBody(text);
-      caretRef.current = nextCaret;
-      const entryId = await flush();
-      if (entryId == null) return false;
-      // Set both ways round: a retried fold-in clears the warning an earlier try
-      // left, and a refused one raises it — no crash, no nag either way.
-      const included = await markIncluded(quote.id, entryId);
-      setInclusionHint(!included);
-      return included;
+      if (!inFlight.begin(quote.id)) return false;
+      try {
+        // A fold-in is two writes: the block lands in the body, then the quote
+        // is marked included. When the mark fails the block has ALREADY landed,
+        // and it stays in the saved body across a close and reopen -- so the
+        // body itself, not anything held in memory, says whether a retry still
+        // needs to splice it. If the writer deleted it meanwhile, it goes back
+        // once rather than marking a quote included that the review omits.
+        const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
+        if (!bodyRef.current.includes(block)) {
+          const { text, nextCaret } = spliceQuoteBlock(bodyRef.current, block, caretRef.current);
+          onChangeBody(text);
+          caretRef.current = nextCaret;
+        }
+        const entryId = await flush();
+        if (entryId == null) return false;
+        // Set both ways round: a retried fold-in clears the warning an earlier try
+        // left, and a refused one raises it — no crash, no nag either way.
+        const included = await markIncluded(quote.id, entryId);
+        setInclusionHint(!included);
+        return included;
+      } finally {
+        inFlight.end(quote.id);
+      }
     },
-    [bodyRef, onChangeBody, flush],
+    [bodyRef, onChangeBody, flush, inFlight],
   );
 
   // Tracked over the WHOLE act, not just the entry write: the draft save

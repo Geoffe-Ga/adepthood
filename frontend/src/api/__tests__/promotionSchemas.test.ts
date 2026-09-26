@@ -9,7 +9,13 @@
  * fails with ``SyntaxError`` / ``Cannot find module`` / ``is not a function``
  * until the implementation-specialist adds the schemas.
  */
-import { promotedQuoteSchema, promotedQuoteSummarySchema } from '../schemas';
+import {
+  promotedQuoteListItemSchema,
+  promotedQuoteListResponseSchema,
+  promotedQuoteSchema,
+  promotedQuoteSummarySchema,
+  promotionStatusFilterSchema,
+} from '../schemas';
 
 /** Return a shallow copy of ``obj`` without ``key`` (avoids unused rest-sibling bindings). */
 function omitKey<T extends Record<string, unknown>>(obj: T, key: string): Record<string, unknown> {
@@ -100,5 +106,37 @@ describe('promotedQuoteSummarySchema', () => {
   it('does not carry stale through', () => {
     const parsed = promotedQuoteSummarySchema.parse({ ...SUMMARY_QUOTE, stale: true });
     expect('stale' in parsed).toBe(false);
+  });
+});
+
+describe('promotedQuoteListItemSchema', () => {
+  const LIST_ITEM = {
+    ...FULL_QUOTE,
+    source_title: null,
+    source_timestamp: '2026-03-01T09:00:00Z',
+    included_in_entry_id: null,
+    included_in_title: null,
+    created_at: '2026-03-02T09:00:00Z',
+  };
+
+  it('accepts an untitled pending quote with null inclusion fields', () => {
+    expect(promotedQuoteListItemSchema.parse(LIST_ITEM)).toEqual(LIST_ITEM);
+  });
+
+  it.each(['source_timestamp', 'created_at', 'stale', 'included_in_entry_id'])(
+    'rejects a list item missing %s',
+    (key) => {
+      expect(promotedQuoteListItemSchema.safeParse(omitKey(LIST_ITEM, key)).success).toBe(false);
+    },
+  );
+
+  it('requires total and has_more on the page envelope', () => {
+    const page = { items: [LIST_ITEM], total: 1, has_more: false };
+    expect(promotedQuoteListResponseSchema.parse(page)).toEqual(page);
+    expect(promotedQuoteListResponseSchema.safeParse(omitKey(page, 'total')).success).toBe(false);
+  });
+
+  it('knows exactly the three status filters', () => {
+    expect(promotionStatusFilterSchema.options).toEqual(['pending', 'included', 'all']);
   });
 });

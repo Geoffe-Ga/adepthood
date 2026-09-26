@@ -61,24 +61,77 @@ export function reflectionTitle(
 }
 
 /**
- * A Markdown blockquote for a quote folded into the reflection body. Opens on a
- * fresh line, attributes the source on its own quoted line, and closes with a
- * blank line so it never runs into surrounding prose.
+ * How many blank lines separate a folded-in quote block from the text around
+ * it. One is what Markdown needs to end a quote block, and exactly one keeps
+ * two quotes folded in back to back reading as neighbours rather than strangers.
+ */
+export const BLANK_LINES_BETWEEN_BLOCKS = 1;
+
+/** Line breaks that make {@link BLANK_LINES_BETWEEN_BLOCKS} blank lines. */
+const BLOCK_SEPARATOR_BREAKS = BLANK_LINES_BETWEEN_BLOCKS + 1;
+
+/** Prefix every line of ``text`` with the blockquote marker. */
+function quoteLines(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+}
+
+/**
+ * A Markdown blockquote for a quote folded into the reflection body: every line
+ * of the passage quoted, then the source attributed on its own quoted line. It
+ * carries no padding of its own; {@link spliceQuoteBlock} sizes the gap to the
+ * text actually around the caret.
  */
 export function formatBlockquote(anchorText: string, attribution: string): string {
-  return `\n> ${anchorText}\n> — ${attribution}\n\n`;
+  return `${quoteLines(anchorText)}\n> — ${attribution}`;
 }
 
 /**
  * A Markdown blockquote prefill for a whole passage carried into a fresh entry.
  * Every line of ``text`` is quoted, the ``sourceTitle`` is attributed on its own
  * quoted line, and a trailing blank line separates it from anything the writer
- * adds. Unlike ``formatBlockquote`` it opens with no leading newline — it is the
- * top of a new body — and quotes multi-line passages line by line.
+ * adds. It is the top of a new body, so it opens with no leading newline.
  */
 export function formatQuotePrefill(text: string, sourceTitle: string): string {
-  const quotedLines = text.split('\n').map((line) => `> ${line}`);
-  return `${quotedLines.join('\n')}\n> — ${sourceTitle}\n\n`;
+  return `${quoteLines(text)}\n> — ${sourceTitle}\n\n`;
+}
+
+/** How many line breaks ``text`` ends with (``fromEnd``) or begins with. */
+function countBreaks(text: string, fromEnd: boolean): number {
+  let count = 0;
+  const at = (i: number): string | undefined => text[fromEnd ? text.length - 1 - i : i];
+  while (at(count) === '\n') count += 1;
+  return count;
+}
+
+/** The breaks still needed so that ``existing`` of them make one separator. */
+function missingBreaks(existing: number): string {
+  return '\n'.repeat(Math.max(0, BLOCK_SEPARATOR_BREAKS - existing));
+}
+
+/**
+ * Splice a quote ``block`` into ``body`` at the UTF-16 ``caret`` (the end when
+ * untracked or past it), padded so exactly {@link BLANK_LINES_BETWEEN_BLOCKS}
+ * blank line separates it from the text on each side. Padding only ADDS the
+ * line breaks that are missing -- the writer's own text, including extra blank
+ * lines they typed, is never removed -- and nothing is added before a block
+ * that opens the body. Returns the new text and the caret just past the block's
+ * trailing separator, so a second fold-in lands after the first.
+ */
+export function spliceQuoteBlock(
+  body: string,
+  block: string,
+  caret: number | null,
+): { text: string; nextCaret: number } {
+  const at = caret == null ? body.length : Math.min(Math.max(caret, 0), body.length);
+  const before = body.slice(0, at);
+  const after = body.slice(at);
+  const lead = before.length === 0 ? '' : missingBreaks(countBreaks(before, true));
+  const trail = missingBreaks(countBreaks(after, false));
+  const inserted = `${lead}${block}${trail}`;
+  return { text: `${before}${inserted}${after}`, nextCaret: at + inserted.length };
 }
 
 /**
@@ -91,7 +144,7 @@ export function formatQuotePrefill(text: string, sourceTitle: string): string {
  * label exists to close, reintroduced on the display layer. Omitted, it falls
  * back to the device zone, which is what the written-attribution path wants.
  */
-function formatSourceDate(timestamp: string, timeZone?: string): string {
+export function formatSourceDate(timestamp: string, timeZone?: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleDateString(undefined, {

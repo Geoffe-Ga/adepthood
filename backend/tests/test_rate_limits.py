@@ -777,7 +777,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 30 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 31 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -812,6 +812,8 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.practice_share.import_share_link": ("30 per 1 hour",),
     "routers.practice_share.preview_share_link": ("30 per 1 hour",),
     "routers.practices.submit_practice": ("5 per 1 minute",),
+    # The cross-entry quote list (#2865), limited like the journal list.
+    "routers.promotions.list_all_promotions": ("30 per 1 minute",),
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
@@ -823,14 +825,14 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 150 mounted ``APIRoute``s share 124 distinct paths. Pinned so a future router
+# 151 mounted ``APIRoute``s share 125 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 124
+_DISTINCT_MOUNTED_PATHS = 125
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 30 declared limits: the 27 from before the ambient floor, plus #2900's three.
+    """The 31 declared limits: the 27 from before the ambient floor, #2900's three, and #2865's.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
@@ -850,7 +852,7 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     """Every distinct mounted path is charged, not merely the three app-level ones.
 
     Deliberately iterates distinct *paths* with a reset between them rather than
-    routes: 150 routes share 124 paths, the ambient bucket is keyed per path,
+    routes: 151 routes share 125 paths, the ambient bucket is keyed per path,
     and a per-route walk would see the second and third method on a shared path
     charged to a bucket the first already spent.
     """

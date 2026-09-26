@@ -132,7 +132,15 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
   'features/Journal/MarginNote.tsx::staleCaption',
+  // The stale-quote row's caption is metadata beside the snapshot text; the
+  // tap target is the whole row (touchTarget.minimum), as with MarginNote.
+  'features/Journal/StaleQuoteNotes.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
+  // A promoted quote's source line (and, once used, its review), beneath the
+  // quote inside the row's own tap target: metadata, as cardDate is below. The
+  // row's accessible name carries the quote and its source; this is not itself
+  // an affordance.
+  'features/Journal/QuoteRow.tsx::caption',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   // The sheet's one eyebrow face: the "Quotes to fold in" group heading and a
   // reflection row's level label, both read and never tapped.

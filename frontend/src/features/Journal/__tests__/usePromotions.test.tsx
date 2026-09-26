@@ -356,3 +356,68 @@ describe('usePromotions', () => {
     }
   });
 });
+
+describe('usePromotions.refresh -- reflect server re-anchoring after an edit (#2891)', () => {
+  it('replaces each quote with the server copy: new offsets and the stale flag', async () => {
+    const before = quote({ id: 1, anchor_start: 2, anchor_end: 19 });
+    const other = quote({ id: 2, anchor_start: 30, anchor_end: 35, anchor_text: 'later' });
+    mockList.mockResolvedValueOnce([before, other]);
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+    await waitFor(() => expect(result.current.quotes).toHaveLength(2));
+
+    const moved = { ...before, anchor_start: 12, anchor_end: 29 };
+    const staled = { ...other, stale: true };
+    mockList.mockResolvedValueOnce([moved, staled]);
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(mockList).toHaveBeenLastCalledWith(7);
+    expect(result.current.quotes).toEqual([moved, staled]);
+  });
+
+  it('is a no-op for an unsaved entry', async () => {
+    const { result } = renderHook(() => usePromotions({ entryId: 0 }));
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('keeps the list and raises a content-free hint when the refetch fails', async () => {
+    const seeded = quote({ id: 1, anchor_text: 'a very private sentence' });
+    mockList.mockResolvedValueOnce([seeded]);
+    const { result } = renderHook(() => usePromotions({ entryId: 7 }));
+    await waitFor(() => expect(result.current.quotes).toHaveLength(1));
+
+    mockList.mockRejectedValueOnce(new ApiError(503, 'service_unavailable'));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.quotes).toEqual([seeded]);
+    expect(result.current.hint).toBeTruthy();
+    expect(result.current.hint).not.toContain('private sentence');
+  });
+
+  it('drops a response that lands after the entry changed', async () => {
+    mockList.mockResolvedValue([]);
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => usePromotions({ entryId: id }),
+      { initialProps: { id: 7 } },
+    );
+    await waitFor(() => expect(mockList).toHaveBeenCalledWith(7));
+    const late = deferred<PromotedQuote[]>();
+    mockList.mockReturnValueOnce(late.promise);
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.refresh();
+    });
+    rerender({ id: 8 });
+    await act(async () => {
+      late.resolve([quote({ id: 99, source_entry_id: 7 })]);
+      await pending;
+    });
+    expect(result.current.quotes.map((q: PromotedQuote) => q.id)).not.toContain(99);
+  });
+});

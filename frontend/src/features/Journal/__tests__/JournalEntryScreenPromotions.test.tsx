@@ -9,6 +9,7 @@ import { StyleSheet } from 'react-native';
 // TextInput, or promoted-quote spans -- every testID below is missing until
 // the implementation-specialist wires `usePromotions` + the new affordance
 // into `JournalEntryScreen`/`ReadColumn`.
+import { parseJournalMarkdown, sourceToVisible, utf16ToSource } from '../journalMarkdown';
 import { PROMOTED_NOTICE_MS } from '../usePromotions';
 
 import type { JournalMessage, PromotedQuote } from '@/api';
@@ -100,13 +101,20 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
+/**
+ * A promoted quote over BODY whose ``anchor_text`` is the slice its offsets
+ * address, edge-trimmed as the server snapshots it (read mode draws a quote
+ * only where its offsets still spell its text).
+ */
 function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
+  const start = overrides.anchor_start ?? 2;
+  const end = overrides.anchor_end ?? 19;
   return {
     id: 55,
     source_entry_id: 7,
-    anchor_start: 2,
-    anchor_end: 19,
-    anchor_text: 'went for a daily',
+    anchor_start: start,
+    anchor_end: end,
+    anchor_text: Array.from(BODY).slice(start, end).join('').trim(),
     pending: true,
     stale: false,
     ...overrides,
@@ -470,5 +478,266 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     });
     expect(await screen.findByTestId('quote-promotion-error')).toBeTruthy();
     expect(screen.queryByTestId('quote-promotion-retry')).toBeNull();
+  });
+});
+
+describe('JournalEntryScreen -- promotions follow the server after an edited save (#2891)', () => {
+  it('refetches promotions (and marginalia) after an edited finished entry is saved', async () => {
+    jest.useFakeTimers();
+    try {
+      mockPromotionsList.mockResolvedValueOnce([promotedQuote()]);
+      const route = { key: 'k', name: 'JournalEntry' as const, params: { entryId: 7 } };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockPromotionsList).toHaveBeenCalledTimes(1);
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-edit'));
+      const input = await findByTestId('journal-body-input');
+      mockList.mockClear();
+      mockPromotionsList.mockResolvedValueOnce([
+        promotedQuote({ anchor_start: 8, anchor_end: 25 }),
+      ]);
+      fireEvent.changeText(input, `Before: ${BODY}`);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ message: `Before: ${BODY}` }),
+      );
+      expect(mockPromotionsList).toHaveBeenCalledTimes(2);
+      expect(mockPromotionsList).toHaveBeenLastCalledWith(7);
+      expect(mockList).toHaveBeenCalledWith(7);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+/**
+ * The server's ``sanitize_user_text``, as far as a body is concerned: NFC, the
+ * zero-width / directional marks U+200B-U+200F stripped, edges trimmed.
+ */
+function serverStored(typed: string): string {
+  return typed
+    .normalize('NFC')
+    .replace(/[\u200B-\u200F]/gu, '')
+    .trim();
+}
+
+describe('JournalEntryScreen -- read mode adopts the server-stored body after Finish (#2891)', () => {
+  const FAMILY = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+  const CASES: { name: string; typed: string; quoted: string }[] = [
+    { name: 'a decomposed combining mark', typed: 'Cafe\u0301 by the river.', quoted: 'river' },
+    { name: 'a ZWJ emoji sequence', typed: `${FAMILY} walked to the river.`, quoted: 'river' },
+    { name: 'a leading nested bullet', typed: '  - by the river\n  - and back', quoted: 'river' },
+    { name: 'a leading newline', typed: '\n> a quote\n\nby the river', quoted: 'river' },
+  ];
+
+  it.each(CASES)('promotes offsets into the stored body after $name', async ({ typed, quoted }) => {
+    jest.useFakeTimers();
+    try {
+      const stored = serverStored(typed);
+      expect(stored).not.toBe(typed); // the case really exercises sanitize
+      mockUpdate.mockImplementation((id: number) =>
+        Promise.resolve(entry({ id, message: stored, status: 'finished' })),
+      );
+      mockPromote.mockResolvedValue(promotedQuote({ id: 91, source_entry_id: 42 }));
+      const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), typed);
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-finish-button'));
+      });
+      fireEvent.press(await findByTestId('promote-quote-button'));
+      const input = getByTestId('quote-select-input');
+      expect(input.props.value).toBe(stored);
+
+      const startUtf16 = stored.indexOf(quoted);
+      fireEvent(input, 'selectionChange', {
+        nativeEvent: { selection: { start: startUtf16, end: startUtf16 + quoted.length } },
+      });
+      await act(async () => {
+        fireEvent.press(getByTestId('quote-select-confirm'));
+      });
+      const [, span] = mockPromote.mock.calls[0]!;
+      expect(Array.from(stored).slice(span.anchor_start, span.anchor_end).join('')).toBe(quoted);
+
+      // Adopting the stored body is not an edit: no further write follows it.
+      const writes = mockUpdate.mock.calls.length + mockCreate.mock.calls.length;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1000);
+      });
+      // Closing flushes only what is not yet durable; the stored body already is.
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-close-entry'));
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(navigation.navigate).toHaveBeenCalled();
+      expect(mockUpdate.mock.calls.length + mockCreate.mock.calls.length).toBe(writes);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('adopts the stored body when Finish updates an entry an autosave already created', async () => {
+    jest.useFakeTimers();
+    try {
+      const typed = 'Cafe\u0301 by the river.  ';
+      mockCreate.mockResolvedValue(entry({ id: 42, message: typed, status: 'draft' }));
+      mockUpdate.mockImplementation((id: number, patch: unknown) =>
+        Promise.resolve(
+          entry({
+            id,
+            message: serverStored((patch as { message: string }).message),
+            status: 'finished',
+          }),
+        ),
+      );
+      const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), typed);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        fireEvent.press(getByTestId('journal-finish-button'));
+      });
+      // The UPDATE branch of the Finish write: the id already existed.
+      expect(mockUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ status: 'finished' }));
+      fireEvent.press(await findByTestId('promote-quote-button'));
+      expect(getByTestId('quote-select-input').props.value).toBe(serverStored(typed));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('shows the stored body, not the typed one, when text is typed during the Finish write', async () => {
+    // The server keeps one copy of the body: whatever it stored last, sanitized.
+    let stored = '';
+    let releaseFinish: () => void = () => {};
+    mockCreate.mockImplementation((payload) => {
+      stored = serverStored((payload as { message: string }).message);
+      return Promise.resolve(entry({ id: 42, message: stored, status: 'draft' }));
+    });
+    mockUpdate.mockImplementation((id: number, patch: unknown) => {
+      const { message, status } = patch as { message?: string; status?: string };
+      if (message != null) stored = serverStored(message);
+      const reply = entry({ id, message: stored, status: 'finished' });
+      if (status !== 'finished') return Promise.resolve(reply);
+      return new Promise<JournalMessage>((resolve) => {
+        releaseFinish = () => resolve(reply);
+      });
+    });
+    mockGet.mockImplementation((id: number) => Promise.resolve(entry({ id, message: stored })));
+    const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+    const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+    const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+    const { getByTestId, findByTestId } = render(
+      <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+    );
+    fireEvent.changeText(getByTestId('journal-body-input'), '\nby the river');
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-finish-button'));
+    });
+    fireEvent.changeText(getByTestId('journal-body-input'), '\nby the river and back');
+    await act(async () => {
+      releaseFinish();
+    });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const surface = getByTestId('quote-select-input');
+    expect(stored).toBe('by the river and back');
+    expect(surface.props.value).toBe(stored);
+
+    mockPromote.mockResolvedValue(promotedQuote({ id: 93, source_entry_id: 42 }));
+    const at = stored.indexOf('river');
+    fireEvent(surface, 'selectionChange', {
+      nativeEvent: { selection: { start: at, end: at + 'river'.length } },
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+    const [, span] = mockPromote.mock.calls[0]!;
+    expect(Array.from(stored).slice(span.anchor_start, span.anchor_end).join('')).toBe('river');
+  });
+
+  it('keeps the writer in the editor when text typed during Finish cannot be saved', async () => {
+    let releaseFinish: () => void = () => {};
+    mockUpdate.mockImplementation((id: number, patch: unknown) => {
+      if ((patch as { status?: string }).status !== 'finished') {
+        return Promise.reject(new Error('offline'));
+      }
+      return new Promise<JournalMessage>((resolve) => {
+        releaseFinish = () => resolve(entry({ id, message: 'by the river', status: 'finished' }));
+      });
+    });
+    const route = { key: 'k', name: 'JournalEntry' as const, params: undefined };
+    const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+    const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+    const { getByTestId, findByTestId, queryByTestId } = render(
+      <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+    );
+    fireEvent.changeText(getByTestId('journal-body-input'), 'by the river');
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-finish-button'));
+    });
+    fireEvent.changeText(getByTestId('journal-body-input'), 'by the river and back');
+    await act(async () => {
+      releaseFinish();
+    });
+    expect(await findByTestId('journal-finish-error')).toBeTruthy();
+    expect(getByTestId('journal-body-input').props.value).toBe('by the river and back');
+    expect(queryByTestId('journal-body-read')).toBeNull();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('JournalEntryScreen -- promote posts source offsets, never display offsets (#2891)', () => {
+  const MARKED = '**bo\u{1F600}ld** _x_ tail';
+
+  it('sends utf16ToSource of the selection, which differs from the visible offset', async () => {
+    mockGet.mockResolvedValue(entry({ message: MARKED }));
+    mockPromote.mockResolvedValue(promotedQuote({ id: 92 }));
+    const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
+    fireEvent.press(await findByTestId('promote-quote-button'));
+    const selection = { start: MARKED.indexOf('tail'), end: MARKED.length };
+    const source = {
+      start: utf16ToSource(MARKED, selection.start),
+      end: utf16ToSource(MARKED, selection.end),
+    };
+    const document = parseJournalMarkdown(MARKED);
+    const visible = {
+      start: sourceToVisible(document, source.start),
+      end: sourceToVisible(document, source.end),
+    };
+    // The guard is only meaningful where the coordinate systems really differ.
+    expect(visible.start).not.toBe(source.start);
+    expect(source.start).not.toBe(selection.start);
+
+    fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+      nativeEvent: { selection },
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-select-confirm'));
+    });
+    expect(mockPromote).toHaveBeenCalledWith(7, {
+      anchor_start: source.start,
+      anchor_end: source.end,
+    });
   });
 });

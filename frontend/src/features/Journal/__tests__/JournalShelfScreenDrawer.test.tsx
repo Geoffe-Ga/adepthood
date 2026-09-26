@@ -266,6 +266,21 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
+  it('opens Promoted quotes from the drawer and closes the drawer behind it', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-promoted-quotes')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-promoted-quotes'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('PromotedQuotes');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
   it('keeps Your corpus in the drawer and routes an undecided account to consent', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());

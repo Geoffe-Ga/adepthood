@@ -5,6 +5,7 @@ import {
   formatBlockquote,
   formatQuotePrefill,
   sourceAttribution,
+  spliceQuoteBlock,
 } from '../reflectionCopy';
 
 import type { ReflectionSourceItem } from '@/api';
@@ -68,20 +69,64 @@ describe('reflectionTitle', () => {
 });
 
 describe('formatBlockquote', () => {
-  it('opens on a fresh line with a blockquote marker before the anchor text', () => {
-    const block = formatBlockquote('went for a daily walk', 'Runs');
-    expect(block.startsWith('\n>')).toBe(true);
-    expect(block).toContain('> went for a daily walk');
+  it('is exactly the quoted text and its attribution line, with no padding', () => {
+    expect(formatBlockquote('went for a daily walk', 'Runs')).toBe(
+      '> went for a daily walk\n> — Runs',
+    );
   });
 
-  it('includes the attribution on its own quoted line', () => {
-    const block = formatBlockquote('went for a daily walk', 'Runs');
-    expect(block).toContain('Runs');
+  it('quotes every line of a multi-line passage (#2891)', () => {
+    expect(formatBlockquote('first line\nsecond line\n\nafter a gap', 'Runs')).toBe(
+      '> first line\n> second line\n> \n> after a gap\n> — Runs',
+    );
+  });
+});
+
+describe('spliceQuoteBlock (#2891)', () => {
+  const A = formatBlockquote('alpha', 'One');
+  const B = formatBlockquote('beta', 'Two');
+
+  it('adds no leading newline at caret 0 of an empty body', () => {
+    const { text, nextCaret } = spliceQuoteBlock('', A, 0);
+    expect(text).toBe(`${A}\n\n`);
+    expect(nextCaret).toBe(text.length);
   });
 
-  it('closes with a blank line so the inserted quote never runs into surrounding prose', () => {
-    const block = formatBlockquote('went for a daily walk', 'Runs');
-    expect(block.endsWith('\n\n')).toBe(true);
+  it('leaves exactly one blank line between two consecutive fold-ins', () => {
+    const first = spliceQuoteBlock('', A, null);
+    const second = spliceQuoteBlock(first.text, B, first.nextCaret);
+    expect(second.text).toBe(`${A}\n\n${B}\n\n`);
+    expect(second.text).not.toContain('\n\n\n');
+  });
+
+  it('keeps one blank line on each side of a block spliced mid-prose', () => {
+    const body = 'before the quote\nafter the quote';
+    const caret = 'before the quote\n'.length;
+    const { text, nextCaret } = spliceQuoteBlock(body, A, caret);
+    expect(text).toBe(`before the quote\n\n${A}\n\nafter the quote`);
+    expect(text.slice(nextCaret)).toBe('after the quote');
+  });
+
+  it("adds only the newlines that are missing, never removing the writer's own", () => {
+    const body = 'prose\n\n\n\nmore';
+    const { text } = spliceQuoteBlock(body, A, 'prose\n\n'.length);
+    expect(text).toBe(`prose\n\n${A}\n\nmore`);
+  });
+
+  it('appends at the end when no caret is tracked, after one blank line', () => {
+    const { text } = spliceQuoteBlock('my reflection', A, null);
+    expect(text).toBe(`my reflection\n\n${A}\n\n`);
+  });
+
+  it('clamps a caret past the end of the body', () => {
+    const { text } = spliceQuoteBlock('short', A, 99);
+    expect(text).toBe(`short\n\n${A}\n\n`);
+  });
+
+  it('changes nothing of the body but the inserted block and its padding', () => {
+    const body = 'one\ntwo';
+    const { text } = spliceQuoteBlock(body, A, 'one\n'.length);
+    expect(text.replace(/\n/gu, '').replace(A.replace(/\n/gu, ''), '')).toBe('onetwo');
   });
 });
 

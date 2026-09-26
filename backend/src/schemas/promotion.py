@@ -8,6 +8,8 @@ text. ``user_id`` never appears in a response.
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -62,3 +64,40 @@ class PromotedQuoteResponse(BaseModel):
     # True once a source-body edit deleted/mutated the anchored passage so the
     # quote could no longer re-anchor; a stale quote stays for the user to resolve.
     stale: bool
+
+
+class PromotionStatusFilter(StrEnum):
+    """Which promoted quotes ``GET /promotions`` returns, by fold state.
+
+    ``pending`` quotes still wait for a review, ``included`` ones were folded
+    into one, and ``all`` (the default) returns both.
+    """
+
+    PENDING = "pending"
+    INCLUDED = "included"
+    ALL = "all"
+
+
+class PromotedQuoteListItemResponse(PromotedQuoteResponse):
+    """A promoted quote as listed across every entry, with where it came from.
+
+    Extends :class:`PromotedQuoteResponse` so the two quote shapes cannot drift.
+    ``source_title`` and ``source_timestamp`` describe the live source entry.
+    ``included_in_title`` is null unless the review the quote was folded into is
+    the caller's own and still live -- a deleted review's title is never shown,
+    though ``included_in_entry_id`` still records that the quote was used.
+    """
+
+    source_title: str | None
+    source_timestamp: datetime
+    included_in_entry_id: int | None
+    included_in_title: str | None
+    created_at: datetime
+
+
+class PromotedQuoteListResponse(BaseModel):
+    """One offset page of the caller's promoted quotes, newest first."""
+
+    items: list[PromotedQuoteListItemResponse]
+    total: int
+    has_more: bool

@@ -2007,3 +2007,90 @@ async def test_a_non_admin_cannot_link_their_report_to_another_tenants(
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert await report_state(db_session, alices_id) == ("new", None)
     assert await row_count(db_session, FeedbackTriageEvent) == 0
+
+
+@pytest.mark.asyncio
+async def test_idor_list_all_promotions_never_serves_another_users_quotes(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``GET /promotions`` serves the caller's own quotes and never anyone else's.
+
+    The route takes no ``*_id`` parameter, so there is no id to authorize with the
+    ``resolve_owned_*`` helpers; ownership rides on three ``user_id`` predicates
+    instead, and each is pinned here by a row that only that predicate excludes:
+
+    * Bob's quote on Bob's own entry -- the quote's ``user_id`` predicate.
+    * Bob's quote anchored on *Alice's* entry id -- the source join's ``user_id``
+      predicate would not catch it, but the quote's own does; and Alice's quote
+      on Bob's entry is caught only by the source join's predicate.
+    * Alice's control quote folded into *Bob's* review -- the inclusion join's
+      ``user_id`` predicate, so Bob's review title never leaks through
+      ``included_in_title``.
+
+    Alice's control quote is present, so "excluded" is never satisfied by an
+    empty list, and the read persists nothing: the table is unchanged.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_list_promotions")
+    bob_headers, bob_id = await _signup(async_client, "bob_list_promotions")
+    assert bob_headers  # Bob exists only to own the material Alice must not see.
+    alices = JournalEntry(user_id=alice_id, sender="user", message="Alice's page", title="Mine")
+    bobs = JournalEntry(user_id=bob_id, sender="user", message="Bob's page", title="Bob's")
+    bobs_review = JournalEntry(
+        user_id=bob_id,
+        sender="user",
+        message="Bob's week",
+        title="Bob's secret week",
+        tag="hierarchical_reflection",
+        reflection_level="week",
+        reflection_scope_key="c1:w1",
+    )
+    db_session.add_all([alices, bobs, bobs_review])
+    await db_session.commit()
+    control = PromotedQuote(
+        user_id=alice_id,
+        source_entry_id=alices.id,
+        anchor_start=0,
+        anchor_end=5,
+        anchor_text="Alice",
+        included_in_entry_id=bobs_review.id,
+    )
+    db_session.add_all(
+        [
+            control,
+            PromotedQuote(
+                user_id=bob_id,
+                source_entry_id=bobs.id,
+                anchor_start=0,
+                anchor_end=3,
+                anchor_text="Bob",
+            ),
+            PromotedQuote(
+                user_id=bob_id,
+                source_entry_id=alices.id,
+                anchor_start=0,
+                anchor_end=5,
+                anchor_text="Alice",
+            ),
+            PromotedQuote(
+                user_id=alice_id,
+                source_entry_id=bobs.id,
+                anchor_start=0,
+                anchor_end=3,
+                anchor_text="Bob",
+            ),
+        ]
+    )
+    await db_session.commit()
+    count_query = select(func.count()).select_from(PromotedQuote)
+    before = (await db_session.execute(count_query)).scalar_one()
+
+    resp = await async_client.get("/promotions", headers=alice_headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert [item["id"] for item in body["items"]] == [control.id]
+    assert body["total"] == 1
+    assert body["items"][0]["included_in_title"] is None
+    assert body["items"][0]["source_title"] == "Mine"
+    assert "user_id" not in body["items"][0]
+    assert (await db_session.execute(count_query)).scalar_one() == before
