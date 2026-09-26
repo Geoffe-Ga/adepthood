@@ -74,7 +74,7 @@ jobs:
         # header: the raw exit code cannot tell "the work landed and the cap
         # bit" from "the account is out of budget".
         continue-on-error: true
-        uses: anthropics/claude-code-action@fa2b2666b747000bf42767d1f332065b375e3c8f  # v1.0.214
+        uses: anthropics/claude-code-action@8cf3482550831fb35a4fc3fbf7ca139cf8028b4c  # v1.0.233
         env:
           GH_TOKEN: ${{ github.token }}
         with:
