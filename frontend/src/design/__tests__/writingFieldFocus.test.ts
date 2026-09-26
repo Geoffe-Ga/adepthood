@@ -9,15 +9,21 @@ import { accent } from '../tokens';
  * trick ``serifStack`` uses in ``tokens.ts``), so each spec re-requires the
  * module with the platform already pinned rather than mutating a frozen value.
  */
-function loadFocusStyle(os: string): Record<string, unknown> {
+type PlatformToken = 'writingFieldFocus' | 'focusHostStyle';
+
+function loadToken(os: string, name: PlatformToken): Record<string, unknown> {
   let style: Record<string, unknown> = {};
   jest.isolateModules(() => {
     // ``isolateModules`` hands the isolated tokens module its own copy of
     // ``react-native``; pin the platform on that copy, not the outer one.
     (require('react-native') as { Platform: { OS: string } }).Platform.OS = os;
-    style = require('../tokens').writingFieldFocus as Record<string, unknown>;
+    style = (require('../tokens') as Record<PlatformToken, Record<string, unknown>>)[name];
   });
   return style;
+}
+
+function loadFocusStyle(os: string): Record<string, unknown> {
+  return loadToken(os, 'writingFieldFocus');
 }
 
 describe('writingField caret token', () => {
@@ -39,5 +45,18 @@ describe('writingFieldFocus', () => {
   it('adds nothing on native, where no focus ring is drawn', () => {
     expect(loadFocusStyle('ios')).toEqual({});
     expect(loadFocusStyle('android')).toEqual({});
+  });
+});
+
+describe('focusHostStyle', () => {
+  it('drops the browser focus ring on web for a host that only takes programmatic focus', () => {
+    const style = loadToken('web', 'focusHostStyle');
+    expect(style.outlineStyle).toBe('none');
+    expect(style).not.toHaveProperty('caretColor');
+  });
+
+  it('adds nothing on native, where no focus ring is drawn', () => {
+    expect(loadToken('ios', 'focusHostStyle')).toEqual({});
+    expect(loadToken('android', 'focusHostStyle')).toEqual({});
   });
 });
