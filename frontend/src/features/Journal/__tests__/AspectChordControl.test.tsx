@@ -7,7 +7,18 @@ import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
 import AspectChordControl from '../AspectChordControl';
 
-import { STAGE_ORDER, colors, readableGlyphOn, resolveStageColor } from '@/design/tokens';
+import { TextField } from '@/components/TextField';
+import {
+  BORDER_RADIUS,
+  INTERACTIVE_TEXT_MIN,
+  SPACING,
+  STAGE_ORDER,
+  colors,
+  ink,
+  readableGlyphOn,
+  resolveStageColor,
+  touchTarget,
+} from '@/design/tokens';
 import { STAGE_DISPLAY } from '@/features/Map/mapLayout';
 
 /** The controlled value shape the control reports back via onChange. */
@@ -278,6 +289,44 @@ describe('AspectChordControl — collapse affordance', () => {
     expect(getByTestId('aspect-chord-trigger').props.accessibilityLabel).toBe(
       'Name an Aspect (optional)',
     );
+  });
+
+  it('frames the untagged trigger like a text field, with the invitation as its placeholder', () => {
+    const { getByTestId, getByText } = renderControl();
+    const trigger = StyleSheet.flatten<ViewStyle>(getByTestId('aspect-chord-trigger').props.style);
+    expect(trigger.borderWidth).toBeGreaterThanOrEqual(StyleSheet.hairlineWidth);
+    expect(trigger.borderColor).toBe(colors.paper.hairline);
+    expect(trigger.borderRadius).toBe(BORDER_RADIUS.md);
+    expect(trigger.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(trigger.paddingHorizontal).toBe(SPACING.md);
+
+    // Frame parity with the real inputs: the same four tokens TextField uses,
+    // asserted against a rendered TextField so the two cannot drift apart.
+    const field = render(<TextField />).getByDisplayValue('');
+    const fieldStyle = StyleSheet.flatten<ViewStyle>(field.props.style);
+    expect(trigger.borderWidth).toBe(fieldStyle.borderWidth);
+    expect(trigger.borderColor).toBe(fieldStyle.borderColor);
+    expect(trigger.borderRadius).toBe(fieldStyle.borderRadius);
+    expect(trigger.minHeight).toBe(fieldStyle.minHeight);
+    expect(trigger.paddingHorizontal).toBe(fieldStyle.paddingHorizontal);
+
+    // The invitation reads as a placeholder: muted, at the interactive floor.
+    const placeholder = StyleSheet.flatten<TextStyle>(
+      getByText('Name an Aspect (optional)').props.style,
+    );
+    expect(placeholder.color).toBe(ink.muted);
+    expect(placeholder.fontSize).toBe(INTERACTIVE_TEXT_MIN);
+  });
+
+  it('keeps the named chord inside the same frame, in the value colour', () => {
+    const { getByTestId, getByText } = renderControl({ primary: 5, secondary: 2 });
+    fireEvent.press(getByTestId('aspect-chord-collapse'));
+    const trigger = StyleSheet.flatten<ViewStyle>(getByTestId('aspect-chord-trigger').props.style);
+    expect(trigger.borderWidth).toBeGreaterThanOrEqual(StyleSheet.hairlineWidth);
+    expect(trigger.borderRadius).toBe(BORDER_RADIUS.md);
+    const value = StyleSheet.flatten<TextStyle>(getByText(/^Aspect: /).props.style);
+    expect(value.color).not.toBe(ink.muted);
+    expect(value.fontSize).toBe(INTERACTIVE_TEXT_MIN);
   });
 });
 
