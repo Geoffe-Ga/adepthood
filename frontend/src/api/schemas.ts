@@ -393,7 +393,7 @@ export const journalListResponseSchema = z.object({
   has_more: z.boolean(),
 });
 
-/** Handwriting-transcription result: the OCR'd text of one journal page. */
+/** Transcription result: the OCR'd text of one captured image (page or screenshot). */
 export const transcribePageSchema = z.object({ text: z.string() });
 export type TranscribePageT = z.infer<typeof transcribePageSchema>;
 

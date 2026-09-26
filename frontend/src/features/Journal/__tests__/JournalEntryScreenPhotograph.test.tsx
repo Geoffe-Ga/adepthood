@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /**
- * Photographing a handwritten page from the page you are already writing.
+ * Photographing a page or screenshot from the page you are already writing.
  *
  * A Course reflection IS a journal entry — the reader hands off to this screen
  * with a prefilled title — so the affordance lives here rather than in a

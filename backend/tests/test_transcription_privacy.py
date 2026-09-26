@@ -9,7 +9,8 @@ transcript text turns this suite (and therefore CI) red. Sections:
 
     A -- the LLMUsageLog table schema stays free of content-bearing columns
     B -- no log record leaks the base64 payload or the transcribed text on
-         any of the four response paths (success, 422, 402, 502)
+         any of the response paths (success, 422, 402, 502, and the 422
+         no-text / refused-reply paths)
     C -- the source tree carries no multipart/UploadFile upload surface
     D -- the route carries no image data in its URL, and the access log's
          structured extras stay inside a closed allow-list
@@ -41,6 +42,7 @@ from sentry import SentryContext
 from services.botmason import ImagePayload, LLMProviderError, generate_response
 from tests.transcription_helpers import (
     JPEG_BYTES,
+    REFUSAL_MARKER_TEXT,
     SENTINEL_TEXT,
     b64,
     patch_generate_response,
@@ -196,6 +198,52 @@ async def test_provider_failure_logs_no_image_or_text_content(
 
     assert resp.status_code == 502
     _assert_no_privacy_leak(caplog.records, encoded, marker_b64)
+
+
+_UNUSABLE_REPLY_EVENT = "journal_page_transcription_unusable"
+# The unusable-reply log line's own extras: metadata only, never content.
+_UNUSABLE_REPLY_LOG_KEYS = frozenset({"user_id", "verdict", "total_tokens"})
+# Stamped on every record by the app log filter (see section D below).
+_STAMPED_LOG_KEYS = frozenset({"trace_id"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "detail"),
+    [
+        pytest.param(REFUSAL_MARKER_TEXT, "transcription_refused", id="refused"),
+        pytest.param("[no text found]", "no_text_found", id="no-text"),
+    ],
+)
+async def test_unusable_reply_paths_log_no_image_or_reply_content(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    reply: str,
+    detail: str,
+) -> None:
+    """A refused or empty read logs metadata only: no image, no reply text (#2851)."""
+    patch_generate_response(monkeypatch, priced_response(reply))
+    headers = await signup(async_client, f"privacy_{detail}")
+    encoded = b64(_MARKED_JPEG_BYTES)
+    marker_b64 = base64.b64encode(_PRIVACY_MARKER).decode()
+
+    with caplog.at_level(logging.DEBUG):
+        resp = await async_client.post(_ENDPOINT, json=payload(_MARKED_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == detail
+    _assert_no_privacy_leak(caplog.records, encoded, marker_b64)
+    for record in caplog.records:
+        for blob in (record.getMessage(), str(record.__dict__)):
+            assert reply not in blob
+    unusable = [r for r in caplog.records if r.getMessage() == _UNUSABLE_REPLY_EVENT]
+    assert len(unusable) == 1
+    record = unusable[0]
+    assert set(record.__dict__) - _BASELINE_LOG_RECORD_KEYS - _STAMPED_LOG_KEYS == (
+        _UNUSABLE_REPLY_LOG_KEYS
+    )
+    assert record.__dict__["verdict"] == detail
 
 
 # ── C: no multipart/upload surface anywhere in the source tree ────────────

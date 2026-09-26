@@ -121,6 +121,18 @@ describe('journal.transcribePage error mapping', () => {
       kind: 'model_lacks_vision',
     },
     {
+      name: '422 no_text_found is its own kind, not invalid_image',
+      status: 422,
+      body: { detail: 'no_text_found' },
+      kind: 'no_text_found',
+    },
+    {
+      name: '422 transcription_refused is its own kind, not invalid_image',
+      status: 422,
+      body: { detail: 'transcription_refused' },
+      kind: 'transcription_refused',
+    },
+    {
       name: '422 pydantic array detail defaults to invalid_image',
       status: 422,
       body: { detail: [{ loc: ['body', 'image_base64'], msg: 'bad image', type: 'value_error' }] },

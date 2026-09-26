@@ -812,7 +812,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.practice_share.import_share_link": ("30 per 1 hour",),
     "routers.practice_share.preview_share_link": ("30 per 1 hour",),
     "routers.practices.submit_practice": ("5 per 1 minute",),
-    "routers.transcription.transcribe_page": ("20 per 1 minute",),
+    # Per address and per account: an uncharged unusable read (#2851) must not
+    # be buyable by rotating addresses.
+    "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only

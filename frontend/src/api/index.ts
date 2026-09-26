@@ -245,7 +245,7 @@ export type {
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 
 /**
- * The stable, UI-facing failure taxonomy for handwriting transcription. Every
+ * The stable, UI-facing failure taxonomy for photographed-text transcription. Every
  * server / transport error is collapsed into one of these so callers branch on
  * a small closed set instead of raw HTTP status + detail strings.
  */
@@ -253,6 +253,10 @@ export type TranscriptionErrorKind =
   | 'invalid_image'
   | 'image_too_large'
   | 'model_lacks_vision'
+  // The server read the image but got nothing usable back: no text in it, or
+  // the model declined. Neither is billed, and a fresh shot is the next move.
+  | 'no_text_found'
+  | 'transcription_refused'
   | 'wallet_exhausted'
   // A spent *provider* balance, which `wallet_exhausted` (our own monthly
   // metering) is not: its remedy is the API key, not the next monthly reset.
@@ -1703,8 +1707,8 @@ interface TranscribeDetailRule {
 /**
  * Per-status `detail` rules: the endpoint reuses one status for several distinct
  * conditions, so the status alone cannot classify them. A 402 is a spent monthly
- * wallet, a spent provider balance, or a missing key; a 422 is a bad image or a
- * text-only model; a 503 is a spent server balance or a genuine outage. The 422
+ * wallet, a spent provider balance, or a missing key; a 422 is a bad image, a
+ * text-only model, or an unusable read (no text found, or a refused read); a 503 is a spent server balance or a genuine outage. The 422
  * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
  * collapses to `'Request failed'`.
  */
@@ -1718,7 +1722,12 @@ const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
     fallback: 'wallet_exhausted',
   },
   [TRANSCRIBE_UNPROCESSABLE]: {
-    kinds: { image_too_large: 'image_too_large', model_lacks_vision: 'model_lacks_vision' },
+    kinds: {
+      image_too_large: 'image_too_large',
+      model_lacks_vision: 'model_lacks_vision',
+      no_text_found: 'no_text_found',
+      transcription_refused: 'transcription_refused',
+    },
     fallback: 'invalid_image',
   },
   [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
@@ -1913,8 +1922,10 @@ export const journal = {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
   },
   /**
-   * Transcribe one handwritten journal page from a base64 image. Stateless: it
-   * persists nothing and just returns the OCR'd text. Charges one wallet unit,
+   * Transcribe the text in one captured image (a page, a screenshot, a photo of
+   * a screen) from base64. Stateless: it persists nothing and just returns the
+   * OCR'd text; an image with no text, or a declined read, is a typed 422
+   * (`no_text_found` / `transcription_refused`) and is not charged. Charges one wallet unit,
    * so it is deliberately NON-idempotent — there is no auto-retry and callers
    * must not resend on transient failure without user intent. Supports BYOK via
    * the optional api key. PRIVACY: the image payload is never logged, and a

@@ -37,7 +37,7 @@ test('journal entry actions remain one row and resonance uses the responsive mar
   const row = page.getByTestId('journal-writing-controls');
   const finish = page.getByRole('button', { name: 'Mark this entry finished' });
   const photograph = page.getByRole('button', {
-    name: 'Photograph a handwritten page and add the transcription to this entry',
+    name: 'Photograph a page or screenshot and add its text to this entry',
   });
   await expect(finish).toBeVisible();
   await expect(photograph).toContainText('Photograph a page');
@@ -111,7 +111,7 @@ test('journal entry actions remain one row and resonance uses the responsive mar
   expect(Math.max(...narrowRow.centres) - Math.min(...narrowRow.centres)).toBeLessThanOrEqual(1);
   expect(narrowRow.scrollWidth).toBeLessThanOrEqual(narrowRow.clientWidth + 1);
   await expect(photograph).toHaveText('');
-  expect(await photograph.getAttribute('aria-label')).toContain('Photograph a handwritten page');
+  expect(await photograph.getAttribute('aria-label')).toContain('Photograph a page or screenshot');
   await expect(margin.getByTestId('get-resonance-button')).toHaveCount(0);
   await expect(page.getByTestId('get-resonance-button')).toBeVisible();
   expect(

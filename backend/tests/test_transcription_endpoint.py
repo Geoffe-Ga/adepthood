@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from client_ip import TRUSTED_PROXIES_ENV_VAR
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from services import botmason as botmason_service
@@ -26,6 +27,8 @@ from services.botmason import LLMProviderError, LLMVisionUnsupportedError
 from tests.provider_transport import OPENAI_KEY, use_openai
 from tests.transcription_helpers import JPEG_BYTES as _JPEG_BYTES
 from tests.transcription_helpers import PNG_BYTES as _PNG_BYTES
+from tests.transcription_helpers import REPORTED_REFUSAL as _REPORTED_REFUSAL
+from tests.transcription_helpers import REPORTED_REFUSAL_CURLY as _REPORTED_REFUSAL_CURLY
 from tests.transcription_helpers import SENTINEL_TEXT as _SENTINEL_TEXT
 from tests.transcription_helpers import WEBP_BYTES as _WEBP_BYTES
 from tests.transcription_helpers import b64 as _b64
@@ -386,6 +389,83 @@ async def test_rate_limit_pinned_at_20_per_minute(async_client: AsyncClient) -> 
     assert throttled.json()["detail"] == "rate_limit_exceeded"
 
 
+# The in-process test transport reports this socket peer; trusting it as a
+# proxy lets a test choose each request's client address via X-Forwarded-For.
+_TEST_TRANSPORT_PEER_NET = "127.0.0.1/32"
+
+
+def _from_address(headers: dict[str, str], address: str) -> dict[str, str]:
+    """Return ``headers`` sent as if from client ``address`` behind the trusted proxy."""
+    return {**headers, "X-Forwarded-For": address}
+
+
+@pytest.mark.asyncio
+async def test_rotating_client_addresses_does_not_buy_a_user_more_transcriptions(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The budget follows the account: a fresh address per request is still refused.
+
+    An unusable read is uncharged (#2851), so the per-address limit alone would
+    let one user buy unmetered provider calls by rotating addresses. A second
+    account behind the address the first one moved to is unaffected.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TEST_TRANSPORT_PEER_NET)
+    greedy = await _signup(async_client, "rotating_transcriber")
+
+    for index in range(_RATE_LIMIT):
+        admitted = await async_client.post(
+            _ENDPOINT,
+            json=_payload(_JPEG_BYTES),
+            headers=_from_address(greedy, f"203.0.113.{index + 1}"),
+        )
+        assert admitted.status_code != HTTPStatus.TOO_MANY_REQUESTS
+
+    rotated = await async_client.post(
+        _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "198.51.100.7")
+    )
+    assert rotated.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert rotated.json()["detail"] == "rate_limit_exceeded"
+
+    neighbour = await _signup(async_client, "neighbour_transcriber")
+    unaffected = await async_client.post(
+        _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(neighbour, "198.51.100.7")
+    )
+    assert unaffected.status_code == HTTPStatus.OK
+
+
+_REFUSED_RETRIES = 5
+
+
+@pytest.mark.asyncio
+async def test_a_refused_account_retry_does_not_spend_the_shared_address_budget(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The account axis is evaluated first, so its refusals cost the address nothing.
+
+    slowapi bills each bucket until one refuses. An account out of budget that
+    keeps retrying from a shared address must not eat that address's budget, or
+    the next person behind it is throttled for someone else's loop.
+    """
+    monkeypatch.setenv(TRUSTED_PROXIES_ENV_VAR, _TEST_TRANSPORT_PEER_NET)
+    greedy = await _signup(async_client, "greedy_transcriber")
+    for _ in range(_RATE_LIMIT):
+        await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "203.0.113.9")
+        )
+    for _ in range(_REFUSED_RETRIES):
+        refused = await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(greedy, "198.51.100.9")
+        )
+        assert refused.status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+    neighbour = await _signup(async_client, "shared_address_transcriber")
+    for _ in range(_RATE_LIMIT):
+        admitted = await async_client.post(
+            _ENDPOINT, json=_payload(_JPEG_BYTES), headers=_from_address(neighbour, "198.51.100.9")
+        )
+        assert admitted.status_code == HTTPStatus.OK
+
+
 @pytest.mark.asyncio
 async def test_no_log_record_leaks_base64_or_transcription_text(
     async_client: AsyncClient,
@@ -510,3 +590,113 @@ async def test_a_real_provider_quota_refusal_reaches_the_caller_as_402(
     after = await _wallet_snapshot(db_session, "scan_real@example.com")
     assert _units_spent(before, after) == 0
     assert await _usage_row_count(db_session) == 0
+
+
+# --- A refusal or an empty read is not the page's text (#2851) --------------
+
+
+@pytest.mark.asyncio
+async def test_refusal_reply_is_422_transcription_refused_and_uncharged(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported refusal is a typed 422, and neither the debit nor a usage row persists."""
+    _patch_generate_response(monkeypatch, _priced_response(_REPORTED_REFUSAL))
+    headers = await _signup(async_client, "refusal_check")
+    before = await _wallet_snapshot(db_session, "refusal_check@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "transcription_refused"
+    after = await _wallet_snapshot(db_session, "refusal_check@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+_UNUSABLE_REPLIES = (
+    pytest.param(_REPORTED_REFUSAL, "transcription_refused", id="refusal-ascii"),
+    pytest.param(_REPORTED_REFUSAL_CURLY, "transcription_refused", id="refusal-curly"),
+    pytest.param("  [no text found]\n", "no_text_found", id="no-text-sentinel"),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("reply", "detail"), _UNUSABLE_REPLIES)
+async def test_unusable_reply_on_server_key_is_422_and_uncharged(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+    detail: str,
+) -> None:
+    """Server-paid: an unusable reply rolls the staged debit and usage row back."""
+    _patch_generate_response(monkeypatch, _priced_response(reply))
+    headers = await _signup(async_client, "unusable_server")
+    before = await _wallet_snapshot(db_session, "unusable_server@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == detail
+    after = await _wallet_snapshot(db_session, "unusable_server@example.com")
+    assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("zero_monthly_cap")
+@pytest.mark.parametrize(("reply", "detail"), _UNUSABLE_REPLIES)
+async def test_unusable_reply_on_byok_is_422_and_writes_no_usage_row(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+    detail: str,
+) -> None:
+    """Caller-paid: an unusable reply leaves both buckets alone and meters nothing."""
+    _patch_generate_response(monkeypatch, _priced_response(reply))
+    headers = await _signup(async_client, "unusable_byok")
+    before = await _wallet_snapshot(db_session, "unusable_byok@example.com")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json=_payload(_JPEG_BYTES),
+        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == detail
+    after = await _wallet_snapshot(db_session, "unusable_byok@example.com")
+    assert after == before
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param("I can't sleep again tonight.", id="i-cant-sleep"),
+        pytest.param(
+            "I can't stop looking at the photo of Dad from 1987.\nHe looks so young.",
+            id="photo-of-dad",
+        ),
+    ],
+)
+async def test_journal_page_opening_with_i_cant_is_transcribed_and_charged(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    page: str,
+) -> None:
+    """A real page that starts "I can't" is the writer's words, not a refusal."""
+    _patch_generate_response(monkeypatch, _priced_response(page))
+    headers = await _signup(async_client, "i_cant_page")
+    before = await _wallet_snapshot(db_session, "i_cant_page@example.com")
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["text"] == page
+    after = await _wallet_snapshot(db_session, "i_cant_page@example.com")
+    assert _units_spent(before, after) == 1
+    assert await _usage_row_count(db_session) == 1
