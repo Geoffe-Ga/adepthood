@@ -176,9 +176,11 @@ export interface ResolvedFocusSpan extends FocusSpan {
  *
  * The span is honoured only when it is in range for the body (in code points,
  * the anchor contract) AND one of the entry's own loaded quotes is anchored at
- * exactly it and is not stale. So a span whose passage was since edited away, or
- * whose offsets no longer fit the body, falls back quietly -- the page never
- * scrolls to words that are not the quote.
+ * exactly it and is live by {@link partitionQuotes}: not stale, and its offsets
+ * still spell its text in this body. A detached quote is drawn apart from the
+ * text, never inline, so a span naming one -- or one whose offsets no longer fit
+ * the body -- falls back quietly: the page never scrolls to words that are not
+ * the quote.
  */
 export function resolveFocusSpan(
   body: string,
@@ -187,8 +189,8 @@ export function resolveFocusSpan(
 ): ResolvedFocusSpan | null {
   if (span == null) return null;
   if (!inRange(Array.from(body).length, span.start, span.end)) return null;
-  const match = quotes.find(
-    (q) => !q.stale && q.anchor_start === span.start && q.anchor_end === span.end,
+  const match = partitionQuotes([...quotes], body).live.find(
+    (q) => q.anchor_start === span.start && q.anchor_end === span.end,
   );
   return match == null ? null : { start: span.start, end: span.end, quoteId: match.id };
 }
