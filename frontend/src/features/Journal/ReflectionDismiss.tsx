@@ -2,7 +2,7 @@
 import { X } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
-import type { StyleProp, TextStyle } from 'react-native';
+import type { StyleProp, TextStyle, View } from 'react-native';
 
 import { SPACING, accent, editorialType, ink, touchTarget } from '@/design/tokens';
 
@@ -22,6 +22,8 @@ interface SharedProps {
   accessibilityLabel: string;
   testID: string;
   onPress: () => void;
+  /** The pressable host view, so a caller can hand focus to it. */
+  ref?: React.Ref<View>;
 }
 
 /** A text control: the label is required, and may take an extra text face. */
@@ -41,10 +43,11 @@ interface CloseVariantProps extends SharedProps {
 export type ReflectionDismissProps = TextVariantProps | CloseVariantProps;
 
 function ReflectionDismiss(props: ReflectionDismissProps): React.JSX.Element {
-  const { accessibilityLabel, testID, onPress } = props;
+  const { accessibilityLabel, testID, onPress, ref } = props;
   if (props.variant === 'close') {
     return (
       <TouchableOpacity
+        ref={ref}
         style={[styles.control, styles.closeControl]}
         onPress={onPress}
         accessibilityRole="button"
@@ -58,6 +61,7 @@ function ReflectionDismiss(props: ReflectionDismissProps): React.JSX.Element {
   const isReopen = props.variant === 'reopen';
   return (
     <TouchableOpacity
+      ref={ref}
       style={[styles.control, isReopen && styles.reopenControl]}
       onPress={onPress}
       accessibilityRole="button"

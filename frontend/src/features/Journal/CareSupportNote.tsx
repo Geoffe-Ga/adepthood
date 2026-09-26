@@ -14,9 +14,14 @@
  * and Settings → Support & care carries the same resources permanently. The
  * dismissal is held in memory only, keyed by the care object's identity, so it
  * is never persisted and a fresh distress signal always re-surfaces the card.
- * Presentational, reduced-motion-safe, tokens only.
+ *
+ * The X unmounts itself, so focus is handed on rather than dropped: to the
+ * reopen line when the card hides, and back to the card's heading when it
+ * returns. A screen reader speaks the reopen line's label as it lands, which is
+ * the announcement that the note was hidden and where help went. A fresh signal
+ * re-shows the card without stealing focus. Presentational, reduced-motion-safe, tokens only.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { reflectionCardStyles } from './noteCards';
@@ -25,6 +30,7 @@ import ReflectionDismiss from './ReflectionDismiss';
 import type { CareResponse } from '@/api';
 import CareResourceCard from '@/components/care/CareResourceCard';
 import { SPACING, editorialType } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 
 const CLOSE_A11Y = 'Hide the support note';
 const REOPEN_LABEL = 'Support options';
@@ -35,11 +41,21 @@ export interface CareSupportNoteProps {
   care: CareResponse | null;
 }
 
+/** Where focus goes after the next expand/collapse, set only by the user's own press. */
+type FocusHandoff = 'reopen' | 'card' | null;
+
 /** The dismissed state: one chrome-free line that restores the whole card. */
-function ReopenLine({ onPress }: { onPress: () => void }): React.JSX.Element {
+function ReopenLine({
+  onPress,
+  reopenRef,
+}: {
+  onPress: () => void;
+  reopenRef: React.Ref<View>;
+}): React.JSX.Element {
   return (
     <View style={styles.reopenLine}>
       <ReflectionDismiss
+        ref={reopenRef}
         variant="reopen"
         label={REOPEN_LABEL}
         accessibilityLabel={REOPEN_A11Y}
@@ -59,13 +75,18 @@ function ReopenLine({ onPress }: { onPress: () => void }): React.JSX.Element {
 function CareCard({
   care,
   onClose,
+  cardRef,
+  headingRef,
 }: {
   care: CareResponse;
   onClose: () => void;
+  cardRef: React.Ref<View>;
+  headingRef: React.Ref<Text>;
 }): React.JSX.Element {
   return (
-    <View style={reflectionCardStyles.root} testID="care-support-card">
-      <Text style={reflectionCardStyles.heading} accessibilityRole="header">
+    // tabIndex -1: the web can focus the card on reopen without it becoming a tab stop.
+    <View ref={cardRef} style={reflectionCardStyles.root} testID="care-support-card" tabIndex={-1}>
+      <Text ref={headingRef} style={reflectionCardStyles.heading} accessibilityRole="header">
         {care.title}
       </Text>
       <Text style={reflectionCardStyles.careBody}>{care.message}</Text>
@@ -85,14 +106,32 @@ function CareCard({
 function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | null {
   // Reference-identity collapse: a fresh care object never matches the pinned one, so a new crisis signal always re-surfaces the card.
   const [collapsedFor, setCollapsedFor] = useState<CareResponse | null>(null);
+  const expanded = care != null && collapsedFor !== care;
+  const reopenRef = useRef<View>(null);
+  const cardRef = useRef<View>(null);
+  const headingRef = useRef<Text>(null);
+  const pendingFocus = useRef<FocusHandoff>(null);
+  useEffect(() => {
+    const next = pendingFocus.current;
+    pendingFocus.current = null;
+    if (next === 'reopen') moveAccessibilityFocus(reopenRef.current);
+    if (next === 'card') moveAccessibilityFocus(headingRef.current, cardRef.current);
+  }, [expanded]);
   if (care == null) return null;
-  const expanded = collapsedFor !== care;
+  const close = (): void => {
+    pendingFocus.current = 'reopen';
+    setCollapsedFor(care);
+  };
+  const reopen = (): void => {
+    pendingFocus.current = 'card';
+    setCollapsedFor(null);
+  };
   return (
     <View testID="care-support">
       {expanded ? (
-        <CareCard care={care} onClose={() => setCollapsedFor(care)} />
+        <CareCard care={care} onClose={close} cardRef={cardRef} headingRef={headingRef} />
       ) : (
-        <ReopenLine onPress={() => setCollapsedFor(null)} />
+        <ReopenLine onPress={reopen} reopenRef={reopenRef} />
       )}
     </View>
   );

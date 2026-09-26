@@ -1,5 +1,5 @@
 /* eslint-env jest */
-import { describe, it, expect } from '@jest/globals';
+import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -20,6 +20,10 @@ import CareSupportNote from '../CareSupportNote';
 
 import type { CareResponse } from '@/api';
 import { INTERACTIVE_TEXT_MIN, editorialType, ink, touchTarget } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
+
+jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
+const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -410,5 +414,68 @@ describe('CareSupportNote — accessibilityLabel composition', () => {
     const card = getByTestId('care-resource-hotline');
     const expected = `${hotlineResource.name}. ${hotlineResource.contact}. ${hotlineResource.what_it_is}`;
     expect(card.props.accessibilityLabel).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Focus handoff — the X unmounts itself, so focus must land somewhere useful
+// ---------------------------------------------------------------------------
+
+type FocusCallTarget = { props: { testID?: unknown; accessibilityRole?: unknown } } | null;
+
+function focusCall(index: number): { native: FocusCallTarget; web: FocusCallTarget } {
+  const call = mockMoveFocus.mock.calls[index];
+  if (call === undefined) throw new Error(`no focus handoff #${String(index)}`);
+  const [native, web] = call as unknown as [FocusCallTarget, FocusCallTarget | undefined];
+  return { native, web: web ?? native };
+}
+
+describe('CareSupportNote — focus handoff', () => {
+  beforeEach(() => {
+    mockMoveFocus.mockClear();
+  });
+
+  it('does not move focus when the card first appears', () => {
+    render(<CareSupportNote care={carePayload()} />);
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+  });
+
+  it('hands focus to the reopen line when the X hides the card', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const { native, web } = focusCall(0);
+    expect(native?.props.testID).toBe('care-reopen');
+    expect(web?.props.testID).toBe('care-reopen');
+  });
+
+  it('hands focus back to the card heading when the reopen line restores it', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    fireEvent.press(getByTestId('care-reopen'));
+
+    expect(mockMoveFocus).toHaveBeenCalledTimes(2);
+    const { native, web } = focusCall(1);
+    // Native screen readers land on the heading; the web focuses the card,
+    // since a heading is not a focusable element there.
+    expect(native?.props.accessibilityRole).toBe('header');
+    expect(web?.props.testID).toBe('care-support-card');
+  });
+
+  it('makes the card programmatically focusable on the web without adding a tab stop', () => {
+    const card = render(<CareSupportNote care={carePayload()} />).getByTestId('care-support-card');
+    expect(card.props.tabIndex).toBe(-1);
+  });
+
+  it('does not move focus when a fresh signal re-shows the card', () => {
+    const { getByTestId, rerender } = render(<CareSupportNote care={carePayload()} />);
+    fireEvent.press(getByTestId('care-dismiss'));
+    mockMoveFocus.mockClear();
+
+    rerender(<CareSupportNote care={carePayload({ message: 'second crisis pass' })} />);
+
+    expect(getByTestId('care-support-card')).toBeTruthy();
+    expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });
