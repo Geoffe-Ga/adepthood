@@ -1256,7 +1256,7 @@ export type WheelBalanceT = z.infer<typeof wheelBalanceSchema>;
  * rejected at the boundary so it can never key untitled copy.
  *
  * RELEASE ORDER (issue #2866): a client still on the retired vocabulary throws
- * here on a ``section`` payload, and ``ReflectionInvitationBand`` swallows the
+ * here on a ``section`` payload, and ``useDueReview`` swallows the
  * throw — so the invitation silently stops appearing rather than erroring. Ship
  * this client with or before the backend.
  */
@@ -1299,6 +1299,24 @@ export const reflectionSourceItemSchema = z.object({
 export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.nullable() });
 
 /**
+ * One reflection scope in progress today (mirrors the backend
+ * ``ReflectionCurrentScope``, which subclasses ``ReflectionDue``): the same
+ * fields as a due window, so the early-review picker and the due invitation
+ * shape one scope identically. ``existing_entry_id`` is the writer's own live
+ * review (draft or finished) already claiming it, offered as "continue".
+ */
+export const reflectionCurrentScopeSchema = reflectionDueSchema;
+
+/**
+ * ``GET /reflections/current`` envelope: every scope in progress today, ordered
+ * week, stage, section, course. No section during the section-less final
+ * stage, empty before the program starts, and the course alone once it ends.
+ */
+export const reflectionCurrentResponseSchema = z.object({
+  scopes: z.array(reflectionCurrentScopeSchema),
+});
+
+/**
  * Which of four causes explains the window a sources response declares, or does
  * not. Only ``unrecorded`` is a loss: that cycle's calendar anchor was destroyed
  * by beginning again before the server retained them (#2894) and cannot be
@@ -1338,6 +1356,7 @@ export const reflectionSourcesResponseSchema = z.object({
 
 export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
 export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
+export type ReflectionCurrentScopeT = z.infer<typeof reflectionCurrentScopeSchema>;
 export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;
 export type ReflectionAnchorStatusT = z.infer<typeof anchorStatusSchema>;
 

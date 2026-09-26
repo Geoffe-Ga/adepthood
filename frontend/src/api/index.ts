@@ -35,6 +35,7 @@ import {
   programCalendarSchema,
   promotedQuoteSchema,
   promptListResponseSchema,
+  reflectionCurrentResponseSchema,
   reflectionDueResponseSchema,
   reflectionSourcesResponseSchema,
   resonanceResponseSchema,
@@ -86,6 +87,7 @@ import {
   type PromotedQuoteT,
   type PromotedQuoteSummaryT,
   type ReflectionAnchorStatusT,
+  type ReflectionCurrentScopeT,
   type ReflectionDueT,
   type ReflectionLevelT,
   type ReflectionSourceItemT,
@@ -1993,12 +1995,21 @@ export const promotions = {
 // Hierarchical reflections client (the 7th-day reflection invitation + sources)
 export type ReflectionLevel = ReflectionLevelT;
 export type ReflectionDue = ReflectionDueT;
+export type ReflectionCurrentScope = ReflectionCurrentScopeT;
 export type ReflectionSourceItem = ReflectionSourceItemT;
 export type ReflectionAnchorStatus = ReflectionAnchorStatusT;
 
 /** ``GET /reflections/due`` result: the due window, or ``null`` when nothing is due. */
 export interface ReflectionDueResponse {
   due: ReflectionDue | null;
+}
+
+/**
+ * ``GET /reflections/current`` result: every scope in progress today, ordered
+ * week, stage, section, course, so a review can be begun early on any day.
+ */
+export interface ReflectionCurrentResponse {
+  scopes: ReflectionCurrentScope[];
 }
 
 /**
@@ -2028,7 +2039,8 @@ export interface ReflectionSourcesResponse {
 
 /**
  * The declinable reflection surface. ``due`` reports the currently-open
- * reflection window (safe to poll on focus); ``sources`` returns the entries and
+ * reflection window (safe to poll on focus); ``current`` lists every scope in
+ * progress today, for beginning a review early; ``sources`` returns the entries and
  * earlier reflections that fall inside a given scope so the reader can reread and
  * fold quotes into the new reflection. The colon-bearing ``scopeKey`` is
  * URL-encoded onto the query string (``c1:s3`` → ``c1%3As3``).
@@ -2038,6 +2050,12 @@ export const reflections = {
     return request<ReflectionDueResponse>('/reflections/due', {
       token,
       schema: reflectionDueResponseSchema as unknown as z.ZodType<ReflectionDueResponse>,
+    });
+  },
+  current(token?: string): Promise<ReflectionCurrentResponse> {
+    return request<ReflectionCurrentResponse>('/reflections/current', {
+      token,
+      schema: reflectionCurrentResponseSchema as unknown as z.ZodType<ReflectionCurrentResponse>,
     });
   },
   sources(

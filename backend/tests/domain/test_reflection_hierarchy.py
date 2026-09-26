@@ -49,6 +49,7 @@ from domain.reflection_hierarchy import (
     SourceKind,
     _key,
     _token_to_level_index,
+    current_scopes,
     due_reflection,
     resolve_sources,
     scope_cycle,
@@ -854,3 +855,116 @@ def test_resolve_sources_level_key_mismatch_raises() -> None:
     """A level that disagrees with the key's own token is rejected."""
     with pytest.raises(ValueError, match="does not match"):
         resolve_sources(ReflectionLevel.STAGE, "c1:w5", existing=[], entries=[])
+
+
+# ---------------------------------------------------------------------------
+# current_scopes -- the scopes in progress today (issue #2867)
+# ---------------------------------------------------------------------------
+
+# A UTC instant that is still the evening BEFORE in New York: 03:30Z on the
+# 15th is 22:30 on the 14th there. Anchored at 17:00Z on the 8th (noon local),
+# the local count is six days (program day 7) and the UTC count is seven
+# (program day 8) -- the two clocks straddle a week boundary.
+_TZ_NOW = datetime(2026, 1, 15, 3, 30, tzinfo=UTC)
+_TZ_ANCHOR = datetime(2026, 1, 8, 17, 0, tzinfo=UTC)
+_NEW_YORK = "America/New_York"
+
+
+def _expected_scopes(
+    cycle: int, week: int, stage: int, section: int | None
+) -> tuple[tuple[ReflectionLevel, str], ...]:
+    """The ordered (level, key) tuple ``current_scopes`` should yield, spelled via ``_key``."""
+    prefix = f"c{cycle}"
+    scopes = [
+        (ReflectionLevel.WEEK, _key(prefix, ReflectionLevel.WEEK, week)),
+        (ReflectionLevel.STAGE, _key(prefix, ReflectionLevel.STAGE, stage)),
+    ]
+    if section is not None:
+        scopes.append((ReflectionLevel.SECTION, _key(prefix, ReflectionLevel.SECTION, section)))
+    scopes.append((ReflectionLevel.COURSE, _key(prefix, ReflectionLevel.COURSE, 0)))
+    return tuple(scopes)
+
+
+def test_current_scopes_on_program_day_nine_names_every_layer_in_progress() -> None:
+    """Day 9 sits in week 2, stage 1, section 1 -- and, as always, the course."""
+    now = _ANCHOR + timedelta(days=8)
+    assert current_scopes(_ANCHOR, now) == _expected_scopes(1, 2, 1, 1)
+
+
+@pytest.mark.parametrize(
+    "elapsed",
+    [sum(STAGE_DURATIONS_DAYS[:-1]), TOTAL_PROGRAM_DAYS - 1],
+    ids=["first-day-of-stage-ten", "last-day-of-stage-ten"],
+)
+def test_current_scopes_in_stage_ten_have_no_section(elapsed: int) -> None:
+    """Stage 10 belongs to no section, so no section is in progress while it runs."""
+    scopes = current_scopes(_ANCHOR, _ANCHOR + timedelta(days=elapsed))
+    levels = [level for level, _ in scopes]
+    assert levels == [ReflectionLevel.WEEK, ReflectionLevel.STAGE, ReflectionLevel.COURSE]
+    assert scopes[1] == (ReflectionLevel.STAGE, _key("c1", ReflectionLevel.STAGE, TOTAL_STAGES))
+
+
+def test_current_scopes_in_stage_five_is_inside_the_second_section() -> None:
+    """Stage 5 is the middle stage of section 2."""
+    scopes = dict(current_scopes(_ANCHOR, _stage_day(5, 1)))
+    assert scopes[ReflectionLevel.STAGE] == _key("c1", ReflectionLevel.STAGE, 5)
+    assert scopes[ReflectionLevel.SECTION] == _key("c1", ReflectionLevel.SECTION, 2)
+
+
+def test_current_scopes_on_the_last_day_of_stage_nine_still_names_section_three() -> None:
+    """The final covered stage's closing day is still inside the last section."""
+    scopes = dict(current_scopes(_ANCHOR, _stage_close_day(SECTION_COUNT * STAGES_PER_SECTION)))
+    assert scopes[ReflectionLevel.SECTION] == _key("c1", ReflectionLevel.SECTION, SECTION_COUNT)
+
+
+@pytest.mark.parametrize("days_past_end", [0, 1, 400])
+def test_current_scopes_past_the_program_end_leaves_only_the_course(days_past_end: int) -> None:
+    """Past the end only the course is open, so a late Course Review stays writable."""
+    now = _ANCHOR + timedelta(days=TOTAL_PROGRAM_DAYS + days_past_end)
+    assert current_scopes(_ANCHOR, now) == ((ReflectionLevel.COURSE, "c1:course"),)
+
+
+def test_current_scopes_carry_the_cycle_prefix() -> None:
+    """A second-cycle user's scopes are ``c2:`` keys, never ``c1:``."""
+    now = _ANCHOR + timedelta(days=8)
+    assert current_scopes(_ANCHOR, now, cycle=2) == _expected_scopes(2, 2, 1, 1)
+
+
+def test_current_scopes_default_to_the_wall_clock() -> None:
+    """With no ``now`` the scopes are today's: an anchor set now is on day 1."""
+    scopes = current_scopes(datetime.now(UTC))
+    assert scopes == _expected_scopes(1, 1, 1, 1)
+
+
+def test_current_scopes_walk_the_whole_curriculum_consistently() -> None:
+    """Every program day's week sits inside its stage, and its stage inside its section."""
+    for elapsed in range(TOTAL_PROGRAM_DAYS):
+        scopes = dict(current_scopes(_ANCHOR, _ANCHOR + timedelta(days=elapsed)))
+        week_span = scope_weeks(ReflectionLevel.WEEK, scopes[ReflectionLevel.WEEK])
+        stage_span = scope_weeks(ReflectionLevel.STAGE, scopes[ReflectionLevel.STAGE])
+        assert week_span.start == elapsed // _DAYS_PER_WEEK + 1
+        assert week_span.start in stage_span, elapsed
+        section_key = scopes.get(ReflectionLevel.SECTION)
+        stage_index = int(scopes[ReflectionLevel.STAGE].rpartition("s")[2])
+        if stage_index > SECTION_COUNT * STAGES_PER_SECTION:
+            assert section_key is None, elapsed
+            continue
+        assert section_key is not None, elapsed
+        section_span = scope_weeks(ReflectionLevel.SECTION, section_key)
+        assert stage_span.start in section_span, elapsed
+        assert stage_span.stop - 1 in section_span, elapsed
+
+
+def test_current_scopes_count_the_day_in_the_users_timezone() -> None:
+    """At 03:30Z New York is still on the previous evening -- program day 7, week 1."""
+    local = dict(current_scopes(_TZ_ANCHOR, _TZ_NOW, tz=_NEW_YORK))
+    in_utc = dict(current_scopes(_TZ_ANCHOR, _TZ_NOW))
+    assert local[ReflectionLevel.WEEK] == "c1:w1"
+    assert in_utc[ReflectionLevel.WEEK] == "c1:w2"
+
+
+def test_due_reflection_counts_the_day_in_the_users_timezone() -> None:
+    """The same instant is New York's day-7 review day, but UTC's quiet day 8."""
+    local = due_reflection(_TZ_ANCHOR, _TZ_NOW, tz=_NEW_YORK)
+    assert local == DueReflection(level=ReflectionLevel.WEEK, key="c1:w1", week=1)
+    assert due_reflection(_TZ_ANCHOR, _TZ_NOW) is None

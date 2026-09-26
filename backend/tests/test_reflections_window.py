@@ -26,6 +26,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+import routers.reflections as reflections_router
 from domain.dates import to_user_date
 from domain.reflection_hierarchy import ReflectionLevel, scope_weeks
 from models.journal_entry import EntryStatus, JournalTag
@@ -860,3 +861,63 @@ async def test_a_wide_feed_mixes_reviews_and_dailies_without_repeating_either(
     assert feed.count("stage one, in review") == 1
     assert feed.count("daily in an unreviewed week") == 1
     assert "daily inside the reviewed stage" not in feed
+
+
+# ── /due and /current count the day in the caller's own zone (#2867) ────
+
+# 03:30Z on the 15th is still 22:30 on the 14th in New York. Anchored at
+# 17:00Z on the 8th -- noon there -- that instant is program day 7 locally (a
+# week-closing review day) but day 8 in UTC (a quiet day in week 2). A router
+# that counted in UTC would hand a New Yorker tomorrow's scopes tonight.
+_LATE_EVENING_IN_NEW_YORK = datetime(2026, 1, 15, 3, 30, tzinfo=UTC)
+_NOON_ANCHOR_IN_NEW_YORK = datetime(2026, 1, 8, 17, 0, tzinfo=UTC)
+
+
+def _frozen_now_in_tz(user_or_tz: object = None) -> datetime:
+    """Stand-in for the router's ``now_in_tz`` pinned to the New York late evening."""
+    zone = ZoneInfo(user_or_tz) if isinstance(user_or_tz, str) and user_or_tz else UTC
+    return _LATE_EVENING_IN_NEW_YORK.astimezone(zone)
+
+
+@pytest.fixture
+def late_evening_clock(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Freeze the reflections router's wall clock at the New York late evening."""
+    monkeypatch.setattr(reflections_router, "now_in_tz", _frozen_now_in_tz)
+    return _LATE_EVENING_IN_NEW_YORK
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("late_evening_clock")
+async def test_due_counts_the_review_day_in_the_callers_timezone(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Before local midnight a New Yorker's day-7 weekly review is still due."""
+    headers, user_id = await _signup(async_client, db_session)
+    await _set_timezone(db_session, user_id, _EASTERN)
+    await _seed_progress(db_session, user_id, anchor=_NOON_ANCHOR_IN_NEW_YORK)
+
+    resp = await async_client.get("/reflections/due", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    due = resp.json()["due"]
+    assert due is not None
+    assert (due["level"], due["scope_key"]) == ("week", "c1:w1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("late_evening_clock")
+async def test_current_counts_the_day_in_the_callers_timezone(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The picker and the due CTA agree: it is still week 1 in New York."""
+    headers, user_id = await _signup(async_client, db_session)
+    await _set_timezone(db_session, user_id, _EASTERN)
+    await _seed_progress(db_session, user_id, anchor=_NOON_ANCHOR_IN_NEW_YORK)
+
+    resp = await async_client.get("/reflections/current", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    scopes = resp.json()["scopes"]
+    week = scopes[0]
+    assert (week["level"], week["scope_key"]) == ("week", "c1:w1")
+    assert _parse(week["window_start"]) == datetime(2026, 1, 8, tzinfo=ZoneInfo(_EASTERN))

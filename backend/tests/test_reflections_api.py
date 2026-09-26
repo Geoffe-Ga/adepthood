@@ -1,4 +1,4 @@
-"""Tests for the hierarchical-reflection API: GET /reflections/due and /reflections/sources.
+"""Tests for the hierarchical-reflection API: /reflections/due, /current and /sources.
 
 These pin the contract for routers that do not exist yet
 (``routers/reflections.py``). Every request below either 404s (route missing)
@@ -19,6 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS
 from domain.reflection_hierarchy import due_reflection, scope_weeks
 from models.journal_entry import EntryStatus, JournalEntry, JournalTag
 from models.promoted_quote import PromotedQuote
@@ -332,6 +333,204 @@ async def test_due_scope_key_carries_cycle_prefix(
     due = resp.json()["due"]
     assert due is not None
     assert due["scope_key"] == "c2:w1"
+
+
+# ── GET /reflections/current ─────────────────────────────────────────────
+
+# Program day 9: the second week of the first stage, inside the first section.
+_DAY_NINE_ELAPSED = 8
+_DAY_NINE_SCOPES = [
+    ("week", "c1:w2"),
+    ("stage", "c1:s1"),
+    ("section", "c1:x1"),
+    ("course", "c1:course"),
+]
+
+
+async def _current(client: AsyncClient, headers: dict[str, str]) -> list[dict[str, object]]:
+    """GET /reflections/current, asserting a 200, and return its scope list."""
+    resp = await client.get("/reflections/current", headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert set(body) == {"scopes"}
+    scopes = body["scopes"]
+    assert isinstance(scopes, list)
+    return scopes
+
+
+def _pairs(scopes: list[dict[str, object]]) -> list[tuple[object, object]]:
+    """The (level, scope_key) pairs of a /current payload, in order."""
+    return [(scope["level"], scope["scope_key"]) for scope in scopes]
+
+
+@pytest.mark.asyncio
+async def test_current_requires_auth(async_client: AsyncClient) -> None:
+    """Unauthenticated callers get 401, exactly as ``/due`` does."""
+    resp = await async_client.get("/reflections/current")
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_current_with_no_stage_progress_returns_no_scopes(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A user who has not started the program has nothing in progress."""
+    headers, _user_id = await _signup(async_client, db_session)
+    resp = await async_client.get("/reflections/current", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == {"scopes": []}
+
+
+@pytest.mark.asyncio
+async def test_current_on_an_early_week_day_returns_every_in_progress_scope(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Day 9 has a week, a stage, a section and the course open -- each windowed like /sources.
+
+    The windows are compared as raw strings: the picker and the composer must
+    name one period, not two derivations that happen to agree.
+    """
+    anchor = datetime.now(UTC) - timedelta(days=_DAY_NINE_ELAPSED)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor)
+
+    scopes = await _current(async_client, headers)
+
+    assert _pairs(scopes) == _DAY_NINE_SCOPES
+    for scope in scopes:
+        assert scope["existing_entry_id"] is None
+        assert "user_id" not in scope
+        sources = await async_client.get(
+            "/reflections/sources",
+            params={"level": str(scope["level"]), "scope_key": str(scope["scope_key"])},
+            headers=headers,
+        )
+        assert sources.status_code == HTTPStatus.OK, sources.text
+        assert scope["window_start"] == sources.json()["window_start"]
+        assert scope["window_end"] == sources.json()["window_end"]
+
+
+@pytest.mark.asyncio
+async def test_current_in_stage_ten_names_no_section(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Clear Light belongs to no section, so the list carries none while it runs."""
+    first_day_of_stage_ten = sum(STAGE_DURATIONS_DAYS[:-1])
+    anchor = datetime.now(UTC) - timedelta(days=first_day_of_stage_ten)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, current_stage=10)
+
+    scopes = await _current(async_client, headers)
+
+    assert [scope["level"] for scope in scopes] == ["week", "stage", "course"]
+    assert scopes[1]["scope_key"] == "c1:s10"
+
+
+@pytest.mark.asyncio
+async def test_current_in_stage_five_names_the_second_section(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Stage 5 is the middle stage of section 2."""
+    first_day_of_stage_five = sum(STAGE_DURATIONS_DAYS[:4])
+    anchor = datetime.now(UTC) - timedelta(days=first_day_of_stage_five)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, current_stage=5)
+
+    pairs = dict(_pairs(await _current(async_client, headers)))
+
+    assert pairs["stage"] == "c1:s5"
+    assert pairs["section"] == "c1:x2"
+
+
+@pytest.mark.asyncio
+async def test_current_past_the_program_end_leaves_only_the_course(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """After day 252 only the course is still open, so a late Course Review stays writable."""
+    anchor = datetime.now(UTC) - timedelta(days=TOTAL_PROGRAM_DAYS)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, current_stage=10)
+
+    scopes = await _current(async_client, headers)
+
+    assert _pairs(scopes) == [("course", "c1:course")]
+
+
+@pytest.mark.asyncio
+async def test_current_scope_keys_carry_the_cycle_prefix(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A second-cycle user's in-progress scopes are ``c2:`` keys."""
+    anchor = datetime.now(UTC) - timedelta(days=_DAY_NINE_ELAPSED)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor, cycle_number=2)
+
+    scopes = await _current(async_client, headers)
+
+    assert _pairs(scopes) == [
+        (level, key.replace("c1:", "c2:", 1)) for level, key in _DAY_NINE_SCOPES
+    ]
+
+
+@pytest.mark.asyncio
+async def test_current_existing_entry_id_tracks_a_live_review_until_soft_delete(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A draft review claims its scope, so does a finished one, and deleting it frees it."""
+    anchor = datetime.now(UTC) - timedelta(days=_DAY_NINE_ELAPSED)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor)
+    review = await _seed_entry(
+        db_session,
+        user_id,
+        "Week two, begun early.",
+        status=EntryStatus.DRAFT,
+        tag=JournalTag.HIERARCHICAL_REFLECTION,
+        reflection_level="week",
+        reflection_scope_key="c1:w2",
+    )
+
+    def _ids(scopes: list[dict[str, object]]) -> dict[object, object]:
+        return {scope["scope_key"]: scope["existing_entry_id"] for scope in scopes}
+
+    draft = _ids(await _current(async_client, headers))
+    assert draft == {"c1:w2": review.id, "c1:s1": None, "c1:x1": None, "c1:course": None}
+
+    review.status = EntryStatus.FINISHED
+    db_session.add(review)
+    await db_session.commit()
+    assert _ids(await _current(async_client, headers))["c1:w2"] == review.id
+
+    review.deleted_at = datetime.now(UTC)
+    db_session.add(review)
+    await db_session.commit()
+    assert _ids(await _current(async_client, headers))["c1:w2"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("level", "scope_key"), [("week", "c1:w2"), ("section", "c1:x1")])
+async def test_sources_serves_a_scope_that_is_still_in_progress(
+    async_client: AsyncClient, db_session: AsyncSession, level: str, scope_key: str
+) -> None:
+    """An early review reads the entries written so far -- never a 404 or 403.
+
+    Verify-only for #2867: a scope that has begun but not closed passes the
+    unlock guard, and its feed is simply what exists so far.
+    """
+    now = datetime.now(UTC)
+    anchor = now - timedelta(days=_DAY_NINE_ELAPSED)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=anchor)
+    await _seed_entry(db_session, user_id, "Today, mid-week.", timestamp=now)
+
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": level, "scope_key": scope_key},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert [item["body"] for item in resp.json()["items"]] == ["Today, mid-week."]
 
 
 # ── GET /reflections/sources ─────────────────────────────────────────────

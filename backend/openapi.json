@@ -5808,6 +5808,66 @@
         "title": "RandomIntervalBellMetadata",
         "type": "object"
       },
+      "ReflectionCurrentResponse": {
+        "description": "The reflection scopes in progress for the caller today (issue #2867).\n\n``scopes`` is ordered week, stage, section, course. It carries no section\nthroughout the section-less final stage, is empty for a caller who has not\nstarted the program, and holds the course alone once the program is over,\nso a late Course Review can still be written.",
+        "properties": {
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionCurrentScope"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scopes"
+        ],
+        "title": "ReflectionCurrentResponse",
+        "type": "object"
+      },
+      "ReflectionCurrentScope": {
+        "description": "One reflection scope in progress today, offered for an early review.\n\nIt carries exactly the fields of :class:`ReflectionDue` -- subclassed so a\nscope offered in the early-review picker and the same scope offered as due\ncan never be shaped differently -- but it is published as its own named\ncomponent, so a client names what it holds (in progress, not due) rather\nthan borrowing the due peek's type. ``existing_entry_id`` names the\ncaller's live review (draft or finished) already claiming the scope, so the\nclient offers to continue it rather than start a second one. No\n``user_id`` is carried.",
+        "properties": {
+          "existing_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Entry Id"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "scope_key": {
+            "title": "Scope Key",
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "scope_key",
+          "window_start",
+          "window_end",
+          "existing_entry_id"
+        ],
+        "title": "ReflectionCurrentScope",
+        "type": "object"
+      },
       "ReflectionDue": {
         "description": "The reflection that has just come due, with its calendar window.\n\n``existing_entry_id`` names the caller's live reflection already claiming\nthis scope, or ``None`` when the layer is still open to compose.",
         "properties": {
@@ -23265,9 +23325,109 @@
         ]
       }
     },
+    "/reflections/current": {
+      "get": {
+        "description": "Return every reflection scope in progress for the caller today.\n\nLets a writer open a review on any day rather than only the day it falls\ndue (issue #2867). Each scope carries the same window ``/due`` and\n``/sources`` declare for it and the caller's own live review claiming it,\nif any. A caller who has not started the program has nothing in progress;\npast the program's end only the course remains open.",
+        "operationId": "get_current_reflections_reflections_current_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionCurrentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Current Reflections",
+        "tags": [
+          "reflections"
+        ]
+      }
+    },
     "/reflections/due": {
       "get": {
-        "description": "Return the reflection that has just come due for the caller, if any.\n\nA user with no program progress, or whose current day is not a week-closing\nday, has nothing due (``due`` is ``None``). Otherwise the widest layer that\ncloses today wins, carried with its calendar window and any reflection\nalready claiming its scope.",
+        "description": "Return the reflection that has just come due for the caller, if any.\n\nA user with no program progress, or whose current day is not a review day,\nhas nothing due (``due`` is ``None``). Otherwise the widest layer that\ncloses today wins, carried with its calendar window and any reflection\nalready claiming its scope. \"Today\" is the caller's own calendar day.",
         "operationId": "get_due_reflection_reflections_due_get",
         "parameters": [
           {

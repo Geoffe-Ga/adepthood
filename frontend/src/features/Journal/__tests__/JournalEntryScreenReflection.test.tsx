@@ -17,6 +17,7 @@ import type {
   JournalMessage,
   PromotedQuote,
   PromotedQuoteSummary,
+  ReflectionCurrentScope,
   ReflectionDue,
   ReflectionSourceItem,
   ReflectionSourcesResponse,
@@ -34,6 +35,9 @@ const mockCompletionList = jest.fn() as jest.MockedFunction<
 const mockRespond = jest.fn() as jest.MockedFunction<(_w: number, _b: string) => Promise<unknown>>;
 const mockSetIncluded = jest.fn() as jest.MockedFunction<
   (_id: number, _entryId: number | null) => Promise<unknown>
+>;
+const mockReflectionsCurrent = jest.fn() as jest.MockedFunction<
+  () => Promise<{ scopes: ReflectionCurrentScope[] }>
 >;
 const mockReflectionsDue = jest.fn() as jest.MockedFunction<
   () => Promise<{ due: ReflectionDue | null }>
@@ -77,6 +81,8 @@ jest.mock('@/api', () => ({
   },
   reflections: {
     due: (...a: unknown[]) => (mockReflectionsDue as unknown as (...x: unknown[]) => unknown)(...a),
+    current: (...a: unknown[]) =>
+      (mockReflectionsCurrent as unknown as (...x: unknown[]) => unknown)(...a),
     sources: (...a: unknown[]) =>
       (mockReflectionsSources as unknown as (...x: unknown[]) => unknown)(...a),
   },
@@ -247,6 +253,8 @@ beforeEach(() => {
   mockSetIncluded.mockResolvedValue(mockStubQuote);
   mockReflectionsDue.mockReset();
   mockReflectionsDue.mockResolvedValue({ due: null });
+  mockReflectionsCurrent.mockReset();
+  mockReflectionsCurrent.mockResolvedValue({ scopes: [] });
   mockReflectionsSources.mockReset();
   mockReflectionsSources.mockResolvedValue({ items: [] });
   mockPromotionsCreate.mockReset();
@@ -551,6 +559,75 @@ describe('JournalEntryScreen -- reflection mode', () => {
           (replaceCall[1] as Record<string, unknown> | undefined)?.entryId === 77) ||
         navigateCall != null;
       expect(routedToExisting).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('JournalEntryScreen -- a review begun early that collides with one already written', () => {
+  it('on a 409 for a scope that is not due, finds the live review among the open scopes and opens it', async () => {
+    mockCreate.mockRejectedValue({ status: 409, detail: 'reflection_scope_taken' });
+    // Nothing is due today: the scope was begun early from the picker.
+    mockReflectionsDue.mockResolvedValue({ due: null });
+    mockReflectionsCurrent.mockResolvedValue({
+      scopes: [
+        {
+          level: 'week',
+          scope_key: 'c1:w2',
+          window_start: '2026-07-08T00:00:00Z',
+          window_end: '2026-07-15T00:00:00Z',
+          existing_entry_id: 88,
+        },
+      ],
+    });
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, navigation } = renderScreen(
+        {
+          reflectionLevel: 'week',
+          reflectionScopeKey: 'c1:w2',
+          prefillTitle: 'Weekly Review — Week 2',
+        },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Halfway through week two.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', { entryId: 88 });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('leaves the retryable save error alone when no open scope claims the key', async () => {
+    mockCreate.mockRejectedValue({ status: 409, detail: 'reflection_scope_taken' });
+    // Another scope's live review must never be mistaken for this one's.
+    mockReflectionsCurrent.mockResolvedValue({
+      scopes: [
+        {
+          level: 'stage',
+          scope_key: 'c1:s1',
+          window_start: '2026-07-01T00:00:00Z',
+          window_end: '2026-07-22T00:00:00Z',
+          existing_entry_id: 5,
+        },
+      ],
+    });
+    jest.useFakeTimers();
+    try {
+      const { getByTestId, navigation } = renderScreen(
+        { reflectionLevel: 'week', reflectionScopeKey: 'c1:w2', prefillTitle: 'Weekly Review' },
+        { autosaveDelayMs: 100 },
+      );
+      fireEvent.changeText(getByTestId('journal-body-input'), 'Halfway through week two.');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+
+      expect(navigation.replace).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }

@@ -9,7 +9,7 @@
 // `global.fetch = mockFetch` and the `mock.calls[0]` tuple destructure below
 // type-check cleanly. No assertion, URL, or payload expectation is changed.
 import { reflections } from '../index';
-import type { ReflectionDue, ReflectionSourceItem } from '../index';
+import type { ReflectionCurrentScope, ReflectionDue, ReflectionSourceItem } from '../index';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -120,6 +120,73 @@ describe('reflections.due', () => {
     );
 
     await expect(reflections.due('tok')).rejects.toThrow();
+  });
+});
+
+describe('reflections.current', () => {
+  // Program day 9: every layer still open, the week already begun as a draft.
+  const dayNine: ReflectionCurrentScope[] = [
+    {
+      level: 'week',
+      scope_key: 'c1:w2',
+      window_start: '2026-07-08T00:00:00Z',
+      window_end: '2026-07-15T00:00:00Z',
+      existing_entry_id: 31,
+    },
+    {
+      level: 'stage',
+      scope_key: 'c1:s1',
+      window_start: '2026-07-01T00:00:00Z',
+      window_end: '2026-07-22T00:00:00Z',
+      existing_entry_id: null,
+    },
+    {
+      level: 'section',
+      scope_key: 'c1:x1',
+      window_start: '2026-07-01T00:00:00Z',
+      window_end: '2026-09-23T00:00:00Z',
+      existing_entry_id: null,
+    },
+    {
+      level: 'course',
+      scope_key: 'c1:course',
+      window_start: '2026-07-01T00:00:00Z',
+      window_end: '2027-03-10T00:00:00Z',
+      existing_entry_id: null,
+    },
+  ];
+
+  it('GETs /reflections/current and parses every in-progress scope in order', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ scopes: dayNine }, 200));
+
+    const result = await reflections.current('tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/reflections/current');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(result.scopes).toEqual(dayNine);
+  });
+
+  it('parses the empty list an unstarted writer gets', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ scopes: [] }, 200));
+
+    const result = await reflections.current('tok');
+
+    expect(result.scopes).toEqual([]);
+  });
+
+  it('rejects a scope whose level is not one the hierarchy knows', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ scopes: [{ ...dayNine[0], level: 'component' }] }, 200),
+    );
+
+    await expect(reflections.current('tok')).rejects.toThrow();
+  });
+
+  it('rejects a payload with no scopes list', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ due: null }, 200));
+
+    await expect(reflections.current('tok')).rejects.toThrow();
   });
 });
 

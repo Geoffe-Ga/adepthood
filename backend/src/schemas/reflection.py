@@ -1,7 +1,8 @@
 """Response schemas for the hierarchical-reflection API.
 
-These DTOs shape the two read surfaces of the nested reflection calendar: the
-``/reflections/due`` peek at what layer has just come due, and the
+These DTOs shape the three read surfaces of the nested reflection calendar: the
+``/reflections/due`` peek at what layer has just come due, the
+``/reflections/current`` list of every layer still in progress, and the
 ``/reflections/sources`` feed of the raw material that composes a given
 reflection. ``user_id`` never appears in any of them.
 """
@@ -102,3 +103,29 @@ class ReflectionDueResponse(BaseModel):
     """Envelope for the due-reflection peek; ``due`` is ``None`` when nothing is due."""
 
     due: ReflectionDue | None
+
+
+class ReflectionCurrentScope(ReflectionDue):
+    """One reflection scope in progress today, offered for an early review.
+
+    It carries exactly the fields of :class:`ReflectionDue` -- subclassed so a
+    scope offered in the early-review picker and the same scope offered as due
+    can never be shaped differently -- but it is published as its own named
+    component, so a client names what it holds (in progress, not due) rather
+    than borrowing the due peek's type. ``existing_entry_id`` names the
+    caller's live review (draft or finished) already claiming the scope, so the
+    client offers to continue it rather than start a second one. No
+    ``user_id`` is carried.
+    """
+
+
+class ReflectionCurrentResponse(BaseModel):
+    """The reflection scopes in progress for the caller today (issue #2867).
+
+    ``scopes`` is ordered week, stage, section, course. It carries no section
+    throughout the section-less final stage, is empty for a caller who has not
+    started the program, and holds the course alone once the program is over,
+    so a late Course Review can still be written.
+    """
+
+    scopes: list[ReflectionCurrentScope]

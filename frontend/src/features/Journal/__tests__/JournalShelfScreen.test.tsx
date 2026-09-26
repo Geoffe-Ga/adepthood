@@ -29,6 +29,13 @@ const mockNavigate = jest.fn();
 const mockUpdate = jest.fn();
 
 jest.mock('@/api', () => ({
+  // The shelf's primary invitation asks what review is due; answer "none" so
+  // the daily-page fallback runs through a real resolved null, not a caught
+  // TypeError from a client this mock forgot.
+  reflections: {
+    due: jest.fn(() => Promise.resolve({ due: null })),
+    current: jest.fn(() => Promise.resolve({ scopes: [] })),
+  },
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -487,9 +494,11 @@ describe('JournalShelfScreen', () => {
 
   it('keeps the stage prompts on the shelf even once the week\u2019s own is answered', async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
-    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId, findAllByTestId } = render(<JournalShelfScreen />);
     await findByTestId('journal-shelf-empty');
-    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
+    // The stage prompts arrive on their own fetch, so await them rather than
+    // assuming they resolved before the empty state rendered.
+    expect(await findAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
   });
 
   // Warm first-prompt affordance — true-empty branch only.
@@ -618,6 +627,9 @@ describe('JournalShelfScreen', () => {
   it('stacks Return above invitations, after the stat tiles and before the action row', async () => {
     const { findByTestId, toJSON } = render(<JournalShelfScreen />);
     await findByTestId('stat-tile-row-stub');
+    // The tip mounts only once the due lookup settles (no card flashes while
+    // it is out), so wait for it rather than read the order mid-flight.
+    await findByTestId('morning-pages-tip-stub');
     const order = flattenOrder(toJSON());
     const statIndex = order.indexOf('#stat-tile-row-stub');
     const returnIndex = order.indexOf('#return-stack-stub');

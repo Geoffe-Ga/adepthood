@@ -88,9 +88,20 @@ jobs:
       # a full minor away from the version the SDK expects -- which is how the
       # same realignment has had to be done more than once. `--check` exits 1
       # on a drifted tree, so this fails the job rather than reporting.
+      #
+      # EXPO_OFFLINE=1 makes the verdict a function of the committed lockfile
+      # (#2918). Online, the CLI overwrites the installed expo's table with the
+      # live api.expo.dev answer, so this step went red three times in eight
+      # days with no commit of ours. Offline, the expected versions come from
+      # node_modules/expo/bundledNativeModules.json, installed by the `npm ci`
+      # above from the same lockfile as the tree it judges -- the verdict cannot
+      # flip without a commit. A new SDK patch arrives as a Dependabot `expo-sdk`
+      # group PR, judged here against the new expo's own table. Drift still
+      # exits 1 offline: backend/tests/scripts/test_sdk_alignment_gate.py proves
+      # it on a planted fixture.
       - name: Dependencies match the pinned Expo SDK
         working-directory: frontend
-        run: npx expo install --check
+        run: EXPO_OFFLINE=1 npx expo install --check
 
       # Regression gate (audit-ci-07): fail if any high/critical advisory is
       # reintroduced. The moderate advisories (Expo SDK 52 toolchain) are below
@@ -145,9 +156,12 @@ jobs:
       # `expo install --check` probes and what the realignment fixed. Gating
       # the whole tool would mean adopting 20 unrelated checks whose future
       # failures are outside this job's control, i.e. shipping it suppressed.
-      # The narrow probe is enforceable instead of aspirational because the
-      # Dependabot floors on react-native-screens and react-native-svg stop the
-      # two drifts it caught from being re-proposed by a bot bump nobody chose.
+      # The narrow probe is enforceable instead of aspirational because it is
+      # judged against the lockfile-installed SDK table (time-independent), and
+      # because of Dependabot: the floors on react-native-screens and
+      # react-native-svg stop the two drifts it caught from being re-proposed by
+      # a bot bump nobody chose, and the `expo-sdk` group delivers each SDK patch
+      # as one reviewable PR instead of a red main.
       - name: Web bundle builds
         working-directory: frontend
         run: npx expo export --platform web
