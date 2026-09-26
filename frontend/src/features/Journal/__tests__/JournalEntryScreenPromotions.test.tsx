@@ -472,3 +472,42 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     expect(screen.queryByTestId('quote-promotion-retry')).toBeNull();
   });
 });
+
+describe('JournalEntryScreen -- promotions follow the server after an edited save (#2891)', () => {
+  it('refetches promotions (and marginalia) after an edited finished entry is saved', async () => {
+    jest.useFakeTimers();
+    try {
+      mockPromotionsList.mockResolvedValueOnce([promotedQuote()]);
+      const route = { key: 'k', name: 'JournalEntry' as const, params: { entryId: 7 } };
+      const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+      const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
+      const { getByTestId, findByTestId } = render(
+        <Screen navigation={navigation} route={route} autosaveDelayMs={100} />,
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockPromotionsList).toHaveBeenCalledTimes(1);
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-edit'));
+      const input = await findByTestId('journal-body-input');
+      mockList.mockClear();
+      mockPromotionsList.mockResolvedValueOnce([
+        promotedQuote({ anchor_start: 8, anchor_end: 25 }),
+      ]);
+      fireEvent.changeText(input, `Before: ${BODY}`);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ message: `Before: ${BODY}` }),
+      );
+      expect(mockPromotionsList).toHaveBeenCalledTimes(2);
+      expect(mockPromotionsList).toHaveBeenLastCalledWith(7);
+      expect(mockList).toHaveBeenCalledWith(7);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

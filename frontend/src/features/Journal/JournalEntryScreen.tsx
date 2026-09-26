@@ -46,6 +46,7 @@ import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurfa
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
+import { useRefreshAfterEdit } from './refreshAfterEdit';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
@@ -1918,6 +1919,8 @@ interface QuotePromotion {
   promoted: boolean;
   /** Re-post the last failed span with the same anchors; null unless a promote failed. */
   retryPromote: (() => Promise<void>) | null;
+  /** Re-read the quotes after an edited save re-anchored or staled them. */
+  refresh: () => Promise<void>;
   /** True while the reader is choosing a span in the selection TextInput. */
   selecting: boolean;
   /** The quote whose "Remove promotion" affordance is currently revealed, if any. */
@@ -1935,7 +1938,7 @@ interface QuotePromotion {
 /** The gesture slice of {@link QuotePromotion} owned by {@link useQuoteInteraction}. */
 type QuoteInteraction = Omit<
   QuotePromotion,
-  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote'
+  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote' | 'refresh'
 >;
 
 /** The read-mode selection/removal gestures over the {@link usePromotions} state. */
@@ -1991,10 +1994,10 @@ function useQuoteInteraction(
 
 /** Compose the promoted-quote state with its read-mode selection gestures. */
 function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
-  const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote } =
+  const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh } =
     usePromotions({ entryId: routeEntryId ?? 0 });
   const interaction = useQuoteInteraction(promote, removePromotion);
-  return { quotes, hint, promoting, promoted, retryPromote, ...interaction };
+  return { quotes, hint, promoting, promoted, retryPromote, refresh, ...interaction };
 }
 
 /**
@@ -2454,33 +2457,6 @@ function deriveResonanceGate(args: ResonanceGateArgs): ResonanceGate {
   };
 }
 
-interface RefreshAfterEdit {
-  refreshRef: React.MutableRefObject<() => Promise<void>>;
-  /** Fires the deferred marginalia refresh after the first post-edit save. */
-  handleSaved: () => void;
-  /** Arms the deferred refresh when the user confirms an edit of a finished entry. */
-  onConfirmEdit: () => void;
-}
-
-/**
- * A finished entry's notes re-anchor/stale on the first save after an edit, so
- * the refresh is deferred: ``onConfirmEdit`` arms it and the next ``handleSaved``
- * fires it once (via ``refreshRef``, wired to resonance.refresh by the caller).
- */
-function useRefreshAfterEdit(): RefreshAfterEdit {
-  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const pendingRefreshRef = useRef(false);
-  const handleSaved = useCallback(() => {
-    if (!pendingRefreshRef.current) return;
-    pendingRefreshRef.current = false;
-    void refreshRef.current();
-  }, []);
-  const onConfirmEdit = useCallback(() => {
-    pendingRefreshRef.current = true;
-  }, []);
-  return { refreshRef, handleSaved, onConfirmEdit };
-}
-
 /** Compose the autosave + idle + resonance hooks into the screen's view-model. */
 /**
  * The live review claiming ``scopeKey``, or null. Every scope that can be
@@ -2698,7 +2674,7 @@ function useJournalEntryController(
   justSaved: boolean,
   initialClassification: JournalClassification,
 ) {
-  const { refreshRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
+  const { refreshersRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
   const autosave = useJournalAutosave(
     routeEntryId,
@@ -2718,7 +2694,8 @@ function useJournalEntryController(
     justSaved,
   });
   const quote = useQuotePromotion(autosave.entryId);
-  refreshRef.current = resonance.refresh;
+  // The first save after an edit re-anchors notes AND pending quotes server-side.
+  refreshersRef.current = [resonance.refresh, quote.refresh];
   const modal = useEssayModal(resonance.updateNote);
   const editGate = useEntryEditGate(autosave, navigation, onConfirmEdit);
   const saveRetry = useEntrySaveRetry(autosave, editGate.markFinished);
