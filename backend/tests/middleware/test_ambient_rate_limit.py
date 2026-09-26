@@ -96,6 +96,19 @@ _JUST_PAST_THE_WINDOW = 1 + 1 / 60
 # Long enough that every bucket in the store has rolled off, whoever holds it.
 _SEVERAL_WINDOWS = 3
 
+# The per-client overall ceiling (#2913), written out rather than imported for
+# the same reason ``_CEILING_PATHS`` is: a flood sized from the constant under
+# test cannot fail for any value of it.
+_CLIENT_CEILING_PER_MINUTE = 600
+
+# The shape that reaches it. One-shot enumeration of distinct paths was already
+# capped at 572 per window (512 fan-out + the 60/minute overflow bucket), so the
+# residual this ceiling closes is *repeat* hits across fewer ids than the
+# fan-out ceiling: 20 ids x 30 hits keeps every path at half its own floor and
+# far below 512 distinct paths, and still spends exactly the ceiling.
+_ENUMERATED_IDS = 20
+_HITS_PER_ID = 30
+
 _CLIENT = "198.51.100.7"
 _OTHER_CLIENT = "203.0.113.9"
 _PATH = "/anything"
@@ -638,3 +651,33 @@ def test_the_slowapi_positive_control_fails_without_the_wiring() -> None:
     client = _slowapi_app(wired=False)
 
     assert _statuses(client, _DIRECT_ROUTE) == [_OK] * _SLOWAPI_ATTEMPTS
+
+
+def _hammer_ids(client: str) -> list[int | None]:
+    """Spend exactly the client ceiling round-robin across a handful of ids."""
+    return [
+        charge_ambient_limit(client, f"/journal/id-{index % _ENUMERATED_IDS}")
+        for index in range(_CLIENT_CEILING_PER_MINUTE)
+    ]
+
+
+def test_a_client_hammering_many_ids_is_refused_at_its_overall_ceiling() -> None:
+    """Enumerating ``{param}`` ids must not buy a fresh 60/minute per id (#2913).
+
+    The ambient floor is keyed on ``(client, raw path)`` because keying on the
+    route template would mean consulting route identity. The cost was that one
+    client could hold up to 512 per-path budgets at once -- some 30,000 admitted
+    requests a minute per worker. The per-client ceiling is the aggregate that
+    closes it, and it reads nothing but the client key.
+    """
+    assert _ENUMERATED_IDS * _HITS_PER_ID == _CLIENT_CEILING_PER_MINUTE
+    assert _HITS_PER_ID < _AMBIENT_ALLOWANCE
+    assert _ENUMERATED_IDS < _CEILING_PATHS
+
+    assert _hammer_ids(_CLIENT) == [None] * _CLIENT_CEILING_PER_MINUTE
+
+    refused = charge_ambient_limit(_CLIENT, "/journal/id-0")
+    assert refused is not None, "the 31st hit on one id was admitted: no per-client ceiling"
+    assert refused >= _MIN_RETRY_AFTER_SECONDS
+
+    assert charge_ambient_limit(_OTHER_CLIENT, "/journal/id-0") is None
