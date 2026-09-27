@@ -359,6 +359,39 @@ const styles = StyleSheet.create({
     paddingTop: spacing(1),
     alignItems: 'center',
   },
+  /**
+   * The read-only mirror of the body the reader selects a passage from. Same
+   * face and inset as ``bodyInput`` but no blank-page floor or ``flexGrow``:
+   * ``useGrowingFieldHeight`` sizes it to its text so it is part of the page
+   * flow, never an inner scroll pane (#2952).
+   */
+  quoteSelectField: {
+    ...LIVE_BODY_FONT,
+    ...LIVE_BODY_INSET,
+    color: colors.paper.ink,
+    textAlignVertical: 'top',
+    // The rule is always laid out so lighting it on focus never shifts the text.
+    borderLeftWidth: PREVIEW_STRIPE_WIDTH,
+    borderLeftColor: 'transparent',
+  },
+  /**
+   * The field's focus signal, standing in for the browser ring
+   * ``writingFieldFocus`` removes: the same terracotta rule the preview card
+   * wears, lit while the field holds focus so a keyboard reader selecting
+   * with Shift and the arrow keys can see where they are.
+   */
+  quoteSelectFieldFocused: {
+    borderLeftColor: accent.primary,
+  },
+  /**
+   * The footer under the field — preview, Promote / Cancel, and the empty-tap
+   * hint — on an opaque paper plate so the body reads cleanly beneath it when
+   * ``pinnedFooterStyle`` holds it at the foot of the viewport.
+   */
+  quoteSelectFooter: {
+    backgroundColor: colors.paper.background,
+    paddingBottom: spacing(1),
+  },
   /** Warm guiding line above the field: how to select a passage to promote. */
   quoteSelectInstruction: {
     ...editorialType.note,

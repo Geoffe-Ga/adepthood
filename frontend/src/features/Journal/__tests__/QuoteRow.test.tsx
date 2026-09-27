@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
+import { Check } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
@@ -65,5 +66,28 @@ describe('QuoteRow', () => {
     fireEvent.press(getByTestId('trailing'));
     expect(onRemove).toHaveBeenCalledTimes(1);
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('marks a folded-in quote with an accent check glyph that assistive tech skips (#2952)', () => {
+    const { getByTestId, queryByTestId, UNSAFE_getByType } = render(
+      <QuoteRow text="q" dimmed marked onPress={jest.fn()} accessibilityLabel="q" testID="row" />,
+    );
+
+    // Present in the tree, absent from the accessibility tree: the row's own
+    // label and state carry the meaning, the glyph only draws it.
+    expect(getByTestId('row-check', { includeHiddenElements: true })).toBeTruthy();
+    expect(queryByTestId('row-check')).toBeNull();
+    const glyph = UNSAFE_getByType(Check);
+    expect(glyph.props.color).toBe(accent.primary);
+    expect(glyph.props.accessible).toBe(false);
+  });
+
+  it('draws no check glyph on a quote that has not been folded in', () => {
+    const { queryByTestId, UNSAFE_queryByType } = render(
+      <QuoteRow text="q" onPress={jest.fn()} accessibilityLabel="q" testID="row" />,
+    );
+
+    expect(queryByTestId('row-check', { includeHiddenElements: true })).toBeNull();
+    expect(UNSAFE_queryByType(Check)).toBeNull();
   });
 });
