@@ -63,7 +63,8 @@ export function selectQuoteA11y(text: string): string {
 /**
  * The composer's warm line when some folded quotes did not get marked as used.
  * Names what happened and that the words are safe; the retry beside it is an
- * offer, not a task.
+ * offer, not a task. It counts the waiting quotes rather than naming them, by
+ * decision (#2754): see ``QuoteInclusionHint`` for why.
  */
 export function inclusionRetryHint(n: number): string {
   const subject = n === SINGLE_QUOTE ? 'One quote is' : `${quoteCount(n)} are`;

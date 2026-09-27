@@ -6,21 +6,27 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 
+import { QUOTE_GONE_DETAIL, QUOTE_GONE_STATUS } from '../inclusionMark';
 import { candidateFromSource } from '../quoteBatch';
 import { formatBlockquote, formatSourceDate, sourceAttribution } from '../reflectionCopy';
 import { useReflectionMode } from '../useReflectionMode';
 
+import { ApiError } from '@/api';
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 
 const mockSetIncluded = jest.fn<(_id: number, _entryId: number | null) => Promise<unknown>>();
+const mockSources = jest.fn<() => Promise<{ items: ReflectionSourceItem[] }>>(() =>
+  Promise.resolve({ items: [] }),
+);
 
 jest.mock('@/api', () => ({
+  ApiError: (jest.requireActual('@/api') as { ApiError: typeof ApiError }).ApiError,
   promotions: {
     setIncluded: (...a: [number, number | null]) => mockSetIncluded(...a),
     create: jest.fn(),
   },
   reflections: {
-    sources: () => Promise.resolve({ items: [] }),
+    sources: () => mockSources(),
   },
 }));
 
@@ -208,17 +214,29 @@ const BLOCK_Q2 = '> q2 text\n> — S1 title';
 
 type Batch = Awaited<ReturnType<ReturnType<typeof useReflectionMode>['onInsertQuotes']>>;
 
+/** Tap one quote of S1 in its own act, resolving to whether it was marked. */
+async function batchTap(
+  result: { current: ReturnType<typeof useReflectionMode> },
+  quote: PromotedQuoteSummary,
+): Promise<boolean> {
+  let marked = false;
+  await act(async () => {
+    marked = await result.current.onInsertQuote(quote, S1);
+  });
+  return marked;
+}
+
 function batchSetup(flushResult?: () => Promise<number | null>) {
   const ctx = setup(flushResult, 'Before.\n\nAfter.');
   const insertMany = async (candidates: typeof THREE): Promise<Batch> => {
-    let outcome: Batch = { included: [], failed: [], skipped: [] };
+    let outcome: Batch = { included: [], failed: [], gone: [], skipped: [] };
     await act(async () => {
       outcome = await ctx.result.current.onInsertQuotes(candidates);
     });
     return outcome;
   };
   const retry = async (): Promise<Batch> => {
-    let outcome: Batch = { included: [], failed: [], skipped: [] };
+    let outcome: Batch = { included: [], failed: [], gone: [], skipped: [] };
     await act(async () => {
       outcome = await ctx.result.current.retryInclusion();
     });
@@ -243,7 +261,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
       [2, 42],
       [3, 42],
     ]);
-    expect(outcome).toEqual({ included: [1, 2, 3], failed: [], skipped: [] });
+    expect(outcome).toEqual({ included: [1, 2, 3], failed: [], gone: [], skipped: [] });
     expect(result.current.inclusionHint).toBe(false);
     expect(result.current.failedCount).toBe(0);
     expect([...result.current.foldedIds].sort()).toEqual([1, 2, 3]);
@@ -271,7 +289,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
     );
     const { result, bodyRef, onChangeBody, insertMany, retry } = batchSetup();
     const first = await insertMany(THREE);
-    expect(first).toEqual({ included: [1, 3], failed: [2], skipped: [] });
+    expect(first).toEqual({ included: [1, 3], failed: [2], gone: [], skipped: [] });
     expect(result.current.inclusionHint).toBe(true);
     expect(result.current.failedCount).toBe(1);
     expect(result.current.foldedIds.has(2)).toBe(false);
@@ -280,7 +298,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
     mockSetIncluded.mockReset();
     mockSetIncluded.mockResolvedValue({});
     const second = await retry();
-    expect(second).toEqual({ included: [2], failed: [], skipped: [] });
+    expect(second).toEqual({ included: [2], failed: [], gone: [], skipped: [] });
     expect(mockSetIncluded.mock.calls).toEqual([[2, 42]]);
     expect(onChangeBody).toHaveBeenCalledTimes(1);
     expect(bodyRef.current).toBe(bodyAfterFirst);
@@ -292,7 +310,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
 
   it('a retry with nothing failed does nothing at all', async () => {
     const { onChangeBody, flush, retry } = batchSetup();
-    expect(await retry()).toEqual({ included: [], failed: [], skipped: [] });
+    expect(await retry()).toEqual({ included: [], failed: [], gone: [], skipped: [] });
     expect(onChangeBody).not.toHaveBeenCalled();
     expect(flush).not.toHaveBeenCalled();
     expect(mockSetIncluded).not.toHaveBeenCalled();
@@ -305,7 +323,12 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
       flushes += 1;
       return Promise.resolve(flushes === 1 ? null : 42);
     });
-    expect(await insertMany(THREE)).toEqual({ included: [], failed: [1, 2, 3], skipped: [] });
+    expect(await insertMany(THREE)).toEqual({
+      included: [],
+      failed: [1, 2, 3],
+      gone: [],
+      skipped: [],
+    });
     expect(mockSetIncluded).not.toHaveBeenCalled();
     expect(result.current.failedCount).toBe(3);
     expect((await retry()).included).toEqual([1, 2, 3]);
@@ -320,7 +343,12 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
         }),
     );
     const { result, bodyRef, onChangeBody } = batchSetup();
-    let first: Promise<Batch> = Promise.resolve({ included: [], failed: [], skipped: [] });
+    let first: Promise<Batch> = Promise.resolve({
+      included: [],
+      failed: [],
+      gone: [],
+      skipped: [],
+    });
     let second: Promise<Batch> = first;
     await act(async () => {
       first = result.current.onInsertQuotes(THREE);
@@ -332,7 +360,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
       releases.forEach((release) => release({}));
       await first;
     });
-    expect(await second).toEqual({ included: [], failed: [], skipped: [1, 2, 3] });
+    expect(await second).toEqual({ included: [], failed: [], gone: [], skipped: [1, 2, 3] });
     expect((await first).included).toEqual([1, 2, 3]);
     expect(mockSetIncluded).toHaveBeenCalledTimes(3);
     expect(onChangeBody).toHaveBeenCalledTimes(1);
@@ -350,7 +378,12 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
     mockSetIncluded.mockResolvedValue({});
     const { result } = batchSetup();
     let tap: Promise<boolean> = Promise.resolve(false);
-    let batch: Promise<Batch> = Promise.resolve({ included: [], failed: [], skipped: [] });
+    let batch: Promise<Batch> = Promise.resolve({
+      included: [],
+      failed: [],
+      gone: [],
+      skipped: [],
+    });
     await act(async () => {
       tap = result.current.onInsertQuote(Q1, S1);
       await Promise.resolve();
@@ -362,7 +395,7 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
       await tap;
       await batch;
     });
-    expect(await batch).toEqual({ included: [2, 3], failed: [], skipped: [1] });
+    expect(await batch).toEqual({ included: [2, 3], failed: [], gone: [], skipped: [1] });
     expect(await tap).toBe(true);
   });
 
@@ -388,7 +421,12 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
         }),
     );
     const { result } = batchSetup();
-    let batch: Promise<Batch> = Promise.resolve({ included: [], failed: [], skipped: [] });
+    let batch: Promise<Batch> = Promise.resolve({
+      included: [],
+      failed: [],
+      gone: [],
+      skipped: [],
+    });
     await act(async () => {
       batch = result.current.onInsertQuotes(THREE);
       await Promise.resolve();
@@ -405,5 +443,273 @@ describe('useReflectionMode batch fold-in (#2885)', () => {
       await batch;
     });
     expect(result.current.foldingIn).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2754: the inclusion warning is kept PER QUOTE. Another quote's successful
+// fold never clears it, and a quote that has left the pending set some other
+// way -- deleted on the Promoted quotes screen, so its mark 404s -- retires
+// from it rather than haunting the composer (and is never spliced back).
+// ---------------------------------------------------------------------------
+
+/** What the promotions PATCH throws for a quote deleted on the Promoted quotes screen. */
+const GONE = new ApiError(QUOTE_GONE_STATUS, QUOTE_GONE_DETAIL);
+
+/** A mark held on the wire until the test settles it. */
+type Held = { resolve: (_v: unknown) => void; reject: (_e: unknown) => void };
+
+/** Hold every mark by quote id, so a test decides which settles first and how. */
+function holdMarks(): Map<number, Held> {
+  const held = new Map<number, Held>();
+  mockSetIncluded.mockImplementation(
+    (id) =>
+      new Promise((resolve, reject) => {
+        held.set(id, { resolve, reject });
+      }),
+  );
+  return held;
+}
+
+describe('#2754 per-quote inclusion warning', () => {
+  it.each([
+    ['A settles last', [3, 1]],
+    ['B settles last', [1, 3]],
+  ])(
+    "B's overlapping success never clears A's failure (%s), and Try again re-marks only A",
+    async (_order, settleOrder) => {
+      const held = holdMarks();
+      const { result, retry } = batchSetup();
+      let tapA: Promise<boolean> = Promise.resolve(true);
+      let tapB: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        tapA = result.current.onInsertQuote(Q1, S1);
+        tapB = result.current.onInsertQuote(Q3, S2);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect([...held.keys()].sort()).toEqual([1, 3]);
+      for (const id of settleOrder) {
+        await act(async () => {
+          if (id === 1) held.get(1)?.reject(new Error('offline'));
+          else held.get(3)?.resolve({});
+          await Promise.resolve();
+        });
+      }
+      await act(async () => {
+        await Promise.all([tapA, tapB]);
+      });
+      expect(await tapA).toBe(false);
+      expect(await tapB).toBe(true);
+      expect(result.current.failedCount).toBe(1);
+      expect(result.current.inclusionHint).toBe(true);
+      expect([...result.current.foldedIds]).toEqual([3]);
+
+      mockSetIncluded.mockReset();
+      mockSetIncluded.mockResolvedValue({});
+      expect(await retry()).toEqual({ included: [1], failed: [], gone: [], skipped: [] });
+      expect(mockSetIncluded.mock.calls).toEqual([[1, 42]]);
+      expect(result.current.failedCount).toBe(0);
+      expect(result.current.inclusionHint).toBe(false);
+    },
+  );
+
+  it('a first-tap 404 retires the quote at once but keeps the words the writer asked for', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(GONE) : Promise.resolve({}),
+    );
+    const { result, bodyRef, insertMany, retry } = batchSetup();
+    expect(await insertMany(THREE)).toEqual({
+      included: [1, 3],
+      failed: [],
+      gone: [2],
+      skipped: [],
+    });
+    expect(result.current.failedCount).toBe(0);
+    expect(result.current.inclusionHint).toBe(false);
+    expect([...result.current.foldedIds].sort()).toEqual([1, 3]);
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(1);
+    mockSetIncluded.mockReset();
+    expect(await retry()).toEqual({ included: [], failed: [], gone: [], skipped: [] });
+    expect(mockSetIncluded).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, unknown]>([
+    ['a network failure', new Error('offline')],
+    ['a 503', new ApiError(503, 'unavailable')],
+    ['a bare 500', { status: 500 }],
+    ['a 403', new ApiError(403, 'forbidden')],
+    ['a 404 for the target entry', new ApiError(QUOTE_GONE_STATUS, 'journal_entry_not_found')],
+  ])('keeps the quote on the retry list after %s, first try and retry alike', async (_l, err) => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(err) : Promise.resolve({}),
+    );
+    const { result, insertMany, retry } = batchSetup();
+    expect((await insertMany(THREE)).failed).toEqual([2]);
+    expect(result.current.failedCount).toBe(1);
+    mockSetIncluded.mockReset();
+    mockSetIncluded.mockRejectedValue(err);
+    expect(await retry()).toEqual({ included: [], failed: [2], gone: [], skipped: [] });
+    expect(mockSetIncluded.mock.calls).toEqual([[2, 42]]);
+    expect(result.current.failedCount).toBe(1);
+    expect(result.current.inclusionHint).toBe(true);
+  });
+
+  it('a retry that fails again after the writer deleted the block does not put it back', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(new Error('offline')) : Promise.resolve({}),
+    );
+    const { result, bodyRef, onChangeBody, insertMany, retry } = batchSetup();
+    await insertMany(THREE);
+    bodyRef.current = bodyRef.current.replace(BLOCK_Q2, '');
+    const callsBefore = onChangeBody.mock.calls.length;
+    await retry();
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(0);
+    expect(onChangeBody.mock.calls.length).toBe(callsBefore);
+    expect(result.current.failedCount).toBe(1);
+  });
+
+  it('a retry that marks puts a deleted block back once, after the mark, in a second flush', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(new Error('offline')) : Promise.resolve({}),
+    );
+    const { result, bodyRef, onChangeBody, flush, insertMany, retry } = batchSetup();
+    await insertMany(THREE);
+    bodyRef.current = bodyRef.current.replace(BLOCK_Q2, '');
+    mockSetIncluded.mockReset();
+    mockSetIncluded.mockResolvedValue({});
+    flush.mockClear();
+    onChangeBody.mockClear();
+    expect((await retry()).included).toEqual([2]);
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(1);
+    expect(onChangeBody).toHaveBeenCalledTimes(1);
+    expect(flush).toHaveBeenCalledTimes(2);
+    const [markOrder] = mockSetIncluded.mock.invocationCallOrder;
+    const [spliceOrder] = onChangeBody.mock.invocationCallOrder;
+    const secondFlushOrder = flush.mock.invocationCallOrder[1];
+    expect(markOrder).toBeLessThan(spliceOrder ?? 0);
+    expect(spliceOrder).toBeLessThan(secondFlushOrder ?? 0);
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it('a marked retry stays marked when its second flush resolves null; the body keeps the block', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(new Error('offline')) : Promise.resolve({}),
+    );
+    let flushes = 0;
+    const { result, bodyRef, insertMany, retry } = batchSetup(() => {
+      flushes += 1;
+      return Promise.resolve(flushes === 3 ? null : 42);
+    });
+    await insertMany(THREE);
+    bodyRef.current = bodyRef.current.replace(BLOCK_Q2, '');
+    mockSetIncluded.mockReset();
+    mockSetIncluded.mockResolvedValue({});
+    expect(await retry()).toEqual({ included: [2], failed: [], gone: [], skipped: [] });
+    expect(flushes).toBe(3);
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(1);
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it('a retry holds its quote on the wire, so a tap on it meanwhile is refused', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(new Error('offline')) : Promise.resolve({}),
+    );
+    const { result, insertMany } = batchSetup();
+    await insertMany(THREE);
+    mockSetIncluded.mockReset();
+    const held = holdMarks();
+    let retrying: Promise<unknown> = Promise.resolve();
+    let tap: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      retrying = result.current.retryInclusion();
+      await Promise.resolve();
+      await Promise.resolve();
+      tap = result.current.onInsertQuote(Q2, S1);
+      await Promise.resolve();
+    });
+    expect(await tap).toBe(false);
+    expect(result.current.foldingIn).toBe(true);
+    await act(async () => {
+      held.get(2)?.resolve({});
+      await retrying;
+    });
+    expect(mockSetIncluded.mock.calls).toEqual([[2, 42]]);
+    expect(result.current.foldingIn).toBe(false);
+    // Released on settle: a later tap on the same quote is admitted again.
+    mockSetIncluded.mockReset();
+    mockSetIncluded.mockResolvedValue({});
+    expect(await batchTap(result, Q2)).toBe(true);
+  });
+
+  it('prunes a removed quote from the sources feed, leaving its siblings pending', async () => {
+    mockSources.mockResolvedValueOnce({
+      items: [
+        { ...S1, promoted_quotes: [Q1, Q2] },
+        { ...S2, promoted_quotes: [Q3] },
+      ],
+    });
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(GONE) : Promise.resolve({}),
+    );
+    const { result, insertMany } = batchSetup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.sources.map((i) => i.promoted_quotes.map((q) => q.id))).toEqual([
+      [1, 2],
+      [3],
+    ]);
+    const before = result.current.sources;
+    await insertMany([candidateFromSource(Q1, S1)]);
+    expect(result.current.sources).toBe(before);
+    await insertMany([candidateFromSource(Q2, S1)]);
+    expect(result.current.sources.map((i) => i.promoted_quotes.map((q) => q.id))).toEqual([
+      [1],
+      [3],
+    ]);
+    expect(result.current.sources[1]).toBe(before[1]);
+  });
+
+  it('leaves the feed untouched when a removed quote was never in it (a hand-off from Promoted quotes)', async () => {
+    mockSources.mockResolvedValueOnce({ items: [{ ...S1, promoted_quotes: [Q1] }] });
+    mockSetIncluded.mockRejectedValue(GONE);
+    const { result, insertMany } = batchSetup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const before = result.current.sources;
+    const elsewhere = { ...candidateFromSource(Q2, S1), id: 99 };
+    expect(await insertMany([elsewhere])).toEqual({
+      included: [],
+      failed: [],
+      gone: [99],
+      skipped: [],
+    });
+    expect(result.current.sources).toBe(before);
+  });
+
+  it("retires a failed quote's warning when its mark 404s because the quote was removed, and the retry never re-splices it", async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 2 ? Promise.reject(new Error('offline')) : Promise.resolve({}),
+    );
+    const { result, bodyRef, onChangeBody, insertMany, retry } = batchSetup();
+    await insertMany(THREE);
+    expect(result.current.failedCount).toBe(1);
+    bodyRef.current = bodyRef.current.replace(BLOCK_Q2, '');
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(0);
+    mockSetIncluded.mockReset();
+    mockSetIncluded.mockRejectedValue(GONE);
+    const callsBefore = onChangeBody.mock.calls.length;
+    await retry();
+    expect(mockSetIncluded.mock.calls).toEqual([[2, 42]]);
+    expect(result.current.failedCount).toBe(0);
+    expect(result.current.inclusionHint).toBe(false);
+    expect(result.current.foldedIds.has(2)).toBe(false);
+    expect(occurrences(bodyRef.current, BLOCK_Q2)).toBe(0);
+    expect(onChangeBody.mock.calls.length).toBe(callsBefore);
+    mockSetIncluded.mockReset();
+    await retry();
+    expect(mockSetIncluded).not.toHaveBeenCalled();
   });
 });
