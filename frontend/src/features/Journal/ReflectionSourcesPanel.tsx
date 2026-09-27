@@ -65,6 +65,7 @@ import {
 } from '@/design/tokens';
 import { useDismissKeys } from '@/hooks/useDismissKeys';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useScreenFocused } from '@/hooks/useScreenFocused';
 
 /** The side pane's width: half the page's reading measure. */
 const SOURCES_PANE_WIDTH = journalLayout.pageMaxWidth / 2;
@@ -719,10 +720,15 @@ function noop(): void {}
 
 /**
  * The inline side pane. It has no Modal to carry Escape or the back button, so
- * it takes both from ``useDismissKeys`` -- only while it can actually close.
+ * it takes both from ``useDismissKeys`` -- only while it can actually close and
+ * its screen is the one in front.
  */
 function SourcesPane(props: ReflectionSourcesPanelProps): React.JSX.Element {
-  useDismissKeys(props.onClose ?? noop, props.onClose != null);
+  // Only while its screen is in front: a stack keeps a covered entry mounted,
+  // and an armed pane there would swallow the back press (or Escape) meant for
+  // the screen pushed over it.
+  const screenFocused = useScreenFocused();
+  useDismissKeys(props.onClose ?? noop, props.onClose != null && screenFocused);
   return (
     <View style={styles.pane} testID="reflection-sources-pane">
       <SourcesContent {...props} />
