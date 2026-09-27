@@ -50,6 +50,7 @@ import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
 import { DEFAULT_TIER } from './PrivacyTierControl';
 import type { PrivacyTier } from './PrivacyTierControl';
+import type { SentPage } from './replayReconcile';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
@@ -369,7 +370,7 @@ function useSaveEntry(
 ): { save: () => Promise<void>; saving: boolean; saveFailed: boolean } {
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
-  const createKeyRef = useRef<CreateKey | null>(null);
+  const createKeyRef = useRef<CreateKey<SentPage> | null>(null);
 
   const save = useCallback(async () => {
     setSaving(true);

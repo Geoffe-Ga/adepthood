@@ -16,11 +16,16 @@
  * never fires, and a retry would create the page a second time. A caller-held
  * `createKey` closes that (#2936): every create attempt of one capture is sent
  * under one idempotency key, so the server answers a repeat with the entry it
- * already wrote. That answer is the row as first written, so a resent create's
- * finishing PATCH also carries the current body and tier. A backdate is not
- * reconciled: the capture screen fixes it before the first attempt.
+ * already wrote. That answer is the row as first written, or as since edited
+ * elsewhere, so a resent create's finishing PATCH carries only what changed
+ * here since the first attempt — and a tier only when it is stricter than the
+ * row's (``replayReconcilePatch``). A backdate is not reconciled: the capture
+ * screen fixes it before the first attempt.
  */
+import { EMPTY_CHORD } from './AspectChordControl';
 import { claimCreateAttempt, type CreateKeyRef } from './createKey';
+import { DEFAULT_TIER } from './PrivacyTierControl';
+import { replayReconcilePatch, type SentPage } from './replayReconcile';
 
 import { journal } from '@/api';
 import type { JournalClassification, JournalEntryUpdate, JournalMessageCreate } from '@/api';
@@ -51,7 +56,7 @@ export async function saveFinishedEntry(
   onCreated?: (_id: number) => void,
   entryDate?: string,
   classification?: JournalClassification,
-  createKey?: CreateKeyRef,
+  createKey?: CreateKeyRef<SentPage>,
 ): Promise<number> {
   if (existingId == null) {
     const payload: JournalMessageCreate = {
@@ -59,16 +64,18 @@ export async function saveFinishedEntry(
       ...(classification != null && { classification }),
       ...(entryDate != null && { entry_date: entryDate }),
     };
-    const attempt = createKey ? claimCreateAttempt(createKey) : null;
+    // A capture has no title or chord, so only the body and tier can differ.
+    const now: SentPage = {
+      message: body,
+      title: null,
+      classification: classification ?? DEFAULT_TIER,
+      chord: EMPTY_CHORD,
+    };
+    const attempt = createKey ? claimCreateAttempt(createKey, now) : null;
     const created = await journal.create(payload, attempt ? { idempotencyKey: attempt.key } : {});
     onCreated?.(created.id);
-    const finishing: JournalEntryUpdate = attempt?.resent
-      ? {
-          message: body,
-          ...(classification != null && { classification }),
-          status: FINISHED_STATUS,
-        }
-      : { status: FINISHED_STATUS };
+    const reconcile = attempt?.resent ? replayReconcilePatch(attempt.first, now, created) : null;
+    const finishing: JournalEntryUpdate = { ...reconcile, status: FINISHED_STATUS };
     await journal.update(created.id, finishing);
     return created.id;
   }

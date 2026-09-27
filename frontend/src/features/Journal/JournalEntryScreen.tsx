@@ -50,6 +50,7 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
+import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
@@ -267,30 +268,17 @@ interface WriteEntryRefs {
    * The page's one create key (#2936): every attempt to create this page, or to
    * answer its weekly prompt, is sent under it until the server has the page.
    */
-  createKeyRef: CreateKeyRef;
+  createKeyRef: CreateKeyRef<SentPage>;
 }
 
-/**
- * Bring a replayed create's row up to the page (#2936). A create re-sent under
- * its key may be answered with the row its FIRST attempt wrote — older text,
- * and the tier and chord as they stood then — so the current body, title, tier
- * and chord are written over it. The tier matters most: one tightened while the
- * page had no id rode only the create, and without this the stored row would
- * stay looser than the control shows.
- */
-async function reconcileReplayedCreate(
-  id: number,
-  refs: WriteEntryRefs,
-  title: string,
-  body: string,
-): Promise<void> {
-  await journal.update(id, {
+/** What this page would send on a create attempt made now. */
+function sentPage(refs: WriteEntryRefs, title: string, body: string): SentPage {
+  return {
     message: body,
     title: titleOrNull(title),
     classification: refs.classificationRef.current,
-    primary_aspect: refs.chordRef.current.primary,
-    secondary_aspect: refs.chordRef.current.secondary,
-  });
+    chord: refs.chordRef.current,
+  };
 }
 
 /**
@@ -301,8 +289,10 @@ async function reconcileReplayedCreate(
  *
  * Every attempt goes under the page's one create key, so a retry of a create
  * whose answer was lost is answered with the entry it already wrote. A resent
- * attempt reconciles before it returns: the caller assigns the id only after
- * that, so a reconcile that fails leaves the page id-less and the next attempt
+ * attempt reconciles before it returns, writing back only what changed on this
+ * page since the first attempt and never loosening the tier the returned row
+ * holds (``replayReconcilePatch``). The caller assigns the id only after that,
+ * so a reconcile that fails leaves the page id-less and the next attempt
  * replays and reconciles again rather than PATCHing only the body.
  */
 async function createEntry(
@@ -312,7 +302,8 @@ async function createEntry(
   ctx: SaveContext,
 ): Promise<number> {
   const { classificationRef, chordRef } = refs;
-  const { key, resent } = claimCreateAttempt(refs.createKeyRef);
+  const now = sentPage(refs, title, body);
+  const { key, resent, first } = claimCreateAttempt(refs.createKeyRef, now);
   const created = await journal.create(
     {
       message: body,
@@ -328,16 +319,9 @@ async function createEntry(
     },
     { idempotencyKey: key },
   );
-  if (resent) await reconcileReplayedCreate(created.id, refs, title, body);
+  const reconcile = resent ? replayReconcilePatch(first, now, created) : null;
+  if (reconcile != null) await journal.update(created.id, reconcile);
   return created.id;
-}
-
-/**
- * True when a stored prompt answer is the text that was sent, allowing for what
- * the server's sanitizer changes (NFC, trimmed edges).
- */
-function sameAnswer(stored: string | null, sent: string): boolean {
-  return stored?.normalize('NFC').trim() === sent.normalize('NFC').trim();
 }
 
 /**
@@ -345,6 +329,10 @@ function sameAnswer(stored: string | null, sent: string): boolean {
  * text sent is what the week now holds, or to the stored answer when a resent
  * attempt was answered with an EARLIER one (#2936): its first attempt landed,
  * and the words typed since cannot be added to a week that holds its answer.
+ *
+ * Only words changed here since the first attempt can be missing from a replay,
+ * so an unchanged resend is simply saved, whatever the server's sanitizer did
+ * to it; a changed one is compared allowing for that sanitizer.
  */
 async function respondOnce(
   refs: WriteEntryRefs,
@@ -353,14 +341,15 @@ async function respondOnce(
   body: string,
   ctx: SaveContext,
 ): Promise<string | null> {
-  const { key, resent } = claimCreateAttempt(refs.createKeyRef);
+  const { key, resent, first } = claimCreateAttempt(refs.createKeyRef, sentPage(refs, title, body));
   const detail = await prompts.respond(weekNumber, body, {
     title: titleOrNull(title),
     ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
     idempotencyKey: key,
   });
   refs.respondedRef.current = true;
-  return resent && !sameAnswer(detail.response, body) ? (detail.response ?? '') : null;
+  const drifted = resent && first.message !== body;
+  return drifted && !isStoredAs(detail.response, body) ? (detail.response ?? '') : null;
 }
 
 /** A blank title collapses to null so an empty title is stored as absent. */
@@ -1065,7 +1054,7 @@ interface DraftRefs {
   entryUnsettledRef: React.MutableRefObject<boolean>;
   generationRef: React.MutableRefObject<number>;
   durableTextRef: React.MutableRefObject<DraftText | null>;
-  createKeyRef: React.MutableRefObject<CreateKey | null>;
+  createKeyRef: React.MutableRefObject<CreateKey<SentPage> | null>;
 }
 
 /**
@@ -1089,7 +1078,7 @@ function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): Draf
   const generationRef = useRef(0);
   const durableTextRef = useRef<DraftText | null>(null);
   // One create key per page: the same lifetime as ``entryIdRef`` (#2936).
-  const createKeyRef = useRef<CreateKey | null>(null);
+  const createKeyRef = useRef<CreateKey<SentPage> | null>(null);
   useMirroredInputs(onSavedRef, onConflictRef, ctxRef, entryUnsettledRef, values);
   return {
     entryIdRef,

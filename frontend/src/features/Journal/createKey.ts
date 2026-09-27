@@ -14,37 +14,49 @@
  * changes between attempts.
  *
  * ``resent`` is what tells the caller a replay may have answered. A replay
- * returns the row as FIRST written, so a resent create cannot treat the text it
- * just sent as stored: it must re-send the current body and tags. An attempt
- * counter decides that rather than a comparison of texts, because the server
- * sanitizes what it stores and a first-try create would otherwise look like
- * drift and write twice.
+ * returns the row as FIRST written — or as it has since been edited elsewhere —
+ * so a resent create cannot treat the text it just sent as stored. What it may
+ * write back is only what changed HERE since the first attempt, which is why the
+ * first attempt's payload is held beside the key and handed back on every claim.
+ * An attempt counter decides "resent" rather than a comparison of texts, because
+ * the server sanitizes what it stores and a first-try create would otherwise
+ * look like drift and write twice.
  */
 import { v4 as uuidv4 } from 'uuid';
 
-/** One logical create: its key, and how many attempts have been made under it. */
-export interface CreateKey {
+/**
+ * One logical create: its key, how many attempts have been made under it, and
+ * what the first attempt carried (``T``, whatever the caller records).
+ */
+export interface CreateKey<T = unknown> {
   readonly key: string;
   attempts: number;
+  readonly first: T;
 }
 
 /** Where a caller holds its create's key between attempts. */
-export interface CreateKeyRef {
-  current: CreateKey | null;
-}
-
-/** One claimed attempt: the key to send, and whether an earlier one was made. */
-export interface CreateAttempt {
-  key: string;
-  resent: boolean;
+export interface CreateKeyRef<T = unknown> {
+  current: CreateKey<T> | null;
 }
 
 /**
- * Claim the next attempt of this create: mint its key on the first claim, keep
- * it on every later one, and report whether any attempt preceded this one.
+ * One claimed attempt: the key to send, whether an earlier attempt was made, and
+ * the payload the FIRST attempt carried (this one's own, on a first claim).
  */
-export function claimCreateAttempt(ref: CreateKeyRef): CreateAttempt {
-  ref.current ??= { key: uuidv4(), attempts: 0 };
+export interface CreateAttempt<T = unknown> {
+  key: string;
+  resent: boolean;
+  first: T;
+}
+
+/**
+ * Claim the next attempt of this create: mint its key on the first claim and
+ * record ``sending`` as what the first attempt carried; keep both on every later
+ * claim, and report whether any attempt preceded this one.
+ */
+export function claimCreateAttempt<T>(ref: CreateKeyRef<T>, sending: T): CreateAttempt<T> {
+  ref.current ??= { key: uuidv4(), attempts: 0, first: sending };
   ref.current.attempts += 1;
-  return { key: ref.current.key, resent: ref.current.attempts > 1 };
+  const { key, attempts, first } = ref.current;
+  return { key, resent: attempts > 1, first };
 }

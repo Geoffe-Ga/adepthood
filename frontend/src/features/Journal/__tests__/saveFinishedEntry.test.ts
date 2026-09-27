@@ -2,6 +2,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { CreateKeyRef } from '../createKey';
+import type { SentPage } from '../replayReconcile';
 import { saveFinishedEntry } from '../saveFinishedEntry';
 
 import type { JournalMessage } from '@/api';
@@ -161,7 +162,7 @@ describe('saveFinishedEntry — one captured page, one entry', () => {
   }
 
   it('sends every create attempt of one capture under one key', async () => {
-    const key: CreateKeyRef = { current: null };
+    const key: CreateKeyRef<SentPage> = { current: null };
     mockCreate.mockRejectedValueOnce(new Error('network'));
     await expect(
       saveFinishedEntry('A page.', null, undefined, undefined, undefined, key),
@@ -188,12 +189,14 @@ describe('saveFinishedEntry — one captured page, one entry', () => {
   });
 
   it('a resent create finishes with the current body and tier, which a replay may not hold', async () => {
-    const key: CreateKeyRef = { current: null };
+    const key: CreateKeyRef<SentPage> = { current: null };
     mockCreate.mockRejectedValueOnce(new Error('network'));
     await saveFinishedEntry('A page.', null, undefined, undefined, 'personal', key).catch(
       () => undefined,
     );
-    mockCreate.mockResolvedValueOnce(entry({ id: 9, message: 'A page.' }));
+    mockCreate.mockResolvedValueOnce(
+      entry({ id: 9, message: 'A page.', classification: 'personal' }),
+    );
     mockUpdate.mockResolvedValueOnce(entry({ id: 9, status: 'finished' }));
 
     await saveFinishedEntry('A page, corrected.', null, undefined, undefined, 'intimate', key);
@@ -203,5 +206,23 @@ describe('saveFinishedEntry — one captured page, one entry', () => {
       classification: 'intimate',
       status: 'finished',
     });
+  });
+
+  it('a resent create never loosens, or rewrites, what the replayed row holds', async () => {
+    // The capture's first create landed and the entry was since made Intimate
+    // elsewhere; this retry sends the same words at the same Personal tier.
+    const key: CreateKeyRef<SentPage> = { current: null };
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await saveFinishedEntry('A page.', null, undefined, undefined, 'personal', key).catch(
+      () => undefined,
+    );
+    mockCreate.mockResolvedValueOnce(
+      entry({ id: 9, message: 'A page.', classification: 'intimate' }),
+    );
+    mockUpdate.mockResolvedValueOnce(entry({ id: 9, status: 'finished' }));
+
+    await saveFinishedEntry('A page.', null, undefined, undefined, 'personal', key);
+
+    expect(mockUpdate.mock.calls).toEqual([[9, { status: 'finished' }]]);
   });
 });

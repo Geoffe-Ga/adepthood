@@ -1180,12 +1180,9 @@ describe('JournalPhotographScreen — save flow', () => {
     expect(keys).toHaveLength(2);
     expect(typeof keys[0]).toBe('string');
     expect(keys[1]).toBe(keys[0]);
-    // The replay may hold an older body, so the finishing PATCH carries this one.
-    expect(mockUpdate).toHaveBeenCalledWith(99, {
-      message: 'One page.',
-      classification: 'personal',
-      status: 'finished',
-    });
+    // Nothing changed here since the first attempt, so nothing but the status
+    // is written over the replayed row: it may hold edits made elsewhere.
+    expect(mockUpdate.mock.calls).toEqual([[99, { status: 'finished' }]]);
   });
 
   it('persists text edited after a failed save on the retry, without re-creating', async () => {
