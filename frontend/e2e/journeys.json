@@ -389,6 +389,24 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.sources-panel-navigation",
+    "description": "A writer composing a due weekly review opens Sources beside a week of long dailies and browses deep into the feed. The panel's heading -- the 'Sources' title, the period and the icon-only X named 'Done' -- stays fixed above a scroll that holds only the quotes and the feed, so at 390x844 and 1280x720 the X is still in the viewport and inside the panel after scrolling to the end, and it is at least 44x44. On a wide screen (1240 and up) the pane sits beside the writing sheet, never stacked full-width beneath it, and the entry body keeps a readable width and the sheet most of the height; narrower, a bounded sheet capped at the content width opens over the page. The X, Escape and (on the sheet) a tap on the backdrop each close only the panel: the route stays, focus returns to the Sources toggle, and the draft is untouched. The writer keeps typing, the page autosaves to 'Saved', and the server holds the continued text on the same entry id. At 390, 768, 1024 and 1440 nothing overflows horizontally, an expanded source stays readable, and closing gives the editor back its width. When a source enters quote selection, 'Promote selection' and 'Cancel' stay inside the panel at 390x844 and 1280x720. Not asserted in the browser, and pinned only by Jest: the Android hardware back button (the sheet's Modal request, the wide pane's BackHandler) and the native bound on the selection field.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "reflections"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /reflections/due",
+        "GET /reflections/sources"
+      ],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-sources-panel.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.live-edit-keeps-quote-and-margin-anchors",
     "description": "A writer types formatted Unicode into the live editor -- a decomposed accent, a ZWJ emoji sequence the server strips, bold typed key by key, italics, underline, an escaped marker, a nested bullet, a leading newline and trailing spaces -- and finishes. Read mode promotes into the body the server STORED, not the typed one, and a selection's trailing space never reaches the stored span, so anchor_end - anchor_start equals the length of anchor_text. A resonance pass anchors a margin note. Two quotes folded into the due week review render as quote blocks in the live mirror at once, with exactly one blank line between them. The source is then edited before every anchor by typing formatting and by a list indent; on reopen the pending quote and the note each still address exactly their own text at the new code-point offset, and the folded quotes (whose offsets the server freezes) are listed apart rather than washed over other words. The review still renders both blocks after reopening.",
     "crosses": {
