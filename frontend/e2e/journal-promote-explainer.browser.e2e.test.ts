@@ -75,6 +75,13 @@ test('the first promote explains where a quote goes, and the quote is there', as
   const tick = card.getByRole('checkbox', { name: /Don’t show this note again/ });
   await expect(tick).not.toBeChecked();
   await expect(page.getByTestId('quote-select-input')).toHaveCount(0);
+  // The two arms are equal: one row, the same size, neither easier to reach.
+  const cancelBox = await page.getByTestId('promote-explainer-cancel').boundingBox();
+  const proceedBox = await page.getByTestId('promote-explainer-continue').boundingBox();
+  if (cancelBox === null || proceedBox === null) throw new Error('an arm has no layout box');
+  expect(proceedBox.y).toBeCloseTo(cancelBox.y, 0);
+  expect(proceedBox.width).toBeCloseTo(cancelBox.width, 0);
+  expect(proceedBox.height).toBeCloseTo(cancelBox.height, 0);
 
   // 2. "Not now" is a real decline: no field, nothing remembered.
   await page.getByTestId('promote-explainer-cancel').click();
