@@ -621,51 +621,72 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
   return { includedIds, setIncludedIds, onInsert };
 }
 
-/** What a batch left for the writer: every id when the batch itself threw. */
+/**
+ * What a batch left for the writer: its failed ids, and whether it took any
+ * quote at all. A batch that threw took none and left every id failed.
+ */
 async function settleBatch(
   outcome: Promise<BatchFoldResult>,
   ids: readonly number[],
-): Promise<readonly number[]> {
+): Promise<{ failed: readonly number[]; admittedAny: boolean }> {
   try {
-    return (await outcome).failed;
+    const result = await outcome;
+    return {
+      failed: result.failed,
+      admittedAny: result.included.length + result.failed.length > 0,
+    };
   } catch {
-    return ids;
+    return { failed: ids, admittedAny: true };
   }
+}
+
+/** The batch fold the panel's bar runs, and whether one is on the wire now. */
+interface BatchFold {
+  onFoldSelected: (_pending: readonly PendingEntry[]) => void;
+  folding: boolean;
 }
 
 /**
  * Fold the checked quotes in as one batch, in the panel's own order: dim them
  * all at once, then undim only the ones whose mark failed and leave exactly
- * those checked for another try. A quote a single tap already had on the wire
- * comes back ``skipped``; that tap reconciles its own dim, so it is left alone
- * here and simply leaves the selection.
+ * those checked for another try.
+ *
+ * It reconciles only its OWN quotes (#2885 review): a quote the writer checks
+ * while the batch is out stays checked, and a batch that took no quote at all
+ * (every id already on the wire with another act, which reconciles its own
+ * dim) leaves the selection exactly as it was. ``folding`` disables the bar
+ * for the span, so a second press cannot race the first's reconciliation.
  */
 function useBatchFold(
   onInsertQuotes: ReflectionSourcesPanelProps['onInsertQuotes'],
   selection: QuoteSelection,
   setIncludedIds: Dispatch<SetStateAction<ReadonlySet<number>>>,
-): (_pending: readonly PendingEntry[]) => void {
-  const { selected, keepOnly } = selection;
+): BatchFold {
+  const { selected, settle } = selection;
+  const [folding, setFolding] = useState(false);
   const foldChosen = useCallback(
     async (pending: readonly PendingEntry[]): Promise<void> => {
-      if (onInsertQuotes == null) return;
+      if (onInsertQuotes == null || folding) return;
       const chosen = pending.filter((entry) => selected.has(entry.quote.id));
       if (chosen.length === 0) return;
       const ids = chosen.map((entry) => entry.quote.id);
+      setFolding(true);
       setIncludedIds((prev) => withIds(prev, ids));
       const outcome = onInsertQuotes(chosen.map((e) => candidateFromSource(e.quote, e.item)));
-      const failed = await settleBatch(outcome, ids);
+      const { failed, admittedAny } = await settleBatch(outcome, ids);
+      setFolding(false);
       setIncludedIds((prev) => withoutIds(prev, failed));
-      keepOnly(failed);
+      if (admittedAny) settle(ids, failed);
     },
-    [onInsertQuotes, selected, keepOnly, setIncludedIds],
+    [onInsertQuotes, folding, selected, settle, setIncludedIds],
   );
-  return useCallback(
+  const onFoldSelected = useCallback(
     (pending: readonly PendingEntry[]) => {
       void foldChosen(pending);
     },
     [foldChosen],
   );
+  return { onFoldSelected, folding };
 }
 
 /**
@@ -775,20 +796,26 @@ interface PanelState {
   /** The checked quotes -- here, above the switch, so a resize keeps them (#2885). */
   selection: QuoteSelection;
   onFoldSelected: (_pending: readonly PendingEntry[]) => void;
+  /** True while this panel's batch is on the wire; the bar rests meanwhile. */
+  folding: boolean;
 }
 
 function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
   const feed = useFeedState(props.onPromoteSpan);
   const dims = useDimReconciler(props.onInsertQuote);
   const selection = useQuoteSelection();
-  const onFoldSelected = useBatchFold(props.onInsertQuotes, selection, dims.setIncludedIds);
+  const { onFoldSelected, folding } = useBatchFold(
+    props.onInsertQuotes,
+    selection,
+    dims.setIncludedIds,
+  );
   const { foldedIds } = props;
   const own = dims.includedIds;
   const includedIds = useMemo(
     () => (foldedIds == null || foldedIds.size === 0 ? own : withIds(own, [...foldedIds])),
     [own, foldedIds],
   );
-  return { feed, includedIds, onInsert: dims.onInsert, selection, onFoldSelected };
+  return { feed, includedIds, onInsert: dims.onInsert, selection, onFoldSelected, folding };
 }
 
 /** The props every container hands its content: the caller's, plus the lifted state. */
@@ -807,7 +834,7 @@ function SourcesContent({
 }: ContainerProps): React.JSX.Element {
   const pending = useMemo(() => collectPending(items), [items]);
   const feed = useMemo(() => [...items].sort(byTimestamp), [items]);
-  const { includedIds, onInsert, selection, onFoldSelected } = state;
+  const { includedIds, onInsert, selection, onFoldSelected, folding } = state;
 
   // The heading is the panel's navigation, so it stands ABOVE the scroll: only
   // the quotes and the feed move, and the way out never scrolls away (#2883).
@@ -839,6 +866,7 @@ function SourcesContent({
         <QuoteFoldBar
           label={foldSelectedLabel(selection.selected.size)}
           count={selection.selected.size}
+          disabled={folding}
           onPress={() => onFoldSelected(pending)}
         />
       ) : null}

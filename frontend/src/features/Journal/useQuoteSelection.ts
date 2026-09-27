@@ -23,6 +23,11 @@ export interface QuoteSelection {
    * checked for another try; after a remove, a row no longer listed drops out.
    */
   keepOnly: (_ids: readonly number[]) => void;
+  /**
+   * Reconcile one batch: uncheck the ids it ``sent``, then re-check the ones
+   * that ``failed``. Anything checked meanwhile, outside the batch, stays.
+   */
+  settle: (_sent: readonly number[], _failed: readonly number[]) => void;
 }
 
 const EMPTY: ReadonlySet<number> = new Set<number>();
@@ -32,6 +37,18 @@ function flipped(ids: ReadonlySet<number>, id: number): ReadonlySet<number> {
   const next = new Set(ids);
   if (next.has(id)) next.delete(id);
   else next.add(id);
+  return next;
+}
+
+/** ``ids`` minus ``sent``, plus ``failed``: one batch's reconciliation. */
+function settled(
+  ids: ReadonlySet<number>,
+  sent: readonly number[],
+  failed: readonly number[],
+): ReadonlySet<number> {
+  const next = new Set(ids);
+  for (const id of sent) next.delete(id);
+  for (const id of failed) next.add(id);
   return next;
 }
 
@@ -58,8 +75,14 @@ export function useQuoteSelection(): QuoteSelection {
     [],
   );
 
+  const settle = useCallback(
+    (sent: readonly number[], failed: readonly number[]) =>
+      setSelected((prev) => settled(prev, sent, failed)),
+    [],
+  );
+
   return useMemo(
-    () => ({ selecting, selected, toggleMode, toggle, selectAll, clear, keepOnly }),
-    [selecting, selected, toggleMode, toggle, selectAll, clear, keepOnly],
+    () => ({ selecting, selected, toggleMode, toggle, selectAll, clear, keepOnly, settle }),
+    [selecting, selected, toggleMode, toggle, selectAll, clear, keepOnly, settle],
   );
 }

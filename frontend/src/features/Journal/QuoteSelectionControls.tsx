@@ -117,6 +117,8 @@ export interface QuoteFoldBarProps {
   label: string;
   /** How many quotes are checked; the action is disabled at zero. */
   count: number;
+  /** Rest the action regardless of the count (a batch is already on the wire). */
+  disabled?: boolean;
   onPress: () => void;
   testID?: string;
 }
@@ -125,10 +127,11 @@ export interface QuoteFoldBarProps {
 export function QuoteFoldBar({
   label,
   count,
+  disabled: resting = false,
   onPress,
   testID = 'quote-fold-action',
 }: QuoteFoldBarProps): React.JSX.Element {
-  const disabled = count === 0;
+  const disabled = resting || count === 0;
   return (
     <View style={styles.bar}>
       <TouchableOpacity

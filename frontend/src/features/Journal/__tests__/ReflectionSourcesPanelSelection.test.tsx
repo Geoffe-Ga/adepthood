@@ -260,3 +260,78 @@ describe('ReflectionSourcesPanel -- the folded trace (#2885)', () => {
     expect(getByTestId('pending-quote-21-check', { includeHiddenElements: true })).toBeTruthy();
   });
 });
+
+// Phase C review of #2885: a batch reconciles only its OWN quotes, and the bar
+// cannot start a second batch while one is on the wire.
+describe('ReflectionSourcesPanel -- a batch in flight (#2885)', () => {
+  function deferredBatch() {
+    let settle: (_r: BatchFoldResult) => void = () => {};
+    const onInsertQuotes = jest.fn<InsertMany>(
+      () =>
+        new Promise<BatchFoldResult>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    return { onInsertQuotes, settle: (r: BatchFoldResult) => settle(r) };
+  }
+
+  it('disables the bar while a batch is in flight, so a second press cannot wipe the retry', async () => {
+    const batch = deferredBatch();
+    const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes: batch.onInsertQuotes });
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByTestId('pending-quote-11'));
+    fireEvent.press(getByTestId('pending-quote-12'));
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-fold-action'));
+    });
+    expect(getByTestId('quote-fold-action').props.accessibilityState.disabled).toBe(true);
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-fold-action'));
+    });
+    expect(batch.onInsertQuotes).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      batch.settle({ included: [11], failed: [12], skipped: [] });
+    });
+    expect(getByTestId('pending-quote-12').props.accessibilityState.checked).toBe(true);
+    expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+      'Fold 1 quote into this review',
+    );
+    expect(getByTestId('quote-fold-action').props.accessibilityState.disabled).toBe(false);
+  });
+
+  it('keeps a quote the writer checks while a batch is in flight', async () => {
+    const batch = deferredBatch();
+    const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes: batch.onInsertQuotes });
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByTestId('pending-quote-11'));
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-fold-action'));
+    });
+    fireEvent.press(getByTestId('pending-quote-21'));
+    await act(async () => {
+      batch.settle({ included: [11], failed: [], skipped: [] });
+    });
+    expect(getByTestId('pending-quote-21').props.accessibilityState.checked).toBe(true);
+    expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+      'Fold 1 quote into this review',
+    );
+  });
+
+  it('leaves the selection alone when a batch admitted nothing', async () => {
+    const onInsertQuotes = jest.fn<InsertMany>(() =>
+      Promise.resolve({ included: [], failed: [], skipped: [11, 12] }),
+    );
+    const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes });
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByTestId('pending-quote-11'));
+    fireEvent.press(getByTestId('pending-quote-12'));
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-fold-action'));
+    });
+    // Another act owns those quotes (and their dims); this batch took none, so
+    // the writer's selection is exactly as they left it.
+    expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+      'Fold 2 quotes into this review',
+    );
+  });
+});

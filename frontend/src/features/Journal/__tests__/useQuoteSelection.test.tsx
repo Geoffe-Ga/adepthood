@@ -46,6 +46,13 @@ describe('useQuoteSelection -- which quotes a writer has checked (#2885)', () =>
     expect(result.current.selected).toBe(before);
   });
 
+  it('settles one batch: its sent ids leave, its failures return, others stay', () => {
+    const { result } = renderHook(() => useQuoteSelection());
+    act(() => result.current.selectAll([1, 2, 3]));
+    act(() => result.current.settle([1, 2], [2]));
+    expect(ids(result.current.selected)).toEqual([2, 3]);
+  });
+
   it('entering and leaving the mode drops any selection', () => {
     const { result } = renderHook(() => useQuoteSelection());
     act(() => result.current.toggleMode());
