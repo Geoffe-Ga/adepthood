@@ -34,6 +34,7 @@ import type { MutableRefObject } from 'react';
 
 import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
 import type { ResonanceRequestOutcome } from './useResonance';
+import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
 
 import { botmasonUsage } from '@/api';
 import { useApiKey } from '@/context/ApiKeyContext';
@@ -164,54 +165,7 @@ function useResonanceCost(): {
 }
 
 /** The stored dismissal, as the gate needs to consult it. */
-interface DismissedFlag {
-  /** The answer if it is already in hand, or ``null`` while the read is out. */
-  known: () => boolean | null;
-  /** The answer, waiting for the read if it has not landed yet. */
-  read: () => Promise<boolean>;
-  /** Record the reader's "don’t show this again", in memory and on disk. */
-  markDismissed: () => void;
-}
-
-/**
- * The stored flag, read once per mount and remembered.
- *
- * Two refs rather than one, because they answer different questions: ``settled``
- * lets a press that already has the answer act on it in the same tick, and
- * ``pending`` lets a press that does not wait for the real answer rather than
- * take a default.
- */
-function useDismissedFlag(): DismissedFlag {
-  const settled = useRef<boolean | null>(null);
-  const pending = useRef<Promise<boolean> | null>(null);
-
-  const read = useCallback((): Promise<boolean> => {
-    pending.current ??= loadResonanceExplainerDismissed().then((stored) => {
-      settled.current = stored;
-      return stored;
-    });
-    return pending.current;
-  }, []);
-
-  // Warm the read at mount so a press is almost never the thing waiting on it.
-  useEffect(() => {
-    void read();
-  }, [read]);
-
-  const markDismissed = useCallback((): void => {
-    // Memory first, disk after: a second press in the same session must not be
-    // able to race the write and be shown the note it was just dismissed from.
-    settled.current = true;
-    pending.current = Promise.resolve(true);
-    void saveResonanceExplainerDismissed(true);
-  }, []);
-
-  const known = useCallback((): boolean | null => settled.current, []);
-
-  // Memoised: the entry screen re-renders on every keystroke, and an unstable
-  // flag object would hand the resonance button a fresh onPress each time.
-  return useMemo(() => ({ known, read, markDismissed }), [known, read, markDismissed]);
-}
+type DismissedFlag = StoredDismissal;
 
 interface DisclosureDecisionInput {
   cost: ReturnType<typeof useResonanceCost>;
@@ -532,7 +486,7 @@ export function useResonanceExplainer(
   const { apiKey, isLoading: keyIsLoading } = useApiKey();
   const payerRef = useRef({ apiKey, keyIsLoading });
   payerRef.current = { apiKey, keyIsLoading };
-  const flag = useDismissedFlag();
+  const flag = useStoredDismissal(loadResonanceExplainerDismissed, saveResonanceExplainerDismissed);
   const surfaces = useDisclosureSurfaces(flag);
   const cost = useResonanceCost();
   const disclosedKeyRef = useRef<string | null>(null);
