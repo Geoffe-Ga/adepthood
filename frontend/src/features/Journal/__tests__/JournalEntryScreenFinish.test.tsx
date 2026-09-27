@@ -4,6 +4,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
+import { KEYED } from './idempotencyTestKit';
+
 import type { JournalMessage } from '@/api';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -147,7 +149,10 @@ describe('JournalEntryScreen Finish — atomic write', () => {
       });
 
       expect(mockCreate).toHaveBeenCalledTimes(1);
-      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: LONG_BODY }));
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ message: LONG_BODY }),
+        KEYED,
+      );
       expect(mockUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ status: 'finished' }));
     } finally {
       jest.useRealTimers();

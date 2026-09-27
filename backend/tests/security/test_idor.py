@@ -60,10 +60,12 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.promoted_quote import PromotedQuote
 from models.prompt_dismissal import PromptDismissal
+from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
 from models.user_ui_flags import UserUiFlags
+from security.idempotency import hash_idem_key
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
     make_account,
@@ -898,6 +900,118 @@ async def test_idor_journal_create_practice_session_returns_403(
     assert getattr(denials[0], "resource", None) == "practice_session"
     assert getattr(denials[0], "resource_id", None) == alice_session_id
     assert getattr(denials[0], "user_id", None) == bob_id
+
+
+# ── Idempotency keys are namespaced per account (#2936) ───────────────────
+
+_SHARED_IDEMPOTENCY_KEY = "the-same-raw-key"
+
+
+@pytest.mark.asyncio
+async def test_idor_journal_create_idempotency_key_is_scoped_per_account(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Bob presenting Alice's raw key writes Bob's own entry; Alice's is neither shown nor touched.
+
+    A key space shared across accounts would turn a guessed or leaked key into
+    a read of somebody else's journal: Bob's "replay" would be answered with
+    Alice's page.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_j_idem")
+    bob_headers, bob_id = await _signup(async_client, "bob_j_idem")
+    alice = await async_client.post(
+        "/journal/",
+        json={"message": "Alice's private page."},
+        headers={**alice_headers, "Idempotency-Key": _SHARED_IDEMPOTENCY_KEY},
+    )
+
+    bob = await async_client.post(
+        "/journal/",
+        json={"message": "Bob's own page."},
+        headers={**bob_headers, "Idempotency-Key": _SHARED_IDEMPOTENCY_KEY},
+    )
+
+    assert bob.status_code == HTTPStatus.CREATED
+    assert bob.json()["id"] != alice.json()["id"]
+    assert bob.json()["message"] == "Bob's own page."
+    assert "Alice" not in bob.text
+    rows = await _entries_where(db_session, col(JournalEntry.user_id).in_([alice_id, bob_id]))
+    assert sorted((row.user_id, row.message, row.idem_key) for row in rows) == sorted(
+        [
+            (alice_id, "Alice's private page.", hash_idem_key(alice_id, _SHARED_IDEMPOTENCY_KEY)),
+            (bob_id, "Bob's own page.", hash_idem_key(bob_id, _SHARED_IDEMPOTENCY_KEY)),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_prompt_respond_idempotency_key_is_scoped_per_account(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Bob presenting Alice's raw key answers Bob's week; Alice's answer is never returned."""
+    alice_headers, alice_id = await _signup(async_client, "alice_p_idem")
+    bob_headers, bob_id = await _signup(async_client, "bob_p_idem")
+    await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Alice's private answer."},
+        headers={**alice_headers, "Idempotency-Key": _SHARED_IDEMPOTENCY_KEY},
+    )
+
+    bob = await async_client.post(
+        "/prompts/1/respond",
+        json={"response": "Bob's own answer."},
+        headers={**bob_headers, "Idempotency-Key": _SHARED_IDEMPOTENCY_KEY},
+    )
+
+    assert bob.status_code == HTTPStatus.CREATED
+    assert bob.json()["response"] == "Bob's own answer."
+    assert "Alice" not in bob.text
+    db_session.expire_all()
+    rows = (await db_session.execute(select(PromptResponse))).scalars().all()
+    assert sorted((row.user_id, row.response) for row in rows) == sorted(
+        [(alice_id, "Alice's private answer."), (bob_id, "Bob's own answer.")]
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_journal_keyed_replay_still_authorizes_practice_links(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A replay is not a way around the body-FK check: it runs first, unconditionally.
+
+    Bob's key already names an entry of his, so a replay lookup placed ahead of
+    the ownership check would answer 201 and never look at the forged link.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_j_idem_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_j_idem_link")
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id, practice_name="Alice Sit"
+    )
+    alice_session_id = await _create_practice_session(
+        async_client, alice_headers, alice_practice_id
+    )
+    keyed = {**bob_headers, "Idempotency-Key": _SHARED_IDEMPOTENCY_KEY}
+    first = await async_client.post("/journal/", json=_journal_payload(), headers=keyed)
+    assert first.status_code == HTTPStatus.CREATED
+
+    with caplog.at_level(logging.WARNING):
+        forged = await async_client.post(
+            "/journal/", json=_journal_payload(practice_session_id=alice_session_id), headers=keyed
+        )
+    missing = await async_client.post(
+        "/journal/", json=_journal_payload(user_practice_id=_DEFINITELY_MISSING_ID), headers=keyed
+    )
+
+    assert forged.status_code == HTTPStatus.FORBIDDEN
+    assert forged.json()["detail"] == "forbidden"
+    assert missing.status_code == HTTPStatus.NOT_FOUND
+    denials = _denial_records(caplog)
+    assert denials, "expected a resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "practice_session"
+    assert getattr(denials[0], "user_id", None) == bob_id
+    assert len(await _entries_where(db_session, col(JournalEntry.user_id) == bob_id)) == 1
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
+import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createKey';
 import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
@@ -49,6 +50,7 @@ import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
 import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
+import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
@@ -264,6 +266,21 @@ interface WriteEntryRefs {
   classificationRef: React.MutableRefObject<JournalClassification>;
   /** Latest chosen Aspect chord; carried on the first ``journal.create``. */
   chordRef: React.MutableRefObject<AspectChordValue>;
+  /**
+   * The page's one create key (#2936): every attempt to create this page, or to
+   * answer its weekly prompt, is sent under it until the server has the page.
+   */
+  createKeyRef: CreateKeyRef<SentPage>;
+}
+
+/** What this page would send on a create attempt made now. */
+function sentPage(refs: WriteEntryRefs, title: string, body: string): SentPage {
+  return {
+    message: body,
+    title: titleOrNull(title),
+    classification: refs.classificationRef.current,
+    chord: refs.chordRef.current,
+  };
 }
 
 /**
@@ -271,6 +288,14 @@ interface WriteEntryRefs {
  * server id. Only attaches context keys when present, so a plain entry's payload
  * stays lean rather than carrying explicit nulls. ``classification`` always rides
  * along so the entry's privacy tier is set at birth (defaults to personal).
+ *
+ * Every attempt goes under the page's one create key, so a retry of a create
+ * whose answer was lost is answered with the entry it already wrote. A resent
+ * attempt reconciles before it returns, writing back only what changed on this
+ * page since the first attempt and never loosening the tier the returned row
+ * holds (``replayReconcilePatch``). The caller assigns the id only after that,
+ * so a reconcile that fails leaves the page id-less and the next attempt
+ * replays and reconciles again rather than PATCHing only the body.
  */
 async function createEntry(
   refs: WriteEntryRefs,
@@ -279,19 +304,54 @@ async function createEntry(
   ctx: SaveContext,
 ): Promise<number> {
   const { classificationRef, chordRef } = refs;
-  const created = await journal.create({
-    message: body,
-    title: titleOrNull(title),
-    classification: classificationRef.current,
-    primary_aspect: chordRef.current.primary,
-    secondary_aspect: chordRef.current.secondary,
-    ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
-    ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
-    ...(ctx.reflectionLevel != null && { tag: 'hierarchical_reflection' as const }),
-    ...(ctx.reflectionLevel != null && { reflection_level: ctx.reflectionLevel }),
-    ...(ctx.reflectionScopeKey != null && { reflection_scope_key: ctx.reflectionScopeKey }),
-  });
+  const now = sentPage(refs, title, body);
+  const { key, resent, first } = claimCreateAttempt(refs.createKeyRef, now);
+  const created = await journal.create(
+    {
+      message: body,
+      title: titleOrNull(title),
+      classification: classificationRef.current,
+      primary_aspect: chordRef.current.primary,
+      secondary_aspect: chordRef.current.secondary,
+      ...(ctx.practiceSessionId != null && { practice_session_id: ctx.practiceSessionId }),
+      ...(ctx.userPracticeId != null && { user_practice_id: ctx.userPracticeId }),
+      ...(ctx.reflectionLevel != null && { tag: 'hierarchical_reflection' as const }),
+      ...(ctx.reflectionLevel != null && { reflection_level: ctx.reflectionLevel }),
+      ...(ctx.reflectionScopeKey != null && { reflection_scope_key: ctx.reflectionScopeKey }),
+    },
+    { idempotencyKey: key },
+  );
+  const reconcile = resent ? replayReconcilePatch(first, now, created) : null;
+  if (reconcile != null) await journal.update(created.id, reconcile);
   return created.id;
+}
+
+/**
+ * Answer the page's weekly prompt, exactly once. Resolves to ``null`` when the
+ * text sent is what the week now holds, or to the stored answer when a resent
+ * attempt was answered with an EARLIER one (#2936): its first attempt landed,
+ * and the words typed since cannot be added to a week that holds its answer.
+ *
+ * Only words changed here since the first attempt can be missing from a replay,
+ * so an unchanged resend is simply saved, whatever the server's sanitizer did
+ * to it; a changed one is compared allowing for that sanitizer.
+ */
+async function respondOnce(
+  refs: WriteEntryRefs,
+  weekNumber: number,
+  title: string,
+  body: string,
+  ctx: SaveContext,
+): Promise<string | null> {
+  const { key, resent, first } = claimCreateAttempt(refs.createKeyRef, sentPage(refs, title, body));
+  const detail = await prompts.respond(weekNumber, body, {
+    title: titleOrNull(title),
+    ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
+    idempotencyKey: key,
+  });
+  refs.respondedRef.current = true;
+  const drifted = resent && first.message !== body;
+  return drifted && !isStoredAs(detail.response, body) ? (detail.response ?? '') : null;
 }
 
 /** A blank title collapses to null so an empty title is stored as absent. */
@@ -299,24 +359,23 @@ function titleOrNull(title: string): string | null {
   return title.trim() ? title : null;
 }
 
-/** Create on first save, then update; a new page's title and body land atomically. */
+/**
+ * Create on first save, then update; a new page's title and body land atomically.
+ * Resolves to the body the server holds when that is NOT the body sent (a
+ * replayed weekly-prompt answer; see ``respondOnce``), else ``null``.
+ */
 async function writeEntry(
   refs: WriteEntryRefs,
   title: string,
   body: string,
   ctx: SaveContext,
-): Promise<void> {
+): Promise<string | null> {
   const { entryIdRef, respondedRef } = refs;
   // Weekly-prompt mode: the respond endpoint persists the entry itself, so we
   // submit exactly once and never pair it with journal.create (no double-create).
   if (ctx.weekNumber != null) {
-    if (respondedRef.current) return;
-    await prompts.respond(ctx.weekNumber, body, {
-      title: titleOrNull(title),
-      ...(ctx.promptOrdinal != null && { promptOrdinal: ctx.promptOrdinal }),
-    });
-    respondedRef.current = true;
-    return;
+    if (respondedRef.current) return null;
+    return respondOnce(refs, ctx.weekNumber, title, body, ctx);
   }
   const trimmedTitle = titleOrNull(title);
   if (entryIdRef.current == null) {
@@ -324,6 +383,7 @@ async function writeEntry(
   } else {
     await journal.update(entryIdRef.current, { message: body, title: trimmedTitle });
   }
+  return null;
 }
 
 /** What the Finish write left on the server: the entry id and its stored body. */
@@ -656,6 +716,8 @@ const chordFailure = (chord: AspectChordValue): RetryFailure => ({ lane: 'chord'
 interface WriteOutcome {
   durable: boolean;
   state: 'saved' | 'failed' | 'weekTaken';
+  /** The body the server holds when it is not the body sent (#2936). */
+  durableBody?: string;
 }
 
 /** Persist once; report its terminal state without publishing a stale result. */
@@ -668,7 +730,10 @@ function trackedWrite(
 ): Promise<WriteOutcome> {
   return (async () => {
     try {
-      await writeEntry(refs, title, body, ctx);
+      const heldAnswer = await writeEntry(refs, title, body, ctx);
+      // A replayed answer holding earlier words: those are what is durable, and
+      // the week's honest state is "already answered", not "saved".
+      if (heldAnswer != null) return { durable: true, state: 'weekTaken', durableBody: heldAnswer };
       return { durable: true, state: 'saved' };
     } catch (error) {
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
@@ -714,7 +779,7 @@ function settleTrackedWrite(
   outcome: WriteOutcome,
   reporter: SaveReporter,
 ): void {
-  if (outcome.durable) durableTextRef.current = { title, body };
+  if (outcome.durable) durableTextRef.current = { title, body: outcome.durableBody ?? body };
   if (outcome.state === 'failed') reporter.fail({ lane: 'body' });
   else reporter.succeed('body');
   if (generationRef.current !== generation) return;
@@ -750,12 +815,26 @@ function rejectSecondPromptEdit(
 }
 
 /**
+ * The write payload's refs, as one stable bundle: the refs never change
+ * identity, so neither does this, and both writers share it rather than each
+ * re-listing every ref in its dependencies.
+ */
+function useWriteRefs(refs: WriteEntryRefs): WriteEntryRefs {
+  const { entryIdRef, respondedRef, classificationRef, chordRef, createKeyRef } = refs;
+  return useMemo(
+    () => ({ entryIdRef, respondedRef, classificationRef, chordRef, createKeyRef }),
+    [entryIdRef, respondedRef, classificationRef, chordRef, createKeyRef],
+  );
+}
+
+/**
  * The debounced writer, single-flighted: if a save is already in flight, this
  * awaits it (letting a pending create set ``entryIdRef``) before starting, so two
  * overlapping saves of an id-less entry never each fire ``journal.create``.
  */
 function useSaveRunner(refs: SaveRunnerRefs, reporter: SaveReporter): RunSave {
-  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
+  const writeRefs = useWriteRefs(refs);
+  const { respondedRef } = refs;
   const { entryUnsettledRef, ctxRef, onSavedRef, onConflictRef } = refs;
   const { inFlightRef, generationRef, durableTextRef } = refs;
   return useCallback<RunSave>(
@@ -769,7 +848,6 @@ function useSaveRunner(refs: SaveRunnerRefs, reporter: SaveReporter): RunSave {
       if (rejectSecondPromptEdit(ctxRef.current, respondedRef.current, isCurrent, reporter))
         return false;
       if (isCurrent) reporter.publish('saving');
-      const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
       const task = trackedWrite(writeRefs, title, body, ctxRef.current, onConflictRef.current);
       inFlightRef.current = task;
       try {
@@ -790,10 +868,8 @@ function useSaveRunner(refs: SaveRunnerRefs, reporter: SaveReporter): RunSave {
       }
     },
     [
-      entryIdRef,
+      writeRefs,
       respondedRef,
-      classificationRef,
-      chordRef,
       entryUnsettledRef,
       ctxRef,
       onSavedRef,
@@ -830,7 +906,7 @@ type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
  * whose full text the Finish write carried.
  */
 function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFinish {
-  const { entryIdRef, respondedRef, classificationRef, chordRef } = refs;
+  const writeRefs = useWriteRefs(refs);
   const { entryUnsettledRef, ctxRef, inFlightRef, timerRef, generationRef, durableTextRef } = refs;
   return useCallback<RunFinish>(
     async (title, body) => {
@@ -842,7 +918,6 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
       while (inFlightRef.current) await inFlightRef.current;
       if (entryUnsettledRef.current) throw new Error(UNSETTLED_FINISH_ERROR);
       reporter.publish('saving');
-      const writeRefs = { entryIdRef, respondedRef, classificationRef, chordRef };
       const task = finishWrite(writeRefs, title, body, ctxRef.current);
       // Register a never-rejecting shadow in the single-flight slot so a keystroke
       // that schedules an autosave mid-finish drains onto us (and sees the id our
@@ -870,10 +945,7 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
       }
     },
     [
-      entryIdRef,
-      respondedRef,
-      classificationRef,
-      chordRef,
+      writeRefs,
       entryUnsettledRef,
       ctxRef,
       inFlightRef,
@@ -984,6 +1056,7 @@ interface DraftRefs {
   entryUnsettledRef: React.MutableRefObject<boolean>;
   generationRef: React.MutableRefObject<number>;
   durableTextRef: React.MutableRefObject<DraftText | null>;
+  createKeyRef: React.MutableRefObject<CreateKey<SentPage> | null>;
 }
 
 /**
@@ -1006,6 +1079,8 @@ function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): Draf
   const entryUnsettledRef = useRef(values.entryUnsettled);
   const generationRef = useRef(0);
   const durableTextRef = useRef<DraftText | null>(null);
+  // One create key per page: the same lifetime as ``entryIdRef`` (#2936).
+  const createKeyRef = useRef<CreateKey<SentPage> | null>(null);
   useMirroredInputs(onSavedRef, onConflictRef, ctxRef, entryUnsettledRef, values);
   return {
     entryIdRef,
@@ -1018,6 +1093,7 @@ function useDraftRefs(routeEntryId: number | null, values: MirroredInputs): Draf
     entryUnsettledRef,
     generationRef,
     durableTextRef,
+    createKeyRef,
   };
 }
 

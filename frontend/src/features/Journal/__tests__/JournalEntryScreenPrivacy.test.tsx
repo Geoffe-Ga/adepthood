@@ -3,6 +3,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { KEYED } from './idempotencyTestKit';
+
 /**
  * Verifies the privacy classification wiring in ``JournalEntryScreen``:
  * ``PrivacyTierControl`` is mounted in the writing column, the chosen
@@ -239,6 +241,7 @@ describe('JournalEntryScreen — classification on first create (#896)', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'intimate' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -257,6 +260,7 @@ describe('JournalEntryScreen — classification on first create (#896)', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'personal' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -277,6 +281,7 @@ describe('JournalEntryScreen — classification on first create (#896)', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'public' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -779,6 +784,7 @@ describe('JournalEntryScreen — classification seeded from the route param', ()
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'intimate' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -797,6 +803,7 @@ describe('JournalEntryScreen — classification seeded from the route param', ()
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ classification: 'personal' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();

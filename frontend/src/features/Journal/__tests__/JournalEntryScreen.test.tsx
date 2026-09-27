@@ -7,6 +7,8 @@ import type { StyleProp, ViewStyle } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 
+import { KEYED } from './idempotencyTestKit';
+
 import type { JournalMessage } from '@/api';
 import { colors, editorialType, spacing, writingField, writingFieldFocus } from '@/design/tokens';
 
@@ -164,6 +166,7 @@ describe('JournalEntryScreen', () => {
       });
       expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
         title: 'Week 3 Reflection',
+        ...KEYED,
       });
       expect(mockCreate).not.toHaveBeenCalled(); // no double-create
       // Resonance can't run on a prompt-compose entry (no local id), so the
@@ -193,6 +196,7 @@ describe('JournalEntryScreen', () => {
       expect(mockRespond).toHaveBeenCalledWith(14, 'Wayfinding and loneliness.', {
         title: 'Combine Multiple Curiosities',
         promptOrdinal: 3,
+        ...KEYED,
       });
     } finally {
       jest.useRealTimers();
@@ -248,6 +252,7 @@ describe('JournalEntryScreen', () => {
       });
       expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
         title: 'Reclaiming my anger',
+        ...KEYED,
       });
       expect(mockCreate).not.toHaveBeenCalled();
     } finally {
@@ -281,6 +286,7 @@ describe('JournalEntryScreen', () => {
       });
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'That was calming.', practice_session_id: 55 }),
+        KEYED,
       );
       expect(mockRespond).not.toHaveBeenCalled();
     } finally {
@@ -301,6 +307,7 @@ describe('JournalEntryScreen', () => {
       });
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'That felt grounding.', user_practice_id: 91 }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -652,6 +659,7 @@ describe('JournalEntryScreen', () => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'A new thought.' }),
+        KEYED,
       );
     } finally {
       jest.useRealTimers();
@@ -671,6 +679,7 @@ describe('JournalEntryScreen', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'River notes', message: 'The water kept moving.' }),
+        KEYED,
       );
       expect(mockUpdate).not.toHaveBeenCalled();
     } finally {
@@ -1055,6 +1064,7 @@ describe('JournalEntryScreen', () => {
         });
         expect(mockCreate).toHaveBeenCalledWith(
           expect.objectContaining({ message: 'A thought mid-read.' }),
+          KEYED,
         );
       } finally {
         jest.useRealTimers();

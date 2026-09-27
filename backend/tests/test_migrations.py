@@ -5713,3 +5713,97 @@ def test_feedback_triage_downgrade_refuses_while_triage_state_exists(
     with pytest.raises(RuntimeError, match="feedback triage state"):
         command.downgrade(cfg, _TRIAGE_BASE_REVISION)
     assert _table_exists(db_url, "feedbacknote")
+
+
+# -- #2936 journal + prompt-response idempotency keys ------------------------
+
+_WRITE_IDEMPOTENCY_BASE_REVISION = "d5b8e2a4c1f7"  # pragma: allowlist secret
+_WRITE_IDEMPOTENCY_REVISION = "6e6fe6af2c30"  # pragma: allowlist secret
+_WRITE_IDEMPOTENCY_TABLES = {
+    "journalentry": "ix_journalentry_user_idem_key",
+    "promptresponse": "ix_promptresponse_user_idem_key",
+}
+
+
+@pytest.fixture
+def alembic_sqlite_config_write_idempotency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """SQLite stamped at the idempotency migration's parent, holding just its two tables.
+
+    The whole chain cannot run on SQLite (``habit`` carries an ARRAY column), so
+    the two tables this migration alters are created in their minimal shape and
+    the round-trip is a statement about this migration alone.
+    """
+    db_path = tmp_path / "write_idempotency_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE journalentry (id INTEGER PRIMARY KEY, user_id INTEGER)"))
+        conn.execute(
+            text(
+                "CREATE TABLE promptresponse"
+                " (id INTEGER PRIMARY KEY, user_id INTEGER, week_number INTEGER)"
+            )
+        )
+        conn.execute(text("INSERT INTO journalentry (id, user_id) VALUES (1, 1)"))
+    engine.dispose()
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _WRITE_IDEMPOTENCY_BASE_REVISION)
+    return cfg
+
+
+# One literal statement per table, keyed by it, so no SQL is ever assembled.
+_KEYED_INSERT = {
+    "journalentry": "INSERT INTO journalentry (user_id, idem_key) VALUES (:user_id, :key)",
+    "promptresponse": "INSERT INTO promptresponse (user_id, idem_key) VALUES (:user_id, :key)",
+}
+
+
+def _insert_keyed(db_url: str, table: str, user_id: int, key: str | None) -> None:
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(_KEYED_INSERT[table]), {"user_id": user_id, "key": key})
+    finally:
+        engine.dispose()
+
+
+def _assert_key_index_is_unique_and_partial(db_url: str, table: str) -> None:
+    """Two rows under one ``(user, key)`` are refused; any number of unkeyed rows are not."""
+    for user_id, key in ((7, None), (7, None), (7, "digest"), (8, "digest")):
+        _insert_keyed(db_url, table, user_id, key)
+    with pytest.raises(IntegrityError):
+        _insert_keyed(db_url, table, 7, "digest")
+
+
+def test_write_idempotency_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_write_idempotency: Config,
+) -> None:
+    """Upgrade adds each keyed column and index; downgrade removes them; re-upgrade restores."""
+    cfg = alembic_sqlite_config_write_idempotency
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _WRITE_IDEMPOTENCY_REVISION)
+    for table, index in _WRITE_IDEMPOTENCY_TABLES.items():
+        assert "idem_key" in _columns_of(db_url, table)
+        assert index in _index_names(db_url, table)
+        _assert_key_index_is_unique_and_partial(db_url, table)
+    assert _scalar(db_url, "SELECT idem_key FROM journalentry WHERE id = 1") is None
+
+    command.downgrade(cfg, _WRITE_IDEMPOTENCY_BASE_REVISION)
+    for table, index in _WRITE_IDEMPOTENCY_TABLES.items():
+        assert "idem_key" not in _columns_of(db_url, table)
+        assert index not in _index_names(db_url, table)
+
+    command.upgrade(cfg, _WRITE_IDEMPOTENCY_REVISION)
+    for table in _WRITE_IDEMPOTENCY_TABLES:
+        assert "idem_key" in _columns_of(db_url, table)

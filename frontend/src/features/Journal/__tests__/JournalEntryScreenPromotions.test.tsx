@@ -12,6 +12,8 @@ import { StyleSheet } from 'react-native';
 import { parseJournalMarkdown, sourceToVisible, utf16ToSource } from '../journalMarkdown';
 import { PROMOTED_NOTICE_MS } from '../usePromotions';
 
+import { KEYED } from './idempotencyTestKit';
+
 import type { JournalMessage, PromotedQuote } from '@/api';
 import { touchTarget } from '@/design/tokens';
 
@@ -234,7 +236,7 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
       fireEvent.press(getByTestId('quote-select-confirm'));
     });
 
-    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BODY }));
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BODY }), KEYED);
     expect(mockPromote).toHaveBeenCalledWith(42, { anchor_start: 2, anchor_end: 19 });
   });
 

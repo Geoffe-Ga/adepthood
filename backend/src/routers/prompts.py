@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, Query, status
+from fastapi import Depends, Header, Query, status
 from sqlalchemy import Select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,7 @@ from schemas.prompt import (
     StagePromptsResponse,
 )
 from security import TextTooLongError, sanitize_user_text
+from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH, hash_idem_key
 
 logger = logging.getLogger(__name__)
 
@@ -501,6 +502,88 @@ def _resolve_entry_title(payload_title: str | None, resolved: WeekPrompt) -> str
     return resolved.default_title
 
 
+@dataclass(frozen=True)
+class _Respondent:
+    """The caller, and the digest of the ``Idempotency-Key`` their answer came under."""
+
+    user_id: int
+    hashed_key: str | None
+
+
+async def _respondent(
+    current_user: Annotated[int, Depends(get_current_user)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", max_length=IDEMPOTENCY_KEY_MAX_LENGTH),
+    ] = None,
+) -> _Respondent:
+    """Resolve who is answering and under which key (#2936).
+
+    The key is reduced to :func:`security.idempotency.hash_idem_key` here, once;
+    the raw header goes no further. Declared as a dependency so the header is
+    still a documented parameter of the route while the handler takes one
+    argument for the caller rather than two.
+    """
+    hashed = hash_idem_key(current_user, idempotency_key) if idempotency_key else None
+    return _Respondent(user_id=current_user, hashed_key=hashed)
+
+
+async def _keyed_response(
+    session: AsyncSession, user_id: int, hashed: str, week_number: int
+) -> PromptResponse | None:
+    """The response this account already submitted under ``hashed``, if any.
+
+    A key names one act. Found under a *different* week it is a client that
+    reused a key, and answering this week's route with another week's detail
+    would be a false 201, so it is refused with the code the goal-completion
+    surface already uses for the same mistake, and nothing is written.
+    """
+    result = await session.execute(
+        select(PromptResponse).where(
+            col(PromptResponse.user_id) == user_id,
+            col(PromptResponse.idem_key) == hashed,
+        )
+    )
+    row = result.scalars().first()
+    if row is not None and row.week_number != week_number:
+        raise conflict("idempotency_key_reused")
+    return row
+
+
+async def _replay_response(
+    session: AsyncSession, user_id: int, hashed: str | None, week_number: int
+) -> PromptDetail | None:
+    """The pre-insert replay read: the stored detail for a presented key, else ``None``."""
+    if hashed is None:
+        return None
+    row = await _keyed_response(session, user_id, hashed, week_number)
+    if row is None:
+        return None
+    return _answered_detail(row, await _dismissed_prompts(session, user_id))
+
+
+async def _commit_response(
+    session: AsyncSession, user_id: int, hashed: str | None, week_number: int
+) -> PromptResponse | None:
+    """Commit the pending response and its journal mirror; ``None`` on success.
+
+    On a collision both rows roll back together. A collision under a presented
+    key is a concurrent retry of this very answer and resolves to the stored
+    row (returned); anything else -- unkeyed, or a key that stored nothing -- is
+    a second answer to an answered week and stays the uniform 409.
+    """
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if hashed is not None:
+            winner = await _keyed_response(session, user_id, hashed, week_number)
+            if winner is not None:
+                return winner
+        raise conflict("already_responded") from exc
+    return None
+
+
 @router.post(
     "/{week_number}/respond",
     response_model=PromptDetail,
@@ -509,7 +592,7 @@ def _resolve_entry_title(payload_title: str | None, resolved: WeekPrompt) -> str
 async def submit_prompt_response(
     week_number: WeekNumberPath,
     payload: PromptSubmit,
-    current_user: Annotated[int, Depends(get_current_user)],
+    respondent: Annotated[_Respondent, Depends(_respondent)],
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> PromptDetail:
@@ -529,6 +612,14 @@ async def submit_prompt_response(
     sees both rows in a TOCTOU race anyway, so we let it own the
     decision and the response code stays uniform.
 
+    The one exception is the writer's own retry (#2936). A submission carrying
+    an ``Idempotency-Key`` this account already answered this week under is
+    answered 201 with the stored detail, not 409: its first attempt landed and
+    only the answer was lost. Nothing is written and nothing is logged a second
+    time, and the retried body is not compared -- the stored response is what
+    comes back. The same key under another week is 409
+    ``idempotency_key_reused``.
+
     ``prompt_ordinal`` names which of the stage's prompts the response
     answers; omitted, it is the prompt the week itself draws, so clients
     written against the one-prompt-per-week contract are unaffected.  An
@@ -538,7 +629,11 @@ async def submit_prompt_response(
     resolved = resolve_week_prompt(week_number, payload.prompt_ordinal)
     if resolved is None:
         raise not_found("prompt")
+    current_user, hashed = respondent.user_id, respondent.hashed_key
     await _check_week_unlocked(session, current_user, week_number, user_tz)
+    replayed = await _replay_response(session, current_user, hashed, week_number)
+    if replayed is not None:
+        return replayed
 
     # Sanitize once at the boundary (BUG-PROMPT-003); both PromptResponse and
     # JournalEntry receive the cleaned text so the two rows agree byte-for-byte
@@ -566,6 +661,7 @@ async def submit_prompt_response(
         question=resolved.question,
         response=cleaned_response,
         user_id=current_user,
+        idem_key=hashed,
     )
     session.add(prompt_response)
 
@@ -581,11 +677,9 @@ async def submit_prompt_response(
     )
     session.add(journal_entry)
 
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise conflict("already_responded") from exc
+    winner = await _commit_response(session, current_user, hashed, week_number)
+    if winner is not None:
+        return _answered_detail(winner, await _dismissed_prompts(session, current_user))
 
     await session.refresh(prompt_response)
 

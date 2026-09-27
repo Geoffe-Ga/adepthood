@@ -1,13 +1,19 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import Column, DateTime, Index, String, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
+from security.idempotency import IDEMPOTENCY_DIGEST_COLUMN_WIDTH
 from services.journal_encryption import EncryptedString
 
 if TYPE_CHECKING:
     from .user import User
+
+# Detached column used ONLY to build the partial-index WHERE expression (the
+# :mod:`models.feedback` shape): it matches the real ``idem_key`` column by name
+# at DDL-compile time and is never attached to the table itself.
+_IDEM_KEY_COLUMN = Column("idem_key", String(IDEMPOTENCY_DIGEST_COLUMN_WIDTH), nullable=True)
 
 
 class PromptResponse(SQLModel, table=True):
@@ -27,10 +33,25 @@ class PromptResponse(SQLModel, table=True):
     prompt, identical for every account and already committed to this repository,
     so encrypting it would protect nothing while making the row harder to reason
     about.
+
+    ``idem_key`` is the digest of ``(user_id, Idempotency-Key)`` for a keyed
+    submission, NULL otherwise (#2936). The week constraint already makes a
+    second row impossible; what the key adds is *recognition*. A retry whose
+    first attempt landed but whose answer was lost is the writer's own answer
+    coming back, so it is answered with that row rather than refused as though
+    somebody else had taken the week.
     """
 
     __table_args__ = (
         UniqueConstraint("user_id", "week_number", name="uq_promptresponse_user_week"),
+        Index(
+            "ix_promptresponse_user_idem_key",
+            "user_id",
+            "idem_key",
+            unique=True,
+            postgresql_where=_IDEM_KEY_COLUMN.is_not(None),
+            sqlite_where=_IDEM_KEY_COLUMN.is_not(None),
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -47,4 +68,8 @@ class PromptResponse(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
+    idem_key: str | None = Field(
+        default=None,
+        sa_column=Column(String(IDEMPOTENCY_DIGEST_COLUMN_WIDTH), nullable=True),
+    )
     user: "User" = Relationship(back_populates="responses")
