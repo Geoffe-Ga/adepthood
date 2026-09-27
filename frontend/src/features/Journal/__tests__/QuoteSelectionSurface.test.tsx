@@ -11,7 +11,7 @@ import QuoteSelectionSurface, { SELECTION_FIELD_MIN_HEIGHT } from '../QuoteSelec
 import { pinnedFooterStyle } from '../readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from '../selectionSurfaceCopy';
 
-import { colors, editorialType, writingFieldFocus } from '@/design/tokens';
+import { accent, colors, editorialType, writingFieldFocus } from '@/design/tokens';
 
 const Platform = require('react-native').Platform as { OS: string };
 
@@ -225,6 +225,17 @@ describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
     expect(before.flexGrow).toBeUndefined();
     fireEvent(input, 'contentSizeChange', { nativeEvent: { contentSize: { height: 900 } } });
     expect(StyleSheet.flatten(getByTestId('quote-select-input').props.style).height).toBe(900);
+  });
+
+  it('marks focus with an accent rule in place of the browser ring, and clears it on blur', () => {
+    const { getByTestId } = renderSurface();
+    const ruleColor = () =>
+      StyleSheet.flatten(getByTestId('quote-select-input').props.style).borderLeftColor;
+    expect(ruleColor()).toBe('transparent');
+    fireEvent(getByTestId('quote-select-input'), 'focus');
+    expect(ruleColor()).toBe(accent.primary);
+    fireEvent(getByTestId('quote-select-input'), 'blur');
+    expect(ruleColor()).toBe('transparent');
   });
 
   it('keeps the preview, actions and hint together in one footer pinned to the viewport', () => {

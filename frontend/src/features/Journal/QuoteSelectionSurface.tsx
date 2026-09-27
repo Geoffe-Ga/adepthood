@@ -8,9 +8,10 @@
  * live preview that echoes the raw selection back, and
  * an honestly disabled "Promote selection" confirm that only lights up once a
  * non-empty passage is chosen (an empty tap surfaces a gentle hint instead of
- * silently promoting nothing). The field wears no browser focus ring and grows
- * to its text, and the preview, actions and hint sit together in a footer that
- * web pins to the foot of the viewport while a long body scrolls (#2952).
+ * silently promoting nothing). The field trades the browser focus ring for a
+ * terracotta rule lit while it holds focus, grows to its text, and the
+ * preview, actions and hint sit together in a footer that web pins to the
+ * foot of the viewport while a long body scrolls (#2952).
  * Shared by the read-mode promote flow on
  * ``JournalEntryScreen`` and the in-panel re-promotion flow in
  * ``ReflectionSourcesPanel``; ``testID`` prefixes every element so more than one
@@ -25,10 +26,8 @@ import {
   TouchableOpacity,
   View,
   type NativeSyntheticEvent,
-  type StyleProp,
   type TextInputContentSizeChangeEventData,
   type TextInputSelectionChangeEventData,
-  type TextStyle,
 } from 'react-native';
 
 import { selectionToAnchorSpan } from './anchorSpan';
@@ -145,32 +144,48 @@ function useSelectionSurfaceState(
   };
 }
 
+/** The measured height the field takes, from ``useGrowingFieldHeight``. */
+interface FieldGrowth {
+  minHeight?: number;
+  height?: number;
+}
+
 interface SelectionBodyProps {
   body: string;
   onSelectionChange: (_event: SelectionChangeEvent) => void;
   onContentSizeChange: (_event: ContentSizeChangeEvent) => void;
-  fieldStyle: StyleProp<TextStyle>;
+  growth: FieldGrowth;
   inputRef: React.RefObject<TextInput | null>;
   testID: string;
 }
 
 /**
  * The read-only body field, isolated in ``React.memo`` behind stable handlers
- * and a memoised style so preview/hint/confirm state changes re-render only the
- * surrounding chrome, never the mirrored text.
+ * and a memoised growth object so preview/hint/confirm state changes re-render
+ * only the surrounding chrome, never the mirrored text. It owns its own focus
+ * flag for the same reason: lighting the focus rule must not re-render the
+ * chrome either.
  */
 const SelectionBody = React.memo(function SelectionBody({
   body,
   onSelectionChange,
   onContentSizeChange,
-  fieldStyle,
+  growth,
   inputRef,
   testID,
 }: SelectionBodyProps): React.JSX.Element {
+  const [focused, setFocused] = useState(false);
   return (
     <TextInput
       ref={inputRef}
-      style={fieldStyle}
+      style={[
+        styles.quoteSelectField,
+        writingFieldFocus,
+        growth,
+        focused && styles.quoteSelectFieldFocused,
+      ]}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       value={body}
       multiline
       editable
@@ -186,21 +201,18 @@ const SelectionBody = React.memo(function SelectionBody({
 });
 
 /**
- * Size the field to its text (no blank-page floor, no inner scroll pane) and
- * drop the browser focus ring, changing the style object only when the
- * measured height does so the memoised body is not re-rendered by the chrome.
+ * Size the field to its text (no blank-page floor, no inner scroll pane),
+ * handing the body a growth object that changes only when the measured height
+ * does, so the memoised body is not re-rendered by the chrome.
  */
-function useSelectionFieldStyle(): {
-  fieldStyle: StyleProp<TextStyle>;
+function useSelectionFieldGrowth(): {
+  growth: FieldGrowth;
   onContentSizeChange: (_event: ContentSizeChangeEvent) => void;
 } {
-  const growth = useGrowingFieldHeight(SELECTION_FIELD_MIN_HEIGHT);
-  const { minHeight, height } = growth.style;
-  const fieldStyle = useMemo<StyleProp<TextStyle>>(
-    () => [styles.quoteSelectField, writingFieldFocus, { minHeight, height }],
-    [minHeight, height],
-  );
-  return { fieldStyle, onContentSizeChange: growth.onContentSizeChange };
+  const measured = useGrowingFieldHeight(SELECTION_FIELD_MIN_HEIGHT);
+  const { minHeight, height } = measured.style;
+  const growth = useMemo<FieldGrowth>(() => ({ minHeight, height }), [minHeight, height]);
+  return { growth, onContentSizeChange: measured.onContentSizeChange };
 }
 
 interface SelectionActionsProps {
@@ -305,7 +317,7 @@ function QuoteSelectionSurface({
     useSelectionSurfaceState(body, onSelectionChange);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, emitSpan);
-  const { fieldStyle, onContentSizeChange } = useSelectionFieldStyle();
+  const { growth, onContentSizeChange } = useSelectionFieldGrowth();
   // Resolved per render rather than at module load so the wording follows the
   // platform the surface is actually mounted on (and so a test that sets
   // Platform.OS after import sees the copy change).
@@ -320,7 +332,7 @@ function QuoteSelectionSurface({
         body={body}
         onSelectionChange={handleSelectionChange}
         onContentSizeChange={onContentSizeChange}
-        fieldStyle={fieldStyle}
+        growth={growth}
         inputRef={inputRef}
         testID={testID}
       />

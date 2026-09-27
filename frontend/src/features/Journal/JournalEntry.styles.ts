@@ -370,6 +370,18 @@ const styles = StyleSheet.create({
     ...LIVE_BODY_INSET,
     color: colors.paper.ink,
     textAlignVertical: 'top',
+    // The rule is always laid out so lighting it on focus never shifts the text.
+    borderLeftWidth: PREVIEW_STRIPE_WIDTH,
+    borderLeftColor: 'transparent',
+  },
+  /**
+   * The field's focus signal, standing in for the browser ring
+   * ``writingFieldFocus`` removes: the same terracotta rule the preview card
+   * wears, lit while the field holds focus so a keyboard reader selecting
+   * with Shift and the arrow keys can see where they are.
+   */
+  quoteSelectFieldFocused: {
+    borderLeftColor: accent.primary,
   },
   /**
    * The footer under the field — preview, Promote / Cancel, and the empty-tap
