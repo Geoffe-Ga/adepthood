@@ -51,7 +51,7 @@ function Choice({ label, onPress, a11y, testID, primary = false }: ChoiceProps) 
 
 /** Said when words typed while the entry could not open are waiting (#2935). */
 export const CARRIED_WORDS_NOTE =
-  'The words you wrote while this page couldn’t open are safe here. Choose Edit to add them below your entry.';
+  'The words you wrote while this page couldn’t open are waiting here, not yet saved. Choose Edit to add them below your entry.';
 
 function EditConfirmDialog({
   visible,

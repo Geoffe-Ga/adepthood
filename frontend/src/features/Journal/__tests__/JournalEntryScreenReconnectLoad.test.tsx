@@ -8,7 +8,7 @@ import React from 'react';
 
 import { captureNetInfoListener, type NetInfoHandle } from './netInfoTestKit';
 
-import type { JournalMessage } from '@/api';
+import type { JournalClassification, JournalMessage } from '@/api';
 import { NetworkStatusProvider } from '@/context/NetworkStatusContext';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -97,18 +97,44 @@ function offlineError(): Error {
 
 let net: NetInfoHandle;
 
+type BeforeRemove = (_event: { preventDefault: () => void; data: { action: unknown } }) => void;
+
+/** One navigation double per test, so exits can be asserted across re-renders. */
+function makeNav() {
+  const listeners: Record<string, BeforeRemove | undefined> = {};
+  return {
+    navigate: jest.fn(),
+    goBack: jest.fn(),
+    push: jest.fn(),
+    dispatch: jest.fn(),
+    addListener: jest.fn((event: string, listener: BeforeRemove) => {
+      listeners[event] = listener;
+      return () => undefined;
+    }),
+    /** Fire the stack's removal of this screen (back gesture, hardware back). */
+    removeScreen(action: unknown) {
+      const preventDefault = jest.fn();
+      act(() => listeners.beforeRemove?.({ preventDefault, data: { action } }));
+      return preventDefault;
+    },
+  };
+}
+
+let nav: ReturnType<typeof makeNav>;
+
 interface ScreenParams {
   entryId?: number;
   prefillQuote?: { text: string; sourceTitle: string };
+  classification?: JournalClassification;
+  returnTo?: { screen: 'Course'; params: { contentId: number } };
 }
 
 function screenElement(params?: ScreenParams) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
-  const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
   return (
     <NetworkStatusProvider>
-      <Screen navigation={navigation} route={route} autosaveDelayMs={AUTOSAVE_MS} />
+      <Screen navigation={nav} route={route} autosaveDelayMs={AUTOSAVE_MS} />
     </NetworkStatusProvider>
   );
 }
@@ -157,6 +183,12 @@ async function openFailed(): Promise<Screen> {
   return screen;
 }
 
+/** Tap a tier on the page and let its PATCH settle. */
+async function pressTierAndSettle(screen: Screen, tier: string) {
+  fireEvent.press(within(screen.getByTestId('journal-page')).getByTestId(`privacy-tier-${tier}`));
+  await advance(0);
+}
+
 async function typeBody(screen: Screen, text: string) {
   fireEvent.changeText(screen.getByTestId('journal-body-input'), text);
   await advance(AUTOSAVE_MS);
@@ -169,6 +201,7 @@ async function reconnect() {
 }
 
 beforeEach(() => {
+  nav = makeNav();
   jest.useFakeTimers();
   net = captureNetInfoListener();
   mockGet.mockReset();
@@ -707,5 +740,192 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  describe('leaving while words are held (#2935 round 4)', () => {
+    async function heldAfterFailedEscalation(stored = 'public' as const) {
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: stored }));
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await screen.findByTestId('journal-carry-waiting');
+      return screen;
+    }
+
+    async function heldOnFinishedAfterCancel() {
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ status: 'finished' }));
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await screen.findByTestId('edit-confirm-dialog');
+      fireEvent.press(screen.getByTestId('edit-confirm-cancel'));
+      return screen;
+    }
+
+    async function pressClose(screen: Screen) {
+      fireEvent.press(screen.getByTestId('journal-close-entry'));
+      await advance(AUTOSAVE_MS);
+    }
+
+    it.each([
+      ['a failed tier move', heldAfterFailedEscalation],
+      ['a finished entry after Cancel', heldOnFinishedAfterCancel],
+    ])('Close asks before leaving held words behind (%s)', async (_path, open) => {
+      const screen = await open();
+
+      await pressClose(screen);
+
+      expect(nav.navigate).not.toHaveBeenCalled();
+      expect(screen.getByTestId('held-leave-dialog')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('held-leave-stay'));
+      await advance(AUTOSAVE_MS);
+      expect(screen.queryByTestId('held-leave-dialog')).toBeNull();
+      expect(nav.navigate).not.toHaveBeenCalled();
+      expect(updatesCarrying(TYPED)).toEqual([]);
+
+      await pressClose(screen);
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(AUTOSAVE_MS);
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      expect(updatesCarrying(TYPED)).toEqual([]);
+    });
+
+    it('guards Back to reading the same way', async () => {
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      mockUpdate.mockRejectedValueOnce(new Error('network'));
+      const returnTo = { screen: 'Course' as const, params: { contentId: 3 } };
+      const screen = renderScreen({ entryId: 7, returnTo });
+      await screen.findByTestId('journal-load-error');
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await screen.findByTestId('journal-carry-waiting');
+
+      fireEvent.press(screen.getByTestId('journal-return-to-reading'));
+
+      expect(nav.navigate).not.toHaveBeenCalled();
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', returnTo);
+      expect(updatesCarrying(TYPED)).toEqual([]);
+    });
+
+    it('guards the back gesture and hardware back the same way', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const action = { type: 'GO_BACK' };
+
+      const prevented = nav.removeScreen(action);
+
+      expect(prevented).toHaveBeenCalled();
+      expect(screen.getByTestId('held-leave-dialog')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      expect(nav.dispatch).toHaveBeenCalledWith(action);
+    });
+
+    it('offers the tier retry from the leave dialog after a failed tier move', async () => {
+      const screen = await heldAfterFailedEscalation();
+      await pressClose(screen);
+
+      fireEvent.press(screen.getByTestId('held-leave-retry'));
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+
+      expect(nav.navigate).not.toHaveBeenCalled();
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+    });
+
+    it('closes straight away when nothing is held and the page is the stored text', async () => {
+      mockGet.mockResolvedValue(entry());
+      const screen = renderScreen({ entryId: 7 });
+      await waitFor(() => expect(bodyValue(screen)).toBe(SERVER_BODY));
+
+      await pressClose(screen);
+
+      expect(screen.queryByTestId('held-leave-dialog')).toBeNull();
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      expect(nav.removeScreen({ type: 'GO_BACK' })).not.toHaveBeenCalled();
+    });
+
+    it('keeps in-view text typed during a failed move unsaved on Close', async () => {
+      const escalation = deferred<JournalMessage>();
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      mockUpdate.mockReturnValueOnce(escalation.promise);
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await waitFor(() =>
+        expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }),
+      );
+      await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+      await act(async () => {
+        escalation.reject(new Error('network'));
+      });
+
+      await pressClose(screen);
+
+      expect(nav.navigate).not.toHaveBeenCalled();
+      expect(screen.getByTestId('held-leave-dialog')).toBeTruthy();
+      expect(updatesCarrying(FLIGHT_WORDS)).toEqual([]);
+    });
+
+    it.each<[JournalClassification, JournalClassification]>([
+      ['public', 'personal'],
+      ['personal', 'intimate'],
+    ])(
+      'a looser choice after a failed move (stored %s, typed under %s) keeps the words held',
+      async (stored, typedUnder) => {
+        mockGet
+          .mockRejectedValueOnce(offlineError())
+          .mockResolvedValueOnce(entry({ classification: stored }));
+        mockUpdate.mockRejectedValueOnce(new Error('network'));
+        // The page opens (from the route) showing the tier the words are typed under.
+        const screen = renderScreen({ entryId: 7, classification: typedUnder });
+        await screen.findByTestId('journal-load-error');
+        expect(tierSelected(screen, typedUnder)).toBe(true);
+        await typeBody(screen, TYPED);
+        await reconnect();
+        await screen.findByTestId('journal-carry-waiting');
+        await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+
+        await pressTierAndSettle(screen, stored);
+        await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS} more`);
+        await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+        expect(bodyValue(screen)).not.toContain(TYPED);
+        expect(updatesCarrying(TYPED)).toEqual([]);
+        expect(updatesCarrying(FLIGHT_WORDS)).toEqual([]);
+        expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+      },
+    );
+
+    it('lifts the gate on a confirmed stricter choice: one save under it, and Finish works', async () => {
+      const screen = await heldAfterFailedEscalation();
+
+      await pressTierAndSettle(screen, 'intimate');
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+      mockUpdate.mockClear();
+      await typeBody(screen, `${CARRIED_BODY} Later.`);
+
+      const saves = mockUpdate.mock.calls.filter(([, p]) => 'message' in (p as object));
+      expect(saves).toHaveLength(1);
+      expect(tierSelected(screen, 'intimate')).toBe(true);
+      expect(mockUpdate.mock.calls.some(([, p]) => 'classification' in (p as object))).toBe(false);
+
+      fireEvent.press(screen.getByTestId('journal-finish-button'));
+      await advance(AUTOSAVE_MS);
+      expect(screen.queryByTestId('journal-finish-error')).toBeNull();
+      expect(mockUpdate).toHaveBeenLastCalledWith(
+        7,
+        expect.objectContaining({ status: 'finished' }),
+      );
+    });
   });
 });

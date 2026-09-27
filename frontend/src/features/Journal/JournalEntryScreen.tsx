@@ -35,6 +35,7 @@ import GetResonanceButton, {
   shouldShowResonance,
   type ResonanceButtonLayout,
 } from './GetResonanceButton';
+import HeldWordsLeaveDialog from './HeldWordsLeaveDialog';
 import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
@@ -1658,18 +1659,20 @@ interface HeldTextGate {
  * still stored under the looser one. So while ``heldRef`` is set (from the
  * moment the escalation is sent until a tier at least as strict is confirmed),
  * the debounced save is dropped (the next release saves the page as it then
- * stands), the exit flush reports not-durable unless the page is exactly the
- * stored text, and Finish refuses. Every tier write reports back through
+ * stands), every flush reports not-durable, and Finish refuses. Every tier write reports back through
  * ``tierSettledRef`` so the release can react to a retry or the writer's choice.
  */
 function useHeldTextGate(
-  entry: EntryState,
   saving: ReturnType<typeof useDebouncedSave>,
+  carryHeld: boolean,
 ): HeldTextGate {
   const heldRef = useRef(false);
+  // Held words (even with no escalation owed, e.g. a finished entry after
+  // Cancel) mean no flush may report the page saved: the words are not on it.
+  const carryHeldRef = useRef(carryHeld);
+  carryHeldRef.current = carryHeld;
   const tierSettledRef = useRef<TierSettled>(() => undefined);
   const { save, flush, finish, changeClassification, entryId } = saving;
-  const { loadedTextRef } = entry;
   const gatedSave = useCallback(
     (title: string, body: string) => {
       if (!heldRef.current) save(title, body);
@@ -1678,10 +1681,8 @@ function useHeldTextGate(
   );
   const gatedFlush = useCallback(
     async (title: string, body: string): Promise<FlushResult> =>
-      heldRef.current
-        ? { durable: sameDraft(loadedTextRef.current, title, body), entryId }
-        : flush(title, body),
-    [flush, loadedTextRef, entryId],
+      heldRef.current || carryHeldRef.current ? { durable: false, entryId } : flush(title, body),
+    [flush, entryId],
   );
   const gatedFinish = useCallback<RunFinish>(
     async (title, body) => {
@@ -1742,10 +1743,10 @@ function useCarryPutBack(
  * ordinary tier writer, with every page-text write gated meanwhile. The words go
  * back only once a tier at least that strict is confirmed. If the move fails,
  * they stay held OFF the page (and ``carryWaitingTier`` says so), the gate stays
- * on, and they return on the first later confirmation: a #2930 retry of the
- * failed tier, or the writer choosing a strict enough tier themselves. A
- * confirmed deliberate choice of any tier lifts the gate for the page's own
- * text, which the writer chose it with in view.
+ * on, and they return on the first later confirmation of a tier at least that
+ * strict: a #2930 retry of the failed tier, or the writer choosing one. A looser
+ * choice lifts nothing; leaving without the words is the held-exit guard's
+ * explicit choice, never a side effect.
  */
 function useCarryRelease(
   entry: EntryState,
@@ -1781,12 +1782,9 @@ function useCarryRelease(
   tierSettledRef.current = (tier) => {
     if (escalatingRef.current || displayedTier() !== tier) return;
     const hold = holdRef.current;
-    if (hold != null && waiting && strictEnough(hold, tier)) {
-      putBack(hold);
-    } else if (heldRef.current) {
-      heldRef.current = false;
-      save(entry.titleRef.current, entry.bodyRef.current);
-    }
+    // Only a confirmed tier at least as strict as the one the words were typed
+    // under lifts the hold; a looser choice leaves them (and the gate) as they are.
+    if (hold != null && waiting && strictEnough(hold, tier)) putBack(hold);
   };
   return { releaseCarry, carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null };
 }
@@ -1935,7 +1933,7 @@ function useJournalAutosave(
   useSeedDurableTextOnLoad(entry, saving.seedDurableText);
   useDropStaleSaveOnLoad(entry.loaded, saving.cancelPending);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
-  const gate = useHeldTextGate(entry, saving);
+  const gate = useHeldTextGate(saving, entry.carryHold != null);
   const bindings = useAutosaveBindings(entry, gate.saving);
   const carry = useCarryRelease(entry, saving.save, bindings.retrySource, gate);
   return buildAutosaveApi(
@@ -3456,7 +3454,7 @@ function LoadErrorBanner({ message }: { message: string | null }): React.JSX.Ele
 
 /** What the page says while carried words wait on a stricter tier (#2935). */
 export function carryWaitingCopy(tier: JournalClassification): string {
-  return `The words you wrote while this page couldn’t open are safe here. They’ll come back once this entry is saved as ${tierLabel(tier)} or more private — tap Retry, or choose that setting.`;
+  return `The words you wrote while this page couldn’t open are waiting here, not yet saved. They’ll come back once this entry is saved as ${tierLabel(tier)} or more private — tap Retry, or choose that setting.`;
 }
 
 /** Say that carried words are waiting on a stricter tier, until they come back. */
@@ -3504,16 +3502,26 @@ function ReturnToReadingLink({
   returnTo,
   navigation,
   flush,
+  guard,
 }: {
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   flush: () => Promise<number | null>;
+  guard: Pick<HeldExitGuard, 'held' | 'request'>;
 }): React.JSX.Element | null {
+  const { held, request } = guard;
   const onPress = useCallback(() => {
     if (returnTo == null) return;
+    const back = () =>
+      navigation.navigate('Tabs', { screen: returnTo.screen, params: returnTo.params });
+    // While words are held nothing can be flushed; the guard asks before leaving.
+    if (held) {
+      request(back);
+      return;
+    }
     void flush();
-    navigation.navigate('Tabs', { screen: returnTo.screen, params: returnTo.params });
-  }, [returnTo, navigation, flush]);
+    back();
+  }, [returnTo, navigation, flush, held, request]);
   if (returnTo == null) return null;
   return (
     <TouchableOpacity
@@ -3563,21 +3571,25 @@ function ApiKeySettingsLink({ onPress }: { onPress: () => void }): React.JSX.Ele
 function CloseEntryLink({
   navigation,
   flush,
+  guard,
 }: {
   navigation: ScreenNavigation;
   flush: () => Promise<boolean>;
+  guard: Pick<HeldExitGuard, 'held' | 'request'>;
 }): React.JSX.Element {
   const [closing, setClosing] = useState(false);
+  const { held, request } = guard;
   const onPress = useCallback(async () => {
     if (closing) return;
     setClosing(true);
+    const toJournal = () => navigation.navigate('Tabs', { screen: 'Journal' });
+    // While words are held the flush is never durable, so Close cannot report the
+    // page saved; the guard asks instead of closing silently or sticking.
     const durable = await flush();
-    if (durable) {
-      navigation.navigate('Tabs', { screen: 'Journal' });
-      return;
-    }
     setClosing(false);
-  }, [closing, flush, navigation]);
+    if (durable) toJournal();
+    else if (held) request(toJournal);
+  }, [closing, flush, navigation, held, request]);
   return (
     <TouchableOpacity
       style={styles.entryIconButton}
@@ -3593,6 +3605,103 @@ function CloseEntryLink({
   );
 }
 
+/** A leave that finishes the stack removal the guard held back. */
+function dispatchLeave(
+  navigation: ScreenNavigation,
+  action: Parameters<ScreenNavigation['dispatch']>[0],
+): () => void {
+  return () => navigation.dispatch(action);
+}
+
+/** A leave the held-exit guard is holding back until the writer chooses. */
+type PendingLeave = { run: () => void } | null;
+
+/** The held-exit guard's controls (#2935). */
+interface HeldExitGuard {
+  /** True while offline words wait to be put back: every exit asks first. */
+  held: boolean;
+  /** Run ``leave`` now, or, while words are held, ask before running it. */
+  request: (_leave: () => void) => void;
+  pending: boolean;
+  stay: () => void;
+  leave: () => void;
+}
+
+/**
+ * Guard every exit while offline words are held (#2935). The in-page exits
+ * (Close, Back to reading) call ``request``; everything that removes this
+ * screen from the stack (the back gesture, hardware or browser back, a
+ * navigate that pops it) is caught by ``beforeRemove``. Either way the writer
+ * is asked, and leaving without the words is only ever their explicit choice.
+ * Pushing another screen on top keeps this one, and its held words, mounted,
+ * so it is not an exit. Closing the app or browser tab cannot be intercepted.
+ */
+function useHeldExitGuard(navigation: ScreenNavigation, held: boolean): HeldExitGuard {
+  const [pending, setPending] = useState<PendingLeave>(null);
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const leavingRef = useRef(false);
+  useEffect(
+    () =>
+      navigation.addListener?.('beforeRemove', (event) => {
+        if (!heldRef.current || leavingRef.current) return;
+        event.preventDefault();
+        setPending({ run: dispatchLeave(navigation, event.data.action) });
+      }),
+    [navigation],
+  );
+  const request = useCallback((leave: () => void) => {
+    if (heldRef.current) setPending({ run: leave });
+    else leave();
+  }, []);
+  const stay = useCallback(() => setPending(null), []);
+  const leave = useCallback(() => {
+    leavingRef.current = true;
+    setPending(null);
+    pending?.run();
+  }, [pending]);
+  return { held, request, pending: pending != null, stay, leave };
+}
+
+/** The exit row plus the dialog its guard asks with (#2935). */
+function EntryExits({
+  ctl,
+  navigation,
+  returnTo,
+  onOpenApiKey,
+}: {
+  ctl: Controller;
+  navigation: ScreenNavigation;
+  returnTo: CourseReturnTo;
+  onOpenApiKey: () => void;
+}): React.JSX.Element {
+  const guard = useHeldExitGuard(navigation, ctl.autosave.carryHeld);
+  const { stay } = guard;
+  const { retryFailedSave } = ctl.saveRetry;
+  const onRetry = useCallback(() => {
+    stay();
+    void retryFailedSave('tap');
+  }, [stay, retryFailedSave]);
+  return (
+    <>
+      <EntryExitControls
+        returnTo={returnTo}
+        navigation={navigation}
+        flush={ctl.autosave.flush}
+        flushForExit={ctl.autosave.flushForExit}
+        onOpenApiKey={onOpenApiKey}
+        guard={guard}
+      />
+      <HeldWordsLeaveDialog
+        visible={guard.pending}
+        onStay={stay}
+        onLeave={guard.leave}
+        onRetry={ctl.autosave.carryWaitingTier == null ? undefined : onRetry}
+      />
+    </>
+  );
+}
+
 /**
  * The page's exit row: the course return when there is one, and the close always.
  * They are separate affordances — the return carries the reader back to the exact
@@ -3604,18 +3713,25 @@ function EntryExitControls({
   flush,
   flushForExit,
   onOpenApiKey,
+  guard,
 }: {
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   flush: () => Promise<number | null>;
   flushForExit: () => Promise<boolean>;
   onOpenApiKey: () => void;
+  guard: HeldExitGuard;
 }): React.JSX.Element {
   return (
     <View style={styles.entryExitRow}>
-      <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
+      <ReturnToReadingLink
+        returnTo={returnTo}
+        navigation={navigation}
+        flush={flush}
+        guard={guard}
+      />
       <ApiKeySettingsLink onPress={onOpenApiKey} />
-      <CloseEntryLink navigation={navigation} flush={flushForExit} />
+      <CloseEntryLink navigation={navigation} flush={flushForExit} guard={guard} />
     </View>
   );
 }
@@ -4013,11 +4129,10 @@ function JournalEntryScreen({
       <EntryCreekSurface ctl={ctl} />
       <EntryCorpusInvitation ctl={ctl} navigation={navigation} />
       <EntryNotices autosave={ctl.autosave} />
-      <EntryExitControls
-        returnTo={route.params?.returnTo}
+      <EntryExits
+        ctl={ctl}
         navigation={navigation}
-        flush={ctl.autosave.flush}
-        flushForExit={ctl.autosave.flushForExit}
+        returnTo={route.params?.returnTo}
         onOpenApiKey={openApiKey}
       />
       <EntryComposeRow
