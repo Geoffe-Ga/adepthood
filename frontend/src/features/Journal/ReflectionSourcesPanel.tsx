@@ -10,13 +10,18 @@
  *      reflections in scope. Each row collapses to an excerpt and expands to its
  *      full body on tap.
  *
- * Responsive per the margin-column precedent: a bottom-sheet ``Modal`` on a
- * narrow viewport, an inline side pane on a wide one. Reduced-motion safe.
+ * Responsive: an inline side pane beside the writing sheet only where the page,
+ * its margin column and the pane all fit (``SIDE_PANE_BREAKPOINT``); below that a
+ * bounded, centred bottom-sheet ``Modal`` a tap on the backdrop dismisses. Either
+ * way the heading and its X stay fixed above a scroll holding only the quotes and
+ * the feed (#2883). Reduced-motion safe.
  */
 import { X } from 'lucide-react-native';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Modal,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -48,17 +53,51 @@ import {
   SPACING,
   accent,
   colors,
+  contentLayout,
   editorialType,
   ink,
+  journalLayout,
+  journalSheet,
   spacing,
   surface,
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
+import { useDismissKeys } from '@/hooks/useDismissKeys';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
-/** Below this viewport width the panel is a bottom sheet; at/above it, a side pane. */
-const NARROW_BREAKPOINT = 600;
+/** The side pane's width: half the page's reading measure. */
+const SOURCES_PANE_WIDTH = journalLayout.pageMaxWidth / 2;
+
+/** The desk ground left between the side pane and the viewport's trailing edge. */
+const SOURCES_PANE_GUTTER = journalSheet.deskPaddingH;
+
+/**
+ * At/above this viewport width the panel is an inline side pane beside the
+ * writing sheet; below it, a bounded bottom sheet. The sheet holds the page
+ * (``contentLayout.maxWidth``: the reading measure plus its fixed 220 margin
+ * column, which persists from 600 up), so a pane only goes beside it once the
+ * viewport also has room for the pane itself. Narrower, a pane would crush the
+ * writing column to a sliver (about 145px at 768).
+ */
+export const SIDE_PANE_BREAKPOINT = contentLayout.maxWidth + SOURCES_PANE_WIDTH;
+
+/** The sheet never covers more than this share of the viewport's height. */
+const SHEET_MAX_HEIGHT = '80%';
+
+/**
+ * On native, the in-panel selection field is capped at this share of the
+ * window's height and scrolls inside, so a long source cannot push "Promote
+ * selection" and "Cancel" out of the sheet. Web needs no cap: its actions
+ * footer is sticky to the panel's scroller.
+ */
+const SELECTION_FIELD_HEIGHT_FRACTION = 0.35;
+
+/** The native selection field's cap for this window height; none on web. */
+function selectionFieldCap(windowHeight: number): number | undefined {
+  if (Platform.OS === 'web') return undefined;
+  return Math.round(windowHeight * SELECTION_FIELD_HEIGHT_FRACTION);
+}
 
 /** Collapsed-row excerpt length before an ellipsis. */
 const EXCERPT_MAX = 120;
@@ -274,6 +313,7 @@ function SourceExpansion({
   item: ReflectionSourceItem;
   controls: RowPromoteControls;
 }): React.JSX.Element {
+  const windowHeight = useWindowDimensions().height;
   if (controls.selecting) {
     return (
       <QuoteSelectionSurface
@@ -282,6 +322,7 @@ function SourceExpansion({
         onConfirm={controls.onConfirm}
         onCancel={controls.onCancel}
         testID={`source-select-${item.kind}-${item.id}`}
+        maxFieldHeight={selectionFieldCap(windowHeight)}
       />
     );
   }
@@ -619,49 +660,81 @@ function SourcesContent({
   const feed = useMemo(() => [...items].sort(byTimestamp), [items]);
   const { includedIds, onInsert } = useDimReconciler(onInsertQuote);
 
+  // The heading is the panel's navigation, so it stands ABOVE the scroll: only
+  // the quotes and the feed move, and the way out never scrolls away (#2883).
   return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.scrollContent}
-      keyboardShouldPersistTaps="handled"
-    >
+    <>
       <SourcesHeading window={reviewWindow} timeZone={timeZone} onClose={onClose} />
-      <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
-      {feed.length === 0 ? (
-        <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
-      ) : (
-        <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
-      )}
-    </ScrollView>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        testID="reflection-sources-scroll"
+      >
+        <PendingQuotesGroup pending={pending} includedIds={includedIds} onInsert={onInsert} />
+        {feed.length === 0 ? (
+          <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
+        ) : (
+          <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
+        )}
+      </ScrollView>
+    </>
   );
 }
 
-function ReflectionSourcesPanel(props: ReflectionSourcesPanelProps): React.JSX.Element {
-  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
+/**
+ * The bottom sheet. The Modal's ``onRequestClose`` carries Escape (web) and the
+ * platform back button; the backdrop is a sibling BEFORE the sheet body, never
+ * its parent, so a press inside the sheet cannot bubble up and close it.
+ */
+function SourcesSheet(props: ReflectionSourcesPanelProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
-
-  if (narrow) {
-    return (
-      <Modal
-        visible
-        transparent
-        animationType={reducedMotion ? 'none' : 'slide'}
-        onRequestClose={props.onClose}
-        testID="reflection-sources-sheet"
-      >
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.sheet}>
-            <SourcesContent {...props} />
-          </View>
+  return (
+    <Modal
+      visible
+      transparent
+      animationType={reducedMotion ? 'none' : 'slide'}
+      onRequestClose={props.onClose}
+      testID="reflection-sources-sheet"
+    >
+      <View style={styles.sheetBackdrop}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={props.onClose}
+          accessible={false}
+          focusable={false}
+          importantForAccessibility="no"
+          testID="reflection-sources-backdrop"
+        />
+        <View style={styles.sheet} testID="reflection-sources-sheet-body">
+          <SourcesContent {...props} />
         </View>
-      </Modal>
-    );
-  }
+      </View>
+    </Modal>
+  );
+}
+
+/** No-op stand-in so the pane's dismissal hook always has a callable handler. */
+function noop(): void {}
+
+/**
+ * The inline side pane. It has no Modal to carry Escape or the back button, so
+ * it takes both from ``useDismissKeys`` -- only while it can actually close.
+ */
+function SourcesPane(props: ReflectionSourcesPanelProps): React.JSX.Element {
+  useDismissKeys(props.onClose ?? noop, props.onClose != null);
   return (
     <View style={styles.pane} testID="reflection-sources-pane">
       <SourcesContent {...props} />
     </View>
   );
+}
+
+function ReflectionSourcesPanel(props: ReflectionSourcesPanelProps): React.JSX.Element {
+  if (useWindowDimensions().width < SIDE_PANE_BREAKPOINT) {
+    return <SourcesSheet {...props} />;
+  }
+  return <SourcesPane {...props} />;
 }
 
 const styles = StyleSheet.create({
@@ -671,8 +744,13 @@ const styles = StyleSheet.create({
     // background controls cannot absorb taps meant for quotes in the panel.
     position: 'relative',
     zIndex: 1,
-    width: '100%',
-    maxHeight: '100%',
+    // Beside the writing sheet, stretched to its height: a column whose heading
+    // stays put while the scroll beneath it takes the rest.
+    width: SOURCES_PANE_WIDTH,
+    alignSelf: 'stretch',
+    flexDirection: 'column',
+    marginTop: journalSheet.deskPaddingTop,
+    marginRight: SOURCES_PANE_GUTTER,
     backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
     ...surfaceShadow.card,
@@ -683,17 +761,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.mystical.overlay,
   },
   sheet: {
-    maxHeight: '80%',
+    flexDirection: 'column',
+    width: '100%',
+    maxWidth: contentLayout.maxWidth,
+    alignSelf: 'center',
+    maxHeight: SHEET_MAX_HEIGHT,
     backgroundColor: surface.raised,
     borderTopLeftRadius: BORDER_RADIUS.lg,
     borderTopRightRadius: BORDER_RADIUS.lg,
     ...surfaceShadow.raised,
   },
+  // Shrinks to the frame's bounded height (the sheet's cap, the pane's
+  // stretched column) so the feed scrolls beneath a heading that stays put.
   scroll: {
     flexGrow: 0,
+    flexShrink: 1,
   },
   scrollContent: {
-    padding: SPACING.lg,
+    paddingHorizontal: SPACING.lg,
+    paddingBottom: SPACING.lg,
   },
   group: {
     marginBottom: SPACING.lg,
@@ -725,6 +811,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.lg,
     paddingBottom: spacing(1),
   },
   headingText: {

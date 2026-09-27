@@ -19,7 +19,7 @@
 // Layout is responsive on `useWindowDimensions().width`: < 600 wraps the
 // panel in a bottom-sheet `Modal` (testID `reflection-sources-sheet`); >= 600
 // renders an inline side pane (testID `reflection-sources-pane`).
-import { jest, describe, it, expect } from '@jest/globals';
+import { jest, describe, it, expect, afterEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -201,6 +201,33 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
       expect(queryByTestId('reflection-sources-sheet')).toBeNull();
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  // #2883: the heading (title, period, X) is the panel's navigation. It sits
+  // above the scroll so browsing a long feed can never carry the way out away.
+  it('keeps the Sources heading and close control fixed outside the scrolling feed (narrow sheet and wide pane)', () => {
+    const rn = require('react-native');
+    const items = [1, 2, 3, 4, 5].map((id) => item({ id, timestamp: `2026-06-0${id}T00:00:00Z` }));
+    for (const width of [390, 1280]) {
+      const spy = jest
+        .spyOn(rn, 'useWindowDimensions')
+        .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+      try {
+        const { getByTestId } = render(
+          <ReflectionSourcesPanel items={items} onInsertQuote={jest.fn()} onClose={jest.fn()} />,
+        );
+        const scroll = getByTestId('reflection-sources-scroll');
+        expect(within(scroll).queryByTestId('reflection-sources-close')).toBeNull();
+        expect(within(scroll).queryByTestId('reflection-sources-heading')).toBeNull();
+        expect(within(scroll).getByTestId('entry-source-5')).toBeTruthy();
+        const frame = getByTestId(
+          width < 600 ? 'reflection-sources-sheet' : 'reflection-sources-pane',
+        );
+        expect(within(frame).getByTestId('reflection-sources-close')).toBeTruthy();
+      } finally {
+        spy.mockRestore();
+      }
     }
   });
 });
@@ -665,5 +692,154 @@ describe('ReflectionSourcesPanel -- one eyebrow face', () => {
       expect(style.fontSize).toBe(editorialType.caption.fontSize);
       expect(style.color).toBe(ink.muted);
     }
+  });
+});
+
+// #2883: below the width where the page, its margin column and a side pane all
+// fit, an inline pane crushes the writing column -- so it is a bounded sheet.
+describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2883)', () => {
+  const { SIDE_PANE_BREAKPOINT } = require('../ReflectionSourcesPanel') as {
+    SIDE_PANE_BREAKPOINT: number;
+  };
+
+  function renderAt(width: number, props: Record<string, unknown> = {}) {
+    const rn = require('react-native');
+    jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+    return render(
+      <ReflectionSourcesPanel items={[item({ id: 3 })]} onInsertQuote={jest.fn()} {...props} />,
+    );
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('derives the breakpoint from the page, its margin column and the pane', () => {
+    // contentLayout.maxWidth (680 + 220) + the pane (680 / 2).
+    expect(SIDE_PANE_BREAKPOINT).toBe(1240);
+  });
+
+  it.each([
+    [768, 'reflection-sources-sheet', 'reflection-sources-pane'],
+    [1024, 'reflection-sources-sheet', 'reflection-sources-pane'],
+    [1239, 'reflection-sources-sheet', 'reflection-sources-pane'],
+    [1240, 'reflection-sources-pane', 'reflection-sources-sheet'],
+  ])('at %ipx renders %s, not %s', (width, shown, absent) => {
+    const { getByTestId, queryByTestId } = renderAt(width);
+    expect(getByTestId(shown)).toBeTruthy();
+    expect(queryByTestId(absent)).toBeNull();
+  });
+
+  it('closes the sheet on a backdrop tap', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = renderAt(390, { onClose });
+    fireEvent.press(getByTestId('reflection-sources-backdrop'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the backdrop out of the accessibility tree', () => {
+    const { getByTestId } = renderAt(390, { onClose: jest.fn() });
+    const backdrop = getByTestId('reflection-sources-backdrop');
+    expect(backdrop.props.accessible).toBe(false);
+    expect(backdrop.props.importantForAccessibility).toBe('no');
+  });
+
+  it('does not close when the sheet body or a row inside it is pressed', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = renderAt(390, { onClose });
+    const body = getByTestId('reflection-sources-sheet-body');
+    // The body is the backdrop's sibling, never its child: a press inside it
+    // cannot bubble to the backdrop's handler.
+    expect(
+      within(getByTestId('reflection-sources-backdrop')).queryByTestId(
+        'reflection-sources-sheet-body',
+      ),
+    ).toBeNull();
+    fireEvent.press(body);
+    fireEvent.press(getByTestId('entry-source-3'));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getByTestId('source-body-3')).toBeTruthy();
+  });
+
+  it('hands the Modal the same close for Escape and the platform back button', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = renderAt(390, { onClose });
+    expect(getByTestId('reflection-sources-sheet').props.onRequestClose).toBe(onClose);
+  });
+
+  it('bounds the sheet as a column capped at the content width and centred', () => {
+    const { getByTestId } = renderAt(1024, { onClose: jest.fn() });
+    const style = StyleSheet.flatten(getByTestId('reflection-sources-sheet-body').props.style);
+    expect(style.maxHeight).toBe('80%');
+    expect(style.maxWidth).toBe(900);
+    expect(style.alignSelf).toBe('center');
+  });
+
+  it('lets the platform back button close the wide pane, and only the pane', () => {
+    const rn = require('react-native');
+    let back: (() => boolean | null | undefined) | undefined;
+    const add = jest.spyOn(rn.BackHandler, 'addEventListener').mockImplementation((...args) => {
+      back = args[1] as () => boolean;
+      return { remove: jest.fn() };
+    });
+    const onClose = jest.fn();
+    renderAt(1280, { onClose });
+    expect(add).toHaveBeenCalledWith('hardwareBackPress', expect.any(Function));
+    let consumed: boolean | null | undefined;
+    act(() => {
+      consumed = back?.();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(consumed).toBe(true);
+  });
+
+  it('leaves back to the Modal on the sheet, and registers nothing for a pane with no close', () => {
+    const rn = require('react-native');
+    const add = jest.spyOn(rn.BackHandler, 'addEventListener');
+    renderAt(390, { onClose: jest.fn() });
+    renderAt(1280);
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  function openSelection(width: number) {
+    const utils = renderAt(width, { onClose: jest.fn(), onPromoteSpan: jest.fn() });
+    fireEvent.press(utils.getByTestId('entry-source-3'));
+    fireEvent.press(utils.getByTestId('source-promote-entry-3'));
+    return utils;
+  }
+
+  it('bounds the selection field on native so Promote selection and Cancel stay in the sheet', () => {
+    // Jest mounts on ios; the bound is a share of the window's height (900).
+    const { getByTestId, toJSON } = openSelection(390);
+    const input = getByTestId('source-select-entry-3-input');
+    expect(StyleSheet.flatten(input.props.style).maxHeight).toBe(315);
+    expect(input.props.scrollEnabled).toBe(true);
+    const tree = JSON.stringify(toJSON());
+    const at = (id: string) => tree.indexOf(id);
+    expect(at('source-select-entry-3-input')).toBeLessThan(at('source-select-entry-3-confirm'));
+    expect(at('source-select-entry-3-input')).toBeLessThan(at('source-select-entry-3-cancel'));
+  });
+
+  it('leaves the field unbounded on web, where the actions footer is sticky', () => {
+    const Platform = require('react-native').Platform as { OS: string };
+    const original = Platform.OS;
+    Platform.OS = 'web';
+    try {
+      const { getByTestId } = openSelection(390);
+      const input = getByTestId('source-select-entry-3-input');
+      expect(StyleSheet.flatten(input.props.style).maxHeight).toBeUndefined();
+      expect(input.props.scrollEnabled).toBe(false);
+    } finally {
+      Platform.OS = original;
+    }
+  });
+
+  it('gives the wide pane a fixed width instead of the full row', () => {
+    const { getByTestId } = renderAt(1280, { onClose: jest.fn() });
+    const style = StyleSheet.flatten(getByTestId('reflection-sources-pane').props.style);
+    expect(style.width).toBe(340);
+    expect(style.alignSelf).toBe('stretch');
   });
 });
