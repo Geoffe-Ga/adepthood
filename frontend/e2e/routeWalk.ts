@@ -11,7 +11,7 @@ import { backendUrl, bearer, frontendUrl, isoDaysAgo } from './journalHabitsBrow
  * Habits, Practice, Course, Map -- there is no Today tab) plus every
  * `RootStack.tsx` screen a lane account can open without an admin role, a
  * camera or a paid call. Only the tabs, Settings, ApiKeySettings and
- * SharePreview have web paths (`App.tsx` linking); the rest are reached the
+ * SharePreview have web paths (`navigation/linking.ts`); the rest are reached the
  * way the app reaches them, through Settings rows, the screen drawers and the
  * shelf's own controls. Every `open` starts with a `page.goto`, so the routes
  * are order-independent and a screen that fails to open cannot strand the
@@ -92,7 +92,7 @@ const SEEDED_HABITS = [
   'Deep Work',
 ] as const;
 /** The canonical stage-1 preset the Practice player opens on. */
-const SEEDED_PRACTICE = '5-4-3-2-1 grounding';
+export const SEEDED_PRACTICE = '5-4-3-2-1 grounding';
 const ENTRY_STAGE = 1;
 /**
  * Every seeded habit starts today. The habits' earliest `start_date` is what
@@ -129,7 +129,7 @@ async function seedHabit(request: APIRequestContext, token: string, name: string
   if (!created.ok()) throw new Error(`seeding "${name}" failed with ${String(created.status())}`);
 }
 
-async function adoptPractice(request: APIRequestContext, token: string): Promise<number> {
+export async function adoptPractice(request: APIRequestContext, token: string): Promise<number> {
   const listed = await request.get(
     `${backendUrl()}/practices/?stage_number=${String(ENTRY_STAGE)}`,
     {
@@ -198,12 +198,10 @@ async function throughSettings(page: Page, rowTestId: string): Promise<void> {
 }
 
 /**
- * The Practice tab at its own path. `practice/:stageNumber?` also accepts a
- * stage, but a stage asked for by path arrives as a string and never matches
- * a numeric `stage_number`, so `/practice/1` shows the empty state for an
- * account with a stage-1 practice (a product finding recorded in the PR for
- * #2948, not worked around here); the bare path derives the stage from the
- * program anchor, which the seed keeps at stage 1.
+ * The Practice tab at its bare path, which derives the stage from the program
+ * anchor (the seed keeps it at stage 1) -- kept bare so the census still walks
+ * that derivation. A stage asked for by path (`/practice/1`) is pinned
+ * separately by `practice-deep-link.browser.e2e.test.ts` (#2958).
  */
 const PRACTICE_PATH = '/practice';
 
