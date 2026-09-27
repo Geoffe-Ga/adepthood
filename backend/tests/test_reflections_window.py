@@ -678,9 +678,14 @@ async def test_due_and_sources_agree_on_the_window(
     Asserted byte-for-byte rather than within a tolerance: the two surfaces
     must read one helper, not two derivations that happen to agree.
     """
-    anchor = (datetime.now(UTC) - timedelta(days=6)).replace(
-        hour=14, minute=30, second=0, microsecond=0
-    )
+    # Six days back on the user's own calendar, not UTC's: between 00:00 and
+    # 04:00 UTC the Eastern date is a day behind, and a UTC-derived anchor
+    # would sit only five local days back, before the review is due.
+    zone = ZoneInfo(_EASTERN)
+    local_today = datetime.now(zone).date()
+    anchor = datetime.combine(
+        local_today - timedelta(days=6), time(10, 30), tzinfo=zone
+    ).astimezone(UTC)
     headers, user_id = await _signup(async_client, db_session)
     await _set_timezone(db_session, user_id, _EASTERN)
     await _seed_progress(db_session, user_id, anchor=anchor)
