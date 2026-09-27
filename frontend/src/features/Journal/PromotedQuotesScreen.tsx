@@ -9,15 +9,25 @@
  * one. Tapping a quote opens its page at the passage; a quote can be removed
  * (after a confirm, with a revert if the server refuses); and "Write a review"
  * opens the same early-review picker the shelf offers.
+ *
+ * "Select quotes" turns the waiting quotes into checkboxes, and one action
+ * fixed beneath the scroll folds the checked ones into a review (#2885) -- see
+ * ``PromotedQuotesFold`` for its two arms.
  */
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 
 import styles from './PromotedQuotes.styles';
+import { ScreenFoldFooter, useScreenFold } from './PromotedQuotesFold';
+import { SELECT_ALL_LOADED_NOTE } from './quoteFoldCopy';
 import { QuoteRow } from './QuoteRow';
-import { formatSourceDate } from './reflectionCopy';
+import { SelectionHeader } from './QuoteSelectionControls';
+import { quoteAttribution } from './reflectionCopy';
 import ReviewScopePicker from './ReviewScopePicker';
 import type { ReviewEntryParams } from './reviewScopes';
 import {
@@ -27,6 +37,7 @@ import {
   type QuoteSection,
   type SectionStatus,
 } from './usePromotedQuoteSection';
+import { useQuoteSelection, type QuoteSelection } from './useQuoteSelection';
 
 import type { PromotedQuoteListItem } from '@/api';
 import { Button } from '@/components/Button';
@@ -72,9 +83,13 @@ const SECTION_EMPTY: Record<SectionStatus, string> = {
   included: 'None has gone into a review yet.',
 };
 
-/** The source a quote came from: its title, else the day it was written. */
+/**
+ * The source a quote came from: its title, else the day it was written. The
+ * SAME composer as the attribution a fold writes into a review (#2885), so the
+ * caption names the source exactly as the folded block will.
+ */
 function sourceLabel(quote: PromotedQuoteListItem): string {
-  return quote.source_title?.trim() || formatSourceDate(quote.source_timestamp);
+  return quoteAttribution({ title: quote.source_title, timestamp: quote.source_timestamp });
 }
 
 /** Where a used quote went; a review since deleted is named only as "a review". */
@@ -150,6 +165,8 @@ function RemoveConfirm({
 }
 
 interface RowActions {
+  /** The checked quotes; a pending row is a checkbox while it is selecting. */
+  selection: QuoteSelection;
   confirmingId: number | null;
   onOpen: (_quote: PromotedQuoteListItem) => void;
   onAskRemove: (_id: number) => void;
@@ -178,13 +195,16 @@ function PromotedQuoteRow({
       <Text style={styles.actionText}>{REMOVE_LABEL}</Text>
     </TouchableOpacity>
   );
+  const { selection } = actions;
+  const checkable = selection.selecting && section.status === 'pending';
   return (
     <>
       <QuoteRow
         text={quote.anchor_text}
         caption={quoteCaption(quote)}
         dimmed={section.status === 'included'}
-        onPress={() => actions.onOpen(quote)}
+        checked={checkable ? selection.selected.has(quote.id) : undefined}
+        onPress={() => (checkable ? selection.toggle(quote.id) : actions.onOpen(quote))}
         accessibilityLabel={quoteA11yLabel(quote)}
         testID={`promoted-quote-${quote.id}`}
         trailing={removeLink}
@@ -234,6 +254,31 @@ function SectionFooter({ section }: { section: QuoteSection }): React.JSX.Elemen
   );
 }
 
+/**
+ * Select / Select all / Clear all over the pending section. Select all takes
+ * the LOADED rows only -- the header's total can be larger -- and while older
+ * quotes remain unloaded a visible note says so (a hint alone would be dropped
+ * on the web).
+ */
+function PendingSelectionHeader({
+  section,
+  selection,
+}: {
+  section: QuoteSection;
+  selection: QuoteSelection;
+}): React.JSX.Element {
+  return (
+    <SelectionHeader
+      selecting={selection.selecting}
+      onToggleMode={selection.toggleMode}
+      onSelectAll={() => selection.selectAll(section.items.map((quote) => quote.id))}
+      onClear={selection.clear}
+      selectAllNote={section.hasMore ? SELECT_ALL_LOADED_NOTE : undefined}
+      testIDPrefix="promoted-quotes-pending"
+    />
+  );
+}
+
 /** One section: its header (with the server total), its rows, and its footer. */
 function QuoteSectionView({
   section,
@@ -247,6 +292,9 @@ function QuoteSectionView({
       <Text accessibilityRole="header" style={styles.sectionHeading}>
         {SECTION_HEADINGS[section.status](section.total)}
       </Text>
+      {section.status === 'pending' && section.items.length > 0 ? (
+        <PendingSelectionHeader section={section} selection={actions.selection} />
+      ) : null}
       {section.settled && section.items.length === 0 && section.error === null ? (
         <Text style={styles.sectionNote}>{SECTION_EMPTY[section.status]}</Text>
       ) : null}
@@ -326,7 +374,10 @@ function ScreenBody({
 }
 
 /** Row presses, the inline confirm, and the optimistic remove with its revert. */
-function useRowActions(navigation: ScreenNavigation): RowActions & { removeError: string | null } {
+function useRowActions(
+  navigation: ScreenNavigation,
+  selection: QuoteSelection,
+): RowActions & { removeError: string | null } {
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
@@ -345,6 +396,7 @@ function useRowActions(navigation: ScreenNavigation): RowActions & { removeError
   }, []);
 
   return {
+    selection,
     confirmingId,
     onOpen,
     onAskRemove: setConfirmingId,
@@ -354,13 +406,12 @@ function useRowActions(navigation: ScreenNavigation): RowActions & { removeError
   };
 }
 
-const PromotedQuotesScreen = (): React.JSX.Element => {
-  const navigation = useNavigation<ScreenNavigation>();
-  const pending = usePromotedQuoteSection('pending');
-  const included = usePromotedQuoteSection('included');
-  const actions = useRowActions(navigation);
-  const [pickerOpen, setPickerOpen] = useState(false);
-
+/** Reload both sections together, and on every refocus after the first. */
+function useBothSections(
+  navigation: ScreenNavigation,
+  pending: QuoteSection,
+  included: QuoteSection,
+): { reloadAll: () => void; refocusCount: number } {
   const { reload: reloadPending } = pending;
   const { reload: reloadIncluded } = included;
   const reloadAll = useCallback(() => {
@@ -368,6 +419,32 @@ const PromotedQuotesScreen = (): React.JSX.Element => {
     reloadIncluded();
   }, [reloadPending, reloadIncluded]);
   const refocusCount = useReloadOnRefocus(navigation, reloadAll);
+  return { reloadAll, refocusCount };
+}
+
+/** A refused remove's message, once it has one. */
+function RemoveError({ message }: { message: string | null }): React.JSX.Element | null {
+  if (message === null) return null;
+  return (
+    <Text style={styles.errorText} accessibilityRole="alert" testID="promoted-quotes-remove-error">
+      {message}
+    </Text>
+  );
+}
+
+type PromotedQuotesScreenProps = Partial<
+  NativeStackScreenProps<RootStackParamList, 'PromotedQuotes'>
+>;
+
+const PromotedQuotesScreen = ({ route }: PromotedQuotesScreenProps = {}): React.JSX.Element => {
+  const navigation = useNavigation<ScreenNavigation>();
+  const pending = usePromotedQuoteSection('pending');
+  const included = usePromotedQuoteSection('included');
+  const selection = useQuoteSelection();
+  const actions = useRowActions(navigation, selection);
+  const fold = useScreenFold(route?.params?.injectInto, pending, selection);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const { reloadAll, refocusCount } = useBothSections(navigation, pending, included);
   const chooseReview = useCallback(
     (params: ReviewEntryParams) => {
       setPickerOpen(false);
@@ -377,7 +454,15 @@ const PromotedQuotesScreen = (): React.JSX.Element => {
   );
 
   return (
-    <ScreenScaffold scroll testID="promoted-quotes-screen">
+    <ScreenScaffold
+      scroll
+      testID="promoted-quotes-screen"
+      footer={
+        selection.selecting ? (
+          <ScreenFoldFooter fold={fold} count={selection.selected.size} refreshKey={refocusCount} />
+        ) : null
+      }
+    >
       <ScreenHeader eyebrow={SCREEN_EYEBROW} title={SCREEN_TITLE} lead={SCREEN_LEAD} />
       <Button
         variant="secondary"
@@ -388,15 +473,7 @@ const PromotedQuotesScreen = (): React.JSX.Element => {
         style={styles.writeReview}
       />
       <ReviewScopePicker enabled={pickerOpen} refreshKey={refocusCount} onChoose={chooseReview} />
-      {actions.removeError !== null ? (
-        <Text
-          style={styles.errorText}
-          accessibilityRole="alert"
-          testID="promoted-quotes-remove-error"
-        >
-          {actions.removeError}
-        </Text>
-      ) : null}
+      <RemoveError message={actions.removeError} />
       <ScreenBody sections={[pending, included]} actions={actions} onRetryAll={reloadAll} />
     </ScreenScaffold>
   );

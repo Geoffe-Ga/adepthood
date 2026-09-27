@@ -1,8 +1,8 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import { Check } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import { QUOTE_STRIPE_WIDTH, QuoteRow } from '../QuoteRow';
 
@@ -89,5 +89,89 @@ describe('QuoteRow', () => {
 
     expect(queryByTestId('row-check', { includeHiddenElements: true })).toBeNull();
     expect(UNSAFE_queryByType(Check)).toBeNull();
+  });
+});
+
+describe('QuoteRow as a checkbox (#2885)', () => {
+  const originalOS = Platform.OS;
+  const asPlatform = (os: typeof Platform.OS): void => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, get: () => os });
+  };
+  afterEach(() => asPlatform(originalOS));
+
+  function renderRow(checked: boolean | undefined, disabled = false) {
+    return render(
+      <QuoteRow
+        text="the anger was grief"
+        checked={checked}
+        onPress={jest.fn()}
+        accessibilityLabel="The quote"
+        accessibilityState={disabled ? { disabled } : undefined}
+        testID="row"
+      />,
+    );
+  }
+
+  it('stays a button when no checked state is given', () => {
+    const { getByTestId, queryByTestId } = renderRow(undefined);
+    expect(getByTestId('row').props.accessibilityRole).toBe('button');
+    expect(queryByTestId('row-box', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it.each([true, false])('is a checkbox carrying checked=%s', (checked) => {
+    const { getByTestId } = renderRow(checked);
+    const row = getByTestId('row');
+    expect(row.props.accessibilityRole).toBe('checkbox');
+    expect(row.props.accessibilityState).toEqual(expect.objectContaining({ checked }));
+  });
+
+  it('draws the box, ticked only when checked, hidden from assistive technology', () => {
+    const hidden = { includeHiddenElements: true };
+    const ticked = renderRow(true);
+    expect(ticked.getByTestId('row-box', hidden)).toBeTruthy();
+    expect(ticked.getByTestId('row-box', hidden).props.importantForAccessibility).toBe(
+      'no-hide-descendants',
+    );
+    expect(ticked.UNSAFE_getAllByType(Check)).toHaveLength(1);
+    ticked.unmount();
+    const empty = renderRow(false);
+    expect(empty.getByTestId('row-box', hidden)).toBeTruthy();
+    expect(empty.UNSAFE_queryAllByType(Check)).toHaveLength(0);
+  });
+
+  // Read off the touchable itself: native TouchableOpacity folds aria-* into
+  // accessibilityState before the host view, which would hide the web prop.
+  it('writes aria-checked on the web, where accessibilityState is dropped', () => {
+    asPlatform('web');
+    const touchable = renderRow(true).UNSAFE_getByType(TouchableOpacity);
+    expect(touchable.props['aria-checked']).toBe(true);
+    expect(touchable.props['aria-disabled']).toBe(false);
+  });
+
+  it('writes no aria-* on native, where accessibilityState carries it', () => {
+    asPlatform('ios');
+    const touchable = renderRow(true).UNSAFE_getByType(TouchableOpacity);
+    expect(touchable.props['aria-checked']).toBeUndefined();
+    expect(touchable.props['aria-disabled']).toBeUndefined();
+  });
+
+  it('writes aria-disabled on the web for a disabled button row, and nothing when none was said', () => {
+    asPlatform('web');
+    const folded = renderRow(undefined, true);
+    expect(folded.UNSAFE_getByType(TouchableOpacity).props['aria-disabled']).toBe(true);
+    folded.unmount();
+    const plain = renderRow(undefined);
+    expect(plain.UNSAFE_getByType(TouchableOpacity).props['aria-disabled']).toBeUndefined();
+  });
+
+  it('never puts aria-selected on the row, whichever role it has', () => {
+    asPlatform('web');
+    for (const checked of [undefined, true, false]) {
+      const { UNSAFE_getByType, unmount } = renderRow(checked);
+      const touchable = UNSAFE_getByType(TouchableOpacity);
+      expect(touchable.props['aria-selected']).toBeUndefined();
+      expect(touchable.props.accessibilityState?.selected).toBeUndefined();
+      unmount();
+    }
   });
 });

@@ -143,7 +143,15 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // quote inside the row's own tap target: metadata, as cardDate is below. The
   // row's accessible name carries the quote and its source; this is not itself
   // an affordance.
+  // The composer's status line when folded quotes await their mark (#2885):
+  // read-only status at the save hint's weight; its "Try again" is a separate
+  // action-face control with its own touch target.
+  'features/Journal/QuoteInclusionHint.tsx::text',
   'features/Journal/QuoteRow.tsx::caption',
+  // The note beneath "Select all" saying it covers only the loaded quotes
+  // (#2885): a disclosure tied to that control by aria-describedby, not itself
+  // an affordance.
+  'features/Journal/QuoteSelectionControls.tsx::note',
   'features/Journal/ReflectionInvitationBand.tsx::label',
   // The sheet's one eyebrow face: the "Quotes to fold in" group heading and a
   // reflection row's level label, both read and never tapped.

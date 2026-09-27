@@ -14,6 +14,14 @@ interface ScreenScaffoldProps {
   /** Extra style merged onto the padded content container. */
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  /**
+   * A scroll screen's fixed action (#2885): rendered BELOW the scroll, never
+   * inside it, so it stays in view however long the content is. The bottom
+   * fade then sits on the scroll's own foot, above the footer, so it can
+   * neither veil the action nor the last line above it. Absent (or null), the
+   * screen is laid out exactly as it always was.
+   */
+  footer?: React.ReactNode;
 }
 
 /**
@@ -26,10 +34,11 @@ export const ScreenScaffold = ({
   scroll = false,
   style,
   testID,
+  footer,
 }: ScreenScaffoldProps): React.JSX.Element => {
   if (scroll) {
-    return (
-      <View style={styles.ground}>
+    const scroller = (
+      <>
         <ScrollView
           style={styles.fill}
           // Invariant: only the ScrollView content container grows. The inner
@@ -43,6 +52,15 @@ export const ScreenScaffold = ({
           <ContentContainer>{children}</ContentContainer>
         </ScrollView>
         <BottomFade />
+      </>
+    );
+    if (footer == null) return <View style={styles.ground}>{scroller}</View>;
+    return (
+      <View style={styles.ground}>
+        <View style={styles.fill}>{scroller}</View>
+        <View style={styles.footer} testID="screen-scaffold-footer">
+          <ContentContainer testID="screen-scaffold-footer-content">{footer}</ContentContainer>
+        </View>
       </View>
     );
   }
@@ -60,6 +78,10 @@ const styles = StyleSheet.create({
   },
   fill: {
     flex: 1,
+  },
+  footer: {
+    paddingHorizontal: rhythm.screenPaddingH,
+    backgroundColor: surface.canvas,
   },
   content: {
     paddingHorizontal: rhythm.screenPaddingH,
