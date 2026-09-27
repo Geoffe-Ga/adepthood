@@ -259,3 +259,24 @@ describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
     within(getByTestId('quote-select-footer')).getByTestId('quote-select-preview');
   });
 });
+
+// #2883: inside the sources panel a long body on native would push the actions
+// out of the sheet, so the panel can bound the field and let it scroll inside.
+describe('QuoteSelectionSurface -- bounded field (#2883)', () => {
+  it('grows unbounded and never scrolls inside when no bound is given (read mode)', () => {
+    const { getByTestId } = renderSurface();
+    const input = getByTestId('quote-select-input');
+    expect(StyleSheet.flatten(input.props.style).maxHeight).toBeUndefined();
+    expect(input.props.scrollEnabled).toBe(false);
+  });
+
+  it('caps the field and scrolls inside it when a bound is given, the actions after it', () => {
+    const { getByTestId, toJSON } = renderSurface({ maxFieldHeight: 200 });
+    const input = getByTestId('quote-select-input');
+    expect(StyleSheet.flatten(input.props.style).maxHeight).toBe(200);
+    expect(input.props.scrollEnabled).toBe(true);
+    const tree = JSON.stringify(toJSON());
+    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-confirm'));
+    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-cancel'));
+  });
+});
