@@ -227,6 +227,11 @@ describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
     expect(StyleSheet.flatten(getByTestId('quote-select-input').props.style).height).toBe(900);
   });
 
+  it('takes focus when it opens, so the control that opened it vanishing drops nothing on the page', () => {
+    const { getByTestId } = renderSurface();
+    expect(getByTestId('quote-select-input').props.autoFocus).toBe(true);
+  });
+
   it('marks focus with an accent rule in place of the browser ring, and clears it on blur', () => {
     const { getByTestId } = renderSurface();
     const ruleColor = () =>

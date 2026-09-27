@@ -38,7 +38,12 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
       const style = getComputedStyle(element);
       return { outline: style.outlineStyle, color: style.borderLeftColor };
     });
-  expect(await rule()).toEqual({ outline: 'none', color: 'rgba(0, 0, 0, 0)' });
+  // It opens focused (#2864), so the rule is already lit; it goes dark on blur
+  // and lights again when focus comes back.
+  await expect(selection).toBeFocused();
+  await expect.poll(rule).toEqual({ outline: 'none', color: ACCENT_PRIMARY_RGB });
+  await selection.blur();
+  await expect.poll(rule).toEqual({ outline: 'none', color: 'rgba(0, 0, 0, 0)' });
   await selection.focus();
   await expect.poll(rule).toEqual({ outline: 'none', color: ACCENT_PRIMARY_RGB });
   const box = await selection.boundingBox();

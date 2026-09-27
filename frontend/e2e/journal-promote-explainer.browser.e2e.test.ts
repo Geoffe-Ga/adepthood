@@ -88,6 +88,9 @@ test('the first promote explains where a quote goes, and the quote is there', as
   await expect(tick).toBeChecked();
   await page.getByRole('button', { name: 'Choose the passage to promote' }).click();
   await expect(card).toHaveCount(0);
+  // The button that opened the note has gone with the read controls, so focus
+  // is handed to the field the reader selects in rather than dropped on <body>.
+  await expect(page.locator('textarea[data-testid="quote-select-input"]')).toBeFocused();
   await selectPassage(page, PASSAGE);
   const promoteResponse = page.waitForResponse(
     (response) =>
@@ -123,6 +126,6 @@ test('the first promote explains where a quote goes, and the quote is there', as
   await page.goto(new URL('/journal', page.url()).toString());
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
   await page.getByTestId('promote-quote-button').click();
-  await expect(page.locator('textarea[data-testid="quote-select-input"]')).toBeVisible();
+  await expect(page.locator('textarea[data-testid="quote-select-input"]')).toBeFocused();
   await expect(page.getByTestId('promote-explainer-card')).toHaveCount(0);
 });

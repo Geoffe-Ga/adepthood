@@ -189,6 +189,11 @@ const SelectionBody = React.memo(function SelectionBody({
       value={body}
       multiline
       editable
+      // The control that opened the surface (read mode's Promote button, or the
+      // sheet's opener) unmounts as it opens, so focus is handed here rather
+      // than dropped on the page; with the soft keyboard suppressed this only
+      // lights the focus rule and puts a keyboard reader in the text.
+      autoFocus
       showSoftInputOnFocus={false}
       caretHidden
       scrollEnabled={false}
