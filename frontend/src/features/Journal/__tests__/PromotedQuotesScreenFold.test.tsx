@@ -190,6 +190,27 @@ describe('PromotedQuotesScreen -- selecting quotes (#2885)', () => {
   });
 });
 
+describe('PromotedQuotesScreen -- a removed quote leaves the selection (#2885)', () => {
+  it('unchecks a quote the writer removes, so it can never be folded from a stale box', async () => {
+    serve([LATE_IN_OLD, EARLY_IN_OLD]);
+    const { getByTestId, getByLabelText } = await renderScreen('quotes-2');
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByTestId('promoted-quote-11'));
+    fireEvent.press(getByTestId('promoted-quote-12'));
+    fireEvent.press(getByTestId('promoted-quote-11-remove'));
+    await act(async () => {
+      fireEvent.press(getByTestId('promoted-quote-11-confirm-remove'));
+    });
+    expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+      'Fold 1 quote into this review',
+    );
+    fireEvent.press(getByTestId('quote-fold-action'));
+    expect(usePromotedQuoteHandoffStore.getState().pending?.candidates.map((c) => c.id)).toEqual([
+      12,
+    ]);
+  });
+});
+
 describe('PromotedQuotesScreen -- folding into the review it was opened from (#2885)', () => {
   it('offers no fold-in without a hand-off token', async () => {
     serve([LATE_IN_OLD]);

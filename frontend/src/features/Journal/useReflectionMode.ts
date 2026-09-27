@@ -401,12 +401,10 @@ function useFoldIn(
   // Tracked over the WHOLE act, not just the entry write: the draft save
   // resolves first and settles the screen's own hint to "Saved" while the
   // quotes are still pending, so the tally is what holds the hint open until
-  // every mark lands -- for this act and for any other still outstanding.
+  // every mark lands -- for this act and for any other still outstanding. An
+  // empty batch admits nothing, so it splices, writes and marks nothing.
   const onInsertQuotes = useCallback<FoldBatch>(
-    (candidates) =>
-      candidates.length === 0
-        ? Promise.resolve({ included: [], failed: [], skipped: [] })
-        : track(() => foldBatch(candidates)),
+    (candidates) => track(() => foldBatch(candidates)),
     [track, foldBatch],
   );
 
