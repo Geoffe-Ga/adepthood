@@ -95,7 +95,12 @@ function offlineError(): Error {
 
 let net: NetInfoHandle;
 
-function screenElement(params?: { entryId?: number }) {
+interface ScreenParams {
+  entryId?: number;
+  prefillQuote?: { text: string; sourceTitle: string };
+}
+
+function screenElement(params?: ScreenParams) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
@@ -106,7 +111,7 @@ function screenElement(params?: { entryId?: number }) {
   );
 }
 
-function renderScreen(params?: { entryId?: number }) {
+function renderScreen(params?: ScreenParams) {
   return render(screenElement(params));
 }
 
@@ -451,5 +456,120 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     });
 
     expect(screen.queryByTestId('journal-load-error')).toBeNull();
+  });
+
+  it('asks before adding offline words to a finished entry, and saves them only after Edit', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ status: 'finished' }));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+
+    await reconnect();
+    await screen.findByTestId('edit-confirm-dialog');
+    expect(screen.getByTestId('edit-confirm-carried-note')).toBeTruthy();
+    // Read mode shows only what is stored; the held words are not presented as saved.
+    expect(screen.queryByText(TYPED, { exact: false })).toBeNull();
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByTestId('edit-confirm-edit'));
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).toHaveBeenCalledWith(7, expect.objectContaining({ message: CARRIED_BODY }));
+  });
+
+  it('keeps offline words for a finished entry after Cancel, and offers them again on Edit', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ status: 'finished' }));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await screen.findByTestId('edit-confirm-dialog');
+
+    fireEvent.press(screen.getByTestId('edit-confirm-cancel'));
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByTestId('journal-edit-button'));
+    expect(screen.getByTestId('edit-confirm-carried-note')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('edit-confirm-edit'));
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+    expect(mockUpdate).toHaveBeenCalledWith(7, expect.objectContaining({ message: CARRIED_BODY }));
+  });
+
+  it('escalates a looser stored tier to the one shown while typing before saving offline words', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    const screen = await openFailed();
+    expect(tierSelected(screen, 'personal')).toBe(true);
+    await typeBody(screen, TYPED);
+
+    await reconnect();
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+
+    expect(mockUpdate.mock.calls).toEqual([
+      [7, { classification: 'personal' }],
+      [7, expect.objectContaining({ message: CARRIED_BODY })],
+    ]);
+    expect(tierSelected(screen, 'personal')).toBe(true);
+  });
+
+  it('holds offline words unsaved when the tier escalation fails', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+
+    await reconnect();
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+    expect(mockUpdate.mock.calls).toEqual([[7, { classification: 'personal' }]]);
+    expect(updatesCarrying(TYPED)).toEqual([]);
+    // The control now tells the truth: the entry is still stored as public.
+    expect(tierSelected(screen, 'public')).toBe(true);
+  });
+
+  it('never escalates or re-tiers when the stored tier is already as strict', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'intimate' }));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+
+    await reconnect();
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+
+    expect(mockUpdate.mock.calls).toEqual([
+      [7, expect.objectContaining({ message: CARRIED_BODY })],
+    ]);
+    expect(tierSelected(screen, 'intimate')).toBe(true);
+  });
+
+  it('drops a pre-load debounce that would write the pre-fill over the stored body', async () => {
+    const load = deferred<JournalMessage>();
+    mockGet.mockReturnValueOnce(load.promise);
+    const quote = { text: 'A line worth keeping.', sourceTitle: 'Rivers' };
+    const screen = renderScreen({ entryId: 7, prefillQuote: quote });
+    const prefill = bodyValue(screen) as string;
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), `${prefill} more`);
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), prefill);
+
+    await act(async () => {
+      load.resolve(entry());
+    });
+    await waitFor(() => expect(bodyValue(screen)).toBe(SERVER_BODY));
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

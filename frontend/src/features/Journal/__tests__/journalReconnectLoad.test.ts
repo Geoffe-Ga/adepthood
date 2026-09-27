@@ -1,10 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  carriedTierEscalation,
   reconcileUnloadedDraft,
   shouldReloadEntryOnReconnect,
   type EntryReloadGate,
 } from '../journalReconnectLoad';
+
+import type { JournalClassification } from '@/api';
 
 const OPEN: EntryReloadGate = {
   wasOnline: false,
@@ -118,5 +121,19 @@ describe('reconcileUnloadedDraft (#2935)', () => {
   it('never lets a cleared local buffer blank the stored copy', () => {
     const prefill = { title: 'Prompt', body: 'Seeded words.' };
     expect(reconcileUnloadedDraft(SERVER, BLANK, prefill)).toEqual({ ...SERVER, carried: false });
+  });
+});
+
+describe('carriedTierEscalation (#2935)', () => {
+  it.each<[JournalClassification, JournalClassification, JournalClassification | null]>([
+    ['public', 'personal', 'personal'],
+    ['public', 'intimate', 'intimate'],
+    ['personal', 'intimate', 'intimate'],
+    ['personal', 'personal', null],
+    ['intimate', 'personal', null],
+    ['intimate', 'public', null],
+    ['personal', 'public', null],
+  ])('stored %s, typed under %s -> %s', (stored, typedUnder, expected) => {
+    expect(carriedTierEscalation(stored, typedUnder)).toBe(expected);
   });
 });

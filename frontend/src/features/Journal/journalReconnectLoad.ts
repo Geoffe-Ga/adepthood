@@ -16,6 +16,9 @@
  * entry was unloaded is carried below it, the way a transcript is appended.
  */
 import { appendTranscript } from './appendTranscript';
+import { isTierLooser } from './journalSaveRetry';
+
+import type { JournalClassification } from '@/api';
 
 /** Everything the reconnect reload decision reads, as plain values. */
 export interface EntryReloadGate {
@@ -87,4 +90,19 @@ export function reconcileUnloadedDraft(
   const title = adoptTitle ? typedTitle : server.title;
   const body = appendTranscript(server.body, block);
   return { title, body, carried: title !== server.title || body !== server.body };
+}
+
+/**
+ * The tier to move the stored entry to before carried words are saved, or null
+ * when none is needed. Words typed while the page showed ``typedUnder`` must
+ * never land in an entry stored under a looser tier, and a tier only ever
+ * escalates (the rule ``isTierLooser`` enforces for the #2930 retry and the
+ * #2936 replay reconcile): so a looser stored tier is raised to the one shown,
+ * and an equal or stricter one is left exactly as it is.
+ */
+export function carriedTierEscalation(
+  stored: JournalClassification,
+  typedUnder: JournalClassification,
+): JournalClassification | null {
+  return isTierLooser(stored, typedUnder) ? typedUnder : null;
 }
