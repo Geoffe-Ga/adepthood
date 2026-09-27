@@ -451,12 +451,12 @@ describe('JournalEntryScreen', () => {
   });
 
   it.each([
-    { width: 375, compact: true, pageDirection: 'column' },
-    { width: 600, compact: true, pageDirection: 'row' },
-    { width: 1200, compact: false, pageDirection: 'row' },
+    { width: 375, pageDirection: 'column' },
+    { width: 600, pageDirection: 'row' },
+    { width: 1200, pageDirection: 'row' },
   ])(
-    'keeps the writing controls on one row at $width px',
-    async ({ width, compact, pageDirection }) => {
+    'keeps Finish centred on the writing rail and the camera in the exit row at $width px',
+    async ({ width, pageDirection }) => {
       const rn = require('react-native');
       const spy = jest
         .spyOn(rn, 'useWindowDimensions')
@@ -472,12 +472,15 @@ describe('JournalEntryScreen', () => {
         );
         expect(rowStyle.flexDirection).toBe('row');
         expect(rowStyle.flexWrap).toBe('nowrap');
+        expect(rowStyle.justifyContent).toBe('center');
         expect(within(row).getByTestId('journal-finish-button')).toBeTruthy();
+        expect(within(row).queryByTestId('journal-photograph-page')).toBeNull();
 
-        const photograph = within(row).getByTestId('journal-photograph-page');
-        expect(StyleSheet.flatten(photograph.props.style).flexDirection).toBe('row');
+        const exitRow = view.getByTestId('journal-entry-exit-row');
+        const photograph = within(exitRow).getByTestId('journal-photograph-page');
         expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
-        expect(view.queryByText('Photograph a page')).toEqual(compact ? null : expect.anything());
+        // Icon-only at every width: the phrase lives in the accessible name alone.
+        expect(view.queryByText('Photograph a page')).toBeNull();
         view.unmount();
       } finally {
         spy.mockRestore();
