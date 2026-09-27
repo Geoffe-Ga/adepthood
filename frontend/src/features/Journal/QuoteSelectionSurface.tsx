@@ -81,6 +81,19 @@ export interface QuoteSelectionSurfaceProps {
   testID?: string;
   /** Label on the confirm Button; defaults to the promote-flow wording. */
   confirmLabel?: string;
+  /**
+   * Cap on the field's height, in dp. Unset (read mode, and the panel on web,
+   * whose footer is sticky), the field grows to its text and never scrolls
+   * inside. Set (the sources panel on native, where nothing is sticky), a long
+   * body scrolls within the field so the actions beneath it stay in the sheet.
+   */
+  maxFieldHeight?: number;
+  /**
+   * A passage already chosen before this surface mounted (the sources panel
+   * swapping its sheet for its pane mid-selection), so the preview and the
+   * enabled confirm carry over. Defaults to nothing chosen.
+   */
+  initialSelection?: CodePointSpan;
 }
 
 /** The derived view state the surface chrome renders from. */
@@ -101,8 +114,16 @@ interface SelectionSurfaceState {
 function useSelectionSurfaceState(
   body: string,
   onSelectionChange: (_span: CodePointSpan) => void,
+  initialSelection?: CodePointSpan,
 ): SelectionSurfaceState {
-  const [span, setSpan] = useState<Utf16Span>({ start: 0, end: 0 });
+  const [span, setSpan] = useState<Utf16Span>(() =>
+    initialSelection == null
+      ? { start: 0, end: 0 }
+      : {
+          start: codePointToUtf16(body, initialSelection.start),
+          end: codePointToUtf16(body, initialSelection.end),
+        },
+  );
   const [hintVisible, setHintVisible] = useState(false);
 
   const emitSpan = useCallback(
@@ -157,6 +178,7 @@ interface SelectionBodyProps {
   growth: FieldGrowth;
   inputRef: React.RefObject<TextInput | null>;
   testID: string;
+  maxFieldHeight?: number;
 }
 
 /**
@@ -173,8 +195,10 @@ const SelectionBody = React.memo(function SelectionBody({
   growth,
   inputRef,
   testID,
+  maxFieldHeight,
 }: SelectionBodyProps): React.JSX.Element {
   const [focused, setFocused] = useState(false);
+  const bounded = maxFieldHeight != null;
   return (
     <TextInput
       ref={inputRef}
@@ -182,6 +206,7 @@ const SelectionBody = React.memo(function SelectionBody({
         styles.quoteSelectField,
         writingFieldFocus,
         growth,
+        bounded && { maxHeight: maxFieldHeight },
         focused && styles.quoteSelectFieldFocused,
       ]}
       onFocus={() => setFocused(true)}
@@ -196,7 +221,7 @@ const SelectionBody = React.memo(function SelectionBody({
       autoFocus
       showSoftInputOnFocus={false}
       caretHidden
-      scrollEnabled={false}
+      scrollEnabled={bounded}
       onSelectionChange={onSelectionChange}
       onContentSizeChange={onContentSizeChange}
       accessibilityLabel="Select a passage to promote"
@@ -317,9 +342,11 @@ function QuoteSelectionSurface({
   onCancel,
   testID = DEFAULT_TEST_ID,
   confirmLabel = DEFAULT_CONFIRM_LABEL,
+  maxFieldHeight,
+  initialSelection,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
   const { isEmpty, previewSlice, hintVisible, emitSpan, handleSelectionChange, showHint } =
-    useSelectionSurfaceState(body, onSelectionChange);
+    useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, emitSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
@@ -340,6 +367,7 @@ function QuoteSelectionSurface({
         growth={growth}
         inputRef={inputRef}
         testID={testID}
+        maxFieldHeight={maxFieldHeight}
       />
       <SelectionFooter
         previewSlice={previewSlice}

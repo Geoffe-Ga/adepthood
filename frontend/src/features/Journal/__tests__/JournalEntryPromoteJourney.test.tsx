@@ -3,8 +3,8 @@
 // select-a-span and in-panel reflection re-promotion) already shipped, so this
 // spec is GREEN by construction. Bite-proofing lives in the mutation protocol
 // run alongside this file, not in a natural RED here.
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import type { JournalMessage, PromotedQuote, ReflectionDue, ReflectionSourceItem } from '@/api';
@@ -360,5 +360,138 @@ describe('JournalEntryPromoteJourney -- reflection-panel re-promotion (draft ent
 
     expect(await screen.findByTestId('source-promote-hint')).toBeTruthy();
     expect(screen.getByTestId('source-promote-entry-1')).toBeTruthy();
+  });
+});
+
+// #2883: the panel closes by its X, Escape/back, or (on the sheet) a backdrop
+// tap -- and closing it closes ONLY it. The route stays, the draft and any
+// folded-in quote stay in the body, and focus goes back to the Sources toggle.
+describe('JournalEntryPromoteJourney -- sources panel navigation (#2883)', () => {
+  const FOLD_QUOTE = {
+    id: 77,
+    anchor_start: 0,
+    anchor_end: 6,
+    anchor_text: 'A page',
+    pending: true,
+  };
+  const foldSource = item({ id: 1, body: BODY, promoted_quotes: [FOLD_QUOTE] });
+  const DRAFT = 'What the week left behind.';
+  let toggleFocus: jest.Mock;
+
+  /**
+   * Spy on the focus() of the component instance the toggle's ref resolves to:
+   * the nearest ancestor of its host node that carries native methods.
+   */
+  function spyOnFocus(host: ReturnType<Screen['getByTestId']>): jest.Mock {
+    let node: typeof host | null = host;
+    while (
+      node != null &&
+      typeof (node.instance as { focus?: unknown } | null)?.focus !== 'function'
+    ) {
+      node = node.parent;
+    }
+    if (node == null) throw new Error('no focusable instance above the toggle');
+    return jest.spyOn(node.instance as { focus: () => void }, 'focus') as unknown as jest.Mock;
+  }
+
+  function atWidth(width: number): void {
+    const rn = require('react-native');
+    jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+  }
+
+  /** Opens Sources on a drafted reflection and folds the pending quote in. */
+  async function openWithDraftAndFold(): Promise<Screen> {
+    mockReflectionsSources.mockResolvedValue({ items: [foldSource] });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), DRAFT);
+    await openReflectionSources(screen);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('pending-quote-77'));
+    });
+    toggleFocus = spyOnFocus(screen.getByTestId('reflection-sources-toggle'));
+    return screen;
+  }
+
+  function expectOnlyThePanelClosed(screen: Screen, bodyBefore: string, frame: string): void {
+    expect(screen.queryByTestId(frame)).toBeNull();
+    expect(screen.getByTestId('journal-body-input').props.value).toBe(bodyBefore);
+    expect(bodyBefore).toContain(DRAFT);
+    expect(bodyBefore).toContain('A page');
+    expect(screen.navigation.goBack).not.toHaveBeenCalled();
+    expect(screen.navigation.navigate).not.toHaveBeenCalled();
+    expect(screen.navigation.replace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('journal-screen')).toBeTruthy();
+    expect(toggleFocus).toHaveBeenCalledTimes(1);
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('sets the wide pane BESIDE the writing sheet, in one row', async () => {
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const row = screen.getByTestId('journal-compose-row');
+    expect(within(row).getByTestId('journal-sheet')).toBeTruthy();
+    expect(within(row).getByTestId('reflection-sources-pane')).toBeTruthy();
+    const { StyleSheet } = require('react-native');
+    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+  });
+
+  it('closes only the wide pane with its X, returning focus to the Sources toggle', async () => {
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    expect(toggleFocus).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByTestId('reflection-sources-close'));
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-pane');
+  });
+
+  it('closes only the wide pane on the hardware back button, which never pops the route', async () => {
+    const rn = require('react-native');
+    let back: (() => boolean | null | undefined) | undefined;
+    jest.spyOn(rn.BackHandler, 'addEventListener').mockImplementation((...args: unknown[]) => {
+      back = args[1] as () => boolean;
+      return { remove: jest.fn() };
+    });
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    let consumed: boolean | null | undefined;
+    act(() => {
+      consumed = back?.();
+    });
+    expect(consumed).toBe(true);
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-pane');
+  });
+
+  it('closes only the narrow sheet on Escape or back (the Modal request)', async () => {
+    atWidth(390);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    act(() => {
+      screen.getByTestId('reflection-sources-sheet').props.onRequestClose();
+    });
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-sheet');
+  });
+
+  it('closes only the narrow sheet on a backdrop tap', async () => {
+    atWidth(390);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    fireEvent.press(screen.getByTestId('reflection-sources-backdrop'));
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-sheet');
+  });
+
+  it('reopens with the draft intact after closing', async () => {
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    fireEvent.press(screen.getByTestId('reflection-sources-close'));
+    await openReflectionSources(screen);
+    expect(screen.getByTestId('reflection-sources-pane')).toBeTruthy();
+    expect(screen.getByTestId('journal-body-input').props.value).toBe(bodyBefore);
   });
 });

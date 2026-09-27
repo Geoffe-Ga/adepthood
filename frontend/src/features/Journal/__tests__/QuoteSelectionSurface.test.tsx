@@ -259,3 +259,49 @@ describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
     within(getByTestId('quote-select-footer')).getByTestId('quote-select-preview');
   });
 });
+
+// #2883: inside the sources panel a long body on native would push the actions
+// out of the sheet, so the panel can bound the field and let it scroll inside.
+describe('QuoteSelectionSurface -- bounded field (#2883)', () => {
+  it('grows unbounded and never scrolls inside when no bound is given (read mode)', () => {
+    const { getByTestId } = renderSurface();
+    const input = getByTestId('quote-select-input');
+    expect(StyleSheet.flatten(input.props.style).maxHeight).toBeUndefined();
+    expect(input.props.scrollEnabled).toBe(false);
+  });
+
+  it('caps the field and scrolls inside it when a bound is given, the actions after it', () => {
+    const { getByTestId, toJSON } = renderSurface({ maxFieldHeight: 200 });
+    const input = getByTestId('quote-select-input');
+    expect(StyleSheet.flatten(input.props.style).maxHeight).toBe(200);
+    expect(input.props.scrollEnabled).toBe(true);
+    const tree = JSON.stringify(toJSON());
+    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-confirm'));
+    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-cancel'));
+  });
+});
+
+describe('QuoteSelectionSurface -- initial selection (#2883)', () => {
+  it('starts with nothing chosen when no initial selection is given', () => {
+    const { queryByTestId, getByTestId } = renderSurface();
+    expect(queryByTestId('quote-select-preview')).toBeNull();
+    expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('carries a code-point selection over a remount, converted back to UTF-16 over a non-BMP body', async () => {
+    // Two astral characters: code points 2..6 are UTF-16 4..8, so an
+    // unconverted seed would echo the second emoji instead of the word.
+    const body = '\u{1F600}\u{1F600}went for a daily walk.';
+    const { getByTestId, onConfirm } = renderSurface({
+      body,
+      initialSelection: { start: 2, end: 6 },
+    });
+    expect(getByTestId('quote-select-preview').props.children).toBe('went');
+    const confirm = getByTestId('quote-select-confirm');
+    expect(confirm.props.accessibilityState.disabled).toBe(false);
+    await act(async () => {
+      fireEvent.press(confirm);
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});

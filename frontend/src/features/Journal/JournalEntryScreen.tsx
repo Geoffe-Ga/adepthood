@@ -104,6 +104,7 @@ import {
 } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
+import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 import { selectGoalUnitById, useHabitStore } from '@/store/useHabitStore';
@@ -1608,6 +1609,15 @@ function useJournalAutosave(
   return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
 }
 
+/** The Sources toggle's host ref, which the composer hands focus back to. */
+type SourcesToggleRef = React.RefObject<React.ComponentRef<typeof TouchableOpacity> | null>;
+
+/** The Sources toggle's wiring: what it opens, and the ref focus returns to on close. */
+interface SourcesToggle {
+  onOpen: () => void;
+  ref: SourcesToggleRef;
+}
+
 interface WritingColumnProps {
   title: string;
   body: string;
@@ -1633,8 +1643,11 @@ interface WritingColumnProps {
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
   onBodySelectionChange?: LiveMarkdownBodyProps['onBodySelectionChange'];
-  /** Opens the rereadable source feed while composing a reflection. */
-  onOpenSources?: () => void;
+  /**
+   * Opens the rereadable source feed while composing a reflection; focus comes
+   * back to this toggle once the panel closes (#2883).
+   */
+  sources?: SourcesToggle;
   /** Opens the shared capture route to add a photographed page to this entry. */
   onPhotographPage: () => void;
   /** Phone layout: secondary actions keep their names for a11y but show icon-only. */
@@ -1814,16 +1827,17 @@ function PhotographPageButton({
 }
 
 function ReflectionSourcesButton({
-  onOpen,
+  toggle,
   compact,
 }: {
-  onOpen?: () => void;
+  toggle?: SourcesToggle;
   compact: boolean;
 }): React.JSX.Element | null {
-  return onOpen ? (
+  return toggle ? (
     <TouchableOpacity
+      ref={toggle.ref}
       style={styles.writingSecondaryControl}
-      onPress={onOpen}
+      onPress={toggle.onOpen}
       accessibilityRole="button"
       accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
       testID="reflection-sources-toggle"
@@ -1842,23 +1856,18 @@ function WritingControls({
   finishing,
   finishError,
   onPhotographPage,
-  onOpenSources,
+  sources,
   compactControls,
 }: Pick<
   WritingColumnProps,
-  | 'onFinish'
-  | 'finishing'
-  | 'finishError'
-  | 'onPhotographPage'
-  | 'onOpenSources'
-  | 'compactControls'
+  'onFinish' | 'finishing' | 'finishError' | 'onPhotographPage' | 'sources' | 'compactControls'
 >): React.JSX.Element {
   return (
     <>
       <View style={styles.writingControlsRow} testID="journal-writing-controls">
         {onFinish ? <FinishControl onFinish={onFinish} finishing={finishing} /> : null}
         <PhotographPageButton onPress={onPhotographPage} compact={compactControls} />
-        <ReflectionSourcesButton onOpen={onOpenSources} compact={compactControls} />
+        <ReflectionSourcesButton toggle={sources} compact={compactControls} />
       </View>
       {finishError == null ? null : (
         <Text style={styles.marginError} testID="journal-finish-error">
@@ -1898,7 +1907,7 @@ function WritingColumnContent({
   bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
-  onOpenSources,
+  sources,
   onPhotographPage,
   compactControls,
 }: WritingColumnProps) {
@@ -1925,7 +1934,7 @@ function WritingColumnContent({
         finishing={finishing}
         finishError={finishError}
         onPhotographPage={onPhotographPage}
-        onOpenSources={onOpenSources}
+        sources={sources}
         compactControls={compactControls}
       />
     </>
@@ -2592,6 +2601,14 @@ function useReflectionComposer(autosave: AutosaveApi) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const openSources = useCallback(() => setSourcesOpen(true), []);
   const closeSources = useCallback(() => setSourcesOpen(false), []);
+  // Closing hands focus back to the toggle that opened the panel (#2883); the
+  // draft is untouched, since it lives in the autosave, not in this flag.
+  const sourcesToggleRef: SourcesToggleRef = useRef(null);
+  useRestoreFocusOnClose(sourcesOpen, sourcesToggleRef);
+  const sourcesToggle = useMemo<SourcesToggle>(
+    () => ({ onOpen: openSources, ref: sourcesToggleRef }),
+    [openSources],
+  );
   const mode = useReflectionMode({
     reflectionLevel: autosave.reflectionLevel,
     reflectionScopeKey: autosave.reflectionScopeKey,
@@ -2599,7 +2616,7 @@ function useReflectionComposer(autosave: AutosaveApi) {
     onChangeBody: autosave.onChangeBody,
     flush: autosave.flush,
   });
-  return { ...mode, sourcesOpen, openSources, closeSources };
+  return { ...mode, sourcesOpen, sourcesToggle, closeSources };
 }
 
 /** What the writing surface needs to send the writer off to photograph a page. */
@@ -2862,7 +2879,7 @@ function PageBodyColumn({
       onBodySelectionChange={
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
-      onOpenSources={ctl.reflection.active ? ctl.reflection.openSources : undefined}
+      sources={ctl.reflection.active ? ctl.reflection.sourcesToggle : undefined}
       onPhotographPage={ctl.photograph.openCapture}
       compactControls={compactControls}
     />
@@ -3201,11 +3218,12 @@ function EntryExitControls({
 }
 
 /**
- * Reflection compose surface: the rereadable sources panel plus a warm hint when
- * a folded quote could not be marked included. Renders nothing outside reflection
- * mode so the plain and weekly-prompt paths are untouched.
+ * The rereadable sources panel, docked in the compose row beside the writing
+ * sheet: a side pane where both fit, else a bottom sheet over the page (#2883).
+ * Renders nothing unless a reflection's sources are open, so the plain and
+ * weekly-prompt paths are untouched.
  */
-function ReflectionComposer({
+function ReflectionSourcesDock({
   reflection,
 }: {
   reflection: Controller['reflection'];
@@ -3214,27 +3232,57 @@ function ReflectionComposer({
   // dates beside a feed the SERVER windowed on this zone; formatting them in the
   // device's instead can show a day boundary the feed disagrees with.
   const { userTimezone } = useAuth();
-  if (!reflection.active) return null;
+  if (!(reflection.active && reflection.sourcesOpen)) return null;
   return (
-    <>
-      {reflection.sourcesOpen ? (
-        <ReflectionSourcesPanel
-          items={reflection.sources}
-          window={reflection.window}
-          anchorStatus={reflection.anchorStatus}
-          feedStatus={reflection.feedStatus}
-          timeZone={userTimezone}
-          onInsertQuote={reflection.onInsertQuote}
-          onPromoteSpan={reflection.onPromoteSpan}
-          onClose={reflection.closeSources}
-        />
-      ) : null}
-      {reflection.inclusionHint ? (
-        <Text style={styles.savedHint} testID="quote-inclusion-hint">
-          {QUOTE_INCLUSION_HINT}
-        </Text>
-      ) : null}
-    </>
+    <ReflectionSourcesPanel
+      items={reflection.sources}
+      window={reflection.window}
+      anchorStatus={reflection.anchorStatus}
+      feedStatus={reflection.feedStatus}
+      timeZone={userTimezone}
+      onInsertQuote={reflection.onInsertQuote}
+      onPromoteSpan={reflection.onPromoteSpan}
+      onClose={reflection.closeSources}
+    />
+  );
+}
+
+/**
+ * The writing sheet and, beside it where there is room, the open sources pane
+ * (#2883). Below the side-pane width the dock renders a Modal sheet instead, and
+ * the row holds the page alone, laid out exactly as it always was.
+ */
+function EntryComposeRow({
+  ctl,
+  bodyPlaceholder,
+  focusSpan,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  focusSpan?: FocusSpan;
+}): React.JSX.Element {
+  return (
+    <View style={styles.composeRow} testID="journal-compose-row">
+      <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} focusSpan={focusSpan} />
+      <ReflectionSourcesDock reflection={ctl.reflection} />
+    </View>
+  );
+}
+
+/**
+ * The reflection composer's warm hint when a folded quote could not be marked
+ * included. Renders nothing outside reflection mode.
+ */
+function ReflectionComposer({
+  reflection,
+}: {
+  reflection: Controller['reflection'];
+}): React.JSX.Element | null {
+  if (!reflection.active || !reflection.inclusionHint) return null;
+  return (
+    <Text style={styles.savedHint} testID="quote-inclusion-hint">
+      {QUOTE_INCLUSION_HINT}
+    </Text>
   );
 }
 
@@ -3568,7 +3616,7 @@ function JournalEntryScreen({
         flushForExit={ctl.autosave.flushForExit}
         onOpenApiKey={openApiKey}
       />
-      <JournalPage
+      <EntryComposeRow
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={route.params?.highlightSpan}

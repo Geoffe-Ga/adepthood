@@ -111,6 +111,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.paper.desk,
   },
+  /**
+   * The writing desk and, when a wide side pane is open, the sources beside it
+   * (#2883). With the pane closed, or on the sheet path, the row holds the desk
+   * alone, so the page lays out exactly as before.
+   */
+  composeRow: {
+    flex: 1,
+    flexDirection: 'row',
+  },
   /** Padded desk so the deeper ground shows as a border around the lifted sheet. */
   desk: {
     flex: 1,
