@@ -43,7 +43,7 @@ type InsertMany = (_c: readonly FoldCandidate[]) => Promise<BatchFoldResult>;
 
 function allIncluded(): jest.Mock<InsertMany> {
   return jest.fn<InsertMany>((candidates) =>
-    Promise.resolve({ included: candidates.map((c) => c.id), failed: [], skipped: [] }),
+    Promise.resolve({ included: candidates.map((c) => c.id), failed: [], gone: [], skipped: [] }),
   );
 }
 
@@ -196,7 +196,7 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
 
   it('leaves a failed quote checked and undimmed, and dims the rest', async () => {
     const onInsertQuotes = jest.fn<InsertMany>(() =>
-      Promise.resolve({ included: [11], failed: [21], skipped: [] }),
+      Promise.resolve({ included: [11], failed: [21], gone: [], skipped: [] }),
     );
     const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes });
     fireEvent.press(getByLabelText('Select quotes'));
@@ -212,6 +212,80 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
     expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
       'Fold 1 quote into this review',
     );
+  });
+
+  it('unchecks a quote removed elsewhere and leaves it dimmed, never offered for a retry (#2754)', async () => {
+    const onInsertQuotes = jest.fn<InsertMany>(() =>
+      Promise.resolve({ included: [], failed: [], gone: [21], skipped: [] }),
+    );
+    const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes });
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByTestId('pending-quote-21'));
+    await act(async () => {
+      fireEvent.press(getByTestId('quote-fold-action'));
+    });
+    const gone = getByTestId('pending-quote-21');
+    expect(gone.props.accessibilityState.disabled).toBe(true);
+    expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+      'Choose quotes to fold in',
+    );
+  });
+
+  describe('a checked quote the composer prunes from the feed (#2754)', () => {
+    /** Fold 21 in a batch whose mark fails, leaving it checked for a retry. */
+    async function failOn21(): Promise<{
+      screen: ReturnType<typeof render>;
+      onInsertQuotes: jest.Mock<InsertMany>;
+      rerenderWith: (_items: ReflectionSourceItem[]) => void;
+    }> {
+      const onInsertQuotes = jest.fn<InsertMany>(() =>
+        Promise.resolve({ included: [], failed: [21], gone: [], skipped: [] }),
+      );
+      const props = { onInsertQuote: jest.fn(), onInsertQuotes, onClose: jest.fn() };
+      const screen = renderPanel(props);
+      fireEvent.press(screen.getByLabelText('Select quotes'));
+      fireEvent.press(screen.getByTestId('pending-quote-21'));
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 1 quote into this review',
+      );
+      const rerenderWith = (items: ReflectionSourceItem[]) =>
+        screen.rerender(<ReflectionSourcesPanel items={items} {...props} />);
+      return { screen, onInsertQuotes, rerenderWith };
+    }
+
+    const PRUNED = [S1, { ...S2, promoted_quotes: [] }];
+
+    it('drops it from the bar, which rests at zero and folds nothing', async () => {
+      const { screen, onInsertQuotes, rerenderWith } = await failOn21();
+      act(() => rerenderWith(PRUNED));
+      const bar = screen.getByTestId('quote-fold-action');
+      expect(bar.props.accessibilityLabel).toBe('Choose quotes to fold in');
+      expect(bar.props.accessibilityState.disabled).toBe(true);
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(onInsertQuotes).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts and folds only the quotes still listed', async () => {
+      const { screen, onInsertQuotes, rerenderWith } = await failOn21();
+      fireEvent.press(screen.getByTestId('pending-quote-12'));
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 2 quotes into this review',
+      );
+      act(() => rerenderWith(PRUNED));
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 1 quote into this review',
+      );
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(onInsertQuotes).toHaveBeenCalledTimes(2);
+      expect(onInsertQuotes.mock.calls[1]?.[0].map((c) => c.id)).toEqual([12]);
+    });
   });
 
   it('reverts every dim when the batch itself rejects, and keeps the selection', async () => {
@@ -290,7 +364,7 @@ describe('ReflectionSourcesPanel -- a batch in flight (#2885)', () => {
     });
     expect(batch.onInsertQuotes).toHaveBeenCalledTimes(1);
     await act(async () => {
-      batch.settle({ included: [11], failed: [12], skipped: [] });
+      batch.settle({ included: [11], failed: [12], gone: [], skipped: [] });
     });
     expect(getByTestId('pending-quote-12').props.accessibilityState.checked).toBe(true);
     expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
@@ -309,7 +383,7 @@ describe('ReflectionSourcesPanel -- a batch in flight (#2885)', () => {
     });
     fireEvent.press(getByTestId('pending-quote-21'));
     await act(async () => {
-      batch.settle({ included: [11], failed: [], skipped: [] });
+      batch.settle({ included: [11], failed: [], gone: [], skipped: [] });
     });
     expect(getByTestId('pending-quote-21').props.accessibilityState.checked).toBe(true);
     expect(getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
@@ -319,7 +393,7 @@ describe('ReflectionSourcesPanel -- a batch in flight (#2885)', () => {
 
   it('leaves the selection alone when a batch admitted nothing', async () => {
     const onInsertQuotes = jest.fn<InsertMany>(() =>
-      Promise.resolve({ included: [], failed: [], skipped: [11, 12] }),
+      Promise.resolve({ included: [], failed: [], gone: [], skipped: [11, 12] }),
     );
     const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes });
     fireEvent.press(getByLabelText('Select quotes'));

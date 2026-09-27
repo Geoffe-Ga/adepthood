@@ -1019,6 +1019,111 @@ describe('JournalEntryScreen -- batch fold-in and its retry (#2885)', () => {
   });
 });
 
+// #2754: the inclusion warning is per quote. A tap on A whose mark fails and an
+// overlapping tap on B whose mark lands leave the warning up for A alone, and
+// Try again re-marks A only. A quote removed elsewhere meanwhile (its PATCH
+// 404s promotion_not_found) retires from the warning and from the panel.
+describe('JournalEntryScreen -- a per-quote inclusion warning (#2754)', () => {
+  const { inclusionRetryHint } = require('../quoteFoldCopy') as {
+    inclusionRetryHint: (_n: number) => string;
+  };
+
+  /** Tap 90 then 91 with both marks held, and settle them in ``order``. */
+  async function overlapThenSettle(
+    screen: ReturnType<typeof renderScreen>,
+    order: readonly number[],
+  ): Promise<void> {
+    const settle = new Map<number, () => void>();
+    mockSetIncluded.mockImplementation(
+      (id: number) =>
+        new Promise<unknown>((resolve, reject) => {
+          settle.set(id, () =>
+            id === 90 ? reject({ status: 500, detail: 'boom' }) : resolve(mockSecondQuote),
+          );
+        }),
+    );
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('stub-insert-quote-90'));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('stub-insert-quote-91'));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    expect([...settle.keys()]).toEqual([90, 91]);
+    for (const id of order) {
+      await act(async () => {
+        settle.get(id)?.();
+        await jest.advanceTimersByTimeAsync(0);
+      });
+    }
+  }
+
+  async function pressRetry(screen: ReturnType<typeof renderScreen>): Promise<void> {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('quote-inclusion-retry'));
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+  }
+
+  it.each([
+    ['A settles last', [91, 90]],
+    ['B settles last', [90, 91]],
+  ])(
+    "keeps A's warning through B's overlapping success (%s), and Try again PATCHes only A",
+    async (_order, order) => {
+      mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+      jest.useFakeTimers();
+      try {
+        const screen = renderScreen(REFLECTION_PARAMS, { autosaveDelayMs: 100 });
+        await overlapThenSettle(screen, order);
+        expect(screen.getByTestId('quote-inclusion-hint-text').props.children).toBe(
+          inclusionRetryHint(1),
+        );
+        expect(screen.getByTestId('stub-folded-ids').props.children).toBe('91');
+
+        mockSetIncluded.mockReset();
+        mockSetIncluded.mockResolvedValue(mockStubQuote);
+        await pressRetry(screen);
+        expect(mockSetIncluded.mock.calls).toEqual([[90, 42]]);
+        expect(screen.queryByTestId('quote-inclusion-hint')).toBeNull();
+        expect(screen.getByTestId('stub-folded-ids').props.children).toBe('91,90');
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('retires the warning and the pending row when the retry finds the quote removed', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    jest.useFakeTimers();
+    try {
+      const screen = renderScreen(REFLECTION_PARAMS, { autosaveDelayMs: 100 });
+      await overlapThenSettle(screen, [91, 90]);
+      expect(screen.getByTestId('stub-pending-ids').props.children).toBe('90,91');
+
+      mockSetIncluded.mockReset();
+      mockSetIncluded.mockRejectedValue({ status: 404, detail: 'promotion_not_found' });
+      await pressRetry(screen);
+      expect(mockSetIncluded.mock.calls).toEqual([[90, 42]]);
+      expect(screen.queryByTestId('quote-inclusion-hint')).toBeNull();
+      expect(screen.getByTestId('stub-pending-ids').props.children).toBe('91');
+      expect(screen.getByTestId('stub-folded-ids').props.children).toBe('91');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 // #2885: a review opened FOR a selection from the Promoted quotes screen folds
 // that selection in once -- into the body it actually has.
 describe('JournalEntryScreen -- a selection handed over from Promoted quotes (#2885)', () => {
