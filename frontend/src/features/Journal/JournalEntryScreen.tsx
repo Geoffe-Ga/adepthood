@@ -42,6 +42,8 @@ import type { RetryFailure, SaveState } from './journalSaveRetry';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
+import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
+import PromoteExplainerDialog from './PromoteExplainerDialog';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
@@ -52,6 +54,7 @@ import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
+import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
@@ -103,6 +106,7 @@ import { useIdle } from '@/hooks/useIdle';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 import { selectGoalUnitById, useHabitStore } from '@/store/useHabitStore';
+import { announceOnIos } from '@/utils/announceOnIos';
 import { useDayKey } from '@/utils/dayRollover';
 
 /** Default idle delay before an edit is persisted. */
@@ -1997,12 +2001,14 @@ interface QuotePromotion {
   confirmRemove: () => void;
   /** Dismiss the revealed remove card without removing (tap elsewhere in the body). */
   dismissRemove: () => void;
+  /** The one-time note in front of "Promote a quote"; its ``onPress`` is the button's. */
+  explainer: PromoteExplainerGate;
 }
 
 /** The gesture slice of {@link QuotePromotion} owned by {@link useQuoteInteraction}. */
 type QuoteInteraction = Omit<
   QuotePromotion,
-  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote' | 'refresh'
+  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote' | 'refresh' | 'explainer'
 >;
 
 /** The read-mode selection/removal gestures over the {@link usePromotions} state. */
@@ -2061,7 +2067,10 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh } =
     usePromotions({ entryId: routeEntryId ?? 0 });
   const interaction = useQuoteInteraction(promote, removePromotion);
-  return { quotes, hint, promoting, promoted, retryPromote, refresh, ...interaction };
+  // Composed here rather than in the action row, so the flag outlives the row
+  // unmounting while the reader is selecting.
+  const explainer = usePromoteExplainer(interaction.startSelecting);
+  return { quotes, hint, promoting, promoted, retryPromote, refresh, ...interaction, explainer };
 }
 
 /**
@@ -2102,7 +2111,7 @@ function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX
       />
       <Button
         variant="tertiary"
-        onPress={quote.startSelecting}
+        onPress={quote.explainer.onPress}
         accessibilityLabel="Promote a quote"
         testID="promote-quote-button"
         label="Promote a quote"
@@ -2121,12 +2130,15 @@ function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX
 
 /**
  * Read-mode affordances: the privacy reason (when resonance is withheld) above
- * the single action row. Unlike the writing surface's floating button, nothing
- * here fades on idleness — a reader is not typing, so nothing needs to get out
- * of the way.
+ * the single action row, and the note the first "Promote a quote" opens — kept
+ * beside the button that opens it (its state lives in ``useQuotePromotion``,
+ * so the row unmounting while the reader selects loses nothing). Unlike the
+ * writing surface's floating button, nothing here fades on idleness — a reader
+ * is not typing, so nothing needs to get out of the way.
  */
 function ReadModeControls(props: ReadControlsProps): React.JSX.Element {
-  const { resonance } = props;
+  const { resonance, quote } = props;
+  const { explainer } = quote;
   return (
     <>
       <PrivacyResonanceReason
@@ -2134,24 +2146,36 @@ function ReadModeControls(props: ReadControlsProps): React.JSX.Element {
         reason={resonance.reason}
       />
       <ReadActions {...props} />
+      <PromoteExplainerDialog
+        visible={explainer.visible}
+        dontShowAgain={explainer.dontShowAgain}
+        onToggleDontShowAgain={explainer.onToggleDontShowAgain}
+        onContinue={explainer.onContinue}
+        onCancel={explainer.onCancel}
+      />
     </>
   );
 }
 
 /** Copy for the promote-lifecycle notices (real ellipsis inside the in-flight line). */
 const PROMOTING_COPY = 'Promoting…';
-const PROMOTED_COPY = 'Promoted';
 
-/** Transient success confirmation that settles in (motion-safe via useEntrance). */
+/**
+ * Transient success confirmation that settles in (motion-safe via useEntrance)
+ * and names where the quote went. A polite live region announces it on Android
+ * and the web; VoiceOver ignores live regions, so iOS is told explicitly.
+ */
 function PromotedNotice(): React.JSX.Element {
   const settle = useEntrance();
+  useEffect(() => announceOnIos(PROMOTED_NOTICE_COPY), []);
   return (
     <Animated.Text
       style={[styles.promotionSuccess, settle]}
       testID="quote-promotion-success"
       accessibilityRole="text"
+      accessibilityLiveRegion="polite"
     >
-      {PROMOTED_COPY}
+      {PROMOTED_NOTICE_COPY}
     </Animated.Text>
   );
 }

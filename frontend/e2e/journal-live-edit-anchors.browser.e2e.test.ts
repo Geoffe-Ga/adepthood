@@ -99,6 +99,8 @@ async function selectRange(page: Page, field: Locator, start: number, end: numbe
 
 async function promote(page: Page, stored: string, selected: string): Promise<void> {
   await page.getByTestId('promote-quote-button').click();
+  // The box is never ticked here, so every promote meets the explainer (#2864).
+  await page.getByTestId('promote-explainer-continue').click();
   const surface = page.locator('textarea[data-testid="quote-select-input"]');
   await expect(surface).toHaveValue(stored);
   const start = stored.indexOf(selected);
@@ -106,7 +108,9 @@ async function promote(page: Page, stored: string, selected: string): Promise<vo
   await selectRange(page, surface, start, start + selected.length);
   await expect(page.getByTestId('quote-select-preview')).toHaveText(selected.trim());
   await page.getByTestId('quote-select-confirm').click();
-  await expect(page.getByTestId('quote-promotion-success')).toHaveText('Promoted');
+  await expect(page.getByTestId('quote-promotion-success')).toHaveText(
+    'Promoted — waiting for your next review',
+  );
 }
 
 test('a live-edited entry keeps its quote and margin anchors on the writer’s own words', async ({

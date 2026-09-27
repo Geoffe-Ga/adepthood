@@ -23,6 +23,9 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   const entryId = ((await created.json()) as { id: number }).id;
   await expect(page.getByTestId('promote-quote-button')).toBeVisible();
   await page.getByTestId('promote-quote-button').click();
+  // A fresh account meets the one-time promote explainer first (#2864).
+  await expect(page.getByTestId('promote-explainer-card')).toBeVisible();
+  await page.getByRole('button', { name: 'Choose the passage to promote' }).click();
 
   const selection = page.locator('textarea[data-testid="quote-select-input"]');
   const box = await selection.boundingBox();
@@ -37,7 +40,9 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   if (!selectedText) throw new Error('mouse selection produced no promoted text');
   await page.getByTestId('quote-select-confirm').click();
 
-  await expect(page.getByTestId('quote-promotion-success')).toHaveText('Promoted');
+  await expect(page.getByTestId('quote-promotion-success')).toHaveText(
+    'Promoted — waiting for your next review',
+  );
   const promotions = await page.request.get(`${backendUrl()}/journal/${entryId}/promotions`, {
     headers: { Authorization: `Bearer ${token}` },
   });

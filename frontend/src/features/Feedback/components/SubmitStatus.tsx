@@ -1,7 +1,6 @@
 import React, { useEffect } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { announceOnIos } from '../feedbackAnnounce';
 import {
   FEEDBACK_EDIT_AFTER_FAILURE_COPY,
   FEEDBACK_OUTCOME_COPY,
@@ -10,6 +9,7 @@ import {
 import { FEEDBACK_TEST_IDS } from '../feedbackTestIds';
 
 import { colors, ink, rhythm, SPACING, type as typeRamp } from '@/design/tokens';
+import { announceOnIos } from '@/utils/announceOnIos';
 
 interface SubmitStatusProps {
   failure: FeedbackFailureKind | null;

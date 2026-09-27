@@ -45,6 +45,9 @@ export function DontShowAgainCheckbox({
       onPress={onToggle}
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
+      // react-native-web reads the checked state only from aria-checked, not
+      // from accessibilityState, so without it a browser reads every box unticked.
+      aria-checked={checked}
       accessibilityLabel={accessibilityLabel}
       testID={testID}
     >
