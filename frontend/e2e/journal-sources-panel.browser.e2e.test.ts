@@ -201,6 +201,8 @@ async function expectCloseHeldThroughScroll(page: Page): Promise<void> {
   expectInside(end['reflection-sources-close']!, viewportBox(page));
   expectInside(end['reflection-sources-close']!, end[frame]!);
   expect(end['reflection-sources-close']).toEqual(top['reflection-sources-close']);
+  expect(end['reflection-sources-close']!.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
+  expect(end['reflection-sources-close']!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 }
 
 test.describe('phone, 390x844', () => {
@@ -213,11 +215,6 @@ test.describe('phone, 390x844', () => {
     await openSources(page);
     await expect(visible(page, 'reflection-sources-sheet')).toHaveCount(1);
     await expectCloseHeldThroughScroll(page);
-    const { 'reflection-sources-close': close } = await settledBoxes(page, [
-      'reflection-sources-close',
-    ]);
-    expect(close!.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
-    expect(close!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(visible(page, 'reflection-sources-sheet-body')).toHaveCount(0);
@@ -239,6 +236,7 @@ test.describe('phone, 390x844', () => {
     await openSources(page);
     await page.keyboard.press('Escape');
     await expect(visible(page, 'reflection-sources-sheet-body')).toHaveCount(0);
+    await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
     await expect(visible(page, 'journal-screen')).toBeVisible();
     await expect(entryBody(page)).toHaveValue(`${DRAFT}${CONTINUED}`);
 
@@ -251,6 +249,7 @@ test.describe('phone, 390x844', () => {
     await expect(visible(page, 'reflection-sources-sheet-body')).toBeVisible();
     await page.mouse.click(PHONE.width / 2, sheet.y / 2);
     await expect(visible(page, 'reflection-sources-sheet-body')).toHaveCount(0);
+    await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
     await expect(entryBody(page)).toHaveValue(`${DRAFT}${CONTINUED}`);
   });
 });
@@ -294,6 +293,27 @@ test.describe('laptop, 1280x720', () => {
     await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
     await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
     await expect(entryBody(page)).toHaveValue(DRAFT);
+  });
+
+  test('Escape while typing leaves the pane alone and the writer in their text', async ({
+    page,
+  }) => {
+    await seedReview(page, 'sources-panel-escape-typing');
+    await openSources(page);
+    await entryBody(page).click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type(' Still here.');
+    // The editor keeps its own keys (react-native-web's TextInput stops every
+    // keydown), so Escape here is the writer's, never the pane's.
+    await page.keyboard.press('Escape');
+    await expect(visible(page, 'reflection-sources-pane')).toBeVisible();
+    await expect(entryBody(page)).toBeFocused();
+    await page.keyboard.type(' And still writing.');
+    await expect(entryBody(page)).toHaveValue(`${DRAFT} Still here. And still writing.`);
+    // Outside a text field, Escape is the pane's again.
+    await visible(page, 'reflection-sources-heading').click();
+    await page.keyboard.press('Escape');
+    await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
   });
 
   test('the keyboard reaches the close control from the Sources toggle', async ({ page }) => {
