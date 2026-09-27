@@ -405,6 +405,25 @@
     "coveredBy": "frontend/e2e/journal-promoted-quote-reflection.browser.e2e.test.ts"
   },
   {
+    "id": "journal.fold-selected-promoted-quotes",
+    "description": "A writer composing a due weekly review opens Sources, taps 'Select quotes', and the pending quotes become checkboxes whose state the browser reads from aria-checked. With nothing checked the fixed action reads disabled (aria-disabled). Two of three quotes promoted from one source are checked out of order; the action, which sits outside the scroll and stays in the viewport, reads exactly 'Fold 2 quotes into this review'. One press splices both as Markdown blockquotes attributed to the source title, in the order they sit in the source, one blank line apart, after the writer's own text; the review autosaves to 'Saved' and the server holds that exact body; exactly one PATCH /promotions/{promotion_id} per checked quote names the review's id; the folded rows read as folded (aria-disabled) and the unchecked one still waits. On the next read the Promoted quotes screen counts 'Not yet in a review (1)' and 'Used in a review (2)'. Pinned only by Jest, not asserted in the browser: one body change and one entry write per batch whatever its size, the partial-failure retry that re-marks only the refused quotes from the composer hint without splicing again, the duplicate-press and in-flight guards, identical blocks written once, Select all / Clear all, the selection surviving a resize across the side-pane breakpoint, and the exact caret placements.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
+      "client": ["journal", "promotions", "reflections"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}",
+        "GET /promotions"
+      ],
+      "tables": ["journalentry", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-fold-selected-promoted-quotes.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.sources-panel-navigation",
     "description": "A writer composing a due weekly review opens Sources beside a week of long dailies and browses deep into the feed. The panel's heading -- the 'Sources' title, the period and the icon-only X named 'Done' -- stays fixed above a scroll that holds only the quotes and the feed, so at 390x844 and 1280x720 the X is still in the viewport and inside the panel after scrolling to the end, and it is at least 44x44. On a wide screen (1240 and up) the pane sits beside the writing sheet, never stacked full-width beneath it, and the entry body keeps a readable width and the sheet most of the height; narrower, a bounded sheet capped at the content width opens over the page. On the phone sheet the X, Escape and a tap on the backdrop each close only the panel, and after each focus returns to the Sources toggle; on the wide pane Escape does the same. The route stays and the draft is untouched. Escape pressed while typing in the entry body belongs to the editor: the pane stays open and the writer keeps focus and keeps typing. The writer keeps typing, the page autosaves to 'Saved', and the server holds the continued text on the same entry id. At 390, 768, 1024 and 1440 nothing overflows horizontally, an expanded source stays readable, and closing gives the editor back its width. When a source enters quote selection, 'Promote selection' and 'Cancel' stay inside the panel at 390x844 and 1280x720. Not asserted in the browser, and pinned only by Jest: the Android hardware back button (the sheet's Modal request, the wide pane's BackHandler, which stands down while another screen covers the entry so back pops that screen), the expanded rows and in-progress selection surviving a resize across the side-pane breakpoint, and the native bound on the selection field.",
     "crosses": {

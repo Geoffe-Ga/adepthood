@@ -96,7 +96,9 @@ describe('ReflectionSourcesPanel -- pending quotes', () => {
     expect(quoteNode.props.accessibilityState?.disabled).toBe(true);
   });
 
-  it('shows a check glyph and reads as selected once a quote is folded in (#2952)', () => {
+  // #2885 moved the folded state off ``selected``: a folded row reads as
+  // disabled and says so in its name, and ``checked`` belongs to selection.
+  it('shows a check glyph and reads as already folded once a quote is folded in (#2952)', () => {
     const sourceItem = item({
       id: 1,
       promoted_quotes: [quote({ id: 90, pending: true })],
@@ -106,10 +108,12 @@ describe('ReflectionSourcesPanel -- pending quotes', () => {
     );
     const hidden = { includeHiddenElements: true };
     expect(queryByTestId('pending-quote-90-check', hidden)).toBeNull();
-    expect(getByTestId('pending-quote-90').props.accessibilityState?.selected).toBeFalsy();
+    expect(getByTestId('pending-quote-90').props.accessibilityLabel).not.toMatch(/already/);
     fireEvent.press(getByTestId('pending-quote-90'));
     expect(getByTestId('pending-quote-90-check', hidden)).toBeTruthy();
-    expect(getByTestId('pending-quote-90').props.accessibilityState?.selected).toBe(true);
+    const folded = getByTestId('pending-quote-90');
+    expect(folded.props.accessibilityState).toEqual({ disabled: true });
+    expect(folded.props.accessibilityLabel).toMatch(/— already in your review$/);
   });
 });
 

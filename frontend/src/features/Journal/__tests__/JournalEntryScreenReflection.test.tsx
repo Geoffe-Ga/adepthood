@@ -133,6 +133,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
   const Stub = ({
     items,
     onInsertQuote,
+    onInsertQuotes,
+    foldedIds,
     onPromoteSpan,
     window: reviewWindow,
     anchorStatus,
@@ -146,6 +148,10 @@ jest.mock('../ReflectionSourcesPanel', () => {
       _q: PromotedQuoteSummary,
       _item: ReflectionSourceItem,
     ) => Promise<boolean> | undefined;
+    onInsertQuotes?: (
+      _c: ReadonlyArray<{ id: number; anchorText: string; attribution: string }>,
+    ) => Promise<unknown>;
+    foldedIds?: ReadonlySet<number>;
     onPromoteSpan?: (
       _item: ReflectionSourceItem,
       _span: { anchor_start: number; anchor_end: number },
@@ -193,6 +199,20 @@ jest.mock('../ReflectionSourcesPanel', () => {
         </Text>
         <Text testID="stub-anchor-status">{anchorStatus ?? ''}</Text>
         <Text testID="stub-feed-status">{feedStatus ?? ''}</Text>
+        <Text testID="stub-folded-ids">{[...(foldedIds ?? [])].join(',')}</Text>
+        {onInsertQuotes == null ? null : (
+          <TouchableOpacity
+            testID="stub-insert-batch"
+            onPress={() => {
+              void onInsertQuotes([
+                { id: 90, anchorText: 'went for a daily walk', attribution: 'Runs' },
+                { id: 91, anchorText: 'to the river', attribution: 'Runs' },
+              ]);
+            }}
+          >
+            <Text>Insert a batch</Text>
+          </TouchableOpacity>
+        )}
       </>
     );
   };
@@ -924,5 +944,75 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('stub-feed-status').props.children).toBe('ready');
+  });
+});
+
+// #2885: the batch fold-in reaches the panel, and a failed mark offers a retry
+// that re-marks only what failed, from the composer hint every path can see.
+describe('JournalEntryScreen -- batch fold-in and its retry (#2885)', () => {
+  const { inclusionRetryHint } = require('../quoteFoldCopy') as {
+    inclusionRetryHint: (_n: number) => string;
+  };
+
+  async function foldBatch(findByTestId: (_id: string) => Promise<unknown>): Promise<void> {
+    await act(async () => {
+      fireEvent.press((await findByTestId('reflection-sources-toggle')) as never);
+    });
+    await act(async () => {
+      fireEvent.press((await findByTestId('stub-insert-batch')) as never);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+  }
+
+  it('folds a batch as one entry write and one mark per quote, then shows both folded', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    jest.useFakeTimers();
+    try {
+      const { findByTestId, getByTestId } = renderScreen(REFLECTION_PARAMS, {
+        autosaveDelayMs: 100,
+      });
+      await foldBatch(findByTestId);
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockSetIncluded.mock.calls).toEqual([
+        [90, 42],
+        [91, 42],
+      ]);
+      expect(getByTestId('stub-folded-ids').props.children).toBe('90,91');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('names how many marks failed, and Try again re-marks only those', async () => {
+    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockSetIncluded.mockImplementation((id) =>
+      id === 91 ? Promise.reject({ status: 500 }) : Promise.resolve(mockStubQuote),
+    );
+    jest.useFakeTimers();
+    try {
+      const { findByTestId, getByTestId, getByLabelText, queryByTestId } = renderScreen(
+        REFLECTION_PARAMS,
+        { autosaveDelayMs: 100 },
+      );
+      await foldBatch(findByTestId);
+      expect(getByTestId('quote-inclusion-hint-text').props.children).toBe(inclusionRetryHint(1));
+      const retry = getByLabelText('Try again');
+      expect(retry.props.accessibilityRole).toBe('button');
+
+      mockSetIncluded.mockReset();
+      mockSetIncluded.mockResolvedValue(mockStubQuote);
+      await act(async () => {
+        fireEvent.press(retry);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockSetIncluded.mock.calls).toEqual([[91, 42]]);
+      expect(queryByTestId('quote-inclusion-hint')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

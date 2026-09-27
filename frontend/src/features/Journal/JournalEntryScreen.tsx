@@ -45,6 +45,7 @@ import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
+import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
@@ -233,14 +234,6 @@ interface SaveContext {
 
 /** HTTP status the backend returns when a reflection already exists for the scope. */
 const REFLECTION_CONFLICT_STATUS = 409;
-/**
- * Warm, declinable hint shown when a folded quote could not be marked included.
- * The quote stays pending and the entry is safe — the writer can simply try
- * again later; there is deliberately no urgency or blame here.
- */
-const QUOTE_INCLUSION_HINT =
-  "That quote is saved but didn't fold in just yet — no rush, you can add it again anytime.";
-
 /** True for a create rejection that means "this reflection already exists". */
 function isCreateConflict(error: unknown): boolean {
   return (
@@ -3317,6 +3310,8 @@ function ReflectionSourcesDock({
       feedStatus={reflection.feedStatus}
       timeZone={userTimezone}
       onInsertQuote={reflection.onInsertQuote}
+      onInsertQuotes={reflection.onInsertQuotes}
+      foldedIds={reflection.foldedIds}
       onPromoteSpan={reflection.onPromoteSpan}
       onClose={reflection.closeSources}
     />
@@ -3346,20 +3341,20 @@ function EntryComposeRow({
 }
 
 /**
- * The reflection composer's warm hint when a folded quote could not be marked
- * included. Renders nothing outside reflection mode.
+ * The reflection composer's warm hint, with its retry, when folded quotes could
+ * not be marked included (#2885). Renders nothing outside reflection mode.
  */
 function ReflectionComposer({
   reflection,
 }: {
   reflection: Controller['reflection'];
 }): React.JSX.Element | null {
-  if (!reflection.active || !reflection.inclusionHint) return null;
-  return (
-    <Text style={styles.savedHint} testID="quote-inclusion-hint">
-      {QUOTE_INCLUSION_HINT}
-    </Text>
-  );
+  const { retryInclusion } = reflection;
+  const onRetry = useCallback(() => {
+    void retryInclusion();
+  }, [retryInclusion]);
+  if (!reflection.active) return null;
+  return <QuoteInclusionHint failedCount={reflection.failedCount} onRetry={onRetry} />;
 }
 
 interface EntryScreenDrawer {
