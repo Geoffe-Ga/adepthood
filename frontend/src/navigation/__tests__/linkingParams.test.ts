@@ -42,9 +42,12 @@ describe('parseContentIdParam', () => {
     expect(parseContentIdParam('5')).toBe(5);
   });
 
-  it.each(['0', '-3', '2.5', 'x', '', UNSAFE_INTEGER])('rejects %p as undefined', (raw) => {
-    expect(parseContentIdParam(raw)).toBeUndefined();
-  });
+  it.each(['0', '-3', '2.5', 'x', '', '1e1', '0x5', ' 5', UNSAFE_INTEGER])(
+    'rejects %p as undefined',
+    (raw) => {
+      expect(parseContentIdParam(raw)).toBeUndefined();
+    },
+  );
 });
 
 describe('parseScrollOffsetParam', () => {
