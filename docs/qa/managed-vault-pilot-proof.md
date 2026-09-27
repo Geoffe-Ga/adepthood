@@ -55,6 +55,29 @@ Bearer bytes belong in two separately rotated owner-readable file mounts:
 
 In each case the bearer is a mounted file value, never an environment value,
 argument, deploy command, log field, screenshot, artifact, or evidence value.
+The backend image runs at the pinned numeric identity `10001:10001`; do not
+assume a platform default such as uid 1000. With managed activation disabled,
+attach the dedicated runtime volume and use an authorized root-capable
+Railway SSH/SFTP session for its one-time bootstrap. Do not run or redeploy the
+application image as root and do not set `RAILWAY_RUN_UID=0`.
+
+Create the runtime-volume mount directory `/run/adepthood-secrets` as
+`10001:10001` with mode `0700`; it and its contents are not Docker image layers.
+Prepare each bearer locally as a `0400` file, then upload it into that protected
+directory as an owner-only `.new` file. A bearer value is never a Railway variable
+and is never pasted into a shell, argument, log, or transcript. Set
+the staged file owner to `10001:10001` and its exact mode to `0400`. Validate
+with `lstat`/file-descriptor metadata only: it must be a regular non-symlink,
+owner-matched, non-empty, and at most 4,096 bytes. Use an atomic rename on the
+same volume to install `/run/adepthood-secrets/creek-control-bearer` and
+`/run/adepthood-secrets/creek-handoff-bearer`. On any failed validation, remove
+the staged file and keep activation disabled; the ordinary journal remains
+available throughout the disabled bootstrap. The application then validates
+one non-empty visible-ASCII bearer line (`0x21`–`0x7e`, with at most one terminal
+LF); a space, tab, control, embedded line break, or non-ASCII character keeps
+the rollout incomplete rather than failing later during HTTP-header creation.
+Restart the ordinary `10001:10001` image, re-stat both final paths, and require
+the content-free rollout state to become ready before admitting an account.
 `CREEK_PROVISIONING_URL` is the public HTTPS Creek control-plane origin and is
 the only address configured in Adepthood. The synthetic account's numeric id is
 placed in the deployment's private
@@ -109,12 +132,16 @@ invalidates the entire record.
 
 ### 1. Railway mounts and server-side admission
 
-Mount the two bearer files, configure the public Creek URL and the one-account
-allowlist, then enable new activation. Redeploy without printing environment
-values. The Adepthood startup event must report a ready rollout and cohort count
-only. A second authenticated synthetic account must receive the same unavailable
-response as every ineligible account and create no Adepthood activation row or
-Creek request. Record this as `railway_secret_file_mounts`.
+Complete the disabled runtime-volume bootstrap above, mount the two bearer
+files, configure the public Creek URL and the one-account allowlist, then enable
+new activation. Redeploy without printing environment values. The Adepthood
+startup event must report a ready rollout and cohort count only. Privately
+capture metadata-only proof of uid/gid `10001:10001`, directory mode `0700`,
+file mode `0400`, regular/non-symlink status, the completed runtime volume
+bootstrap, and the 1–4,096-byte bounds. A second authenticated synthetic account
+must receive the same unavailable response as every ineligible account and
+create no Adepthood activation row or Creek request. Record these closed facts
+as `railway_secret_file_mounts`.
 
 ### 2. Explicit activation and authenticated completion
 

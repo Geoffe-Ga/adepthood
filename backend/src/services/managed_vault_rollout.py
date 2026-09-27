@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from typing import Final
 
 from services.creek_provisioning_client import (
@@ -14,6 +13,7 @@ from services.creek_provisioning_client import (
     PROVISIONING_URL_ENV_VAR,
 )
 from services.creek_vault_url import classify_vault_url
+from services.secure_mounted_secret import read_secure_mounted_secret
 
 MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ACTIVATION_ENABLED"
 MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_PILOT_USER_IDS"
@@ -46,12 +46,7 @@ class ManagedVaultRollout:
 
 def _mounted_secret_is_readable(env_var: str) -> bool:
     path = os.getenv(env_var, "").strip()
-    if not path:
-        return False
-    try:
-        return bool(Path(path).read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+    return read_secure_mounted_secret(path) is not None
 
 
 def _parse_enabled() -> bool | None:

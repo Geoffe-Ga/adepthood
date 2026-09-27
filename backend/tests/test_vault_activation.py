@@ -124,8 +124,10 @@ def _encrypted_handoff(
     monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
     token_file = tmp_path / "handoff-token"
     token_file.write_text(_HANDOFF_TOKEN, encoding="utf-8")
+    token_file.chmod(0o400)
     control_token_file = tmp_path / "control-token"
     control_token_file.write_text("control-test-token-" + "t" * 48, encoding="utf-8")
+    control_token_file.chmod(0o400)
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control_token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")

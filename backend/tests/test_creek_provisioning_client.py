@@ -204,11 +204,41 @@ def test_insecure_control_plane_url_never_builds_a_bearer_transport(
     """A remote plaintext URL is rejected before a bearer-carrying client exists."""
     token_file = tmp_path / "control-token"
     token_file.write_text(_TOKEN, encoding="utf-8")
+    token_file.chmod(0o400)
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "http://control.example.test")
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(token_file))
 
     def fail_transport(*_args: object, **_kwargs: object) -> None:
         pytest.fail("an insecure control-plane URL built an HTTP transport")
+
+    monkeypatch.setattr("services.creek_provisioning_client.httpx.AsyncClient", fail_transport)
+
+    client = get_creek_provisioning_client()
+
+    assert client.__class__.__name__ == "_UnavailableProvisioningClient"
+
+
+@pytest.mark.parametrize("unsafe_kind", ["permissive", "symlink"])
+def test_unsafe_control_bearer_file_never_builds_a_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    """The production client consumes the same fail-closed mounted-file boundary."""
+    target = tmp_path / "target-token"
+    target.write_text(_TOKEN, encoding="utf-8")
+    target.chmod(0o400)
+    token_file = tmp_path / "control-token"
+    if unsafe_kind == "symlink":
+        token_file.symlink_to(target)
+    else:
+        token_file.write_text(_TOKEN, encoding="utf-8")
+        token_file.chmod(0o640)
+    monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://control.example.test")
+    monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(token_file))
+
+    def fail_transport(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an unsafe mounted credential built an HTTP transport")
 
     monkeypatch.setattr("services.creek_provisioning_client.httpx.AsyncClient", fail_transport)
 

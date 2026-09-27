@@ -10,9 +10,18 @@ The backend records exactly one state at startup without logging bearer values:
 
 - `disabled`: `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` is unset or false;
 - `incomplete`: the switch is invalid/true but the allowlist or Creek URL and
-  mounted bearer files are invalid, empty, or missing;
+  mounted bearer files are invalid, empty, missing, or insecure;
 - `ready`: the switch is true, both mounted bearers are readable, the Creek URL
   is usable, and 1–100 positive account ids are allowlisted.
+
+A bearer path must be absolute and resolve directly to a regular, non-symlink
+file owned by the backend's effective uid. The backend image pins that runtime
+identity to uid/gid `10001:10001`. Each file must have exact mode `0400`, contain
+one non-empty visible-ASCII bearer line (`0x21`–`0x7e`), and be no larger than
+4,096 bytes. One terminal LF is accepted; spaces, tabs, controls, embedded
+line breaks, and non-ASCII characters fail closed before HTTP-header use.
+Replacement or mutation across the open/read boundary also fails closed. The
+secret reader never logs the path contents or value.
 
 Only `ready` plus membership of the authenticated account id admits a new
 allocation. Every other case returns the same
@@ -24,7 +33,22 @@ bring-your-own-vault form.
 
 1. Verify Creek's provider-side fleet cap, billing alert, reconciliation worker,
    callback, and public ownership-bound route are healthy.
-2. Mount separately rotated, non-empty control and handoff bearer files.
+2. With managed activation disabled, attach the runtime secret volume and use
+   an authorized root-capable Railway SSH/SFTP session to bootstrap it. Keep the
+   normal application image running as `10001:10001`; never redeploy it as root
+   and never set `RAILWAY_RUN_UID=0`. Make the mount directory owned by
+   `10001:10001` with mode `0700`. This directory is the Railway runtime volume
+   at `/run/adepthood-secrets`; do not create it or either bearer in the Docker
+   image. For each separately rotated bearer, upload a local owner-only file
+   into an owner-only `.new` file without putting its bytes in an environment
+   value, argument, command, log, or terminal output. Set owner `10001:10001`
+   and exact mode `0400`, verify by `lstat` that it is a regular non-symlink
+   between 1 and 4,096 bytes, then use an atomic rename on that volume. Install
+   the final files as `/run/adepthood-secrets/creek-control-bearer` and
+   `/run/adepthood-secrets/creek-handoff-bearer`. The bearer is never a Railway
+   variable. Restart only the normal non-root image and re-stat both final
+   files before enabling the cohort. The disabled rollout leaves the ordinary
+   journal available while the volume is being bootstrapped.
 3. Set `CREEK_PROVISIONING_URL` to Creek's public HTTPS control-plane origin.
 4. Set `CREEK_MANAGED_VAULT_PILOT_USER_IDS` to the comma-separated Adepthood
    account ids approved for this cohort. Never use email addresses or a browser

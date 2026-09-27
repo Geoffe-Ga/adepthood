@@ -29,6 +29,12 @@
         "handoff_bearer_transport": null,
         "bearer_values_in_environment": null,
         "bearer_values_in_evidence": null,
+        "runtime_uid": null,
+        "runtime_gid": null,
+        "mount_directory_mode": null,
+        "mounted_file_mode": null,
+        "regular_files_without_symlinks": null,
+        "runtime_volume_bootstrap": null,
         "eligible_accounts": null,
         "ineligible_allocations": null
       }

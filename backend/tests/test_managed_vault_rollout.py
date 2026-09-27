@@ -23,6 +23,8 @@ def _complete_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     handoff = tmp_path / "handoff"
     control.write_text("control-token", encoding="utf-8")
     handoff.write_text("handoff-token", encoding="utf-8")
+    control.chmod(0o400)
+    handoff.chmod(0o400)
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control))
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(handoff))
@@ -92,6 +94,22 @@ def test_allowlist_over_the_pilot_ceiling_fails_closed(
     assert rollout.allows_new_activation(1) is False
 
 
+def test_permissive_handoff_file_keeps_the_rollout_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Readiness and request-time authentication share the strict file boundary."""
+    _complete_provider(monkeypatch, tmp_path)
+    (tmp_path / "handoff").chmod(0o440)
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, "1")
+
+    rollout = load_managed_vault_rollout()
+
+    assert rollout.state is ManagedVaultRolloutState.INCOMPLETE
+    assert rollout.defects == ("CREEK_PROVISIONING_HANDOFF_AUTH_FILE",)
+
+
 def test_incomplete_startup_record_names_settings_but_never_secret_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -102,7 +120,9 @@ def test_incomplete_startup_record_names_settings_but_never_secret_values(
     monkeypatch.delenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, raising=False)
     redaction_marker = "mounted-value-must-not-be-logged"
     control = tmp_path / "control"
+    control.chmod(0o600)
     control.write_text(redaction_marker, encoding="utf-8")
+    control.chmod(0o400)
 
     validate_managed_vault_rollout_config()
 

@@ -7,13 +7,13 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
-from pathlib import Path
 from typing import Annotated, Final, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from services.creek_vault_url import classify_vault_url
+from services.secure_mounted_secret import read_secure_mounted_secret
 
 PROVISIONING_URL_ENV_VAR: Final[str] = "CREEK_PROVISIONING_URL"
 PROVISIONING_AUTH_FILE_ENV_VAR: Final[str] = "CREEK_PROVISIONING_AUTH_FILE"
@@ -292,13 +292,7 @@ _HTTP_POOL = _HttpClientPool()
 def _read_mounted_token(env_var: str) -> str | None:
     """Read a non-empty bearer from its mounted file without logging its value."""
     raw_path = os.getenv(env_var, "").strip()
-    if not raw_path:
-        return None
-    try:
-        token = Path(raw_path).read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return token or None
+    return read_secure_mounted_secret(raw_path)
 
 
 def handoff_bearer_is_valid(authorization: str | None) -> bool:

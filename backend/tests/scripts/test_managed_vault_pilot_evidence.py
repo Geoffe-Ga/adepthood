@@ -52,6 +52,12 @@ _PASS_FACTS: dict[str, dict[str, object]] = {
         "handoff_bearer_transport": "mounted_file",
         "bearer_values_in_environment": 0,
         "bearer_values_in_evidence": 0,
+        "runtime_uid": 10001,
+        "runtime_gid": 10001,
+        "mount_directory_mode": "0700",
+        "mounted_file_mode": "0400",
+        "regular_files_without_symlinks": True,
+        "runtime_volume_bootstrap": True,
         "eligible_accounts": 1,
         "ineligible_allocations": 0,
     },
@@ -438,6 +444,26 @@ def test_operator_runbook_names_every_secret_and_privacy_boundary() -> None:
 
     assert "private creek content-free receipts retain" in text.casefold()
     assert "sanitized checked-in evidence contains neither identity nor resource address" in text
+
+
+def test_operator_runbook_pins_the_nonroot_railway_bootstrap_boundary() -> None:
+    text = _RUNBOOK.read_text(encoding="utf-8")
+
+    for phrase in (
+        "10001:10001",
+        "0700",
+        "0400",
+        ".new",
+        "atomic rename",
+        "Railway SSH/SFTP",
+        "RAILWAY_RUN_UID=0",
+        "4,096 bytes",
+        "/run/adepthood-secrets/creek-control-bearer",
+        "/run/adepthood-secrets/creek-handoff-bearer",
+    ):
+        assert phrase in text
+    assert "managed activation disabled" in text
+    assert "never a Railway variable" in text
 
 
 def test_operator_runbook_closes_every_acceptance_row_and_uses_the_validator() -> None:

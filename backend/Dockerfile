@@ -52,9 +52,13 @@ COPY backend/migrations/ migrations/
 # from the blanket ``*.md`` exclusion.
 COPY backend/content/ content/
 
-# Create non-root user
-RUN useradd --create-home appuser
-USER appuser
+# Keep runtime file-mount ownership deterministic across Railway deployments.
+# The bearer bootstrap chowns each credential to this identity with mode 0400;
+# pinning both ids prevents a base-image allocation change from locking the
+# application out or making a differently owned credential look trustworthy.
+RUN groupadd --gid 10001 appuser && \
+    useradd --uid 10001 --gid 10001 --create-home appuser
+USER 10001:10001
 
 EXPOSE 8000
 
