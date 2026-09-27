@@ -69,6 +69,8 @@ const TYPED = 'Words written while the page would not open.';
 const CARRIED_BODY = `${SERVER_BODY}\n\n${TYPED}`;
 const EIGHT_BODY = 'A page about mountains.';
 const SAVED_HINT = 'Saved';
+const RETRY_NAME = 'Retry saving this entry';
+const FLIGHT_WORDS = 'Typed while the privacy change was still on its way.';
 /** Autosave windows to wait while online, proving nothing retries without an edge. */
 const QUIET_WINDOWS = 10;
 
@@ -520,7 +522,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     expect(tierSelected(screen, 'personal')).toBe(true);
   });
 
-  it('holds offline words unsaved when the tier escalation fails', async () => {
+  it('keeps offline words off the page and unsaved when the tier escalation fails', async () => {
     mockGet
       .mockRejectedValueOnce(offlineError())
       .mockResolvedValueOnce(entry({ classification: 'public' }));
@@ -529,13 +531,147 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     await typeBody(screen, TYPED);
 
     await reconnect();
-    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await screen.findByTestId('journal-carry-waiting');
     await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
+    // The words typed under Personal are held, not on the public page.
+    expect(bodyValue(screen)).toBe(SERVER_BODY);
     expect(mockUpdate.mock.calls).toEqual([[7, { classification: 'personal' }]]);
     expect(updatesCarrying(TYPED)).toEqual([]);
     // The control now tells the truth: the entry is still stored as public.
     expect(tierSelected(screen, 'public')).toBe(true);
+  });
+
+  it('never lets the close flush write held words', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await screen.findByTestId('journal-carry-waiting');
+
+    fireEvent.press(screen.getByTestId('journal-close-entry'));
+    await advance(AUTOSAVE_MS);
+
+    expect(updatesCarrying(TYPED)).toEqual([]);
+  });
+
+  it('puts held words back and saves them once a retry makes the entry strict enough', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await screen.findByTestId('journal-carry-waiting');
+
+    fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+
+    expect(tierSelected(screen, 'personal')).toBe(true);
+    expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+    const saves = updatesCarrying(TYPED);
+    expect(saves).toHaveLength(1);
+    const payloads = mockUpdate.mock.calls.map(([, p]) => p as Record<string, unknown>);
+    const lastTier = payloads.map((p) => p.classification).lastIndexOf('personal');
+    const firstCarry = payloads.findIndex((p) => String(p.message ?? '').includes(TYPED));
+    expect(firstCarry).toBeGreaterThan(lastTier);
+  });
+
+  it('puts held words back once the writer chooses a strict enough tier', async () => {
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await screen.findByTestId('journal-carry-waiting');
+
+    fireEvent.press(
+      within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+    );
+    await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+    await advance(AUTOSAVE_MS);
+
+    expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'intimate' });
+    expect(updatesCarrying(TYPED)).toHaveLength(1);
+  });
+
+  it('holds keystrokes typed during an in-flight escalation until the tier is confirmed', async () => {
+    const escalation = deferred<JournalMessage>();
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockReturnValueOnce(escalation.promise);
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }));
+
+    await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+    expect(updatesCarrying(FLIGHT_WORDS)).toEqual([]);
+
+    await act(async () => {
+      escalation.resolve(entry({ classification: 'personal' }));
+    });
+    await advance(AUTOSAVE_MS);
+    const saves = updatesCarrying(FLIGHT_WORDS);
+    expect(saves).toHaveLength(1);
+    expect(JSON.stringify(saves[0]?.[1])).toContain(JSON.stringify(TYPED).slice(1, -1));
+  });
+
+  it('never saves in-flight keystrokes under the looser tier when the escalation fails', async () => {
+    const escalation = deferred<JournalMessage>();
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockReturnValueOnce(escalation.promise);
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }));
+    await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+
+    await act(async () => {
+      escalation.reject(new Error('network'));
+    });
+    await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+    fireEvent.press(screen.getByTestId('journal-close-entry'));
+    await advance(AUTOSAVE_MS);
+
+    expect(tierSelected(screen, 'public')).toBe(true);
+    expect(updatesCarrying(FLIGHT_WORDS)).toEqual([]);
+    expect(updatesCarrying(TYPED)).toEqual([]);
+    expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+  });
+
+  it('refuses Finish while in-flight keystrokes wait on a failed escalation', async () => {
+    const escalation = deferred<JournalMessage>();
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockReturnValueOnce(escalation.promise);
+    const screen = await openFailed();
+    await typeBody(screen, TYPED);
+    await reconnect();
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }));
+    await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+    await act(async () => {
+      escalation.reject(new Error('network'));
+    });
+    await screen.findByTestId('journal-carry-waiting');
+
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await advance(AUTOSAVE_MS);
+
+    expect(updatesCarrying(FLIGHT_WORDS)).toEqual([]);
+    expect(screen.getByTestId('journal-finish-error')).toBeTruthy();
   });
 
   it('never escalates or re-tiers when the stored tier is already as strict', async () => {
