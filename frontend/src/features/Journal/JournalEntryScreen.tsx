@@ -124,14 +124,13 @@ const NARROW_BREAKPOINT = 600;
 
 /**
  * The fixed margin first appears at 600px, but it initially leaves the writing
- * rail too narrow for every secondary label. Keep those actions icon-only
- * through that transition; their accessible names remain complete.
+ * rail too narrow for the Sources label. Keep Sources icon-only through that
+ * transition; its accessible name remains complete.
  */
 const COMPACT_WRITING_CONTROLS_BREAKPOINT = NARROW_BREAKPOINT + 120;
 
-/** The photograph affordance, offered while writing — including to a Course
+/** The photograph affordance's name, offered while writing — including to a Course
  *  reflection, which is an ordinary journal page opened with a title. */
-const PHOTOGRAPH_PAGE_LABEL = 'Photograph a page';
 const PHOTOGRAPH_PAGE_HINT = 'Photograph a page or screenshot and add its text to this entry';
 
 /** Body-field placeholder for a free-write with no prompt to echo. */
@@ -2109,8 +2108,6 @@ interface WritingColumnProps {
    * back to this toggle once the panel closes (#2883).
    */
   sources?: SourcesToggle;
-  /** Opens the shared capture route to add a photographed page to this entry. */
-  onPhotographPage: () => void;
   /** Phone layout: secondary actions keep their names for a11y but show icon-only. */
   compactControls: boolean;
 }
@@ -2259,32 +2256,32 @@ function WritingFooter({
 }
 
 /**
- * "Photograph a page" — the writing surface's door to the existing capture flow.
+ * The camera — the writing surface's door to the existing capture flow.
  *
- * A link beside the other writing controls rather than a camera embedded in the
- * page: the capture route already owns the whole multi-page session, its privacy
- * gate and its transcription run, and inlining any of that would fork a paid OCR
- * path. Offered while writing only; a finished page is read, not added to.
+ * An icon in the exit row, directly left of the close X, rather than a camera
+ * embedded in the page: the capture route already owns the whole multi-page
+ * session, its privacy gate and its transcription run, and inlining any of that
+ * would fork a paid OCR path. Glyph over word (DESIGN.md): the full phrase is its
+ * accessible name. Offered while writing only; a finished page is read, not
+ * added to.
  */
-function PhotographPageButton({
-  onPress,
-  compact,
-}: {
-  onPress: () => void;
-  compact: boolean;
-}): React.JSX.Element {
+function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.Element {
   return (
     <TouchableOpacity
-      style={styles.writingSecondaryControl}
+      style={styles.entryIconButton}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={PHOTOGRAPH_PAGE_HINT}
       testID="journal-photograph-page"
     >
       <View accessible={false} testID="journal-photograph-page-icon">
-        <Camera color={accent.primary} size={18} accessible={false} />
+        <Camera
+          color={accent.primary}
+          size={NAV_ICON_SIZE}
+          strokeWidth={NAV_ICON_STROKE}
+          accessible={false}
+        />
       </View>
-      {compact ? null : <Text style={styles.writingControlLabel}>{PHOTOGRAPH_PAGE_LABEL}</Text>}
     </TouchableOpacity>
   );
 }
@@ -2313,27 +2310,37 @@ function ReflectionSourcesButton({
   ) : null;
 }
 
-/** The page's one unbroken action rail, with any Finish error beneath the rail. */
+/**
+ * The page's one unbroken action rail, with any Finish error centred beneath it.
+ *
+ * Balanced: two equal flanks hold Finish on the rail's centre, under the text
+ * box. Sources lives in the trailing flank, so neither control shifts sideways
+ * when the first keystroke makes Finish appear.
+ */
 function WritingControls({
   onFinish,
   finishing,
   finishError,
-  onPhotographPage,
   sources,
   compactControls,
 }: Pick<
   WritingColumnProps,
-  'onFinish' | 'finishing' | 'finishError' | 'onPhotographPage' | 'sources' | 'compactControls'
+  'onFinish' | 'finishing' | 'finishError' | 'sources' | 'compactControls'
 >): React.JSX.Element {
   return (
     <>
       <View style={styles.writingControlsRow} testID="journal-writing-controls">
+        <View style={styles.writingControlsSide} testID="journal-writing-controls-leading" />
         {onFinish ? <FinishControl onFinish={onFinish} finishing={finishing} /> : null}
-        <PhotographPageButton onPress={onPhotographPage} compact={compactControls} />
-        <ReflectionSourcesButton toggle={sources} compact={compactControls} />
+        <View
+          style={[styles.writingControlsSide, styles.writingControlsTrailing]}
+          testID="journal-writing-controls-trailing"
+        >
+          <ReflectionSourcesButton toggle={sources} compact={compactControls} />
+        </View>
       </View>
       {finishError == null ? null : (
-        <Text style={styles.marginError} testID="journal-finish-error">
+        <Text style={[styles.marginError, styles.finishError]} testID="journal-finish-error">
           {finishError}
         </Text>
       )}
@@ -2371,7 +2378,6 @@ function WritingColumnContent({
   controlsDisabled,
   onBodySelectionChange,
   sources,
-  onPhotographPage,
   compactControls,
 }: WritingColumnProps) {
   return (
@@ -2396,7 +2402,6 @@ function WritingColumnContent({
         onFinish={onFinish}
         finishing={finishing}
         finishError={finishError}
-        onPhotographPage={onPhotographPage}
         sources={sources}
         compactControls={compactControls}
       />
@@ -3386,7 +3391,6 @@ function PageBodyColumn({
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
       sources={ctl.reflection.active ? ctl.reflection.sourcesToggle : undefined}
-      onPhotographPage={ctl.photograph.openCapture}
       compactControls={compactControls}
     />
   ) : (
@@ -3825,10 +3829,9 @@ function EntryExits({
   return (
     <>
       <EntryExitControls
+        ctl={ctl}
         returnTo={returnTo}
         navigation={navigation}
-        flush={ctl.autosave.flush}
-        flushForExit={ctl.autosave.flushForExit}
         onOpenApiKey={onOpenApiKey}
         guard={guard}
       />
@@ -3843,27 +3846,29 @@ function EntryExits({
 }
 
 /**
- * The page's exit row: the course return when there is one, and the close always.
- * They are separate affordances — the return carries the reader back to the exact
- * passage they left, which the close cannot know about.
+ * The page's top-right row: the course return when there is one, the API-key
+ * door, the camera while writing, and the close always — [Return?][Key][Camera][X].
+ * The return and the close are separate affordances — the return carries the
+ * reader back to the exact passage they left, which the close cannot know about.
+ * The camera shares the writing column's gate (``editMode``): a finished page is
+ * read, not added to.
  */
 function EntryExitControls({
+  ctl,
   returnTo,
   navigation,
-  flush,
-  flushForExit,
   onOpenApiKey,
   guard,
 }: {
+  ctl: Controller;
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
-  flush: () => Promise<number | null>;
-  flushForExit: () => Promise<boolean>;
   onOpenApiKey: () => void;
   guard: HeldExitGuard;
 }): React.JSX.Element {
+  const { flush, flushForExit } = ctl.autosave;
   return (
-    <View style={styles.entryExitRow}>
+    <View style={styles.entryExitRow} testID="journal-entry-exit-row">
       <ReturnToReadingLink
         returnTo={returnTo}
         navigation={navigation}
@@ -3871,6 +3876,7 @@ function EntryExitControls({
         guard={guard}
       />
       <ApiKeySettingsLink onPress={onOpenApiKey} />
+      {ctl.editGate.editMode ? <PhotographPageButton onPress={ctl.photograph.openCapture} /> : null}
       <CloseEntryLink navigation={navigation} flush={flushForExit} guard={guard} />
     </View>
   );
