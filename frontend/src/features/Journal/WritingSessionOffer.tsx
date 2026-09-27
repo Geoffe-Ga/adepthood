@@ -30,6 +30,15 @@
  * or has declined it, causes no request at all — and taking one branch never
  * spends a request on the other.
  *
+ * Keeping it as a habit first asks WHICH habit (#2861): one the writer already
+ * keeps, listed by their own names, or a new Journaling one last. Choosing an
+ * existing habit links the writing timer to it on ``/ui-flags`` — from then on
+ * every finished session checks it off — and settles the offer; choosing "New
+ * habit" goes on to the placement step unchanged. And an account that already
+ * HAS a link is not asked again, even on a device that has never seen the
+ * offer: the link is the server's answer, where the stored flag is only this
+ * device's.
+ *
  * The practice branch lives in ``SaveAsPracticeStep`` rather than here, because
  * it has to ask the server what keeping it would DO before it can describe the
  * choice honestly, and that lookup has states of its own. What stays here is
@@ -52,6 +61,7 @@ import OfferAction from './OfferAction';
 import {
   JOURNALING_HABIT_ICON,
   JOURNALING_HABIT_NAME,
+  linkedHabitConfirmation,
   SAVE_AS_HABIT_ACCEPT,
   SAVE_AS_HABIT_ACCEPT_A11Y,
   SAVE_AS_HABIT_CANCEL,
@@ -73,17 +83,32 @@ import {
 } from './saveAsHabitCopy';
 import { SAVE_AS_PRACTICE_ACCEPT, SAVE_AS_PRACTICE_ACCEPT_A11Y } from './saveAsPracticeCopy';
 import SaveAsPracticeStep from './SaveAsPracticeStep';
+import WritingHabitPicker from './WritingHabitPicker';
 import type { WritingSessionResult } from './writingSession';
 
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
+import type { Habit } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
+import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
-/** Where the offer has got to. ``unknown`` is "the decline has not been read yet". */
-type Phase = 'unknown' | 'offered' | 'placing' | 'saving' | 'saved' | 'keeping' | 'declined';
+/**
+ * Where the offer has got to. ``choosing`` is "which habit?", ``linking`` is an
+ * existing habit's link in flight, and ``linked`` is that link landed.
+ */
+type Phase =
+  | 'offered'
+  | 'choosing'
+  | 'linking'
+  | 'linked'
+  | 'placing'
+  | 'saving'
+  | 'saved'
+  | 'keeping'
+  | 'declined';
 
 /** One row of the prospective order: what it is called, and whose lap it counts on. */
 interface PreviewRow {
@@ -303,21 +328,60 @@ interface OfferMoves {
   practiceKept: () => void;
   confirmHabit: () => void;
   backToOffer: () => void;
+  chooseNew: () => void;
+  chooseExisting: (_habit: Habit) => void;
+  /** The habit an existing-habit link landed on, for the confirmation. */
+  linkedName: string | null;
+}
+
+/**
+ * The "which habit?" moves, apart from the rest so each hook stays small.
+ *
+ * ``chooseExisting`` settles only once the server has AGREED to the link: a
+ * refused PATCH leaves the picker up and the offer unanswered, because the
+ * writer asked for a link they have not got.
+ */
+function useHabitChoiceMoves(
+  settle: () => void,
+  setPhase: (_phase: Phase) => void,
+  token: string | undefined,
+): { chooseExisting: (_habit: Habit) => void; linkedName: string | null } {
+  const setLink = useWritingHabitLinkStore((state) => state.setLink);
+  const [linkedName, setLinkedName] = useState<string | null>(null);
+  const chooseExisting = useCallback(
+    (habit: Habit) => {
+      setPhase('linking');
+      void setLink(habit.id, token).then((linked) => {
+        if (!linked) {
+          setPhase('choosing');
+          return;
+        }
+        settle();
+        setLinkedName(habit.name);
+        setPhase('linked');
+      });
+    },
+    [setLink, settle, setPhase, token],
+  );
+  return { chooseExisting, linkedName };
 }
 
 /**
  * The moves, in one place, so the component below only chooses what to render.
  *
- * ``settle`` is called from all three endings — declining, keeping the habit,
- * keeping the practice — and from none of the ways back, because an offer the
- * writer stepped out of is one they have not answered.
+ * ``settle`` is called from all four endings — declining, keeping a new habit,
+ * linking an existing one, keeping the practice — and from none of the ways
+ * back, because an offer the writer stepped out of is one they have not
+ * answered.
  */
 function useOfferMoves(
   settle: () => void,
   placement: ReturnType<typeof usePlacement>,
   tz: string,
+  token: string | undefined,
 ): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
+  const { chooseExisting, linkedName } = useHabitChoiceMoves(settle, setPhase, token);
 
   const decline = useCallback(() => {
     settle();
@@ -326,11 +390,16 @@ function useOfferMoves(
 
   const keepAsHabit = useCallback(() => {
     // Read the writer's habits only now: an offer nobody takes up costs no
-    // request, and the list is what the next step is about.
+    // request, and the list is what the next step is about. The picker reads
+    // the store reactively, so it fills in as the read lands.
     void habitManager.loadHabits(tz);
+    setPhase('choosing');
+  }, [tz]);
+
+  const chooseNew = useCallback(() => {
     placement.reset();
     setPhase('placing');
-  }, [placement, tz]);
+  }, [placement]);
 
   const confirmHabit = useCallback(() => {
     setPhase('saving');
@@ -356,7 +425,15 @@ function useOfferMoves(
     practiceKept: useCallback(() => settle(), [settle]),
     confirmHabit,
     backToOffer: useCallback(() => setPhase('offered'), []),
+    chooseNew,
+    chooseExisting,
+    linkedName,
   };
+}
+
+/** Whether the account already has a writing habit linked, as the server said. */
+function useKnownLink(): boolean {
+  return useWritingHabitLinkStore((state) => state.hydrated && state.habitId !== null);
 }
 
 function WritingSessionOffer({
@@ -364,11 +441,11 @@ function WritingSessionOffer({
   now = systemClock,
 }: WritingSessionOfferProps): React.JSX.Element | null {
   const habits = useHabitStore((state) => state.habits);
-  const { userTimezone } = useAuth();
+  const { userTimezone, token } = useAuth();
   const { answered, settle } = useOfferGate();
   const placement = usePlacement(habits.length);
-  const { phase, decline, keepAsHabit, keepAsPractice, practiceKept, confirmHabit, backToOffer } =
-    useOfferMoves(settle, placement, userTimezone);
+  const moves = useOfferMoves(settle, placement, userTimezone, token ?? undefined);
+  const knownLink = useKnownLink();
   // Stamped ONCE, at mount, and never re-read. The note appears when the session
   // ends and is keyed to it, so mount time is the session's own end instant;
   // reading the clock again at the tap would post-date the writing to whenever
@@ -380,8 +457,45 @@ function WritingSessionOffer({
     elapsedMs: result.elapsedMs,
   }));
 
+  const { phase } = moves;
   if (answered !== false || phase === 'declined') return null;
+  // A link the server already holds is this account's answer, on any device.
+  // Only the untouched invitation is withheld: a writer mid-choice keeps it.
+  if (phase === 'offered' && knownLink) return null;
 
+  return renderHabitChoice(moves, habits) ?? renderPhase(moves, habits, placement, writing);
+}
+
+/** The "which habit?" phases, or ``null`` when the offer is in another one. */
+function renderHabitChoice(moves: OfferMoves, habits: readonly Habit[]): React.JSX.Element | null {
+  const { phase } = moves;
+  if (phase === 'linked') {
+    return (
+      <View style={styles.offer} testID="save-as-habit-linked">
+        <Text style={styles.prompt}>{linkedHabitConfirmation(moves.linkedName ?? '')}</Text>
+      </View>
+    );
+  }
+  if (phase !== 'choosing' && phase !== 'linking') return null;
+  return (
+    <WritingHabitPicker
+      habits={habits}
+      busy={phase === 'linking'}
+      onChoose={moves.chooseExisting}
+      onNew={moves.chooseNew}
+      onCancel={moves.backToOffer}
+    />
+  );
+}
+
+/** The note's body for every other phase the offer can be in. */
+function renderPhase(
+  moves: OfferMoves,
+  habits: readonly Habit[],
+  placement: ReturnType<typeof usePlacement>,
+  writing: FinishedWriting,
+): React.JSX.Element {
+  const { phase } = moves;
   if (phase === 'saved') {
     return (
       <View style={styles.offer} testID="save-as-habit-saved">
@@ -391,7 +505,13 @@ function WritingSessionOffer({
   }
 
   if (phase === 'keeping') {
-    return <SaveAsPracticeStep writing={writing} onKept={practiceKept} onCancel={backToOffer} />;
+    return (
+      <SaveAsPracticeStep
+        writing={writing}
+        onKept={moves.practiceKept}
+        onCancel={moves.backToOffer}
+      />
+    );
   }
 
   if (phase === 'placing' || phase === 'saving') {
@@ -401,14 +521,18 @@ function WritingSessionOffer({
         saving={phase === 'saving'}
         onEarlier={placement.earlier}
         onLater={placement.later}
-        onConfirm={confirmHabit}
-        onCancel={backToOffer}
+        onConfirm={moves.confirmHabit}
+        onCancel={moves.backToOffer}
       />
     );
   }
 
   return (
-    <Invitation onKeepAsHabit={keepAsHabit} onKeepAsPractice={keepAsPractice} onDecline={decline} />
+    <Invitation
+      onKeepAsHabit={moves.keepAsHabit}
+      onKeepAsPractice={moves.keepAsPractice}
+      onDecline={moves.decline}
+    />
   );
 }
 
