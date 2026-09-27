@@ -1,11 +1,18 @@
 {
-  "dataset_version": "2.1.0",
+  "dataset_version": "2.2.0",
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
-    "refresh_doc": "docs/curriculum.md"
+    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' and free_will_description follow the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md (the description is paraphrased from it) and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype and habits/personalities description carried over from backup/2.PURPLE.md (issue #2915). APTITUDE Complete Map.csv is not vendored; its own description sentence replaces this one when #2664 vendors the CSV",
+    "refresh_doc": "docs/curriculum.md",
+    "supersessions": [
+      {"stage_number": 4, "field": "aspect", "value": "Community Love"},
+      {"stage_number": 8, "field": "spiral_dynamics_color", "value": "Teal"},
+      {"stage_number": 8, "field": "aspect", "value": "True Self Connection"},
+      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"}
+    ]
   },
   "phases": ["Rising", "Peaking", "Withdrawal", "Diminishing", "Bottoming Out", "Restoration"],
   "stages": [
@@ -62,8 +69,8 @@
       "spiral_dynamics_color": "Purple",
       "growing_up_stage": "Magic",
       "divine_gender_polarity": "Divine Feminine",
-      "relationship_to_free_will": "Archetype Embodier",
-      "free_will_description": "Individual personalities (collections of habits—which are frequently repeated behaviors) are the combined effort of archetypal role models, including everything from fictional characters to societal celebrities (and perhaps ancient gods in polytheistic cultures)",
+      "relationship_to_free_will": "Pleasure Seeker",
+      "free_will_description": "Will is steered from the Sacral, about three inches below the navel: toward the pleasant, away from the unpleasant, before the argument starts. Pleasure is real information, and it is also a leash; Free Will at Purple lives in the ability to tell one pleasure from another.",
       "manifestations": [
         {
           "phase": "Rising",
