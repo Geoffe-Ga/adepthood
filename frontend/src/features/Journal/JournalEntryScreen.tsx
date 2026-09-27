@@ -58,6 +58,7 @@ import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
+import { usePromotedQuoteHandoff } from './usePromotedQuoteHandoff';
 import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
@@ -3371,7 +3372,10 @@ interface EntryScreenDrawer {
  * so a row tap and New entry must ``push`` a fresh screen (not ``navigate`` in
  * place, which would keep the current, already-loaded entry).
  */
-function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
+function useEntryScreenDrawer(
+  navigation: ScreenNavigation,
+  quoteHandoffToken: () => string | undefined,
+): EntryScreenDrawer {
   const drawer = useScreenDrawer('Journal');
   const onSelectEntry = useCallback(
     (entryId: number) => {
@@ -3395,10 +3399,14 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
     drawer.close();
   }, [navigation, drawer]);
   // Promoted quotes is a place beside the entry too, so it navigates in place.
+  // From a review being written it carries a hand-off token, so the screen can
+  // fold a selection back into THIS page (#2885); from anything else, nothing.
   const onOpenPromotedQuotes = useCallback(() => {
-    navigation.navigate('PromotedQuotes');
+    const injectInto = quoteHandoffToken();
+    if (injectInto == null) navigation.navigate('PromotedQuotes');
+    else navigation.navigate('PromotedQuotes', { injectInto });
     drawer.close();
-  }, [navigation, drawer]);
+  }, [navigation, drawer, quoteHandoffToken]);
   return {
     drawer,
     onSelectEntry,
@@ -3655,6 +3663,34 @@ function EntryCorpusInvitation({
   return <CorpusInvitationNote completedPasses={ctl.resonance.completedPasses} onOpen={onOpen} />;
 }
 
+/**
+ * This page's end of the Promoted quotes hand-off (#2885). A selection folds
+ * only into a review (the server marks a quote included nowhere else, #1458),
+ * and only while that review is hydrated and editable. Returns the drawer's
+ * token source: a fresh token while the page can fold, else none.
+ */
+function useEntryQuoteHandoff(
+  ctl: Controller,
+  routeToken: string | undefined,
+): () => string | undefined {
+  const ready = ctl.reflection.active && ctl.editGate.editMode;
+  const { mint } = usePromotedQuoteHandoff({
+    ready,
+    routeToken,
+    onInsertQuotes: ctl.reflection.onInsertQuotes,
+  });
+  return useCallback(() => (ready ? mint() : undefined), [ready, mint]);
+}
+
+/** The header drawer, its Promoted quotes door carrying this page's hand-off. */
+function useEntryDrawerWithHandoff(
+  navigation: ScreenNavigation,
+  ctl: Controller,
+  routeToken: string | undefined,
+): EntryScreenDrawer {
+  return useEntryScreenDrawer(navigation, useEntryQuoteHandoff(ctl, routeToken));
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -3663,7 +3699,6 @@ function JournalEntryScreen({
   const { ctx, initialText, bodyPlaceholder, initialClassification } = readEntrypoint(route.params);
   const currentEntryId = route.params?.entryId ?? null;
   const justSaved = route.params?.justSaved ?? false;
-  const entryDrawer = useEntryScreenDrawer(navigation);
   const ctl = useJournalEntryController(
     currentEntryId,
     autosaveDelayMs,
@@ -3673,6 +3708,7 @@ function JournalEntryScreen({
     justSaved,
     initialClassification,
   );
+  const entryDrawer = useEntryDrawerWithHandoff(navigation, ctl, route.params?.injectQuotes);
   const openApiKey = useOpenApiKey(navigation, ctl.explainer.cancelPending);
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">

@@ -133,3 +133,45 @@ describe('ScreenScaffold', () => {
     expect(queryByTestId('bottom-fade')).toBeNull();
   });
 });
+
+// #2885: a screen's one primary action can stand below the scroll, so it never
+// scrolls away; a screen without one is laid out exactly as before.
+describe('ScreenScaffold footer', () => {
+  it('renders the footer outside the scroll, beneath it', () => {
+    const { getByTestId } = render(
+      <ScreenScaffold scroll testID="scaffold" footer={<Text testID="bar">Act</Text>}>
+        <Text testID="body">x</Text>
+      </ScreenScaffold>,
+    );
+    expect(within(getByTestId('scaffold')).queryByTestId('bar')).toBeNull();
+    expect(within(getByTestId('scaffold')).getByTestId('body')).toBeTruthy();
+    expect(within(getByTestId('screen-scaffold-footer')).getByTestId('bar')).toBeTruthy();
+  });
+
+  it('caps the footer at the content width, with the screen padding', () => {
+    const { getByTestId } = render(
+      <ScreenScaffold scroll footer={<Text>Act</Text>}>
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    const footer = getByTestId('screen-scaffold-footer');
+    const flat = StyleSheet.flatten(footer.props.style);
+    expect(flat.paddingHorizontal).toBe(rhythm.screenPaddingH);
+    expect(within(footer).getByTestId('screen-scaffold-footer-content')).toBeTruthy();
+  });
+
+  it('leaves a scroll screen without a footer unchanged', () => {
+    const without = render(
+      <ScreenScaffold scroll testID="scaffold">
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    expect(without.queryByTestId('screen-scaffold-footer')).toBeNull();
+    const withNull = render(
+      <ScreenScaffold scroll testID="scaffold" footer={null}>
+        <Text>x</Text>
+      </ScreenScaffold>,
+    );
+    expect(withNull.toJSON()).toEqual(without.toJSON());
+  });
+});

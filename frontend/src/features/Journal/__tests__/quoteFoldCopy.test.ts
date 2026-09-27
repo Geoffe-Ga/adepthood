@@ -19,6 +19,7 @@ describe('quoteFoldCopy -- the fold vocabulary, counted honestly (#2885)', () =>
   it('names the write-a-review action exactly, singular and plural', () => {
     expect(writeReviewWithLabel(1)).toBe('Write a review with 1 quote');
     expect(writeReviewWithLabel(2)).toBe('Write a review with 2 quotes');
+    expect(writeReviewWithLabel(0)).toBe('Choose quotes to fold in');
   });
 
   it('says how many quotes are still unmarked, and that trying again is optional', () => {

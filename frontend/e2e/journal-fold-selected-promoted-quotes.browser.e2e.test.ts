@@ -114,10 +114,39 @@ test('a writer checks several promoted quotes and folds them into the review at 
   await expect(row(firstId)).toHaveAttribute('aria-disabled', 'true');
   await expect(row(secondId)).toHaveAttribute('aria-checked', 'false');
 
-  // The Promoted quotes screen counts the move on its next read.
-  await page.reload();
-  await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+  // From the review's own drawer, the Promoted quotes screen counts the move,
+  // and folds the quote still waiting back into THIS review.
+  const openPromotedQuotes = async (): Promise<void> => {
+    await page.getByRole('button', { name: 'Open Journal menu' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+    await expect(page.getByTestId('promoted-quotes-screen')).toBeVisible();
+  };
+  await openPromotedQuotes();
   await expect(page.getByText('Not yet in a review (1)')).toBeVisible();
   await expect(page.getByText('Used in a review (2)')).toBeVisible();
+  await page.getByTestId('promoted-quotes-pending-select-toggle').click();
+  const screenRow = page.getByTestId(`promoted-quote-${secondId}`);
+  await expect(screenRow).toHaveAttribute('aria-checked', 'false');
+  await screenRow.click();
+  await expect(screenRow).toHaveAttribute('aria-checked', 'true');
+  const screenAction = page.locator('[data-testid="quote-fold-action"]:visible');
+  await expect(screenAction).toHaveText('Fold 1 quote into this review');
+  await expect(screenAction).toBeInViewport();
+  await screenAction.click();
+
+  // Back on the review, the quote lands once, attributed as the panel would.
+  await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
+  await expect
+    .poll(() => marks.filter((mark) => mark.id === secondId))
+    .toEqual([{ id: secondId, target: reflectionId }]);
+  const after = await page.request.get(`${backendUrl()}/journal/${reflectionId}`, { headers });
+  const finalBody = ((await after.json()) as { message: string }).message;
+  for (const passage of PASSAGES) {
+    expect(finalBody.split(block(passage)).length - 1).toBe(1);
+  }
+  expect(marks).toHaveLength(3);
+
+  await openPromotedQuotes();
+  await expect(page.getByText('Not yet in a review (0)')).toBeVisible();
+  await expect(page.getByText('Used in a review (3)')).toBeVisible();
 });

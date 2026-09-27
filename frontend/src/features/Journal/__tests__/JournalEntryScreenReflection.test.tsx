@@ -1016,3 +1016,114 @@ describe('JournalEntryScreen -- batch fold-in and its retry (#2885)', () => {
     }
   });
 });
+
+// #2885: a review opened FOR a selection from the Promoted quotes screen folds
+// that selection in once -- into the body it actually has.
+describe('JournalEntryScreen -- a selection handed over from Promoted quotes (#2885)', () => {
+  const { usePromotedQuoteHandoffStore } = require('@/store/usePromotedQuoteHandoffStore') as {
+    usePromotedQuoteHandoffStore: {
+      getState: () => {
+        open: () => string;
+        deliver: (_t: string, _c: unknown[]) => void;
+        clear: () => void;
+        pending: unknown;
+      };
+    };
+  };
+  const HANDED = [
+    { id: 90, anchorText: 'went for a daily walk', attribution: 'Runs' },
+    { id: 91, anchorText: 'to the river', attribution: 'Runs' },
+  ];
+  const BLOCKS = '> went for a daily walk\n> — Runs\n\n> to the river\n> — Runs\n\n';
+
+  function handOver(): string {
+    const handoff = usePromotedQuoteHandoffStore.getState();
+    let token = '';
+    act(() => {
+      token = handoff.open();
+      handoff.deliver(token, HANDED);
+    });
+    return token;
+  }
+
+  beforeEach(() => {
+    act(() => usePromotedQuoteHandoffStore.getState().clear());
+  });
+
+  it('folds the selection into a fresh review once, and marks each quote once', async () => {
+    const token = handOver();
+    jest.useFakeTimers();
+    try {
+      renderScreen(
+        { ...REFLECTION_PARAMS, injectQuotes: token },
+        {
+          autosaveDelayMs: 100,
+        },
+      );
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BLOCKS }), KEYED);
+      // Later renders and saves fold nothing more.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(500);
+      });
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockSetIncluded.mock.calls).toEqual([
+        [90, 42],
+        [91, 42],
+      ]);
+      expect(usePromotedQuoteHandoffStore.getState().pending).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('waits for a continued review to load, then folds into the body it loaded', async () => {
+    mockGet.mockResolvedValue(
+      entry({
+        id: 42,
+        message: 'What I wrote on Monday.',
+        tag: 'hierarchical_reflection' as JournalMessage['tag'],
+        reflection_level: 'week',
+        reflection_scope_key: 'c1:w1',
+      }),
+    );
+    const token = handOver();
+    jest.useFakeTimers();
+    try {
+      renderScreen({ entryId: 42, injectQuotes: token }, { autosaveDelayMs: 100 });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ message: `What I wrote on Monday.\n\n${BLOCKS}` }),
+      );
+      expect(mockSetIncluded).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('ignores a selection handed to another page', async () => {
+    handOver();
+    jest.useFakeTimers();
+    try {
+      renderScreen(
+        { ...REFLECTION_PARAMS, injectQuotes: 'quotes-not-mine' },
+        {
+          autosaveDelayMs: 100,
+        },
+      );
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockSetIncluded).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});

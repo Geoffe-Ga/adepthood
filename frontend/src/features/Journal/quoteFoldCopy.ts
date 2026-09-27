@@ -36,7 +36,7 @@ export function foldSelectedLabel(n: number): string {
 
 /** The screen's action with no review to fold into: open the picker carrying the quotes. */
 export function writeReviewWithLabel(n: number): string {
-  return `Write a review with ${quoteCount(n)}`;
+  return n === 0 ? FOLD_NONE_LABEL : `Write a review with ${quoteCount(n)}`;
 }
 
 /**
