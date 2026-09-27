@@ -180,6 +180,27 @@ def test_overlapping_edit_destroying_own_copy_with_sibling_goes_stale() -> None:
     assert out == ReanchorResult(_SECOND, _SECOND_END, stale=True)
 
 
+def test_two_separate_edits_around_a_repeated_anchor_fail_safe_to_stale() -> None:
+    """Two edits in one save, one before and one after the anchor, go stale.
+
+    One PATCH can carry a typo fix near the start and a sentence added near
+    the end. A single prefix/suffix window then spans both, so an untouched
+    anchor between them counts as touched. On a repeated passage that fails
+    safe: the note goes stale rather than moving to a sibling copy.
+    """
+    new_body = "~" + _TWO_COPIES + "~"
+    out = reanchor_one(_ANCHOR, _SECOND, _TWO_COPIES, new_body)
+    assert out == ReanchorResult(_SECOND, _SECOND_END, stale=True)
+
+
+def test_two_separate_edits_around_a_unique_anchor_still_relocate() -> None:
+    """The same two-edit save leaves a unique passage live on its one copy."""
+    start = _BODY.index(_ANCHOR)
+    new_body = "~" + _BODY + "~"
+    out = reanchor_one(_ANCHOR, start, _BODY, new_body)
+    assert out == ReanchorResult(start + 1, start + 1 + len(_ANCHOR), stale=False)
+
+
 @pytest.mark.parametrize(
     "old",
     [

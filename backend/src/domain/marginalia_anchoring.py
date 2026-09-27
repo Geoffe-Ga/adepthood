@@ -121,7 +121,9 @@ def reanchor_one(
     Known limit: the prefix-greedy diff cannot tell which of two identical
     adjacent runs an edit changed (inserting "the " before "the willow"). The
     window then lands inside the anchor, so a repeated passage goes stale and a
-    unique one relocates. Offsets are Unicode code points (Python ``str``
+    unique one relocates. The window is also one contiguous region: a save
+    carrying two separate edits, one before and one after the anchor, marks
+    the anchor as touched, with the same outcome. Offsets are Unicode code points (Python ``str``
     indices), the anchor API's unit.
     """
     if not anchor_text:
