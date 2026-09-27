@@ -67,6 +67,7 @@ from models.stage_progress import StageProgress
 from models.user import User
 from models.user_depth_preferences import UserDepthPreferences
 from models.user_practice import UserPractice
+from models.user_ui_flags import UserUiFlags
 
 if TYPE_CHECKING:
     from sqlalchemy import MetaData
@@ -444,9 +445,15 @@ MANIFEST: Mapping[str, ExportRule] = {
         UserPractice,
         "The practices the account took on, and how it customised them.",
     ),
-    "useruiflags": Omitted(
-        "One-time interface state — which tips have been seen. It describes "
-        "the app's memory of a session, not the account.",
+    "useruiflags": _include(
+        "writing_timer",
+        UserUiFlags,
+        "The habit the account linked its writing timer to (#2861) -- a choice "
+        "it made, exported as that habit's id in this archive's ``habits``. "
+        "The one-time interface flags on the same row (which tips have been "
+        "seen) are the app's memory of a session, not the account, and stay "
+        "behind.",
+        drop_columns=("has_seen_welcome", "energy_scaffolding_archived"),
     ),
     "uservaultconfig": Omitted(
         "The Creek Vault the account connected, and the key that opens it. "
