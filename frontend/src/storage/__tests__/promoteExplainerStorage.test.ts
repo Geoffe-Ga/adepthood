@@ -67,6 +67,21 @@ describe('loadPromoteExplainerDismissed', () => {
   });
 });
 
+describe('savePromoteExplainerDismissed', () => {
+  test('a write failure resolves with a warning instead of rejecting', async () => {
+    mockAsyncStorage.setItem.mockRejectedValueOnce(new Error('QuotaExceededError'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(savePromoteExplainerDismissed(true)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      '[promoteExplainerStorage] failed to save the dismissal flag',
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+});
+
 describe('the flag is namespaced per account (BUG-FE-STATE-001)', () => {
   test('one account’s dismissal never answers for the next account on the device', async () => {
     setActiveUser(1);

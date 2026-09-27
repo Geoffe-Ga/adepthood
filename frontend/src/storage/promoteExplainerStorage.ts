@@ -28,7 +28,14 @@ function dismissedKey(): string {
 
 /** Record (or clear) this account's "don't show the promote note again" answer. */
 export async function savePromoteExplainerDismissed(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(dismissedKey(), String(value));
+  // Never rejects: callers fire it and forget (the answer is already held in
+  // memory), so a failed write (quota exceeded, storage blocked) is reported
+  // here rather than escaping as an unhandled rejection — the note simply shows again next session.
+  try {
+    await AsyncStorage.setItem(dismissedKey(), String(value));
+  } catch (err) {
+    console.warn('[promoteExplainerStorage] failed to save the dismissal flag', err);
+  }
 }
 
 /**

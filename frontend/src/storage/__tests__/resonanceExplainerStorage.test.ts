@@ -70,6 +70,21 @@ describe('loadResonanceExplainerDismissed', () => {
   });
 });
 
+describe('saveResonanceExplainerDismissed', () => {
+  test('a write failure resolves with a warning instead of rejecting', async () => {
+    mockAsyncStorage.setItem.mockRejectedValueOnce(new Error('QuotaExceededError'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(saveResonanceExplainerDismissed(true)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      '[resonanceExplainerStorage] failed to save the dismissal flag',
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+});
+
 describe('the flag is namespaced per account (BUG-FE-STATE-001)', () => {
   test('one account’s dismissal never answers for the next account on the device', async () => {
     setActiveUser(1);
