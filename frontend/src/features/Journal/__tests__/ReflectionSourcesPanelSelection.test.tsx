@@ -231,6 +231,63 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
     );
   });
 
+  describe('a checked quote the composer prunes from the feed (#2754)', () => {
+    /** Fold 21 in a batch whose mark fails, leaving it checked for a retry. */
+    async function failOn21(): Promise<{
+      screen: ReturnType<typeof render>;
+      onInsertQuotes: jest.Mock<InsertMany>;
+      rerenderWith: (_items: ReflectionSourceItem[]) => void;
+    }> {
+      const onInsertQuotes = jest.fn<InsertMany>(() =>
+        Promise.resolve({ included: [], failed: [21], gone: [], skipped: [] }),
+      );
+      const props = { onInsertQuote: jest.fn(), onInsertQuotes, onClose: jest.fn() };
+      const screen = renderPanel(props);
+      fireEvent.press(screen.getByLabelText('Select quotes'));
+      fireEvent.press(screen.getByTestId('pending-quote-21'));
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 1 quote into this review',
+      );
+      const rerenderWith = (items: ReflectionSourceItem[]) =>
+        screen.rerender(<ReflectionSourcesPanel items={items} {...props} />);
+      return { screen, onInsertQuotes, rerenderWith };
+    }
+
+    const PRUNED = [S1, { ...S2, promoted_quotes: [] }];
+
+    it('drops it from the bar, which rests at zero and folds nothing', async () => {
+      const { screen, onInsertQuotes, rerenderWith } = await failOn21();
+      act(() => rerenderWith(PRUNED));
+      const bar = screen.getByTestId('quote-fold-action');
+      expect(bar.props.accessibilityLabel).toBe('Choose quotes to fold in');
+      expect(bar.props.accessibilityState.disabled).toBe(true);
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(onInsertQuotes).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts and folds only the quotes still listed', async () => {
+      const { screen, onInsertQuotes, rerenderWith } = await failOn21();
+      fireEvent.press(screen.getByTestId('pending-quote-12'));
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 2 quotes into this review',
+      );
+      act(() => rerenderWith(PRUNED));
+      expect(screen.getByTestId('quote-fold-action').props.accessibilityLabel).toBe(
+        'Fold 1 quote into this review',
+      );
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('quote-fold-action'));
+      });
+      expect(onInsertQuotes).toHaveBeenCalledTimes(2);
+      expect(onInsertQuotes.mock.calls[1]?.[0].map((c) => c.id)).toEqual([12]);
+    });
+  });
+
   it('reverts every dim when the batch itself rejects, and keeps the selection', async () => {
     const onInsertQuotes = jest.fn<InsertMany>(() => Promise.reject(new Error('boom')));
     const { getByTestId, getByLabelText } = renderPanel({ onInsertQuotes });

@@ -19,7 +19,14 @@
  * the feed (#2883). Reduced-motion safe.
  */
 import { X } from 'lucide-react-native';
-import React, { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import {
   Modal,
   Platform,
@@ -806,6 +813,14 @@ function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
   const feed = useFeedState(props.onPromoteSpan);
   const dims = useDimReconciler(props.onInsertQuote);
   const selection = useQuoteSelection();
+  // A checked quote can leave the feed while it waits -- the composer prunes a
+  // quote removed elsewhere (#2754) -- so the selection narrows to what is still
+  // listed, and the bar never counts, or offers to fold, a row that is gone.
+  const { keepOnly } = selection;
+  const { items } = props;
+  useEffect(() => {
+    keepOnly(collectPending(items).map((entry) => entry.quote.id));
+  }, [items, keepOnly]);
   const { onFoldSelected, folding } = useBatchFold(
     props.onInsertQuotes,
     selection,
