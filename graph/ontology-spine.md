@@ -19,7 +19,7 @@ extractor should resolve every name on an Aliases line onto the same node.
 
 ## Sources
 
-- `backend/src/curriculum/archetypal_wavelength.json` (dataset_version 2.0.0) -- the vendored source of truth for the 10 Stages and their 6-phase manifestations.
+- `backend/src/curriculum/archetypal_wavelength.json` (dataset_version as in this file's frontmatter) -- the vendored source of truth for the 10 Stages and their 6-phase manifestations.
 - `backend/content/markdown/NN-color/` chapters (e.g. `08-teal/`) -- each Stage's Mode ("The Mode of the Wavelength of ...").
 - `frontend/src/design/tokens.ts` -- Stage color hex (`STAGE_COLORS`) and the legacy Turquoise -> Teal alias (`LEGACY_STAGE_ALIASES`).
 - `docs/curriculum.md` -- provenance: `stage_attributes_source` = APTITUDE Complete Map.csv (aptitude-course repo), `manifestations_source` = Archetypal Wavelength "Expanded List" sheet; Rx = integrated, OD = shadow.
