@@ -1112,6 +1112,12 @@ export type DepthPreferencesT = z.infer<typeof depthPreferencesSchema>;
 export const uiFlagsSchema = z.object({
   has_seen_welcome: z.boolean(),
   energy_scaffolding_archived: z.boolean(),
+  /**
+   * The habit a finished writing session checks off, or ``null`` when the
+   * writer has linked none (#2861). Defaulted rather than required so a payload
+   * from a server that predates the link still parses, as unlinked.
+   */
+  writing_session_habit_id: z.number().int().positive().nullable().default(null),
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;

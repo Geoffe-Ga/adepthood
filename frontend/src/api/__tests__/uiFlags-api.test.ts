@@ -19,7 +19,10 @@ function jsonResponse(data: unknown, status = 200) {
 const ALL_SEEN: UiFlags = {
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
+  writing_session_habit_id: null,
 };
+
+const LINKED_HABIT_ID = 42;
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -69,11 +72,55 @@ describe('uiFlags.get', () => {
   });
 });
 
+describe('uiFlags writing_session_habit_id', () => {
+  test('a payload from before the link existed parses, with the link null', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ has_seen_welcome: true, energy_scaffolding_archived: false }),
+    );
+    const result = await uiFlags.get('tok');
+    expect(result.writing_session_habit_id).toBeNull();
+  });
+
+  test('a linked habit id parses through as a number', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        has_seen_welcome: true,
+        energy_scaffolding_archived: false,
+        writing_session_habit_id: LINKED_HABIT_ID,
+      }),
+    );
+    const result = await uiFlags.get('tok');
+    expect(result.writing_session_habit_id).toBe(LINKED_HABIT_ID);
+  });
+
+  test.each([['42'], [-1], [0], [1.5]])(
+    'rejects a link that no habit id can be (%p) with ApiValidationError',
+    async (bad) => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({
+          has_seen_welcome: true,
+          energy_scaffolding_archived: false,
+          writing_session_habit_id: bad,
+        }),
+      );
+      await expect(uiFlags.get('tok')).rejects.toBeInstanceOf(ApiValidationError);
+    },
+  );
+
+  test('update sends an explicit null verbatim, which is how the link is cleared', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(ALL_SEEN));
+    await uiFlags.update({ writing_session_habit_id: null }, 'tok');
+    const [, init] = mockFetch.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ writing_session_habit_id: null });
+  });
+});
+
 describe('uiFlags.update', () => {
   test('PATCHes /ui-flags with the partial body verbatim and returns the full echo', async () => {
     const fullResponse: UiFlags = {
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      writing_session_habit_id: null,
     };
     mockFetch.mockReturnValueOnce(jsonResponse(fullResponse));
 
