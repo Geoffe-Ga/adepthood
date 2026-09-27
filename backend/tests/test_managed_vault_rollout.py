@@ -8,6 +8,7 @@ import pytest
 
 from main import validate_managed_vault_rollout_config
 from services.managed_vault_rollout import (
+    MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,
     MANAGED_VAULT_ENABLED_ENV_VAR,
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
     ManagedVaultRolloutState,
@@ -28,6 +29,7 @@ def _complete_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control))
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(handoff))
+    monkeypatch.setenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR, "operator@example.com")
 
 
 def test_rollout_defaults_disabled_even_when_provider_is_configured(
@@ -108,6 +110,27 @@ def test_permissive_handoff_file_keeps_the_rollout_incomplete(
 
     assert rollout.state is ManagedVaultRolloutState.INCOMPLETE
     assert rollout.defects == ("CREEK_PROVISIONING_HANDOFF_AUTH_FILE",)
+
+
+@pytest.mark.parametrize("destination", [None, "not-an-email", " operator@example.com"])
+def test_invalid_fleet_alert_destination_keeps_the_rollout_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    destination: str | None,
+) -> None:
+    """Activation cannot start when fleet failures have nowhere to arrive."""
+    _complete_provider(monkeypatch, tmp_path)
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, "1")
+    if destination is None:
+        monkeypatch.delenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR)
+    else:
+        monkeypatch.setenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR, destination)
+
+    rollout = load_managed_vault_rollout()
+
+    assert rollout.state is ManagedVaultRolloutState.INCOMPLETE
+    assert rollout.defects == (MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,)
 
 
 def test_incomplete_startup_record_names_settings_but_never_secret_values(

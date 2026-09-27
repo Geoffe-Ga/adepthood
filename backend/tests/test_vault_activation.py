@@ -20,6 +20,7 @@ from models.account_deletion_audit import AccountDeletionAudit
 from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
+from routers import vault_provisioning_internal
 from services import journal_encryption
 from services.creek_provisioning import (
     reconcile_vault_teardowns,
@@ -33,7 +34,12 @@ from services.creek_provisioning_client import (
     get_creek_provisioning_client,
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.email import (
+    EmailDeliveryError,
+    EmailMessagePayload,
+)
 from services.managed_vault_rollout import (
+    MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,
     MANAGED_VAULT_ENABLED_ENV_VAR,
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
 )
@@ -49,6 +55,29 @@ _PASSWORD = "securepassword123"  # pragma: allowlist secret
 _HANDOFF_TOKEN = "handoff-test-token-" + "h" * 48
 _CREDENTIAL = "consumer-credential-" + "c" * 48
 _VAULT_URL = "https://vault-user-001.example.test/v1"
+_ALERT_PATH = "/internal/vault-provisioning/alerts"
+_ALERT_EMAIL = "managed-vault-alerts@example.com"
+
+
+class FakeEmailSender:
+    """Record content-free fleet alerts or fail with an opaque wire error."""
+
+    def __init__(self) -> None:
+        """Start with an empty call ledger and healthy delivery."""
+        self.calls: list[tuple[EmailMessagePayload, str | None]] = []
+        self.failure: EmailDeliveryError | None = None
+        self.factory_calls = 0
+
+    async def send(
+        self,
+        message: EmailMessagePayload,
+        *,
+        redact_for_log: str | None = None,
+    ) -> None:
+        """Record the exact message unless the test armed a wire failure."""
+        self.calls.append((message, redact_for_log))
+        if self.failure is not None:
+            raise self.failure
 
 
 class FakeProvisioningClient:
@@ -131,6 +160,7 @@ def _encrypted_handoff(
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control_token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")
+    monkeypatch.setenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR, _ALERT_EMAIL)
     monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(
         MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
@@ -147,6 +177,20 @@ def creek_client() -> FakeProvisioningClient:
     client = FakeProvisioningClient()
     app.dependency_overrides[get_creek_provisioning_client] = lambda: client
     return client
+
+
+@pytest.fixture
+def email_sender(monkeypatch: pytest.MonkeyPatch) -> FakeEmailSender:
+    """Wire an isolated sender and the operator destination into the route."""
+    sender = FakeEmailSender()
+
+    def build_sender() -> FakeEmailSender:
+        sender.factory_calls += 1
+        return sender
+
+    monkeypatch.setenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR, _ALERT_EMAIL)
+    monkeypatch.setattr(vault_provisioning_internal, "get_email_sender", build_sender)
+    return sender
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int, str]:
@@ -487,6 +531,143 @@ async def test_malformed_or_unauthenticated_handoff_echoes_no_secret(
     assert canary not in malformed.text
     assert canary not in caplog.text
     assert _HANDOFF_TOKEN not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_authenticates_before_parsing_the_body(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+) -> None:
+    """An attacker cannot use JSON parsing as a bearer-validity oracle."""
+    unauthenticated = await async_client.post(
+        _ALERT_PATH,
+        content=b"{",
+        headers={"content-type": "application/json"},
+    )
+    authenticated = await async_client.post(
+        _ALERT_PATH,
+        content=b"{",
+        headers={
+            "Authorization": f"Bearer {_HANDOFF_TOKEN}",
+            "content-type": "application/json",
+        },
+    )
+
+    assert unauthenticated.status_code == HTTPStatus.UNAUTHORIZED
+    assert unauthenticated.json() == {"detail": "invalid_provisioning_handoff"}
+    assert authenticated.status_code == HTTPStatus.BAD_REQUEST
+    assert authenticated.json() == {"detail": "invalid_fleet_alert"}
+    assert email_sender.factory_calls == 0
+    assert email_sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_delivers_only_sorted_closed_kind_counts(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+) -> None:
+    """The operator receives counts, never subjects, ids, paths, or content."""
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={
+            "schema": "creek_fleet_alert_v1",
+            "counts": {
+                "continuous_running": 1,
+                "duplicate_resource": 2,
+                "monthly_budget_departure": 3,
+                "orphan_resource": 4,
+                "stuck_deletion": 5,
+            },
+        },
+    )
+
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    assert response.content == b""
+    assert email_sender.factory_calls == 1
+    assert email_sender.calls == [
+        (
+            EmailMessagePayload(
+                to=_ALERT_EMAIL,
+                subject="Managed vault pilot alert",
+                body=(
+                    "Managed vault fleet alerts:\ncontinuous_running: 1\n"
+                    "duplicate_resource: 2\nmonthly_budget_departure: 3\n"
+                    "orphan_resource: 4\nstuck_deletion: 5\n"
+                ),
+            ),
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "schema": "creek_fleet_alert_v1",
+            "counts": {"not_a_creek_alert": 1},
+        },
+        {"schema": "creek_fleet_alert_v2", "counts": {"orphan_resource": 1}},
+        {"schema": "creek_fleet_alert_v1", "counts": {}},
+        {"schema": "creek_fleet_alert_v1", "counts": {"orphan_resource": 0}},
+        {"schema": "creek_fleet_alert_v1", "counts": {"orphan_resource": True}},
+        {
+            "schema": "creek_fleet_alert_v1",
+            "counts": {"orphan_resource": 1},
+            "subject": "content-bearing-extension",
+        },
+    ],
+    ids=(
+        "unknown-kind",
+        "wrong-schema",
+        "empty-counts",
+        "zero-count",
+        "boolean-count",
+        "extra-field",
+    ),
+)
+async def test_fleet_alert_rejects_every_shape_outside_the_closed_contract(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+    payload: dict[str, object],
+) -> None:
+    """No schema extension or loose integer coercion may reach email."""
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json=payload,
+    )
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json() == {"detail": "invalid_fleet_alert"}
+    assert email_sender.calls == []
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_delivery_failure_is_generic_and_retryable(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Creek sees one stable 503 and never the provider's diagnostic."""
+    canary = "provider-secret-diagnostic"
+    email_sender.failure = EmailDeliveryError(canary)
+
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={
+            "schema": "creek_fleet_alert_v1",
+            "counts": {"monthly_budget_departure": 1},
+        },
+    )
+
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json() == {"detail": "managed_vault_alert_delivery_unavailable"}
+    assert canary not in response.text
+    assert canary not in caplog.text
 
 
 @pytest.mark.asyncio

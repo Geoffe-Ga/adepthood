@@ -426,6 +426,7 @@ def test_operator_runbook_names_every_secret_and_privacy_boundary() -> None:
         "CREEK_PROVISIONING_AUTH_FILE",
         "CREEK_PROVISIONING_HANDOFF_AUTH_FILE",
         "CREEK_PROVISIONING_URL",
+        "CREEK_MANAGED_VAULT_ALERT_EMAIL",
         "CREEK_MANAGED_VAULT_PILOT_USER_IDS",
         "CREEK_MANAGED_VAULT_ACTIVATION_ENABLED",
     ):
@@ -436,6 +437,7 @@ def test_operator_runbook_names_every_secret_and_privacy_boundary() -> None:
         "attested_confidential=false",
         "INTIMATE",
         "content-free",
+        "/internal/vault-provisioning/alerts",
         "synthetic account",
         "user identifier",
         "vault URL",

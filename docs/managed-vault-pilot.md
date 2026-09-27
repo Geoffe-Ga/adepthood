@@ -9,10 +9,11 @@ controls for a vault that already exists.
 The backend records exactly one state at startup without logging bearer values:
 
 - `disabled`: `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` is unset or false;
-- `incomplete`: the switch is invalid/true but the allowlist or Creek URL and
-  mounted bearer files are invalid, empty, missing, or insecure;
+- `incomplete`: the switch is invalid/true but the allowlist, alert destination,
+  Creek URL, or mounted bearer files are invalid, empty, missing, or insecure;
 - `ready`: the switch is true, both mounted bearers are readable, the Creek URL
-  is usable, and 1–100 positive account ids are allowlisted.
+  and fleet-alert destination are usable, and 1–100 positive account ids are
+  allowlisted.
 
 A bearer path must be absolute and resolve directly to a regular, non-symlink
 file owned by the backend's effective uid. The backend image pins that runtime
@@ -50,13 +51,19 @@ bring-your-own-vault form.
    files before enabling the cohort. The disabled rollout leaves the ordinary
    journal available while the volume is being bootstrapped.
 3. Set `CREEK_PROVISIONING_URL` to Creek's public HTTPS control-plane origin.
-4. Set `CREEK_MANAGED_VAULT_PILOT_USER_IDS` to the comma-separated Adepthood
+4. Set `CREEK_MANAGED_VAULT_ALERT_EMAIL` to the approved operator mailbox.
+   Creek authenticates `POST /internal/vault-provisioning/alerts` with the
+   existing mounted handoff bearer. The closed request and email contain only
+   alert-kind counts—never an allocation id, user id, path, URL, exception,
+   provider response, or journal content. Delivery failure is a generic 503 so
+   Creek's bounded sender retries and reports the unhealthy reconciliation pass.
+5. Set `CREEK_MANAGED_VAULT_PILOT_USER_IDS` to the comma-separated Adepthood
    account ids approved for this cohort. Never use email addresses or a browser
    flag. The parser rejects zero, negative, malformed, empty, and over-100 lists.
-5. Set `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED=true`, deploy, and confirm the
+6. Set `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED=true`, deploy, and confirm the
    startup record says `managed_vault_activation_config_state=ready` with only
    the expected cohort count.
-6. Exercise one eligible and one ineligible account before expanding the list.
+7. Exercise one eligible and one ineligible account before expanding the list.
 
 ## Emergency disable and rollback
 

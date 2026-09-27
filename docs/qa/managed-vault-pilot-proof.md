@@ -79,8 +79,13 @@ the rollout incomplete rather than failing later during HTTP-header creation.
 Restart the ordinary `10001:10001` image, re-stat both final paths, and require
 the content-free rollout state to become ready before admitting an account.
 `CREEK_PROVISIONING_URL` is the public HTTPS Creek control-plane origin and is
-the only address configured in Adepthood. The synthetic account's numeric id is
-placed in the deployment's private
+the only provider address configured in Adepthood.
+`CREEK_MANAGED_VAULT_ALERT_EMAIL` names the approved operator mailbox. Creek
+authenticates the exact `/internal/vault-provisioning/alerts` callback with the
+same mounted handoff bearer; its request and resulting email are both
+content-free alert-kind counts, with no resource subject, identity, provider
+resource, path, URL, exception, or journal material. The synthetic account's
+numeric id is placed in the deployment's private
 `CREEK_MANAGED_VAULT_PILOT_USER_IDS` setting but never copied into evidence.
 `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` starts as `false`.
 
@@ -133,8 +138,9 @@ invalidates the entire record.
 ### 1. Railway mounts and server-side admission
 
 Complete the disabled runtime-volume bootstrap above, mount the two bearer
-files, configure the public Creek URL and the one-account allowlist, then enable
-new activation. Redeploy without printing environment values. The Adepthood
+files, configure the public Creek URL, operator alert destination, and
+one-account allowlist, then enable new activation. Redeploy without printing
+environment values. The Adepthood
 startup event must report a ready rollout and cohort count only. Privately
 capture metadata-only proof of uid/gid `10001:10001`, directory mode `0700`,
 file mode `0400`, regular/non-symlink status, the completed runtime volume
