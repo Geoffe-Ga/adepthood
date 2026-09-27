@@ -1239,6 +1239,18 @@
     "coveredBy": "frontend/e2e/stage-copy.e2e.test.ts"
   },
   {
+    "id": "map.stage-persona-is-the-course-archetype",
+    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column, and the stage name in the Journal AspectChordControl's label and accessibility label -- and it is the course's own archetype: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use, not the retired name the dataset carried until #2915. Uncovered because today that persona never crosses a seam: it is a client-side copy of coursestage.relationship_to_free_will hardcoded in STAGE_DISPLAY (frontend/src/features/Map/mapLayout.ts), so no browser spec could watch it come from the server. The route, client and table named here are the seam the persona moves onto when #2663 deletes that mirror and reads it from GET /stages, not the path it takes now. Until then it is pinned by frontend/src/features/Map/__tests__/stageCanonDrift.test.ts, which joins every persona to backend/src/curriculum/archetypal_wavelength.json and which backend CI runs through scripts/frontend/cross-boundary-drift.sh, and the dataset itself is held to the vendored course headings by backend/tests/test_vendored_course_copy_pins.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages"],
+      "tables": ["coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 2663
+  },
+  {
     "id": "journal.higher-self-does-not-repeat-itself",
     "description": "A writer who has asked for reflections before asks for another one, and the Higher Self does not say a thing it has already said: at most two of the letters it wrote them earlier ride along with the pass as content-only context, under a pinned instruction never to imitate their wording or treat them as a voice sample. A letter about an entry they deleted, or one they later marked Intimate, is never among them, and neither is a letter about the page being read. Uncovered for the same reason as journal.ask-for-resonance and journal.see-related-vault-pages: what changes here is generated prose rather than a screen or a new seam, and the real-wire lane has no deterministic language-model provider, so it cannot make POST /journal/{entry_id}/resonance return notes it could read back and compare across two passes. #2408 tracks that missing provider seam. The exclusions are pinned end-to-end at the endpoint by backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt, and the query that decides them by backend/tests/test_prior_letters_grounding.py.",
     "crosses": {
