@@ -1,7 +1,7 @@
 """add idempotency keys to journal creates and weekly-prompt responses
 
 Revision ID: 6e6fe6af2c30
-Revises: c7e4a2f9b1d8
+Revises: d5b8e2a4c1f7
 Create Date: 2026-09-27 00:00:00.000000
 
 Issue #2936. ``journalentry`` and ``promptresponse`` each gain a nullable
@@ -26,7 +26,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "6e6fe6af2c30"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "c7e4a2f9b1d8"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "d5b8e2a4c1f7"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

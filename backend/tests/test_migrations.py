@@ -5717,7 +5717,7 @@ def test_feedback_triage_downgrade_refuses_while_triage_state_exists(
 
 # -- #2936 journal + prompt-response idempotency keys ------------------------
 
-_WRITE_IDEMPOTENCY_BASE_REVISION = "c7e4a2f9b1d8"  # pragma: allowlist secret
+_WRITE_IDEMPOTENCY_BASE_REVISION = "d5b8e2a4c1f7"  # pragma: allowlist secret
 _WRITE_IDEMPOTENCY_REVISION = "6e6fe6af2c30"  # pragma: allowlist secret
 _WRITE_IDEMPOTENCY_TABLES = {
     "journalentry": "ix_journalentry_user_idem_key",
