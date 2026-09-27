@@ -62,8 +62,19 @@ export type RootStackParamList = {
   Feedback: { control?: string } | undefined;
   /** The shelf of expanded margin notes. No params: it is a place, not a query. */
   VoiceDrafts: undefined;
-  /** Every quote the writer has promoted, across entries (#2865). A place, no params. */
-  PromotedQuotes: undefined;
+  /**
+   * Every quote the writer has promoted, across entries (#2865).
+   *
+   * This was "a place, no params", and it still is one when opened from the
+   * shelf. #2885 reverses that note on purpose: to fold a selection into the
+   * review the writer came FROM, the screen has to know there is one, and a
+   * route param is the only thing that survives the hop. It follows the
+   * ``JournalPhotograph`` ``appendTo`` precedent exactly -- one opaque hand-off
+   * token (see ``usePromotedQuoteHandoffStore``), never quote text and never an
+   * entry id, and minted only while the entry is composing a review. Absent,
+   * the screen offers no fold-in, only "Write a review with N quotes".
+   */
+  PromotedQuotes: { injectInto?: string } | undefined;
   /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
   AdminFeedback: undefined;
   JournalPhotograph:
@@ -100,6 +111,13 @@ export type RootStackParamList = {
         reflectionLevel?: ReflectionLevel;
         /** The scope key the reflection covers (e.g. ``c1:w14``); pairs with ``reflectionLevel``. */
         reflectionScopeKey?: string;
+        /**
+         * A hand-off token from the Promoted quotes screen's "Write a review
+         * with N quotes" (#2885): the review collects the selection delivered
+         * under it (``usePromotedQuoteHandoffStore``) and folds it in once,
+         * after it has hydrated. Only the token rides here, never the quotes.
+         */
+        injectQuotes?: string;
         /** A passage folded in from the reader; seeds the body as a blockquote. */
         prefillQuote?: { text: string; sourceTitle: string };
         /**
