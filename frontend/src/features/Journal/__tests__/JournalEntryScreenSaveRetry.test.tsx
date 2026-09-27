@@ -10,9 +10,14 @@ import type { JournalMessage } from '@/api';
 import { NetworkStatusProvider } from '@/context/NetworkStatusContext';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
-const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
+const mockCreate = jest.fn() as jest.MockedFunction<
+  (_e: unknown, _options?: unknown) => Promise<JournalMessage>
+>;
 const mockUpdate = jest.fn() as jest.MockedFunction<
   (_id: number, _p: unknown) => Promise<JournalMessage>
+>;
+const mockRespond = jest.fn() as jest.MockedFunction<
+  (_week: number, _body: string, _options: unknown) => Promise<unknown>
 >;
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
 
@@ -26,7 +31,9 @@ jest.mock('@/api', () => ({
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
     update: (...a: unknown[]) => (mockUpdate as unknown as (...x: unknown[]) => unknown)(...a),
   },
-  prompts: { respond: jest.fn() },
+  prompts: {
+    respond: (...a: unknown[]) => (mockRespond as unknown as (...x: unknown[]) => unknown)(...a),
+  },
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     generate: jest.fn(),
@@ -85,7 +92,7 @@ function deferred<T>() {
 
 let net: NetInfoHandle;
 
-function renderScreen(params?: { entryId?: number }) {
+function renderScreen(params?: { entryId?: number; weekNumber?: number }) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
@@ -161,6 +168,7 @@ beforeEach(() => {
   mockGet.mockReset();
   mockCreate.mockReset();
   mockUpdate.mockReset();
+  mockRespond.mockReset();
   mockCreate.mockResolvedValue(entry({ id: 42 }));
   mockUpdate.mockResolvedValue(entry());
   mockList.mockReset();
@@ -542,5 +550,265 @@ describe('coming back online retries once (#2930)', () => {
     expect(updatesCarrying('status')).toHaveLength(1);
     expect(hint(screen)).toBe(SAVE_ERROR_HINT);
     expect(screen.getByTestId('journal-body-input')).toBeTruthy();
+  });
+});
+
+// #2936: a create whose answer was lost is retried under the key it was first
+// sent with, so the server answers it with the entry it already wrote.
+describe('a retried create is one entry (#2936)', () => {
+  const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
+
+  function createKeys(): unknown[] {
+    return mockCreate.mock.calls.map(
+      (call) => (call[1] as { idempotencyKey?: string } | undefined)?.idempotencyKey,
+    );
+  }
+
+  function respondKeys(): unknown[] {
+    return mockRespond.mock.calls.map(
+      ([, , options]) => (options as { idempotencyKey?: string }).idempotencyKey,
+    );
+  }
+
+  it('a Retry after a failed create re-sends the same Idempotency-Key', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A new page.');
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+
+    await pressRetry(screen);
+
+    const [first, second] = createKeys();
+    expect(typeof first).toBe('string');
+    expect(first).not.toBe('');
+    expect(second).toBe(first);
+    expect(hint(screen)).toBe('Saved');
+    screen.unmount();
+
+    const fresh = renderScreen();
+    await typeBody(fresh, 'Another page.');
+    expect(createKeys()).toHaveLength(3);
+    expect(createKeys()[2]).not.toBe(first);
+  });
+
+  it('re-sends the same key from the reconnect retry', async () => {
+    const screen = renderScreen();
+    await settle();
+    await net.emit(false);
+    mockCreate.mockRejectedValueOnce(new Error('offline'));
+    await typeBody(screen, 'Written on the train.');
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+
+    await net.emit(true);
+    await settle();
+
+    const keys = createKeys();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('re-sends the same key from a second Finish tap', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), 'Finished on the train.');
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+
+    const keys = createKeys();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(updatesCarrying('status')).toEqual([
+      [42, expect.objectContaining({ status: 'finished' })],
+    ]);
+  });
+
+  it('a first-try create reconciles nothing: no journal.update follows it', async () => {
+    const screen = renderScreen();
+    await typeBody(screen, 'A new page.');
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a replayed create PATCHes only the words typed since its first attempt', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'First words.');
+    // The first create landed; only its answer was lost. The retry is answered
+    // with that stored row, which does not hold the newer words.
+    mockCreate.mockResolvedValueOnce(
+      entry({ id: 42, message: 'First words.', title: null, classification: 'personal' }),
+    );
+
+    await typeBody(screen, 'First words, and more.');
+
+    expect(mockUpdate.mock.calls).toEqual([[42, { message: 'First words, and more.' }]]);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('never loosens, or overwrites, what the replayed row now holds from elsewhere', async () => {
+    // Another device tightened the entry to Intimate and retitled and re-tagged
+    // it after this page's first create landed. None of that changed here, so
+    // none of it may be written back: only the words typed here since.
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A page.');
+    mockCreate.mockResolvedValueOnce(
+      entry({
+        id: 42,
+        message: 'A page.',
+        title: 'Titled elsewhere',
+        classification: 'intimate',
+        primary_aspect: 3,
+        secondary_aspect: 5,
+      }),
+    );
+
+    await typeBody(screen, 'A page, continued.');
+
+    expect(mockUpdate.mock.calls).toEqual([[42, { message: 'A page, continued.' }]]);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('writes nothing over a replayed row when nothing changed here since the first attempt', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A page.');
+    mockCreate.mockResolvedValueOnce(
+      entry({ id: 42, message: 'A page.', title: 'Titled elsewhere', classification: 'intimate' }),
+    );
+
+    await pressRetry(screen);
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a replayed create re-asserts a stricter tier chosen while the page had no id', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A private page.');
+    await pressTier(screen, 'intimate');
+    expect(mockUpdate).not.toHaveBeenCalled();
+    mockCreate.mockResolvedValueOnce(
+      entry({ id: 42, message: 'A private page.', classification: 'personal' }),
+    );
+
+    await pressRetry(screen);
+
+    expect(mockUpdate.mock.calls).toEqual([[42, { classification: 'intimate' }]]);
+  });
+
+  it('a failed reconcile leaves the page id-less, so the next Retry replays and reconciles again', async () => {
+    const screen = renderScreen();
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A new page.');
+    mockCreate.mockResolvedValue(
+      entry({ id: 42, message: 'A new page.', title: null, classification: 'personal' }),
+    );
+    mockUpdate.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'A new page, and more.');
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+
+    await pressRetry(screen);
+
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(new Set(createKeys()).size).toBe(1);
+    expect(mockUpdate.mock.calls).toEqual([
+      [42, { message: 'A new page, and more.' }],
+      [42, { message: 'A new page, and more.' }],
+    ]);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a weekly respond retried after a lost answer settles on Saved, not week-taken', async () => {
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'I noticed the willow.');
+    expect(hint(screen)).toBe(SAVE_ERROR_HINT);
+    mockRespond.mockResolvedValueOnce({ response: 'I noticed the willow.' });
+
+    await pressRetry(screen);
+
+    const [first, second] = respondKeys();
+    expect(typeof first).toBe('string');
+    expect(second).toBe(first);
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a resent answer is Saved when the server only stripped invisible characters', async () => {
+    // A joined emoji and a direction mark: both are stripped by the server's
+    // sanitizer, so the stored answer differs from the text sent, byte for byte,
+    // though nothing drifted.
+    const sent = 'Walked with the family \u{1F468}\u200D\u{1F469}\u200D\u{1F467} \u200Etoday.';
+    const stored = 'Walked with the family \u{1F468}\u{1F469}\u{1F467} today.';
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, sent);
+    mockRespond.mockResolvedValueOnce({ response: stored });
+
+    await pressRetry(screen);
+
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a resent answer with newer words is Saved when the stored answer is those words, sanitized', async () => {
+    // The first attempt never landed; the resend with newer words is what the
+    // week holds, stripped of its invisible characters.
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'The heron \u200D.');
+    mockRespond.mockResolvedValueOnce({ response: 'The heron ., and the willow.' });
+
+    await typeBody(screen, 'The heron \u200D., and the willow.');
+
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a resent answer with no words changed since is Saved whatever the server stored', async () => {
+    // Nothing typed since the first attempt, so a replay cannot be missing any
+    // of it: the stored text is this answer, however the server reshaped it.
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'I noticed the willow.');
+    mockRespond.mockResolvedValueOnce({ response: 'Reshaped by the server.' });
+
+    await pressRetry(screen);
+
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a first-try respond is Saved whatever the stored text looks like', async () => {
+    // Only a RESENT answer can have been answered by an earlier attempt; a first
+    // one is what the server stored, however its sanitizer reshaped the words.
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockResolvedValueOnce({ response: 'Reshaped by the server.' });
+
+    await typeBody(screen, 'I noticed the willow.');
+
+    expect(hint(screen)).toBe('Saved');
+  });
+
+  it('a replayed respond holding older words says so instead of calling the newer ones saved', async () => {
+    const screen = renderScreen({ weekNumber: 3 });
+    mockRespond.mockRejectedValueOnce(new Error('network'));
+    await typeBody(screen, 'I noticed the willow.');
+    mockRespond.mockResolvedValueOnce({ response: 'I noticed the willow.' });
+
+    await typeBody(screen, 'I noticed the willow, and the heron.');
+
+    expect(hint(screen)).toBe(WEEK_TAKEN_HINT);
+    // What is durable is the stored answer, not the newer words: offering them
+    // again is still an edit the week cannot take, never a silent "no change".
+    await typeBody(screen, 'I noticed the willow.');
+    await typeBody(screen, 'I noticed the willow, and the heron.');
+    expect(mockRespond).toHaveBeenCalledTimes(2);
+    expect(hint(screen)).toBe(WEEK_TAKEN_HINT);
   });
 });

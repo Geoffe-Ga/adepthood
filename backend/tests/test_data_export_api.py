@@ -437,6 +437,37 @@ async def test_each_download_declares_the_media_type_it_sends(
 
 _FEEDBACK_SUMMARY = "The habit card vanished the moment I accepted the offer."
 _FEEDBACK_INTENT = "I was trying to log the sit I had just finished."
+_WRITE_IDEMPOTENCY_KEY = "export-journal-write-0001"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_journal_entry_and_prompt_answer_export_without_their_retry_token(
+    async_client: AsyncClient,
+) -> None:
+    """The writing comes out; the digest of the key it was sent under does not (#2936).
+
+    ``idem_key`` is transport bookkeeping, like the feedback report's: it names
+    no thing the account wrote, and a digest in an archive answers no question
+    a person asks about their own data.
+    """
+    headers, _ = await _signup(async_client, "keyed_writer_exporter")
+    keyed = {**headers, "Idempotency-Key": _WRITE_IDEMPOTENCY_KEY}
+    entry = await async_client.post("/journal/", json={"message": "A keyed page."}, headers=keyed)
+    answer = await async_client.post(
+        "/prompts/1/respond", json={"response": "A keyed answer."}, headers=keyed
+    )
+    assert (entry.status_code, answer.status_code) == (HTTPStatus.CREATED, HTTPStatus.CREATED)
+
+    _, document = await _export(async_client, headers)
+
+    entries = _records(document, "journal_entries")
+    responses = _records(document, "prompt_responses")
+    assert {row["message"] for row in entries} >= {"A keyed page."}
+    assert [row["response"] for row in responses] == ["A keyed answer."]
+    assert all("idem_key" not in row for row in entries)
+    assert all("idem_key" not in row for row in responses)
+
+
 _FEEDBACK_IDEMPOTENCY_KEY = "export-round-trip-0001"  # pragma: allowlist secret
 
 

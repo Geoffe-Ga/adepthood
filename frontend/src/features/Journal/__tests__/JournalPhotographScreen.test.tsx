@@ -23,7 +23,11 @@ const mockCapture = jest.fn() as jest.MockedFunction<() => Promise<CaptureResult
 const mockTranscribe = jest.fn() as jest.MockedFunction<
   (_p: { imageBase64: string; mediaType: MediaType }) => Promise<TranscribePageT>
 >;
-const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
+const mockCreate = jest.fn() as jest.MockedFunction<
+  (_e: unknown, _options?: unknown) => Promise<JournalMessage>
+>;
+// Every capture's create is sent under its idempotency key (#2936).
+const KEYED = { idempotencyKey: expect.any(String) };
 const mockUpdate = jest.fn() as jest.MockedFunction<
   (_id: number, _p: unknown) => Promise<JournalMessage>
 >;
@@ -1051,10 +1055,13 @@ describe('JournalPhotographScreen — merged save across pages', () => {
     fireEvent.press(getByTestId('photograph-save'));
 
     await waitFor(() =>
-      expect(mockCreate).toHaveBeenCalledWith({
-        message: 'A\n\nB-edited\n\nC',
-        classification: 'personal',
-      }),
+      expect(mockCreate).toHaveBeenCalledWith(
+        {
+          message: 'A\n\nB-edited\n\nC',
+          classification: 'personal',
+        },
+        KEYED,
+      ),
     );
     expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
       entryId: 40,
@@ -1079,10 +1086,10 @@ describe('JournalPhotographScreen — save flow', () => {
     fireEvent.press(await findByTestId('photograph-save'));
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(99, { status: 'finished' }));
-    expect(mockCreate).toHaveBeenCalledWith({
-      message: 'Edited by hand.',
-      classification: 'personal',
-    });
+    expect(mockCreate).toHaveBeenCalledWith(
+      { message: 'Edited by hand.', classification: 'personal' },
+      KEYED,
+    );
     expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
       entryId: 99,
       justSaved: true,
@@ -1145,6 +1152,37 @@ describe('JournalPhotographScreen — save flow', () => {
     // The retry reuses the created id (no second create), so the page is never
     // duplicated and the wallet is never charged twice.
     expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a Retry-save after a create whose answer was lost re-sends the same key (#2936)', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'Original.' });
+    mockCreate.mockRejectedValueOnce(new Error('network down'));
+    mockCreate.mockResolvedValueOnce(makeEntry({ id: 99 }));
+    mockUpdate.mockResolvedValueOnce(makeEntry({ id: 99, status: 'finished' }));
+
+    const { findByTestId, getByTestId, navigation } = renderScreen();
+    fireEvent.press(await findByTestId('capture-transcribe'));
+    fireEvent.changeText(await findByTestId('photograph-block-1-input'), 'One page.');
+    fireEvent.press(await findByTestId('photograph-save'));
+    await findByTestId('photograph-retry-save');
+    fireEvent.press(getByTestId('photograph-retry-save'));
+
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith('JournalEntry', {
+        entryId: 99,
+        justSaved: true,
+      }),
+    );
+    const keys = mockCreate.mock.calls.map(
+      (call) => (call[1] as { idempotencyKey?: string }).idempotencyKey,
+    );
+    expect(keys).toHaveLength(2);
+    expect(typeof keys[0]).toBe('string');
+    expect(keys[1]).toBe(keys[0]);
+    // Nothing changed here since the first attempt, so nothing but the status
+    // is written over the replayed row: it may hold edits made elsewhere.
+    expect(mockUpdate.mock.calls).toEqual([[99, { status: 'finished' }]]);
   });
 
   it('persists text edited after a failed save on the retry, without re-creating', async () => {
@@ -2029,7 +2067,10 @@ describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
     fireEvent.press(await screen.findByTestId('photograph-save'));
 
     await waitFor(() =>
-      expect(mockCreate).toHaveBeenCalledWith({ message: MERGED_ONCE, classification: 'personal' }),
+      expect(mockCreate).toHaveBeenCalledWith(
+        { message: MERGED_ONCE, classification: 'personal' },
+        KEYED,
+      ),
     );
   });
 
@@ -2045,7 +2086,10 @@ describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
     fireEvent.press(await screen.findByTestId('photograph-save'));
 
     await waitFor(() =>
-      expect(mockCreate).toHaveBeenCalledWith({ message: KEPT_WHOLE, classification: 'personal' }),
+      expect(mockCreate).toHaveBeenCalledWith(
+        { message: KEPT_WHOLE, classification: 'personal' },
+        KEYED,
+      ),
     );
     expect(mockTranscribe).toHaveBeenCalledTimes(2);
   });
@@ -2075,10 +2119,13 @@ describe('JournalPhotographScreen — overlapping screenshots (#2929)', () => {
     fireEvent.press(await screen.findByTestId('photograph-save'));
 
     await waitFor(() =>
-      expect(mockCreate).toHaveBeenCalledWith({
-        message: `${PAGE_ONE}\n\n${corrected}`,
-        classification: 'personal',
-      }),
+      expect(mockCreate).toHaveBeenCalledWith(
+        {
+          message: `${PAGE_ONE}\n\n${corrected}`,
+          classification: 'personal',
+        },
+        KEYED,
+      ),
     );
   });
 

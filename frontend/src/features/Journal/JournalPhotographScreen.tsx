@@ -44,11 +44,13 @@ import { CaptureClassificationControl } from './CaptureClassificationControl';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
 import type { CapturePage, CaptureSessionAction } from './captureSession';
+import type { CreateKey } from './createKey';
 import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
 import type { CaptureResult, MultiPickResult, PickedAsset } from './pickJournalPhoto';
 import { DEFAULT_TIER } from './PrivacyTierControl';
 import type { PrivacyTier } from './PrivacyTierControl';
+import type { SentPage } from './replayReconcile';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
@@ -355,7 +357,9 @@ function useRetakePage({
 }
 
 /** Persist the merged transcript. Reuses ``createdIdRef`` across save retries so a
- *  retry after a failed finish PATCH updates the created entry rather than duplicating it. */
+ *  retry after a failed finish PATCH updates the created entry rather than duplicating it,
+ *  and holds one create key for the capture so a retry after a create whose answer was
+ *  lost is answered with the entry it already wrote (#2936). */
 function useSaveEntry(
   navigation: PhotographNavigation,
   mergedText: string,
@@ -366,6 +370,7 @@ function useSaveEntry(
 ): { save: () => Promise<void>; saving: boolean; saveFailed: boolean } {
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const createKeyRef = useRef<CreateKey<SentPage> | null>(null);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -379,6 +384,7 @@ function useSaveEntry(
         },
         entryDateForCreate(entryDate),
         classification,
+        createKeyRef,
       );
       releaseSession(); // Release every page image the moment the entry is saved.
       navigation.replace('JournalEntry', { entryId: id, justSaved: true });

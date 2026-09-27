@@ -3,6 +3,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
+import { KEYED } from './idempotencyTestKit';
+
 import type { JournalMessage } from '@/api';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -193,6 +195,7 @@ describe('JournalEntryScreen — closing flushes the pending draft', () => {
     });
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'A thought worth keeping.' }),
+      KEYED,
     );
     expect(navigation.navigate).not.toHaveBeenCalled();
 
@@ -233,6 +236,7 @@ describe('JournalEntryScreen — closing flushes the pending draft', () => {
 
     expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
       title: 'Week 3 Reflection',
+      ...KEYED,
     });
     expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
   });

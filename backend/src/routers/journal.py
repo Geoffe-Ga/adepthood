@@ -105,6 +105,7 @@ from schemas.marginalia import (
 )
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
+from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH, hash_idem_key
 from services import journal_encryption
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import (
@@ -448,12 +449,108 @@ async def _authorize_practice_links(
         await resolve_owned_practice_session(session, payload.practice_session_id, current_user)
 
 
+async def _keyed_entry(session: AsyncSession, user_id: int, hashed: str) -> JournalEntry | None:
+    """The entry this account already created under ``hashed``, if any.
+
+    Scoped by ``user_id`` as well as the digest: the digest is already
+    account-prefixed, and filtering on the owner too means no reading of this
+    function can ever hand one account's writing to another.
+
+    A recorded entry that has since been soft-deleted is a 404, never the entry
+    and never a fresh write. The key stays spent (the unique index is not
+    partial on ``deleted_at``), so a retry arriving after a delete cannot bring
+    the deleted words back, and it cannot quietly write them a second time
+    either: from the client's side that is the same resurrection.
+    """
+    result = await session.execute(
+        select(JournalEntry).where(
+            col(JournalEntry.user_id) == user_id,
+            col(JournalEntry.idem_key) == hashed,
+        )
+    )
+    entry = result.scalars().first()
+    if entry is not None and entry.deleted_at is not None:
+        raise not_found("journal_entry")
+    return entry
+
+
+async def _replay_hit(
+    session: AsyncSession, user_id: int, hashed: str | None
+) -> JournalEntry | None:
+    """The pre-insert replay read: the stored entry for a presented key, else ``None``.
+
+    An unkeyed create never replays -- two unkeyed writes are two entries, and
+    reading ``idem_key IS NULL`` would match every earlier unkeyed one.
+    """
+    if hashed is None:
+        return None
+    return await _keyed_entry(session, user_id, hashed)
+
+
+def _build_entry(payload: JournalMessageCreate, user_id: int, hashed: str | None) -> JournalEntry:
+    """The row a create writes: sanitized body, resolved date, digest of its key."""
+    data = payload.model_dump()
+    # ``entry_date`` is not a column: resolve it to a stored ``timestamp`` (or,
+    # when absent, leave it out so the model's default_factory stamps "now").
+    backdated = _resolve_backdated_timestamp(data.pop("entry_date"))
+    if backdated is not None:
+        data["timestamp"] = backdated
+    data["message"] = _sanitize_message(data["message"])
+    _coerce_reflection_level(data)
+    return JournalEntry(sender="user", user_id=user_id, idem_key=hashed, **data)
+
+
+async def _commit_new_entry(
+    session: AsyncSession, entry: JournalEntry, user_id: int, *, hashed: str | None
+) -> tuple[JournalEntry, bool]:
+    """Insert ``entry``; answer ``(row, created)``.
+
+    ``created`` is ``False`` only when a concurrent request under the same key
+    won the insert: the winner's row is returned and it, not this request, owns
+    the vault write, the corpus ingest and the ``journal_entry_created`` event.
+    """
+    scoped = entry.reflection_scope_key is not None
+    session.add(entry)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # This row has to exist before the barrier in the handler can key the
+        # entry serializer on its id, so the commit above is the one statement
+        # in the create that runs *outside* the ordering. On PostgreSQL
+        # ``journalentry.user_id`` is a real foreign key, so an erasure that
+        # linearized first turns this insert into a foreign-key violation rather
+        # than into a row the liveness read then refuses -- the same refusal,
+        # arriving through the database. Answer it the same way, before any
+        # collision branch, because a violation is not a collision.
+        await ensure_account_live(session, user_id)
+        # A keyed collision is a concurrent retry of this very write; resolve it
+        # to the stored row. Checked before the scope 409 because a retried
+        # scoped write collides on both indexes. Only when a key was presented:
+        # re-reading an absent key would match ``idem_key IS NULL`` rows.
+        if hashed is not None:
+            winner = await _keyed_entry(session, user_id, hashed)
+            if winner is not None:
+                return winner, False
+        # A partial unique index guards one live entry per (user, scope); only a
+        # scoped write can trip it, so a scopeless collision is a real bug to raise.
+        if scoped:
+            raise conflict("reflection_scope_taken") from exc
+        raise
+    await session.refresh(entry)
+    return entry, True
+
+
 @router.post("/", response_model=JournalMessageResponse, status_code=status.HTTP_201_CREATED)
 async def create_journal_entry(
     payload: JournalMessageCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", max_length=IDEMPOTENCY_KEY_MAX_LENGTH),
+    ] = None,
 ) -> JournalEntry:
     """Create a journal message for the authenticated user.
 
@@ -464,40 +561,28 @@ async def create_journal_entry(
     smuggling in log viewers.
 
     ``user_practice_id`` and ``practice_session_id`` are authorized before the
-    row is constructed: an id that exists for nobody is a 404, another user's
-    id is a 403, and neither can reach the session, so no forged link is ever
-    persisted.
+    row is constructed -- and before any replay is looked up, so a replay can
+    never be used to skip the check: an id that exists for nobody is a 404,
+    another user's id is a 403, and neither can reach the session, so no
+    forged link is ever persisted.
+
+    A create carrying an ``Idempotency-Key`` this account has already used is
+    answered with the entry that key created (#2936): one row, 201, and no
+    second vault write, corpus ingest or ``journal_entry_created`` event. The
+    body of the retry is not compared -- a client whose retry carries newer text
+    must PATCH it -- and a key whose entry was since deleted is a 404. An
+    unkeyed create is always a new entry.
     """
     await _authorize_practice_links(session, payload, current_user)
-    data = payload.model_dump()
-    # ``entry_date`` is not a column: resolve it to a stored ``timestamp`` (or,
-    # when absent, leave it out so the model's default_factory stamps "now").
-    backdated = _resolve_backdated_timestamp(data.pop("entry_date"))
-    if backdated is not None:
-        data["timestamp"] = backdated
-    data["message"] = _sanitize_message(data["message"])
-    _coerce_reflection_level(data)
-    entry = JournalEntry(sender="user", user_id=current_user, **data)
-    session.add(entry)
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        # This row has to exist before the barrier below can key the entry
-        # serializer on its id, so the commit above is the one statement in this
-        # handler that runs *outside* the ordering. On PostgreSQL
-        # ``journalentry.user_id`` is a real foreign key, so an erasure that
-        # linearized first turns this insert into a foreign-key violation rather
-        # than into a row the liveness read then refuses -- the same refusal,
-        # arriving through the database. Answer it the same way, before the
-        # scope-collision branch, because a violation is not a collision.
-        await ensure_account_live(session, current_user)
-        # A partial unique index guards one live entry per (user, scope); only a
-        # scoped write can trip it, so a scopeless collision is a real bug to raise.
-        if data.get("reflection_scope_key") is not None:
-            raise conflict("reflection_scope_taken") from exc
-        raise
-    await session.refresh(entry)
+    hashed = hash_idem_key(current_user, idempotency_key) if idempotency_key else None
+    replayed = await _replay_hit(session, current_user, hashed)
+    if replayed is not None:
+        return replayed
+    entry, created = await _commit_new_entry(
+        session, _build_entry(payload, current_user, hashed), current_user, hashed=hashed
+    )
+    if not created:
+        return entry
     entry_id = cast("int", entry.id)
     # Account barrier outermost, entry serializer innermost — the fixed nesting
     # everywhere the two meet. Taken exactly once in this handler: the locks are
