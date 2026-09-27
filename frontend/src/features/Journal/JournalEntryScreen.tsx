@@ -45,6 +45,7 @@ import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
+import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
@@ -57,6 +58,7 @@ import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
+import { usePromotedQuoteHandoff } from './usePromotedQuoteHandoff';
 import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
@@ -232,14 +234,6 @@ interface SaveContext {
 
 /** HTTP status the backend returns when a reflection already exists for the scope. */
 const REFLECTION_CONFLICT_STATUS = 409;
-/**
- * Warm, declinable hint shown when a folded quote could not be marked included.
- * The quote stays pending and the entry is safe — the writer can simply try
- * again later; there is deliberately no urgency or blame here.
- */
-const QUOTE_INCLUSION_HINT =
-  "That quote is saved but didn't fold in just yet — no rush, you can add it again anytime.";
-
 /** True for a create rejection that means "this reflection already exists". */
 function isCreateConflict(error: unknown): boolean {
   return (
@@ -448,6 +442,14 @@ interface AutosaveApi {
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
+  /**
+   * Persist the latest text and resolve to the entry id ONLY when that text is
+   * durable on the server; null when the write failed, even though the entry
+   * already has an id. For a caller about to record something ABOUT the saved
+   * body -- a quote fold marking the quote included on it (#2885) -- where the
+   * id alone would vouch for words the server does not hold.
+   */
+  flushDurable: () => Promise<number | null>;
   /** Persist only if needed and report durable success independently of an id. */
   flushForExit: () => Promise<boolean>;
   /**
@@ -1208,6 +1210,7 @@ function useBoundWriters(
   adoptStoredBody: (_stored: string) => void,
 ): {
   flushNow: () => Promise<number | null>;
+  flushDurableNow: () => Promise<number | null>;
   flushForExitNow: () => Promise<boolean>;
   finishNow: () => Promise<number>;
 } {
@@ -1215,6 +1218,10 @@ function useBoundWriters(
     async () => (await flush(titleRef.current, bodyRef.current)).entryId,
     [flush, titleRef, bodyRef],
   );
+  const flushDurableNow = useCallback(async () => {
+    const result = await flush(titleRef.current, bodyRef.current);
+    return result.durable ? result.entryId : null;
+  }, [flush, titleRef, bodyRef]);
   const flushForExitNow = useCallback(async () => {
     for (;;) {
       const requested = { title: titleRef.current, body: bodyRef.current };
@@ -1233,7 +1240,7 @@ function useBoundWriters(
     adoptStoredBody(await settleStoredBody(finished, sent));
     return finished.id;
   }, [finish, titleRef, bodyRef, adoptStoredBody, settleStoredBody]);
-  return { flushNow, flushForExitNow, finishNow };
+  return { flushNow, flushDurableNow, flushForExitNow, finishNow };
 }
 
 /** Referentially-stable change handlers; each save reads the other field's ref. */
@@ -1564,6 +1571,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   flush: () => Promise<number | null>;
+  flushDurable: () => Promise<number | null>;
   flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
 }
@@ -1628,7 +1636,7 @@ function useAutosaveBindings(
     entry.setBody,
   );
   const adoptStoredBody = useAdoptStoredBody(entry.bodyRef, entry.setBody);
-  const { flushNow, flushForExitNow, finishNow } = useBoundWriters(
+  const { flushNow, flushDurableNow, flushForExitNow, finishNow } = useBoundWriters(
     saving.flush,
     saving.finish,
     entry.titleRef,
@@ -1648,6 +1656,7 @@ function useAutosaveBindings(
     onChangeTitle,
     onChangeBody,
     flush: flushNow,
+    flushDurable: flushDurableNow,
     flushForExit: flushForExitNow,
     finish: finishNow,
     ...choices,
@@ -2695,7 +2704,9 @@ function useReflectionComposer(autosave: AutosaveApi) {
     reflectionScopeKey: autosave.reflectionScopeKey,
     bodyRef: reflectionBodyRef,
     onChangeBody: autosave.onChangeBody,
-    flush: autosave.flush,
+    // Durable-only: a fold marks quotes included on the saved review, so a
+    // failed body write must leave them pending (and retryable), never marked.
+    flush: autosave.flushDurable,
   });
   return { ...mode, sourcesOpen, sourcesToggle, closeSources };
 }
@@ -3324,6 +3335,8 @@ function ReflectionSourcesDock({
       feedStatus={reflection.feedStatus}
       timeZone={userTimezone}
       onInsertQuote={reflection.onInsertQuote}
+      onInsertQuotes={reflection.onInsertQuotes}
+      foldedIds={reflection.foldedIds}
       onPromoteSpan={reflection.onPromoteSpan}
       onClose={reflection.closeSources}
     />
@@ -3353,20 +3366,20 @@ function EntryComposeRow({
 }
 
 /**
- * The reflection composer's warm hint when a folded quote could not be marked
- * included. Renders nothing outside reflection mode.
+ * The reflection composer's warm hint, with its retry, when folded quotes could
+ * not be marked included (#2885). Renders nothing outside reflection mode.
  */
 function ReflectionComposer({
   reflection,
 }: {
   reflection: Controller['reflection'];
 }): React.JSX.Element | null {
-  if (!reflection.active || !reflection.inclusionHint) return null;
-  return (
-    <Text style={styles.savedHint} testID="quote-inclusion-hint">
-      {QUOTE_INCLUSION_HINT}
-    </Text>
-  );
+  const { retryInclusion } = reflection;
+  const onRetry = useCallback(() => {
+    void retryInclusion();
+  }, [retryInclusion]);
+  if (!reflection.active) return null;
+  return <QuoteInclusionHint failedCount={reflection.failedCount} onRetry={onRetry} />;
 }
 
 interface EntryScreenDrawer {
@@ -3383,7 +3396,10 @@ interface EntryScreenDrawer {
  * so a row tap and New entry must ``push`` a fresh screen (not ``navigate`` in
  * place, which would keep the current, already-loaded entry).
  */
-function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
+function useEntryScreenDrawer(
+  navigation: ScreenNavigation,
+  quoteHandoffToken: () => string | undefined,
+): EntryScreenDrawer {
   const drawer = useScreenDrawer('Journal');
   const onSelectEntry = useCallback(
     (entryId: number) => {
@@ -3407,10 +3423,14 @@ function useEntryScreenDrawer(navigation: ScreenNavigation): EntryScreenDrawer {
     drawer.close();
   }, [navigation, drawer]);
   // Promoted quotes is a place beside the entry too, so it navigates in place.
+  // From a review being written it carries a hand-off token, so the screen can
+  // fold a selection back into THIS page (#2885); from anything else, nothing.
   const onOpenPromotedQuotes = useCallback(() => {
-    navigation.navigate('PromotedQuotes');
+    const injectInto = quoteHandoffToken();
+    if (injectInto == null) navigation.navigate('PromotedQuotes');
+    else navigation.navigate('PromotedQuotes', { injectInto });
     drawer.close();
-  }, [navigation, drawer]);
+  }, [navigation, drawer, quoteHandoffToken]);
   return {
     drawer,
     onSelectEntry,
@@ -3667,6 +3687,34 @@ function EntryCorpusInvitation({
   return <CorpusInvitationNote completedPasses={ctl.resonance.completedPasses} onOpen={onOpen} />;
 }
 
+/**
+ * This page's end of the Promoted quotes hand-off (#2885). A selection folds
+ * only into a review (the server marks a quote included nowhere else, #1458),
+ * and only while that review is hydrated and editable. Returns the drawer's
+ * token source: a fresh token while the page can fold, else none.
+ */
+function useEntryQuoteHandoff(
+  ctl: Controller,
+  routeToken: string | undefined,
+): () => string | undefined {
+  const ready = ctl.reflection.active && ctl.editGate.editMode;
+  const { mint } = usePromotedQuoteHandoff({
+    ready,
+    routeToken,
+    onInsertQuotes: ctl.reflection.onInsertQuotes,
+  });
+  return useCallback(() => (ready ? mint() : undefined), [ready, mint]);
+}
+
+/** The header drawer, its Promoted quotes door carrying this page's hand-off. */
+function useEntryDrawerWithHandoff(
+  navigation: ScreenNavigation,
+  ctl: Controller,
+  routeToken: string | undefined,
+): EntryScreenDrawer {
+  return useEntryScreenDrawer(navigation, useEntryQuoteHandoff(ctl, routeToken));
+}
+
 function JournalEntryScreen({
   route,
   navigation,
@@ -3675,7 +3723,6 @@ function JournalEntryScreen({
   const { ctx, initialText, bodyPlaceholder, initialClassification } = readEntrypoint(route.params);
   const currentEntryId = route.params?.entryId ?? null;
   const justSaved = route.params?.justSaved ?? false;
-  const entryDrawer = useEntryScreenDrawer(navigation);
   const ctl = useJournalEntryController(
     currentEntryId,
     autosaveDelayMs,
@@ -3685,6 +3732,7 @@ function JournalEntryScreen({
     justSaved,
     initialClassification,
   );
+  const entryDrawer = useEntryDrawerWithHandoff(navigation, ctl, route.params?.injectQuotes);
   const openApiKey = useOpenApiKey(navigation, ctl.explainer.cancelPending);
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">

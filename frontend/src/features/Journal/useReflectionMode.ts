@@ -25,12 +25,8 @@ import {
   type SetStateAction,
 } from 'react';
 
-import {
-  formatBlockquote,
-  sourceAttribution,
-  spliceQuoteBlock,
-  type ReviewWindow,
-} from './reflectionCopy';
+import { candidateFromSource, planQuoteBatch, type FoldCandidate } from './quoteBatch';
+import type { ReviewWindow } from './reflectionCopy';
 import type { SourcesFeedStatus } from './ReflectionSourcesPanel';
 
 import { promotions, reflections } from '@/api';
@@ -54,7 +50,12 @@ export interface UseReflectionModeArgs {
   bodyRef: MutableRefObject<string>;
   /** The screen's body change handler (updates state + schedules the draft save). */
   onChangeBody: (_next: string) => void;
-  /** Persist the draft now and resolve to the entry id (single-flight writer). */
+  /**
+   * Persist the draft now and resolve to the entry id -- or null unless the
+   * body is DURABLE. Every fold (a single tap and a batch alike) marks quotes
+   * included only against a non-null id, so a failed write leaves them all on
+   * the retry list, and a retry re-flushes before it re-marks.
+   */
   flush: () => Promise<number | null>;
 }
 
@@ -86,6 +87,14 @@ export interface UseReflectionModeResult {
   feedStatus: SourcesFeedStatus;
   /** Set when a folded quote could not be marked included; drives a warm hint. */
   inclusionHint: boolean;
+  /** How many folded quotes are still waiting on their inclusion mark. */
+  failedCount: number;
+  /**
+   * Every quote this composer has folded in AND marked, however it got here --
+   * a panel tap, a panel selection, or a hand-off from the Promoted quotes
+   * screen -- so the panel shows it folded when it next opens.
+   */
+  foldedIds: ReadonlySet<number>;
   /**
    * True while ANY fold-in is outstanding: from the tap on a pending quote until
    * the whole act has settled -- the entry write AND the mark that retires the
@@ -103,6 +112,13 @@ export interface UseReflectionModeResult {
     _quote: PromotedQuoteSummary,
     _sourceItem: ReflectionSourceItem,
   ) => Promise<boolean>;
+  /**
+   * Fold a whole selection in (#2885): ONE body change at the caret, in the
+   * order given, ONE entry write, then one inclusion mark per quote.
+   */
+  onInsertQuotes: (_candidates: readonly FoldCandidate[]) => Promise<BatchFoldResult>;
+  /** Re-mark only the quotes whose mark failed; the body already holds them. */
+  retryInclusion: () => Promise<BatchFoldResult>;
   /** Promote a freshly selected span of a source; resolves true on success. */
   onPromoteSpan: (_sourceItem: ReflectionSourceItem, _span: PromoteQuoteSpan) => Promise<boolean>;
 }
@@ -273,71 +289,153 @@ function useFoldsInFlight() {
   );
 }
 
-/** The caret tracker plus the fold-a-pending-quote-into-the-body flow. */
+/** What one batch fold-in did with each quote it was handed, by id. */
+export interface BatchFoldResult {
+  /** Folded into the body AND marked included on the entry. */
+  included: number[];
+  /** In the body (or not, if the entry write failed) but NOT marked; kept for a retry. */
+  failed: number[];
+  /** Already on the wire from an earlier tap or batch, so left to that act. */
+  skipped: number[];
+}
+
+/**
+ * The quotes whose inclusion mark has not landed, kept by id so a retry can
+ * re-mark exactly those. ``failedCount`` mirrors the map's size as state, so
+ * the composer's retry hint re-renders; ``foldedIds`` gains every quote that
+ * was marked, so the panel can show it folded however it got there.
+ */
+function useInclusionLedger() {
+  const failedRef = useRef(new Map<number, FoldCandidate>());
+  const [failedCount, setFailedCount] = useState(0);
+  const [foldedIds, setFoldedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
+  const record = useCallback((candidates: readonly FoldCandidate[], marked: readonly boolean[]) => {
+    const included = candidates.filter((_candidate, index) => marked[index]);
+    for (const candidate of candidates) failedRef.current.set(candidate.id, candidate);
+    for (const candidate of included) failedRef.current.delete(candidate.id);
+    setFailedCount(failedRef.current.size);
+    const includedIds = included.map((candidate) => candidate.id);
+    if (includedIds.length > 0) setFoldedIds((prev) => new Set([...prev, ...includedIds]));
+  }, []);
+  const failedCandidates = useCallback(() => [...failedRef.current.values()], []);
+  return { failedCount, foldedIds, record, failedCandidates };
+}
+
+/** Split a batch's outcome by id: which quotes were marked, and which were not. */
+function batchOutcome(
+  admitted: readonly FoldCandidate[],
+  marked: readonly boolean[],
+  skipped: number[],
+): BatchFoldResult {
+  const ids = (want: boolean) =>
+    admitted.filter((_candidate, index) => marked[index] === want).map((candidate) => candidate.id);
+  return { included: ids(true), failed: ids(false), skipped };
+}
+
+/** Fold a batch of candidates in, resolving to what became of each. */
+type FoldBatch = (_candidates: readonly FoldCandidate[]) => Promise<BatchFoldResult>;
+
+/** The marks for an admitted batch: none at all when the entry write failed. */
+function markAll(admitted: readonly FoldCandidate[], entryId: number | null): Promise<boolean[]> {
+  if (entryId == null) return Promise.resolve(admitted.map(() => false));
+  return Promise.all(admitted.map((candidate) => markIncluded(candidate.id, entryId)));
+}
+
+/**
+ * One batch's two writes, untracked: splice what the body lacks at the caret,
+ * write the entry once, then mark each quote. Refuses, per quote, any quote an
+ * earlier act still has on the wire.
+ */
+function useFoldBatch(
+  bodyRef: MutableRefObject<string>,
+  caretRef: MutableRefObject<number | null>,
+  write: { onChangeBody: (_next: string) => void; flush: () => Promise<number | null> },
+  record: (_candidates: readonly FoldCandidate[], _marked: readonly boolean[]) => void,
+): FoldBatch {
+  const inFlight = useFoldsInFlight();
+  const { onChangeBody, flush } = write;
+  return useCallback<FoldBatch>(
+    async (candidates) => {
+      // Per quote, not per batch: a quote a single tap already has on the wire
+      // is left to that act, and the rest of the selection still goes in.
+      const admitted = candidates.filter((candidate) => inFlight.begin(candidate.id));
+      const skipped = candidates.filter((c) => !admitted.includes(c)).map((c) => c.id);
+      if (admitted.length === 0) return { included: [], failed: [], skipped };
+      try {
+        // A fold-in is two writes: the blocks land in the body, then each quote
+        // is marked included. When a mark fails its block has ALREADY landed,
+        // and it stays in the saved body across a close and reopen -- so the
+        // body itself, not anything held in memory, says whether a retry still
+        // needs to splice it. If the writer deleted it meanwhile, it goes back
+        // once rather than marking a quote included that the review omits.
+        const plan = planQuoteBatch(bodyRef.current, admitted, caretRef.current);
+        if (plan.text !== bodyRef.current) {
+          onChangeBody(plan.text);
+          caretRef.current = plan.nextCaret;
+        }
+        const marked = await markAll(admitted, await flush());
+        // Recorded both ways round: a retried quote clears the warning an
+        // earlier try left, and a refused one raises it -- no crash, no nag.
+        record(admitted, marked);
+        return batchOutcome(admitted, marked, skipped);
+      } finally {
+        for (const candidate of admitted) inFlight.end(candidate.id);
+      }
+    },
+    [bodyRef, caretRef, onChangeBody, flush, inFlight, record],
+  );
+}
+
+/** The caret tracker plus the fold-pending-quotes-into-the-body flow. */
 function useFoldIn(
   bodyRef: MutableRefObject<string>,
   onChangeBody: (_next: string) => void,
   flush: () => Promise<number | null>,
-): {
-  inclusionHint: boolean;
-  foldingIn: boolean;
-  onBodySelectionChange: (_caret: BodyCaret) => void;
-  onInsertQuote: (
-    _quote: PromotedQuoteSummary,
-    _sourceItem: ReflectionSourceItem,
-  ) => Promise<boolean>;
-} {
-  const [inclusionHint, setInclusionHint] = useState(false);
+) {
   const { anyInFlight, track } = useInFlightTally();
   const caretRef = useRef<number | null>(null);
+  const ledger = useInclusionLedger();
+  const { record, failedCandidates } = ledger;
 
   const onBodySelectionChange = useCallback((caret: BodyCaret) => {
     caretRef.current = caret.start;
   }, []);
 
-  const inFlight = useFoldsInFlight();
-
-  const foldQuoteIn = useCallback(
-    async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
-      if (!inFlight.begin(quote.id)) return false;
-      try {
-        // A fold-in is two writes: the block lands in the body, then the quote
-        // is marked included. When the mark fails the block has ALREADY landed,
-        // and it stays in the saved body across a close and reopen -- so the
-        // body itself, not anything held in memory, says whether a retry still
-        // needs to splice it. If the writer deleted it meanwhile, it goes back
-        // once rather than marking a quote included that the review omits.
-        const block = formatBlockquote(quote.anchor_text, sourceAttribution(sourceItem));
-        if (!bodyRef.current.includes(block)) {
-          const { text, nextCaret } = spliceQuoteBlock(bodyRef.current, block, caretRef.current);
-          onChangeBody(text);
-          caretRef.current = nextCaret;
-        }
-        const entryId = await flush();
-        if (entryId == null) return false;
-        // Set both ways round: a retried fold-in clears the warning an earlier try
-        // left, and a refused one raises it — no crash, no nag either way.
-        const included = await markIncluded(quote.id, entryId);
-        setInclusionHint(!included);
-        return included;
-      } finally {
-        inFlight.end(quote.id);
-      }
-    },
-    [bodyRef, onChangeBody, flush, inFlight],
-  );
+  const foldBatch = useFoldBatch(bodyRef, caretRef, { onChangeBody, flush }, record);
 
   // Tracked over the WHOLE act, not just the entry write: the draft save
-  // resolves first and settles the screen's own hint to "Saved" while the quote
-  // is still pending, so the tally is what holds the hint open until the mark
-  // lands — for this act and for any other still outstanding.
-  const onInsertQuote = useCallback(
-    (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> =>
-      track(() => foldQuoteIn(quote, sourceItem)),
-    [track, foldQuoteIn],
+  // resolves first and settles the screen's own hint to "Saved" while the
+  // quotes are still pending, so the tally is what holds the hint open until
+  // every mark lands -- for this act and for any other still outstanding. An
+  // empty batch admits nothing, so it splices, writes and marks nothing.
+  const onInsertQuotes = useCallback<FoldBatch>(
+    (candidates) => track(() => foldBatch(candidates)),
+    [track, foldBatch],
   );
 
-  return { inclusionHint, foldingIn: anyInFlight, onBodySelectionChange, onInsertQuote };
+  const retryInclusion = useCallback(
+    () => onInsertQuotes(failedCandidates()),
+    [onInsertQuotes, failedCandidates],
+  );
+
+  const onInsertQuote = useCallback(
+    async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
+      const outcome = await onInsertQuotes([candidateFromSource(quote, sourceItem)]);
+      return outcome.included.includes(quote.id);
+    },
+    [onInsertQuotes],
+  );
+
+  return {
+    inclusionHint: ledger.failedCount > 0,
+    failedCount: ledger.failedCount,
+    foldedIds: ledger.foldedIds,
+    foldingIn: anyInFlight,
+    onBodySelectionChange,
+    onInsertQuote,
+    onInsertQuotes,
+    retryInclusion,
+  };
 }
 
 /** The in-panel re-promote flow: lift a fresh span into its source's pending set. */
@@ -377,23 +475,8 @@ export function useReflectionMode({
     reflectionLevel,
     reflectionScopeKey,
   );
-  const { inclusionHint, foldingIn, onBodySelectionChange, onInsertQuote } = useFoldIn(
-    bodyRef,
-    onChangeBody,
-    flush,
-  );
+  const foldIn = useFoldIn(bodyRef, onChangeBody, flush);
   const onPromoteSpan = usePromoteSpan(setSources);
 
-  return {
-    active,
-    sources,
-    window,
-    anchorStatus,
-    feedStatus,
-    inclusionHint,
-    foldingIn,
-    onBodySelectionChange,
-    onInsertQuote,
-    onPromoteSpan,
-  };
+  return { active, sources, window, anchorStatus, feedStatus, ...foldIn, onPromoteSpan };
 }

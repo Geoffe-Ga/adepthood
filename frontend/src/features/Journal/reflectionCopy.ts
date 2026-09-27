@@ -155,10 +155,30 @@ export function formatSourceDate(timestamp: string, timeZone?: string): string {
   });
 }
 
+/** The two facts an attribution is built from, whichever feed carried them. */
+export interface AttributionSource {
+  title: string | null | undefined;
+  timestamp: string;
+}
+
+/**
+ * The attribution line written beneath a folded quote: the source's trimmed
+ * title, else the day it was written (in the device zone).
+ *
+ * The ONE composer of that line. The sources panel and the Promoted quotes
+ * screen read the same entry through two different feeds, and the batch
+ * fold-in decides "already in the body" by looking for the exact rendered
+ * block -- so a second, drifting copy of this rule would make the same quote,
+ * folded from the other surface, land twice.
+ */
+export function quoteAttribution(source: AttributionSource): string {
+  const title = source.title?.trim();
+  return title ? title : formatSourceDate(source.timestamp);
+}
+
 /** The attribution shown beneath a folded quote: the source's title, else its date. */
 export function sourceAttribution(item: ReflectionSourceItem): string {
-  const title = item.title?.trim();
-  return title ? title : formatSourceDate(item.timestamp);
+  return quoteAttribution(item);
 }
 
 /**
