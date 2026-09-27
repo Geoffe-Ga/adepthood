@@ -7529,7 +7529,7 @@
         "type": "object"
       },
       "UiFlagsResponse": {
-        "description": "The two UI flags returned to the caller.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.",
+        "description": "The caller's UI flags, plus the habit their writing timer checks off.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
         "properties": {
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
@@ -7538,17 +7538,29 @@
           "has_seen_welcome": {
             "title": "Has Seen Welcome",
             "type": "boolean"
+          },
+          "writing_session_habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writing Session Habit Id"
           }
         },
         "required": [
           "has_seen_welcome",
-          "energy_scaffolding_archived"
+          "energy_scaffolding_archived",
+          "writing_session_habit_id"
         ],
         "title": "UiFlagsResponse",
         "type": "object"
       },
       "UiFlagsUpdate": {
-        "description": "Partial update for the UI flags (PATCH).\n\nEvery field is a plain boolean defaulting to its column's own default, so an\nexplicit ``null`` is refused by the annotation at a ``loc`` naming the flag\nrather than reaching a NOT NULL column. Only the fields the caller sets are\napplied -- unspecified flags keep their stored value, because the router\ndumps with ``exclude_unset=True`` and no default here is ever written on its\nown. An empty payload is rejected (422) by\n:class:`~schemas.partial_update.PartialUpdateModel`.",
+        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` is the one deliberate exception to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.",
         "properties": {
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
@@ -7557,6 +7569,19 @@
           "has_seen_welcome": {
             "title": "Has Seen Welcome",
             "type": "boolean"
+          },
+          "writing_session_habit_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writing Session Habit Id"
           }
         },
         "title": "UiFlagsUpdate",
@@ -24760,7 +24785,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update the caller's UI flags and return the full new state.\n\nOnly the fields present in the request are applied; unspecified flags keep\ntheir stored value. An empty body is rejected upstream (422) by\n:class:`~schemas.ui_flags.UiFlagsUpdate`.",
+        "description": "Partially update the caller's UI flags and return the full new state.\n\nOnly the fields present in the request are applied; unspecified flags keep\ntheir stored value. An empty body is rejected upstream (422) by\n:class:`~schemas.ui_flags.UiFlagsUpdate`. A ``writing_session_habit_id``\nnaming a missing habit is 404 and another user's habit is 403, and either\nrefusal writes nothing at all; an explicit ``null`` clears the link.",
         "operationId": "update_ui_flags_ui_flags_patch",
         "parameters": [
           {

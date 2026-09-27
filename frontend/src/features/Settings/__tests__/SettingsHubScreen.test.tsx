@@ -42,13 +42,30 @@ const mockCapabilities = jest.fn<Promise<{ feedback_triage: boolean }>, []>(() =
   Promise.reject(new Error('no capability answer configured')),
 );
 
+// The Journal group reads the writing-timer link; it answers "no link" here.
+const mockUiFlagsGet = jest.fn(() =>
+  Promise.resolve({
+    has_seen_welcome: true,
+    energy_scaffolding_archived: false,
+    writing_session_habit_id: null,
+  }),
+);
+
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
+    uiFlags: { get: () => mockUiFlagsGet(), update: jest.fn() },
   };
 });
+
+const mockSaveWritingOfferAnswered = jest.fn((_value: boolean) => Promise.resolve());
+
+jest.mock('@/storage/writingOfferStorage', () => ({
+  saveWritingOfferAnswered: (value: boolean) => mockSaveWritingOfferAnswered(value),
+  loadWritingOfferAnswered: () => Promise.resolve(false),
+}));
 
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
@@ -320,6 +337,44 @@ describe('SettingsHubScreen — Choose your depths section', () => {
     expect(getByTestId('settings-row-logout')).toBeTruthy();
     expect(getByTestId('settings-group-privacy')).toBeTruthy();
     expect(getByTestId('settings-group-support')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Journal section (#2861) — the writing timer's habit, and the offer again
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Journal section', () => {
+  test('renders the Journal group with the writing-timer row and the offer-again row', async () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-journal')).toBeTruthy();
+    await waitFor(() =>
+      expect(getByTestId('settings-row-writing-habit').props.accessibilityLabel).toBe(
+        'Writing timer → not linked',
+      ),
+    );
+    expect(getByTestId('settings-row-writing-offer-again').props.accessibilityLabel).toBe(
+      'Offer again at the end of a session',
+    );
+  });
+
+  test('offering again clears this device’s answer', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-writing-offer-again'));
+
+    expect(mockSaveWritingOfferAnswered).toHaveBeenCalledWith(false);
+  });
+
+  test('sits after the depths group, so the depth choices still lead', () => {
+    const { toJSON } = render(<SettingsHubScreen />);
+    const tree = JSON.stringify(toJSON());
+
+    expect(tree.indexOf('settings-group-depths')).toBeGreaterThan(-1);
+    expect(tree.indexOf('settings-group-journal')).toBeGreaterThan(
+      tree.indexOf('settings-group-depths'),
+    );
   });
 });
 

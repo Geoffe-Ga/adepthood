@@ -158,6 +158,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
   'features/Journal/ResonanceEssayModal.tsx::kind',
+  // Audited: the one line under "Which habit?" (#2861) saying what choosing a
+  // habit does. Static text above the rows, never pressed — every row in the
+  // picker is an OfferAction, which takes editorialType.action.
+  'features/Journal/WritingHabitPicker.tsx::help',
   // Audited: the one line explaining what the prioritise step does. Static
   // text beside the rows, never pressed — every affordance in that step is an
   // OfferAction, which takes editorialType.action.

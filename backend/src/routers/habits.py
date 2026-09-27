@@ -18,6 +18,7 @@ from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
 from domain.habit_stats import compute_habit_stats
+from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
@@ -383,6 +384,11 @@ async def delete_habit(
     # loaded each goal's completions and de-associated them instead, writing
     # NULL into a NOT NULL column and failing the request for any habit that
     # had ever been checked in (#2763).
+    #
+    # A writing timer linked to this habit is unlinked first (#2861). The
+    # column's ``ON DELETE SET NULL`` would do it on Postgres; doing it here
+    # keeps the rule true wherever foreign keys are not enforced.
+    await clear_writing_habit_links(session, cast("int", habit_id))
     await session.delete(habit)
     await session.commit()
     logger.info(

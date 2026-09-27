@@ -56,6 +56,7 @@ import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
+import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
 import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
@@ -3543,6 +3544,10 @@ function EntryWritingSurfaces({
   launch: WritingLaunchParam;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
+  // Above the edit-mode return, beside the practice hook it wraps: both kinds
+  // of page finish through this one handler, so a linked habit is checked off
+  // on either (#2861).
+  const onSession = useLinkedHabitCheckOff(session.onSession);
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   if (!ctl.editGate.editMode) return null;
   return (
@@ -3550,7 +3555,7 @@ function EntryWritingSurfaces({
       <WritingSessionSurface
         initialMinutes={session.initialMinutes}
         autoStart={session.autoStart}
-        onSession={session.onSession}
+        onSession={onSession}
         renderOffer={session.launched ? undefined : renderSessionOffer}
       />
       {narrow ? (

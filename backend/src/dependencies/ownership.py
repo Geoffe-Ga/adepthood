@@ -76,19 +76,35 @@ def log_ownership_denied(resource: str, resource_id: int, current_user: int) -> 
     )
 
 
+async def resolve_owned_habit(session: AsyncSession, habit_id: int, user_id: int) -> Habit:
+    """Resolve ``habit_id`` for write access -- owner only -- and audit denials.
+
+    The singular counterpart of :func:`resolve_owned_habits`, for a route that
+    takes one habit id in a request *body*. Unlike the batch resolver it never
+    drops a foreign id silently: a missing habit is 404 and another user's habit
+    is 403 with a ``resource_access_denied`` audit row, the same split
+    :func:`require_owned_habit` publishes for the path parameter.
+    """
+    habit = await session.get(Habit, habit_id)
+    if habit is None:
+        raise not_found("habit")
+    if habit.user_id != user_id:
+        log_ownership_denied("habit", habit_id, user_id)
+        raise forbidden("forbidden")
+    return habit
+
+
 async def require_owned_habit(
     habit_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Habit:
-    """Resolve ``habit_id`` and verify the caller owns it."""
-    habit = await session.get(Habit, habit_id)
-    if habit is None:
-        raise not_found("habit")
-    if habit.user_id != current_user:
-        log_ownership_denied("habit", habit_id, current_user)
-        raise forbidden("forbidden")
-    return habit
+    """Resolve ``habit_id`` and verify the caller owns it.
+
+    Delegates to :func:`resolve_owned_habit`, so the path and body spellings
+    share one 404-then-403 rule and one audit row.
+    """
+    return await resolve_owned_habit(session, habit_id, current_user)
 
 
 def _audit_unowned_habits(habits: list[Habit], user_id: int) -> None:

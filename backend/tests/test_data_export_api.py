@@ -568,3 +568,40 @@ async def test_the_export_after_triage_carries_no_operator_state(
     assert set(document["records"]) == included
     assert isinstance(MANIFEST["feedbacknote"], Omitted)
     assert isinstance(MANIFEST["feedbacktriageevent"], Omitted)
+
+
+@pytest.mark.asyncio
+async def test_the_writing_timer_habit_link_is_exported_as_the_habit_id(
+    async_client: AsyncClient,
+) -> None:
+    """The habit a writer linked to the timer is a choice they made, so it goes with them (#2861).
+
+    It is exported as the habit's id, which names a row in the same archive's
+    ``habits`` collection. The one-time interface flags beside it on the same
+    row are the app's memory of a session, and stay behind.
+    """
+    headers, _ = await _signup(async_client, "linked_exporter")
+    habit = await async_client.post(
+        "/habits/",
+        json={
+            "name": "Morning pages",
+            "icon": "✍️",
+            "start_date": "2024-01-01",
+            "energy_cost": 1,
+            "energy_return": 2,
+        },
+        headers=headers,
+    )
+    habit_id = int(habit.json()["id"])
+    linked = await async_client.patch(
+        "/ui-flags", json={"writing_session_habit_id": habit_id}, headers=headers
+    )
+    assert linked.status_code == HTTPStatus.OK
+
+    _, document = await _export(async_client, headers)
+
+    rows = _records(document, "writing_timer")
+    assert [row["writing_session_habit_id"] for row in rows] == [habit_id]
+    assert habit_id in {row["id"] for row in _records(document, "habits")}
+    assert all("has_seen_welcome" not in row for row in rows)
+    assert all("energy_scaffolding_archived" not in row for row in rows)

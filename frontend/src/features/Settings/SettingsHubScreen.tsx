@@ -36,6 +36,7 @@ import {
 import { FEEDBACK_TEST_IDS } from '@/features/Feedback/feedbackTestIds';
 import { openFeedbackComposer } from '@/features/Feedback/navigation';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
+import JournalSection from '@/features/Settings/JournalSection';
 import SanghaSection from '@/features/Settings/SanghaSection';
 import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -288,6 +289,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <CorpusSection onSeedCorpus={openSeedCorpus} onCorpusConsent={openCorpusConsent} />
       <PrivacySection onVault={openVault} />
       <ChooseDepthsSection />
+      <JournalSection />
       <SanghaSection />
       <YourDataSection onExportData={openExportData} />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
