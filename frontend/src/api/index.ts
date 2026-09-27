@@ -389,10 +389,14 @@ export const LLM_API_KEY_HEADER = REQUEST_HEADER_VOCABULARY.llmApiKey;
  * matching the IETF draft (``draft-ietf-httpapi-idempotency-key-header``).
  *
  * There is no dedupe middleware behind it: the header is honoured per-route by
- * the routes that opted in (``POST /practice-sessions``, and the energy
- * router's ``X-Idempotency-Key``), so sending it elsewhere is inert
- * server-side. Client-side its effect is universal — ``hasIdempotencyHeader``
- * reads it to make a mutation retry-eligible.
+ * the routes that opted in (``POST /practice-sessions/``, ``POST
+ * /goal_completions/``, ``POST /feedback/``, ``POST /journal/`` and ``POST
+ * /prompts/{week}/respond``, plus the energy router's ``X-Idempotency-Key``),
+ * so sending it elsewhere is inert server-side. Client-side its effect is
+ * universal — ``hasIdempotencyHeader`` reads it to make a mutation
+ * retry-eligible, so a keyed POST is repeated on a transient failure. Send it
+ * only to a route that honours it: a keyed POST to one that does not would be
+ * retried into a duplicate.
  */
 export const IDEMPOTENCY_KEY_HEADER = REQUEST_HEADER_VOCABULARY.idempotencyKey;
 
@@ -1916,12 +1920,25 @@ export const journal = {
   get(entryId: number, token?: string): Promise<JournalMessage> {
     return request<JournalMessage>(`/journal/${entryId}`, { token });
   },
-  create(entry: JournalMessageCreate, token?: string): Promise<JournalMessage> {
+  /**
+   * Create an entry. ``options.idempotencyKey`` (#2936) names the logical
+   * create: the server answers a repeat of it with the entry it already stored
+   * rather than writing a second one, which is also what makes the POST
+   * transport-retryable. The answer to a repeat is the row *as first written*
+   * — a caller whose retry carried newer text must PATCH it.
+   */
+  create(
+    entry: JournalMessageCreate,
+    options: { token?: string; idempotencyKey?: string } = {},
+  ): Promise<JournalMessage> {
     // Trailing slash — the collection POST route is `/journal/` (#790).
     return request<JournalMessage>('/journal/', {
       method: 'POST',
       body: entry,
-      token,
+      token: options.token,
+      headers: options.idempotencyKey
+        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+        : undefined,
     });
   },
   /**
@@ -2381,6 +2398,10 @@ export interface PromptResponseOptions {
   /** 1-based position in the stage's prompt list; omitted means the prompt the
    *  week itself draws, which is what a week-keyed caller has always sent. */
   promptOrdinal?: number | null;
+  /** Names this answer (#2936). A repeat under the same key is answered with
+   *  the stored response instead of 409 ``already_responded``; sent as the
+   *  ``Idempotency-Key`` header, never in the body. */
+  idempotencyKey?: string;
 }
 
 export const prompts = {
@@ -2393,7 +2414,7 @@ export const prompts = {
     options: PromptResponseOptions = {},
     token?: string,
   ): Promise<PromptDetail> {
-    const { title, promptOrdinal } = options;
+    const { title, promptOrdinal, idempotencyKey: key } = options;
     return request<PromptDetail>(`/prompts/${weekNumber}/respond`, {
       method: 'POST',
       body: {
@@ -2402,6 +2423,7 @@ export const prompts = {
         ...(promptOrdinal != null && { prompt_ordinal: promptOrdinal }),
       },
       token,
+      headers: key ? { [IDEMPOTENCY_KEY_HEADER]: key } : undefined,
     });
   },
   /** Every prompt of one stage, in curriculum order, each with its own cadence.

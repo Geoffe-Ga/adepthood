@@ -3,6 +3,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { KEYED } from './idempotencyTestKit';
+
 /**
  * Verifies the Aspect-chord PATCH-error wiring in ``JournalEntryScreen``: a
  * chord change on an existing entry is PATCHed immediately, and — mirroring the
@@ -310,6 +312,7 @@ describe('JournalEntryScreen — chord chosen before the first save', () => {
 
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ primary_aspect: 5, secondary_aspect: null }),
+        KEYED,
       );
       // No PATCH: the chord rode the create — there is no existing entry to update yet.
       expect(mockUpdate).not.toHaveBeenCalled();

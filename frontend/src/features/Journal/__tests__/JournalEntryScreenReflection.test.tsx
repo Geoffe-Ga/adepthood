@@ -13,6 +13,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { KEYED } from './idempotencyTestKit';
+
 import type {
   JournalMessage,
   PromotedQuote,
@@ -319,6 +321,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
           reflection_level: 'stage',
           reflection_scope_key: 'c1:s1',
         }),
+        KEYED,
       );
       expect(mockRespond).not.toHaveBeenCalled();
       expect(getByTestId('journal-finish-button')).toBeTruthy();
@@ -757,6 +760,7 @@ describe('JournalEntryScreen -- weekly-prompt mode regression', () => {
       });
       expect(mockRespond).toHaveBeenCalledWith(3, 'I noticed the willow.', {
         title: 'Week 3 Reflection',
+        ...KEYED,
       });
       expect(mockCreate).not.toHaveBeenCalled();
       const respondArgs = mockRespond.mock.calls[0];

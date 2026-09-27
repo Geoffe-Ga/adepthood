@@ -1,11 +1,14 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
+import type { CreateKeyRef } from '../createKey';
 import { saveFinishedEntry } from '../saveFinishedEntry';
 
 import type { JournalMessage } from '@/api';
 
-const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
+const mockCreate = jest.fn() as jest.MockedFunction<
+  (_e: unknown, _options?: unknown) => Promise<JournalMessage>
+>;
 const mockUpdate = jest.fn() as jest.MockedFunction<
   (_id: number, _p: unknown) => Promise<JournalMessage>
 >;
@@ -41,7 +44,8 @@ describe('saveFinishedEntry — new entry (no existingId)', () => {
     mockCreate.mockResolvedValueOnce(entry({ id: 7 }));
     mockUpdate.mockResolvedValueOnce(entry({ id: 7, status: 'finished' }));
     await saveFinishedEntry('A fresh page.');
-    expect(mockCreate).toHaveBeenCalledWith({ message: 'A fresh page.' });
+    // No key held: the create goes out unkeyed, with empty options (#2936).
+    expect(mockCreate).toHaveBeenCalledWith({ message: 'A fresh page.' }, {});
   });
 
   it('never sends entry_date on create', async () => {
@@ -122,6 +126,7 @@ describe('saveFinishedEntry — entry date', () => {
     await saveFinishedEntry('A page.', undefined, undefined, '2026-07-05');
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'A page.', entry_date: '2026-07-05' }),
+      {},
     );
   });
 
@@ -144,5 +149,59 @@ describe('saveFinishedEntry — failure propagation', () => {
     mockUpdate.mockRejectedValueOnce(new Error('PATCH failed again'));
     await expect(saveFinishedEntry('Doomed retry.', 55)).rejects.toThrow('PATCH failed again');
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+});
+
+// #2936: a capture whose create answer was lost must not become two entries.
+describe('saveFinishedEntry — one captured page, one entry', () => {
+  function keysSent(): unknown[] {
+    return mockCreate.mock.calls.map(
+      (call) => (call[1] as { idempotencyKey?: string } | undefined)?.idempotencyKey,
+    );
+  }
+
+  it('sends every create attempt of one capture under one key', async () => {
+    const key: CreateKeyRef = { current: null };
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await expect(
+      saveFinishedEntry('A page.', null, undefined, undefined, undefined, key),
+    ).rejects.toThrow('network');
+    mockCreate.mockResolvedValueOnce(entry({ id: 9 }));
+    mockUpdate.mockResolvedValueOnce(entry({ id: 9, status: 'finished' }));
+
+    await expect(
+      saveFinishedEntry('A page.', null, undefined, undefined, undefined, key),
+    ).resolves.toBe(9);
+
+    const [first, second] = keysSent();
+    expect(typeof first).toBe('string');
+    expect(second).toBe(first);
+  });
+
+  it('a first-try create finishes with the status alone', async () => {
+    mockCreate.mockResolvedValueOnce(entry({ id: 9 }));
+    mockUpdate.mockResolvedValueOnce(entry({ id: 9, status: 'finished' }));
+
+    await saveFinishedEntry('A page.', null, undefined, undefined, 'intimate', { current: null });
+
+    expect(mockUpdate).toHaveBeenCalledWith(9, { status: 'finished' });
+  });
+
+  it('a resent create finishes with the current body and tier, which a replay may not hold', async () => {
+    const key: CreateKeyRef = { current: null };
+    mockCreate.mockRejectedValueOnce(new Error('network'));
+    await saveFinishedEntry('A page.', null, undefined, undefined, 'personal', key).catch(
+      () => undefined,
+    );
+    mockCreate.mockResolvedValueOnce(entry({ id: 9, message: 'A page.' }));
+    mockUpdate.mockResolvedValueOnce(entry({ id: 9, status: 'finished' }));
+
+    await saveFinishedEntry('A page, corrected.', null, undefined, undefined, 'intimate', key);
+
+    expect(mockUpdate).toHaveBeenCalledWith(9, {
+      message: 'A page, corrected.',
+      classification: 'intimate',
+      status: 'finished',
+    });
   });
 });

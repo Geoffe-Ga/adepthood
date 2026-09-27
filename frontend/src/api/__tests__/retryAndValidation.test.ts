@@ -18,7 +18,9 @@ import {
   goalCompletions,
   habits,
   IDEMPOTENCY_KEY_HEADER,
+  journal,
   practiceSessions,
+  prompts,
   setOnUnauthorized,
   setTokenGetter,
   toLocalHabit,
@@ -241,6 +243,56 @@ describe('BUG-007: retry policy', () => {
       'idempotency-key-abc',
       'idempotency-key-abc',
     ]);
+  });
+});
+
+// #2936: a journal create or a weekly-prompt respond whose answer is lost is
+// indistinguishable, client-side, from one that never arrived. Keyed, the server
+// recognises the retry, so the transport may safely repeat it; unkeyed, it
+// still must not.
+describe('keyed journal and prompt writes are transport-retryable (#2936)', () => {
+  const sentHeaders = () =>
+    mockFetch.mock.calls.map(
+      ([, init]) => (init.headers as Record<string, string>)[IDEMPOTENCY_KEY_HEADER],
+    );
+  const sentBodies = () => mockFetch.mock.calls.map(([, init]) => JSON.parse(init.body as string));
+
+  test('a keyed journal.create retries a 502 under the same key, never in the body', async () => {
+    jest.useFakeTimers();
+    mockFetch
+      .mockReturnValueOnce(jsonResponse({ detail: 'bad gateway' }, 502))
+      .mockReturnValueOnce(jsonResponse({ id: 7, message: 'A page.' }, 201));
+    const promise = journal.create({ message: 'A page.' }, { idempotencyKey: 'page-key-1' });
+    await jest.runAllTimersAsync();
+    await expect(promise).resolves.toMatchObject({ id: 7 });
+    expect(sentHeaders()).toEqual(['page-key-1', 'page-key-1']);
+    expect(sentBodies()).toEqual([{ message: 'A page.' }, { message: 'A page.' }]);
+  });
+
+  test('an unkeyed journal.create is still not retried and sends no key', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'bad gateway' }, 502));
+    await expect(journal.create({ message: 'A page.' })).rejects.toMatchObject({ status: 502 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(sentHeaders()).toEqual([undefined]);
+  });
+
+  test('a keyed prompts.respond retries a 502 under the same key, never in the body', async () => {
+    jest.useFakeTimers();
+    mockFetch
+      .mockReturnValueOnce(jsonResponse({ detail: 'bad gateway' }, 502))
+      .mockReturnValueOnce(jsonResponse({ week_number: 1, has_responded: true }, 201));
+    const promise = prompts.respond(1, 'An answer.', { idempotencyKey: 'respond-key-1' });
+    await jest.runAllTimersAsync();
+    await promise;
+    expect(sentHeaders()).toEqual(['respond-key-1', 'respond-key-1']);
+    expect(sentBodies()).toEqual([{ response: 'An answer.' }, { response: 'An answer.' }]);
+  });
+
+  test('an unkeyed prompts.respond is still not retried and sends no key', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'bad gateway' }, 502));
+    await expect(prompts.respond(1, 'An answer.')).rejects.toMatchObject({ status: 502 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(sentHeaders()).toEqual([undefined]);
   });
 });
 

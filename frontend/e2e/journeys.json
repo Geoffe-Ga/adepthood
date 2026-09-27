@@ -306,6 +306,22 @@
     "coveredBy": "frontend/e2e/journal-save-retry.browser.e2e.test.ts"
   },
   {
+    "id": "journal.retried-save-never-duplicates",
+    "description": "A writer's first save of a new page, or their answer to the week's prompt, reaches the server but its answer is lost on the way back. The page cannot tell that from a save that never arrived, so it retries: first the transport (a keyed POST is retry-eligible), then the footer's Retry. Every attempt carries the one Idempotency-Key the page minted for that create, so the server answers each retry with the row it already stored rather than writing a second entry, and a lost prompt answer settles on Saved instead of being reported as the week already taken. Words typed after the lost create are PATCHed over the replayed row, so the one stored entry holds the newer text. The browser spec commits the first POST and drops its response, counting rows through the account's own API; Jest seam suites (the #2936 cases in JournalEntryScreenSaveRetry, saveFinishedEntry and JournalPhotographScreen) pin what the browser cannot isolate: a stricter tier re-asserted on the replayed row, a failed reconcile that leaves the page id-less, the photograph capture's own key, and a replayed answer holding older words staying honest as week-taken.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "prompts"],
+      "routes": [
+        "POST /journal/",
+        "POST /prompts/{week_number}/respond",
+        "PATCH /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "promptresponse"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-lost-answer.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-a-single-line-title",
     "description": "A writer opens a fresh Journal page whose title occupies one line before they type. A long title can still wrap visually, pasted line breaks collapse to spaces, and Return moves the caret into the body without becoming stored title data. Closing crosses the production client and create route, and the returned durable row carries the exact single-line title; schema tests separately pin the server-side defence for non-UI create and update callers.",
     "crosses": {

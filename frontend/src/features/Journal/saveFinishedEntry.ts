@@ -11,9 +11,19 @@
  * supply it. On create, the message body is sent along with an optional
  * `entry_date` (a backdate); when it is omitted the backend stamps today. The
  * finishing PATCH and any retry send only the body and status, never a date.
+ *
+ * `existingId` cannot help when the create's own answer is lost: `onCreated`
+ * never fires, and a retry would create the page a second time. A caller-held
+ * `createKey` closes that (#2936): every create attempt of one capture is sent
+ * under one idempotency key, so the server answers a repeat with the entry it
+ * already wrote. That answer is the row as first written, so a resent create's
+ * finishing PATCH also carries the current body and tier. A backdate is not
+ * reconciled: the capture screen fixes it before the first attempt.
  */
+import { claimCreateAttempt, type CreateKeyRef } from './createKey';
+
 import { journal } from '@/api';
-import type { JournalClassification, JournalMessageCreate } from '@/api';
+import type { JournalClassification, JournalEntryUpdate, JournalMessageCreate } from '@/api';
 
 /** The status a fully-captured page is flipped to once its body is saved. */
 const FINISHED_STATUS = 'finished' as const;
@@ -30,7 +40,9 @@ const FINISHED_STATUS = 'finished' as const;
  * a retry even if the PATCH then rejects. `entryDate`, when given, backdates the
  * created entry; it is sent only on create, never on a retry PATCH. `classification`
  * is the privacy tier chosen during capture; like `entryDate` it rides only the
- * create (the tier is set at birth), never the finishing or retry PATCH. Rejections
+ * create (the tier is set at birth), never the finishing or retry PATCH — except
+ * after a resent create, whose replayed row may predate them. `createKey`, when
+ * given, holds this capture's idempotency key across attempts. Rejections
  * propagate to the caller.
  */
 export async function saveFinishedEntry(
@@ -39,6 +51,7 @@ export async function saveFinishedEntry(
   onCreated?: (_id: number) => void,
   entryDate?: string,
   classification?: JournalClassification,
+  createKey?: CreateKeyRef,
 ): Promise<number> {
   if (existingId == null) {
     const payload: JournalMessageCreate = {
@@ -46,9 +59,17 @@ export async function saveFinishedEntry(
       ...(classification != null && { classification }),
       ...(entryDate != null && { entry_date: entryDate }),
     };
-    const created = await journal.create(payload);
+    const attempt = createKey ? claimCreateAttempt(createKey) : null;
+    const created = await journal.create(payload, attempt ? { idempotencyKey: attempt.key } : {});
     onCreated?.(created.id);
-    await journal.update(created.id, { status: FINISHED_STATUS });
+    const finishing: JournalEntryUpdate = attempt?.resent
+      ? {
+          message: body,
+          ...(classification != null && { classification }),
+          status: FINISHED_STATUS,
+        }
+      : { status: FINISHED_STATUS };
+    await journal.update(created.id, finishing);
     return created.id;
   }
   await journal.update(existingId, { message: body, status: FINISHED_STATUS });
