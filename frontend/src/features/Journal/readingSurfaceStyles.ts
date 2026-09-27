@@ -28,3 +28,21 @@ export const buildReadingScrollStyle = (platform: ReadingSurfacePlatform): WebRe
   platform === 'web' ? { scrollbarGutter: 'stable' } : {};
 
 export const readingScrollStyle = buildReadingScrollStyle(Platform.OS);
+
+/** A ``ViewStyle`` whose ``position`` admits the CSS ``sticky`` value react-native-web passes through. */
+export type WebPinnedFooterStyle = Omit<ViewStyle, 'position'> & {
+  position?: ViewStyle['position'] | 'sticky';
+};
+
+/**
+ * Keep a footer (the quote-selection surface's Promote / Cancel row) in view
+ * while the reader scrolls a long body above it. On web ``position: sticky``
+ * with ``bottom: 0`` holds the row at the foot of the scroll viewport until its
+ * own place in the flow scrolls into view, so it never covers the last lines
+ * and needs no clearance padding. Native ``ScrollView`` has no sticky-bottom
+ * primitive, so there the row stays where the flow puts it.
+ */
+export const buildPinnedFooterStyle = (platform: ReadingSurfacePlatform): WebPinnedFooterStyle =>
+  platform === 'web' ? { position: 'sticky', bottom: 0 } : {};
+
+export const pinnedFooterStyle: ViewStyle = buildPinnedFooterStyle(Platform.OS) as ViewStyle;

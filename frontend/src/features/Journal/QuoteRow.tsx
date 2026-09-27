@@ -11,6 +11,7 @@
  * the pressable rather than nested inside it, so the two presses never fight
  * and each keeps its own accessible name.
  */
+import { Check } from 'lucide-react-native';
 import React from 'react';
 import {
   StyleSheet,
@@ -41,6 +42,9 @@ const DIMMED_ROW_OPACITY = 0.5;
 /** How many lines of the quote a row shows before it truncates, by default. */
 const DEFAULT_QUOTE_LINES = 2;
 
+/** The folded-in check glyph's size in dp, sized to the note face it sits beside. */
+const CHECK_GLYPH_SIZE = 20;
+
 export interface QuoteRowProps {
   /** The quoted words, verbatim. */
   text: string;
@@ -48,6 +52,12 @@ export interface QuoteRowProps {
   caption?: string;
   /** Dim the row: the quote has already been folded into a review. */
   dimmed?: boolean;
+  /**
+   * Draw a check glyph beside the words: the quote has been folded in (#2952).
+   * Decorative by contract — the caller's ``accessibilityState`` carries the
+   * meaning — so the glyph is hidden from assistive technology.
+   */
+  marked?: boolean;
   onPress: () => void;
   accessibilityLabel: string;
   accessibilityState?: AccessibilityState;
@@ -58,11 +68,26 @@ export interface QuoteRowProps {
   style?: StyleProp<ViewStyle>;
 }
 
+/** The check glyph a folded-in quote wears; decorative, so hidden from assistive technology. */
+function FoldedMark({ testID }: { testID: string }): React.JSX.Element {
+  return (
+    <View
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      testID={testID}
+    >
+      <Check size={CHECK_GLYPH_SIZE} color={accent.primary} accessible={false} />
+    </View>
+  );
+}
+
 /** A promoted quote as a tappable, stripe-marked row. */
 export function QuoteRow({
   text,
   caption,
   dimmed = false,
+  marked = false,
   onPress,
   accessibilityLabel,
   accessibilityState,
@@ -80,9 +105,12 @@ export function QuoteRow({
       accessibilityLabel={accessibilityLabel}
       testID={testID}
     >
-      <Text style={styles.text} numberOfLines={numberOfLines}>
-        {text}
-      </Text>
+      <View style={styles.line}>
+        <Text style={[styles.text, styles.textInLine]} numberOfLines={numberOfLines}>
+          {text}
+        </Text>
+        {marked ? <FoldedMark testID={`${testID}-check`} /> : null}
+      </View>
       {caption ? (
         <Text style={styles.caption} numberOfLines={1} testID={`${testID}-caption`}>
           {caption}
@@ -117,9 +145,19 @@ const styles = StyleSheet.create({
   dimmed: {
     opacity: DIMMED_ROW_OPACITY,
   },
+  /** The words and, once folded in, the check glyph on one line. */
+  line: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
   text: {
     ...editorialType.note,
     color: ink.primary,
+  },
+  /** Let the words wrap and truncate beside the glyph instead of pushing it out. */
+  textInLine: {
+    flexShrink: 1,
   },
   caption: {
     ...editorialType.caption,
