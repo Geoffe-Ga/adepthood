@@ -87,6 +87,7 @@ import {
 import type { DroppedCheckInState } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
+import { useWritingHabitLinkStore } from '../../../../store/useWritingHabitLinkStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { buildMergePlan, buildReviewRows } from '../../components/onboardingReview';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
@@ -261,6 +262,24 @@ beforeEach(() => {
 });
 
 describe('habitManager', () => {
+  describe('refreshHabits (#2861)', () => {
+    it('resolves true when the server list was read', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await expect(habitManager.refreshHabits('UTC')).resolves.toBe(true);
+    });
+
+    it('resolves false when the read failed, even though a cache kept the list on screen', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      await expect(habitManager.refreshHabits('UTC')).resolves.toBe(false);
+      expect(useHabitStore.getState().error).toBeNull();
+    });
+  });
+
   describe('loadHabits', () => {
     it('keeps a successful empty API response truthful when there is no cache', async () => {
       (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
@@ -1493,6 +1512,29 @@ describe('habitManager', () => {
       expect(habitsApi.delete).toHaveBeenCalledWith(1);
     });
 
+    it('forgets the writing-timer link once the linked habit is deleted (#2861)', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 }), makeHabit({ id: 2 })] });
+      useWritingHabitLinkStore.setState({ habitId: 1, hydrated: true });
+
+      habitManager.deleteHabit(1);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
+    });
+
+    it('keeps the writing-timer link when the delete is refused, as the server still has it', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+      useWritingHabitLinkStore.setState({ habitId: 1, hydrated: true });
+      (habitsApi.delete as jest.Mock).mockImplementationOnce(() =>
+        Promise.reject(new Error('refused')),
+      );
+
+      habitManager.deleteHabit(1);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(useWritingHabitLinkStore.getState().habitId).toBe(1);
+    });
+
     it('does not blame the connection when the server refused the delete', async () => {
       // The failure #2763 reported was a constraint violation: the request
       // left, arrived, and came back refused. Anything the client says about
@@ -2270,6 +2312,53 @@ describe('habitManager', () => {
         () => Promise.reject(new Error('boom')) as never,
       );
     };
+
+    it('insertHabitAtWithId names the server id of the habit it kept (#2861)', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      (habitsApi.create as jest.Mock).mockImplementation(
+        () => Promise.resolve({ id: CREATED_HABIT_ID }) as never,
+      );
+
+      const outcome = await habitManager.insertHabitAtWithId(
+        { name: 'Journaling', icon: '\u{1F4D3}' },
+        0,
+      );
+
+      expect(outcome).toEqual({ kept: true, habitId: CREATED_HABIT_ID });
+    });
+
+    it('insertHabitAtWithId names no id when the habit was taken back off', async () => {
+      echoStore();
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      halfFailedInsert();
+
+      const outcome = await habitManager.insertHabitAtWithId(
+        { name: 'Journaling', icon: '\u{1F4D3}' },
+        0,
+      );
+
+      expect(outcome).toEqual({ kept: false, habitId: null });
+    });
+
+    it('insertHabitAtWithId still names the id when the habit stayed, out of place', async () => {
+      useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
+      halfFailedInsert();
+      (habitsApi.delete as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('nope')) as never,
+      );
+      serverHolds(
+        makeHabit({ id: 1, name: 'Meditate' }),
+        makeHabit({ id: CREATED_HABIT_ID, name: 'Journaling' }),
+      );
+
+      const outcome = await habitManager.insertHabitAtWithId(
+        { name: 'Journaling', icon: '\u{1F4D3}' },
+        0,
+      );
+
+      expect(outcome).toEqual({ kept: true, habitId: CREATED_HABIT_ID });
+    });
 
     it('takes the habit it just created back off the server when a displacing PUT fails', async () => {
       // #2729: the create landed and a PUT did not, so rolling the STORE back

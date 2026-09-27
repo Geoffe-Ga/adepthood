@@ -59,6 +59,91 @@ export function savedHabitConfirmation(): string {
   return `${JOURNALING_HABIT_NAME} is on your habits list, locked until you open it.`;
 }
 
+/**
+ * What a finished writing session says once it has checked off the habit the
+ * writer linked it to (#2861). The habit's own name and nothing else: no
+ * count, no run of days, no tier reached — the Habits screen is where those
+ * live, for anyone who goes looking.
+ */
+export function checkedOffToast(habitName: string): string {
+  return `${habitName} checked off`;
+}
+
+/**
+ * The "which habit?" step (#2861), shared by the offer and by Settings. The
+ * writer's own habits are listed by their own names — nothing here guesses
+ * which one is "the writing one" — with a new Journaling habit last.
+ */
+export const WRITING_HABIT_PICKER_TITLE = 'Which habit?';
+/**
+ * Strictly true for both kinds of choice: the picker lists only open habits,
+ * and a new Journaling habit starts locked, so "once it is open" is the
+ * condition every check-off actually waits on.
+ */
+export const WRITING_HABIT_PICKER_HELP =
+  'Pick one you already keep, or start a new one. Once it is open, a finished writing timer checks it off.';
+
+/** A habit row's screen-reader label: what choosing it will do. */
+export function writingHabitChooseA11y(habitName: string): string {
+  return `Check off ${habitName} when a writing timer ends`;
+}
+
+export const WRITING_HABIT_NEW = `New habit: ${JOURNALING_HABIT_NAME}`;
+export const WRITING_HABIT_NEW_A11Y = `Start a new habit called ${JOURNALING_HABIT_NAME}`;
+
+export const WRITING_HABIT_CLEAR = 'Clear link';
+export const WRITING_HABIT_CLEAR_A11Y = 'Stop checking off a habit when a writing timer ends';
+
+export const WRITING_HABIT_CANCEL = 'Cancel';
+export const WRITING_HABIT_CANCEL_A11Y = 'Close without choosing a habit';
+
+/** Once linked: what will happen from now on, said once. */
+export function linkedHabitConfirmation(habitName: string): string {
+  return `${habitName} will be checked off when a timer ends.`;
+}
+
+/** Settings: the group, and the row naming the current link. */
+export const JOURNAL_SETTINGS_TITLE = 'Journal';
+export const WRITING_TIMER_ROW_DESCRIPTION =
+  'The habit a finished writing timer checks off. Change it or clear it here.';
+export const WRITING_TIMER_ROW_UNLINKED = 'Writing timer → not linked';
+/** A link the server holds whose habit has not been read yet — never "not linked". */
+export const WRITING_TIMER_ROW_LINKED_PENDING = 'Writing timer → a habit';
+
+/**
+ * The Settings row's label for a resolved link, or ``null`` for none. A linked
+ * habit that is locked is ``paused``: nothing is logged against a locked habit,
+ * so the row says so rather than implying the timer is still checking it off.
+ */
+export function writingTimerRowLabel(
+  habitName: string | null,
+  { paused = false }: { paused?: boolean } = {},
+): string {
+  if (habitName === null) return WRITING_TIMER_ROW_UNLINKED;
+  const label = `Writing timer → ${habitName}`;
+  return paused ? `${label} · paused while locked` : label;
+}
+
+/**
+ * Settings: bring the end-of-session offer back. The answer it clears is kept
+ * on this device only, so the copy says so rather than promising more.
+ */
+export const OFFER_AGAIN_LABEL = 'Offer again at the end of a session';
+export const OFFER_AGAIN_DESCRIPTION =
+  'Shows the keep-this offer after your next finished session, on this device.';
+export const OFFER_AGAIN_DONE =
+  'The offer will be there after your next finished session on this device.';
+
+/**
+ * The new Journaling habit, kept AND linked to the timer. It starts locked like
+ * every new habit, and nothing is logged against a locked habit — so the
+ * sentence says the check-off begins once it is open, and does not open it on
+ * the writer's behalf.
+ */
+export function savedAndLinkedConfirmation(): string {
+  return `${savedHabitConfirmation()} Once it is open, a finished writing timer checks it off.`;
+}
+
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   JOURNALING_HABIT_NAME,
@@ -80,4 +165,25 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   SAVE_AS_HABIT_SAVING,
   savedHabitConfirmation(),
   stagePreviewLabel(JOURNALING_HABIT_NAME, 'Beige'),
+  checkedOffToast(JOURNALING_HABIT_NAME),
+  savedAndLinkedConfirmation(),
+  WRITING_HABIT_PICKER_TITLE,
+  WRITING_HABIT_PICKER_HELP,
+  writingHabitChooseA11y(JOURNALING_HABIT_NAME),
+  WRITING_HABIT_NEW,
+  WRITING_HABIT_NEW_A11Y,
+  WRITING_HABIT_CLEAR,
+  WRITING_HABIT_CLEAR_A11Y,
+  WRITING_HABIT_CANCEL,
+  WRITING_HABIT_CANCEL_A11Y,
+  linkedHabitConfirmation(JOURNALING_HABIT_NAME),
+  JOURNAL_SETTINGS_TITLE,
+  WRITING_TIMER_ROW_DESCRIPTION,
+  WRITING_TIMER_ROW_UNLINKED,
+  WRITING_TIMER_ROW_LINKED_PENDING,
+  writingTimerRowLabel(JOURNALING_HABIT_NAME),
+  writingTimerRowLabel(JOURNALING_HABIT_NAME, { paused: true }),
+  OFFER_AGAIN_LABEL,
+  OFFER_AGAIN_DESCRIPTION,
+  OFFER_AGAIN_DONE,
 ];

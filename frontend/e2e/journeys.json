@@ -1138,6 +1138,27 @@
     "coveredBy": "frontend/e2e/journal-practice-offer.e2e.test.ts"
   },
   {
+    "id": "journal.timer-checks-off-a-linked-habit",
+    "description": "A writer finishes a timed writing session and is offered to keep it as a habit; the offer now asks which habit first, listing the ones they already keep by their own names with a new Journaling habit last. Choosing an existing one links the writing timer to it on the server (PATCH /ui-flags writing_session_habit_id), and from then on every finished session checks that habit off. The covering Playwright spec installs the browser clock before the app loads so a twenty-minute session can be run out in one step, signs up through the UI, seeds a habit, runs a first session and picks that habit from the picker, then reads GET /ui-flags back out of band to prove the link landed on the server. It runs a second session and waits for the POST /goal_completions/ that the habit pipeline sends, then reads GET /habits/{habit_id} back and pins the day's total at exactly the LOW tier target: 'checked off' means the low target is met today, and the amount posted is the gap to it, because since #2852 explicit amounts accumulate on the server and posting the session's minutes would push the habit further every time. A third session the same day posts nothing at all, which is the idempotency only the client's gap rule can supply. Deleting the habit then leaves GET /ui-flags unlinked. The cross-tenant refusal (403 with an audit row, and nothing written) is pinned in backend/tests/security/test_idor.py; the picker's rules, the offer's suppression once a link exists, the Settings row and the offer-again control are pinned by the Jest specs beside WritingSessionOffer, WritingHabitPicker and JournalSection.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "uiFlags", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "PATCH /ui-flags",
+        "GET /ui-flags",
+        "POST /goal_completions/",
+        "GET /habits/{habit_id}",
+        "DELETE /habits/{habit_id}"
+      ],
+      "tables": ["useruiflags", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/writing-timer-habit-link.browser.e2e.test.ts"
+  },
+  {
     "id": "habits.re-scaffold-keeps-what-you-already-built",
     "description": "A user who already has habits reopens the scaffolding modal from the drawer or the energy footer and re-runs it. A habit they enter again keeps its own row: the new energy rating, icon, stage and staggered start date are PUT onto the id the server issued, while the streak, the check-ins, the goal ids and the unlock flag survive untouched. Before this, that pick was POSTed, the server rejected the duplicate name with a 409, the client swallowed it into a console line, and the rating the user had just confirmed was silently discarded while the stale row kept its old one -- only a habit under a genuinely new name ever appeared. A habit carried along from before the program is matched too, and stays on the negative lap with its own beginning rather than being scaffolded onto a program date. A habit the picks do not mention is retained, never released: the delete cascades that habit's goals and completions server-side and cannot be undone, so it follows only an explicit choice. That explicit release is implemented and unit-tested here -- deletes are awaited before any create, so a released name can be re-entered without the create hitting the same unique index -- and the review step now gives the user a way to state one, behind a confirmation that names the habit and says its check-ins and goals go with it. Uncovered because the seam runs through the habit service rather than the API client the lane drives directly: reaching it needs a lane that can open the modal, which is what the linked issue tracks. Pinned meanwhile by the \"onboardingSave merge\" block in src/features/Habits/services/__tests__/habitManager.test.ts, which drives the merge through the same bare picks the screen passes and asserts the exact create/update/delete call counts, the phase ordering, and that no fabricated id reaches the wire.",
     "crosses": {
