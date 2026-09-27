@@ -666,7 +666,7 @@ function useBatchFold(
   const [folding, setFolding] = useState(false);
   const foldChosen = useCallback(
     async (pending: readonly PendingEntry[]): Promise<void> => {
-      if (onInsertQuotes == null || folding) return;
+      if (onInsertQuotes == null) return;
       const chosen = pending.filter((entry) => selected.has(entry.quote.id));
       if (chosen.length === 0) return;
       const ids = chosen.map((entry) => entry.quote.id);
@@ -678,7 +678,7 @@ function useBatchFold(
       setIncludedIds((prev) => withoutIds(prev, failed));
       if (admittedAny) settle(ids, failed);
     },
-    [onInsertQuotes, folding, selected, settle, setIncludedIds],
+    [onInsertQuotes, selected, settle, setIncludedIds],
   );
   const onFoldSelected = useCallback(
     (pending: readonly PendingEntry[]) => {
