@@ -69,6 +69,7 @@ const TYPED = 'Words written while the page would not open.';
 const CARRIED_BODY = `${SERVER_BODY}\n\n${TYPED}`;
 const EIGHT_BODY = 'A page about mountains.';
 const SAVED_HINT = 'Saved';
+const HELD_HINT_PERSONAL = 'Not saved yet — waiting until this entry is Personal or more private';
 const RETRY_NAME = 'Retry saving this entry';
 const FLIGHT_WORDS = 'Typed while the privacy change was still on its way.';
 /** Autosave windows to wait while online, proving nothing retries without an edge. */
@@ -99,14 +100,25 @@ let net: NetInfoHandle;
 
 type BeforeRemove = (_event: { preventDefault: () => void; data: { action: unknown } }) => void;
 
-/** One navigation double per test, so exits can be asserted across re-renders. */
+/**
+ * One navigation double per test, so exits can be asserted across re-renders.
+ * Like the real stack, ``navigate`` and ``dispatch`` first fire ``beforeRemove``
+ * with the action and only take effect (``effective``) if nothing prevented it.
+ */
 function makeNav() {
   const listeners: Record<string, BeforeRemove | undefined> = {};
+  const effective: unknown[] = [];
+  const removeThenRun = (action: unknown) => {
+    const preventDefault = jest.fn();
+    listeners.beforeRemove?.({ preventDefault, data: { action } });
+    if (preventDefault.mock.calls.length === 0) effective.push(action);
+  };
   return {
-    navigate: jest.fn(),
+    effective,
+    navigate: jest.fn((...args: unknown[]) => removeThenRun({ type: 'NAVIGATE', args })),
     goBack: jest.fn(),
     push: jest.fn(),
-    dispatch: jest.fn(),
+    dispatch: jest.fn((action: unknown) => removeThenRun(action)),
     addListener: jest.fn((event: string, listener: BeforeRemove) => {
       listeners[event] = listener;
       return () => undefined;
@@ -181,6 +193,10 @@ async function openFailed(): Promise<Screen> {
   const screen = renderScreen({ entryId: 7 });
   await screen.findByTestId('journal-load-error');
   return screen;
+}
+
+function hint(screen: Screen): unknown {
+  return screen.getByTestId('journal-save-hint').props.children;
 }
 
 /** Tap a tier on the page and let its PATCH settle. */
@@ -825,6 +841,9 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(screen.getByTestId('held-leave-dialog')).toBeTruthy();
       fireEvent.press(screen.getByTestId('held-leave-leave'));
       expect(nav.dispatch).toHaveBeenCalledWith(action);
+      // The re-dispatched removal passes the guard once: no second dialog, no loop.
+      expect(nav.effective).toEqual([action]);
+      expect(screen.queryByTestId('held-leave-dialog')).toBeNull();
     });
 
     it('offers the tier retry from the leave dialog after a failed tier move', async () => {
@@ -926,6 +945,74 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         7,
         expect.objectContaining({ status: 'finished' }),
       );
+    });
+
+    describe('after a looser choice (#2935 round 5)', () => {
+      async function heldAfterLooserChoice() {
+        const screen = await heldAfterFailedEscalation();
+        await pressTierAndSettle(screen, 'public');
+        await typeBody(screen, `${SERVER_BODY} ${FLIGHT_WORDS}`);
+        return screen;
+      }
+
+      it('never says Saved while words are held', async () => {
+        const screen = await heldAfterLooserChoice();
+
+        expect(hint(screen)).not.toBe(SAVED_HINT);
+        expect(hint(screen)).toBe(HELD_HINT_PERSONAL);
+      });
+
+      it('offers Retry, which re-sends the typed-under tier and then saves under it', async () => {
+        const screen = await heldAfterLooserChoice();
+        mockUpdate.mockClear();
+
+        fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        expect(mockUpdate.mock.calls[0]).toEqual([7, { classification: 'personal' }]);
+        expect(tierSelected(screen, 'personal')).toBe(true);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
+        expect(updatesCarrying(FLIGHT_WORDS)).toHaveLength(1);
+        expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+      });
+
+      it('keeps the words held when the re-send fails', async () => {
+        const screen = await heldAfterLooserChoice();
+        mockUpdate.mockClear();
+        mockUpdate.mockRejectedValueOnce(new Error('network'));
+
+        fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+        await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+        expect(mockUpdate.mock.calls).toEqual([[7, { classification: 'personal' }]]);
+        expect(bodyValue(screen)).not.toContain(TYPED);
+        expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+        expect(hint(screen)).toBe(HELD_HINT_PERSONAL);
+        expect(screen.getByRole('button', { name: RETRY_NAME })).toBeTruthy();
+      });
+
+      it('lets the leave dialog re-send the typed-under tier too', async () => {
+        const screen = await heldAfterLooserChoice();
+        mockUpdate.mockClear();
+        await pressClose(screen);
+
+        fireEvent.press(screen.getByTestId('held-leave-retry'));
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        expect(mockUpdate.mock.calls[0]).toEqual([7, { classification: 'personal' }]);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
+        expect(nav.effective).toEqual([]);
+      });
+
+      it('says in the leave dialog that text written on the page is unsaved too', async () => {
+        const screen = await heldAfterLooserChoice();
+        await pressClose(screen);
+
+        const dialog = within(screen.getByTestId('held-leave-dialog'));
+        expect(dialog.getByText(/written here since/)).toBeTruthy();
+      });
     });
   });
 });

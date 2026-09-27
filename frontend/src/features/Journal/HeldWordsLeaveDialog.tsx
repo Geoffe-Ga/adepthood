@@ -24,7 +24,7 @@ export const HELD_LEAVE_TITLE = 'Leave your offline words behind?';
 
 /** Why leaving now would lose words, said without blame. */
 export const HELD_LEAVE_BODY =
-  'The words you wrote while this page couldn’t open haven’t been saved yet. If you leave now, they won’t come with you.';
+  'The words you wrote while this page couldn’t open, and anything you’ve written here since, haven’t been saved yet. If you leave now, they won’t come with you.';
 
 export const HELD_LEAVE_STAY = 'Stay';
 export const HELD_LEAVE_RETRY = 'Try saving again';

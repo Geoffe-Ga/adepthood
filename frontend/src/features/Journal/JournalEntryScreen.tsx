@@ -206,6 +206,36 @@ function hintStateWhileFolding(state: SaveState, foldingIn: boolean): SaveState 
   return foldingIn ? 'saving' : state;
 }
 
+/** What the footer says, and offers, while offline words are held (#2935). */
+interface HeldFooter {
+  label: string;
+  /** Retry re-sends the tier the words were typed under. */
+  canRetry: boolean;
+}
+
+/** What the writing footer's Retry does, and the held state it shows. */
+interface SaveFooterActions {
+  retry: () => Promise<void>;
+  held: HeldFooter | null;
+}
+
+/** The hint while held words wait on no particular tier (e.g. mid-escalation). */
+const HELD_HINT = 'Not saved yet';
+
+/** The hint while held words wait on the entry being made ``tier`` or stricter. */
+function heldHintCopy(tier: JournalClassification): string {
+  return `${HELD_HINT} — waiting until this entry is ${tierLabel(tier)} or more private`;
+}
+
+/** The footer's held state, or null when nothing is held. */
+function heldFooterFor(
+  autosave: Pick<AutosaveApi, 'carryHeld' | 'carryWaitingTier'>,
+): HeldFooter | null {
+  if (!autosave.carryHeld) return null;
+  const tier = autosave.carryWaitingTier;
+  return { label: tier == null ? HELD_HINT : heldHintCopy(tier), canRetry: tier != null };
+}
+
 function savedHintLabel(state: SaveState): string {
   if (state === 'saving') return 'Saving…';
   if (state === 'saved') return SAVED_HINT;
@@ -485,6 +515,8 @@ interface AutosaveApi {
   releaseCarry: () => Promise<void>;
   /** The tier held words wait on after a failed escalation (#2935), else null. */
   carryWaitingTier: JournalClassification | null;
+  /** Re-send the escalation to the tier held words were typed under (#2935). */
+  resendCarryTier: () => Promise<void>;
 }
 
 /**
@@ -1734,6 +1766,32 @@ function useCarryPutBack(
   );
 }
 
+/** Send the escalation held words need, then put them back or keep them waiting. */
+function useCarryEscalation(
+  applyClassification: RetrySource['applyClassification'],
+  displayedTier: RetrySource['displayedTier'],
+  gate: Pick<HeldTextGate, 'heldRef'>,
+  putBack: (_hold: CarryHold) => void,
+  state: { escalatingRef: React.MutableRefObject<boolean>; setWaiting: (_w: boolean) => void },
+): (_hold: CarryHold) => Promise<void> {
+  const { heldRef } = gate;
+  const { escalatingRef, setWaiting } = state;
+  return useCallback(
+    async (hold: CarryHold) => {
+      escalatingRef.current = true;
+      heldRef.current = true;
+      try {
+        await applyClassification(hold.tier ?? displayedTier());
+      } finally {
+        escalatingRef.current = false;
+      }
+      if (strictEnough(hold, displayedTier())) putBack(hold);
+      else setWaiting(true);
+    },
+    [applyClassification, displayedTier, heldRef, putBack, escalatingRef, setWaiting],
+  );
+}
+
 /**
  * Put held carried words back on the page and save them (#2935), as one normal
  * debounced autosave the save indicator reports.
@@ -1753,7 +1811,7 @@ function useCarryRelease(
   save: (_title: string, _body: string) => void,
   retrySource: RetrySource,
   gate: HeldTextGate,
-): { releaseCarry: () => Promise<void>; carryWaitingTier: JournalClassification | null } {
+): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier'> {
   const { applyClassification, displayedTier } = retrySource;
   const { heldRef, tierSettledRef } = gate;
   const [waiting, setWaiting] = useState(false);
@@ -1761,6 +1819,11 @@ function useCarryRelease(
   holdRef.current = entry.carryHold;
   const escalatingRef = useRef(false);
   const putBack = useCarryPutBack(entry, save, heldRef, setWaiting);
+  const escalate = useCarryEscalation(applyClassification, displayedTier, gate, putBack, {
+    escalatingRef,
+    setWaiting,
+  });
+
   const releaseCarry = useCallback(async () => {
     const hold = holdRef.current;
     if (hold == null || escalatingRef.current || heldRef.current) return;
@@ -1768,17 +1831,15 @@ function useCarryRelease(
       putBack(hold);
       return;
     }
-    const tier = hold.tier ?? displayedTier();
-    escalatingRef.current = true;
-    heldRef.current = true;
-    try {
-      await applyClassification(tier);
-    } finally {
-      escalatingRef.current = false;
-    }
-    if (strictEnough(hold, displayedTier())) putBack(hold);
-    else setWaiting(true);
-  }, [applyClassification, displayedTier, heldRef, putBack]);
+    await escalate(hold);
+  }, [displayedTier, heldRef, putBack, escalate]);
+  // Retry, from the footer or the leave dialog: re-send the tier the words were
+  // typed under. Only a confirmed escalation puts them back (#2935).
+  const resendCarryTier = useCallback(async () => {
+    const hold = holdRef.current;
+    if (hold == null || escalatingRef.current) return;
+    await escalate(hold);
+  }, [escalate]);
   tierSettledRef.current = (tier) => {
     if (escalatingRef.current || displayedTier() !== tier) return;
     const hold = holdRef.current;
@@ -1786,7 +1847,11 @@ function useCarryRelease(
     // under lifts the hold; a looser choice leaves them (and the gate) as they are.
     if (hold != null && waiting && strictEnough(hold, tier)) putBack(hold);
   };
-  return { releaseCarry, carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null };
+  return {
+    releaseCarry,
+    resendCarryTier,
+    carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null,
+  };
 }
 
 /**
@@ -1822,7 +1887,8 @@ interface AutosaveBindings extends ChoiceHandlers {
 /** Project internal entry/persistence state onto the screen's autosave contract. */
 function buildAutosaveApi(
   entry: EntryState,
-  bindings: AutosaveBindings & Pick<AutosaveApi, 'releaseCarry' | 'carryWaitingTier'>,
+  bindings: AutosaveBindings &
+    Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier'>,
   controlsLocked: boolean,
   loadedFromServer: boolean,
 ): AutosaveApi {
@@ -1963,8 +2029,8 @@ interface WritingColumnProps {
   onChangeBody: (_next: string) => void;
   onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
-  /** Re-send whatever failed to save (#2930). */
-  onRetrySave: () => Promise<void>;
+  /** Retry: re-send what failed (#2930), or held words' tier (#2935); and the held hint. */
+  onRetrySave: SaveFooterActions;
   onFinish?: () => void;
   /** True while the Finish write is in flight; drives the busy/disabled control. */
   finishing: boolean;
@@ -2097,20 +2163,22 @@ function WritingFields(
 function WritingFooter({
   body,
   saveState,
-  onRetry,
+  actions,
 }: {
   body: string;
   saveState: SaveState;
-  onRetry: () => Promise<void>;
+  actions: SaveFooterActions;
 }) {
+  const { retry: onRetry, held } = actions;
   const words = useMemo(() => countWords(body), [body]);
+  const canRetry = held == null ? saveState === 'error' : held.canRetry;
   return (
     <View style={styles.writingFooter}>
       <View style={styles.saveStatusRow}>
         <Text style={styles.savedHint} testID="journal-save-hint">
-          {savedHintLabel(saveState)}
+          {held?.label ?? savedHintLabel(saveState)}
         </Text>
-        {saveState === 'error' ? (
+        {canRetry ? (
           <TouchableOpacity
             style={styles.saveRetry}
             onPress={() => void onRetry()}
@@ -2263,7 +2331,7 @@ function WritingColumnContent({
         onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
-      <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
+      <WritingFooter body={body} saveState={saveState} actions={onRetrySave} />
       <WritingControls
         onFinish={onFinish}
         finishing={finishing}
@@ -3212,6 +3280,18 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
 }
 
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
+/**
+ * The footer's Retry and held state. Retry re-sends the held words' tier while
+ * they wait on one (#2935), else whatever failed to save (#2930).
+ */
+function saveFooterFor(ctl: Controller): SaveFooterActions {
+  const held = heldFooterFor(ctl.autosave);
+  if (ctl.autosave.carryWaitingTier != null) {
+    return { retry: ctl.autosave.resendCarryTier, held };
+  }
+  return { retry: () => ctl.saveRetry.retryFailedSave('tap'), held };
+}
+
 function PageBodyColumn({
   ctl,
   bodyPlaceholder,
@@ -3236,7 +3316,7 @@ function PageBodyColumn({
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
       onChangeChord={ctl.autosave.onChangeChord}
-      onRetrySave={() => ctl.saveRetry.retryFailedSave('tap')}
+      onRetrySave={saveFooterFor(ctl)}
       onFinish={canOfferFinish ? markFinished : undefined}
       finishing={ctl.editGate.finishing}
       finishError={ctl.editGate.finishError}
@@ -3256,7 +3336,7 @@ function PageBodyColumn({
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
       resonance={buildReadResonanceAction(ctl)}
-      justSaved={ctl.justSaved}
+      justSaved={ctl.justSaved && !ctl.autosave.carryHeld}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
     />
@@ -3677,11 +3757,11 @@ function EntryExits({
 }): React.JSX.Element {
   const guard = useHeldExitGuard(navigation, ctl.autosave.carryHeld);
   const { stay } = guard;
-  const { retryFailedSave } = ctl.saveRetry;
+  const { resendCarryTier } = ctl.autosave;
   const onRetry = useCallback(() => {
     stay();
-    void retryFailedSave('tap');
-  }, [stay, retryFailedSave]);
+    void resendCarryTier();
+  }, [stay, resendCarryTier]);
   return (
     <>
       <EntryExitControls
