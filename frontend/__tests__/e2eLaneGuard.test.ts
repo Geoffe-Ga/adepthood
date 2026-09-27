@@ -88,6 +88,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'resonance-explainer.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
+  'writing-timer-habit-link.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [

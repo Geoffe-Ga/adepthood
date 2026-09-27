@@ -51,6 +51,22 @@ jest.mock('@/navigation/hooks', () => ({
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
+const mockCheckOff = jest.fn((_request: { habitId: number; elapsedMs: number }) =>
+  Promise.resolve(),
+);
+
+jest.mock('../writingHabitCheckOff', () => ({
+  ...(jest.requireActual('../writingHabitCheckOff') as Record<string, unknown>),
+  checkOffLinkedHabit: (request: { habitId: number; elapsedMs: number }) => mockCheckOff(request),
+}));
+
+const { useWritingHabitLinkStore } = require('@/store/useWritingHabitLinkStore') as {
+  useWritingHabitLinkStore: {
+    getState: () => { reset: () => void };
+    setState: (_state: { habitId: number | null; hydrated: boolean }) => void;
+  };
+};
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 /** The timer's default length, in milliseconds — long enough to run one out. */
@@ -91,6 +107,8 @@ beforeEach(() => {
   mockGet.mockReset();
   mockList.mockReset();
   mockList.mockResolvedValue({ items: [] });
+  mockCheckOff.mockClear();
+  useWritingHabitLinkStore.getState().reset();
 });
 
 afterEach(() => {
@@ -202,5 +220,39 @@ describe('JournalEntryScreen — a finished session is offered as a habit', () =
     fireEvent.press(getByTestId('writing-timer-stop'));
 
     expect(queryByTestId('save-as-habit-accept')).toBeNull();
+  });
+});
+
+/**
+ * #2861: the seam that checks the linked habit off is the page's own session
+ * handler, so this drives the real page rather than the hook alone — a screen
+ * that forgot to pass the wrapped handler on would still pass a hook test.
+ */
+describe('JournalEntryScreen — a finished session checks off the linked habit', () => {
+  const LINKED_HABIT_ID = 42;
+
+  it('hands the finished session to the check-off when a habit is linked', async () => {
+    jest.useFakeTimers();
+    useWritingHabitLinkStore.setState({ habitId: LINKED_HABIT_ID, hydrated: true });
+    const { getByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    expect(mockCheckOff).toHaveBeenCalledTimes(1);
+    expect(mockCheckOff.mock.calls[0]?.[0]).toMatchObject({
+      habitId: LINKED_HABIT_ID,
+      elapsedMs: TWENTY_MINUTES_MS,
+    });
+  });
+
+  it('checks nothing off when no habit is linked', async () => {
+    jest.useFakeTimers();
+    const { getByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    expect(mockCheckOff).not.toHaveBeenCalled();
   });
 });

@@ -13,10 +13,15 @@
 // though the offer widened past habits. Renaming it would re-ask every writer
 // who has already answered — the one thing this module exists to prevent.
 //
-// The cost, accepted knowingly: a writer who keeps the habit and later deletes
-// it is not offered it again. That is the same shape as the decline — the offer
-// is a one-time invitation, not a standing menu — and the habits screen is
-// where a habit is added on purpose.
+// The offer is still a one-time invitation, not a standing menu: nothing brings
+// it back on its own. But the writer can (#2861): Settings → Journal → "Offer
+// again at the end of a session" calls ``saveWritingOfferAnswered(false)``, so a
+// "No thanks" said in the moment is not a door closed for good. That reopening
+// is the writer's own choice, made on purpose, which is what keeps it an
+// invitation rather than pressure. It is also device-local, like the flag
+// itself, and the Settings copy says "on this device" rather than promising
+// more. (Whether the account already has a habit LINKED to the timer is the
+// server's to say, on ``/ui-flags`` — the offer checks that separately.)
 //
 // A read failure resolves ``false`` — the offer appears — rather than
 // suppressing it: a flaky disk should not silently withhold something the
