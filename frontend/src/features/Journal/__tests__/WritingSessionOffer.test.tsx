@@ -4,7 +4,11 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import { keepAsPractice } from '../keepAsPractice';
-import { linkedHabitConfirmation } from '../saveAsHabitCopy';
+import {
+  linkedHabitConfirmation,
+  savedAndLinkedConfirmation,
+  savedHabitConfirmation,
+} from '../saveAsHabitCopy';
 import WritingSessionOffer from '../WritingSessionOffer';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
@@ -33,7 +37,7 @@ jest.mock('@/api', () => ({
 
 jest.mock('@/features/Habits/services/habitManager', () => ({
   habitManager: {
-    insertHabitAt: jest.fn(() => Promise.resolve(true)),
+    insertHabitAtWithId: jest.fn(() => Promise.resolve({ kept: true, habitId: null })),
     loadHabits: jest.fn(() => Promise.resolve(undefined)),
   },
 }));
@@ -54,7 +58,11 @@ jest.mock('../keepAsPractice', () => ({
   keepAsPractice: jest.fn(() => Promise.resolve({ kept: true, sessionLogged: true })),
 }));
 
-const insertHabitAt = habitManager.insertHabitAt as jest.Mock;
+// The offer keeps a new habit through ``insertHabitAtWithId`` so it can link the
+// row it kept (#2861); the tests keep the shorter name.
+const insertHabitAt = habitManager.insertHabitAtWithId as jest.Mock;
+const KEPT = { kept: true, habitId: null };
+const NOT_KEPT = { kept: false, habitId: null };
 const loadAnswered = loadWritingOfferAnswered as jest.Mock;
 const saveAnswered = saveWritingOfferAnswered as jest.Mock;
 
@@ -82,7 +90,7 @@ const THREE_HABITS = [
 beforeEach(() => {
   jest.clearAllMocks();
   loadAnswered.mockImplementation(() => Promise.resolve(false));
-  insertHabitAt.mockImplementation(() => Promise.resolve(true));
+  insertHabitAt.mockImplementation(() => Promise.resolve(KEPT));
   useHabitStore.setState({ habits: THREE_HABITS, loading: false, error: null });
   useWritingHabitLinkStore.getState().reset();
   mockFlagsUpdate.mockImplementation((partial) =>
@@ -273,7 +281,7 @@ describe('WritingSessionOffer — confirming', () => {
   });
 
   it('leaves the offer open when the write rolled back, so nothing is silently spent', async () => {
-    insertHabitAt.mockImplementation(() => Promise.resolve(false));
+    insertHabitAt.mockImplementation(() => Promise.resolve(NOT_KEPT));
     const view = await renderOffer();
     await openPlacing(view);
 
@@ -295,7 +303,7 @@ describe('WritingSessionOffer — confirming', () => {
   });
 
   it('does not claim a habit that the write rolled back', async () => {
-    insertHabitAt.mockImplementation(() => Promise.resolve(false));
+    insertHabitAt.mockImplementation(() => Promise.resolve(NOT_KEPT));
     const view = await renderOffer();
     await openPlacing(view);
 
@@ -307,10 +315,10 @@ describe('WritingSessionOffer — confirming', () => {
   });
 
   it('will not write twice while the first write is still in flight', async () => {
-    let settle: ((value: boolean) => void) | undefined;
+    let settle: ((value: typeof KEPT) => void) | undefined;
     insertHabitAt.mockImplementation(
       () =>
-        new Promise<boolean>((resolve) => {
+        new Promise<typeof KEPT>((resolve) => {
           settle = resolve;
         }),
     );
@@ -321,7 +329,7 @@ describe('WritingSessionOffer — confirming', () => {
     fireEvent.press(view.getByTestId('save-as-habit-confirm'));
 
     expect(insertHabitAt).toHaveBeenCalledTimes(1);
-    settle?.(true);
+    settle?.(KEPT);
     await waitFor(() => expect(view.queryByTestId('save-as-habit-saved')).not.toBeNull());
   });
 
@@ -436,8 +444,8 @@ const ladderGoals = (): Goal[] =>
   }));
 
 const LINKABLE = [
-  habit(21, 'Morning pages', 'Beige', { goals: ladderGoals() }),
-  habit(22, 'Stretch', 'Purple', { goals: ladderGoals() }),
+  habit(21, 'Morning pages', 'Beige', { goals: ladderGoals(), revealed: true }),
+  habit(22, 'Stretch', 'Purple', { goals: ladderGoals(), revealed: true }),
 ];
 
 describe('WritingSessionOffer — keeping it as a habit the writer already has (#2861)', () => {
@@ -561,5 +569,62 @@ describe('WritingSessionOffer — a link the server already holds (#2861)', () =
     const view = await renderOffer();
 
     expect(view.getByTestId('save-as-habit-accept')).toBeTruthy();
+  });
+});
+
+describe('WritingSessionOffer — a new Journaling habit is linked too (#2861)', () => {
+  const NEW_HABIT_ID = 88;
+
+  it('links the habit it just kept, and says it is checked off once it is open', async () => {
+    insertHabitAt.mockImplementation(() => Promise.resolve({ kept: true, habitId: NEW_HABIT_ID }));
+    const view = await renderOffer();
+    await openPlacing(view);
+
+    fireEvent.press(view.getByTestId('save-as-habit-confirm'));
+
+    await waitFor(() => expect(view.queryByTestId('save-as-habit-saved')).not.toBeNull());
+    await waitFor(() => expect(view.getByText(savedAndLinkedConfirmation())).toBeTruthy());
+    expect(mockFlagsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockFlagsUpdate).toHaveBeenCalledWith(
+      { writing_session_habit_id: NEW_HABIT_ID },
+      'offer-tok',
+    );
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(NEW_HABIT_ID);
+  });
+
+  it('a kept habit whose link was refused is still kept, and claims no link', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    insertHabitAt.mockImplementation(() => Promise.resolve({ kept: true, habitId: NEW_HABIT_ID }));
+    mockFlagsUpdate.mockImplementation(() => Promise.reject(new Error('403')));
+    const view = await renderOffer();
+    await openPlacing(view);
+
+    fireEvent.press(view.getByTestId('save-as-habit-confirm'));
+
+    await waitFor(() => expect(mockFlagsUpdate).toHaveBeenCalled());
+    await waitFor(() => expect(view.getByText(savedHabitConfirmation())).toBeTruthy());
+    expect(view.queryByText(savedAndLinkedConfirmation())).toBeNull();
+    expect(saveAnswered).toHaveBeenCalledWith(true);
+  });
+
+  it('links nothing when the insert named no habit to link', async () => {
+    const view = await renderOffer();
+    await openPlacing(view);
+
+    fireEvent.press(view.getByTestId('save-as-habit-confirm'));
+
+    await waitFor(() => expect(view.queryByTestId('save-as-habit-saved')).not.toBeNull());
+    expect(mockFlagsUpdate).not.toHaveBeenCalled();
+  });
+
+  it('links nothing when the habit was not kept', async () => {
+    insertHabitAt.mockImplementation(() => Promise.resolve(NOT_KEPT));
+    const view = await renderOffer();
+    await openPlacing(view);
+
+    fireEvent.press(view.getByTestId('save-as-habit-confirm'));
+
+    await waitFor(() => expect(insertHabitAt).toHaveBeenCalled());
+    expect(mockFlagsUpdate).not.toHaveBeenCalled();
   });
 });

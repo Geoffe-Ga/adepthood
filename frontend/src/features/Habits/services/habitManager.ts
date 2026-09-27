@@ -38,6 +38,7 @@ import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStora
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
+import { useWritingHabitLinkStore } from '../../../store/useWritingHabitLinkStore';
 import {
   dayKeyInTZ,
   dayKeyToInstant,
@@ -1189,7 +1190,15 @@ const postBackfillCompletions = (
  */
 let lastKnownTz: string | undefined;
 
-const loadHabits = async (tz?: string): Promise<void> => {
+/**
+ * ``loadHabits``, reporting whether the server's list was actually read.
+ *
+ * ``loadHabits`` keeps a cached list on screen when the read fails and leaves
+ * ``error`` unset in that case, which is right for a screen but means the store
+ * cannot say whether what it holds is fresh. A caller about to act on today's
+ * server total (the writing-timer check-off, #2861) needs exactly that answer.
+ */
+const refreshHabits = async (tz?: string): Promise<boolean> => {
   if (tz !== undefined) lastKnownTz = tz;
   const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
   setLoading(true);
@@ -1198,6 +1207,7 @@ const loadHabits = async (tz?: string): Promise<void> => {
   const recoverable = await hydrateRealHabitCache(cached);
   const hasCachedData = recoverable.length > 0;
   const result = await fetchFromApi(hasCachedData, zone);
+  let fresh = result.kind === 'ok';
   // Stuck-user recovery: cache has real habits, server returned an empty list.
   // Push those back, then re-fetch so the store gets the server's ids. Demo
   // tiles left in an older cache are skipped on both legs, so a cache holding
@@ -1205,6 +1215,7 @@ const loadHabits = async (tz?: string): Promise<void> => {
   if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
     await recoverStuckHabits(recoverable, zone);
     const refetch = await fetchFromApi(true, zone);
+    fresh = refetch.kind === 'ok';
     // #286: the recovery push seeded default goal targets — replay any
     // cached customizations onto the fresh server goals.
     if (refetch.kind === 'ok') {
@@ -1225,6 +1236,11 @@ const loadHabits = async (tz?: string): Promise<void> => {
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
   await replayPendingCheckIns(zone);
+  return fresh;
+};
+
+const loadHabits = async (tz?: string): Promise<void> => {
+  await refreshHabits(tz);
 };
 
 /**
@@ -1364,8 +1380,59 @@ const settleFailedInsert = async (
   return true;
 };
 
+/** What an insert kept, and the server id of the row it kept (see ``insertHabitAtWithId``). */
+export interface InsertOutcome {
+  kept: boolean;
+  habitId: number | null;
+}
+
+/** The server id a create answered with, or null when it named none. */
+const createdId = (created: ApiHabit | undefined): number | null =>
+  isServerIssuedId(created?.id) ? created.id : null;
+
+const insertHabitAtWithId = async (
+  input: AddHabitInput,
+  position: number,
+  tz?: string,
+): Promise<InsertOutcome> => {
+  const prev = getHabits();
+  const at = clampPosition(prev.length, position);
+  const zone = tz ?? detectDeviceTimezone();
+  const newHabit = buildAddedHabitAtSlot(
+    input,
+    prev,
+    false,
+    prev.slice(0, at).filter(isNotCarryoverHabit).length,
+    zone,
+  );
+  const next = stampPositionalOrder(insertAt(prev, newHabit, at));
+  setHabits(next);
+  void persistHabits(next);
+  // Held outside the ``try`` so the catch can tell "nothing was created" from
+  // "a row exists and these writes did not place it".
+  let created: ApiHabit | undefined;
+  try {
+    created = await habitsApi.create(toApiPayload(next[at] ?? newHabit, zone));
+    await Promise.all(
+      next
+        .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
+        .map((habit) => habitsApi.update(habit.id, toApiPayload(habit, zone))),
+    );
+  } catch (err) {
+    const kept = await settleFailedInsert(prev, created, err);
+    return { kept, habitId: kept ? createdId(created) : null };
+  }
+  try {
+    await loadHabits(zone);
+  } catch {
+    Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
+  }
+  return { kept: true, habitId: createdId(created) };
+};
+
 export const habitManager = {
   loadHabits,
+  refreshHabits,
 
   /**
    * Acknowledge the dropped-check-in notice: erase the on-device quarantine,
@@ -1499,7 +1566,12 @@ export const habitManager = {
     void persistHabits(next);
     void cancelForHabit(habitId);
     if (!isServerBackedHabit(target)) return;
-    habitsApi.delete(habitId).catch(revertOnFailure(prev, DELETE_FAILED_COPY));
+    habitsApi
+      .delete(habitId)
+      // The server unlinks a deleted habit from the writing timer itself
+      // (#2861); this keeps the on-device mirror from checking off a ghost.
+      .then(() => useWritingHabitLinkStore.getState().forgetHabit(habitId))
+      .catch(revertOnFailure(prev, DELETE_FAILED_COPY));
   },
 
   /**
@@ -1586,40 +1658,20 @@ export const habitManager = {
    * habit was kept — and an offer that says so over a rolled-back write is
    * worse than one that quietly stays open.
    */
-  insertHabitAt: async (input: AddHabitInput, position: number, tz?: string): Promise<boolean> => {
-    const prev = getHabits();
-    const at = clampPosition(prev.length, position);
-    const zone = tz ?? detectDeviceTimezone();
-    const newHabit = buildAddedHabitAtSlot(
-      input,
-      prev,
-      false,
-      prev.slice(0, at).filter(isNotCarryoverHabit).length,
-      zone,
-    );
-    const next = stampPositionalOrder(insertAt(prev, newHabit, at));
-    setHabits(next);
-    void persistHabits(next);
-    // Held outside the ``try`` so the catch can tell "nothing was created" from
-    // "a row exists and these writes did not place it".
-    let created: ApiHabit | undefined;
-    try {
-      created = await habitsApi.create(toApiPayload(next[at] ?? newHabit, zone));
-      await Promise.all(
-        next
-          .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
-          .map((habit) => habitsApi.update(habit.id, toApiPayload(habit, zone))),
-      );
-    } catch (err) {
-      return settleFailedInsert(prev, created, err);
-    }
-    try {
-      await loadHabits(zone);
-    } catch {
-      Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
-    }
-    return true;
-  },
+  insertHabitAt: async (input: AddHabitInput, position: number, tz?: string): Promise<boolean> =>
+    (await insertHabitAtWithId(input, position, tz)).kept,
+
+  /**
+   * ``insertHabitAt``, also naming the server id of the habit it kept, so a
+   * caller can act on that row — the writing-timer offer links it (#2861).
+   * ``habitId`` is null whenever ``kept`` is false, and also when the create
+   * answered without an id to name.
+   */
+  insertHabitAtWithId: (
+    input: AddHabitInput,
+    position: number,
+    tz?: string,
+  ): Promise<InsertOutcome> => insertHabitAtWithId(input, position, tz),
 
   /**
    * Persist a user-chosen ordering. Stamps each habit with a positional

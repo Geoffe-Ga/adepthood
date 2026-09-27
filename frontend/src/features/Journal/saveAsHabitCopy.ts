@@ -75,8 +75,13 @@ export function checkedOffToast(habitName: string): string {
  * which one is "the writing one" — with a new Journaling habit last.
  */
 export const WRITING_HABIT_PICKER_TITLE = 'Which habit?';
+/**
+ * Strictly true for both kinds of choice: the picker lists only open habits,
+ * and a new Journaling habit starts locked, so "once it is open" is the
+ * condition every check-off actually waits on.
+ */
 export const WRITING_HABIT_PICKER_HELP =
-  'Pick one you already keep, or start a new one. When a writing timer ends, it is checked off.';
+  'Pick one you already keep, or start a new one. Once it is open, a finished writing timer checks it off.';
 
 /** A habit row's screen-reader label: what choosing it will do. */
 export function writingHabitChooseA11y(habitName: string): string {
@@ -105,9 +110,18 @@ export const WRITING_TIMER_ROW_UNLINKED = 'Writing timer → not linked';
 /** A link the server holds whose habit has not been read yet — never "not linked". */
 export const WRITING_TIMER_ROW_LINKED_PENDING = 'Writing timer → a habit';
 
-/** The Settings row's label for a resolved link, or ``null`` for none. */
-export function writingTimerRowLabel(habitName: string | null): string {
-  return habitName === null ? WRITING_TIMER_ROW_UNLINKED : `Writing timer → ${habitName}`;
+/**
+ * The Settings row's label for a resolved link, or ``null`` for none. A linked
+ * habit that is locked is ``paused``: nothing is logged against a locked habit,
+ * so the row says so rather than implying the timer is still checking it off.
+ */
+export function writingTimerRowLabel(
+  habitName: string | null,
+  { paused = false }: { paused?: boolean } = {},
+): string {
+  if (habitName === null) return WRITING_TIMER_ROW_UNLINKED;
+  const label = `Writing timer → ${habitName}`;
+  return paused ? `${label} · paused while locked` : label;
 }
 
 /**
@@ -119,6 +133,16 @@ export const OFFER_AGAIN_DESCRIPTION =
   'Shows the keep-this offer after your next finished session, on this device.';
 export const OFFER_AGAIN_DONE =
   'The offer will be there after your next finished session on this device.';
+
+/**
+ * The new Journaling habit, kept AND linked to the timer. It starts locked like
+ * every new habit, and nothing is logged against a locked habit — so the
+ * sentence says the check-off begins once it is open, and does not open it on
+ * the writer's behalf.
+ */
+export function savedAndLinkedConfirmation(): string {
+  return `${savedHabitConfirmation()} Once it is open, a finished writing timer checks it off.`;
+}
 
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
@@ -142,6 +166,7 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   savedHabitConfirmation(),
   stagePreviewLabel(JOURNALING_HABIT_NAME, 'Beige'),
   checkedOffToast(JOURNALING_HABIT_NAME),
+  savedAndLinkedConfirmation(),
   WRITING_HABIT_PICKER_TITLE,
   WRITING_HABIT_PICKER_HELP,
   writingHabitChooseA11y(JOURNALING_HABIT_NAME),
@@ -157,6 +182,7 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   WRITING_TIMER_ROW_UNLINKED,
   WRITING_TIMER_ROW_LINKED_PENDING,
   writingTimerRowLabel(JOURNALING_HABIT_NAME),
+  writingTimerRowLabel(JOURNALING_HABIT_NAME, { paused: true }),
   OFFER_AGAIN_LABEL,
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,

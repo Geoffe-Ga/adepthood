@@ -59,6 +59,8 @@ const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   ...overrides,
 });
 
+const SERVER_READ = async (): Promise<boolean> => true;
+
 const withTodayUnits = (units: number): Habit =>
   makeHabit({ completions: [{ id: 't-1', timestamp: new Date(), completed_units: units }] });
 
@@ -88,6 +90,8 @@ beforeEach(() => {
   showToast = jest.fn();
   jest.spyOn(console, 'warn').mockImplementation(() => undefined);
   useHabitStore.getState().setHabits([makeHabit()]);
+  // The server agrees with the store unless a test says otherwise.
+  jest.spyOn(habitManager, 'refreshHabits').mockImplementation(SERVER_READ);
 });
 
 afterEach(() => {
@@ -105,6 +109,11 @@ describe('isLinkableHabit', () => {
       makeGoal(tier, { is_additive: false }),
     );
     expect(isLinkableHabit(makeHabit({ goals }))).toBe(false);
+  });
+
+  it('refuses a locked habit: nothing can be logged against one until it is open', () => {
+    expect(isLinkableHabit(makeHabit({ revealed: false }))).toBe(false);
+    expect(isLinkableHabit(makeHabit({ revealed: undefined }))).toBe(false);
   });
 
   it('refuses a demo tile, whose ids name no server row', () => {
@@ -197,8 +206,9 @@ describe('checkOffLinkedHabit', () => {
 
   it('loads the habits first when the linked one is not in the store', async () => {
     useHabitStore.getState().setHabits([]);
-    const load = jest.spyOn(habitManager, 'loadHabits').mockImplementation(async () => {
+    const load = jest.spyOn(habitManager, 'refreshHabits').mockImplementation(async () => {
       useHabitStore.getState().setHabits([makeHabit()]);
+      return true;
     });
 
     await run();
@@ -209,7 +219,7 @@ describe('checkOffLinkedHabit', () => {
 
   it('a linked habit that no longer exists posts nothing and throws nothing', async () => {
     useHabitStore.getState().setHabits([]);
-    jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+    jest.spyOn(habitManager, 'refreshHabits').mockResolvedValue(true);
 
     await expect(run()).resolves.toBeUndefined();
 
@@ -226,6 +236,50 @@ describe('checkOffLinkedHabit', () => {
     await run();
 
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('a linked habit that is locked again goes quiet: no post and no toast', async () => {
+    useHabitStore.getState().setHabits([makeHabit({ revealed: false })]);
+
+    await run();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('reads the server’s day before posting, so another device’s check-off is not repeated', async () => {
+    jest.spyOn(habitManager, 'refreshHabits').mockImplementation(async () => {
+      useHabitStore.getState().setHabits([withTodayUnits(LOW_TARGET)]);
+      return true;
+    });
+
+    await run();
+
+    expect(habitManager.refreshHabits).toHaveBeenCalledWith(TZ);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('posts only the gap the server still shows', async () => {
+    jest.spyOn(habitManager, 'refreshHabits').mockImplementation(async () => {
+      useHabitStore.getState().setHabits([withTodayUnits(1)]);
+      return true;
+    });
+
+    await run();
+
+    const [payload] = mockCreate.mock.calls[0] as [Record<string, unknown>];
+    expect(payload.completed_units).toBe(LOW_TARGET - 1);
+  });
+
+  it('posts nothing when the server’s day cannot be read', async () => {
+    // The cache keeps the list on screen, so only the read's own answer says
+    // this day is stale.
+    jest.spyOn(habitManager, 'refreshHabits').mockResolvedValue(false);
+
+    await run();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it('a failed post rolls the optimistic row back, warns, and shows nothing', async () => {
@@ -253,7 +307,7 @@ describe('checkOffLinkedHabit', () => {
 
   it('a load that throws is swallowed, never surfaced to the writer', async () => {
     useHabitStore.getState().setHabits([]);
-    jest.spyOn(habitManager, 'loadHabits').mockRejectedValue(new Error('boom'));
+    jest.spyOn(habitManager, 'refreshHabits').mockRejectedValue(new Error('boom'));
 
     await expect(run()).resolves.toBeUndefined();
 

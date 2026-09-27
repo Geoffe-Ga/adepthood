@@ -62,6 +62,7 @@ import {
   JOURNALING_HABIT_ICON,
   JOURNALING_HABIT_NAME,
   linkedHabitConfirmation,
+  savedAndLinkedConfirmation,
   SAVE_AS_HABIT_ACCEPT,
   SAVE_AS_HABIT_ACCEPT_A11Y,
   SAVE_AS_HABIT_CANCEL,
@@ -332,6 +333,8 @@ interface OfferMoves {
   chooseExisting: (_habit: Habit) => void;
   /** The habit an existing-habit link landed on, for the confirmation. */
   linkedName: string | null;
+  /** Whether the new Journaling habit was linked once it was kept. */
+  newLinked: boolean;
 }
 
 /**
@@ -345,9 +348,24 @@ function useHabitChoiceMoves(
   settle: () => void,
   setPhase: (_phase: Phase) => void,
   token: string | undefined,
-): { chooseExisting: (_habit: Habit) => void; linkedName: string | null } {
+): {
+  chooseExisting: (_habit: Habit) => void;
+  linkedName: string | null;
+  linkNew: (_habitId: number) => Promise<void>;
+  newLinked: boolean;
+} {
   const setLink = useWritingHabitLinkStore((state) => state.setLink);
   const [linkedName, setLinkedName] = useState<string | null>(null);
+  const [newLinked, setNewLinked] = useState(false);
+  // The new Journaling habit is the writer's choice of habit as much as an
+  // existing one is: "New habit" promises a check-off, so the row it kept is
+  // linked too. A refused link leaves the habit kept and claims no link.
+  const linkNew = useCallback(
+    async (habitId: number) => {
+      setNewLinked(await setLink(habitId, token));
+    },
+    [setLink, token],
+  );
   const chooseExisting = useCallback(
     (habit: Habit) => {
       setPhase('linking');
@@ -363,7 +381,46 @@ function useHabitChoiceMoves(
     },
     [setLink, settle, setPhase, token],
   );
-  return { chooseExisting, linkedName };
+  return { chooseExisting, linkedName, linkNew, newLinked };
+}
+
+/**
+ * Keep the new Journaling habit at the chosen place, then link it (#2861).
+ * Split out of ``useOfferMoves`` so each hook stays one readable thing.
+ */
+function useConfirmNewHabit({
+  settle,
+  setPhase,
+  linkNew,
+  position,
+  tz,
+}: {
+  settle: () => void;
+  setPhase: (_phase: Phase) => void;
+  linkNew: (_habitId: number) => Promise<void>;
+  position: number;
+  tz: string;
+}): () => void {
+  return useCallback(() => {
+    setPhase('saving');
+    void habitManager
+      .insertHabitAtWithId(
+        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON },
+        position,
+        tz,
+      )
+      .then(async ({ kept, habitId }) => {
+        // Only a write that landed settles the offer. A rolled-back one leaves
+        // it open, because the writer asked for a habit they have not got.
+        if (!kept) {
+          setPhase('placing');
+          return;
+        }
+        settle();
+        if (habitId !== null) await linkNew(habitId);
+        setPhase('saved');
+      });
+  }, [linkNew, position, setPhase, settle, tz]);
 }
 
 /**
@@ -381,7 +438,11 @@ function useOfferMoves(
   token: string | undefined,
 ): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
-  const { chooseExisting, linkedName } = useHabitChoiceMoves(settle, setPhase, token);
+  const { chooseExisting, linkedName, linkNew, newLinked } = useHabitChoiceMoves(
+    settle,
+    setPhase,
+    token,
+  );
 
   const decline = useCallback(() => {
     settle();
@@ -401,21 +462,13 @@ function useOfferMoves(
     setPhase('placing');
   }, [placement]);
 
-  const confirmHabit = useCallback(() => {
-    setPhase('saving');
-    void habitManager
-      .insertHabitAt(
-        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON },
-        placement.position,
-        tz,
-      )
-      .then((saved) => {
-        // Only a write that landed settles the offer. A rolled-back one leaves
-        // it open, because the writer asked for a habit they have not got.
-        if (saved) settle();
-        setPhase(saved ? 'saved' : 'placing');
-      });
-  }, [placement.position, settle, tz]);
+  const confirmHabit = useConfirmNewHabit({
+    settle,
+    setPhase,
+    linkNew,
+    position: placement.position,
+    tz,
+  });
 
   return {
     phase,
@@ -428,6 +481,7 @@ function useOfferMoves(
     chooseNew,
     chooseExisting,
     linkedName,
+    newLinked,
   };
 }
 
@@ -499,7 +553,9 @@ function renderPhase(
   if (phase === 'saved') {
     return (
       <View style={styles.offer} testID="save-as-habit-saved">
-        <Text style={styles.prompt}>{savedHabitConfirmation()}</Text>
+        <Text style={styles.prompt}>
+          {moves.newLinked ? savedAndLinkedConfirmation() : savedHabitConfirmation()}
+        </Text>
       </View>
     );
   }

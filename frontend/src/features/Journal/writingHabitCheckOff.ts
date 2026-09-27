@@ -19,10 +19,17 @@
  * second session the same day (or a double-fired finish) cannot double-count.
  *
  * **Which habits.** Only ones this rule can honestly apply to: server-backed
- * ids (a PATCH and a post need real rows), not a demo tile, not subtractive (a
- * "check-off" there would record consumption), and with all three tiers (the
- * rule is defined against the ladder). ``isLinkableHabit`` gates both the
- * picker and the check-off.
+ * ids (a PATCH and a post need real rows), UNLOCKED (``revealed``: the Habits
+ * screen offers no logging on a locked habit — not begun yet, re-locked, or
+ * released by a Metta Return — and this must not be a back door past that),
+ * not a demo tile, not subtractive (a "check-off" there would record
+ * consumption), and with all three tiers (the rule is defined against the
+ * ladder). ``isLinkableHabit`` gates both the picker and the check-off, so a
+ * linked habit that locks later simply goes quiet until it is open again.
+ *
+ * **Server truth.** The habits are re-read (``GET /habits/``) before every
+ * check-off, so the gap is the server's, not this device's possibly stale
+ * copy's; a failed read posts nothing.
  *
  * **Which sessions.** Any session that ran at all — ``elapsedMs`` of at least
  * ``MIN_CHECK_OFF_ELAPSED_MS`` — including one the writer stopped early: they
@@ -39,7 +46,7 @@ import { checkedOffToast } from './saveAsHabitCopy';
 import type { ToastConfig } from '@/components/Toast';
 import { colors } from '@/design/tokens';
 import type { Habit } from '@/features/Habits/Habits.types';
-import { isSubtractiveHabit } from '@/features/Habits/HabitUtils';
+import { isHabitUnlocked, isSubtractiveHabit } from '@/features/Habits/HabitUtils';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import {
   hasServerIssuedIds,
@@ -60,6 +67,7 @@ export function isLinkableHabit(habit: Habit): boolean {
   return (
     isServerIssuedId(habit.id) &&
     hasServerIssuedIds(habit) &&
+    isHabitUnlocked(habit) &&
     isNotDemoSeed(habit) &&
     !isSubtractiveHabit(habit) &&
     LADDER_TIERS.every((tier) => habit.goals.some((goal) => goal.tier === tier))
@@ -95,12 +103,22 @@ const systemClock = (): Date => new Date();
 const findHabit = (habitId: number): Habit | undefined =>
   useHabitStore.getState().habits.find((habit) => habit.id === habitId);
 
-/** The linked habit from the store, loading the habits first when it is absent. */
+/**
+ * The linked habit AS THE SERVER HAS IT NOW, or ``undefined`` when that cannot
+ * be known.
+ *
+ * The habits are always re-read before posting, never taken from the store as
+ * it stands: the gap is only idempotent if it is measured against the server's
+ * day, and this device's store can be minutes stale — a second device may have
+ * checked the habit off since. The read is the same ``GET /habits/`` the Habits
+ * screen hydrates from, through ``refreshHabits``, which says whether the
+ * server actually answered (a cached list stays on screen either way). When it
+ * did not, nothing is posted: a check-off computed from a stale day could
+ * double-count, and one missed check-off is the smaller harm.
+ */
 async function resolveLinkedHabit(habitId: number, tz: string): Promise<Habit | undefined> {
-  const cached = findHabit(habitId);
-  if (cached) return cached;
-  await habitManager.loadHabits(tz);
-  return findHabit(habitId);
+  const fresh = await habitManager.refreshHabits(tz);
+  return fresh ? findHabit(habitId) : undefined;
 }
 
 /** Post ``amount`` against the habit through the logUnit pipeline, quietly. */

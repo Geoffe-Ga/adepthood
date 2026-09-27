@@ -87,6 +87,27 @@ describe('useWritingHabitLinkStore.hydrate', () => {
   });
 });
 
+describe('useWritingHabitLinkStore.forgetHabit', () => {
+  it('forgets the link when the linked habit is deleted on this device', async () => {
+    mockUiFlags.get.mockResolvedValueOnce(flags(SERVER_HABIT_ID));
+    await useWritingHabitLinkStore.getState().hydrate(TOKEN);
+
+    useWritingHabitLinkStore.getState().forgetHabit(SERVER_HABIT_ID);
+
+    expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+  });
+
+  it('keeps the link when some other habit is deleted', async () => {
+    mockUiFlags.get.mockResolvedValueOnce(flags(SERVER_HABIT_ID));
+    await useWritingHabitLinkStore.getState().hydrate(TOKEN);
+
+    useWritingHabitLinkStore.getState().forgetHabit(CHOSEN_HABIT_ID);
+
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(SERVER_HABIT_ID);
+  });
+});
+
 describe('useWritingHabitLinkStore.setLink', () => {
   it('PATCHes the id and adopts the id the server echoes back', async () => {
     mockUiFlags.update.mockResolvedValueOnce(flags(ECHOED_HABIT_ID));
@@ -126,6 +147,38 @@ describe('useWritingHabitLinkStore.setLink', () => {
 });
 
 describe('useWritingHabitLinkStore.reset', () => {
+  it('a read still in flight at logout never lands on the next account', async () => {
+    let answer: ((value: UiFlags) => void) | undefined;
+    mockUiFlags.get.mockImplementationOnce(
+      () =>
+        new Promise<UiFlags>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const previousAccount = useWritingHabitLinkStore.getState().hydrate(TOKEN);
+    await Promise.resolve();
+
+    resetAllStores();
+    answer?.(flags(SERVER_HABIT_ID));
+    await previousAccount;
+
+    expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
+  });
+
+  it('after logout, the next account reads its own link rather than joining the old read', async () => {
+    mockUiFlags.get.mockImplementationOnce(() => new Promise<UiFlags>(() => undefined));
+    void useWritingHabitLinkStore.getState().hydrate('old-tok');
+    await Promise.resolve();
+    resetAllStores();
+    mockUiFlags.get.mockResolvedValueOnce(flags(CHOSEN_HABIT_ID));
+
+    await useWritingHabitLinkStore.getState().hydrate('new-tok');
+
+    expect(mockUiFlags.get).toHaveBeenLastCalledWith('new-tok');
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(CHOSEN_HABIT_ID);
+  });
+
   it('logging out forgets the link', async () => {
     mockUiFlags.get.mockResolvedValueOnce(flags(SERVER_HABIT_ID));
     await useWritingHabitLinkStore.getState().hydrate(TOKEN);

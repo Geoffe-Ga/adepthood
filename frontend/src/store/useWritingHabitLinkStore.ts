@@ -14,6 +14,9 @@
  *   ``null``, which means "check nothing off" — the quiet default.
  * - **The server's echo is the truth.** ``setLink`` adopts the id the PATCH
  *   returned, never the one it sent, and a refused PATCH changes nothing.
+ * - **An answer belongs to the account that asked.** Every ``reset`` (logout)
+ *   bumps a generation; a read started before it is dropped when it lands, so
+ *   one account's link can never surface under the next.
  */
 import { create } from 'zustand';
 
@@ -30,6 +33,11 @@ export interface WritingHabitLinkState {
   hydrate: (_token?: string) => Promise<void>;
   /** Link a habit (or clear with ``null``); resolves whether the server agreed. */
   setLink: (_habitId: number | null, _token?: string) => Promise<boolean>;
+  /**
+   * The linked habit was deleted on this device: forget it locally. The server
+   * has already cleared its own copy (``delete_habit`` unlinks it).
+   */
+  forgetHabit: (_habitId: number) => void;
   /** Forget the link (logout). */
   reset: () => void;
 }
@@ -38,6 +46,9 @@ const INITIAL_STATE = { habitId: null as number | null, hydrated: false };
 
 /** The hydrate already on the wire, so concurrent mounts share one request. */
 let inFlight: Promise<void> | null = null;
+
+/** Bumped by every ``reset``; a read that began under an older one is stale. */
+let generation = 0;
 
 export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get) => ({
   ...INITIAL_STATE,
@@ -48,18 +59,21 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
     // Started inside a ``then`` so even a synchronous throw from the client
     // lands in the ``catch`` below: a hydrate must never break the page that
     // asked for it.
-    inFlight = Promise.resolve()
+    const startedIn = generation;
+    const request = Promise.resolve()
       .then(() => uiFlags.get(token))
       .then((flags) => {
+        if (startedIn !== generation) return;
         set({ habitId: flags.writing_session_habit_id, hydrated: true });
       })
       .catch((err: unknown) => {
         console.warn('[useWritingHabitLinkStore] failed to read the writing habit link', err);
       })
       .finally(() => {
-        inFlight = null;
+        if (inFlight === request) inFlight = null;
       });
-    return inFlight;
+    inFlight = request;
+    return request;
   },
 
   setLink: async (habitId, token) => {
@@ -73,7 +87,13 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
     }
   },
 
+  forgetHabit: (habitId) => {
+    if (get().habitId === habitId) set({ habitId: null });
+  },
+
   reset: () => {
+    generation += 1;
+    inFlight = null;
     set({ ...INITIAL_STATE });
   },
 }));

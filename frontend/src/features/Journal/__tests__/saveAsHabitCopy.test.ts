@@ -76,6 +76,9 @@ describe('saveAsHabitCopy — the writing-habit link (#2861)', () => {
   it('names the Settings row by the link, and never reads "not linked" for a pending one', () => {
     expect(writingTimerRowLabel('Morning pages')).toBe('Writing timer → Morning pages');
     expect(writingTimerRowLabel(null)).toBe(WRITING_TIMER_ROW_UNLINKED);
+    expect(writingTimerRowLabel('Stretch', { paused: true })).toBe(
+      'Writing timer → Stretch · paused while locked',
+    );
     expect(WRITING_TIMER_ROW_UNLINKED).toBe('Writing timer → not linked');
     expect(WRITING_TIMER_ROW_LINKED_PENDING).toBe('Writing timer → a habit');
     expect(WRITING_TIMER_ROW_LINKED_PENDING).not.toMatch(/not linked/);

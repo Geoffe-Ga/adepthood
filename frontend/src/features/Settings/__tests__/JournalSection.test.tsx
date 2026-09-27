@@ -64,6 +64,7 @@ const habit = (id: number, name: string): Habit => ({
   start_date: new Date('2025-01-01'),
   goals: ladder(),
   completions: [],
+  revealed: true,
 });
 
 const HABITS = [habit(31, 'Morning pages'), habit(32, 'Stretch')];
@@ -111,6 +112,16 @@ describe('JournalSection — the writing timer row', () => {
 
     await waitFor(() => expect(rowLabel(view)).toBe(writingTimerRowLabel('Stretch')));
     expect(view.getByText('Writing timer → Stretch')).toBeTruthy();
+  });
+
+  it('says a linked habit that is locked is paused, rather than implying it is checked off', async () => {
+    useHabitStore.getState().setHabits([{ ...habit(32, 'Stretch'), revealed: false }]);
+    mockFlagsGet.mockResolvedValue(flags(32));
+    const view = render(<JournalSection />);
+
+    await waitFor(() =>
+      expect(rowLabel(view)).toBe('Writing timer → Stretch · paused while locked'),
+    );
   });
 
   it('never says "not linked" for a link whose habit has not been read yet, and reads it', async () => {

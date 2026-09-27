@@ -42,6 +42,7 @@ const habit = (id: number, name: string, overrides: Partial<Habit> = {}): Habit 
   start_date: new Date('2025-01-01'),
   goals: ladder(),
   completions: [],
+  revealed: true,
   ...overrides,
 });
 
@@ -50,6 +51,7 @@ const HABITS: Habit[] = [
   habit(12, 'Stretch'),
   habit(13, 'Less coffee', { goals: ladder(false) }),
   habit(14, 'Demo', { isDemoSeed: true }),
+  habit(15, 'Not begun yet', { revealed: false }),
 ];
 
 const noop = (): void => undefined;
@@ -79,6 +81,15 @@ describe('WritingHabitPicker', () => {
 
     expect(queryByTestId('writing-habit-choose-13')).toBeNull();
     expect(queryByTestId('writing-habit-choose-14')).toBeNull();
+  });
+
+  it('leaves out a locked habit, which nothing may be logged against until it is open', () => {
+    const { queryByTestId, queryByText } = render(
+      <WritingHabitPicker habits={HABITS} onChoose={noop} onCancel={noop} />,
+    );
+
+    expect(queryByTestId('writing-habit-choose-15')).toBeNull();
+    expect(queryByText('Not begun yet')).toBeNull();
   });
 
   it('offers a new habit only when there is somewhere for it to go', () => {

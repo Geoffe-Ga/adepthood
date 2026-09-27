@@ -24,6 +24,7 @@ import { SettingsRow } from './shared/SettingsRow';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
+import { isHabitUnlocked } from '@/features/Habits/HabitUtils';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import {
   JOURNAL_SETTINGS_TITLE,
@@ -43,7 +44,8 @@ import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 function rowLabelFor(habitId: number | null, habits: readonly Habit[]): string {
   if (habitId === null) return writingTimerRowLabel(null);
   const linked = habits.find((habit) => habit.id === habitId);
-  return linked ? writingTimerRowLabel(linked.name) : WRITING_TIMER_ROW_LINKED_PENDING;
+  if (!linked) return WRITING_TIMER_ROW_LINKED_PENDING;
+  return writingTimerRowLabel(linked.name, { paused: !isHabitUnlocked(linked) });
 }
 
 /** Read the habits quietly: a failure leaves the pending label, never an error. */
