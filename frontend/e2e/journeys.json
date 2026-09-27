@@ -222,6 +222,18 @@
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
   },
   {
+    "id": "journal.open-offline-loads-on-reconnect",
+    "description": "A writer saves a page, returns to the shelf, loses their connection, and opens that page anyway: the client short-circuits the GET, so the page shows its load-error banner and will not save (#2935). When the device comes back online, the real browser sees the load run again by itself, the banner clear, and the stored body appear; the writer then edits the page without reopening it, and the PATCH lands and is read back from the server. The seam suite JournalEntryScreenReconnectLoad.test.tsx pins what the browser cannot isolate: exactly one reload per offline-to-online edge and none while merely online, no duplicate or in-flight reload, a failed reload that retries only on the next edge, a fresh page that never loads, words typed while the entry was unloaded kept below the stored body and saved once, and no carry of those words into a different route entry. journalReconnectLoad.test.ts pins the reload gate and the carry rules term by term.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/{entry_id}", "PATCH /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-reconnect-load.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.begin-a-dated-morning-page",
     "description": "A writer sees that ordinary New entry still opens without a title, closes it, then takes the morning-pages invitation. The real browser lands on a fresh JournalEntry titled with that account/browser's local YYYY-MM-DD plus Daily Journal, and the writer can immediately replace the generated title. The shelf component test pins the exact prefillTitle navigation parameter, the tip test freezes a UTC instant across the prior-day America/Los_Angeles boundary, and the saved Journaling-practice quick-launch suite pins the same shared title contract.",
     "crosses": {
