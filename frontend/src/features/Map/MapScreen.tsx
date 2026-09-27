@@ -13,6 +13,7 @@ import {
   type TextStyle,
   TouchableOpacity,
   View,
+  type ViewStyle,
 } from 'react-native';
 
 import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from '../../api';
@@ -54,6 +55,7 @@ import {
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
+  noteCorner,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   STAGE_DISPLAY,
   STAGE_LINE_MAX_FONT_SIZE,
@@ -98,27 +100,32 @@ const FULL_PROGRESS = 1;
 // in the same row, so a stage's text, glyph and label always share its baseline
 // however the copy wraps. The Map reads with no PNG.
 
-const LockGlyph = (): React.JSX.Element => (
-  <View style={styles.lockRow}>
-    <Text style={styles.lockText}>🔒</Text>
-  </View>
-);
-
-/** Aspect label / unlock estimate corner within a center cell. */
-type LabelCorner = 'left' | 'right' | 'center';
+/** Which corner of the center cell a stage's annotations hug (``labelCorner``). */
+type LabelCorner = 'left' | 'right';
 
 /** Text-align variant for each corner, keyed to avoid a nested ternary. */
 const UNLOCK_ALIGN_STYLE: Readonly<Record<LabelCorner, StyleProp<TextStyle>>> = {
   left: styles.unlockTimelineLeft,
   right: styles.unlockTimelineRight,
-  center: styles.unlockTimelineCenter,
+};
+
+/** The label side's half-lane each corner's locked note is confined to. */
+const LOCKED_NOTE_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = {
+  left: styles.lockedNoteLeft,
+  right: styles.lockedNoteRight,
+};
+
+/** The label side's corner each completed stage's check badge is pinned to. */
+const BADGE_CORNER_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = {
+  left: styles.completedBadgeLeft,
+  right: styles.completedBadgeRight,
 };
 
 /**
  * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
- * no program anchor is set. Its text aligns to the block's corner so the copy
- * reads away from the wave strand (or centers beneath a fitted title).
+ * no program anchor is set. Its text aligns to the note's corner so the copy
+ * reads away from the wave strand.
  */
 const UnlockTimeline = ({
   stageNumber,
@@ -133,6 +140,29 @@ const UnlockTimeline = ({
     <Text style={[styles.unlockTimeline, alignStyle]} testID={`stage-unlock-${stageNumber}`}>
       {unlockTimeline(daysUntil)}
     </Text>
+  );
+};
+
+/**
+ * A locked stage's note in its center cell: the padlock and the unlock estimate
+ * in one row, confined to the half of the cell on the label's side -- the half
+ * the wave leaves free through the stage's band (#2657). The padlock sits on
+ * the cell's outer edge, so the row mirrors between the two corners.
+ */
+const LockedNote = ({
+  stageNumber,
+  corner,
+}: {
+  stageNumber: number;
+  corner: LabelCorner;
+}): React.JSX.Element => {
+  const padlock = <Text style={styles.lockText}>🔒</Text>;
+  return (
+    <View style={[styles.lockedNote, LOCKED_NOTE_STYLE[corner]]}>
+      {corner === 'left' ? padlock : null}
+      <UnlockTimeline stageNumber={stageNumber} corner={corner} />
+      {corner === 'right' ? padlock : null}
+    </View>
   );
 };
 
@@ -255,7 +285,8 @@ const StageTextBlock = ({
 // carries the directional/polarity read behind these cells ----------------
 
 // Corner-hugging Aspect-label block: the arrow word plus, when locked, its
-// unlock estimate, grouped against the corner opposite the wave's return pole.
+// padlock and unlock estimate, grouped against the corner opposite the wave's
+// return pole.
 // A stretch wrapper measures the full center-cell width so the word's fitted
 // size (fitStageText) shrinks only when the cell is genuinely too narrow.
 const AspectLabelBlock = ({
@@ -285,7 +316,7 @@ const AspectLabelBlock = ({
         >
           {display.arrowLabel}
         </Text>
-        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+        {locked ? <LockedNote stageNumber={display.stageNumber} corner={corner} /> : null}
       </View>
     </View>
   );
@@ -347,8 +378,9 @@ const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
   );
 };
 
-// Title rows (9, 10) keep their centered serif heading; every other stage shows
-// its corner-hugging Aspect-label block instead of a centered word.
+// Title rows (9, 10) keep their centered serif heading, with a locked note in
+// the stage's corner beneath it; every other stage shows its corner-hugging
+// Aspect-label block instead of a centered word.
 const CenterContent = ({
   display,
   locked,
@@ -361,7 +393,9 @@ const CenterContent = ({
     return (
       <>
         <FittedTitle title={title} />
-        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner="center" /> : null}
+        {locked ? (
+          <LockedNote stageNumber={display.stageNumber} corner={noteCorner(display.stageNumber)} />
+        ) : null}
       </>
     );
   }
@@ -403,9 +437,11 @@ const StageCenterCell = ({
     accessibilityLabel={stageCenterCellLabel(stage.title, stage.subtitle, { locked, current })}
   >
     <CenterContent display={display} locked={locked} />
-    {locked ? <LockGlyph /> : null}
     {stage.progress >= FULL_PROGRESS ? (
-      <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
+      <View
+        style={[styles.completedBadge, BADGE_CORNER_STYLE[labelCorner(display.stageNumber)]]}
+        testID={`stage-complete-${stage.stageNumber}`}
+      >
         <Text style={styles.completedBadgeText}>✓</Text>
       </View>
     ) : null}
@@ -1357,18 +1393,27 @@ const MapContent = (props: MapContentProps): React.JSX.Element => (
     <MapBackdrop />
     <ContentContainer fill>
       <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
-      <MapGrid
-        lookup={props.lookup}
-        fullnessByStage={props.fullnessByStage}
-        currentStage={props.currentStage}
-        focusedStage={props.focusedStage}
-        onSelectStage={props.onSelectStage}
-        onSettleStage={props.onSettleStage}
-        onOpenStage={props.onOpenStage}
-      />
-      {props.showBeginAgain && (
-        <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
-      )}
+      {/* The grid and Begin again scroll together once the bands reach their
+          content; while they fit, the content fills the viewport and nothing moves. */}
+      <ScrollView
+        testID="map-scroll"
+        style={styles.gridScroll}
+        contentContainerStyle={styles.gridScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <MapGrid
+          lookup={props.lookup}
+          fullnessByStage={props.fullnessByStage}
+          currentStage={props.currentStage}
+          focusedStage={props.focusedStage}
+          onSelectStage={props.onSelectStage}
+          onSettleStage={props.onSettleStage}
+          onOpenStage={props.onOpenStage}
+        />
+        {props.showBeginAgain && (
+          <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
+        )}
+      </ScrollView>
       {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
       <CelebrationBanner
         active={props.celebration.active}

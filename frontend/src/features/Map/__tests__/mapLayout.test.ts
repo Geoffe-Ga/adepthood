@@ -7,6 +7,7 @@ import {
   fitStageText,
   fittedTitleFontSize,
   labelCorner,
+  noteCorner,
   MAP_ROWS,
   MAP_TITLE_LINES,
   MIXED_CASE_GLYPH_EM_WIDTH,
@@ -153,8 +154,30 @@ describe('mapLayout', () => {
     expect(labelCorner(8)).toBe('right');
   });
 
-  it('always hugs the corner opposite the wave return pole', () => {
+  // #2657: the title stages' check badges take a corner by the same parity.
+  it('gives the title stages a corner by the same parity: 9 left, 10 right', () => {
+    expect(labelCorner(9)).toBe('left');
+    expect(labelCorner(10)).toBe('right');
+  });
+});
+
+describe('noteCorner', () => {
+  it("puts a labelled stage's locked note in its label corner", () => {
     for (let stageNumber = 1; stageNumber <= 8; stageNumber += 1) {
+      expect(noteCorner(stageNumber)).toBe(labelCorner(stageNumber));
+    }
+  });
+
+  // Through both title bands the converging wave runs right of the cell centre
+  // (measured by map-legibility.browser.e2e.test.ts), so both notes go left --
+  // stage 10 against its own parity.
+  it("puts both title stages' locked notes on the left, where the converging wave is not", () => {
+    expect(noteCorner(9)).toBe('left');
+    expect(noteCorner(10)).toBe('left');
+  });
+
+  it('always hugs the corner opposite the wave return pole', () => {
+    for (let stageNumber = 1; stageNumber <= 10; stageNumber += 1) {
       const expected = isLeftReturning(stageNumber) ? 'right' : 'left';
       expect(labelCorner(stageNumber)).toBe(expected);
     }
