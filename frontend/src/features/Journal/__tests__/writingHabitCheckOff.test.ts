@@ -1,0 +1,263 @@
+/* eslint-env jest */
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+
+const mockCreate = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
+
+jest.mock('@/api', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/api');
+  return { ...actual, goalCompletions: { create: (...args: unknown[]) => mockCreate(...args) } };
+});
+
+import { checkedOffToast } from '../saveAsHabitCopy';
+import {
+  MIN_CHECK_OFF_ELAPSED_MS,
+  checkOffLinkedHabit,
+  isLinkableHabit,
+  planWritingCheckOff,
+} from '../writingHabitCheckOff';
+
+import type { ToastConfig } from '@/components/Toast';
+import type { Goal, Habit } from '@/features/Habits/Habits.types';
+import { habitManager } from '@/features/Habits/services/habitManager';
+import { useHabitStore } from '@/store/useHabitStore';
+
+const TZ = 'UTC';
+const HABIT_ID = 42;
+const LOW_TARGET = 2;
+const ELAPSED_MS = 60_000;
+const NOW = new Date('2026-09-27T09:30:00Z');
+const SERVER_DAY_UNITS = LOW_TARGET;
+
+const makeGoal = (tier: 'low' | 'clear' | 'stretch', overrides: Partial<Goal> = {}): Goal => ({
+  id: tier === 'low' ? 101 : tier === 'clear' ? 102 : 103,
+  title: `${tier} goal`,
+  tier,
+  target: tier === 'low' ? LOW_TARGET : tier === 'clear' ? 4 : 6,
+  target_unit: 'pages',
+  frequency: 1,
+  frequency_unit: 'per_day',
+  is_additive: true,
+  ...overrides,
+});
+
+const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
+  id: HABIT_ID,
+  stage: 'Beige',
+  name: 'Morning pages',
+  icon: '✍️',
+  streak: 0,
+  energy_cost: 1,
+  energy_return: 2,
+  start_date: new Date('2025-01-01'),
+  goals: [makeGoal('low'), makeGoal('clear'), makeGoal('stretch')],
+  completions: [],
+  revealed: true,
+  ...overrides,
+});
+
+const withTodayUnits = (units: number): Habit =>
+  makeHabit({ completions: [{ id: 't-1', timestamp: new Date(), completed_units: units }] });
+
+const serverResult = (dayUnits = SERVER_DAY_UNITS) => ({
+  streak: 1,
+  milestones: [],
+  reason_code: 'units_adjusted',
+  day_units: dayUnits,
+});
+
+let showToast: jest.Mock<(_config: ToastConfig) => void>;
+
+const run = (overrides: Partial<Parameters<typeof checkOffLinkedHabit>[0]> = {}) =>
+  checkOffLinkedHabit({
+    habitId: HABIT_ID,
+    elapsedMs: ELAPSED_MS,
+    tz: TZ,
+    showToast,
+    now: () => NOW,
+    ...overrides,
+  });
+
+beforeEach(() => {
+  jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate'] });
+  mockCreate.mockReset();
+  mockCreate.mockResolvedValue(serverResult());
+  showToast = jest.fn();
+  jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  useHabitStore.getState().setHabits([makeHabit()]);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+  jest.useRealTimers();
+});
+
+describe('isLinkableHabit', () => {
+  it('admits an additive, server-backed habit with all three tiers', () => {
+    expect(isLinkableHabit(makeHabit())).toBe(true);
+  });
+
+  it('refuses a subtractive habit: checking one off would record consumption', () => {
+    const goals = (['low', 'clear', 'stretch'] as const).map((tier) =>
+      makeGoal(tier, { is_additive: false }),
+    );
+    expect(isLinkableHabit(makeHabit({ goals }))).toBe(false);
+  });
+
+  it('refuses a demo tile, whose ids name no server row', () => {
+    expect(isLinkableHabit(makeHabit({ isDemoSeed: true }))).toBe(false);
+  });
+
+  it('refuses a habit whose ids this device minted', () => {
+    expect(isLinkableHabit(makeHabit({ hasClientMintedIds: true }))).toBe(false);
+  });
+
+  it('refuses a habit still holding a pre-sync placeholder id', () => {
+    expect(isLinkableHabit(makeHabit({ id: -1 }))).toBe(false);
+  });
+
+  it('refuses a habit without the three-tier ladder', () => {
+    expect(isLinkableHabit(makeHabit({ goals: [makeGoal('low'), makeGoal('clear')] }))).toBe(false);
+  });
+});
+
+describe('planWritingCheckOff — "checked off" means the low tier is met today', () => {
+  it('plans exactly the gap to the low target', () => {
+    expect(planWritingCheckOff(makeHabit(), TZ)).toBe(LOW_TARGET);
+  });
+
+  it('plans only what is left when part of the low target is already logged', () => {
+    expect(planWritingCheckOff(withTodayUnits(1), TZ)).toBe(LOW_TARGET - 1);
+  });
+
+  it('plans nothing once the low target is met', () => {
+    expect(planWritingCheckOff(withTodayUnits(LOW_TARGET), TZ)).toBeNull();
+  });
+
+  it('plans nothing past the low target, rather than a negative correction', () => {
+    expect(planWritingCheckOff(withTodayUnits(LOW_TARGET + 1), TZ)).toBeNull();
+  });
+
+  it('plans nothing for a habit that cannot be linked', () => {
+    expect(planWritingCheckOff(makeHabit({ isDemoSeed: true }), TZ)).toBeNull();
+  });
+});
+
+describe('checkOffLinkedHabit', () => {
+  it('posts the low gap through the logUnit pipeline, dated now, and says so', async () => {
+    const prepare = jest.spyOn(habitManager, 'prepareLogUnit');
+    const reconcile = jest.spyOn(habitManager, 'reconcileLogUnitContext');
+
+    await run();
+
+    expect(prepare).toHaveBeenCalledWith(HABIT_ID, LOW_TARGET, TZ, NOW);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const [payload, options] = mockCreate.mock.calls[0] as [
+      Record<string, unknown>,
+      { idempotencyKey?: string },
+    ];
+    expect(payload).toEqual({
+      goal_id: 101,
+      did_complete: true,
+      completed_on: undefined,
+      completed_units: LOW_TARGET,
+    });
+    expect(options.idempotencyKey).toMatch(/^log-unit:/);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(showToast.mock.calls[0]?.[0].message).toBe(checkedOffToast('Morning pages'));
+  });
+
+  it('a second finished session the same day posts nothing: the habit is already checked off', async () => {
+    await run();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it('a zero-length session checks nothing off', async () => {
+    const prepare = jest.spyOn(habitManager, 'prepareLogUnit');
+
+    await run({ elapsedMs: 0 });
+
+    expect(prepare).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('the shortest session that ran at all does check off', async () => {
+    await run({ elapsedMs: MIN_CHECK_OFF_ELAPSED_MS });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads the habits first when the linked one is not in the store', async () => {
+    useHabitStore.getState().setHabits([]);
+    const load = jest.spyOn(habitManager, 'loadHabits').mockImplementation(async () => {
+      useHabitStore.getState().setHabits([makeHabit()]);
+    });
+
+    await run();
+
+    expect(load).toHaveBeenCalledWith(TZ);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a linked habit that no longer exists posts nothing and throws nothing', async () => {
+    useHabitStore.getState().setHabits([]);
+    jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('a habit that stopped being linkable (now subtractive) posts nothing', async () => {
+    const goals = (['low', 'clear', 'stretch'] as const).map((tier) =>
+      makeGoal(tier, { is_additive: false }),
+    );
+    useHabitStore.getState().setHabits([makeHabit({ goals })]);
+
+    await run();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('a failed post rolls the optimistic row back, warns, and shows nothing', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('offline'));
+    const rollback = jest.spyOn(habitManager, 'rollbackLogUnitContext');
+    const before = useHabitStore.getState().habits;
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(rollback).toHaveBeenCalledTimes(1);
+    expect(useHabitStore.getState().habits).toEqual(before);
+    expect(console.warn).toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('a commit that resolves no result shows no toast', async () => {
+    jest.spyOn(habitManager, 'commitLogUnitContext').mockResolvedValueOnce(null);
+    const reconcile = jest.spyOn(habitManager, 'reconcileLogUnitContext');
+
+    await run();
+
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('a load that throws is swallowed, never surfaced to the writer', async () => {
+    useHabitStore.getState().setHabits([]);
+    jest.spyOn(habitManager, 'loadHabits').mockRejectedValue(new Error('boom'));
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalled();
+  });
+});
