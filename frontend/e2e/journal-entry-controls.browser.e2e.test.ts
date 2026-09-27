@@ -1,6 +1,14 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { setProgramAnchorSixDaysAgo, signUp } from './journalHabitsBrowserSupport';
+
+/** WCAG / Candle & Ink touch floor (``touchTarget.minimum``), in CSS px. */
+const TOUCH_TARGET_MIN = 44;
+/** Sub-pixel rounding allowance for two boxes sharing one line. */
+const SAME_LINE_TOLERANCE = 1;
+/** Allowance for Finish sitting on the body input's centre line. */
+const CENTRE_TOLERANCE = 2;
+const PHOTOGRAPH_NAME = 'Photograph a page or screenshot and add its text to this entry';
 
 interface RowGeometry {
   clientWidth: number;
@@ -8,10 +16,36 @@ interface RowGeometry {
   centres: number[];
 }
 
+interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/** Everything the layout claims rest on, read in ONE settled frame (#2959). */
+interface EntryFrame {
+  camera: Box;
+  close: Box;
+  finish: Box;
+  input: Box;
+  exitRowClientWidth: number;
+  exitRowScrollWidth: number;
+  documentScrollWidth: number;
+  innerWidth: number;
+  /** key → camera → X → title, each strictly after the previous in DOM order. */
+  focusOrderHolds: boolean;
+}
+
 /** Read the actual browser boxes: stylesheet intent alone cannot prove a row did not wrap. */
 async function rowGeometry(row: Locator): Promise<RowGeometry> {
   return row.evaluate((element) => {
-    const controls = Array.from(element.children) as HTMLElement[];
+    // The rail's empty flank slots have no height; only visible controls share a line.
+    const controls = (Array.from(element.children) as HTMLElement[]).filter(
+      (control) => control.getBoundingClientRect().height > 0,
+    );
     return {
       clientWidth: element.clientWidth,
       scrollWidth: element.scrollWidth,
@@ -23,10 +57,83 @@ async function rowGeometry(row: Locator): Promise<RowGeometry> {
   });
 }
 
-test('journal entry actions remain one row and resonance uses the responsive margin', async ({
+/**
+ * Measure the exit row, the rail and the page after two animation frames, so a
+ * resize React Native Web is still delivering cannot split the reads across
+ * two layouts.
+ */
+async function settledFrame(page: Page): Promise<EntryFrame> {
+  return page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    const byId = (id: string): HTMLElement => {
+      const element = document.querySelector(`[data-testid="${id}"]`);
+      if (!(element instanceof HTMLElement)) throw new Error(`missing ${id}`);
+      return element;
+    };
+    const box = (id: string) => {
+      const r = byId(id).getBoundingClientRect();
+      return {
+        left: r.left,
+        right: r.right,
+        top: r.top,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      };
+    };
+    const order = [
+      'journal-api-key-settings',
+      'journal-photograph-page',
+      'journal-close-entry',
+      'journal-title-input',
+    ].map(byId);
+    const focusOrderHolds = order.every(
+      (element, index) =>
+        index === 0 ||
+        (order[index - 1]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !==
+          0,
+    );
+    const exitRow = byId('journal-entry-exit-row');
+    return {
+      camera: box('journal-photograph-page'),
+      close: box('journal-close-entry'),
+      finish: box('journal-finish-button'),
+      input: box('journal-body-input'),
+      exitRowClientWidth: exitRow.clientWidth,
+      exitRowScrollWidth: exitRow.scrollWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      focusOrderHolds,
+    };
+  });
+}
+
+const centreY = (b: Box): number => b.top + b.height / 2;
+const centreX = (b: Box): number => b.left + b.width / 2;
+
+/** The camera sits beside the X; Finish sits centred under the page. */
+function expectEntryLayout(frame: EntryFrame): void {
+  expect(Math.abs(centreY(frame.camera) - centreY(frame.close))).toBeLessThanOrEqual(
+    SAME_LINE_TOLERANCE,
+  );
+  expect(frame.camera.right).toBeLessThanOrEqual(frame.close.left);
+  expect(frame.camera.width).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN);
+  expect(frame.camera.height).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN);
+  expect(frame.exitRowScrollWidth).toBeLessThanOrEqual(frame.exitRowClientWidth + 1);
+  expect(frame.documentScrollWidth).toBeLessThanOrEqual(frame.innerWidth);
+  expect(Math.abs(centreX(frame.finish) - centreX(frame.input))).toBeLessThanOrEqual(
+    CENTRE_TOLERANCE,
+  );
+  expect(frame.finish.top).toBeGreaterThanOrEqual(frame.input.bottom);
+  expect(frame.focusOrderHolds).toBe(true);
+}
+
+test('journal entry camera joins the exit row, Finish centres under the page, and resonance uses the responsive margin', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   const email = await signUp(page, 'journal-entry-controls');
   await page.getByTestId('journal-new-entry').click();
   await page.getByTestId('journal-title-input').fill('A page with steady controls');
@@ -36,17 +143,19 @@ test('journal entry actions remain one row and resonance uses the responsive mar
 
   const row = page.getByTestId('journal-writing-controls');
   const finish = page.getByRole('button', { name: 'Mark this entry finished' });
-  const photograph = page.getByRole('button', {
-    name: 'Photograph a page or screenshot and add its text to this entry',
-  });
+  const photograph = page
+    .getByTestId('journal-entry-exit-row')
+    .getByRole('button', { name: PHOTOGRAPH_NAME });
   await expect(finish).toBeVisible();
-  await expect(photograph).toContainText('Photograph a page');
+  await expect(photograph).toBeVisible();
+  // Icon-only at every width: the phrase is its accessible name, never visible text.
+  await expect(photograph).toHaveText('');
+  await expect(row.getByTestId('journal-photograph-page')).toHaveCount(0);
+  await expect(page.getByTestId('journal-page')).toHaveCSS('flex-direction', 'row');
+  expectEntryLayout(await settledFrame(page));
   const wideRow = await rowGeometry(row);
   expect(Math.max(...wideRow.centres) - Math.min(...wideRow.centres)).toBeLessThanOrEqual(1);
   expect(wideRow.scrollWidth).toBeLessThanOrEqual(wideRow.clientWidth + 1);
-  expect(await photograph.evaluate((element) => getComputedStyle(element).flexDirection)).toBe(
-    'row',
-  );
 
   const margin = page.getByTestId('journal-margin-column');
   const resonance = margin.getByTestId('get-resonance-button');
@@ -88,8 +197,7 @@ test('journal entry actions remain one row and resonance uses the responsive mar
   await page.getByTestId('resonance-explainer-cancel').click();
   await page.unroute('**/user/usage');
 
-  // At the exact two-column breakpoint the fixed margin is already present,
-  // but the writing rail is not yet wide enough for secondary labels.
+  // At the exact two-column breakpoint the fixed margin is already present.
   await page.setViewportSize({ width: 600, height: 800 });
   await expect(row).toBeVisible();
   const breakpointRow = await rowGeometry(row);
@@ -100,18 +208,17 @@ test('journal entry actions remain one row and resonance uses the responsive mar
   await expect(photograph).toHaveText('');
   await expect(margin.getByTestId('get-resonance-button')).toBeVisible();
 
-  await page.setViewportSize({ width: 375, height: 800 });
-  await expect(row).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
   // ``setViewportSize`` resolves before React Native Web has necessarily
-  // delivered the resize through ``useWindowDimensions``.  The row is already
-  // visible in the prior two-column layout, so visibility cannot synchronize
-  // the geometry assertion below.  Wait for the product breakpoint itself.
+  // delivered the resize through ``useWindowDimensions``. Wait for the product
+  // breakpoint itself before taking the settled frame.
   await expect(page.getByTestId('journal-page')).toHaveCSS('flex-direction', 'column');
+  expectEntryLayout(await settledFrame(page));
   const narrowRow = await rowGeometry(row);
   expect(Math.max(...narrowRow.centres) - Math.min(...narrowRow.centres)).toBeLessThanOrEqual(1);
   expect(narrowRow.scrollWidth).toBeLessThanOrEqual(narrowRow.clientWidth + 1);
   await expect(photograph).toHaveText('');
-  expect(await photograph.getAttribute('aria-label')).toContain('Photograph a page or screenshot');
+  expect(await photograph.getAttribute('aria-label')).toBe(PHOTOGRAPH_NAME);
   await expect(margin.getByTestId('get-resonance-button')).toHaveCount(0);
   await expect(page.getByTestId('get-resonance-button')).toBeVisible();
   expect(
@@ -120,19 +227,27 @@ test('journal entry actions remain one row and resonance uses the responsive mar
       .evaluate((button) => getComputedStyle(button.parentElement as HTMLElement).position),
   ).toBe('absolute');
 
-  // Exercise the worst-case writing rail in Chromium: reflection adds Sources,
-  // so all three controls must still share one measured line at the breakpoint.
+  // The worst-case rail: a reflection adds Sources beside Finish. Sources takes
+  // the trailing flank, so Finish must still sit on the body input's centre.
   setProgramAnchorSixDaysAgo(email);
   await page.getByTestId('journal-close-entry').click();
   await page.reload();
   await page.setViewportSize({ width: 600, height: 800 });
   await page.getByTestId('journal-reflection-band').click();
   const reflectionRow = page.getByTestId('journal-writing-controls');
-  const reflectionPhotograph = page.getByTestId('journal-photograph-page');
-  const sources = page.getByTestId('reflection-sources-toggle');
+  const sources = reflectionRow
+    .getByTestId('journal-writing-controls-trailing')
+    .getByTestId('reflection-sources-toggle');
   await expect(sources).toBeVisible();
-  await expect(reflectionPhotograph).toHaveText('');
   await expect(sources).toHaveText('');
+  // Finish only appears once the page has words; fill first so the centre
+  // check below can never pass against an absent button.
+  await page.getByTestId('journal-body-input').fill('What this stage asked of me.');
+  await expect(finish).toBeVisible();
+  await expect(page.getByTestId('journal-page')).toHaveCSS('flex-direction', 'row');
+  await expect(reflectionRow.getByTestId('journal-photograph-page')).toHaveCount(0);
+  await expect(photograph).toHaveText('');
+  expectEntryLayout(await settledFrame(page));
   const reflectionGeometry = await rowGeometry(reflectionRow);
   expect(
     Math.max(...reflectionGeometry.centres) - Math.min(...reflectionGeometry.centres),
