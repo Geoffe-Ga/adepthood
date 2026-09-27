@@ -65,12 +65,12 @@ _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
         "spiral_dynamics_color": "Purple",
         "growing_up_stage": "Magic",
         "divine_gender_polarity": "Divine Feminine",
-        "relationship_to_free_will": "Archetype Embodier",
+        "relationship_to_free_will": "Pleasure Seeker",
         "free_will_description": (
-            "Individual personalities (collections of habits—which are frequently repeated "
-            "behaviors) are the combined effort of archetypal role models, including everything "
-            "from fictional characters to societal celebrities (and perhaps ancient gods in "
-            "polytheistic cultures)"
+            "Will is steered from the Sacral, about three inches below the navel: toward the "
+            "pleasant, away from the unpleasant, before the argument starts. Pleasure is real "
+            "information, and it is also a leash; Free Will at Purple lives in the ability to "
+            "tell one pleasure from another."
         ),
     },
     {
@@ -267,6 +267,9 @@ async def test_seed_stages_reconciles_stale_row(db_session: AsyncSession) -> Non
 
     reinserted = await seed_stages(db_session)
     assert reinserted == 0
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
 
     refreshed = await _fetch_stage(db_session, 1)
     assert refreshed.id == original_id
@@ -290,7 +293,55 @@ async def test_seed_stages_preserves_overview_url_on_reconcile(
     await db_session.commit()
 
     await seed_stages(db_session)
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
 
     refreshed = await _fetch_stage(db_session, 1)
     assert refreshed.aspect == "Agency"
     assert refreshed.overview_url == "https://example.test/stage-1"
+
+
+#: Stage 2's free-will archetype as the dataset carried it before #2915
+#: corrected it to the course's "Pleasure Seeker".  It survives only here, as
+#: the value an already-seeded database still holds on its first boot after the
+#: fix; the corrected value is read from ``STAGE_DEFINITIONS``, never retyped.
+_RETIRED_STAGE_2_ARCHETYPE = "Archetype Embodier"
+
+#: Stage 2's pre-#2915 free-will description (backup-era habits/personalities
+#: prose), paired with :data:`_RETIRED_STAGE_2_ARCHETYPE`.
+_RETIRED_STAGE_2_DESCRIPTION = (
+    "Individual personalities (collections of habits—which are frequently repeated "
+    "behaviors) are the combined effort of archetypal role models, including everything "
+    "from fictional characters to societal celebrities (and perhaps ancient gods in "
+    "polytheistic cultures)"
+)
+
+_STAGE_2 = 2
+
+
+@pytest.mark.asyncio
+async def test_seed_stages_corrects_retired_stage_2_free_will(db_session: AsyncSession) -> None:
+    """A stage-2 row seeded before #2915 is rewritten to the course archetype on boot."""
+    await seed_stages(db_session)
+    row = await _fetch_stage(db_session, _STAGE_2)
+    original_id = row.id
+    row.relationship_to_free_will = _RETIRED_STAGE_2_ARCHETYPE
+    row.free_will_description = _RETIRED_STAGE_2_DESCRIPTION
+    row.overview_url = "https://example.test/stage-2"
+    await db_session.commit()
+
+    reinserted = await seed_stages(db_session)
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
+
+    assert reinserted == 0
+    definition = next(d for d in STAGE_DEFINITIONS if d["stage_number"] == _STAGE_2)
+    refreshed = await _fetch_stage(db_session, _STAGE_2)
+    assert refreshed.id == original_id
+    assert refreshed.relationship_to_free_will == definition["relationship_to_free_will"]
+    assert refreshed.relationship_to_free_will != _RETIRED_STAGE_2_ARCHETYPE
+    assert refreshed.free_will_description == definition["free_will_description"]
+    assert refreshed.free_will_description != _RETIRED_STAGE_2_DESCRIPTION
+    assert refreshed.overview_url == "https://example.test/stage-2"

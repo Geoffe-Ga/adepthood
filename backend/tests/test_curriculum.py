@@ -40,7 +40,7 @@ _CANONICAL_STAGE_ONTOLOGY: dict[int, dict[str, str]] = {
         "spiral_dynamics_color": "Purple",
         "growing_up_stage": "Magic",
         "divine_gender_polarity": "Divine Feminine",
-        "relationship_to_free_will": "Archetype Embodier",
+        "relationship_to_free_will": "Pleasure Seeker",
     },
     3: {
         "category": "Love",

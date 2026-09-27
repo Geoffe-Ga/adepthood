@@ -285,7 +285,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   },
   2: {
     stageNumber: 2,
-    persona: 'Archetype Embodier',
+    persona: 'Pleasure Seeker',
     descriptor: 'Magick',
     practice: 'Tarot meditation',
     arrowLabel: 'Receptivity',
