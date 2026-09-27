@@ -299,7 +299,9 @@ MANIFEST: Mapping[str, ExportRule] = {
         "The writing. Encrypted at rest and decrypted on the way out, because "
         "an archive of ciphertext the account cannot read is not a copy of "
         "anything. This is the row the whole feature exists for.",
-        drop_columns=("vault_ref", "vault_tags"),
+        # ``idem_key`` is the digest of the retry token a create was sent under:
+        # transport bookkeeping, withheld exactly as ``feedbackreport``'s is.
+        drop_columns=("vault_ref", "vault_tags", "idem_key"),
     ),
     "licensebinding": Omitted(
         "The processor's sale identifier for the licence this account "
@@ -400,6 +402,9 @@ MANIFEST: Mapping[str, ExportRule] = {
         PromptResponse,
         "Answers to the weekly prompts — the account's writing, in reply to "
         "the curriculum's question.",
+        # The retry token's digest, not something the account wrote (see
+        # ``journalentry`` above).
+        drop_columns=("idem_key",),
     ),
     "revokedtoken": Omitted(
         "Expired JWT identifiers with no owner column at all. Nothing here "

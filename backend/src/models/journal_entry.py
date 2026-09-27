@@ -7,6 +7,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 from domain.constants import TOTAL_STAGES
 from domain.reflection_hierarchy import ReflectionLevel
+from security.idempotency import IDEMPOTENCY_DIGEST_COLUMN_WIDTH
 from services.journal_encryption import EncryptedString
 
 # The inclusive lower bound of a valid Aspect tag. The upper bound is
@@ -27,6 +28,7 @@ JOURNAL_TITLE_MAX_LENGTH = 200
 # partial index stays drift-free against the migration.
 _REFLECTION_SCOPE_COLUMN = Column("reflection_scope_key", String, nullable=True)
 _DELETED_AT_COLUMN = Column("deleted_at", DateTime(timezone=True), nullable=True)
+_IDEM_KEY_COLUMN = Column("idem_key", String(IDEMPOTENCY_DIGEST_COLUMN_WIDTH), nullable=True)
 
 if TYPE_CHECKING:
     from .completion_suggestion import CompletionSuggestion
@@ -186,6 +188,19 @@ class JournalEntry(SQLModel, table=True):
                 _DELETED_AT_COLUMN.is_(None),
             ),
         ),
+        # One entry per (user, Idempotency-Key digest), so a create retried after
+        # its answer was lost resolves to the row it already wrote (#2936). Unlike
+        # the scope index this one is deliberately NOT partial on ``deleted_at``:
+        # a key whose entry was since deleted stays spent, so a late retry can
+        # neither resurrect the deleted writing nor quietly write it again.
+        Index(
+            "ix_journalentry_user_idem_key",
+            "user_id",
+            "idem_key",
+            unique=True,
+            postgresql_where=_IDEM_KEY_COLUMN.is_not(None),
+            sqlite_where=_IDEM_KEY_COLUMN.is_not(None),
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -251,6 +266,14 @@ class JournalEntry(SQLModel, table=True):
     corpus_attempted_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # SHA-256 digest of ``(user_id, Idempotency-Key)`` for a keyed create
+    # (:func:`security.idempotency.hash_idem_key`); NULL for every unkeyed write,
+    # including the weekly-prompt mirror, whose dedup lives on ``promptresponse``.
+    # The raw header is never stored.
+    idem_key: str | None = Field(
+        default=None,
+        sa_column=Column(String(IDEMPOTENCY_DIGEST_COLUMN_WIDTH), nullable=True),
     )
     # BUG-JOURNAL-007: soft-delete column.  ``None`` = live row; non-None = deleted.
     deleted_at: datetime | None = Field(

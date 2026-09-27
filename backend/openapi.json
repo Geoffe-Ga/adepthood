@@ -16117,9 +16117,26 @@
         ]
       },
       "post": {
-        "description": "Create a journal message for the authenticated user.\n\nThe message body is sanitized at the router boundary\n(BUG-JOURNAL-003) so the row that lands in the DB has no control\ncharacters, zero-width, or bidi-override codepoints — defense\nagainst stored-XSS payloads in journal renderers and Trojan-Source\nsmuggling in log viewers.\n\n``user_practice_id`` and ``practice_session_id`` are authorized before the\nrow is constructed: an id that exists for nobody is a 404, another user's\nid is a 403, and neither can reach the session, so no forged link is ever\npersisted.",
+        "description": "Create a journal message for the authenticated user.\n\nThe message body is sanitized at the router boundary\n(BUG-JOURNAL-003) so the row that lands in the DB has no control\ncharacters, zero-width, or bidi-override codepoints — defense\nagainst stored-XSS payloads in journal renderers and Trojan-Source\nsmuggling in log viewers.\n\n``user_practice_id`` and ``practice_session_id`` are authorized before the\nrow is constructed -- and before any replay is looked up, so a replay can\nnever be used to skip the check: an id that exists for nobody is a 404,\nanother user's id is a 403, and neither can reach the session, so no\nforged link is ever persisted.\n\nA create carrying an ``Idempotency-Key`` this account has already used is\nanswered with the entry that key created (#2936): one row, 201, and no\nsecond vault write, corpus ingest or ``journal_entry_created`` event. The\nbody of the retry is not compared -- a client whose retry carries newer text\nmust PATCH it -- and a key whose entry was since deleted is a 404. An\nunkeyed create is always a new entry.",
         "operationId": "create_journal_entry_journal__post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -23464,7 +23481,7 @@
     },
     "/prompts/{week_number}/respond": {
       "post": {
-        "description": "Submit a response to a weekly prompt. Prevents duplicate responses.\n\nRefuses ``week_number > user_week`` so a single POST cannot leapfrog\nthe weekly pacing by driving ``max(week_number)`` up in one request.\nPaired with the ``count + 1``-based ``_get_user_week`` this makes\nthe server-derived week a monotone function of *contiguous*\ncompletion, not the highest value the client has ever submitted.\n\nDuplicate submissions are caught exclusively by the\n``uq_promptresponse_user_week`` constraint and surfaced as 409\nConflict (BUG-PROMPT-004).  The earlier 400-on-pre-check / 409-on-race\nsplit exposed clients to two distinct status codes for what is\nsemantically one condition; the constraint is the only observer that\nsees both rows in a TOCTOU race anyway, so we let it own the\ndecision and the response code stays uniform.\n\n``prompt_ordinal`` names which of the stage's prompts the response\nanswers; omitted, it is the prompt the week itself draws, so clients\nwritten against the one-prompt-per-week contract are unaffected.  An\nordinal the stage does not carry is a 404 — the same shape an unknown week\nalready gets — rather than a silent wrap-around onto a different prompt.",
+        "description": "Submit a response to a weekly prompt. Prevents duplicate responses.\n\nRefuses ``week_number > user_week`` so a single POST cannot leapfrog\nthe weekly pacing by driving ``max(week_number)`` up in one request.\nPaired with the ``count + 1``-based ``_get_user_week`` this makes\nthe server-derived week a monotone function of *contiguous*\ncompletion, not the highest value the client has ever submitted.\n\nDuplicate submissions are caught exclusively by the\n``uq_promptresponse_user_week`` constraint and surfaced as 409\nConflict (BUG-PROMPT-004).  The earlier 400-on-pre-check / 409-on-race\nsplit exposed clients to two distinct status codes for what is\nsemantically one condition; the constraint is the only observer that\nsees both rows in a TOCTOU race anyway, so we let it own the\ndecision and the response code stays uniform.\n\nThe one exception is the writer's own retry (#2936). A submission carrying\nan ``Idempotency-Key`` this account already answered this week under is\nanswered 201 with the stored detail, not 409: its first attempt landed and\nonly the answer was lost. Nothing is written and nothing is logged a second\ntime, and the retried body is not compared -- the stored response is what\ncomes back. The same key under another week is 409\n``idempotency_key_reused``.\n\n``prompt_ordinal`` names which of the stage's prompts the response\nanswers; omitted, it is the prompt the week itself draws, so clients\nwritten against the one-prompt-per-week contract are unaffected.  An\nordinal the stage does not carry is a 404 — the same shape an unknown week\nalready gets — rather than a silent wrap-around onto a different prompt.",
         "operationId": "submit_prompt_response_prompts__week_number__respond_post",
         "parameters": [
           {
@@ -23476,6 +23493,23 @@
               "minimum": 1,
               "title": "Week Number",
               "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
