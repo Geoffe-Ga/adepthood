@@ -597,6 +597,7 @@ function useRefPersist<T>(
   entryUnsettledRef: React.MutableRefObject<boolean>,
   initial: T,
   toPatch: (_value: T) => JournalEntryUpdate,
+  onConfirmed?: (_value: T, _stored: JournalMessage | null) => void,
 ): RefPersist<T> {
   const ref = useRef<T>(initial);
   const change = useCallback(
@@ -609,7 +610,9 @@ function useRefPersist<T>(
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
       if (entryIdRef.current == null) return { revertTo: null, state: null };
       try {
-        await journal.update(entryIdRef.current, toPatch(value));
+        const stored = await journal.update(entryIdRef.current, toPatch(value));
+        // Only a write the server accepted is ever reported as confirmed (#2935).
+        onConfirmed?.(value, stored);
         return { revertTo: null, state: 'saved' };
       } catch (error) {
         // A rapid superseding change already owns the ref and the UI — leave both
@@ -619,13 +622,14 @@ function useRefPersist<T>(
         // withdraw. Keep that safer truth selected and expose its retry path;
         // reverting to Personal would visually contradict persisted privacy.
         if (isVaultWithdrawalPending(error)) {
+          onConfirmed?.(value, null);
           return { revertTo: null, state: 'vaultWithdrawalPending' };
         }
         ref.current = previous;
         return { revertTo: previous, state: 'failed' };
       }
     },
-    [entryIdRef, entryUnsettledRef, toPatch],
+    [entryIdRef, entryUnsettledRef, toPatch, onConfirmed],
   );
   const seed = useCallback((value: T): void => {
     ref.current = value;
@@ -991,6 +995,13 @@ function usePersistControls(
   reporter: SaveReporter,
   entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
+  // Told of every tier the server ACCEPTED, with the tier it reports storing (#2935).
+  const tierConfirmedRef = useRef<TierConfirmed>(() => undefined);
+  const onTierConfirmed = useCallback(
+    (tier: JournalClassification, stored: JournalMessage | null) =>
+      tierConfirmedRef.current(stored?.classification ?? tier),
+    [],
+  );
   const {
     ref: classificationRef,
     change: changeClassification,
@@ -1000,6 +1011,7 @@ function usePersistControls(
     entryUnsettledRef,
     DEFAULT_TIER,
     classificationToPatch,
+    onTierConfirmed,
   );
   const {
     ref: chordRef,
@@ -1017,10 +1029,24 @@ function usePersistControls(
     classificationRef,
     chordRef,
     seedPersist,
+    tierConfirmedRef,
     persistClassification: useLanePersist(changeClassification, reporter, classificationFailure),
     persistChord: useLanePersist(changeChord, reporter, chordFailure),
   };
 }
+
+/** The tier/chord writers and seeds the draft saver hands on. */
+function persistPorts(persist: ReturnType<typeof usePersistControls>) {
+  return {
+    changeClassification: persist.persistClassification,
+    changeChord: persist.persistChord,
+    seedPersist: persist.seedPersist,
+    tierConfirmedRef: persist.tierConfirmedRef,
+  };
+}
+
+/** Receives each tier the server confirmed storing (#2935). */
+type TierConfirmed = (_tier: JournalClassification) => void;
 
 /** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
 type DraftWriters = SaveTimer & { finish: RunFinish };
@@ -1187,9 +1213,7 @@ function useDebouncedSave(
     save,
     flush: flushAndTrack,
     finish: finishAndTrack,
-    changeClassification: persist.persistClassification,
-    changeChord: persist.persistChord,
-    seedPersist: persist.seedPersist,
+    ...persistPorts(persist),
     seedDurableText: useDurableTextSeeder(refs.durableTextRef),
     cancelPending,
   };
@@ -1339,6 +1363,8 @@ interface CarryHold {
   typed: InitialText;
   baseline: InitialText;
   tier: JournalClassification | null;
+  /** The tier the server held when the entry loaded: confirmed until a write says otherwise. */
+  storedTier: JournalClassification;
 }
 
 interface MutableEntryState extends EntryState {
@@ -1471,6 +1497,7 @@ function carryHoldFor(
     typed: local,
     baseline: { title: baseline.title, body: baseline.body },
     tier: carriedTierEscalation(stored, baseline.classification),
+    storedTier: stored,
   };
 }
 
@@ -1677,17 +1704,21 @@ function strictEnough(hold: CarryHold, tier: JournalClassification): boolean {
 /** Said by Finish while held words wait on a stricter tier (#2935). */
 const CARRY_HELD_FINISH_ERROR = 'Cannot finish while carried words wait on a stricter tier.';
 
-type TierSettled = (_tier: JournalClassification) => void;
+type TierSettled = () => void;
 
 /** The writers the page uses, gated while a tier escalation is owed (#2935). */
 interface HeldTextGate {
   saving: ReturnType<typeof useDebouncedSave>;
   /** True while page text must not be written: an escalation is in flight or failed. */
   heldRef: React.MutableRefObject<boolean>;
-  /** Told after every tier write settles, so held words can be put back. */
+  /** Told after every tier write settles (success or not), to re-check release. */
   tierSettledRef: React.MutableRefObject<TierSettled>;
+  /** Told of every tier the server confirmed storing: the only proof of a tier. */
+  tierConfirmedRef: React.MutableRefObject<TierConfirmed>;
   /** Tier writes on their way (the writer's, a retry's, or an escalation). */
   tierWritesRef: React.MutableRefObject<number>;
+  /** The tiers those in-flight writes carry. */
+  inFlightTiersRef: React.MutableRefObject<JournalClassification[]>;
   /** True while any tier write is on its way, for what the page offers. */
   tierWriteInFlight: boolean;
 }
@@ -1724,18 +1755,12 @@ function useHeldTextGate(
       heldRef.current || carryHeldRef.current ? { durable: false, entryId } : flush(title, body),
     [flush, entryId],
   );
-  const gatedFinish = useCallback<RunFinish>(
-    async (title, body) => {
-      if (heldRef.current) throw new Error(CARRY_HELD_FINISH_ERROR);
-      return finish(title, body);
-    },
-    [finish],
-  );
-  const { tierWritesRef, tierWriteInFlight, track } = useTierWriteCount();
+  const gatedFinish = useGatedFinish(finish, heldRef);
+  const { track, ...writes } = useTierWriteCount();
   const reportingChange = useCallback(
     async (tier: JournalClassification) => {
-      const revertTo = await track(() => changeClassification(tier));
-      tierSettledRef.current(tier);
+      const revertTo = await track(tier, () => changeClassification(tier));
+      tierSettledRef.current();
       return revertTo;
     },
     [changeClassification, track],
@@ -1747,24 +1772,48 @@ function useHeldTextGate(
     finish: gatedFinish,
     changeClassification: reportingChange,
   };
-  return { saving: gated, heldRef, tierSettledRef, tierWritesRef, tierWriteInFlight };
+  return {
+    saving: gated,
+    heldRef,
+    tierSettledRef,
+    ...writes,
+    tierConfirmedRef: saving.tierConfirmedRef,
+  };
+}
+
+/** Finish refuses while held words wait on a stricter tier (#2935). */
+function useGatedFinish(finish: RunFinish, heldRef: React.MutableRefObject<boolean>): RunFinish {
+  return useCallback<RunFinish>(
+    async (title, body) => {
+      if (heldRef.current) throw new Error(CARRY_HELD_FINISH_ERROR);
+      return finish(title, body);
+    },
+    [finish, heldRef],
+  );
 }
 
 /** Count tier writes in flight: a ref for decisions, a flag for rendering. */
 function useTierWriteCount() {
   const tierWritesRef = useRef(0);
+  const inFlightTiersRef = useRef<JournalClassification[]>([]);
   const [tierWriteInFlight, setTierWriteInFlight] = useState(false);
-  const track = useCallback(async <T,>(write: () => Promise<T>): Promise<T> => {
-    tierWritesRef.current += 1;
-    setTierWriteInFlight(true);
-    try {
-      return await write();
-    } finally {
-      tierWritesRef.current -= 1;
-      setTierWriteInFlight(tierWritesRef.current > 0);
-    }
-  }, []);
-  return { tierWritesRef, tierWriteInFlight, track };
+  const track = useCallback(
+    async <T,>(tier: JournalClassification, write: () => Promise<T>): Promise<T> => {
+      tierWritesRef.current += 1;
+      inFlightTiersRef.current = [...inFlightTiersRef.current, tier];
+      setTierWriteInFlight(true);
+      try {
+        return await write();
+      } finally {
+        tierWritesRef.current -= 1;
+        const at = inFlightTiersRef.current.indexOf(tier);
+        inFlightTiersRef.current = inFlightTiersRef.current.filter((_t, i) => i !== at);
+        setTierWriteInFlight(tierWritesRef.current > 0);
+      }
+    },
+    [],
+  );
+  return { tierWritesRef, inFlightTiersRef, tierWriteInFlight, track };
 }
 
 /** Merge held words onto the page as it now stands, lift the gate, and save. */
@@ -1810,27 +1859,46 @@ function usePutBackOnce(
   );
 }
 
-/** Send the escalation held words need, then put them back or keep them waiting. */
+/** The server-confirmed tier: the last accepted write, else the tier it loaded with. */
+function useConfirmedTier(
+  tierConfirmedRef: React.MutableRefObject<TierConfirmed>,
+): (_hold: CarryHold) => JournalClassification {
+  const confirmedRef = useRef<JournalClassification | null>(null);
+  tierConfirmedRef.current = (tier) => {
+    confirmedRef.current = tier;
+  };
+  return useCallback((hold: CarryHold) => confirmedRef.current ?? hold.storedTier, []);
+}
+
+interface CarryEscalationState {
+  escalatingRef: React.MutableRefObject<boolean>;
+  setWaiting: (_waiting: boolean) => void;
+  holdRef: React.MutableRefObject<CarryHold | null>;
+  /** The tier the server has confirmed storing, as far as this page knows. */
+  confirmedTier: (_hold: CarryHold) => JournalClassification;
+}
+
+/**
+ * Send the escalation held words need (#2935). It chooses only WHAT to send:
+ * the stricter of the tier on screen and the typed-under tier (the planRetry
+ * rule, via isTierLooser), so nothing looser than the screen is ever sent. It
+ * never releases anything itself: release follows confirmed server writes
+ * alone (``tierSettledRef``). Afterwards, if the writer's stricter tier is
+ * still not the confirmed one (this write may have landed after theirs), it is
+ * re-sent once; words still held then wait, with Retry.
+ */
 function useCarryEscalation(
-  applyClassification: RetrySource['applyClassification'],
-  displayedTier: RetrySource['displayedTier'],
-  gate: Pick<HeldTextGate, 'heldRef'>,
-  putBack: (_hold: CarryHold) => void,
-  state: { escalatingRef: React.MutableRefObject<boolean>; setWaiting: (_w: boolean) => void },
+  retrySource: Pick<RetrySource, 'applyClassification' | 'displayedTier'>,
+  gate: Pick<HeldTextGate, 'heldRef' | 'tierWritesRef'>,
+  state: CarryEscalationState,
 ): (_hold: CarryHold) => Promise<void> {
-  const { heldRef } = gate;
-  const { escalatingRef, setWaiting } = state;
+  const { applyClassification, displayedTier } = retrySource;
+  const { heldRef, tierWritesRef } = gate;
+  const { escalatingRef, setWaiting, holdRef, confirmedTier } = state;
   return useCallback(
     async (hold: CarryHold) => {
-      // Never send a tier looser than the one on screen (the planRetry rule, via
-      // isTierLooser): when the page already shows one strict enough, nothing is
-      // sent and the words simply go back.
       const shown = displayedTier();
-      const sent = carriedTierEscalation(shown, hold.tier ?? shown);
-      if (sent == null) {
-        putBack(hold);
-        return;
-      }
+      const sent = carriedTierEscalation(shown, hold.tier ?? shown) ?? shown;
       escalatingRef.current = true;
       heldRef.current = true;
       try {
@@ -1838,13 +1906,23 @@ function useCarryEscalation(
       } finally {
         escalatingRef.current = false;
       }
-      // The writer chose a stricter tier while this was out; it may have landed
-      // after theirs, so re-assert theirs rather than leave the row lowered.
-      if (isTierLooser(sent, displayedTier())) await applyClassification(displayedTier());
-      if (strictEnough(hold, displayedTier())) putBack(hold);
-      else setWaiting(true);
+      const writerTier = displayedTier();
+      const unconfirmed = isTierLooser(confirmedTier(hold), writerTier);
+      if (tierWritesRef.current === 0 && isTierLooser(sent, writerTier) && unconfirmed) {
+        await applyClassification(writerTier);
+      }
+      if (holdRef.current === hold) setWaiting(true);
     },
-    [applyClassification, displayedTier, heldRef, putBack, escalatingRef, setWaiting],
+    [
+      applyClassification,
+      displayedTier,
+      heldRef,
+      tierWritesRef,
+      escalatingRef,
+      setWaiting,
+      holdRef,
+      confirmedTier,
+    ],
   );
 }
 
@@ -1868,27 +1946,30 @@ function useCarryRelease(
   retrySource: RetrySource,
   gate: HeldTextGate,
 ): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'> {
-  const { applyClassification, displayedTier } = retrySource;
-  const { heldRef, tierSettledRef, tierWritesRef } = gate;
+  const { heldRef, tierSettledRef, tierWritesRef, tierConfirmedRef, inFlightTiersRef } = gate;
   const [waiting, setWaiting] = useState(false);
   const holdRef = useRef(entry.carryHold);
   holdRef.current = entry.carryHold;
   const escalatingRef = useRef(false);
+  const confirmedTier = useConfirmedTier(tierConfirmedRef);
   const putBack = usePutBackOnce(holdRef, useCarryPutBack(entry, save, heldRef, setWaiting));
-  const escalate = useCarryEscalation(applyClassification, displayedTier, gate, putBack, {
+  const escalate = useCarryEscalation(retrySource, gate, {
     escalatingRef,
     setWaiting,
+    holdRef,
+    confirmedTier,
   });
 
   const releaseCarry = useCallback(async () => {
     const hold = holdRef.current;
     if (hold == null || escalatingRef.current || heldRef.current) return;
-    if (strictEnough(hold, displayedTier())) {
+    // Stored already at least as strict as the typed-under tier: nothing is owed.
+    if (hold.tier == null) {
       putBack(hold);
       return;
     }
     await escalate(hold);
-  }, [displayedTier, heldRef, putBack, escalate]);
+  }, [heldRef, putBack, escalate]);
   // Retry, from the footer or the leave dialog: re-send the tier the words were
   // typed under. Only a confirmed escalation puts them back (#2935).
   const resendCarryTier = useCallback(async () => {
@@ -1897,13 +1978,14 @@ function useCarryRelease(
     if (hold == null || escalatingRef.current || tierWritesRef.current > 0) return;
     await escalate(hold);
   }, [escalate, tierWritesRef]);
-  tierSettledRef.current = (tier) => {
-    if (displayedTier() !== tier) return;
+  tierSettledRef.current = () => {
     const hold = holdRef.current;
-    // Only a confirmed tier at least as strict as the one the words were typed
-    // under lifts the hold; a looser choice leaves them (and the gate) as they are.
-    // The writer's own confirmed stricter choice counts even mid-escalation.
-    if (hold != null && heldRef.current && strictEnough(hold, tier)) putBack(hold);
+    // Release only when the tier the server CONFIRMED is at least as strict as
+    // the typed-under tier. Failures and optimistic taps never count, and while a
+    // looser choice of the writer's is still out, the words stay held.
+    if (hold == null || !heldRef.current) return;
+    if (inFlightTiersRef.current.some((tier) => !strictEnough(hold, tier))) return;
+    if (strictEnough(hold, confirmedTier(hold))) putBack(hold);
   };
   return {
     releaseCarry,

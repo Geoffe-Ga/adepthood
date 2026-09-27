@@ -1106,4 +1106,229 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       });
     });
   });
+
+  describe('release follows confirmed server writes only (#2935 round 7)', () => {
+    const STRICTNESS: Record<JournalClassification, number> = {
+      public: 0,
+      personal: 1,
+      intimate: 2,
+    };
+
+    /**
+     * A server double: every tier PATCH waits for the test to settle it, and the
+     * row's tier (``row``) moves only when one succeeds. Each message PATCH
+     * records the row's tier at the moment it was sent.
+     */
+    function serverDouble() {
+      const tierWrites: {
+        tier: JournalClassification;
+        settle: (ok: boolean) => Promise<void>;
+      }[] = [];
+      const messages: { message: string; rowTier: JournalClassification }[] = [];
+      const state = {
+        row: 'public' as JournalClassification,
+        autoSettle: false,
+        /** When set, a successful tier write stores (and reports) this tier instead. */
+        storesAs: null as JournalClassification | null,
+      };
+      mockUpdate.mockImplementation((_id, payload) => {
+        const p = payload as { classification?: JournalClassification; message?: string };
+        if (p.classification != null) {
+          const tier = p.classification;
+          if (state.autoSettle) {
+            state.row = tier;
+            return Promise.resolve(entry({ classification: tier }));
+          }
+          const write = deferred<JournalMessage>();
+          tierWrites.push({
+            tier,
+            settle: async (ok) => {
+              await act(async () => {
+                if (ok) {
+                  state.row = state.storesAs ?? tier;
+                  write.resolve(entry({ classification: state.row }));
+                } else {
+                  write.reject(new Error('network'));
+                }
+              });
+              await advance(0);
+            },
+          });
+          return write.promise;
+        }
+        if (p.message != null) messages.push({ message: p.message, rowTier: state.row });
+        return Promise.resolve(entry({ classification: state.row }));
+      });
+      return { tierWrites, messages, state };
+    }
+
+    /** Stored public, words typed under Personal, the escalation to Personal out. */
+    async function escalationOut() {
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      const server = serverDouble();
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await waitFor(() => expect(server.tierWrites).toHaveLength(1));
+      expect(server.tierWrites[0]?.tier).toBe('personal');
+      return { screen, server };
+    }
+
+    async function tapTier(screen: Screen, tier: JournalClassification) {
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId(`privacy-tier-${tier}`),
+      );
+      await advance(0);
+    }
+
+    function carried(server: ReturnType<typeof serverDouble>) {
+      return server.messages.filter((m) => m.message.includes(TYPED));
+    }
+
+    it('trusts the tier the server reports storing, not the tier it was sent', async () => {
+      const { screen, server } = await escalationOut();
+      server.state.storesAs = 'public';
+
+      await server.tierWrites[0]?.settle(true);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.messages).toEqual([]);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+    });
+
+    it('a failed re-assert never releases the held words', async () => {
+      const { screen, server } = await escalationOut();
+      await tapTier(screen, 'intimate');
+      server.state.storesAs = 'public';
+      await server.tierWrites[1]?.settle(true);
+      server.state.storesAs = null;
+      await server.tierWrites[0]?.settle(false);
+      expect(server.tierWrites.map((w) => w.tier)).toEqual(['personal', 'intimate', 'intimate']);
+
+      await server.tierWrites[2]?.settle(false);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.messages).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+    });
+
+    it('repro B: tapping the shown tier then failing never releases', async () => {
+      const { screen, server } = await escalationOut();
+      await tapTier(screen, 'personal');
+      expect(server.tierWrites).toHaveLength(2);
+
+      await server.tierWrites[1]?.settle(false);
+      await server.tierWrites[0]?.settle(false);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.messages).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+      expect(screen.getByRole('button', { name: RETRY_NAME })).toBeTruthy();
+    });
+
+    it('repro A: a stricter tap and its re-assert both failing never release', async () => {
+      const { screen, server } = await escalationOut();
+      await tapTier(screen, 'intimate');
+
+      await server.tierWrites[0]?.settle(false);
+      for (let i = 1; i < server.tierWrites.length; i += 1) {
+        await server.tierWrites[i]?.settle(false);
+      }
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.messages).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+      expect(screen.getByRole('button', { name: RETRY_NAME })).toBeTruthy();
+    });
+
+    it('releases once, under the confirmed tier, when the tap succeeds and the escalation fails', async () => {
+      const { screen, server } = await escalationOut();
+      await tapTier(screen, 'personal');
+
+      await server.tierWrites[1]?.settle(true);
+      await server.tierWrites[0]?.settle(false);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(carried(server)).toEqual([expect.objectContaining({ rowTier: 'personal' })]);
+      expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+    });
+
+    it('never releases when every tier write fails', async () => {
+      const { screen, server } = await escalationOut();
+      await server.tierWrites[0]?.settle(false);
+      fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+      await advance(0);
+      await server.tierWrites[1]?.settle(false);
+      await tapTier(screen, 'intimate');
+      for (let i = 2; i < server.tierWrites.length; i += 1) {
+        await server.tierWrites[i]?.settle(false);
+      }
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.messages).toEqual([]);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+    });
+
+    it('releases exactly once when a success arrives after a failure', async () => {
+      const { screen, server } = await escalationOut();
+      await tapTier(screen, 'intimate');
+
+      await server.tierWrites[0]?.settle(false);
+      await server.tierWrites[1]?.settle(true);
+      server.state.autoSettle = true;
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(carried(server)).toHaveLength(1);
+      expect(carried(server)[0]?.rowTier).toBe('intimate');
+      expect(tierSelected(screen, 'intimate')).toBe(true);
+    });
+
+    type Tap = 'personal' | 'intimate' | 'public';
+    type Order = 'escalation-first' | 'tap-first';
+    const TAPS: Tap[] = ['personal', 'intimate', 'public'];
+    const ORDERS: Order[] = ['escalation-first', 'tap-first'];
+    const cases: [boolean, Tap, boolean, Order][] = [true, false].flatMap((escalationOk) =>
+      TAPS.flatMap((tap) =>
+        [true, false].flatMap((tapOk) =>
+          ORDERS.map((order): [boolean, Tap, boolean, Order] => [escalationOk, tap, tapOk, order]),
+        ),
+      ),
+    );
+
+    it.each(cases)(
+      'escalation ok=%s, tap %s ok=%s, %s: carried words go out only under a confirmed strict tier',
+      async (escalationOk, tap, tapOk, order) => {
+        const { screen, server } = await escalationOut();
+        await tapTier(screen, tap);
+        const [escalation, writer] = [server.tierWrites[0], server.tierWrites[1]];
+        const firstPair: [typeof escalation, boolean][] =
+          order === 'escalation-first'
+            ? [
+                [escalation, escalationOk],
+                [writer, tapOk],
+              ]
+            : [
+                [writer, tapOk],
+                [escalation, escalationOk],
+              ];
+        for (const [write, ok] of firstPair) await write?.settle(ok);
+        // Any re-assert the page sends afterwards simply succeeds.
+        server.state.autoSettle = true;
+        for (const later of server.tierWrites.slice(2)) await later.settle(true);
+        await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+        const sent = carried(server);
+        expect(sent.length).toBeLessThanOrEqual(1);
+        for (const m of sent) {
+          expect(STRICTNESS[m.rowTier]).toBeGreaterThanOrEqual(STRICTNESS.personal);
+        }
+        if (sent.length === 0) expect(bodyValue(screen)).not.toContain(TYPED);
+      },
+    );
+  });
 });
