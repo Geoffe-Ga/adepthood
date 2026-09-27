@@ -267,6 +267,9 @@ async def test_seed_stages_reconciles_stale_row(db_session: AsyncSession) -> Non
 
     reinserted = await seed_stages(db_session)
     assert reinserted == 0
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
 
     refreshed = await _fetch_stage(db_session, 1)
     assert refreshed.id == original_id
@@ -290,6 +293,9 @@ async def test_seed_stages_preserves_overview_url_on_reconcile(
     await db_session.commit()
 
     await seed_stages(db_session)
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
 
     refreshed = await _fetch_stage(db_session, 1)
     assert refreshed.aspect == "Agency"
@@ -326,6 +332,9 @@ async def test_seed_stages_corrects_retired_stage_2_free_will(db_session: AsyncS
     await db_session.commit()
 
     reinserted = await seed_stages(db_session)
+    # Discard anything seed_stages left unflushed or uncommitted, so the
+    # re-read below sees only what reached the database.
+    await db_session.rollback()
 
     assert reinserted == 0
     definition = next(d for d in STAGE_DEFINITIONS if d["stage_number"] == _STAGE_2)
