@@ -50,7 +50,12 @@ export interface UseReflectionModeArgs {
   bodyRef: MutableRefObject<string>;
   /** The screen's body change handler (updates state + schedules the draft save). */
   onChangeBody: (_next: string) => void;
-  /** Persist the draft now and resolve to the entry id (single-flight writer). */
+  /**
+   * Persist the draft now and resolve to the entry id -- or null unless the
+   * body is DURABLE. Every fold (a single tap and a batch alike) marks quotes
+   * included only against a non-null id, so a failed write leaves them all on
+   * the retry list, and a retry re-flushes before it re-marks.
+   */
   flush: () => Promise<number | null>;
 }
 

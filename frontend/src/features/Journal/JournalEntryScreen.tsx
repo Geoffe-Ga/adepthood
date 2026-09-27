@@ -443,6 +443,14 @@ interface AutosaveApi {
   onChangeChord: (_next: AspectChordValue) => void;
   /** Persist the latest text immediately and resolve to the entry id (or null). */
   flush: () => Promise<number | null>;
+  /**
+   * Persist the latest text and resolve to the entry id ONLY when that text is
+   * durable on the server; null when the write failed, even though the entry
+   * already has an id. For a caller about to record something ABOUT the saved
+   * body -- a quote fold marking the quote included on it (#2885) -- where the
+   * id alone would vouch for words the server does not hold.
+   */
+  flushDurable: () => Promise<number | null>;
   /** Persist only if needed and report durable success independently of an id. */
   flushForExit: () => Promise<boolean>;
   /**
@@ -1203,6 +1211,7 @@ function useBoundWriters(
   adoptStoredBody: (_stored: string) => void,
 ): {
   flushNow: () => Promise<number | null>;
+  flushDurableNow: () => Promise<number | null>;
   flushForExitNow: () => Promise<boolean>;
   finishNow: () => Promise<number>;
 } {
@@ -1210,6 +1219,10 @@ function useBoundWriters(
     async () => (await flush(titleRef.current, bodyRef.current)).entryId,
     [flush, titleRef, bodyRef],
   );
+  const flushDurableNow = useCallback(async () => {
+    const result = await flush(titleRef.current, bodyRef.current);
+    return result.durable ? result.entryId : null;
+  }, [flush, titleRef, bodyRef]);
   const flushForExitNow = useCallback(async () => {
     for (;;) {
       const requested = { title: titleRef.current, body: bodyRef.current };
@@ -1228,7 +1241,7 @@ function useBoundWriters(
     adoptStoredBody(await settleStoredBody(finished, sent));
     return finished.id;
   }, [finish, titleRef, bodyRef, adoptStoredBody, settleStoredBody]);
-  return { flushNow, flushForExitNow, finishNow };
+  return { flushNow, flushDurableNow, flushForExitNow, finishNow };
 }
 
 /** Referentially-stable change handlers; each save reads the other field's ref. */
@@ -1559,6 +1572,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
   flush: () => Promise<number | null>;
+  flushDurable: () => Promise<number | null>;
   flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
 }
@@ -1623,7 +1637,7 @@ function useAutosaveBindings(
     entry.setBody,
   );
   const adoptStoredBody = useAdoptStoredBody(entry.bodyRef, entry.setBody);
-  const { flushNow, flushForExitNow, finishNow } = useBoundWriters(
+  const { flushNow, flushDurableNow, flushForExitNow, finishNow } = useBoundWriters(
     saving.flush,
     saving.finish,
     entry.titleRef,
@@ -1643,6 +1657,7 @@ function useAutosaveBindings(
     onChangeTitle,
     onChangeBody,
     flush: flushNow,
+    flushDurable: flushDurableNow,
     flushForExit: flushForExitNow,
     finish: finishNow,
     ...choices,
@@ -2684,7 +2699,9 @@ function useReflectionComposer(autosave: AutosaveApi) {
     reflectionScopeKey: autosave.reflectionScopeKey,
     bodyRef: reflectionBodyRef,
     onChangeBody: autosave.onChangeBody,
-    flush: autosave.flush,
+    // Durable-only: a fold marks quotes included on the saved review, so a
+    // failed body write must leave them pending (and retryable), never marked.
+    flush: autosave.flushDurable,
   });
   return { ...mode, sourcesOpen, sourcesToggle, closeSources };
 }

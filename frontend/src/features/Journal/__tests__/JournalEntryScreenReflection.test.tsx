@@ -1127,3 +1127,95 @@ describe('JournalEntryScreen -- a selection handed over from Promoted quotes (#2
     }
   });
 });
+
+// Phase C review of #2885: a fold marks a quote included on the review only
+// once the review's body -- the one holding the quote's words -- is durable.
+describe('JournalEntryScreen -- no inclusion mark over a failed review write (#2885)', () => {
+  const { inclusionRetryHint } = require('../quoteFoldCopy') as {
+    inclusionRetryHint: (_n: number) => string;
+  };
+
+  function openExistingReview() {
+    mockGet.mockResolvedValue(
+      entry({
+        id: 42,
+        message: 'What I wrote on Monday.',
+        tag: 'hierarchical_reflection' as JournalMessage['tag'],
+        reflection_level: 'week',
+        reflection_scope_key: 'c1:w1',
+      }),
+    );
+    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    return renderScreen({ entryId: 42 }, { autosaveDelayMs: 100 });
+  }
+
+  /** Let the review load (fake timers hold its promises until advanced). */
+  async function hydrate(): Promise<void> {
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  it('sends no PATCH when the body write fails, keeps every quote retryable, and retry re-saves first', async () => {
+    mockUpdate.mockRejectedValue({ status: 500, detail: 'boom' });
+    jest.useFakeTimers();
+    try {
+      const { findByTestId, getByTestId, getByLabelText } = openExistingReview();
+      await hydrate();
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-batch'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalled();
+      expect(mockSetIncluded).not.toHaveBeenCalled();
+      expect(getByTestId('quote-inclusion-hint-text').props.children).toBe(inclusionRetryHint(2));
+
+      mockUpdate.mockReset();
+      mockUpdate.mockResolvedValue(entry({ id: 42 }));
+      await act(async () => {
+        fireEvent.press(getByLabelText('Try again'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ message: expect.stringContaining('> to the river') }),
+      );
+      expect(mockSetIncluded.mock.calls).toEqual([
+        [90, 42],
+        [91, 42],
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a single tap sends no PATCH either when the body write fails', async () => {
+    mockUpdate.mockRejectedValue({ status: 500, detail: 'boom' });
+    jest.useFakeTimers();
+    try {
+      const { findByTestId } = openExistingReview();
+      await hydrate();
+      await act(async () => {
+        fireEvent.press(await findByTestId('reflection-sources-toggle'));
+      });
+      await act(async () => {
+        fireEvent.press(await findByTestId('stub-insert-quote'));
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      expect(mockUpdate).toHaveBeenCalled();
+      expect(mockSetIncluded).not.toHaveBeenCalled();
+      expect(await findByTestId('quote-inclusion-hint')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
