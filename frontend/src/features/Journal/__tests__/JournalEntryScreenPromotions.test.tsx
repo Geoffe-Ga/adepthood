@@ -80,6 +80,7 @@ jest.mock('@/navigation/hooks', () => ({
 }));
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+jest.mock('@/storage/promoteExplainerStorage', () => require('./promoteExplainerTestKit'));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 

@@ -15,8 +15,13 @@
  * keep appearing does nothing to keep it.
  */
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text } from 'react-native';
 
+import {
+  DontShowAgainCheckbox,
+  ExplainerActionPair,
+  explainerStyles as styles,
+} from './ExplainerDialogParts';
 import JournalModalShell from './JournalModalShell';
 import {
   RESONANCE_EXPLAINER_CANCEL,
@@ -30,15 +35,6 @@ import {
   RESONANCE_EXPLAINER_TITLE,
   RESONANCE_EXPLAINER_WHAT,
 } from './resonanceExplainerCopy';
-
-import {
-  BORDER_RADIUS,
-  colors,
-  editorialType,
-  journalLayout,
-  spacing,
-  touchTarget,
-} from '@/design/tokens';
 
 export interface ResonanceExplainerDialogProps {
   visible: boolean;
@@ -55,69 +51,31 @@ export interface ResonanceExplainerDialogProps {
   onCancel: () => void;
 }
 
-/** The tick box, as a real checkbox rather than a pressable label. */
-function DontShowAgain({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}): React.JSX.Element {
-  return (
-    <TouchableOpacity
-      style={styles.checkboxRow}
-      onPress={onToggle}
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked }}
-      accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
-      testID="resonance-explainer-dont-show"
-    >
-      <Text style={styles.checkboxMark}>{checked ? '✓' : ' '}</Text>
-      <Text style={styles.checkboxLabel}>{RESONANCE_EXPLAINER_DONT_SHOW}</Text>
-    </TouchableOpacity>
-  );
-}
-
-/**
- * The two arms, side by side and the same size.
- *
- * Extracted as its own component so the fact that they are one row of equal
- * halves is stated once, in one place, rather than being a property of how the
- * card happens to be laid out. Only the fill differs, and it names which arm
- * spends money — not which one we would rather the reader took.
- */
-function ExplainerActions({
+/** The two arms, in the disclosure's own words; the charged one waits on the payer. */
+function ResonanceArms({
   continueDisabled,
   onContinue,
   onCancel,
-}: {
-  continueDisabled: boolean;
-  onContinue: () => void;
-  onCancel: () => void;
-}): React.JSX.Element {
+}: Pick<
+  ResonanceExplainerDialogProps,
+  'continueDisabled' | 'onContinue' | 'onCancel'
+>): React.JSX.Element {
   return (
-    <View style={styles.actions}>
-      <TouchableOpacity
-        style={styles.action}
-        onPress={onCancel}
-        accessibilityRole="button"
-        accessibilityLabel={RESONANCE_EXPLAINER_CANCEL_A11Y}
-        testID="resonance-explainer-cancel"
-      >
-        <Text style={styles.cancelLabel}>{RESONANCE_EXPLAINER_CANCEL}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.action, styles.continue, continueDisabled && styles.continueDisabled]}
-        onPress={onContinue}
-        disabled={continueDisabled}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: continueDisabled }}
-        accessibilityLabel={RESONANCE_EXPLAINER_CONTINUE_A11Y}
-        testID="resonance-explainer-continue"
-      >
-        <Text style={styles.continueLabel}>{RESONANCE_EXPLAINER_CONTINUE}</Text>
-      </TouchableOpacity>
-    </View>
+    <ExplainerActionPair
+      cancel={{
+        label: RESONANCE_EXPLAINER_CANCEL,
+        accessibilityLabel: RESONANCE_EXPLAINER_CANCEL_A11Y,
+        testID: 'resonance-explainer-cancel',
+        onPress: onCancel,
+      }}
+      proceed={{
+        label: RESONANCE_EXPLAINER_CONTINUE,
+        accessibilityLabel: RESONANCE_EXPLAINER_CONTINUE_A11Y,
+        testID: 'resonance-explainer-continue',
+        onPress: onContinue,
+      }}
+      proceedDisabled={continueDisabled}
+    />
   );
 }
 
@@ -152,8 +110,14 @@ function ResonanceExplainerDialog({
       <Text style={styles.body} testID="resonance-explainer-choice">
         {RESONANCE_EXPLAINER_CHOICE}
       </Text>
-      <DontShowAgain checked={dontShowAgain} onToggle={onToggleDontShowAgain} />
-      <ExplainerActions
+      <DontShowAgainCheckbox
+        checked={dontShowAgain}
+        onToggle={onToggleDontShowAgain}
+        label={RESONANCE_EXPLAINER_DONT_SHOW}
+        accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
+        testID="resonance-explainer-dont-show"
+      />
+      <ResonanceArms
         continueDisabled={continueDisabled}
         onContinue={onContinue}
         onCancel={onCancel}
@@ -161,70 +125,5 @@ function ResonanceExplainerDialog({
     </JournalModalShell>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    width: '100%',
-    maxWidth: journalLayout.pageMaxWidth,
-    alignSelf: 'center',
-  },
-  title: {
-    ...editorialType.title,
-    color: colors.paper.ink,
-  },
-  body: {
-    ...editorialType.note,
-    color: colors.paper.inkSoft,
-    paddingTop: spacing(1),
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing(1),
-    minHeight: touchTarget.minimum,
-    marginTop: spacing(1),
-  },
-  checkboxMark: {
-    ...editorialType.action,
-    color: colors.paper.ink,
-    minWidth: spacing(2.5),
-    textAlign: 'center',
-    borderWidth: 1,
-    borderColor: colors.paper.inkSoft,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  checkboxLabel: {
-    ...editorialType.action,
-    color: colors.paper.ink,
-    flexShrink: 1,
-  },
-  /** Both arms in one row; ``action`` below gives each of them the same half. */
-  actions: {
-    flexDirection: 'row',
-    gap: spacing(1),
-    marginTop: spacing(1.5),
-  },
-  action: {
-    flex: 1,
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: BORDER_RADIUS.md,
-  },
-  continue: {
-    backgroundColor: colors.primary,
-  },
-  continueDisabled: {
-    opacity: 0.45,
-  },
-  continueLabel: {
-    ...editorialType.action,
-    color: colors.text.light,
-  },
-  cancelLabel: {
-    ...editorialType.action,
-    color: colors.paper.ink,
-  },
-});
 
 export default ResonanceExplainerDialog;

@@ -8,7 +8,6 @@ import { CategoryStep } from './components/CategoryStep';
 import { ImpactPicker } from './components/ImpactPicker';
 import { QuestionFields } from './components/QuestionFields';
 import { SubmitStatus } from './components/SubmitStatus';
-import { announceOnIos } from './feedbackAnnounce';
 import { FEEDBACK_COMPOSER_COPY } from './feedbackCopy';
 import { focusHost, restoreFeedbackOrigin } from './feedbackFocus';
 import { FEEDBACK_SUCCESS_COPY } from './feedbackOutcome';
@@ -19,6 +18,7 @@ import type { FeedbackReceipt } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent, focusHostStyle, ink, rhythm, SPACING, type as typeRamp } from '@/design/tokens';
+import { announceOnIos } from '@/utils/announceOnIos';
 
 /**
  * The beta feedback composer (#2898): choose what kind of report this is, answer

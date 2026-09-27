@@ -39,7 +39,14 @@ function dismissedKey(): string {
 
 /** Record (or clear) this account's "don't show the cost note again" answer. */
 export async function saveResonanceExplainerDismissed(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(dismissedKey(), String(value));
+  // Never rejects: callers fire it and forget (the answer is already held in
+  // memory), so a failed write (quota exceeded, storage blocked) is reported
+  // here rather than escaping as an unhandled rejection — the disclosure simply shows again next session.
+  try {
+    await AsyncStorage.setItem(dismissedKey(), String(value));
+  } catch (err) {
+    console.warn('[resonanceExplainerStorage] failed to save the dismissal flag', err);
+  }
 }
 
 /**
