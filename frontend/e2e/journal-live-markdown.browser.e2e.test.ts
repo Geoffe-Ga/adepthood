@@ -46,51 +46,103 @@ async function selectRange(field: Locator, start: number, end: number): Promise<
   );
 }
 
+/** Consecutive animation frames a glyph must hold still before it is measured. */
+const SETTLED_FRAMES = 2;
+/** The most frames to wait for a scroll to come to rest before measuring anyway. */
+const MAX_SETTLE_FRAMES = 60;
+
+interface GlyphMeasure {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** The glyph's vertical centre, as a distance from the middle of the field's own line. */
+  offsetFromLineMiddle: number;
+}
+
 /**
  * The viewport rect of the mirror character that draws body index ``index``,
- * scrolled to the middle of the viewport first: a point below the fold hits no
- * element at all, so a click there would leave the caret where it was and read
- * as a false mismatch.
+ * and where its centre falls in the textarea's own line box -- both read in
+ * ONE frame, once the page has stopped scrolling.
+ *
+ * The character is scrolled to the middle of the viewport first: a point below
+ * the fold hits no element at all, so a click there would leave the caret where
+ * it was and read as a false mismatch. The glyph and the field are read in the
+ * same frame because two separate reads race a wheel scroll that is still
+ * settling: one box moves between them, and the gap measures the scroll, not
+ * the register.
  */
+async function measureGlyph(page: Page, index: number): Promise<GlyphMeasure> {
+  return page.getByTestId('journal-body-mirror').evaluate(
+    async (mirror, { target, settled, maxFrames }) => {
+      function findGlyph(): Range {
+        const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
+        let offset = 0;
+        for (let node = walker.nextNode(); node != null; node = walker.nextNode()) {
+          const length = node.textContent?.length ?? 0;
+          if (target < offset + length) {
+            const range = document.createRange();
+            range.setStart(node, target - offset);
+            range.setEnd(node, target - offset + 1);
+            node.parentElement?.scrollIntoView({ block: 'center' });
+            return range;
+          }
+          offset += length;
+        }
+        throw new Error(`mirror has no character ${target}`);
+      }
+      function fieldLineTop(field: HTMLTextAreaElement): { top: number; lineHeight: number } {
+        const style = getComputedStyle(field);
+        return {
+          top:
+            field.getBoundingClientRect().top +
+            Number.parseFloat(style.borderTopWidth) +
+            Number.parseFloat(style.paddingTop),
+          lineHeight: Number.parseFloat(style.lineHeight),
+        };
+      }
+      function read(glyph: Range, field: HTMLTextAreaElement): GlyphMeasure {
+        const rect = glyph.getClientRects()[0] ?? glyph.getBoundingClientRect();
+        const line = fieldLineTop(field);
+        const centreY = rect.top + rect.height / 2;
+        const intoLine =
+          (((centreY - line.top) % line.lineHeight) + line.lineHeight) % line.lineHeight;
+        return {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          offsetFromLineMiddle: Math.abs(intoLine - line.lineHeight / 2),
+        };
+      }
+      const frame = (): Promise<void> =>
+        new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      async function settle(glyph: Range, field: HTMLTextAreaElement): Promise<GlyphMeasure> {
+        let last = read(glyph, field);
+        let still = 0;
+        for (let waited = 0; still < settled && waited < maxFrames; waited += 1) {
+          await frame();
+          const next = read(glyph, field);
+          still = next.top === last.top && next.left === last.left ? still + 1 : 0;
+          last = next;
+        }
+        return last;
+      }
+      const field = document.querySelector('[data-testid="journal-body-input"]');
+      if (!(field instanceof HTMLTextAreaElement)) throw new Error('no journal body field');
+      return settle(findGlyph(), field);
+    },
+    { target: index, settled: SETTLED_FRAMES, maxFrames: MAX_SETTLE_FRAMES },
+  );
+}
+
+/** The viewport rect of the mirror character for ``index``, measured once scrolling settles. */
 async function mirrorCharRect(
   page: Page,
   index: number,
 ): Promise<{ left: number; top: number; width: number; height: number }> {
-  return page.getByTestId('journal-body-mirror').evaluate((mirror, target) => {
-    const walker = document.createTreeWalker(mirror, NodeFilter.SHOW_TEXT);
-    let offset = 0;
-    for (let node = walker.nextNode(); node != null; node = walker.nextNode()) {
-      const length = node.textContent?.length ?? 0;
-      if (target < offset + length) {
-        const range = document.createRange();
-        range.setStart(node, target - offset);
-        range.setEnd(node, target - offset + 1);
-        node.parentElement?.scrollIntoView({ block: 'center' });
-        const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
-        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-      }
-      offset += length;
-    }
-    throw new Error(`mirror has no character ${target}`);
-  }, index);
-}
-
-/**
- * Where the glyph's vertical centre falls inside the textarea's own line box,
- * as a distance from that line's middle. The two layers share a line height,
- * so a glyph drawn in register sits at the middle of the field's line.
- */
-async function offsetFromFieldLineMiddle(page: Page, centreY: number): Promise<number> {
-  return body(page).evaluate((element, y) => {
-    const style = getComputedStyle(element);
-    const lineHeight = Number.parseFloat(style.lineHeight);
-    const firstLineTop =
-      element.getBoundingClientRect().top +
-      Number.parseFloat(style.borderTopWidth) +
-      Number.parseFloat(style.paddingTop);
-    const intoLine = (((y - firstLineTop) % lineHeight) + lineHeight) % lineHeight;
-    return Math.abs(intoLine - lineHeight / 2);
-  }, centreY);
+  const { left, top, width, height } = await measureGlyph(page, index);
+  return { left, top, width, height };
 }
 
 /**
@@ -99,15 +151,13 @@ async function offsetFromFieldLineMiddle(page: Page, centreY: number): Promise<n
  * caret on exactly that character.
  */
 async function expectCaretLandsOn(page: Page, index: number): Promise<void> {
-  const rect = await mirrorCharRect(page, index);
-  expect(rect.width).toBeGreaterThan(0);
-  const centreY = rect.top + rect.height / 2;
+  const glyph = await measureGlyph(page, index);
+  expect(glyph.width).toBeGreaterThan(0);
+  const centreY = glyph.top + glyph.height / 2;
   expect(centreY).toBeGreaterThan(0);
   expect(centreY).toBeLessThan(page.viewportSize()?.height ?? 0);
-  expect(await offsetFromFieldLineMiddle(page, centreY)).toBeLessThanOrEqual(
-    OVERLAY_ALIGNMENT_TOLERANCE_PX,
-  );
-  await page.mouse.click(rect.left + rect.width * CARET_PROBE_FRACTION, centreY);
+  expect(glyph.offsetFromLineMiddle).toBeLessThanOrEqual(OVERLAY_ALIGNMENT_TOLERANCE_PX);
+  await page.mouse.click(glyph.left + glyph.width * CARET_PROBE_FRACTION, centreY);
   expect(await selection(body(page))).toEqual([index, index]);
 }
 
