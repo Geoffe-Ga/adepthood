@@ -26,6 +26,7 @@ const mockReportException = jest.fn();
 
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
+jest.mock('@/storage/promoteExplainerStorage', () => require('./promoteExplainerTestKit'));
 jest.mock('@/observability/sentry', () => ({
   reportException: (...a: unknown[]) => mockReportException(...a),
   initErrorMonitoring: () => false,

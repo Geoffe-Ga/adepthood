@@ -69,6 +69,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-markdown.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
+  'journal-promote-explainer.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-promoted-quotes-screen.browser.e2e.test.ts',

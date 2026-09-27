@@ -2,6 +2,9 @@ import { expect, test } from '@playwright/test';
 
 import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
+/** ``accent.primary`` (#a5572f) as the browser computes it. */
+const ACCENT_PRIMARY_RGB = 'rgb(165, 87, 47)';
+
 test('a reader can promote a selected quote, reload it, and remove it over the real wire', async ({
   page,
 }) => {
@@ -23,8 +26,26 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   const entryId = ((await created.json()) as { id: number }).id;
   await expect(page.getByTestId('promote-quote-button')).toBeVisible();
   await page.getByTestId('promote-quote-button').click();
+  // A fresh account meets the one-time promote explainer first (#2864).
+  await expect(page.getByTestId('promote-explainer-card')).toBeVisible();
+  await page.getByRole('button', { name: 'Choose the passage to promote' }).click();
 
   const selection = page.locator('textarea[data-testid="quote-select-input"]');
+  // The field is caret-hidden and wears no browser ring, so its only focus
+  // signal is the accent rule it lights on focus (#2952, WCAG 2.4.7).
+  const rule = () =>
+    selection.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { outline: style.outlineStyle, color: style.borderLeftColor };
+    });
+  // It opens focused (#2864), so the rule is already lit; it goes dark on blur
+  // and lights again when focus comes back.
+  await expect(selection).toBeFocused();
+  await expect.poll(rule).toEqual({ outline: 'none', color: ACCENT_PRIMARY_RGB });
+  await selection.blur();
+  await expect.poll(rule).toEqual({ outline: 'none', color: 'rgba(0, 0, 0, 0)' });
+  await selection.focus();
+  await expect.poll(rule).toEqual({ outline: 'none', color: ACCENT_PRIMARY_RGB });
   const box = await selection.boundingBox();
   if (box === null) throw new Error('the quote-selection field has no layout box');
   await page.mouse.move(box.x + 8, box.y + 24);
@@ -37,7 +58,9 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   if (!selectedText) throw new Error('mouse selection produced no promoted text');
   await page.getByTestId('quote-select-confirm').click();
 
-  await expect(page.getByTestId('quote-promotion-success')).toHaveText('Promoted');
+  await expect(page.getByTestId('quote-promotion-success')).toHaveText(
+    'Promoted — find it any time under Promoted quotes',
+  );
   const promotions = await page.request.get(`${backendUrl()}/journal/${entryId}/promotions`, {
     headers: { Authorization: `Bearer ${token}` },
   });

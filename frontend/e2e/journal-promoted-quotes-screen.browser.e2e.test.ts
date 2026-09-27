@@ -46,7 +46,7 @@ test('a writer finds a promoted quote from the drawer, opens it at the passage, 
   await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
   expect((await listed).ok()).toBe(true);
   await expect(page.getByTestId('promoted-quotes-screen')).toBeVisible();
-  await expect(page.getByText('Waiting for your next review (1)')).toBeVisible();
+  await expect(page.getByText('Not yet in a review (1)')).toBeVisible();
   await expect(page.getByText('Used in a review (0)')).toBeVisible();
   const row = page.getByTestId(`promoted-quote-${quoteId}`);
   await expect(row).toContainText(QUOTE);

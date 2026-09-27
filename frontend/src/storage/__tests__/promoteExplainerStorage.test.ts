@@ -3,19 +3,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
-  loadResonanceExplainerDismissed,
-  saveResonanceExplainerDismissed,
-} from '../resonanceExplainerStorage';
+  loadPromoteExplainerDismissed,
+  savePromoteExplainerDismissed,
+} from '../promoteExplainerStorage';
 import { setActiveUser } from '../userScope';
 
 /**
- * The dismissal flag for the resonance spend disclosure.
+ * The dismissal flag for the promote-a-quote explainer (#2864).
  *
- * The scoping assertions below are the point of this file, not decoration. The
- * flag suppresses the one screen that says a resonance pass spends money, so an
- * unscoped flag would let one account's "I know what this costs" answer for the
- * next account to hold the device — who would then be charged, against their
- * own allowance or their own API key, having been told nothing.
+ * Scoped per account: one reader's "I know where promoted quotes go" must not
+ * answer for the next account on the device, who has never been told.
  */
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -25,7 +22,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 const mockAsyncStorage = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
 
-const KEY_BASE = '@adepthood/resonance_explainer_dismissed';
+const KEY_BASE = '@adepthood/promote_explainer_dismissed';
 
 /** A store the tests own outright, so no assertion depends on mock-reset order. */
 let store: Record<string, string>;
@@ -41,44 +38,44 @@ beforeEach(() => {
   setActiveUser(null);
 });
 
-describe('loadResonanceExplainerDismissed', () => {
-  test('is false when nothing has been stored, so the disclosure shows', async () => {
-    expect(await loadResonanceExplainerDismissed()).toBe(false);
+describe('loadPromoteExplainerDismissed', () => {
+  test('is false when nothing has been stored, so the explainer shows', async () => {
+    expect(await loadPromoteExplainerDismissed()).toBe(false);
   });
 
   test('round-trips a dismissal', async () => {
-    await saveResonanceExplainerDismissed(true);
+    await savePromoteExplainerDismissed(true);
 
-    expect(await loadResonanceExplainerDismissed()).toBe(true);
+    expect(await loadPromoteExplainerDismissed()).toBe(true);
   });
 
-  test('a cleared dismissal brings the disclosure back', async () => {
-    await saveResonanceExplainerDismissed(true);
-    await saveResonanceExplainerDismissed(false);
+  test('a cleared dismissal brings the explainer back', async () => {
+    await savePromoteExplainerDismissed(true);
+    await savePromoteExplainerDismissed(false);
 
-    expect(await loadResonanceExplainerDismissed()).toBe(false);
+    expect(await loadPromoteExplainerDismissed()).toBe(false);
   });
 
-  test('a read failure resolves false rather than suppressing the disclosure', async () => {
+  test('a read failure resolves false rather than suppressing the explainer', async () => {
     mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('disk'));
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    expect(await loadResonanceExplainerDismissed()).toBe(false);
+    expect(await loadPromoteExplainerDismissed()).toBe(false);
 
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 });
 
-describe('saveResonanceExplainerDismissed', () => {
+describe('savePromoteExplainerDismissed', () => {
   test('a write failure resolves with a warning instead of rejecting', async () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(new Error('QuotaExceededError'));
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await expect(saveResonanceExplainerDismissed(true)).resolves.toBeUndefined();
+    await expect(savePromoteExplainerDismissed(true)).resolves.toBeUndefined();
 
     expect(warn).toHaveBeenCalledWith(
-      '[resonanceExplainerStorage] failed to save the dismissal flag',
+      '[promoteExplainerStorage] failed to save the dismissal flag',
       expect.any(Error),
     );
     warn.mockRestore();
@@ -88,29 +85,28 @@ describe('saveResonanceExplainerDismissed', () => {
 describe('the flag is namespaced per account (BUG-FE-STATE-001)', () => {
   test('one account’s dismissal never answers for the next account on the device', async () => {
     setActiveUser(1);
-    await saveResonanceExplainerDismissed(true);
+    await savePromoteExplainerDismissed(true);
 
     setActiveUser(2);
 
-    // The incoming account has never been told what a pass costs, so it must
-    // still be told — a charge landing on their allowance is theirs, not user 1's.
-    expect(await loadResonanceExplainerDismissed()).toBe(false);
+    // The incoming account has never been told where a promoted quote goes.
+    expect(await loadPromoteExplainerDismissed()).toBe(false);
   });
 
   test('the original account still finds its own dismissal on return', async () => {
     setActiveUser(1);
-    await saveResonanceExplainerDismissed(true);
+    await savePromoteExplainerDismissed(true);
     setActiveUser(2);
-    await saveResonanceExplainerDismissed(false);
+    await savePromoteExplainerDismissed(false);
 
     setActiveUser(1);
 
-    expect(await loadResonanceExplainerDismissed()).toBe(true);
+    expect(await loadPromoteExplainerDismissed()).toBe(true);
   });
 
   test('writes land under the account-suffixed key, not the bare one', async () => {
     setActiveUser(7);
-    await saveResonanceExplainerDismissed(true);
+    await savePromoteExplainerDismissed(true);
 
     expect(store[`${KEY_BASE}#u7`]).toBe('true');
     expect(store[KEY_BASE]).toBeUndefined();

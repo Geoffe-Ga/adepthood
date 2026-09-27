@@ -59,7 +59,7 @@ const VOICE_DRAFTS_LABEL = 'Voice drafts';
  * listing's totals are spent on the screen's own section headers, reached
  * because the writer went looking, and never on a number beside this row.
  */
-const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
+export const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
 const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
