@@ -39,6 +39,7 @@ import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
+import { reconcileUnloadedDraft } from './journalReconnectLoad';
 import type { RetryFailure, SaveState } from './journalSaveRetry';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
@@ -55,6 +56,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
+import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
 import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
@@ -496,31 +498,6 @@ interface RetrySource {
   applyChord: (_chord: AspectChordValue) => Promise<void>;
   /** True while a body or Finish write holds the single-flight slot. */
   isWriteInFlight: () => boolean;
-}
-
-/** Load an existing entry once (by route id) and hand it to ``apply``. */
-function useEntryLoadEffect(
-  routeEntryId: number | null,
-  apply: (_entry: JournalMessage) => void,
-  onError: () => void,
-): void {
-  useEffect(() => {
-    if (routeEntryId == null) return undefined;
-    let active = true;
-    void journal
-      .get(routeEntryId)
-      .then((entry) => {
-        if (active) apply(entry);
-      })
-      .catch(() => {
-        // A failed load flags the entry as unloaded so autosave is gated off and
-        // the screen surfaces a banner; the untouched entry is never overwritten.
-        if (active) onError();
-      });
-    return () => {
-      active = false;
-    };
-  }, [routeEntryId, apply, onError]);
 }
 
 /** Clear a pending timeout on unmount. */
@@ -1289,12 +1266,23 @@ interface EntryState {
   loadError: string | null;
   /** Flips true once an existing entry's values have been applied to state. */
   loaded: boolean;
+  /** Set when a load kept words typed while the entry was unloaded (#2935):
+   *  they are on the page but not yet stored, so they still need one save. */
+  carriedTextRef: React.MutableRefObject<boolean>;
   reflectionLevel?: ReflectionLevel;
   reflectionScopeKey?: string;
 }
 
+/** What the page held when it opened on an entry, before its load landed. */
+interface CarryBaseline extends InitialText {
+  entryId: number;
+}
+
 interface MutableEntryState extends EntryState {
-  setLoadError: (_message: string) => void;
+  /** Cleared (null) when a load succeeds, so a reconnect reload lifts the banner. */
+  setLoadError: (_message: string | null) => void;
+  /** The opening baseline, for the FIRST load of the route entry only (#2935). */
+  carryBaselineRef: React.MutableRefObject<CarryBaseline | null>;
   setLoaded: (_loaded: boolean) => void;
   setReflectionLevel: (_level: ReflectionLevel | undefined) => void;
   setReflectionScopeKey: (_scopeKey: string | undefined) => void;
@@ -1308,8 +1296,22 @@ function reflectionLevelFromWire(value: string | null | undefined): ReflectionLe
     : undefined;
 }
 
+/**
+ * The refs that let a load keep words typed while the entry was unloaded
+ * (#2935). The baseline is what the page opened with, tied to the route entry
+ * id, and is used by that entry's first successful load only.
+ */
+function useCarryRefs(routeEntryId: number | null, initialText: InitialText) {
+  const carryBaselineRef = useRef<CarryBaseline | null>(
+    routeEntryId == null ? null : { entryId: routeEntryId, ...initialText },
+  );
+  const carriedTextRef = useRef(false);
+  return { carryBaselineRef, carriedTextRef };
+}
+
 /** Local fields and setters; server hydration stays in the smaller hook below. */
 function useLocalEntryState(
+  routeEntryId: number | null,
   initialText: InitialText,
   initialClassification: JournalClassification,
   initialReflectionLevel?: ReflectionLevel,
@@ -1329,7 +1331,9 @@ function useLocalEntryState(
   const titleRef = useRef(initialTitle);
   const bodyRef = useRef(initialText.body);
   const loadedTextRef = useRef<DraftText | null>(null);
+  const carry = useCarryRefs(routeEntryId, { title: initialTitle, body: initialText.body });
   return {
+    ...carry,
     title,
     body,
     status,
@@ -1381,57 +1385,79 @@ function useRouteScopeSync(
   }, [routeReflectionLevel, routeReflectionScopeKey, setReflectionLevel, setReflectionScopeKey]);
 }
 
-/** Stable load applicator, separated so the state owner remains reviewably small. */
-function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
-  const {
-    titleRef,
-    bodyRef,
-    loadedTextRef,
-    setTitle,
-    setBody,
-    setStatus,
-    setClassification,
-    setChord,
-    setReflectionLevel,
-    setReflectionScopeKey,
-    setLoaded,
-  } = state;
-  return useCallback(
-    (entry: JournalMessage) => {
-      titleRef.current = singleLineTitle(entry.title ?? '');
-      bodyRef.current = entry.message;
-      loadedTextRef.current = { title: titleRef.current, body: bodyRef.current };
-      setTitle(titleRef.current);
-      setBody(bodyRef.current);
-      setStatus(entry.status ?? 'draft');
-      setClassification(entry.classification ?? DEFAULT_TIER);
-      setChord({
-        primary: entry.primary_aspect ?? null,
-        secondary: entry.secondary_aspect ?? null,
-      });
-      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
-      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
-      setLoaded(true);
-    },
-    [
-      bodyRef,
-      loadedTextRef,
-      setBody,
-      setChord,
-      setClassification,
-      setLoaded,
-      setReflectionLevel,
-      setReflectionScopeKey,
-      setStatus,
-      setTitle,
-      titleRef,
-    ],
-  );
+/**
+ * Put the stored title and body on the page (#2935).
+ *
+ * ``loadedTextRef`` always takes the exact stored text, so the durable-text
+ * seed only ever blesses what the server holds. What the page SHOWS is the
+ * stored text, plus any words typed while this entry was unloaded, carried
+ * below it by ``reconcileUnloadedDraft``. The baseline is single-use and must
+ * name this entry, so nothing typed on one entry reaches another.
+ */
+function applyServerText(state: MutableEntryState, entry: JournalMessage): void {
+  const { titleRef, bodyRef, carryBaselineRef } = state;
+  const server = { title: singleLineTitle(entry.title ?? ''), body: entry.message };
+  const baseline = carryBaselineRef.current;
+  carryBaselineRef.current = null;
+  const local = { title: titleRef.current, body: bodyRef.current };
+  const shown =
+    baseline?.entryId === entry.id
+      ? reconcileUnloadedDraft(server, local, baseline)
+      : { ...server, carried: false };
+  state.loadedTextRef.current = server;
+  state.carriedTextRef.current = shown.carried;
+  titleRef.current = shown.title;
+  bodyRef.current = shown.body;
+  state.setTitle(shown.title);
+  state.setBody(shown.body);
 }
 
-/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
- *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
- *  capture flow's intimate offramp); an existing entry's load overrides it. */
+/** Put the stored status, tier, chord and scope on the page, and lift the gate. */
+function applyServerFields(state: MutableEntryState, entry: JournalMessage): void {
+  state.setStatus(entry.status ?? 'draft');
+  state.setClassification(entry.classification ?? DEFAULT_TIER);
+  state.setChord({
+    primary: entry.primary_aspect ?? null,
+    secondary: entry.secondary_aspect ?? null,
+  });
+  state.setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
+  state.setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
+  state.setLoadError(null);
+  state.setLoaded(true);
+}
+
+/**
+ * Stable load applicator, separated so the state owner remains reviewably small.
+ *
+ * Its identity never changes: the load effect is keyed on it, so a dependency
+ * that changed between renders would re-run the GET on every render. Every
+ * setter and ref it touches is itself stable, so it reads them through a ref.
+ */
+function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  return useCallback((entry: JournalMessage) => {
+    applyServerText(stateRef.current, entry);
+    applyServerFields(stateRef.current, entry);
+  }, []);
+}
+
+/** Drop the carry baseline once the screen is reused for a different entry, so
+ *  words typed on the entry it opened on are never carried into another. */
+function useDropCarryOnRouteChange(
+  routeEntryId: number | null,
+  carryBaselineRef: MutableEntryState['carryBaselineRef'],
+): void {
+  const openedOnRef = useRef(routeEntryId);
+  useEffect(() => {
+    if (routeEntryId !== openedOnRef.current) carryBaselineRef.current = null;
+  }, [routeEntryId, carryBaselineRef]);
+}
+
+/** The entry's editable state (title/body/status/tier) + load-on-open, re-run on
+ *  reconnect after a failed load (#2935). ``initialClassification`` pre-selects
+ *  the tier for a fresh entry (e.g. the capture flow's intimate offramp); an
+ *  existing entry's load overrides it. */
 function useEntryState(
   routeEntryId: number | null,
   initialText: InitialText,
@@ -1440,20 +1466,24 @@ function useEntryState(
   initialReflectionScopeKey?: string,
 ): EntryState {
   const state = useLocalEntryState(
+    routeEntryId,
     initialText,
     initialClassification,
     initialReflectionLevel,
     initialReflectionScopeKey,
   );
   useRouteScopeSync(state, initialReflectionLevel, initialReflectionScopeKey);
-  const applyLoadedEntry = useApplyLoadedEntry(state);
+  useDropCarryOnRouteChange(routeEntryId, state.carryBaselineRef);
+  const apply = useApplyLoadedEntry(state);
   const { setLoadError } = state;
-
-  useEntryLoadEffect(
+  const onError = useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]);
+  useEntryLoad({
     routeEntryId,
-    applyLoadedEntry,
-    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]),
-  );
+    loaded: state.loaded,
+    loadFailed: state.loadError != null,
+    apply,
+    onError,
+  });
   return state;
 }
 
@@ -1537,6 +1567,25 @@ function useSeedDurableTextOnLoad(
     seededRef.current = true;
     seedDurableText(loaded.title, loaded.body);
   }, [entry.loaded, entry.loadedTextRef, seedDurableText]);
+}
+
+/**
+ * Save words a load carried onto the page (#2935), once, as one normal debounced
+ * autosave the save indicator reports. Declared after the durable-text seed so
+ * the stored text is already durable and only the carried words are new. Without
+ * it the carried words would be lost on any exit but Close, since unmount drops
+ * the pending debounce.
+ */
+function useSaveCarriedTextOnLoad(
+  entry: Pick<EntryState, 'loaded' | 'carriedTextRef' | 'titleRef' | 'bodyRef'>,
+  save: (_title: string, _body: string) => void,
+): void {
+  const { loaded, carriedTextRef, titleRef, bodyRef } = entry;
+  useEffect(() => {
+    if (!loaded || !carriedTextRef.current) return;
+    carriedTextRef.current = false;
+    save(titleRef.current, bodyRef.current);
+  }, [loaded, carriedTextRef, titleRef, bodyRef, save]);
 }
 
 /**
@@ -1680,6 +1729,7 @@ function useJournalAutosave(
   const saving = useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
   useSeedPersistOnLoad(entry, saving.seedPersist);
   useSeedDurableTextOnLoad(entry, saving.seedDurableText);
+  useSaveCarriedTextOnLoad(entry, saving.save);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
   const bindings = useAutosaveBindings(entry, saving);
   return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
