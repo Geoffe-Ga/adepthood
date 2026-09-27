@@ -124,14 +124,13 @@ describe('PromotedQuotesScreen sections', () => {
     serve(page([WAITING], 3, true), page([USED], 12));
     const { findByText, getByText, getAllByRole } = render(<PromotedQuotesScreen />);
 
-    expect(await findByText('Waiting for your next review (3)')).toBeTruthy();
+    // Strictly true: a pending quote surfaces in a review covering the week it
+    // was written (GET /reflections/sources), not in whichever review is next.
+    expect(await findByText('Not yet in a review (3)')).toBeTruthy();
     expect(getByText('Used in a review (12)')).toBeTruthy();
     // The screen's own title is a header too; the two sections follow it, in order.
     const headers = getAllByRole('header').map((node) => node.props.children);
-    expect(headers.slice(-2)).toEqual([
-      'Waiting for your next review (3)',
-      'Used in a review (12)',
-    ]);
+    expect(headers.slice(-2)).toEqual(['Not yet in a review (3)', 'Used in a review (12)']);
     expect(mockListAll).toHaveBeenCalledWith({
       status: 'pending',
       limit: PROMOTED_QUOTES_PAGE_SIZE,
@@ -204,7 +203,7 @@ describe('PromotedQuotesScreen sections', () => {
     expect(EMPTY_COPY).toBe(
       'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.',
     );
-    expect(queryByText(/^Waiting for your next review/)).toBeNull();
+    expect(queryByText(/^Not yet in a review/)).toBeNull();
     expect(queryByText(/^Used in a review/)).toBeNull();
   });
 
@@ -240,14 +239,14 @@ describe('PromotedQuotesScreen failure', () => {
     serve(page([WAITING]), page([]));
     fireEvent.press(getByText('Try again'));
 
-    expect(await findByText('Waiting for your next review (1)')).toBeTruthy();
+    expect(await findByText('Not yet in a review (1)')).toBeTruthy();
   });
 
   it('keeps a section that loaded when only the other failed', async () => {
     serve(page([WAITING]), new Error('offline'));
     const { findByText, getByTestId } = render(<PromotedQuotesScreen />);
 
-    expect(await findByText('Waiting for your next review (1)')).toBeTruthy();
+    expect(await findByText('Not yet in a review (1)')).toBeTruthy();
     expect(getByTestId('promoted-quotes-included-error')).toBeTruthy();
   });
 });
@@ -270,7 +269,7 @@ describe('PromotedQuotesScreen remove', () => {
 
     expect(mockRemove).toHaveBeenCalledWith(1);
     expect(queryByTestId('promoted-quote-1')).toBeNull();
-    expect(getByText('Waiting for your next review (1)')).toBeTruthy();
+    expect(getByText('Not yet in a review (1)')).toBeTruthy();
   });
 
   it('keeps the quote when the writer changes their mind', async () => {
@@ -302,7 +301,7 @@ describe('PromotedQuotesScreen remove', () => {
 
     const order = getAllByTestId(/^promoted-quote-\d+$/).map((node) => node.props.testID);
     expect(order).toEqual(['promoted-quote-1', 'promoted-quote-2', 'promoted-quote-3']);
-    expect(getByText('Waiting for your next review (3)')).toBeTruthy();
+    expect(getByText('Not yet in a review (3)')).toBeTruthy();
     expect(getByTestId('promoted-quotes-remove-error')).toBeTruthy();
   });
 });

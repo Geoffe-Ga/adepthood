@@ -128,7 +128,7 @@ test('the first promote explains where a quote goes, and the quote is there', as
   // 6. The place the note named is real: the quote is waiting there.
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
-  await expect(page.getByText('Waiting for your next review (1)')).toBeVisible();
+  await expect(page.getByText('Not yet in a review (1)')).toBeVisible();
   await expect(page.getByTestId(`promoted-quote-${quoteId}`)).toContainText(PASSAGE);
 
   // 7. After a cold reload the answer holds: the press goes straight to selecting.

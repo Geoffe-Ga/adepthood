@@ -55,9 +55,15 @@ const CAPTION_SEPARATOR = ' · ';
 
 type ScreenNavigation = NativeStackNavigationProp<RootStackParamList>;
 
-/** Each section's header, by status, carrying the server's total. */
+/**
+ * Each section's header, by status, carrying the server's total.
+ *
+ * "Not yet in a review", not "waiting for your next review": a pending quote
+ * surfaces among the sources of a review covering the week its entry was
+ * written (``GET /reflections/sources``), not in whichever review comes next.
+ */
 const SECTION_HEADINGS: Record<SectionStatus, (_total: number) => string> = {
-  pending: (total) => `Waiting for your next review (${total})`,
+  pending: (total) => `Not yet in a review (${total})`,
   included: (total) => `Used in a review (${total})`,
 };
 /** What an empty section says, when the other section has quotes. */

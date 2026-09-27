@@ -141,31 +141,31 @@ describe('the optimistic window', () => {
     server.pending = [row(1), row(2), row(3)];
     const deferred = deferRemove();
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText('Waiting for your next review (3)');
+    await screen.findByText('Not yet in a review (3)');
 
     await confirmRemove(screen, 2);
 
     expect(mockRemove).toHaveBeenCalledWith(2);
     expect(screen.queryByTestId('promoted-quote-2')).toBeNull();
-    expect(screen.getByText('Waiting for your next review (2)')).toBeTruthy();
+    expect(screen.getByText('Not yet in a review (2)')).toBeTruthy();
 
     await deferred.succeed();
     expect(screen.queryByTestId('promoted-quote-2')).toBeNull();
-    expect(screen.getByText('Waiting for your next review (2)')).toBeTruthy();
+    expect(screen.getByText('Not yet in a review (2)')).toBeTruthy();
   });
 
   it('shows the row leave, then return to its place, when the DELETE is refused', async () => {
     server.pending = [row(1), row(2), row(3)];
     const deferred = deferRemove();
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText('Waiting for your next review (3)');
+    await screen.findByText('Not yet in a review (3)');
 
     await confirmRemove(screen, 2);
     expect(renderedIds(screen.getAllByTestId)).toEqual([1, 3]);
 
     await deferred.fail();
     expect(renderedIds(screen.getAllByTestId)).toEqual([1, 2, 3]);
-    expect(screen.getByText('Waiting for your next review (3)')).toBeTruthy();
+    expect(screen.getByText('Not yet in a review (3)')).toBeTruthy();
     expect(screen.getByTestId('promoted-quotes-remove-error')).toBeTruthy();
   });
 });
@@ -177,7 +177,7 @@ describe('paging past a remove', () => {
     server.pending = Array.from({ length: ROWS }, (_, i) => row(i + 1));
     const deferred = deferRemove();
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText(`Waiting for your next review (${ROWS})`);
+    await screen.findByText(`Not yet in a review (${ROWS})`);
 
     await confirmRemove(screen, 1);
     const pendingLoadMore = screen.getByTestId('promoted-quotes-pending-load-more');
@@ -206,7 +206,7 @@ describe('paging past a remove', () => {
   it('shows a row the server repeats across pages only once', async () => {
     server.pending = Array.from({ length: ROWS }, (_, i) => row(i + 1));
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText(`Waiting for your next review (${ROWS})`);
+    await screen.findByText(`Not yet in a review (${ROWS})`);
     // Another device promoted a quote meanwhile: every row shifts down by one.
     server.pending = [row(0), ...server.pending];
 
@@ -225,7 +225,7 @@ describe('a reload landing inside a remove', () => {
     server.pending = [row(1), row(2)];
     const deferred = deferRemove();
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText('Waiting for your next review (2)');
+    await screen.findByText('Not yet in a review (2)');
     act(() => mockFocusListener?.()); // the screen's first focus: no reload
 
     await confirmRemove(screen, 1);
@@ -234,14 +234,14 @@ describe('a reload landing inside a remove', () => {
 
     await waitFor(() => expect(screen.queryByTestId('promoted-quote-1')).toBeNull());
     expect(renderedIds(screen.getAllByTestId)).toEqual([2]);
-    expect(screen.getByText('Waiting for your next review (1)')).toBeTruthy();
+    expect(screen.getByText('Not yet in a review (1)')).toBeTruthy();
   });
 
   it('ends on the server truth when the DELETE then fails', async () => {
     server.pending = [row(1), row(2)];
     const deferred = deferRemove();
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText('Waiting for your next review (2)');
+    await screen.findByText('Not yet in a review (2)');
     act(() => mockFocusListener?.());
 
     await confirmRemove(screen, 1);
@@ -249,7 +249,7 @@ describe('a reload landing inside a remove', () => {
     await deferred.fail();
 
     await waitFor(() => expect(renderedIds(screen.getAllByTestId)).toEqual([1, 2]));
-    expect(screen.getByText('Waiting for your next review (2)')).toBeTruthy();
+    expect(screen.getByText('Not yet in a review (2)')).toBeTruthy();
   });
 });
 
@@ -259,7 +259,7 @@ describe('retrying an older page', () => {
     server.pending = Array.from({ length: ROWS }, (_, i) => row(i + 1));
     failPages.add(PROMOTED_QUOTES_PAGE_SIZE);
     const screen = render(<PromotedQuotesScreen />);
-    await screen.findByText(`Waiting for your next review (${ROWS})`);
+    await screen.findByText(`Not yet in a review (${ROWS})`);
 
     await act(async () => {
       fireEvent.press(screen.getByTestId('promoted-quotes-pending-load-more'));
