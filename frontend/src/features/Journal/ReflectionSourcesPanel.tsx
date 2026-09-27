@@ -623,7 +623,9 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
 
 /**
  * What a batch left for the writer: its failed ids, and whether it took any
- * quote at all. A batch that threw took none and left every id failed.
+ * quote at all. A batch that threw took none and left every id failed. A quote
+ * the server says is gone (#2754) was taken but is not failed, so it leaves the
+ * selection and stays dimmed until the composer prunes its row from the feed.
  */
 async function settleBatch(
   outcome: Promise<BatchFoldResult>,
@@ -633,7 +635,7 @@ async function settleBatch(
     const result = await outcome;
     return {
       failed: result.failed,
-      admittedAny: result.included.length + result.failed.length > 0,
+      admittedAny: result.included.length + result.failed.length + result.gone.length > 0,
     };
   } catch {
     return { failed: ids, admittedAny: true };
