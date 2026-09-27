@@ -1014,5 +1014,96 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         expect(dialog.getByText(/written here since/)).toBeTruthy();
       });
     });
+
+    describe("while the writer's own tier change is on its way (#2935 round 6)", () => {
+      /** Held after a failed move, then the writer taps Intimate and it stays in flight. */
+      async function heldWithWriterTierInFlight() {
+        const screen = await heldAfterFailedEscalation();
+        const intimate = deferred<JournalMessage>();
+        mockUpdate.mockClear();
+        mockUpdate.mockReturnValueOnce(intimate.promise);
+        fireEvent.press(
+          within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+        );
+        await advance(0);
+        return { screen, intimate };
+      }
+
+      it('hides Retry, then puts the words back under Intimate with no downgrade', async () => {
+        const { screen, intimate } = await heldWithWriterTierInFlight();
+
+        expect(screen.queryByRole('button', { name: RETRY_NAME })).toBeNull();
+        await act(async () => {
+          intimate.resolve(entry({ classification: 'intimate' }));
+        });
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        const tiers = mockUpdate.mock.calls
+          .map(([, p]) => (p as { classification?: string }).classification)
+          .filter((t) => t != null);
+        expect(tiers).toEqual(['intimate']);
+        expect(tierSelected(screen, 'intimate')).toBe(true);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
+      });
+
+      it('never lets a Retry pressed during the change send a looser tier', async () => {
+        const { screen, intimate } = await heldWithWriterTierInFlight();
+        const retry = screen.queryByRole('button', { name: RETRY_NAME });
+        if (retry != null) fireEvent.press(retry);
+        await advance(0);
+
+        await act(async () => {
+          intimate.resolve(entry({ classification: 'intimate' }));
+        });
+        await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+        const tiers = mockUpdate.mock.calls
+          .map(([, p]) => (p as { classification?: string }).classification)
+          .filter((t) => t != null);
+        expect(tiers).toEqual(['intimate']);
+        expect(tierSelected(screen, 'intimate')).toBe(true);
+      });
+
+      it("honours the writer's stricter choice mid-escalation, and never lets the escalation lower it", async () => {
+        const escalation = deferred<JournalMessage>();
+        mockGet
+          .mockRejectedValueOnce(offlineError())
+          .mockResolvedValueOnce(entry({ classification: 'public' }));
+        mockUpdate.mockReturnValueOnce(escalation.promise);
+        const screen = await openFailed();
+        await typeBody(screen, TYPED);
+        await reconnect();
+        await waitFor(() =>
+          expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }),
+        );
+
+        await pressTierAndSettle(screen, 'intimate');
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
+
+        // The escalation lands on the server AFTER the writer's Intimate, so the
+        // row now reads Personal; the page must re-assert the stricter tier.
+        const sentBefore = mockUpdate.mock.calls.length;
+        await act(async () => {
+          escalation.resolve(entry({ classification: 'personal' }));
+        });
+        await advance(0);
+        expect(mockUpdate.mock.calls.slice(sentBefore)).toEqual([
+          [7, { classification: 'intimate' }],
+        ]);
+        expect(tierSelected(screen, 'intimate')).toBe(true);
+      });
+
+      it('does not offer Try saving again in the leave dialog meanwhile', async () => {
+        const { screen } = await heldWithWriterTierInFlight();
+
+        await pressClose(screen);
+
+        expect(screen.getByTestId('held-leave-dialog')).toBeTruthy();
+        expect(screen.queryByTestId('held-leave-retry')).toBeNull();
+      });
+    });
   });
 });

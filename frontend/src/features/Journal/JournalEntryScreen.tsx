@@ -229,11 +229,14 @@ function heldHintCopy(tier: JournalClassification): string {
 
 /** The footer's held state, or null when nothing is held. */
 function heldFooterFor(
-  autosave: Pick<AutosaveApi, 'carryHeld' | 'carryWaitingTier'>,
+  autosave: Pick<AutosaveApi, 'carryHeld' | 'carryWaitingTier' | 'carryRetryReady'>,
 ): HeldFooter | null {
   if (!autosave.carryHeld) return null;
   const tier = autosave.carryWaitingTier;
-  return { label: tier == null ? HELD_HINT : heldHintCopy(tier), canRetry: tier != null };
+  return {
+    label: tier == null ? HELD_HINT : heldHintCopy(tier),
+    canRetry: autosave.carryRetryReady,
+  };
 }
 
 function savedHintLabel(state: SaveState): string {
@@ -517,6 +520,8 @@ interface AutosaveApi {
   carryWaitingTier: JournalClassification | null;
   /** Re-send the escalation to the tier held words were typed under (#2935). */
   resendCarryTier: () => Promise<void>;
+  /** True when that re-send may be offered: words wait, and no tier write is out. */
+  carryRetryReady: boolean;
 }
 
 /**
@@ -1682,6 +1687,10 @@ interface HeldTextGate {
   heldRef: React.MutableRefObject<boolean>;
   /** Told after every tier write settles, so held words can be put back. */
   tierSettledRef: React.MutableRefObject<TierSettled>;
+  /** Tier writes on their way (the writer's, a retry's, or an escalation). */
+  tierWritesRef: React.MutableRefObject<number>;
+  /** True while any tier write is on its way, for what the page offers. */
+  tierWriteInFlight: boolean;
 }
 
 /**
@@ -1723,13 +1732,14 @@ function useHeldTextGate(
     },
     [finish],
   );
+  const { tierWritesRef, tierWriteInFlight, track } = useTierWriteCount();
   const reportingChange = useCallback(
     async (tier: JournalClassification) => {
-      const revertTo = await changeClassification(tier);
+      const revertTo = await track(() => changeClassification(tier));
       tierSettledRef.current(tier);
       return revertTo;
     },
-    [changeClassification],
+    [changeClassification, track],
   );
   const gated = {
     ...saving,
@@ -1738,7 +1748,24 @@ function useHeldTextGate(
     finish: gatedFinish,
     changeClassification: reportingChange,
   };
-  return { saving: gated, heldRef, tierSettledRef };
+  return { saving: gated, heldRef, tierSettledRef, tierWritesRef, tierWriteInFlight };
+}
+
+/** Count tier writes in flight: a ref for decisions, a flag for rendering. */
+function useTierWriteCount() {
+  const tierWritesRef = useRef(0);
+  const [tierWriteInFlight, setTierWriteInFlight] = useState(false);
+  const track = useCallback(async <T,>(write: () => Promise<T>): Promise<T> => {
+    tierWritesRef.current += 1;
+    setTierWriteInFlight(true);
+    try {
+      return await write();
+    } finally {
+      tierWritesRef.current -= 1;
+      setTierWriteInFlight(tierWritesRef.current > 0);
+    }
+  }, []);
+  return { tierWritesRef, tierWriteInFlight, track };
 }
 
 /** Merge held words onto the page as it now stands, lift the gate, and save. */
@@ -1766,6 +1793,24 @@ function useCarryPutBack(
   );
 }
 
+/**
+ * Whichever confirmed write is strict enough first puts the words back; any
+ * later one (a slower escalation) finds nothing held and changes nothing.
+ */
+function usePutBackOnce(
+  holdRef: React.MutableRefObject<CarryHold | null>,
+  putBack: (_hold: CarryHold) => void,
+): (_hold: CarryHold) => void {
+  return useCallback(
+    (hold: CarryHold) => {
+      if (holdRef.current !== hold) return;
+      holdRef.current = null;
+      putBack(hold);
+    },
+    [holdRef, putBack],
+  );
+}
+
 /** Send the escalation held words need, then put them back or keep them waiting. */
 function useCarryEscalation(
   applyClassification: RetrySource['applyClassification'],
@@ -1778,13 +1823,25 @@ function useCarryEscalation(
   const { escalatingRef, setWaiting } = state;
   return useCallback(
     async (hold: CarryHold) => {
+      // Never send a tier looser than the one on screen (the planRetry rule, via
+      // isTierLooser): when the page already shows one strict enough, nothing is
+      // sent and the words simply go back.
+      const shown = displayedTier();
+      const sent = carriedTierEscalation(shown, hold.tier ?? shown);
+      if (sent == null) {
+        putBack(hold);
+        return;
+      }
       escalatingRef.current = true;
       heldRef.current = true;
       try {
-        await applyClassification(hold.tier ?? displayedTier());
+        await applyClassification(sent);
       } finally {
         escalatingRef.current = false;
       }
+      // The writer chose a stricter tier while this was out; it may have landed
+      // after theirs, so re-assert theirs rather than leave the row lowered.
+      if (isTierLooser(sent, displayedTier())) await applyClassification(displayedTier());
       if (strictEnough(hold, displayedTier())) putBack(hold);
       else setWaiting(true);
     },
@@ -1811,14 +1868,14 @@ function useCarryRelease(
   save: (_title: string, _body: string) => void,
   retrySource: RetrySource,
   gate: HeldTextGate,
-): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier'> {
+): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'> {
   const { applyClassification, displayedTier } = retrySource;
-  const { heldRef, tierSettledRef } = gate;
+  const { heldRef, tierSettledRef, tierWritesRef } = gate;
   const [waiting, setWaiting] = useState(false);
   const holdRef = useRef(entry.carryHold);
   holdRef.current = entry.carryHold;
   const escalatingRef = useRef(false);
-  const putBack = useCarryPutBack(entry, save, heldRef, setWaiting);
+  const putBack = usePutBackOnce(holdRef, useCarryPutBack(entry, save, heldRef, setWaiting));
   const escalate = useCarryEscalation(applyClassification, displayedTier, gate, putBack, {
     escalatingRef,
     setWaiting,
@@ -1837,20 +1894,23 @@ function useCarryRelease(
   // typed under. Only a confirmed escalation puts them back (#2935).
   const resendCarryTier = useCallback(async () => {
     const hold = holdRef.current;
-    if (hold == null || escalatingRef.current) return;
+    // Never on top of another tier write: it could land after, and lower, it.
+    if (hold == null || escalatingRef.current || tierWritesRef.current > 0) return;
     await escalate(hold);
-  }, [escalate]);
+  }, [escalate, tierWritesRef]);
   tierSettledRef.current = (tier) => {
-    if (escalatingRef.current || displayedTier() !== tier) return;
+    if (displayedTier() !== tier) return;
     const hold = holdRef.current;
     // Only a confirmed tier at least as strict as the one the words were typed
     // under lifts the hold; a looser choice leaves them (and the gate) as they are.
-    if (hold != null && waiting && strictEnough(hold, tier)) putBack(hold);
+    // The writer's own confirmed stricter choice counts even mid-escalation.
+    if (hold != null && heldRef.current && strictEnough(hold, tier)) putBack(hold);
   };
   return {
     releaseCarry,
     resendCarryTier,
     carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null,
+    carryRetryReady: waiting && !gate.tierWriteInFlight,
   };
 }
 
@@ -1888,7 +1948,7 @@ interface AutosaveBindings extends ChoiceHandlers {
 function buildAutosaveApi(
   entry: EntryState,
   bindings: AutosaveBindings &
-    Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier'>,
+    Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'>,
   controlsLocked: boolean,
   loadedFromServer: boolean,
 ): AutosaveApi {
@@ -3776,7 +3836,7 @@ function EntryExits({
         visible={guard.pending}
         onStay={stay}
         onLeave={guard.leave}
-        onRetry={ctl.autosave.carryWaitingTier == null ? undefined : onRetry}
+        onRetry={ctl.autosave.carryRetryReady ? onRetry : undefined}
       />
     </>
   );
