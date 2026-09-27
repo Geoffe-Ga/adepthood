@@ -6,11 +6,14 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import type { Stage } from '../../../api';
+import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { useStageStore } from '../../../store/useStageStore';
 import PracticeScreen from '../PracticeScreen';
 
 const mockListAll = jest.fn<Promise<Stage[]>, [string?]>();
+// The practice catalogue fetch is observed only for the stage it is keyed on.
+const mockPracticesListAll = jest.fn((_options: { stageNumber: number }) => Promise.resolve([]));
 
 // PracticeScreen reads useSafeAreaInsets and there is no provider in tests.
 jest.mock('react-native-safe-area-context', () => {
@@ -33,7 +36,7 @@ jest.mock('../../../api', () => ({
     programCalendar: () => Promise.reject(new Error('calendar unavailable in tests')),
   },
   practices: {
-    listAll: () => Promise.resolve([]),
+    listAll: (options: { stageNumber: number }) => mockPracticesListAll(options),
   },
   userPractices: {
     list: () => Promise.resolve([]),
@@ -107,6 +110,8 @@ jest.mock('expo-haptics', () => ({
 const FLUSH_ROUNDS = 8;
 const STAGE_TOTAL = 10;
 const LOAD_ERROR_MESSAGE = 'Could not reach the server.';
+/** The current stage the store derives from ``wireStages()``: stage 1 is the only unlocked one. */
+const DERIVED_STAGE = 1;
 
 const makeWireStage = (stageNumber: number): Stage => ({
   id: stageNumber,
@@ -169,6 +174,7 @@ beforeEach(() => {
   useProgramStore.getState().hydrateProgramStartDate(null);
   mockRouteParams = {};
   mockListAll.mockReset();
+  mockPracticesListAll.mockClear();
 });
 
 // Unmount before the next test resets the shared store, so a stale subscriber
@@ -371,5 +377,39 @@ describe('PracticeScreen — a spent stage load is named, not answered with stag
     // The calendar on this device answers without the server, so the stage is
     // derived rather than defaulted.
     expect(queryByTestId('practice-stage-unconfirmed')).toBeNull();
+  });
+});
+
+// #2958: a deep link whose stage segment is malformed or out of range parses to
+// no stage at all, so the screen takes the same "nothing asked for" path as the
+// bare ``/practice`` -- never a string, NaN, or a fabricated stage.
+describe('PracticeScreen — an unusable /practice/:stageNumber deep link', () => {
+  const deepLinkParams = (path: string): { stageNumber?: number } =>
+    tabParamsFromPath(path, 'Practice') ?? {};
+
+  it.each(['practice/abc', 'practice/11'])(
+    '%s still says the stage is unconfirmed when the load fails',
+    async (path) => {
+      mockRouteParams = deepLinkParams(path);
+      mockListAll.mockRejectedValue(new Error(LOAD_ERROR_MESSAGE));
+
+      const { getByTestId } = renderPractice();
+      await flushRounds();
+
+      expect(getByTestId('practice-stage-unconfirmed')).toBeTruthy();
+    },
+  );
+
+  it('practice/11 falls back to the derived stage once the stages are in hand', async () => {
+    mockRouteParams = deepLinkParams('practice/11');
+    mockListAll.mockResolvedValue(wireStages());
+
+    const { queryByTestId } = renderPractice();
+    await flushRounds();
+
+    expect(queryByTestId('practice-stage-unconfirmed')).toBeNull();
+    const stagesAskedFor = mockPracticesListAll.mock.calls.map(([options]) => options.stageNumber);
+    expect(stagesAskedFor.length).toBeGreaterThan(0);
+    expect(stagesAskedFor.every((stage) => stage === DERIVED_STAGE)).toBe(true);
   });
 });

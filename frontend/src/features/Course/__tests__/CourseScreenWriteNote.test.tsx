@@ -6,6 +6,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
+import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -189,6 +190,17 @@ describe('CourseScreen -- write a note on a passage', () => {
 
   it('auto-opens the returned content restored to its scroll offset once the stage content has loaded', async () => {
     mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 300 };
+    const { findByTestId } = render(<CourseScreen />);
+
+    await findByTestId('chapter-reader');
+    const scrollView = await findByTestId('reader-markdown');
+    expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 300 });
+  });
+
+  it('restores the reader from a /course/:stageNumber deep link with query params (#2958)', async () => {
+    // Resolved through the real linking config: the query values arrive as
+    // strings and only the ``parse`` step makes ``contentId`` match an item.
+    mockRouteParams = tabParamsFromPath('course/1?contentId=5&scrollOffset=300', 'Course');
     const { findByTestId } = render(<CourseScreen />);
 
     await findByTestId('chapter-reader');

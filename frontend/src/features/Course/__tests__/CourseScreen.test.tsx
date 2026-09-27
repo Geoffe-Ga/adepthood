@@ -6,6 +6,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
+import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
 function backgroundColorOf(style: StyleProp<ViewStyle>): string {
   const flat = StyleSheet.flatten(style) ?? {};
@@ -431,6 +432,40 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
     expect(mockStageContent.mock.calls.length).toBe(contentCallsAfterMount);
     expect(mockStagesList.mock.calls.length).toBe(stagesCallsAfterMount);
+  });
+
+  // #2958: params resolved through the real linking config, exactly as a
+  // ``/course/<n>`` deep link delivers them. The derived default here is stage
+  // 2 (the program calendar), so stage 1 can only come from the link itself.
+  describe('opened through a /course/:stageNumber deep link', () => {
+    it('shows the linked stage cover and metadata and selects its pill', async () => {
+      mockRouteParams = tabParamsFromPath('course/1', 'Course');
+      const { getByTestId, getByText } = render(<CourseScreen />);
+
+      await waitFor(() => {
+        expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+      });
+      expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(false);
+      expect(getByTestId('stage-cover')).toBeTruthy();
+      expect(getByTestId('stage-metadata')).toBeTruthy();
+      expect(getByText('First stage')).toBeTruthy();
+      expect(mockStageContent).toHaveBeenCalledWith(1);
+    });
+
+    it.each(['course/abc', 'course/0', 'course/11'])(
+      '%s falls back to the derived current stage',
+      async (path) => {
+        mockRouteParams = tabParamsFromPath(path, 'Course');
+        const { getByTestId } = render(<CourseScreen />);
+
+        await waitFor(() => {
+          expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+        });
+        expect(getByTestId('stage-cover')).toBeTruthy();
+        expect(getByTestId('stage-metadata')).toBeTruthy();
+        expect(mockStageContent).toHaveBeenCalledWith(2);
+      },
+    );
   });
 
   it('keeps the current stage content when a stale fetch for a previously-selected stage resolves late', async () => {

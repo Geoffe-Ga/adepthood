@@ -5,6 +5,7 @@ import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
 import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
+import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -406,6 +407,26 @@ describe('PracticeScreen', () => {
     expect(queryByTestId('active-practice-name')).toBeNull();
     expect(queryByTestId('active-practice-configure')).toBeNull();
     expect(queryByText('Adjust')).toBeNull();
+  });
+
+  // #2958: the route params come from the real linking config, exactly as a
+  // ``/practice/<n>`` deep link delivers them -- not a hand-written number.
+  describe('opened through a /practice/:stageNumber deep link', () => {
+    afterEach(() => {
+      delete mockRouteParams.stageNumber;
+    });
+
+    it.each([1, 3])('shows the adopted stage-%i practice, not the empty state', async (stage) => {
+      Object.assign(mockRouteParams, tabParamsFromPath(`practice/${stage}`, 'Practice'));
+      mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: stage })]);
+      const { getByTestId, queryByText } = render(<PracticeScreen />);
+      await waitFor(() => expect(getByTestId('practice-identity-title')).toBeTruthy());
+      expect(getByTestId('ritual-start')).toBeTruthy();
+      expect(queryByText('No practice set for this stage yet.')).toBeNull();
+      expect(mockPracticesList).toHaveBeenCalledWith(
+        expect.objectContaining({ stageNumber: stage }),
+      );
+    });
   });
 
   it('renders the threshold ground-fade overlay on the shell without blocking touches', async () => {
