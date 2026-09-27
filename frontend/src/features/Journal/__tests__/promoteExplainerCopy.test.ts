@@ -22,15 +22,18 @@ describe('promoteExplainerCopy — says what promotion is and where the quote go
     expect(PROMOTE_EXPLAINER_DONT_SHOW).toBe('Don’t show this again');
   });
 
-  it('names both destinations: the next review of any kind, and the drawer door', () => {
-    expect(PROMOTE_EXPLAINER_BODY).toContain('top of your next review');
-    expect(PROMOTE_EXPLAINER_BODY).toContain('weekly, stage, section or course');
+  it('names only what the sources feed does: a review covering the week, and the drawer door', () => {
+    // GET /reflections/sources attaches a pending quote to its source entry, so
+    // it surfaces in a review whose window covers the day that entry was
+    // written -- not in whichever review comes next.
+    expect(PROMOTE_EXPLAINER_BODY).toContain('a review that covers the week you wrote it');
+    expect(PROMOTE_EXPLAINER_BODY).not.toMatch(/next review/);
     // The door is named exactly as the drawer labels it, so the reader can find it.
     expect(PROMOTE_EXPLAINER_BODY).toContain(`${PROMOTED_QUOTES_LABEL} in the Journal menu`);
   });
 
-  it('the Promoted notice names where the quote went', () => {
-    expect(PROMOTED_NOTICE_COPY).toBe('Promoted — waiting for your next review');
+  it('the Promoted notice names where the quote went, and only a place that always lists it', () => {
+    expect(PROMOTED_NOTICE_COPY).toBe(`Promoted — find it any time under ${PROMOTED_QUOTES_LABEL}`);
   });
 });
 

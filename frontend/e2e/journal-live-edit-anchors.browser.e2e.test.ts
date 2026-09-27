@@ -109,7 +109,7 @@ async function promote(page: Page, stored: string, selected: string): Promise<vo
   await expect(page.getByTestId('quote-select-preview')).toHaveText(selected.trim());
   await page.getByTestId('quote-select-confirm').click();
   await expect(page.getByTestId('quote-promotion-success')).toHaveText(
-    'Promoted — waiting for your next review',
+    'Promoted — find it any time under Promoted quotes',
   );
 }
 

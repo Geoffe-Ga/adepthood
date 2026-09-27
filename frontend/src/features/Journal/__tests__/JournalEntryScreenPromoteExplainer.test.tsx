@@ -112,7 +112,7 @@ describe('JournalEntryScreen — the first promote explains itself', () => {
     expect(await screen.findByTestId('promote-explainer-dialog')).toBeTruthy();
     expect(screen.getByRole('header', { name: 'Promote a quote' })).toBeTruthy();
     const body = screen.getByTestId('promote-explainer-body').props.children as string;
-    expect(body).toMatch(/your next review/);
+    expect(body).toMatch(/a review that covers the week you wrote it/);
     expect(body).toMatch(/Promoted quotes in the Journal menu/);
     const tick = screen.getByTestId('promote-explainer-dont-show');
     expect(tick.props.accessibilityRole).toBe('checkbox');
@@ -195,7 +195,7 @@ describe('JournalEntryScreen — "Don’t show this again" is remembered per acc
 });
 
 describe('JournalEntryScreen — the Promoted notice names where the quote went', () => {
-  it('announces "Promoted — waiting for your next review" politely, then clears', async () => {
+  it('announces "Promoted — find it any time under Promoted quotes" politely, then clears', async () => {
     await AsyncStorage.setItem(DISMISSED_KEY, 'true');
     mockPromote.mockResolvedValue({
       id: 90,
@@ -221,11 +221,11 @@ describe('JournalEntryScreen — the Promoted notice names where the quote went'
         fireEvent.press(screen.getByTestId('quote-select-confirm'));
       });
       const notice = screen.getByTestId('quote-promotion-success');
-      expect(notice).toHaveTextContent('Promoted — waiting for your next review');
+      expect(notice).toHaveTextContent('Promoted — find it any time under Promoted quotes');
       expect(notice.props.accessibilityLiveRegion).toBe('polite');
       // VoiceOver ignores live regions, so iOS is told in words.
       expect(Platform.OS).toBe('ios');
-      expect(announce).toHaveBeenCalledWith('Promoted — waiting for your next review');
+      expect(announce).toHaveBeenCalledWith('Promoted — find it any time under Promoted quotes');
 
       act(() => {
         jest.advanceTimersByTime(PROMOTED_NOTICE_MS);

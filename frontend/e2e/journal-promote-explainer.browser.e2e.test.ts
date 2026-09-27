@@ -15,7 +15,7 @@ import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupp
 
 const PAGE = 'I walked beside the river and noticed the light on the water.';
 const PASSAGE = 'noticed the light on the water';
-const NOTICE = 'Promoted — waiting for your next review';
+const NOTICE = 'Promoted — find it any time under Promoted quotes';
 const DISMISSED_KEY_BASE = '@adepthood/promote_explainer_dismissed';
 
 /** Select `passage` in the mirrored field the way a keyboard user does. */
@@ -68,7 +68,9 @@ test('the first promote explains where a quote goes, and the quote is there', as
   await page.getByTestId('promote-quote-button').click();
   const card = page.getByTestId('promote-explainer-card');
   await expect(card.getByRole('heading', { name: 'Promote a quote' })).toBeVisible();
-  await expect(page.getByTestId('promote-explainer-body')).toContainText('top of your next review');
+  await expect(page.getByTestId('promote-explainer-body')).toContainText(
+    'a review that covers the week you wrote it',
+  );
   await expect(page.getByTestId('promote-explainer-body')).toContainText(
     'under Promoted quotes in the Journal menu',
   );

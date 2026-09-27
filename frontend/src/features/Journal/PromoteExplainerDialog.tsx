@@ -4,7 +4,7 @@
  *
  * Presentational only: it reports which arm was taken and the host starts (or
  * does not start) selection. It says what promotion does and where the quote
- * goes — the top of the next review, and the Promoted quotes door in the
+ * goes — a review that covers the week it was written, and the Promoted quotes door in the
  * Journal menu — then offers the two arms at equal weight. The scrim declines
  * exactly as "Not now" does, and the "don’t show this again" box starts
  * unticked, so a reader who wants the note to keep appearing does nothing.
