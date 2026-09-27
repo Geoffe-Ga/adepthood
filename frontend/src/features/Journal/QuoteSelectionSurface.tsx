@@ -88,6 +88,12 @@ export interface QuoteSelectionSurfaceProps {
    * body scrolls within the field so the actions beneath it stay in the sheet.
    */
   maxFieldHeight?: number;
+  /**
+   * A passage already chosen before this surface mounted (the sources panel
+   * swapping its sheet for its pane mid-selection), so the preview and the
+   * enabled confirm carry over. Defaults to nothing chosen.
+   */
+  initialSelection?: CodePointSpan;
 }
 
 /** The derived view state the surface chrome renders from. */
@@ -108,8 +114,16 @@ interface SelectionSurfaceState {
 function useSelectionSurfaceState(
   body: string,
   onSelectionChange: (_span: CodePointSpan) => void,
+  initialSelection?: CodePointSpan,
 ): SelectionSurfaceState {
-  const [span, setSpan] = useState<Utf16Span>({ start: 0, end: 0 });
+  const [span, setSpan] = useState<Utf16Span>(() =>
+    initialSelection == null
+      ? { start: 0, end: 0 }
+      : {
+          start: codePointToUtf16(body, initialSelection.start),
+          end: codePointToUtf16(body, initialSelection.end),
+        },
+  );
   const [hintVisible, setHintVisible] = useState(false);
 
   const emitSpan = useCallback(
@@ -329,9 +343,10 @@ function QuoteSelectionSurface({
   testID = DEFAULT_TEST_ID,
   confirmLabel = DEFAULT_CONFIRM_LABEL,
   maxFieldHeight,
+  initialSelection,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
   const { isEmpty, previewSlice, hintVisible, emitSpan, handleSelectionChange, showHint } =
-    useSelectionSurfaceState(body, onSelectionChange);
+    useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, emitSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();

@@ -17,7 +17,7 @@
  * the feed (#2883). Reduced-motion safe.
  */
 import { X } from 'lucide-react-native';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -300,6 +300,8 @@ interface RowPromoteControls {
   promoteFailed: boolean;
   /** True when re-promotion is available at all (the parent wired a handler). */
   canPromote: boolean;
+  /** The passage already chosen, so a remounted surface picks up where it was. */
+  selectedSpan: CodePointSpan;
   onStartSelecting: () => void;
   onSelectionChange: (_span: CodePointSpan) => void;
   onConfirm: () => Promise<void>;
@@ -324,6 +326,7 @@ function SourceExpansion({
         onCancel={controls.onCancel}
         testID={`source-select-${item.kind}-${item.id}`}
         maxFieldHeight={selectionFieldCap(windowHeight)}
+        initialSelection={controls.selectedSpan}
       />
     );
   }
@@ -397,8 +400,8 @@ function SourceRow({
   );
 }
 
-/** A char-offset span (defaults to empty so a bare confirm promotes nothing). */
-type SelectionSpan = { start: number; end: number };
+/** Nothing chosen yet: a bare confirm promotes nothing. */
+const EMPTY_SPAN: CodePointSpan = { start: 0, end: 0 };
 
 /** A re-promotion span handler; absent when the parent doesn't offer it. */
 type PromoteSpanHandler = (
@@ -410,6 +413,7 @@ type PromoteSpanHandler = (
 interface RowSelection {
   selectingKey: string | null;
   promoteFailedKey: string | null;
+  span: CodePointSpan;
   onSelectionChange: (_span: CodePointSpan) => void;
   startSelecting: (_key: string) => void;
   cancelSelecting: () => void;
@@ -424,10 +428,12 @@ interface RowSelection {
 function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
   const [selectingKey, setSelectingKey] = useState<string | null>(null);
   const [promoteFailedKey, setPromoteFailedKey] = useState<string | null>(null);
-  const selectionRef = useRef<SelectionSpan>({ start: 0, end: 0 });
+  // State, not a ref: a surface remounted mid-selection (the sheet and pane
+  // swapping as the window crosses the breakpoint) is seeded from it.
+  const [span, setSpan] = useState<CodePointSpan>(EMPTY_SPAN);
 
   const startSelecting = useCallback((key: string) => {
-    selectionRef.current = { start: 0, end: 0 };
+    setSpan(EMPTY_SPAN);
     setPromoteFailedKey(null);
     setSelectingKey(key);
   }, []);
@@ -436,24 +442,25 @@ function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
 
   // The surface hands back an already-converted code-point span; store it so the
   // confirm handler posts anchors in the API's code-point unit.
-  const onSelectionChange = useCallback((span: CodePointSpan) => {
-    selectionRef.current = span;
+  const onSelectionChange = useCallback((next: CodePointSpan) => {
+    setSpan(next);
   }, []);
 
   const confirmSelection = useCallback(
     async (item: ReflectionSourceItem, key: string): Promise<void> => {
-      const { start, end } = selectionRef.current;
+      const { start, end } = span;
       setSelectingKey(null);
       if (onPromoteSpan == null) return;
       const ok = await onPromoteSpan(item, { anchor_start: start, anchor_end: end });
       if (!ok) setPromoteFailedKey(key);
     },
-    [onPromoteSpan],
+    [onPromoteSpan, span],
   );
 
   return {
     selectingKey,
     promoteFailedKey,
+    span,
     onSelectionChange,
     startSelecting,
     cancelSelecting,
@@ -472,6 +479,7 @@ function buildControls(
     selecting: selection.selectingKey === key,
     promoteFailed: selection.promoteFailedKey === key,
     canPromote,
+    selectedSpan: selection.span,
     onStartSelecting: () => selection.startSelecting(key),
     onSelectionChange: selection.onSelectionChange,
     onConfirm: () => selection.confirmSelection(item, key),
@@ -479,22 +487,35 @@ function buildControls(
   };
 }
 
-/** The chronological feed; owns which rows are expanded + the selection surface. */
-function SourceFeed({
-  feed,
-  onPromoteSpan,
-  timeZone,
-}: {
-  feed: ReflectionSourceItem[];
-  onPromoteSpan?: PromoteSpanHandler;
-  timeZone?: string;
-}): React.JSX.Element {
+/** Which rows are expanded, and the one row holding the selection surface. */
+interface FeedState {
+  expandedKeys: ReadonlySet<string>;
+  toggle: (_key: string) => void;
+  selection: RowSelection;
+  canPromote: boolean;
+}
+
+/** Own the feed's expansion and selection state. */
+function useFeedState(onPromoteSpan?: PromoteSpanHandler): FeedState {
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
   const toggle = useCallback((key: string) => {
     setExpandedKeys((prev) => toggleKey(prev, key));
   }, []);
   const selection = useRowSelection(onPromoteSpan);
-  const canPromote = onPromoteSpan != null;
+  return { expandedKeys, toggle, selection, canPromote: onPromoteSpan != null };
+}
+
+/** The chronological feed, rendered from state its caller owns. */
+function SourceFeed({
+  feed,
+  state,
+  timeZone,
+}: {
+  feed: ReflectionSourceItem[];
+  state: FeedState;
+  timeZone?: string;
+}): React.JSX.Element {
+  const { expandedKeys, toggle, selection, canPromote } = state;
   return (
     <View>
       {feed.map((item) => {
@@ -646,6 +667,26 @@ function EmptyFeed({
   );
 }
 
+/**
+ * Everything the reader has done in the panel. Owned ABOVE the sheet/pane
+ * switch: those are different containers, so crossing the breakpoint while
+ * open remounts the content, and this is what survives it (#2883).
+ */
+interface PanelState {
+  feed: FeedState;
+  includedIds: ReadonlySet<number>;
+  onInsert: (_entry: PendingEntry) => void;
+}
+
+function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
+  const feed = useFeedState(props.onPromoteSpan);
+  const { includedIds, onInsert } = useDimReconciler(props.onInsertQuote);
+  return { feed, includedIds, onInsert };
+}
+
+/** The props every container hands its content: the caller's, plus the lifted state. */
+type ContainerProps = ReflectionSourcesPanelProps & { state: PanelState };
+
 /** The panel's inner content, shared by the sheet and pane containers. */
 function SourcesContent({
   items,
@@ -653,13 +694,12 @@ function SourcesContent({
   timeZone,
   anchorStatus,
   feedStatus = 'ready',
-  onInsertQuote,
-  onPromoteSpan,
   onClose,
-}: ReflectionSourcesPanelProps): React.JSX.Element {
+  state,
+}: ContainerProps): React.JSX.Element {
   const pending = useMemo(() => collectPending(items), [items]);
   const feed = useMemo(() => [...items].sort(byTimestamp), [items]);
-  const { includedIds, onInsert } = useDimReconciler(onInsertQuote);
+  const { includedIds, onInsert } = state;
 
   // The heading is the panel's navigation, so it stands ABOVE the scroll: only
   // the quotes and the feed move, and the way out never scrolls away (#2883).
@@ -676,7 +716,7 @@ function SourcesContent({
         {feed.length === 0 ? (
           <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
         ) : (
-          <SourceFeed feed={feed} onPromoteSpan={onPromoteSpan} timeZone={timeZone} />
+          <SourceFeed feed={feed} state={state.feed} timeZone={timeZone} />
         )}
       </ScrollView>
     </>
@@ -688,7 +728,7 @@ function SourcesContent({
  * platform back button; the backdrop is a sibling BEFORE the sheet body, never
  * its parent, so a press inside the sheet cannot bubble up and close it.
  */
-function SourcesSheet(props: ReflectionSourcesPanelProps): React.JSX.Element {
+function SourcesSheet(props: ContainerProps): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   return (
     <Modal
@@ -723,7 +763,7 @@ function noop(): void {}
  * it takes both from ``useDismissKeys`` -- only while it can actually close and
  * its screen is the one in front.
  */
-function SourcesPane(props: ReflectionSourcesPanelProps): React.JSX.Element {
+function SourcesPane(props: ContainerProps): React.JSX.Element {
   // Only while its screen is in front: a stack keeps a covered entry mounted,
   // and an armed pane there would swallow the back press (or Escape) meant for
   // the screen pushed over it.
@@ -737,10 +777,11 @@ function SourcesPane(props: ReflectionSourcesPanelProps): React.JSX.Element {
 }
 
 function ReflectionSourcesPanel(props: ReflectionSourcesPanelProps): React.JSX.Element {
+  const state = usePanelState(props);
   if (useWindowDimensions().width < SIDE_PANE_BREAKPOINT) {
-    return <SourcesSheet {...props} />;
+    return <SourcesSheet {...props} state={state} />;
   }
-  return <SourcesPane {...props} />;
+  return <SourcesPane {...props} state={state} />;
 }
 
 const styles = StyleSheet.create({

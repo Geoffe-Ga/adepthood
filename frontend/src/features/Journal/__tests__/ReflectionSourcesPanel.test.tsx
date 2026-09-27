@@ -843,3 +843,67 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
     expect(style.alignSelf).toBe('stretch');
   });
 });
+
+// #2883: the sheet and the pane are different containers, so crossing the
+// breakpoint (a tablet rotating, a window resized) remounts the content. What
+// the reader was doing -- an expanded row, a folded quote's dim, a passage
+// mid-selection -- lives above that switch and survives it.
+describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open (#2883)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function mockWidth(width: number) {
+    const rn = require('react-native');
+    jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+  }
+
+  it.each([
+    [1280, 390, 'reflection-sources-sheet'],
+    [390, 1280, 'reflection-sources-pane'],
+  ])(
+    'keeps the expanded row, the folded dim and the selection from %ipx to %ipx',
+    async (from, to, frame) => {
+      const onPromoteSpan = jest.fn(() => Promise.resolve(true));
+      const selecting = item({ id: 3, body: 'A steady daily walk to the river.' });
+      const other = item({
+        id: 4,
+        timestamp: '2026-06-02T00:00:00Z',
+        body: 'Another full body.',
+        promoted_quotes: [quote({ id: 90, pending: true })],
+      });
+      // A fresh element per render, so the rerender is not skipped as unchanged.
+      const element = () => (
+        <ReflectionSourcesPanel
+          items={[selecting, other]}
+          onInsertQuote={jest.fn()}
+          onPromoteSpan={onPromoteSpan}
+          onClose={jest.fn()}
+        />
+      );
+      mockWidth(from);
+      const screen = render(element());
+      fireEvent.press(screen.getByTestId('pending-quote-90'));
+      fireEvent.press(screen.getByTestId('entry-source-4'));
+      fireEvent.press(screen.getByTestId('entry-source-3'));
+      fireEvent.press(screen.getByTestId('source-promote-entry-3'));
+      fireEvent(screen.getByTestId('source-select-entry-3-input'), 'selectionChange', {
+        nativeEvent: { selection: { start: 2, end: 8 } },
+      });
+
+      mockWidth(to);
+      screen.rerender(element());
+
+      expect(screen.getByTestId(frame)).toBeTruthy();
+      expect(screen.getByTestId('source-body-4')).toBeTruthy();
+      expect(screen.getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBe(true);
+      expect(screen.getByTestId('source-select-entry-3-preview').props.children).toBe('steady');
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('source-select-entry-3-confirm'));
+      });
+      expect(onPromoteSpan).toHaveBeenCalledWith(selecting, { anchor_start: 2, anchor_end: 8 });
+    },
+  );
+});
