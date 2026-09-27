@@ -10,10 +10,14 @@
  * prose in the body the writer is already in, under the title they arrived with.
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { Camera } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { JournalMessage } from '@/api';
+import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
+import { accent, touchTarget } from '@/design/tokens';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -78,9 +82,42 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   };
 }
 
+/** The course reader's hand-back address, as the Course screen passes it. */
+interface ReturnToCourse {
+  screen: 'Course';
+  params: { stageNumber?: number; contentId: number; scrollOffset: number };
+}
+
 interface RouteParams {
   entryId?: number;
   prefillTitle?: string;
+  returnTo?: ReturnToCourse;
+}
+
+/** A course hand-off, so the exit row also carries "Back to reading". */
+const RETURN_TO: ReturnToCourse = {
+  screen: 'Course',
+  params: { stageNumber: 3, contentId: 11, scrollOffset: 120 },
+};
+
+/** The exit row's buttons, in the order a screen reader and the tab key meet them. */
+function exitRowOrder(exitRow: Parameters<typeof within>[0]): string[] {
+  return within(exitRow)
+    .getAllByRole('button')
+    .map((b) => String(b.props.testID));
+}
+
+/** Render at a fixed window width, restoring the real hook afterwards. */
+function withWidth<T>(width: number, run: () => T): T {
+  const rn = require('react-native');
+  const spy = jest
+    .spyOn(rn, 'useWindowDimensions')
+    .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+  try {
+    return run();
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 function renderScreen(params?: RouteParams, autosaveDelayMs = 0) {
@@ -132,10 +169,71 @@ describe('JournalEntryScreen — photograph a page', () => {
   it('withholds it in read mode, where there is nothing to append to', async () => {
     mockGet.mockResolvedValue(entry({ id: 7, status: 'finished' }));
 
-    const { queryByTestId, findByTestId } = renderScreen({ entryId: 7 });
+    const { queryByTestId, findByTestId, getByTestId } = renderScreen({ entryId: 7 });
     await findByTestId('journal-read-actions');
 
     expect(queryByTestId('journal-photograph-page')).toBeNull();
+    // The exit row still renders in read mode — just without the camera.
+    expect(exitRowOrder(getByTestId('journal-entry-exit-row'))).toEqual([
+      'journal-api-key-settings',
+      'journal-close-entry',
+    ]);
+  });
+
+  it.each([{ width: 390 }, { width: 1280 }])(
+    'offers the camera icon-only in the exit row, directly left of the close X at $width px',
+    ({ width }) => {
+      const view = withWidth(width, () => renderScreen({ prefillTitle: REFLECTION_TITLE }));
+      const exitRow = view.getByTestId('journal-entry-exit-row');
+
+      expect(exitRowOrder(exitRow)).toEqual([
+        'journal-api-key-settings',
+        'journal-photograph-page',
+        'journal-close-entry',
+      ]);
+      expect(
+        within(view.getByTestId('journal-writing-controls')).queryByTestId(
+          'journal-photograph-page',
+        ),
+      ).toBeNull();
+
+      const camera = within(exitRow).getByTestId('journal-photograph-page');
+      expect(view.queryByText('Photograph a page')).toBeNull();
+      expect(within(camera).getByTestId('journal-photograph-page-icon')).toBeTruthy();
+
+      const cameraStyle = StyleSheet.flatten(camera.props.style);
+      expect(cameraStyle.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+      expect(cameraStyle.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+      // Parity with the X beside it: the same icon-button footprint.
+      expect(cameraStyle).toEqual(
+        StyleSheet.flatten(view.getByTestId('journal-close-entry').props.style),
+      );
+
+      expect(camera.props.accessibilityRole).toBe('button');
+      expect(camera.props.accessibilityLabel).toMatch(
+        /^Photograph a page or screenshot and add its text to this entry$/,
+      );
+
+      const glyphs = view.UNSAFE_getAllByType(Camera);
+      expect(glyphs).toHaveLength(1);
+      expect(glyphs[0]?.props).toMatchObject({
+        size: NAV_ICON_SIZE,
+        strokeWidth: NAV_ICON_STROKE,
+        color: accent.primary,
+      });
+      view.unmount();
+    },
+  );
+
+  it('keeps the course return first, ahead of the key, camera and X', () => {
+    const { getByTestId } = renderScreen({ prefillTitle: REFLECTION_TITLE, returnTo: RETURN_TO });
+
+    expect(exitRowOrder(getByTestId('journal-entry-exit-row'))).toEqual([
+      'journal-return-to-reading',
+      'journal-api-key-settings',
+      'journal-photograph-page',
+      'journal-close-entry',
+    ]);
   });
 
   it('opens the existing capture route in append mode rather than a fork of it', () => {
