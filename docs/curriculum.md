@@ -32,6 +32,7 @@ credentials surface.)
 | Stage seeder (reads the dataset) | `backend/src/seed_stages.py` |
 | Loader + dataset tests | `backend/tests/test_curriculum.py` |
 | Seeder golden-value tests | `backend/tests/test_seed_stages.py` |
+| Course-copy pins + archetype drift guard | `backend/tests/test_vendored_course_copy_pins.py` |
 
 ## Provenance
 
@@ -64,6 +65,26 @@ per-phase manifestation copy are pulled from two different sources:
   (2026-07-31) ahead of the content pin; the re-pin to `9d0f896` (issue
   #2706) closed that gap, so the About page now reads "True Self Wisdom"
   too.
+- `supersessions` — the ratified December 2025 supersessions above, as a
+  machine-readable list of `{stage_number, field, value}` entries. Each
+  `value` must equal what the dataset ships for that `(stage_number, field)`.
+  `backend/tests/test_vendored_course_copy_pins.py` validates every entry
+  (exact keys; an integer stage in 1–10; `field` one of the seven stage
+  attributes; `value` equal to the dataset) and reads the list to decide which
+  stages' `relationship_to_free_will` may differ from the archetype named in
+  the vendored `aptitude-stages.md` `#### ` headings. Every other stage must
+  match its heading (after dropping a leading "The "). Recording a new
+  supersession is a one-line JSON change; there is no exception table in the
+  tests.
+- `stage_2_free_will_source` — Stage 2's `relationship_to_free_will`
+  ("Pleasure Seeker") and `free_will_description` follow the vendored course
+  at the `9d0f896` pin, not the stale value carried over from
+  `backup/2.PURPLE.md` (issue #2915). The archetype is the course's own name in
+  `markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`
+  and in the `aptitude-stages.md` heading; the description is paraphrased from
+  that chapter. `APTITUDE Complete Map.csv` is not vendored, so its own
+  description sentence, and a six-field comparison of the whole table against
+  the CSV, wait on #2664 / #2667.
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
@@ -74,14 +95,18 @@ The `Rx`/`OD` copy in the JSON is quoted from that vendored markdown so the
 three apps stay in sync with the sheet without adepthood needing live access to
 the spreadsheet (privacy posture, #893).
 
-`dataset_version` is `2.1.0`. The `1.x` series shipped with a wrong,
+`dataset_version` is `2.2.0`. The `1.x` series shipped with a wrong,
 non-canonical vocabulary for the seven stage-attribute fields; correcting
 them to the `stage_attributes_source` above is a breaking data change, hence
 the major bump to `2.0.0` rather than a patch or minor. The `2.0.0` → `2.1.0`
 minor is the Stage 8 subtitle correction: it adds the `subtitles_source`
 provenance key and moves the subtitles out of `manifestations_source`'s remit,
 so a consumer reading provenance gets different *semantics*, not just a
-different character — which is more than a patch, and less than a shape change.
+different character — which is more than a patch, and less than a shape change. The
+`2.1.0` → `2.2.0` minor follows that precedent: it corrects Stage 2's free-will
+archetype and description to the course (#2915) and adds the `supersessions`
+and `stage_2_free_will_source` provenance keys, with no change to the Stage or
+phase shape.
 
 ## What the loader guarantees
 
@@ -115,7 +140,8 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    and this doc's presence:
 
    ```bash
-   cd backend && pytest tests/test_curriculum.py tests/test_seed_stages.py
+   cd backend && pytest tests/test_curriculum.py tests/test_seed_stages.py \
+     tests/test_vendored_course_copy_pins.py
    ```
 
 5. **After any `make sync-content`** (which re-pins the vendored course tree
@@ -123,7 +149,9 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    `backend/tests/test_vendored_course_copy_pins.py`. It pins the course's own
    curriculum wording — the ten `aptitude-stages.md` stage headings and the ten
    `about.md` list items — as literals, so a re-pin cannot change curriculum
-   copy silently. **A failure there is a decision, not a typo:** read the
+   copy silently, and it compares each stage's `relationship_to_free_will`
+   to its heading's archetype unless `provenance.supersessions` records the
+   divergence. **A failure there is a decision, not a typo:** read the
    upstream diff and decide whether this dataset follows the new wording, or
    record the divergence deliberately (as `subtitles_source` does for Stage 8
    today). Never hand-edit `backend/content/**` to make it match — that tree is

@@ -1,6 +1,6 @@
 ---
 ontology_version: aptitude-wavelength/2026-05-23
-dataset_version: "2.0.0"
+dataset_version: "2.2.0"
 ---
 
 # APTITUDE / Archetypal Wavelength -- Ontology Spine
@@ -48,9 +48,9 @@ Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival
 ### Stage 2 -- Purple
 
 - Color `#a093c6` | Category Yes-And-Ness | Gift Receptivity | Growing-Up Magic | Divine gender Divine Feminine
-- Mode Inhabit (Feel) | Archetype Archetype Embodier | Frequency F2 Receptivity
-- Shadow: personality as "the combined effort of archetypal role models," from fictional characters to celebrities, rather than chosen
-- Source: `archetypal_wavelength.json` stage 2; `tokens.ts`; `backend/content/markdown/02-purple/05-the-vibe-wavelength-of-purple-internalize-feel.md`.
+- Mode Inhabit (Feel) | Archetype Pleasure Seeker | Frequency F2 Receptivity
+- Shadow: will steered "toward the pleasant, away from the unpleasant" -- pleasure as real information that is also a leash, hijacked by whoever controls what feels nice
+- Source: `archetypal_wavelength.json` stage 2; `tokens.ts`; `backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`; `backend/content/markdown/02-purple/05-the-vibe-wavelength-of-purple-internalize-feel.md`.
 
 #### Aliases
 
@@ -306,14 +306,14 @@ F10 = Frequency 10 = Emptiness = Clear Light = Stage 10
 
 ## Known Conflicts
 
-The Stage attribute values shipped above come from `APTITUDE Complete Map.csv` (the dataset's `stage_attributes_source`, per `archetypal_wavelength.json` and `docs/curriculum.md`). The vendored course manifest chapters under `backend/content/markdown/` carried a DIFFERING ontology for Stages 7-10, and now differ at Stage 2 as well. The content re-pin to `9d0f896` (issue #2706) reconciled the **Category** and **Aspect** halves of that difference at each stage's Mood chapter, by renaming those six chapters upstream. It did NOT reconcile the **Archetype** half, which still differs at Stages 7, 9 and 10, nor the older Category vocabulary that survives in the Stage 9 and 10 introductions. The residue is recorded here neutrally as an open decision (#1637, epic:stage-ontology):
+The Stage attribute values shipped above come from `APTITUDE Complete Map.csv` (the dataset's `stage_attributes_source`, with Stage 2's free-will pair following the vendored course per `stage_2_free_will_source`; see `archetypal_wavelength.json` and `docs/curriculum.md`). The vendored course manifest chapters under `backend/content/markdown/` carried a DIFFERING ontology for Stages 7-10; the re-pin also opened a Stage 2 archetype difference, since resolved by #2915. The content re-pin to `9d0f896` (issue #2706) reconciled the **Category** and **Aspect** halves of that difference at each stage's Mood chapter, by renaming those six chapters upstream. It did NOT reconcile the **Archetype** half, which still differs at Stages 7, 9 and 10, nor the older Category vocabulary that survives in the Stage 9 and 10 introductions. The residue is recorded here neutrally as an open decision (#1637, epic:stage-ontology):
 
-- Stage 2 -- NEWLY OPENED by the re-pin: Archetype "Archetype Embodier" vs. manifest "Pleasure Seeker" (`backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`). Upstream `3bf0df5` renamed Purple's free-will archetype and "Archetype Embodier" no longer appears anywhere in the vendored markdown, so the dataset's `relationship_to_free_will` and `frontend/src/features/Map/mapLayout.ts` persona are now the only carriers of the old name. Whether the dataset follows is the same deliberate call #2577 made for Stage 8's subtitle, and is left to the #1637 reconciliation rather than bundled into a content re-pin.
+- Stage 2 -- RESOLVED by #2915: the dataset's `relationship_to_free_will` and the `frontend/src/features/Map/mapLayout.ts` persona now read "Pleasure Seeker", the course's own name (`backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md` and the `aptitude-stages.md` heading), and `free_will_description` is paraphrased from that chapter. The re-pin to `9d0f896` had opened this when upstream `3bf0df5` renamed Purple's archetype; the old name now survives only in the vendored `backup/` tree. `backend/tests/test_vendored_course_copy_pins.py` now holds every stage's archetype to its `aptitude-stages.md` heading except where `provenance.supersessions` records a ratified supersession.
 - Stage 7 -- RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/07-yellow/02-the-mood-of-yellow-wisdomsystems-wisdom.md` (Category Wisdom, Aspect Systems Wisdom), and `01-what-is-yellow.md` agrees. **Still open:** Archetype Despairing Analyst vs. manifest "Intentional Actor" (`backend/content/markdown/07-yellow/05-the-relationship-to-free-will-at-yellow-intentional-actor.md`). The course uses "Intentional Actor" for the *integrated* pole of Systems Wisdom and "Despairing Analyst" for the *repressed* pole; the dataset's `relationship_to_free_will` pins the repressed one. The two name-sets are describing different poles, not disagreeing about the stage.
 - Stage 8 -- FULLY RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md` (Category Wisdom), and the Archetype already agreed (`04-the-relationship-to-free-will-at-teal-true-self-embodier.md` vs. dataset "True Self Embodier").
 - Stage 9 -- PARTIALLY RESOLVED: the Mood chapter is now `backend/content/markdown/09-ultraviolet/02-the-mood-of-ultraviolet-beingunity.md` (Category Being, Aspect Unity). **Still open:** `01-what-is-ultraviolet.md:27` still reads "APTITUDE calls this **Wholeness** ... **Developmental Complexity**", as does the Gift chapter title (`10-ultraviolets-gift-the-recognition-of-natural-hierarchy.md`); and Archetype Blissy Adept vs. manifest "Hierarchical Organizer" (`backend/content/markdown/09-ultraviolet/04-the-relationship-to-free-will-at-ultraviolet-hierarchical-or.md`). Note the re-pin left the course internally inconsistent here: the Mood chapter's integrated pole is now "Skillful Composer" while the Free Will chapter is still titled "Hierarchical Organizer".
 - Stage 10 -- PARTIALLY RESOLVED: the Mood chapter is now `backend/content/markdown/10-clearlight/02-the-mood-of-clear-light-awarenessemptiness.md` (Category Awareness). **Still open:** `01-what-is-clear-light.md:29` still reads "APTITUDE calls this **Wholeness**"; and Archetype Whole Adept vs. manifest "Adept" (`backend/content/markdown/10-clearlight/04-the-relationship-to-free-will-at-clear-light-adept.md`).
 
-This document pins the shipped dataset values above as canonical. The reconciliation is tracked in the open stage-ontology decision (#1637); until it lands, a semantic-extraction pass should treat both name-sets as aliases of the same Stage entity rather than choosing a side.
+This document pins the shipped dataset values above as canonical. The owner's #1637 decision (2026-09-05) is that the source materials are authoritative, and #2915 applied it to Stage 2. For the stages still listed as open above (7, 9 and 10), until each is reconciled a semantic-extraction pass should treat both name-sets as aliases of the same Stage entity rather than choosing a side.
 
 By contrast, Stage 4's aspect "Community Love" and Stage 8's color Teal / aspect "True Self Connection" / archetype "True Self Embodier" are SETTLED Dec-2025 supersessions, not open conflicts -- see the `docs/curriculum.md` provenance block and the `aptitude-course` repository's `CLAUDE.md`.
