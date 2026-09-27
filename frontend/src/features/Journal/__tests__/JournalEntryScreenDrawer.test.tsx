@@ -50,6 +50,10 @@ jest.mock('@/api', () => ({
     setIncluded: jest.fn(),
     list: jest.fn(() => Promise.resolve([])),
   },
+  // A reopened review asks for its sources; the drawer tests need only a reply.
+  reflections: {
+    sources: jest.fn(() => Promise.resolve({ items: [] })),
+  },
   corpus: {
     voiceReadiness: (...a: unknown[]) =>
       (mockVoiceReadiness as unknown as (...x: unknown[]) => unknown)(...a),
@@ -220,6 +224,52 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
     expect(navigation.push).not.toHaveBeenCalledWith('PromotedQuotes');
     expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  // #2885: from a review being written, the door carries a hand-off token so
+  // the screen can fold a selection back into THIS review -- and only then.
+  it('opens Promoted quotes with a hand-off token from a review being written', async () => {
+    mockGet.mockResolvedValue(
+      entry({
+        tag: 'hierarchical_reflection' as JournalMessage['tag'],
+        reflection_level: 'week',
+        reflection_scope_key: 'c1:w1',
+      }),
+    );
+    const { getByTestId, getByLabelText, navigation } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-promoted-quotes')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-promoted-quotes'));
+    });
+
+    expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes', {
+      injectInto: expect.stringMatching(/^quotes-\d+$/),
+    });
+  });
+
+  it('opens Promoted quotes with no token from a finished review until the writer edits it', async () => {
+    mockGet.mockResolvedValue(
+      entry({
+        tag: 'hierarchical_reflection' as JournalMessage['tag'],
+        reflection_level: 'week',
+        reflection_scope_key: 'c1:w1',
+        status: 'finished',
+      }),
+    );
+    const { getByTestId, getByLabelText, getByText, navigation } = renderScreen(7);
+    // Hydrated, in read mode: the page's own words, and no editable title.
+    await waitFor(() => expect(getByText('An existing page about rivers.')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-promoted-quotes')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-promoted-quotes'));
+    });
+
+    expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
   });
 
   it('routes a consented account from Your corpus to the import surface', async () => {

@@ -34,3 +34,23 @@ export function webPressedState<P>(pressed: boolean): Partial<P> {
   if (Platform.OS !== 'web') return {};
   return { 'aria-pressed': pressed } as unknown as Partial<P>;
 }
+
+/**
+ * A checkbox's state for react-native-web, which drops `accessibilityState`
+ * and so would read every box unticked (#2971). `aria-checked` is the ARIA for
+ * role=checkbox; a checkbox never carries `aria-selected`. Web only, as above:
+ * on native `accessibilityState.checked` already carries it.
+ */
+export function webCheckedState<P>(checked: boolean, disabled: boolean): Partial<P> {
+  if (Platform.OS !== 'web') return {};
+  return { 'aria-checked': checked, 'aria-disabled': disabled } as unknown as Partial<P>;
+}
+
+/**
+ * A plain control's disabled state for react-native-web, which drops
+ * `accessibilityState.disabled`. Web only, as above.
+ */
+export function webDisabledState<P>(disabled: boolean): Partial<P> {
+  if (Platform.OS !== 'web') return {};
+  return { 'aria-disabled': disabled } as unknown as Partial<P>;
+}
