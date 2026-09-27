@@ -228,19 +228,40 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing(2),
   },
-  /** One unbroken action rail below the save state, at phone and desktop widths. */
+  /**
+   * One unbroken action rail below the save state, at phone and desktop widths:
+   * [leading slot][Finish][trailing slot]. The two side slots share the leftover
+   * width equally, so Finish sits on the rail's centre — under the text box —
+   * whether or not a reflection's Sources toggle occupies the trailing slot.
+   */
   writingControlsRow: {
     flexDirection: 'row',
     flexWrap: 'nowrap',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: SPACING.sm,
     paddingTop: spacing(2),
+  },
+  /** An equal-width flank of the rail; its twin keeps Finish centred. */
+  writingControlsSide: {
+    flex: 1,
+    flexBasis: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  /** The trailing flank starts beside Finish, so Sources never drifts to the page edge. */
+  writingControlsTrailing: {
+    justifyContent: 'flex-start',
+  },
+  /** A Finish failure reads beneath the centred button it belongs to. */
+  finishError: {
+    textAlign: 'center',
   },
   /** Finish keeps its label while yielding first if the secondary controls need room. */
   writingPrimaryControl: {
     flexShrink: 1,
   },
-  /** Icon and optional label share one touch target; compact mode simply omits the label. */
+  /** Sources' icon and optional label share one touch target; compact mode omits the label. */
   writingSecondaryControl: {
     minWidth: touchTarget.minimum,
     minHeight: touchTarget.minimum,
@@ -339,9 +360,10 @@ const styles = StyleSheet.create({
     paddingTop: spacing(2),
   },
   /**
-   * The page's exit row, above the sheet: the optional "Back to reading" return
-   * and the always-present close, clustered at the trailing edge so the writer
-   * finds one way out wherever they arrived from.
+   * The page's exit row, above the sheet: the optional "Back to reading" return,
+   * the API-key door, the camera while writing, and the always-present close,
+   * clustered at the trailing edge so the writer finds one way out wherever they
+   * arrived from.
    */
   entryExitRow: {
     flexDirection: 'row',
