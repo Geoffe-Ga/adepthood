@@ -1,8 +1,9 @@
 /* eslint-env jest */
 // Pins the Journal "Finish" data-loss bug: a failed final write can silently flip status to 'finished' on top of a stale/shorter autosaved body.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import { KEYED } from './idempotencyTestKit';
 
@@ -427,5 +428,57 @@ describe('JournalEntryScreen Finish — prompt-compose has no Finish affordance'
     });
     fireEvent.changeText(getByTestId('journal-body-input'), 'I noticed the willow.');
     expect(queryByTestId('journal-finish-button')).toBeNull();
+  });
+});
+
+/** A rendered host or composite node, as the query helpers return one. */
+type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
+
+/** The rail's slot and Finish testIDs, in render order, ignoring everything nested deeper. */
+const RAIL_PARTS = new Set([
+  'journal-writing-controls-leading',
+  'journal-finish-button',
+  'journal-writing-controls-trailing',
+]);
+
+describe('JournalEntryScreen Finish — centres under the text box', () => {
+  it('holds Finish between two equal side slots on a centred rail', () => {
+    const { getByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'A first line.');
+
+    const rail = getByTestId('journal-writing-controls');
+    const railStyle = StyleSheet.flatten(rail.props.style);
+    expect(railStyle.alignItems).toBe('center');
+    expect(railStyle.justifyContent).toBe('center');
+
+    for (const slot of ['journal-writing-controls-leading', 'journal-writing-controls-trailing']) {
+      const slotStyle = StyleSheet.flatten(within(rail).getByTestId(slot).props.style);
+      expect(slotStyle.flex).toBe(1);
+      expect(slotStyle.flexBasis).toBe(0);
+    }
+
+    const order = rail
+      .findAll(
+        (node: RenderedNode) =>
+          typeof node.type === 'string' && RAIL_PARTS.has(String(node.props.testID)),
+      )
+      .map((node: RenderedNode) => String(node.props.testID));
+    expect(order).toEqual([
+      'journal-writing-controls-leading',
+      'journal-finish-button',
+      'journal-writing-controls-trailing',
+    ]);
+  });
+
+  it('centres a Finish error beneath the button', async () => {
+    const { getByTestId, findByTestId } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), LONG_BODY);
+    mockCreate.mockReset();
+    mockCreate.mockRejectedValue(new Error('network down'));
+
+    fireEvent.press(getByTestId('journal-finish-button'));
+
+    const error = await findByTestId('journal-finish-error');
+    expect(StyleSheet.flatten(error.props.style).textAlign).toBe('center');
   });
 });

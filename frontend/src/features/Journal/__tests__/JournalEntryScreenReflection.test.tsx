@@ -294,7 +294,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
     { width: 600, compact: true },
     { width: 1200, compact: false },
   ])(
-    'keeps Photograph and Sources in the same control row at $width px',
+    'keeps Sources on the writing rail and the camera in the exit row at $width px',
     async ({ width, compact }) => {
       const rn = require('react-native');
       const spy = jest
@@ -305,14 +305,16 @@ describe('JournalEntryScreen -- reflection mode', () => {
         await act(async () => {
           await Promise.resolve();
         });
-        const row = within(screen.getByTestId('journal-writing-controls'));
-        const photograph = row.getByTestId('journal-photograph-page');
-        const sources = row.getByTestId('reflection-sources-toggle');
+        const rail = within(screen.getByTestId('journal-writing-controls'));
+        expect(rail.queryByTestId('journal-photograph-page')).toBeNull();
+        const trailing = within(rail.getByTestId('journal-writing-controls-trailing'));
+        const sources = trailing.getByTestId('reflection-sources-toggle');
+        const photograph = within(screen.getByTestId('journal-entry-exit-row')).getByTestId(
+          'journal-photograph-page',
+        );
         expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
         expect(within(sources).getByTestId('reflection-sources-icon')).toBeTruthy();
-        expect(within(photograph).queryByText('Photograph a page')).toEqual(
-          compact ? null : expect.anything(),
-        );
+        expect(within(photograph).queryByText('Photograph a page')).toBeNull();
         expect(within(sources).queryByText('Sources')).toEqual(compact ? null : expect.anything());
         expect(photograph.props.accessibilityLabel).toMatch(/Photograph a page or screenshot/);
         expect(sources.props.accessibilityLabel).toMatch(/Open the sources/);
