@@ -6,6 +6,7 @@ import { act, create } from 'react-test-renderer';
 
 import { ink, surface, touchTarget } from '../../../design/tokens';
 import { unlockTimeline } from '../journeyNarrative';
+import { focusScrollOffset, lensFrame } from '../magnifierGeometry';
 import styles, { ANNOTATION_LANE_WIDTH, FIT_CONTENT, WAVE_KEEP_OUT } from '../Map.styles';
 import {
   ARROW_LABEL_MAX_FONT_SIZE,
@@ -23,6 +24,7 @@ import {
 } from '../mapLayout';
 import MapScreen, { MapBackdrop } from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
+import { nominalAnchorY } from '../waveGeometry';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import {
@@ -1368,5 +1370,113 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
       expect(String(hotspot.props.accessibilityLabel)).toMatch(/locked/iu);
     }
     expect(styles.centerStageCell.minHeight).toBe(touchTarget.minimum);
+  });
+});
+
+describe('MapScreen scroller and the magnifier (#2657)', () => {
+  const GRID = { width: 300, height: 600 };
+  const VIEWPORT_HEIGHT = 200;
+  const CONTENT_HEIGHT = 650;
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  const mapScroll = (tree: ReturnType<typeof create>) => {
+    const [scroll] = tree.root
+      .findAllByType(ScrollView)
+      .filter((n: TestNode) => n.props.testID === 'map-scroll');
+    if (scroll === undefined) throw new Error('map-scroll is not a ScrollView');
+    return scroll;
+  };
+
+  /** Lay the grid and its scroller out: a 600px grid in a 200px window. */
+  const layOut = (tree: ReturnType<typeof create>, contentHeight = CONTENT_HEIGHT) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, ...GRID } },
+      });
+      const scroll = mapScroll(tree);
+      scroll.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: GRID.width, height: VIEWPORT_HEIGHT } },
+      });
+      scroll.props.onContentSizeChange(GRID.width, contentHeight);
+    });
+  };
+
+  const touch = (pageY: number) => ({ nativeEvent: { pageX: 150, pageY, timestamp: 0 } });
+
+  it('never bounces, so an iOS overscroll cannot cancel a lens drag', () => {
+    const tree = create(<MapScreen />);
+    expect(mapScroll(tree).props.alwaysBounceVertical).toBe(false);
+    expect(mapScroll(tree).props.bounces).toBe(false);
+  });
+
+  it('stops the Map scrolling while the lens is held and resumes on release', () => {
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    expect(mapScroll(tree).props.scrollEnabled).toBe(true);
+
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    act(() => lens.props.onResponderGrant(touch(500)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(false);
+
+    act(() => lens.props.onResponderMove(touch(400)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(false);
+
+    act(() => lens.props.onResponderRelease(touch(400)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(true);
+  });
+
+  it('scrolls a focused stage below the fold into view when the lens glides to it', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    const anchorY = nominalAnchorY(3) * GRID.height;
+    const expected = focusScrollOffset({
+      anchorY,
+      halfExtent: lensFrame(GRID.width, GRID.height).height / 2,
+      scrollY: 0,
+      viewportHeight: VIEWPORT_HEIGHT,
+      contentHeight: CONTENT_HEIGHT,
+    });
+    expect(expected).toBe(anchorY - VIEWPORT_HEIGHT / 2);
+    expect(scrollTo).toHaveBeenCalledWith({ y: expected, animated: true });
+  });
+
+  it('follows the scroller, so a stage already in the window is not scrolled to', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    // The reader has scrolled stage 3 into the window themselves.
+    act(() =>
+      mapScroll(tree).props.onScroll({
+        nativeEvent: { contentOffset: { x: 0, y: nominalAnchorY(3) * GRID.height - 100 } },
+      }),
+    );
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('leaves the scroller alone when the Map fits its window', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree, VIEWPORT_HEIGHT);
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

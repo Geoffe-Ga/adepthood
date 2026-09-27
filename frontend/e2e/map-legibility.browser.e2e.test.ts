@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type CDPSession, type Locator, type Page } from '@playwright/test';
 
 import { signUp } from './journalHabitsBrowserSupport';
 import {
@@ -15,7 +15,14 @@ import {
   type Hotspot,
   type MapMeasurement,
 } from './mapGeometry';
-import { arrangeMapState, EXPECTED, openSettledMap, type MapState } from './mapStates';
+import {
+  arrangeMapState,
+  EXPECTED,
+  journeyReadFor,
+  openSettledMap,
+  STATE_MARKER,
+  type MapState,
+} from './mapStates';
 import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
 import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from './textCensus';
 
@@ -73,6 +80,8 @@ const CASES: Readonly<Record<MapState, readonly Size[]>> = {
 };
 
 const PADLOCK = '\u{1F512}';
+/** The chip the lens wears over the current stage. */
+const YOU_ARE_HERE = 'YOU ARE HERE';
 const HOTSPOT = /^stage-hotspot-(\d+)-([01])$/u;
 const UNLOCK = /^stage-unlock-(\d+)$/u;
 /** The EMPTINESS / UNITY watermark: the wave converges through it by design. */
@@ -130,6 +139,27 @@ function assertMeasured(m: MapMeasurement, state: MapState, where: string): void
   expect(padlocks(m, text, '1'), `${where}: centre padlocks`).toHaveLength(locked);
   expect(padlocks(m, text, '0'), `${where}: left padlocks`).toHaveLength(locked);
   expect(m.badges, `${where}: check badges`).toHaveLength(complete);
+  assertStateMarkers(m, state, where);
+}
+
+/** The measured frame itself shows the arranged state, not the one before it. */
+function assertStateMarkers(m: MapMeasurement, state: MapState, where: string): void {
+  const texts = (id: string): string[] =>
+    m.census.filter((record) => record.testId === id).map((record) => record.text);
+  expect(texts('journey-read').join(' '), `${where}: journey read`).toContain(
+    journeyReadFor(state),
+  );
+  const { lens } = m;
+  const underLens = lens === null ? [] : m.census.filter((record) => within(record, lens));
+  expect(
+    underLens.map((record) => record.text),
+    `${where}: the lens rests on the current stage`,
+  ).toContain(YOU_ARE_HERE);
+  const marker = STATE_MARKER[state];
+  if (marker !== null) {
+    const shown = m.census.some((record) => (record.testId ?? '').startsWith(marker));
+    expect(shown, `${where}: ${marker} in the measured frame`).toBe(true);
+  }
 }
 
 /** Rule 2: what the wave's paint reaches, intended covers aside. */
@@ -226,7 +256,7 @@ function gridFindings(m: MapMeasurement): string[] {
 
 async function measure(page: Page, state: MapState, size: Size): Promise<MapMeasurement> {
   await page.setViewportSize(size);
-  await openSettledMap(page);
+  await openSettledMap(page, state);
   const dir = join(ARTIFACT_DIR, state);
   mkdirSync(dir, { recursive: true });
   await page.screenshot({ path: join(dir, `${label(size)}.png`) });
@@ -239,12 +269,6 @@ async function holdLegibility(page: Page, state: MapState, size: Size): Promise<
   const where = `${state} ${label(size)}`;
   const m = await measure(page, state, size);
   assertMeasured(m, state, where);
-  if (state === 'completed') {
-    await expect(page.getByTestId('begin-again-button'), `${where}: Begin again`).toHaveCount(1);
-  }
-  if (state === 'partial') {
-    await expect(page.getByTestId('cycle-indicator'), `${where}: cycle caption`).toBeVisible();
-  }
 
   const overlaps = overlappingPairs(gridText(m), SUBPIXEL_TOLERANCE).map(
     ([a, b]) => `${describeRecord(a)} overlaps ${describeRecord(b)}`,
@@ -274,3 +298,85 @@ for (const [state, sizes] of Object.entries(CASES) as Array<[MapState, readonly 
     for (const size of sizes) await holdLegibility(page, state, size);
   });
 }
+
+/** A phone window short enough that the fresh Map overflows and scrolls. */
+const TOUCH_VIEWPORT = { width: NARROW_VIEWPORT.width, height: 664 } as const;
+/** How far each drag travels, and in how many touch moves. */
+const DRAG_DISTANCE_PX = 120;
+const DRAG_STEPS = 12;
+/** A stage in the middle of the table, on screen before anything scrolls. */
+const MID_TABLE_STAGE = 5;
+
+interface Point2 {
+  x: number;
+  y: number;
+}
+
+/** A real finger drag through the DevTools protocol: start, move in steps, lift. */
+async function touchDrag(cdp: CDPSession, from: Point2, to: Point2): Promise<void> {
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+  for (let step = 1; step <= DRAG_STEPS; step += 1) {
+    const t = step / DRAG_STEPS;
+    const point = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+async function centreOf(locator: Locator): Promise<Point2> {
+  const box = await locator.boundingBox();
+  if (box === null) throw new Error('the element to drag is not laid out');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/**
+ * The Map scrolls once the table outgrows the window, and the lens is dragged
+ * inside that scroller: a finger on the lens must move the lens, never the grid
+ * beneath it, while a finger anywhere else on the table still scrolls it.
+ */
+test('a touch drag on the lens moves the lens and leaves the Map still; a drag on the table scrolls it', async ({
+  browser,
+}) => {
+  test.setTimeout(STATE_TIMEOUT_MS);
+  const context = await browser.newContext({
+    viewport: TOUCH_VIEWPORT,
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await context.newPage();
+  await signUp(page, 'map-legibility-touch');
+  await openSettledMap(page, 'fresh');
+  const cdp = await context.newCDPSession(page);
+  const scroller = page.getByTestId('map-scroll');
+  const scrollTop = (): Promise<number> => scroller.evaluate((el) => el.scrollTop);
+  const overflow = await scroller.evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(overflow, 'the fresh Map must overflow this window').toBeGreaterThan(0);
+
+  // Bring the lens up to a mid-table stage that the unscrolled window shows,
+  // and let it come to rest: from the top of the scroller, a finger moving up
+  // is exactly the gesture that would scroll the Map down.
+  const lens = page.getByTestId('map-magnifier');
+  await page.getByTestId(`stage-hotspot-${String(MID_TABLE_STAGE)}-0`).tap();
+  let resting = '';
+  await expect
+    .poll(async () => {
+      const box = JSON.stringify(await lens.boundingBox());
+      const settled = box === resting;
+      resting = box;
+      return settled;
+    })
+    .toBe(true);
+  await expect(lens).toBeInViewport();
+  const before = await scrollTop();
+  const from = await centreOf(lens);
+  await touchDrag(cdp, from, { x: from.x, y: from.y - DRAG_DISTANCE_PX });
+  await expect.poll(async () => (await centreOf(lens)).y).toBeLessThan(from.y);
+  expect(await scrollTop(), 'a lens drag must not scroll the Map').toBe(before);
+
+  // Control: the same gesture on the table's text does scroll the Map, so the
+  // stillness above is the lens's doing and not a scroller that cannot move.
+  const text = await centreOf(page.getByTestId('stage-text-fit-9'));
+  await touchDrag(cdp, text, { x: text.x, y: text.y - DRAG_DISTANCE_PX });
+  await expect.poll(scrollTop).toBeGreaterThan(before);
+  await context.close();
+});

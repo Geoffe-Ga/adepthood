@@ -3,6 +3,7 @@
 
 import { STAGE_ORDER } from '../../../design/tokens';
 import {
+  focusScrollOffset,
   clampLensCenter,
   DRAG_TAP_SLOP,
   glideDurationMs,
@@ -259,5 +260,38 @@ describe('DRAG_TAP_SLOP', () => {
   it('is a small positive px threshold (a tap, not a drag)', () => {
     expect(DRAG_TAP_SLOP).toBeGreaterThan(0);
     expect(DRAG_TAP_SLOP).toBeLessThanOrEqual(12);
+  });
+});
+
+// #2657: once the Map scrolls, a glide to a stage below the fold would land
+// where nobody can see it, so the scroller follows the focused stage.
+describe('focusScrollOffset', () => {
+  const BASE = { halfExtent: 20, scrollY: 0, viewportHeight: 200, contentHeight: 650 };
+
+  it('asks for no scroll when the content fits its viewport', () => {
+    expect(focusScrollOffset({ ...BASE, anchorY: 500, contentHeight: 200 })).toBeNull();
+    expect(focusScrollOffset({ ...BASE, anchorY: 500, contentHeight: 199 })).toBeNull();
+  });
+
+  it('leaves the scroller alone while the whole lens is already in the window', () => {
+    expect(focusScrollOffset({ ...BASE, anchorY: 20 })).toBeNull();
+    expect(focusScrollOffset({ ...BASE, anchorY: 180 })).toBeNull();
+    expect(focusScrollOffset({ ...BASE, anchorY: 320, scrollY: 300 })).toBeNull();
+  });
+
+  it('moves as soon as any of the lens leaves the window, on either side', () => {
+    expect(focusScrollOffset({ ...BASE, anchorY: 181 })).toBe(81);
+    expect(focusScrollOffset({ ...BASE, anchorY: 319, scrollY: 300 })).toBe(219);
+  });
+
+  it('centres the focused anchor in the viewport', () => {
+    expect(focusScrollOffset({ ...BASE, anchorY: 300 })).toBe(300 - BASE.viewportHeight / 2);
+  });
+
+  it('never scrolls above the top or past the end of the content', () => {
+    expect(focusScrollOffset({ ...BASE, anchorY: 40, scrollY: 400 })).toBe(0);
+    expect(focusScrollOffset({ ...BASE, anchorY: 640 })).toBe(
+      BASE.contentHeight - BASE.viewportHeight,
+    );
   });
 });

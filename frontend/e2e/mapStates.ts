@@ -46,6 +46,28 @@ export const EXPECTED: Readonly<Record<MapState, { locked: number; complete: num
   completed: { locked: 0, complete: FINAL_STAGE },
 };
 
+/** The stage the calendar puts each state in. */
+export const CURRENT_STAGE: Readonly<Record<MapState, number>> = {
+  fresh: 1,
+  partial: PARTIAL_STAGE,
+  completed: FINAL_STAGE,
+};
+
+/** The journey read's opening for a state: "Stage N of 10". */
+export const journeyReadFor = (state: MapState): string =>
+  `Stage ${String(CURRENT_STAGE[state])} of ${String(FINAL_STAGE)}`;
+
+/**
+ * What only the arranged state shows, so a measure cannot run on the Map as it
+ * looked before the calendar and the stage list answered: Begin again once the
+ * arc is whole, and the cycle caption for the returning traveller.
+ */
+export const STATE_MARKER: Readonly<Record<MapState, string | null>> = {
+  fresh: null,
+  partial: 'cycle-indicator',
+  completed: 'begin-again-button',
+};
+
 interface WireStage {
   stage_number: number;
   progress: number;
@@ -96,14 +118,21 @@ function everyMeasured(ids: readonly string[]): boolean {
 }
 
 /**
- * Open the Map and wait until it has settled: the wave drawn, every fitted
+ * Open the Map and wait until it has settled in `state`: the state's own
+ * markers shown, the wave drawn, every fitted
  * text wrapper measured to a real width, so the fitted font sizes are final,
  * and the magnifier at rest on the current stage.
  * The frame itself is then taken by `mapMeasureScript`, two animation frames on.
  */
-export async function openSettledMap(page: Page): Promise<void> {
+export async function openSettledMap(page: Page, state: MapState): Promise<void> {
   await page.goto(`${frontendUrl()}/map`);
-  await expect(page.getByTestId('journey-read')).toBeVisible();
+  // The state is established before anything is measured: the calendar's
+  // current stage in the journey read and under the lens's YOU ARE HERE chip,
+  // and the state's own marker.
+  await expect(page.getByTestId('journey-read')).toContainText(journeyReadFor(state));
+  const marker = STATE_MARKER[state];
+  if (marker !== null) await expect(page.getByTestId(marker)).toBeVisible();
+  await expect(page.getByTestId('map-magnifier').getByTestId('you-are-here')).toBeVisible();
   await expect(page.locator('[testid="map-wave"], [data-testid="map-wave"]')).toHaveCount(1);
   const fitted = STAGE_NUMBERS.flatMap((stage) => [
     `stage-text-fit-${String(stage)}`,
