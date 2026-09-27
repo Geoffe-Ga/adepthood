@@ -95,6 +95,22 @@ describe('ReflectionSourcesPanel -- pending quotes', () => {
     expect(quoteNode).toBeTruthy();
     expect(quoteNode.props.accessibilityState?.disabled).toBe(true);
   });
+
+  it('shows a check glyph and reads as selected once a quote is folded in (#2952)', () => {
+    const sourceItem = item({
+      id: 1,
+      promoted_quotes: [quote({ id: 90, pending: true })],
+    });
+    const { getByTestId, queryByTestId } = render(
+      <ReflectionSourcesPanel items={[sourceItem]} onInsertQuote={jest.fn()} />,
+    );
+    const hidden = { includeHiddenElements: true };
+    expect(queryByTestId('pending-quote-90-check', hidden)).toBeNull();
+    expect(getByTestId('pending-quote-90').props.accessibilityState?.selected).toBeFalsy();
+    fireEvent.press(getByTestId('pending-quote-90'));
+    expect(getByTestId('pending-quote-90-check', hidden)).toBeTruthy();
+    expect(getByTestId('pending-quote-90').props.accessibilityState?.selected).toBe(true);
+  });
 });
 
 describe('ReflectionSourcesPanel -- chronological feed', () => {

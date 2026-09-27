@@ -7,10 +7,11 @@ import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import QuoteSelectionSurface from '../QuoteSelectionSurface';
+import QuoteSelectionSurface, { SELECTION_FIELD_MIN_HEIGHT } from '../QuoteSelectionSurface';
+import { pinnedFooterStyle } from '../readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from '../selectionSurfaceCopy';
 
-import { editorialType } from '@/design/tokens';
+import { colors, editorialType, writingFieldFocus } from '@/design/tokens';
 
 const Platform = require('react-native').Platform as { OS: string };
 
@@ -207,5 +208,38 @@ describe('QuoteSelectionSurface -- edge whitespace (#2891)', () => {
     });
     expect(queryByTestId('quote-select-preview')).toBeNull();
     expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
+  });
+});
+
+describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
+  it('attaches the writing-field focus fragment so no browser ring frames the field', () => {
+    const { getByTestId } = renderSurface();
+    expect(getByTestId('quote-select-input').props.style).toContain(writingFieldFocus);
+  });
+
+  it('grows with its content instead of keeping the blank page floor or an inner scroll', () => {
+    const { getByTestId } = renderSurface();
+    const input = getByTestId('quote-select-input');
+    const before = StyleSheet.flatten(input.props.style);
+    expect(before.minHeight).toBe(SELECTION_FIELD_MIN_HEIGHT);
+    expect(before.flexGrow).toBeUndefined();
+    fireEvent(input, 'contentSizeChange', { nativeEvent: { contentSize: { height: 900 } } });
+    expect(StyleSheet.flatten(getByTestId('quote-select-input').props.style).height).toBe(900);
+  });
+
+  it('keeps the preview, actions and hint together in one footer pinned to the viewport', () => {
+    const { getByTestId } = renderSurface();
+    const footer = getByTestId('quote-select-footer');
+    expect(footer.props.style).toContain(pinnedFooterStyle);
+    const flat = StyleSheet.flatten(footer.props.style);
+    expect(flat.backgroundColor).toBe(colors.paper.background);
+    within(footer).getByTestId('quote-select-confirm');
+    within(footer).getByTestId('quote-select-cancel');
+    fireEvent.press(getByTestId('quote-select-confirm-guard'));
+    within(footer).getByTestId('quote-select-hint');
+    fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+      nativeEvent: { selection: { start: 0, end: 8 } },
+    });
+    within(getByTestId('quote-select-footer')).getByTestId('quote-select-preview');
   });
 });

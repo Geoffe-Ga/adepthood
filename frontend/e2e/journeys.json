@@ -334,6 +334,18 @@
     "coveredBy": "frontend/e2e/journal-promote-quote.browser.e2e.test.ts"
   },
   {
+    "id": "journal.promote-a-passage-deep-in-a-long-entry",
+    "description": "A reader on a phone opens an entry several screens long, taps Promote a quote, and selects a passage near its end. The mirrored field wears no browser focus ring and grows to its text instead of becoming an inner scroll pane, and the preview / Promote / Cancel footer stays pinned at the foot of the viewport (web position: sticky) while the body scrolls, so the confirm is in reach without scrolling past the whole entry. Uncovered because the browser lane's promote spec (journal.promote-reopen-and-remove-quote) drives a one-line body and never scrolls; the focus fragment, growth wiring and pinned footer are pinned meanwhile by QuoteSelectionSurface.test.tsx and readingSurfaceStyles.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/QuoteSelectionSurface.tsx",
+      "client": ["promotions"],
+      "routes": ["POST /journal/{entry_id}/promote"],
+      "tables": ["promotedquote"]
+    },
+    "status": "uncovered",
+    "issue": 2967
+  },
+  {
     "id": "journal.find-promoted-quotes-any-day",
     "description": "On any day, not only inside a review composer, a writer opens the Journal drawer's 'Promoted quotes' door (a door with no count) and sees every quote they have promoted, grouped by status: 'Waiting for your next review (n)' above 'Used in a review (m)', each header carrying the server's total for its own section. A quote seeded through the real promote route near the end of a long finished page is listed verbatim with its source title; tapping it opens that page in read mode scrolled to the passage, which is underlined and asserted in the viewport. Back on the screen, Remove asks first, the confirmed remove issues DELETE /promotions/{promotion_id}, and after a cold reload the screen shows the exact empty copy and GET /promotions returns nothing. Not asserted in the browser, and pinned only by Jest and pytest: the Write a review picker hand-off, per-section paging, the revert-in-place of a refused remove, the stale and deleted-review captions, refetch on refocus, and the cross-tenant and soft-delete exclusions of GET /promotions.",
     "crosses": {

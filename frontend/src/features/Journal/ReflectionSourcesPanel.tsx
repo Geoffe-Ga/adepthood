@@ -201,7 +201,7 @@ function collectPending(items: ReflectionSourceItem[]): PendingEntry[] {
   return pending;
 }
 
-/** One tappable pending quote; dims to an "already folded in" trace once inserted. */
+/** One tappable pending quote; dims and takes a check once folded in (#2952). */
 function PendingQuoteRow({
   entry,
   included,
@@ -215,10 +215,11 @@ function PendingQuoteRow({
     <QuoteRow
       text={entry.quote.anchor_text}
       dimmed={included}
+      marked={included}
       onPress={() => {
         if (!included) onInsert(entry);
       }}
-      accessibilityState={{ disabled: included }}
+      accessibilityState={{ disabled: included, selected: included }}
       accessibilityLabel={`Fold the quote "${entry.quote.anchor_text}" into your reflection`}
       testID={`pending-quote-${entry.quote.id}`}
     />

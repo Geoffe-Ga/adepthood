@@ -8,12 +8,15 @@
  * live preview that echoes the raw selection back, and
  * an honestly disabled "Promote selection" confirm that only lights up once a
  * non-empty passage is chosen (an empty tap surfaces a gentle hint instead of
- * silently promoting nothing). Shared by the read-mode promote flow on
+ * silently promoting nothing). The field wears no browser focus ring and grows
+ * to its text, and the preview, actions and hint sit together in a footer that
+ * web pins to the foot of the viewport while a long body scrolls (#2952).
+ * Shared by the read-mode promote flow on
  * ``JournalEntryScreen`` and the in-panel re-promotion flow in
  * ``ReflectionSourcesPanel``; ``testID`` prefixes every element so more than one
  * surface can coexist on a page.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -22,18 +25,31 @@ import {
   TouchableOpacity,
   View,
   type NativeSyntheticEvent,
+  type StyleProp,
+  type TextInputContentSizeChangeEventData,
   type TextInputSelectionChangeEventData,
+  type TextStyle,
 } from 'react-native';
 
 import { selectionToAnchorSpan } from './anchorSpan';
 import { codePointToUtf16 } from './codePoints';
 import styles from './JournalEntry.styles';
+import { pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
+import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useWebSelectionListener } from './webSelectionListener';
 
 import { Button } from '@/components/Button';
+import { editorialType, writingFieldFocus } from '@/design/tokens';
 
 type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
+type ContentSizeChangeEvent = NativeSyntheticEvent<TextInputContentSizeChangeEventData>;
+
+/** Body lines the field shows at minimum, so a one-line entry is not boxed in blank page. */
+const SELECTION_FIELD_MIN_LINES = 2;
+
+/** The selection field's floor in dp; its text takes over above this. */
+export const SELECTION_FIELD_MIN_HEIGHT = SELECTION_FIELD_MIN_LINES * editorialType.body.lineHeight;
 
 /**
  * A selection span in Unicode code-point offsets (the anchor API's unit),
@@ -132,25 +148,29 @@ function useSelectionSurfaceState(
 interface SelectionBodyProps {
   body: string;
   onSelectionChange: (_event: SelectionChangeEvent) => void;
+  onContentSizeChange: (_event: ContentSizeChangeEvent) => void;
+  fieldStyle: StyleProp<TextStyle>;
   inputRef: React.RefObject<TextInput | null>;
   testID: string;
 }
 
 /**
- * The read-only body field, isolated in ``React.memo`` behind a stable handler so
- * preview/hint/confirm state changes re-render only the surrounding chrome, never
- * the mirrored text.
+ * The read-only body field, isolated in ``React.memo`` behind stable handlers
+ * and a memoised style so preview/hint/confirm state changes re-render only the
+ * surrounding chrome, never the mirrored text.
  */
 const SelectionBody = React.memo(function SelectionBody({
   body,
   onSelectionChange,
+  onContentSizeChange,
+  fieldStyle,
   inputRef,
   testID,
 }: SelectionBodyProps): React.JSX.Element {
   return (
     <TextInput
       ref={inputRef}
-      style={styles.bodyInput}
+      style={fieldStyle}
       value={body}
       multiline
       editable
@@ -158,11 +178,30 @@ const SelectionBody = React.memo(function SelectionBody({
       caretHidden
       scrollEnabled={false}
       onSelectionChange={onSelectionChange}
+      onContentSizeChange={onContentSizeChange}
       accessibilityLabel="Select a passage to promote"
       testID={`${testID}-input`}
     />
   );
 });
+
+/**
+ * Size the field to its text (no blank-page floor, no inner scroll pane) and
+ * drop the browser focus ring, changing the style object only when the
+ * measured height does so the memoised body is not re-rendered by the chrome.
+ */
+function useSelectionFieldStyle(): {
+  fieldStyle: StyleProp<TextStyle>;
+  onContentSizeChange: (_event: ContentSizeChangeEvent) => void;
+} {
+  const growth = useGrowingFieldHeight(SELECTION_FIELD_MIN_HEIGHT);
+  const { minHeight, height } = growth.style;
+  const fieldStyle = useMemo<StyleProp<TextStyle>>(
+    () => [styles.quoteSelectField, writingFieldFocus, { minHeight, height }],
+    [minHeight, height],
+  );
+  return { fieldStyle, onContentSizeChange: growth.onContentSizeChange };
+}
 
 interface SelectionActionsProps {
   isEmpty: boolean;
@@ -215,6 +254,45 @@ function SelectionActions({
   );
 }
 
+interface SelectionFooterProps {
+  /** The echoed passage; empty when nothing is selected, and then no card shows. */
+  previewSlice: string;
+  /** The empty-tap hint to show, or null while it is hidden. */
+  emptyHint: string | null;
+  testID: string;
+  children: React.ReactNode;
+}
+
+/**
+ * The preview card, the action row (``children``) and the empty-tap hint on
+ * one opaque plate that web pins to the foot of the scroll viewport, so a
+ * reader deep in a long body always has the echo and the confirm in view.
+ */
+function SelectionFooter({
+  previewSlice,
+  emptyHint,
+  testID,
+  children,
+}: SelectionFooterProps): React.JSX.Element {
+  return (
+    <View style={[styles.quoteSelectFooter, pinnedFooterStyle]} testID={`${testID}-footer`}>
+      {previewSlice !== '' && (
+        <View style={styles.quoteSelectPreview}>
+          <Text style={styles.quoteSelectPreviewText} testID={`${testID}-preview`}>
+            {previewSlice}
+          </Text>
+        </View>
+      )}
+      {children}
+      {emptyHint != null && (
+        <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
+          {emptyHint}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function QuoteSelectionSurface({
   body,
   onSelectionChange,
@@ -227,6 +305,7 @@ function QuoteSelectionSurface({
     useSelectionSurfaceState(body, onSelectionChange);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, emitSpan);
+  const { fieldStyle, onContentSizeChange } = useSelectionFieldStyle();
   // Resolved per render rather than at module load so the wording follows the
   // platform the surface is actually mounted on (and so a test that sets
   // Platform.OS after import sees the copy change).
@@ -240,29 +319,25 @@ function QuoteSelectionSurface({
       <SelectionBody
         body={body}
         onSelectionChange={handleSelectionChange}
+        onContentSizeChange={onContentSizeChange}
+        fieldStyle={fieldStyle}
         inputRef={inputRef}
         testID={testID}
       />
-      {!isEmpty && (
-        <View style={styles.quoteSelectPreview}>
-          <Text style={styles.quoteSelectPreviewText} testID={`${testID}-preview`}>
-            {previewSlice}
-          </Text>
-        </View>
-      )}
-      <SelectionActions
-        isEmpty={isEmpty}
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-        showHint={showHint}
+      <SelectionFooter
+        previewSlice={previewSlice}
+        emptyHint={hintVisible ? copy.emptyHint : null}
         testID={testID}
-        confirmLabel={confirmLabel}
-      />
-      {hintVisible && (
-        <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
-          {copy.emptyHint}
-        </Text>
-      )}
+      >
+        <SelectionActions
+          isEmpty={isEmpty}
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+          showHint={showHint}
+          testID={testID}
+          confirmLabel={confirmLabel}
+        />
+      </SelectionFooter>
     </View>
   );
 }
