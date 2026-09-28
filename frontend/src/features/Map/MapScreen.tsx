@@ -880,7 +880,13 @@ interface ModalBodyProps {
 
 const ModalBody = ({ stage, onClose, onNavigate }: ModalBodyProps): React.JSX.Element => (
   <ScrollView showsVerticalScrollIndicator={false}>
-    <TouchableOpacity testID="close-modal" style={styles.closeButton} onPress={onClose}>
+    <TouchableOpacity
+      testID="close-modal"
+      style={styles.closeButton}
+      onPress={onClose}
+      accessibilityRole="button"
+      accessibilityLabel="Close stage details"
+    >
       <Text style={styles.closeText}>×</Text>
     </TouchableOpacity>
     <View style={styles.titleRow}>
