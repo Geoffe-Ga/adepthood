@@ -26,6 +26,9 @@ const LEFT_FLEX = GRID_COLUMN_FLEX.left;
 const CENTER_FLEX = GRID_COLUMN_FLEX.center;
 const RIGHT_FLEX = GRID_COLUMN_FLEX.right;
 const CENTER = 'center';
+// A corner's two edges: the left corner's content starts, the right one's ends.
+const FLEX_START = 'flex-start';
+const FLEX_END = 'flex-end';
 
 // --- Soft grid rules -------------------------------------------------------
 // The Map is a table, and a table reads as one through its rules: gentle
@@ -35,6 +38,37 @@ const CENTER = 'center';
 // whisper the grid over the parchment rather than caging it.
 const GRID_LINE_COLOR = surface.hairline;
 const GRID_LINE_WIDTH = StyleSheet.hairlineWidth;
+
+// --- Keeping the stage annotations off the wave (#2657) ----------------------
+// Through a stage's band the wave keeps to its return pole's half of the
+// center column and crosses the centreline only at the band edges; the half on
+// the label's side is the one the stroke leaves free. A stage's locked note
+// (padlock + unlock estimate) is confined to that half, stopping a keep-out
+// short of the centreline, and no band may shrink below its content, so a short
+// window scrolls the table rather than painting one stage onto the next.
+
+/**
+ * The share of a center cell a stage's locked note may use: the half on its
+ * label's side, which the wave leaves free through the band.
+ */
+export const ANNOTATION_LANE_WIDTH = '50%';
+
+/**
+ * Clearance between a lane and the column centreline, which the wave's stroke
+ * (plus its converging apex offset near the top) can reach.
+ */
+export const WAVE_KEEP_OUT = spacing(0.5);
+
+/**
+ * A flex item's content-based minimum height. react-native-web gives every View
+ * min-height 0, so a grid shorter than its content squeezed each band below
+ * its own text and painted one stage onto the next; restoring the content
+ * minimum on the bands makes a short window scroll instead. (The grid needs
+ * none: inside the scroll content its height is indefinite, so it already
+ * sizes to its bands.)
+ * (Yoga has no content minimum and ignores it on native.)
+ */
+export const FIT_CONTENT = 'auto';
 
 /**
  * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
@@ -100,13 +134,22 @@ const styles = StyleSheet.create({
   },
 
   // --- The single responsive row grid --------------------------------------
+  // The grid and Begin again scroll together below the fixed journey read; the
+  // content stretches to the viewport so the grid still fills it when it fits.
+  gridScroll: {
+    flex: 1,
+  },
+  gridScrollContent: {
+    flexGrow: 1,
+  },
   grid: {
     flex: 1,
   },
   // One stage row; flex weight set inline to stageNumbers.length so a paired
-  // row is twice the height of a single-stage row.
+  // row is twice the height of a single-stage row, never shorter than its text.
   groupRow: {
     flexDirection: 'row',
+    minHeight: FIT_CONTENT,
   },
   leftCell: {
     flex: LEFT_FLEX,
@@ -230,15 +273,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   // Aspect-label block hugging a center-cell corner (opposite the wave's
-  // return pole). ``alignSelf`` escapes the cell's centering so the word +
-  // its unlock estimate group against the edge, in flow (no absolute overlay).
+  // return pole). The block spans the cell and ``alignItems`` groups the word +
+  // its locked note against the edge, in flow (no absolute overlay); spanning
+  // is what lets the note's lane resolve to half the cell.
   labelBlockLeft: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
+    alignSelf: 'stretch',
+    alignItems: FLEX_START,
   },
   labelBlockRight: {
-    alignSelf: 'flex-end',
-    alignItems: 'flex-end',
+    alignSelf: 'stretch',
+    alignItems: FLEX_END,
   },
   // Measured wrapper around the label block: stretches to the center cell's
   // full width (like titleFit) so a label that already fits is never shrunk.
@@ -273,10 +317,25 @@ const styles = StyleSheet.create({
     backgroundColor: surface.hairline,
   },
 
-  // Lock glyph row, stacked in flow beneath a locked stage's label
-  lockRow: {
+  // A locked stage's note: padlock + unlock estimate in one row, confined to
+  // the label side's half of the cell and a keep-out short of the centreline,
+  // with the padlock on the cell's outer edge (mirrored per corner).
+  lockedNote: {
+    width: ANNOTATION_LANE_WIDTH,
+    flexDirection: 'row',
     alignItems: CENTER,
+    gap: spacing(0.25),
     marginTop: spacing(0.25),
+  },
+  lockedNoteLeft: {
+    alignSelf: FLEX_START,
+    justifyContent: FLEX_START,
+    paddingRight: WAVE_KEEP_OUT,
+  },
+  lockedNoteRight: {
+    alignSelf: FLEX_END,
+    justifyContent: FLEX_END,
+    paddingLeft: WAVE_KEEP_OUT,
   },
   lockText: {
     fontSize: 14,
@@ -293,12 +352,12 @@ const styles = StyleSheet.create({
   locked: {
     opacity: 0.4,
   },
-  // Unlock estimate ("Unlocks in N days") grouped under the Aspect word inside
-  // the corner-hugging label block. Its text aligns to the same corner as the
-  // block via the left/right variants below, so the copy reads away from the
-  // wave strand rather than spanning and centering across the cell.
+  // Unlock estimate ("Unlocks in N days") beside the padlock in the locked
+  // note. It wraps inside the lane rather than spanning the cell, and its text
+  // aligns to the same corner via the left/right variants below, so the copy
+  // reads away from the wave strand.
   unlockTimeline: {
-    marginTop: spacing(0.25),
+    flexShrink: 1,
     fontSize: 9,
     color: ink.muted,
     paddingHorizontal: spacing(0.25),
@@ -308,9 +367,6 @@ const styles = StyleSheet.create({
   },
   unlockTimelineRight: {
     textAlign: 'right',
-  },
-  unlockTimelineCenter: {
-    textAlign: 'center',
   },
 
   // --- Stage-completion celebration banner ----------------------------------
@@ -381,17 +437,23 @@ const styles = StyleSheet.create({
     textAlign: CENTER,
   },
 
-  // Completed stage checkmark
+  // Completed stage checkmark, pinned to the bottom of the label's corner:
+  // the top of that corner is the word's, and the other side is the wave's.
   completedBadge: {
     position: 'absolute',
-    top: spacing(0.25),
-    right: spacing(0.25),
+    bottom: spacing(0.25),
     width: 18,
     height: 18,
     borderRadius: 9,
     backgroundColor: colors.success,
     alignItems: CENTER,
     justifyContent: CENTER,
+  },
+  completedBadgeLeft: {
+    left: spacing(0.25),
+  },
+  completedBadgeRight: {
+    right: spacing(0.25),
   },
   completedBadgeText: {
     fontSize: 11,

@@ -5,6 +5,8 @@ import {
   InteractionManager,
   type LayoutChangeEvent,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +15,7 @@ import {
   type TextStyle,
   TouchableOpacity,
   View,
+  type ViewStyle,
 } from 'react-native';
 
 import type { HabitHistoryItem, PracticeHistoryItem, StageHistoryResponse } from '../../api';
@@ -42,7 +45,7 @@ import {
   rankedStats,
   unlockTimeline,
 } from './journeyNarrative';
-import { lensCaption } from './magnifierGeometry';
+import { focusScrollOffset, lensCaption, lensFrame } from './magnifierGeometry';
 import type { LensCaption } from './magnifierGeometry';
 import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
@@ -54,6 +57,7 @@ import {
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
+  noteCorner,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   STAGE_DISPLAY,
   STAGE_LINE_MAX_FONT_SIZE,
@@ -70,6 +74,8 @@ import {
 import { STAGE_COUNT, type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
 import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { nominalAnchorY } from './waveGeometry';
+import type { StageAnchors } from './waveGeometry';
 import { WaveOverlay } from './WaveOverlay';
 
 import { Button } from '@/components/Button';
@@ -98,27 +104,32 @@ const FULL_PROGRESS = 1;
 // in the same row, so a stage's text, glyph and label always share its baseline
 // however the copy wraps. The Map reads with no PNG.
 
-const LockGlyph = (): React.JSX.Element => (
-  <View style={styles.lockRow}>
-    <Text style={styles.lockText}>🔒</Text>
-  </View>
-);
-
-/** Aspect label / unlock estimate corner within a center cell. */
-type LabelCorner = 'left' | 'right' | 'center';
+/** Which corner of the center cell a stage's annotations hug (``labelCorner``). */
+type LabelCorner = 'left' | 'right';
 
 /** Text-align variant for each corner, keyed to avoid a nested ternary. */
 const UNLOCK_ALIGN_STYLE: Readonly<Record<LabelCorner, StyleProp<TextStyle>>> = {
   left: styles.unlockTimelineLeft,
   right: styles.unlockTimelineRight,
-  center: styles.unlockTimelineCenter,
+};
+
+/** The label side's half-lane each corner's locked note is confined to. */
+const LOCKED_NOTE_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = {
+  left: styles.lockedNoteLeft,
+  right: styles.lockedNoteRight,
+};
+
+/** The label side's corner each completed stage's check badge is pinned to. */
+const BADGE_CORNER_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = {
+  left: styles.completedBadgeLeft,
+  right: styles.completedBadgeRight,
 };
 
 /**
  * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
- * no program anchor is set. Its text aligns to the block's corner so the copy
- * reads away from the wave strand (or centers beneath a fitted title).
+ * no program anchor is set. Its text aligns to the note's corner so the copy
+ * reads away from the wave strand.
  */
 const UnlockTimeline = ({
   stageNumber,
@@ -133,6 +144,29 @@ const UnlockTimeline = ({
     <Text style={[styles.unlockTimeline, alignStyle]} testID={`stage-unlock-${stageNumber}`}>
       {unlockTimeline(daysUntil)}
     </Text>
+  );
+};
+
+/**
+ * A locked stage's note in its center cell: the padlock and the unlock estimate
+ * in one row, confined to the half of the cell on the label's side -- the half
+ * the wave leaves free through the stage's band (#2657). The padlock sits on
+ * the cell's outer edge, so the row mirrors between the two corners.
+ */
+const LockedNote = ({
+  stageNumber,
+  corner,
+}: {
+  stageNumber: number;
+  corner: LabelCorner;
+}): React.JSX.Element => {
+  const padlock = <Text style={styles.lockText}>🔒</Text>;
+  return (
+    <View style={[styles.lockedNote, LOCKED_NOTE_STYLE[corner]]}>
+      {corner === 'left' ? padlock : null}
+      <UnlockTimeline stageNumber={stageNumber} corner={corner} />
+      {corner === 'right' ? padlock : null}
+    </View>
   );
 };
 
@@ -255,7 +289,8 @@ const StageTextBlock = ({
 // carries the directional/polarity read behind these cells ----------------
 
 // Corner-hugging Aspect-label block: the arrow word plus, when locked, its
-// unlock estimate, grouped against the corner opposite the wave's return pole.
+// padlock and unlock estimate, grouped against the corner opposite the wave's
+// return pole.
 // A stretch wrapper measures the full center-cell width so the word's fitted
 // size (fitStageText) shrinks only when the cell is genuinely too narrow.
 const AspectLabelBlock = ({
@@ -285,7 +320,7 @@ const AspectLabelBlock = ({
         >
           {display.arrowLabel}
         </Text>
-        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner={corner} /> : null}
+        {locked ? <LockedNote stageNumber={display.stageNumber} corner={corner} /> : null}
       </View>
     </View>
   );
@@ -347,8 +382,9 @@ const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
   );
 };
 
-// Title rows (9, 10) keep their centered serif heading; every other stage shows
-// its corner-hugging Aspect-label block instead of a centered word.
+// Title rows (9, 10) keep their centered serif heading, with a locked note in
+// the stage's corner beneath it; every other stage shows its corner-hugging
+// Aspect-label block instead of a centered word.
 const CenterContent = ({
   display,
   locked,
@@ -361,7 +397,9 @@ const CenterContent = ({
     return (
       <>
         <FittedTitle title={title} />
-        {locked ? <UnlockTimeline stageNumber={display.stageNumber} corner="center" /> : null}
+        {locked ? (
+          <LockedNote stageNumber={display.stageNumber} corner={noteCorner(display.stageNumber)} />
+        ) : null}
       </>
     );
   }
@@ -403,9 +441,11 @@ const StageCenterCell = ({
     accessibilityLabel={stageCenterCellLabel(stage.title, stage.subtitle, { locked, current })}
   >
     <CenterContent display={display} locked={locked} />
-    {locked ? <LockGlyph /> : null}
     {stage.progress >= FULL_PROGRESS ? (
-      <View style={styles.completedBadge} testID={`stage-complete-${stage.stageNumber}`}>
+      <View
+        style={[styles.completedBadge, BADGE_CORNER_STYLE[labelCorner(display.stageNumber)]]}
+        testID={`stage-complete-${stage.stageNumber}`}
+      >
         <Text style={styles.completedBadgeText}>✓</Text>
       </View>
     ) : null}
@@ -1023,6 +1063,10 @@ interface MapGridProps {
   onSettleStage: (_stageNumber: number) => void;
   /** A tap on the lens opens the focused stage's detail modal. */
   onOpenStage: (_stageNumber: number) => void;
+  /** The lens is held (true) or let go (false); the scroller stands still meanwhile. */
+  onLensDragActiveChange: (_active: boolean) => void;
+  /** The focused stage's anchor, in grid pixels, each time the focus moves. */
+  onFocusAnchor: (_anchorY: number, _halfExtent: number) => void;
 }
 
 // Optional decorative backdrop. The grid is fully legible without it (#766), so
@@ -1102,6 +1146,88 @@ const useGridSize = (): [GridSize, (_event: LayoutChangeEvent) => void] => {
   return [size, onLayout];
 };
 
+/**
+ * Report the focused stage's anchor (grid pixels) whenever the focus moves --
+ * not on mount and not on a re-measure, so a reader's own scrolling is never
+ * undone by a layout pass.
+ */
+const useFocusAnchor = (
+  focusedStage: number,
+  anchors: StageAnchors,
+  grid: GridSize,
+  onFocusAnchor: (_anchorY: number, _halfExtent: number) => void,
+): void => {
+  const reportedRef = useRef(focusedStage);
+  useEffect(() => {
+    if (reportedRef.current === focusedStage) return;
+    reportedRef.current = focusedStage;
+    const anchorY = (anchors[focusedStage] ?? nominalAnchorY(focusedStage)) * grid.height;
+    onFocusAnchor(anchorY, lensFrame(grid.width, grid.height).height / 2);
+  }, [focusedStage, anchors, grid, onFocusAnchor]);
+};
+
+/** One frame: how often the scroller reports where it is, for the focus follow. */
+const SCROLL_EVENT_THROTTLE_MS = 16;
+
+/** The Map scroller's wiring: its ref, its measured extents, and the lens hold. */
+interface MapScroll {
+  scrollRef: React.RefObject<ScrollView | null>;
+  scrollEnabled: boolean;
+  onLayout: (_event: LayoutChangeEvent) => void;
+  onContentSizeChange: (_width: number, _height: number) => void;
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onLensDragActiveChange: (_active: boolean) => void;
+  onFocusAnchor: (_anchorY: number, _halfExtent: number) => void;
+}
+
+/**
+ * Own the Map's scroller (#2657): it stands still while a finger holds the
+ * lens, so the grid never slides under the drag, and follows the lens when the
+ * focus glides to a stage the window cannot show.
+ */
+const useMapScroll = (): MapScroll => {
+  const scrollRef = useRef<ScrollView>(null);
+  const viewportHeight = useRef(0);
+  const contentHeight = useRef(0);
+  const scrollY = useRef(0);
+  const [lensHeld, setLensHeld] = useState(false);
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    viewportHeight.current = event.nativeEvent.layout.height;
+  }, []);
+  const onContentSizeChange = useCallback((_width: number, height: number) => {
+    contentHeight.current = height;
+  }, []);
+  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollY.current = event.nativeEvent.contentOffset.y;
+  }, []);
+  const onFocusAnchor = useCallback((anchorY: number, halfExtent: number) => {
+    const y = focusScrollOffset({
+      anchorY,
+      halfExtent,
+      scrollY: scrollY.current,
+      viewportHeight: viewportHeight.current,
+      contentHeight: contentHeight.current,
+    });
+    if (y !== null) scrollRef.current?.scrollTo({ y, animated: true });
+  }, []);
+  return {
+    scrollRef,
+    scrollEnabled: !lensHeld,
+    onLayout,
+    onContentSizeChange,
+    onScroll,
+    onLensDragActiveChange: setLensHeld,
+    onFocusAnchor,
+  };
+};
+
+/**
+ * Resolve the lens caption from loaded StageData so the pill's title +
+ * subtitle reflect the stage under the glass, live as it drags.
+ */
+const useCaptionForStage = (lookup: StageLookup): ((_stageNumber: number) => LensCaption) =>
+  useCallback((stageNumber: number): LensCaption => lensCaption(lookup[stageNumber]), [lookup]);
+
 /** Smallest measured grid extent the lens can meaningfully float over. */
 const MIN_LENS_GRID_EXTENT = 1;
 
@@ -1113,16 +1239,14 @@ const MapGrid = ({
   onSelectStage,
   onSettleStage,
   onOpenStage,
+  onLensDragActiveChange,
+  onFocusAnchor,
 }: MapGridProps): React.JSX.Element => {
   const [size, onLayout] = useGridSize();
   const { anchors, onRowLayout, onCellLayout } = useStageAnchors(size.height);
+  useFocusAnchor(focusedStage, anchors, size, onFocusAnchor);
   const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
-  // Resolve the lens caption from loaded StageData so the pill's title +
-  // subtitle reflect the stage under the glass, live as it drags.
-  const captionForStage = useCallback(
-    (stageNumber: number): LensCaption => lensCaption(lookup[stageNumber]),
-    [lookup],
-  );
+  const captionForStage = useCaptionForStage(lookup);
   return (
     <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
       <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
@@ -1149,6 +1273,7 @@ const MapGrid = ({
           captionForStage={captionForStage}
           onSettleStage={onSettleStage}
           onOpenStage={onOpenStage}
+          onDragActiveChange={onLensDragActiveChange}
         />
       ) : null}
     </View>
@@ -1350,25 +1475,63 @@ interface MapContentProps {
   onNavigate: (_screen: NavTarget, _stage: StageData) => void;
 }
 
+/**
+ * The grid and Begin again, in the Map's one scroller: they scroll together
+ * once the bands reach their content; while they fit, the content fills the
+ * viewport and nothing moves.
+ */
+const MapScrollBody = ({
+  scroll,
+  ...props
+}: MapContentProps & { scroll: MapScroll }): React.JSX.Element => (
+  <ScrollView
+    testID="map-scroll"
+    ref={scroll.scrollRef}
+    style={styles.gridScroll}
+    contentContainerStyle={styles.gridScrollContent}
+    showsVerticalScrollIndicator={false}
+    // An iOS overscroll bounce can cancel the lens's JS responder drag.
+    alwaysBounceVertical={false}
+    bounces={false}
+    scrollEnabled={scroll.scrollEnabled}
+    onLayout={scroll.onLayout}
+    onContentSizeChange={scroll.onContentSizeChange}
+    onScroll={scroll.onScroll}
+    scrollEventThrottle={SCROLL_EVENT_THROTTLE_MS}
+  >
+    <MapGrid
+      lookup={props.lookup}
+      fullnessByStage={props.fullnessByStage}
+      currentStage={props.currentStage}
+      focusedStage={props.focusedStage}
+      onSelectStage={props.onSelectStage}
+      onSettleStage={props.onSettleStage}
+      onOpenStage={props.onOpenStage}
+      onLensDragActiveChange={scroll.onLensDragActiveChange}
+      onFocusAnchor={scroll.onFocusAnchor}
+    />
+    {props.showBeginAgain && (
+      <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
+    )}
+  </ScrollView>
+);
+
 /** The rendered Map: spiral grid + magnifier lens + banners + stage modal. */
-const MapContent = (props: MapContentProps): React.JSX.Element => (
+const MapContent = (props: MapContentProps): React.JSX.Element => {
+  const scroll = useMapScroll();
+  return <MapContentView {...props} scroll={scroll} />;
+};
+
+const MapContentView = ({
+  scroll,
+  ...props
+}: MapContentProps & { scroll: MapScroll }): React.JSX.Element => (
   <View style={styles.container}>
     {/* The parchment backdrop stays full-bleed; only the spiral content caps. */}
     <MapBackdrop />
     <ContentContainer fill>
       <JourneyHeader currentStage={props.currentStage} cycleNumber={props.cycleNumber} />
-      <MapGrid
-        lookup={props.lookup}
-        fullnessByStage={props.fullnessByStage}
-        currentStage={props.currentStage}
-        focusedStage={props.focusedStage}
-        onSelectStage={props.onSelectStage}
-        onSettleStage={props.onSettleStage}
-        onOpenStage={props.onOpenStage}
-      />
-      {props.showBeginAgain && (
-        <BeginAgainBlock onBeginAgain={props.onBeginAgain} beginning={props.beginning} />
-      )}
+      <MapScrollBody {...props} scroll={scroll} />
       {props.showRefreshError && <MapRefreshErrorBanner onRetry={props.onRefresh} />}
       <CelebrationBanner
         active={props.celebration.active}

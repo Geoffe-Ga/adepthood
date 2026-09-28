@@ -1,12 +1,13 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
-import { Image, StyleSheet } from 'react-native';
+import { Image, ScrollView, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { ink, surface } from '../../../design/tokens';
+import { ink, surface, touchTarget } from '../../../design/tokens';
 import { unlockTimeline } from '../journeyNarrative';
-import styles from '../Map.styles';
+import { focusScrollOffset, lensFrame } from '../magnifierGeometry';
+import styles, { ANNOTATION_LANE_WIDTH, FIT_CONTENT, WAVE_KEEP_OUT } from '../Map.styles';
 import {
   ARROW_LABEL_MAX_FONT_SIZE,
   fitRightLabel,
@@ -23,6 +24,7 @@ import {
 } from '../mapLayout';
 import MapScreen, { MapBackdrop } from '../MapScreen';
 import { STAGE_COUNT } from '../stageData';
+import { nominalAnchorY } from '../waveGeometry';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
 import {
@@ -854,9 +856,10 @@ describe('MapScreen center-cell overlay layout', () => {
     expect(styles.stageLines.flex).toBe(1);
   });
 
-  // The YOU ARE HERE pill now rides the magnifier lens, so the center cell of
-  // a locked stage only needs to keep the countdown above its padlock.
-  it('stacks the countdown above the lock in a locked center cell', () => {
+  // #2657: a padlock stacked on the column centreline sat on the wave, and a
+  // fourth stacked line overran the band, so the padlock now rides beside the
+  // countdown in one corner row -- on the cell's outer edge, mirrored per corner.
+  it('rides the padlock beside the countdown on the outer edge of a locked center cell', () => {
     mockMapState.daysUntilStage = 42;
     const tree = create(<MapScreen />);
     const textOrder = (testID: string): string[] =>
@@ -865,18 +868,22 @@ describe('MapScreen center-cell overlay layout', () => {
         .findAll((node: TestNode) => typeof node.props.children === 'string')
         .map((node: TestNode) => node.props.children as string);
 
-    // Locked stage 8: the countdown copy renders before the lock glyph.
-    const lockedText = textOrder('stage-hotspot-8-1');
-    const countdownIndex = lockedText.findIndex((text) => text.startsWith('Unlocks'));
-    expect(countdownIndex).toBeGreaterThanOrEqual(0);
-    expect(countdownIndex).toBeLessThan(lockedText.indexOf('🔒'));
+    // Stage 8 hugs the right corner: the countdown, then the padlock at the edge.
+    const right = textOrder('stage-hotspot-8-1');
+    const rightCountdown = right.findIndex((text) => text.startsWith('Unlocks'));
+    expect(rightCountdown).toBeGreaterThanOrEqual(0);
+    expect(rightCountdown).toBeLessThan(right.indexOf('🔒'));
+    // Stage 7 hugs the left corner: the padlock at the edge, then the countdown.
+    const left = textOrder('stage-hotspot-7-1');
+    expect(left.indexOf('🔒')).toBeGreaterThanOrEqual(0);
+    expect(left.indexOf('🔒')).toBeLessThan(left.findIndex((text) => text.startsWith('Unlocks')));
   });
 
   it('groups stage 1 (Agency) label in the left corner, unlocked with no countdown', () => {
     const tree = create(<MapScreen />);
     const block = tree.root.findByProps({ testID: 'aspect-label-1' });
-    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
-    expect(flat.alignSelf).toBe('flex-start');
+    const flat = StyleSheet.flatten(block.props.style) as { alignItems?: string };
+    expect(flat.alignItems).toBe('flex-start');
     expect(block.findAll((node: TestNode) => node.props.testID === 'stage-unlock-1')).toHaveLength(
       0,
     );
@@ -885,8 +892,8 @@ describe('MapScreen center-cell overlay layout', () => {
   it('groups stage 2 (Receptivity) label in the right corner, unlocked', () => {
     const tree = create(<MapScreen />);
     const block = tree.root.findByProps({ testID: 'aspect-label-2' });
-    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
-    expect(flat.alignSelf).toBe('flex-end');
+    const flat = StyleSheet.flatten(block.props.style) as { alignItems?: string };
+    expect(flat.alignItems).toBe('flex-end');
   });
 
   it('nests the locked stage 8 (True Self) countdown inside its right-corner block', () => {
@@ -1093,8 +1100,8 @@ describe('MapScreen stage-text fit-to-width', () => {
     const tree = create(<MapScreen />);
     driveLayout(tree, `aspect-label-fit-${STAGE}`, NARROW_WIDTH);
     const block = tree.root.findByProps({ testID: `aspect-label-${STAGE}` });
-    const flat = StyleSheet.flatten(block.props.style) as { alignSelf?: string };
-    expect(flat.alignSelf).toBe('flex-end');
+    const flat = StyleSheet.flatten(block.props.style) as { alignItems?: string };
+    expect(flat.alignItems).toBe('flex-end');
     expect(block.findByProps({ testID: `stage-unlock-${STAGE}` })).toBeTruthy();
   });
 });
@@ -1108,10 +1115,16 @@ describe('MapScreen locked title-row unlock estimate', () => {
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
-  it('renders the centered unlock estimate on the locked EMPTINESS and UNITY title rows', () => {
-    mockMapState.daysUntilStage = 42;
-    const tree = create(<MapScreen />);
-    for (const stageNumber of [9, 10]) {
+  // #2657: centred under the watermark, the estimate sat where the converging
+  // wave rises; it now takes its stage's corner lane like every other stage.
+  it.each([
+    [9, 'left', 'flex-start'],
+    [10, 'left', 'flex-start'],
+  ])(
+    'renders stage %i locked title-row estimate in its %s corner lane, off the centreline',
+    (stageNumber, textAlign, alignSelf) => {
+      mockMapState.daysUntilStage = 42;
+      const tree = create(<MapScreen />);
       const estimate = tree.root.findByProps({ testID: `stage-unlock-${stageNumber}` });
       expect(estimate.props.children).toBe(unlockTimeline(42));
       const flat = StyleSheet.flatten(estimate.props.style) as {
@@ -1121,9 +1134,24 @@ describe('MapScreen locked title-row unlock estimate', () => {
       };
       expect(flat.fontSize).toBe(9);
       expect(flat.color).toBe(ink.muted);
-      expect(flat.textAlign).toBe('center');
-    }
-  });
+      expect(flat.textAlign).toBe(textAlign);
+      // The estimate shares its lane with the padlock, whose host parent is the lane.
+      const cell = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-1` });
+      const lock = cell.findAll(isLockIcon)[0] as TestNode & {
+        parent: TestNode & { findAll: typeof cell.findAll };
+      };
+      const inLane = lock.parent.findAll(
+        (n: TestNode) => n.props.testID === `stage-unlock-${stageNumber}`,
+      );
+      expect(inLane.length).toBeGreaterThan(0);
+      const lane = StyleSheet.flatten(lock.parent.props.style) as {
+        alignSelf?: string;
+        width?: string;
+      };
+      expect(lane.alignSelf).toBe(alignSelf);
+      expect(lane.width).toBe(ANNOTATION_LANE_WIDTH);
+    },
+  );
 
   it('omits the unlock estimate on unlocked title rows', () => {
     mockMapState.derivedStage = 10;
@@ -1238,5 +1266,217 @@ describe('MapScreen content-width cap', () => {
     const container = tree.root.findByProps({ testID: 'content-container' });
     const flat = StyleSheet.flatten(container.props.style) as { flex?: number };
     expect(flat.flex).toBe(1);
+  });
+});
+
+describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  /** The flattened style of the row that carries a locked stage's padlock in its center cell. */
+  const centerLockLane = (tree: ReturnType<typeof create>, stageNumber: number) => {
+    const cell = tree.root.findByProps({ testID: `stage-hotspot-${stageNumber}-1` });
+    const lock = cell.findAll(isLockIcon)[0] as TestNode & { parent: TestNode };
+    return StyleSheet.flatten(lock.parent.props.style) as {
+      flexDirection?: string;
+      alignSelf?: string;
+      width?: string;
+      paddingLeft?: number;
+      paddingRight?: number;
+    };
+  };
+
+  it.each([
+    [8, 'flex-end'],
+    [7, 'flex-start'],
+    [10, 'flex-start'],
+    [9, 'flex-start'],
+  ])('moves stage %i center padlock off the centreline into its %s lane', (stage, alignSelf) => {
+    const tree = create(<MapScreen />);
+    const lane = centerLockLane(tree, stage);
+    expect(lane.flexDirection).toBe('row');
+    expect(lane.alignSelf).toBe(alignSelf);
+    expect(lane.width).toBe(ANNOTATION_LANE_WIDTH);
+  });
+
+  it('keeps each lane its keep-out clear of the column centre, on the centre side only', () => {
+    const tree = create(<MapScreen />);
+    const left = centerLockLane(tree, 7);
+    const right = centerLockLane(tree, 8);
+    expect(left.paddingRight).toBe(WAVE_KEEP_OUT);
+    expect(left.paddingLeft).toBeUndefined();
+    expect(right.paddingLeft).toBe(WAVE_KEEP_OUT);
+    expect(right.paddingRight).toBeUndefined();
+    expect(WAVE_KEEP_OUT).toBeGreaterThan(0);
+  });
+
+  // react-native-web gives every View min-height 0, which is what let a short
+  // grid squeeze a band below its own text and paint one stage onto the next.
+  it('never squeezes a band below its content, so a short grid scrolls', () => {
+    const tree = create(<MapScreen />);
+    for (const row of MAP_ROWS) {
+      const band = tree.root.findByProps({ testID: `map-row-${row.rightLabel}` });
+      const flat = StyleSheet.flatten(band.props.style) as { minHeight?: string; flex?: number };
+      expect(flat.minHeight).toBe(FIT_CONTENT);
+      expect(flat.flex).toBe(row.stageNumbers.length);
+    }
+  });
+
+  it('scrolls the grid and Begin again together, keeping the journey read fixed above', () => {
+    mockMapState.isEndOfCycle = jest.fn<boolean, [Record<number, { progress: number }>, number]>(
+      () => true,
+    );
+    const tree = create(<MapScreen />);
+    // A real scroller, not a View wearing its testID.
+    const [scroll] = tree.root
+      .findAllByType(ScrollView)
+      .filter((n: TestNode) => n.props.testID === 'map-scroll');
+    if (scroll === undefined) throw new Error('map-scroll is not a ScrollView');
+    expect(scroll.findByProps({ testID: 'map-grid' })).toBeTruthy();
+    expect(scroll.findByProps({ testID: 'begin-again-button' })).toBeTruthy();
+    expect(scroll.findAll((n: TestNode) => n.props.testID === 'journey-read')).toHaveLength(0);
+    expect(StyleSheet.flatten(scroll.props.contentContainerStyle)).toEqual(
+      expect.objectContaining({ flexGrow: 1 }),
+    );
+  });
+
+  it.each([
+    [2, 'right'],
+    [1, 'left'],
+  ])('pins stage %i check badge to the bottom of its %s (label) corner', (stage, corner) => {
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, { progress: 10 - i <= 2 ? 1 : 0 }),
+    );
+    const tree = create(<MapScreen />);
+    const badge = tree.root.findByProps({ testID: `stage-complete-${stage}` });
+    const flat = StyleSheet.flatten(badge.props.style) as Record<string, unknown>;
+    const other = corner === 'left' ? 'right' : 'left';
+    expect(flat.position).toBe('absolute');
+    expect(flat[corner]).toBeDefined();
+    expect(flat[other]).toBeUndefined();
+    expect(flat.bottom).toBeDefined();
+    expect(flat.top).toBeUndefined();
+  });
+
+  it('still announces the lock on both tap targets and keeps the touch floor', () => {
+    const tree = create(<MapScreen />);
+    for (const column of [0, 1]) {
+      const hotspot = tree.root.findByProps({ testID: `stage-hotspot-8-${column}` });
+      expect(String(hotspot.props.accessibilityLabel)).toMatch(/locked/iu);
+    }
+    expect(styles.centerStageCell.minHeight).toBe(touchTarget.minimum);
+  });
+});
+
+describe('MapScreen scroller and the magnifier (#2657)', () => {
+  const GRID = { width: 300, height: 600 };
+  const VIEWPORT_HEIGHT = 200;
+  const CONTENT_HEIGHT = 650;
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
+      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+    );
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  const mapScroll = (tree: ReturnType<typeof create>) => {
+    const [scroll] = tree.root
+      .findAllByType(ScrollView)
+      .filter((n: TestNode) => n.props.testID === 'map-scroll');
+    if (scroll === undefined) throw new Error('map-scroll is not a ScrollView');
+    return scroll;
+  };
+
+  /** Lay the grid and its scroller out: a 600px grid in a 200px window. */
+  const layOut = (tree: ReturnType<typeof create>, contentHeight = CONTENT_HEIGHT) => {
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, ...GRID } },
+      });
+      const scroll = mapScroll(tree);
+      scroll.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: GRID.width, height: VIEWPORT_HEIGHT } },
+      });
+      scroll.props.onContentSizeChange(GRID.width, contentHeight);
+    });
+  };
+
+  const touch = (pageY: number) => ({ nativeEvent: { pageX: 150, pageY, timestamp: 0 } });
+
+  it('never bounces, so an iOS overscroll cannot cancel a lens drag', () => {
+    const tree = create(<MapScreen />);
+    expect(mapScroll(tree).props.alwaysBounceVertical).toBe(false);
+    expect(mapScroll(tree).props.bounces).toBe(false);
+  });
+
+  it('stops the Map scrolling while the lens is held and resumes on release', () => {
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    expect(mapScroll(tree).props.scrollEnabled).toBe(true);
+
+    const lens = tree.root.findByProps({ testID: 'map-magnifier' });
+    act(() => lens.props.onResponderGrant(touch(500)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(false);
+
+    act(() => lens.props.onResponderMove(touch(400)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(false);
+
+    act(() => lens.props.onResponderRelease(touch(400)));
+    expect(mapScroll(tree).props.scrollEnabled).toBe(true);
+  });
+
+  it('scrolls a focused stage below the fold into view when the lens glides to it', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    const anchorY = nominalAnchorY(3) * GRID.height;
+    const expected = focusScrollOffset({
+      anchorY,
+      halfExtent: lensFrame(GRID.width, GRID.height).height / 2,
+      scrollY: 0,
+      viewportHeight: VIEWPORT_HEIGHT,
+      contentHeight: CONTENT_HEIGHT,
+    });
+    expect(expected).toBe(anchorY - VIEWPORT_HEIGHT / 2);
+    expect(scrollTo).toHaveBeenCalledWith({ y: expected, animated: true });
+  });
+
+  it('follows the scroller, so a stage already in the window is not scrolled to', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree);
+    // The reader has scrolled stage 3 into the window themselves.
+    act(() =>
+      mapScroll(tree).props.onScroll({
+        nativeEvent: { contentOffset: { x: 0, y: nominalAnchorY(3) * GRID.height - 100 } },
+      }),
+    );
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it('leaves the scroller alone when the Map fits its window', () => {
+    const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+    const tree = create(<MapScreen />);
+    layOut(tree, VIEWPORT_HEIGHT);
+    scrollTo.mockClear();
+
+    act(() => tree.root.findByProps({ testID: 'stage-hotspot-3-0' }).props.onPress());
+
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });

@@ -219,3 +219,38 @@ export const lensStageIdentity = (stageNumber: number): string => {
   const colorName = (STAGE_ORDER[display.stageNumber - 1] ?? '').toUpperCase();
   return `${headline}, stage ${display.stageNumber} · ${colorName}, ${display.persona}`;
 };
+
+/** The Map scroller and a focused stage, as ``focusScrollOffset`` reads them. */
+export interface FocusScrollInput {
+  /** The focused stage's wave anchor, in scroll-content (= grid) pixels. */
+  anchorY: number;
+  /** How far the lens reaches above and below that anchor. */
+  halfExtent: number;
+  /** The scroller's current offset. */
+  scrollY: number;
+  viewportHeight: number;
+  contentHeight: number;
+}
+
+/**
+ * Where the Map's scroller should move so a newly focused stage can be seen
+ * (#2657): a glide to a stage below the fold would otherwise land where nobody
+ * can see it. Null -- leave the scroller alone -- when the content fits, or when
+ * the lens around the anchor is already wholly in the window (a drag settles
+ * where the finger left it, which is on screen). Otherwise the anchor is
+ * centred, clamped to the content.
+ */
+export const focusScrollOffset = ({
+  anchorY,
+  halfExtent,
+  scrollY,
+  viewportHeight,
+  contentHeight,
+}: FocusScrollInput): number | null => {
+  const maxOffset = contentHeight - viewportHeight;
+  if (maxOffset <= 0) return null;
+  const inView =
+    anchorY - halfExtent >= scrollY && anchorY + halfExtent <= scrollY + viewportHeight;
+  if (inView) return null;
+  return clamp(anchorY - viewportHeight / 2, 0, maxOffset);
+};
