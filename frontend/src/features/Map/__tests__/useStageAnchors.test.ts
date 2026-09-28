@@ -7,6 +7,8 @@ import { useStageAnchors } from '../hooks/useStageAnchors';
 
 const GRID_HEIGHT = 1000;
 const SUB_PIXEL_GRID_HEIGHT = 0;
+/** The grid after Begin again (or a cycle caption) takes some of its height. */
+const SHRUNK_GRID_HEIGHT = 800;
 
 const ROW_INDEX_A = 0;
 const ROW_INDEX_B = 1;
@@ -85,5 +87,28 @@ describe('useStageAnchors', () => {
       result.current.onCellLayout(STAGE_A, ROW_INDEX_A, layoutEvent(CELL_Y_A, CELL_HEIGHT_A));
     });
     expect(Object.is(result.current.anchors, first)).toBe(true);
+  });
+
+  // #2657: the rows and cells report their new layout in the same pass that
+  // shrinks the grid, so they are normalised by the OLD height, and the grid's
+  // own onLayout lands after them. Unless the anchors follow the height, the
+  // wave is drawn against stale bands and runs through the stage annotations.
+  it('re-resolves every anchor against the new grid height when only the height changes', () => {
+    const { result, rerender } = renderHook(
+      ({ height }: { height: number }) => useStageAnchors(height),
+      {
+        initialProps: { height: GRID_HEIGHT },
+      },
+    );
+    act(() => {
+      result.current.onRowLayout(ROW_INDEX_A, layoutEvent(ROW_Y_A, 0));
+      result.current.onCellLayout(STAGE_A, ROW_INDEX_A, layoutEvent(CELL_Y_A, CELL_HEIGHT_A));
+    });
+
+    rerender({ height: SHRUNK_GRID_HEIGHT });
+
+    expect(result.current.anchors[STAGE_A]).toBeCloseTo(
+      anchorFor(ROW_Y_A, CELL_Y_A, CELL_HEIGHT_A, SHRUNK_GRID_HEIGHT),
+    );
   });
 });

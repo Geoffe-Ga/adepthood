@@ -84,6 +84,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-sources-panel.browser.e2e.test.ts',
   'journal-title-single-line.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
+  'map-legibility.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',

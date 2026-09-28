@@ -318,10 +318,24 @@ export const MAP_ROWS: readonly MapRow[] = [
 ];
 
 /**
- * Which corner of the center panel a stage's Aspect label hugs. The label sits
- * on the corner opposite the wave's return pole, so the word never lands under
- * the strand: even (left-returning) stages hug the right corner, odd stages the
- * left. Title stages (9, 10) carry no arrow label and never call this.
+ * Which corner of the center panel a stage's annotations hug. The Aspect label,
+ * the locked note (padlock + unlock estimate) and the check badge sit on the
+ * corner opposite the wave's return pole, so none lands under the strand: even
+ * (left-returning) stages hug the right corner, odd stages the left. Title
+ * stages (9, 10) carry no arrow label, but their locked note and badge take
+ * the same corner by the same parity for their check badge (#2657); their locked note has its
+ * own rule (``noteCorner``).
  */
 export const labelCorner = (stageNumber: number): 'left' | 'right' =>
   isLeftReturning(stageNumber) ? 'right' : 'left';
+
+/**
+ * Which corner of the center cell a locked stage's note (padlock + unlock
+ * estimate) hugs. A labelled stage keeps its note under its word, in the label
+ * corner. The title stages sit where the wave converges: through both title
+ * bands it rises from stage 9's right-hand pole into the apex without crossing
+ * left of the cell centre (map-legibility.browser.e2e.test.ts measures it at
+ * both profiles), so both notes take the left -- stage 10 against its parity.
+ */
+export const noteCorner = (stageNumber: number): 'left' | 'right' =>
+  TITLE_BY_STAGE[stageNumber] === undefined ? labelCorner(stageNumber) : 'left';

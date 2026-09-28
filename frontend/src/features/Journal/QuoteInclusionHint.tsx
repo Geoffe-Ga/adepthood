@@ -7,6 +7,18 @@
  * place every path can see. It names how many quotes are waiting and offers a
  * retry that re-marks only those -- their words are already in the body, so
  * nothing is spliced twice. Declinable: ignoring it costs nothing.
+ *
+ * Why it counts rather than names the quote (#2754). The line shows with the
+ * sources panel closed, including for folds handed over from the Promoted
+ * quotes screen, and it may stand for several quotes at once: quoting each
+ * passage would turn one warm line into a list the writer has to read, beside
+ * a page they are writing. Per-quote identity is carried elsewhere, exactly:
+ * the ledger behind the count is keyed by quote id, so another quote's
+ * successful fold never clears this one; the panel shows each waiting quote as
+ * an undimmed row (still checked in selection mode); and Try again re-marks
+ * precisely the failed ids. A quote removed elsewhere meanwhile (its mark
+ * answers 404 ``promotion_not_found``) drops out of the count and the panel,
+ * and a retry never puts its words back.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';

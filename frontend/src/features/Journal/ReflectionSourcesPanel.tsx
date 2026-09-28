@@ -19,7 +19,14 @@
  * the feed (#2883). Reduced-motion safe.
  */
 import { X } from 'lucide-react-native';
-import React, { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import {
   Modal,
   Platform,
@@ -623,7 +630,9 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
 
 /**
  * What a batch left for the writer: its failed ids, and whether it took any
- * quote at all. A batch that threw took none and left every id failed.
+ * quote at all. A batch that threw took none and left every id failed. A quote
+ * the server says is gone (#2754) was taken but is not failed, so it leaves the
+ * selection and stays dimmed until the composer prunes its row from the feed.
  */
 async function settleBatch(
   outcome: Promise<BatchFoldResult>,
@@ -633,7 +642,7 @@ async function settleBatch(
     const result = await outcome;
     return {
       failed: result.failed,
-      admittedAny: result.included.length + result.failed.length > 0,
+      admittedAny: result.included.length + result.failed.length + result.gone.length > 0,
     };
   } catch {
     return { failed: ids, admittedAny: true };
@@ -804,6 +813,14 @@ function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
   const feed = useFeedState(props.onPromoteSpan);
   const dims = useDimReconciler(props.onInsertQuote);
   const selection = useQuoteSelection();
+  // A checked quote can leave the feed while it waits -- the composer prunes a
+  // quote removed elsewhere (#2754) -- so the selection narrows to what is still
+  // listed, and the bar never counts, or offers to fold, a row that is gone.
+  const { keepOnly } = selection;
+  const { items } = props;
+  useEffect(() => {
+    keepOnly(collectPending(items).map((entry) => entry.quote.id));
+  }, [items, keepOnly]);
   const { onFoldSelected, folding } = useBatchFold(
     props.onInsertQuotes,
     selection,
