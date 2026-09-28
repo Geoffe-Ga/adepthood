@@ -49,6 +49,7 @@ const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
  * flake waiting for the first checkout that reads them the other way round.
  */
 const EXPECTED_BROWSER_JOURNEYS = [
+  'action-rows.browser.e2e.test.ts',
   'api-key-remove.browser.e2e.test.ts',
   AUTH_OVERFLOW_JOURNEY,
   BROWSER_JOURNEY,
