@@ -80,17 +80,49 @@ React.act = (callback) =>
     };
   });
 
-afterEach(async () => {
-  if (openActScopes.size === 0) {
-    return;
-  }
+const abandonOpenActScopes = () => {
+  const abandoned = openActScopes.size;
   for (const abandon of openActScopes) {
     abandon(new AbandonedTestError());
   }
   openActScopes.clear();
-  // Let React's rejection continuation (`popActScope`) run before the next
-  // test renders anything.
-  await new Promise((resolve) => realSetImmediate(resolve));
+  return abandoned;
+};
+
+// Rejecting runs React's rejection continuation synchronously, so the depth is
+// back to zero before the next hook -- including RNTL's cleanup unmount.
+afterEach(() => {
+  abandonOpenActScopes();
+});
+
+const yieldOneRealMacrotask = () => new Promise((resolve) => realSetImmediate(resolve));
+
+// An abandoned test is not always parked *inside* an act scope when it is
+// abandoned. RNTL's `waitFor` under fake timers loops `act()` -> a real
+// `setImmediate` -> `act()`, and React itself finishes an async scope on a
+// real `setImmediate` after popping it, so a body can be caught between two
+// scopes with none open. It then resumes a macrotask or two later and opens a
+// fresh scope inside whichever test runs next. So before each test, this
+// yields real macrotasks until QUIET_ROUNDS pass in a row with nothing to
+// reject, rejecting any scope a straggler opens meanwhile -- which also
+// unwinds the loop that opened it. It is a `beforeEach` rather than part of
+// the `afterEach` above on purpose: by now the previous test's tree has been
+// unmounted and its animation frames cancelled, so yielding lets nothing of
+// that test run against a live tree. The `timeoutCascadeBetweenActs` fixture
+// is caught within the first quiet round here (with the rounds in an
+// `afterEach`, before cleanup, it needed two); the rest is margin for a
+// straggler that takes a turn or two longer to re-enter `act()`.
+// MAX_ABANDON_ROUNDS only guards against something that reopens a scope on
+// every turn forever.
+const QUIET_ROUNDS = 3;
+const MAX_ABANDON_ROUNDS = 50;
+
+beforeEach(async () => {
+  let quiet = 0;
+  for (let round = 0; round < MAX_ABANDON_ROUNDS && quiet < QUIET_ROUNDS; round += 1) {
+    await yieldOneRealMacrotask();
+    quiet = abandonOpenActScopes() === 0 ? quiet + 1 : 0;
+  }
 });
 
 // Jest setup: mock ``react-native-reanimated`` so its worklet plugin does

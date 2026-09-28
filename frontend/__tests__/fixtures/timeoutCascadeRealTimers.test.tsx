@@ -1,5 +1,6 @@
 import { expect, it } from '@jest/globals';
 import { act, render, screen } from '@testing-library/react-native';
+import React, { useEffect } from 'react';
 import { Text } from 'react-native';
 
 /**
@@ -14,8 +15,12 @@ import { Text } from 'react-native';
  * fake-timer containment cannot help. That is the shape a load-starved suite
  * takes when a test runs past `testTimeout` inside a real-timer `act`.
  *
- * Two things must hold for the neighbours:
- *  - they render and commit normally (the act scope depth was restored), and
+ * Three things must hold for the neighbours:
+ *  - they render and commit normally (the act scope depth was restored),
+ *  - the abandoned test's tree is really unmounted before they start, so
+ *    nothing it mounted outlives it. `firstUnmounted` records the unmount
+ *    effect; RNTL's cleanup unmount is itself an `act()`, and at an elevated
+ *    depth it would be queued rather than committed, and
  *  - the abandoned body never resumes into them. `resumed` records whether the
  *    code after the abandoned `await` ever ran; a containment that *resolved*
  *    the abandoned scope instead of rejecting it would flip it, and the
@@ -25,9 +30,20 @@ import { Text } from 'react-native';
  */
 
 let resumed = false;
+let firstUnmounted = false;
+
+function First(): React.JSX.Element {
+  useEffect(
+    () => () => {
+      firstUnmounted = true;
+    },
+    [],
+  );
+  return <Text>first</Text>;
+}
 
 it('is abandoned mid-await on a real-timer act, as a load-starved test is', async () => {
-  render(<Text>first</Text>);
+  render(<First />);
   await act(async () => {
     // Never settles: no timer, no mock, nothing — the test times out here.
     await new Promise<never>(() => undefined);
@@ -35,7 +51,8 @@ it('is abandoned mid-await on a real-timer act, as a load-starved test is', asyn
   resumed = true;
 });
 
-it('neighbour one renders normally', () => {
+it('neighbour one renders normally, after the abandoned tree was unmounted', () => {
+  expect(firstUnmounted).toBe(true);
   render(<Text>second</Text>);
   expect(screen.getByText('second')).toBeTruthy();
 });

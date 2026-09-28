@@ -27,6 +27,8 @@ const FIXTURES = join('__tests__', 'fixtures');
 const FAKE_TIMER_FIXTURE = join(FIXTURES, 'timeoutCascade.test.tsx');
 /** A test abandoned mid-`act` on real timers, on a promise nothing settles. */
 const REAL_TIMER_FIXTURE = join(FIXTURES, 'timeoutCascadeRealTimers.test.tsx');
+/** A test abandoned while looping act() across real macrotasks. */
+const BETWEEN_ACTS_FIXTURE = join(FIXTURES, 'timeoutCascadeBetweenActs.test.tsx');
 
 /** Short enough that the fixture's first test is abandoned mid-`act`. */
 const FIXTURE_TIMEOUT_MS = 40;
@@ -93,6 +95,14 @@ describe('test-timeout cascade containment', () => {
     'costs exactly one failure when a test is abandoned mid real-timer act()',
     () => {
       expectExactlyOneFailure(runFixture(REAL_TIMER_FIXTURE));
+    },
+    CHILD_BUDGET_MS,
+  );
+
+  it(
+    'costs exactly one failure when a test is abandoned between act() scopes',
+    () => {
+      expectExactlyOneFailure(runFixture(BETWEEN_ACTS_FIXTURE));
     },
     CHILD_BUDGET_MS,
   );
