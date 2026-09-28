@@ -86,9 +86,8 @@ base as `typography()`:
 The app exists to get a life in order. An interface that is not itself in
 order cannot promote that — the medium is the message — so every string on a
 screen has one place it belongs, one edge it shares with its siblings, and one
-face for its role. Buttons and their rows are governed by the forthcoming
-`## Action rows` section (#2860); this section governs text and does not
-restate it.
+face for its role. Buttons and their rows are governed by `## Action rows`
+below (#2860); this section governs text and does not restate it.
 
 Seven rules, each one a reviewer can answer yes or no:
 
@@ -143,6 +142,45 @@ route at both viewports and write
 plus one census of every text node's string, size, box and nearest `testID` —
 and the review protocol that reads those artifacts screen by screen is
 `prompts/scans/text-order.md`.
+
+## Action rows (#2860)
+
+Controls are where order is felt most: a person reaches for them. A button
+"aligned with nothing at all, just scattered around" tells someone trying to
+get their life in order that this place is not in order either. Five rules,
+each one a reviewer can answer yes or no:
+
+- **(a) One decline is the corner X.** A card with a single way to decline
+  (set aside, dismiss, not now) declines with `ReflectionDismiss`
+  `variant="close"` — an icon-only `lucide-react-native` X in `ink.soft`,
+  `accent.primary` while pressed, pinned to the card's top-right corner with a
+  hit area of at least `touchTarget.minimum` — never a text link on a line of
+  its own. The card's content keeps clear of that corner (the morning-pages
+  tip's `closeCornerReserve` is the precedent).
+- **(b) Confirm and decline share one row.** A card that asks for a decision
+  puts both controls in one right-aligned row at one height, with the decline
+  as a `tertiary` `Button`.
+- **(c) A form's primary action is placed, not left behind.** It is full-width
+  or centred at the bottom of the form, never left-flush beneath a left-flush
+  field label where it reads as one more label.
+- **(d) No lone link under a card.** A text link never sits under a card on a
+  line of its own; it joins a row (the card's own, or a row of its siblings)
+  or becomes an icon.
+- **(e) Siblings share one baseline and one edge.** Controls that belong
+  together sit on one baseline and hang from one edge — all left or all right,
+  never one of each.
+
+**How to check** — `frontend/e2e/action-rows.browser.e2e.test.ts` walks every
+route `e2e/routeWalk.ts` reaches (every tab and `RootStack` screen a lane
+account can open; each one it cannot is listed with its reason) at 390x844
+and 1280x720, reads every visible `accessibilityRole="button"` box in one
+settled frame, prints one line per button (viewport, screen, `testID`, box,
+name) and writes `frontend/e2e/artifacts/action-rows/<viewport>/<route>.{png,json}`,
+which CI publishes as `action-row-sweep` on every run. Geometry holds three
+of the rules' consequences as assertions: no two buttons overlap by more than
+a pixel, no button leaves the viewport's width, and buttons side by side have
+tops within 2px. Rules (a) to (e) themselves need judgement: they are the
+reviewer's pass over those screenshots, screen by screen.
 
 ## Constraints (carried from the epic)
 
