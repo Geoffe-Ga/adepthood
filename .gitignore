@@ -185,8 +185,9 @@ graphify-out/
 # would be worse than no file at all, so it is never shared and never committed.
 frontend/e2e/.e2e-state.json
 frontend/e2e/.browser-e2e-state.json
-# The text census one browser run took (#2948): screenshots and per-route JSON
-# are run artifacts CI publishes as text-order-census, never committed.
+# What one browser run's route walks took -- the text census (#2948) and the
+# action-row sweep (#2860): screenshots and per-route JSON are run artifacts CI
+# publishes as text-order-census and action-row-sweep, never committed.
 frontend/e2e/artifacts/
 frontend/playwright-report/
 frontend/test-results/

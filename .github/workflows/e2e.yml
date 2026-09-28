@@ -208,3 +208,17 @@ jobs:
           path: frontend/e2e/artifacts/text-order/**
           if-no-files-found: warn
           retention-days: 14
+
+      # The action-row sweep (#2860) likewise: its screenshots and button tables
+      # under e2e/artifacts/action-rows are the review step's input, and a green
+      # run -- geometry held -- is exactly the one a reviewer reads against the
+      # DESIGN.md "Action rows" rules. Guarded by
+      # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
+      - name: Upload the action-row sweep
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: action-row-sweep
+          path: frontend/e2e/artifacts/action-rows/**
+          if-no-files-found: warn
+          retention-days: 14
