@@ -19,6 +19,13 @@ it publishes. So each is checked here as data, per step, in the browser job.
 Parsed as plain text through ``tests.workflow_text``, like the other guards in
 this directory: PyYAML is deliberately in no requirements file.
 
+The same job must also be given the time to produce them. The browser job was
+already at its 15-minute cap on ``main`` before the sweep joined it -- E2E run
+36363745320 was cancelled at that cap mid-way through the text census, and the
+run before it took 14m20s -- so the job's ``timeout-minutes`` is pinned at a
+floor too: a cap that cancels the run publishes a folder with half the screens
+in it, which is the silent partial review this module exists to prevent.
+
 Every check takes the workflow text as an argument, so the code that grades
 the real ``e2e.yml`` is also pointed at deliberately violating copies below. A
 gate never observed to fail is not known to be a gate.
@@ -42,6 +49,14 @@ _E2E_DIR = _REPO_ROOT / "frontend" / "e2e"
 _BROWSER_JOB = "browser-journey"
 _UPLOAD_ACTION = "actions/upload-artifact@"
 _ALWAYS = "always()"
+
+# The browser job's own ``timeout-minutes``, at the job's key indentation.
+_JOB_TIMEOUT = re.compile(r"^    timeout-minutes:\s*(?P<minutes>\d+)\s*(?:#.*)?$", re.MULTILINE)
+
+# The least the browser job may be given. 14m20s for the lane without the
+# sweep, plus the sweep's own 2.3 minutes (measured locally), is ~17 minutes; 25 leaves the
+# headroom a slower runner needs without letting a hung run idle for an hour.
+_BROWSER_TIMEOUT_FLOOR_MINUTES = 25
 
 # A step-level ``if:`` key, captured with its indentation so a key nested under
 # ``with:`` is not mistaken for the step's own condition.
@@ -132,12 +147,38 @@ def _upload_shortfall(workflow_text: str, publication: Publication) -> str | Non
     return None
 
 
+def _timeout_shortfall(workflow_text: str) -> str | None:
+    """Describe how the browser job's time cap falls short, or ``None``.
+
+    Args:
+        workflow_text: The whole workflow file's contents.
+
+    Returns:
+        A sentence naming the shortfall, or ``None`` when the job declares a
+        ``timeout-minutes`` of at least the floor.
+    """
+    job = jobs(without_comment_lines(workflow_text)).get(_BROWSER_JOB)
+    if job is None:
+        return f"the workflow has no {_BROWSER_JOB} job"
+    found = _JOB_TIMEOUT.search(job)
+    if found is None:
+        return f"the {_BROWSER_JOB} job declares no timeout-minutes of its own"
+    minutes = int(found.group("minutes"))
+    if minutes < _BROWSER_TIMEOUT_FLOOR_MINUTES:
+        return (
+            f"the {_BROWSER_JOB} job is capped at {minutes} minutes, under the "
+            f"{_BROWSER_TIMEOUT_FLOOR_MINUTES}-minute floor the census and sweep need"
+        )
+    return None
+
+
 _COMPLIANT = """\
 name: E2E
 on: pull_request
 jobs:
   browser-journey:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Run the real-browser journey
         run: npm run test:e2e:web
@@ -172,6 +213,12 @@ def test_the_spec_writes_the_folder_the_workflow_publishes(publication: Publicat
     spec = (_E2E_DIR / publication.spec).read_text(encoding="utf-8")
 
     assert f"join(__dirname, 'artifacts', '{publication.folder}')" in spec
+
+
+def test_the_browser_job_has_time_to_publish_every_screen() -> None:
+    """The job's cap covers the census and the sweep with headroom."""
+    shortfall = _timeout_shortfall(_E2E_WORKFLOW.read_text(encoding="utf-8"))
+    assert shortfall is None, shortfall
 
 
 # --- Deliberately violating workflows --------------------------------------
@@ -258,3 +305,42 @@ def test_a_condition_nested_under_with_is_not_the_steps_own() -> None:
     )
 
     assert _step_condition(workflow, _SWEEP.step) is None
+
+
+def test_the_timeout_check_can_be_satisfied() -> None:
+    """The compliant fixture's 25 minutes meets the floor exactly."""
+    assert _timeout_shortfall(_COMPLIANT) is None
+
+
+def test_the_old_fifteen_minute_cap_is_caught() -> None:
+    """The cap that cancelled run 36363745320 mid-census."""
+    shortfall = _timeout_shortfall(_COMPLIANT.replace("timeout-minutes: 25", "timeout-minutes: 15"))
+
+    assert shortfall is not None
+    assert "15 minutes" in shortfall
+
+
+def test_a_cap_one_minute_under_the_floor_is_caught() -> None:
+    """The floor is a floor: 24 is under it."""
+    workflow = _COMPLIANT.replace("timeout-minutes: 25", "timeout-minutes: 24")
+
+    assert _timeout_shortfall(workflow) is not None
+
+
+def test_a_missing_or_commented_out_cap_is_caught() -> None:
+    """No cap is GitHub's 360-minute default, not a deliberate floor; a comment is not a cap."""
+    removed = _COMPLIANT.replace("    timeout-minutes: 25\n", "")
+    commented = _COMPLIANT.replace("    timeout-minutes: 25", "    # timeout-minutes: 25")
+
+    assert _timeout_shortfall(removed) is not None
+    assert _timeout_shortfall(commented) is not None
+
+
+def test_a_step_level_cap_is_not_the_jobs() -> None:
+    """A step's ``timeout-minutes`` sits deeper and caps that step alone."""
+    workflow = _COMPLIANT.replace("    timeout-minutes: 25\n", "").replace(
+        "        run: npm run test:e2e:web",
+        "        run: npm run test:e2e:web\n        timeout-minutes: 30",
+    )
+
+    assert _timeout_shortfall(workflow) is not None
