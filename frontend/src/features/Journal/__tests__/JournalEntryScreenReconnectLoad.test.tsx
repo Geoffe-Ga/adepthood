@@ -1205,8 +1205,10 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       server: ReturnType<typeof serverDouble>,
       preference: number[],
       outcome: (index: number) => boolean,
+      afterFirst?: () => Promise<void>,
     ) {
       for (let round = 0; round < MAX_SETTLE_ROUNDS; round += 1) {
+        if (round === 1 && afterFirst) await afterFirst();
         const order = [...preference, ...server.tierWrites.map((_w, i) => i)];
         const index = order.find((i) => server.tierWrites[i]?.settled === false);
         if (index === undefined) return;
@@ -1360,27 +1362,37 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     type Order = 'escalation-first' | 'tap-first';
     const TAPS: Tap[] = ['personal', 'intimate', 'public'];
     const ORDERS: Order[] = ['escalation-first', 'tap-first'];
-    type Case = [boolean, Tap, boolean, Order, boolean];
+    type Case = [boolean, Tap, boolean, Order, boolean, boolean];
     const BOOLS = [true, false];
     type Setup = [boolean, Tap, boolean];
     const setups: Setup[] = BOOLS.flatMap((e) =>
       TAPS.flatMap((tap) => BOOLS.map((k): Setup => [e, tap, k])),
     );
     const cases: Case[] = setups.flatMap(([escalationOk, tap, tapOk]) =>
-      ORDERS.flatMap((order): Case[] => [
-        [escalationOk, tap, tapOk, order, false],
-        [escalationOk, tap, tapOk, order, true],
-      ]),
+      ORDERS.flatMap((order): Case[] =>
+        [false, true].flatMap((commitAtSend): Case[] => [
+          [escalationOk, tap, tapOk, order, commitAtSend, false],
+          [escalationOk, tap, tapOk, order, commitAtSend, true],
+        ]),
+      ),
     );
 
     it.each(cases)(
-      'escalation ok=%s, tap %s ok=%s, %s, commit-at-send=%s: carried words go out only under a confirmed strict tier',
-      async (escalationOk, tap, tapOk, order, commitAtSend) => {
+      'escalation ok=%s, tap %s ok=%s, %s, commit-at-send=%s, retry while queued=%s: carried words go out only under a confirmed strict tier',
+      async (escalationOk, tap, tapOk, order, commitAtSend, retryWhileQueued) => {
         const { screen, server } = await escalationOut({ commitAtSend });
+        // The writer taps while the escalation is in flight: the tap is queued.
         await tapTier(screen, tap);
         const outcome = (i: number) => (i === 0 ? escalationOk : i === 1 ? tapOk : true);
-        await settleAll(server, order === 'escalation-first' ? [0, 1] : [1, 0], outcome);
+        // Optionally a #2930 reconnect retry fires with the tap still waiting.
+        const retry = retryWhileQueued ? reconnect : undefined;
+        await settleAll(server, order === 'escalation-first' ? [0, 1] : [1, 0], outcome, retry);
         await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+        // Nothing sent after the tap is ever looser than the writer asked for.
+        for (const later of server.tierWrites.slice(1)) {
+          expect(STRICTNESS[later.tier]).toBeGreaterThanOrEqual(STRICTNESS[tap]);
+        }
 
         const sent = carried(server);
         expect(sent.length).toBeLessThanOrEqual(1);

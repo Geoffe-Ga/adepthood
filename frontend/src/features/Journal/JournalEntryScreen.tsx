@@ -83,6 +83,7 @@ import {
   type SaveReporter,
   type SaveRetry,
 } from './useSaveRetry';
+import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
 import { countWords, wordCountLabel } from './wordCount';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -1081,6 +1082,8 @@ function usePersistControls(
 function persistPorts(persist: ReturnType<typeof usePersistControls>) {
   return {
     changeClassification: persist.persistClassification,
+    /** The #2930 retry's and the escalation's path; the gate queues it apart. */
+    changeClassificationSystem: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
     tierOutcomeRef: persist.tierOutcomeRef,
@@ -1682,14 +1685,26 @@ function useChoiceApplier<T>(
 /** Reflect a privacy/chord choice in local state, then persist it (ref or PATCH). */
 function useChoiceHandlers(
   entry: EntryState,
-  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>,
+  tierWriters: Pick<
+    ReturnType<typeof useDebouncedSave>,
+    'changeClassification' | 'changeClassificationSystem'
+  >,
   changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>,
 ): ChoiceHandlers & ChoiceAppliers {
-  const applyClassification = useChoiceApplier(entry.setClassification, changeClassification);
+  // The writer's tap and the retry/escalation reach the tier queue as different
+  // kinds (#2935): only a tap is the writer's request.
+  const tapClassification = useChoiceApplier(
+    entry.setClassification,
+    tierWriters.changeClassification,
+  );
+  const applyClassification = useChoiceApplier(
+    entry.setClassification,
+    tierWriters.changeClassificationSystem,
+  );
   const applyChord = useChoiceApplier(entry.setChord, changeChord);
   const onChangeClassification = useCallback(
-    (tier: JournalClassification) => void applyClassification(tier),
-    [applyClassification],
+    (tier: JournalClassification) => void tapClassification(tier),
+    [tapClassification],
   );
   const onChangeChord = useCallback(
     (next: AspectChordValue) => void applyChord(next),
@@ -1790,7 +1805,7 @@ function useHeldTextGate(
   const carryHeldRef = useRef(carryHeld);
   carryHeldRef.current = carryHeld;
   const tierSettledRef = useRef<TierSettled>(() => undefined);
-  const { save, flush, finish, changeClassification, entryId } = saving;
+  const { save, flush, finish, entryId } = saving;
   const gatedSave = useCallback(
     (title: string, body: string) => {
       if (!heldRef.current) save(title, body);
@@ -1803,23 +1818,8 @@ function useHeldTextGate(
     [flush, entryId],
   );
   const gatedFinish = useGatedFinish(finish, heldRef);
-  const { track, ...writes } = useTierWriteCount();
-  const queuedChange = useTierWriteQueue(changeClassification);
-  const reportingChange = useCallback(
-    async (tier: JournalClassification) => {
-      const revertTo = await track(tier, () => queuedChange(tier));
-      tierSettledRef.current();
-      return revertTo;
-    },
-    [queuedChange, track],
-  );
-  const gated = {
-    ...saving,
-    save: gatedSave,
-    flush: gatedFlush,
-    finish: gatedFinish,
-    changeClassification: reportingChange,
-  };
+  const { writers, ...writes } = useTierWrites(saving, tierSettledRef);
+  const gated = { ...saving, save: gatedSave, flush: gatedFlush, finish: gatedFinish, ...writers };
   return {
     saving: gated,
     heldRef,
@@ -1840,53 +1840,42 @@ function useGatedFinish(finish: RunFinish, heldRef: React.MutableRefObject<boole
   );
 }
 
-/** A tier write the queue has not sent yet, and the caller waiting on it. */
-interface QueuedTierWrite {
-  tier: JournalClassification;
-  resolve: (_revertTo: JournalClassification | null) => void;
-}
-
 /**
- * Serialize this entry's tier writes (#2935): at most one tier PATCH is ever in
- * flight, so the server commits them in the order they are sent and responses
- * arrive in that order. Every writer (taps, the #2930 retry, the escalation)
- * goes through here. A write asked for while one is out waits; a newer one
- * replaces it (last tap wins), and the replaced caller resolves as superseded
- * without anything being sent. The control's own state still moves at once.
+ * This entry's tier writers, all through one serialized queue (#2935): the
+ * writer's taps (``changeClassification``) and the #2930 retry and escalation
+ * (``changeClassificationSystem``), which never replace a queued tap. Every
+ * reader of "the tier the writer chose" (``displayedTier``: the #2930 retry's
+ * floor and the escalation's target) reads the writer's latest request, queued
+ * or sent, and only falls back to the last-sent persist ref before any tap.
  */
-function useTierWriteQueue(
-  change: (_tier: JournalClassification) => Promise<JournalClassification | null>,
-): (_tier: JournalClassification) => Promise<JournalClassification | null> {
-  const busyRef = useRef(false);
-  const nextRef = useRef<QueuedTierWrite | null>(null);
-  const send = useCallback(
-    async (tier: JournalClassification): Promise<JournalClassification | null> => {
-      busyRef.current = true;
-      try {
-        const revertTo = await change(tier);
-        // A newer choice is already queued and owns the control: never revert
-        // the screen over it (the same rule useRefPersist applies to a superseded
-        // write).
-        return nextRef.current == null ? revertTo : null;
-      } finally {
-        busyRef.current = false;
-        const next = nextRef.current;
-        nextRef.current = null;
-        if (next != null) void send(next.tier).then(next.resolve);
-      }
+function useTierWrites(
+  saving: ReturnType<typeof useDebouncedSave>,
+  tierSettledRef: React.MutableRefObject<TierSettled>,
+) {
+  const { changeClassification, displayedTier: sentTier } = saving;
+  const { track, ...writes } = useTierWriteCount();
+  const queue = useTierWriteQueue(changeClassification);
+  const { enqueue, requestedTier } = queue;
+  const write = useCallback(
+    async (tier: JournalClassification, kind: TierWriteKind) => {
+      const revertTo = await track(tier, () => enqueue(tier, kind));
+      tierSettledRef.current();
+      return revertTo;
     },
-    [change],
+    [enqueue, track, tierSettledRef],
   );
-  return useCallback(
-    (tier: JournalClassification) => {
-      if (!busyRef.current) return send(tier);
-      return new Promise<JournalClassification | null>((resolve) => {
-        nextRef.current?.resolve(null);
-        nextRef.current = { tier, resolve };
-      });
-    },
-    [send],
-  );
+  const writers = {
+    changeClassification: useCallback(
+      (tier: JournalClassification) => write(tier, 'writer'),
+      [write],
+    ),
+    changeClassificationSystem: useCallback(
+      (tier: JournalClassification) => write(tier, 'system'),
+      [write],
+    ),
+    displayedTier: useCallback(() => requestedTier() ?? sentTier(), [requestedTier, sentTier]),
+  };
+  return { writers, ...writes };
 }
 
 /** Count tier writes in flight: a ref for decisions, a flag for rendering. */
@@ -2178,7 +2167,7 @@ function useAutosaveBindings(
   );
   const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
     entry,
-    saving.changeClassification,
+    saving,
     saving.changeChord,
   );
   const retrySource = useRetrySource(saving, flushNow, { applyClassification, applyChord });
