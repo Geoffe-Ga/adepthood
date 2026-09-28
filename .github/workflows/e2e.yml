@@ -129,7 +129,14 @@ jobs:
   # real Chromium process against the same real FastAPI/Postgres boundary.
   browser-journey:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Measured, not guessed: at 15 minutes this job was already at its cap on
+    # main -- run 36363745320 (56267069) was cancelled after 13m51s of
+    # Playwright, mid-way through the text census, and the run before it took
+    # 14m20s. The action-row sweep (#2860) adds 2.3 minutes of its own
+    # walk, so the lane now needs ~17; 25 gives a slower runner headroom
+    # without letting a hung run idle for GitHub's 6-hour default. Pinned by
+    # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -206,5 +213,19 @@ jobs:
         with:
           name: text-order-census
           path: frontend/e2e/artifacts/text-order/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The action-row sweep (#2860) likewise: its screenshots and button tables
+      # under e2e/artifacts/action-rows are the review step's input, and a green
+      # run -- geometry held -- is exactly the one a reviewer reads against the
+      # DESIGN.md "Action rows" rules. Guarded by
+      # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
+      - name: Upload the action-row sweep
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: action-row-sweep
+          path: frontend/e2e/artifacts/action-rows/**
           if-no-files-found: warn
           retention-days: 14
