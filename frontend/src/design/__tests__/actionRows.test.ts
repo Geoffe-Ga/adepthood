@@ -8,6 +8,7 @@ import {
   overlappingButtons,
   ROW_TOP_TOLERANCE,
   SUBPIXEL_TOLERANCE,
+  stackScreenNames,
   tableLine,
   unaccountedScreens,
   type ButtonRecord,
@@ -23,7 +24,7 @@ import {
 
 const PHONE_WIDTH = 390;
 
-/** A button no scroller clips -- visible and swipe boxes are its box -- unless overridden. */
+/** A button in no scroller -- every box is its own box -- unless overridden. */
 const button = (overrides: Partial<ButtonRecord>): ButtonRecord => {
   const x = overrides.x ?? 16;
   const y = overrides.y ?? 400;
@@ -38,6 +39,7 @@ const button = (overrides: Partial<ButtonRecord>): ButtonRecord => {
     h,
     visible: { x, y, w, h },
     swipe: { x, y, w, h },
+    scroller: null,
     index: 1,
     span: 0,
     ...overrides,
@@ -84,9 +86,83 @@ describe('overlappingButtons', () => {
   });
 
   it('measures what a scroller left visible, so a clipped row cannot collide with a footer', () => {
-    const tile = button({ index: 1, y: 780, h: 44, visible: { x: 16, y: 780, w: 120, h: 2 } });
+    const tile = button({
+      index: 1,
+      y: 780,
+      h: 44,
+      visible: { x: 16, y: 780, w: 120, h: 2 },
+      scroller: 7,
+    });
     const footer = button({ index: 9, y: 782, h: 44 });
     expect(overlappingButtons([tile, footer], SUBPIXEL_TOLERANCE)).toEqual([]);
+  });
+});
+
+describe("buttons below a scroller's fold", () => {
+  /** A button `y` pixels down a scroller's content (its box starts at page y 700), out of sight. */
+  const deep = (index: number, x: number, y: number): ButtonRecord =>
+    button({
+      index,
+      x,
+      y: 700 + y,
+      visible: { x, y: 700 + y, w: 120, h: -600 },
+      scroller: 7,
+    });
+
+  it('still reports two overlapping buttons the scroller has not yet shown', () => {
+    const a = deep(1, 16, 1200);
+    const b = deep(2, 60, 1210);
+    expect(overlappingButtons([a, b], SUBPIXEL_TOLERANCE)).toEqual([[a, b]]);
+  });
+
+  it('still reports a misaligned row the scroller has not yet shown', () => {
+    const left = deep(1, 16, 1500);
+    const right = deep(2, 140, 1512);
+    expect(misalignedRows([left, right], ROW_TOP_TOLERANCE, SUBPIXEL_TOLERANCE)).toEqual([
+      [left, right],
+    ]);
+  });
+
+  it('compares buttons in different scrollers only where both can be seen', () => {
+    // A list row below its scroller's fold against a footer fixed outside the
+    // list. Laid out, the row sits exactly where the footer is drawn -- one
+    // box, or a 4px-misaligned row -- yet a reader never sees both: the list
+    // clips the row away until it is scrolled, and scrolling moves it.
+    const row = deep(1, 16, 54);
+    const footer = button({ index: 9, x: 16, y: 754 });
+    const beside = button({ index: 9, x: 200, y: 758 });
+    expect(overlappingButtons([row, footer], SUBPIXEL_TOLERANCE)).toEqual([]);
+    expect(misalignedRows([row, beside], ROW_TOP_TOLERANCE, SUBPIXEL_TOLERANCE)).toEqual([]);
+  });
+});
+
+describe('exact boundaries', () => {
+  it('does not report two buttons that share exactly the tolerance across', () => {
+    // Deep in each other vertically, exactly one pixel shared horizontally.
+    const a = button({ index: 1, x: 16, y: 400, w: 120, h: 44 });
+    const b = button({ index: 2, x: 135, y: 410, w: 120, h: 44 });
+    expect(overlappingButtons([a, b], SUBPIXEL_TOLERANCE)).toEqual([]);
+  });
+
+  it('does not report two buttons that share exactly the tolerance down', () => {
+    // Deep in each other horizontally, exactly one pixel shared vertically.
+    const a = button({ index: 1, x: 16, y: 400, w: 120, h: 44 });
+    const b = button({ index: 2, x: 40, y: 443, w: 120, h: 44 });
+    expect(overlappingButtons([a, b], SUBPIXEL_TOLERANCE)).toEqual([]);
+  });
+
+  it('does not report a button whose edges sit exactly at the tolerance outside the viewport', () => {
+    const right = button({ x: 291, w: 100 });
+    const left = button({ x: -1, w: 100 });
+    expect(outsideViewportWidth([right, left], PHONE_WIDTH, SUBPIXEL_TOLERANCE)).toEqual([]);
+  });
+
+  it('still reads a side-by-side pair sharing exactly the tolerance as one row', () => {
+    const left = button({ index: 1, x: 16, y: 400, w: 120 });
+    const right = button({ index: 2, x: 135, y: 405, w: 120 });
+    expect(misalignedRows([left, right], ROW_TOP_TOLERANCE, SUBPIXEL_TOLERANCE)).toEqual([
+      [left, right],
+    ]);
   });
 });
 
@@ -172,6 +248,7 @@ describe('misalignedRows', () => {
       y: 732,
       h: 32,
       visible: { x: 16, y: 732, w: 120, h: -7 },
+      scroller: 7,
     });
     const pager = button({ index: 9, x: 200, y: 729, h: 44 });
     expect(misalignedRows([marker, pager], ROW_TOP_TOLERANCE, SUBPIXEL_TOLERANCE)).toEqual([]);
@@ -231,12 +308,26 @@ describe('button skips', () => {
 
 describe('route inventory', () => {
   const rootStack = [
+    'export type RootStackParamList = {',
+    '  Tabs: NavigatorScreenParams<RootTabParamList>;',
+    '  Settings: undefined;',
+    '  /** The operator inbox. Server-gated; no params. */',
+    '  AdminFeedback: undefined;',
+    '  JournalEntry:',
+    '    | {',
+    '        entryId?: number;',
+    "        returnTo?: { screen: 'Course'; params: { contentId: number } };",
+    '      }',
+    '    | undefined;',
+    '};',
+    'const ADMIN = "AdminFeedback" as const;',
     '<Stack.Screen name="Tabs" component={BottomTabs} />',
     '<Stack.Screen',
     '  name="Settings"',
     '  component={SettingsHubScreen}',
     '/>',
-    '<Stack.Screen name="AdminFeedback" component={AdminFeedbackScreen} />',
+    '<Stack.Screen name={ADMIN} component={AdminFeedbackScreen} />',
+    '<Stack.Screen name="JournalEntry" component={JournalEntryScreen} />',
   ].join('\n');
   const tabs = [
     'export type RootTabParamList = {',
@@ -248,14 +339,25 @@ describe('route inventory', () => {
     'const Tab = createBottomTabNavigator<RootTabParamList>();',
   ].join('\n');
 
-  it('reads every stack screen but the tab shell, and every tab', () => {
+  it('reads every param-list key but the tab shell, however its JSX spells the name', () => {
+    // `AdminFeedback` is registered as `name={ADMIN}`: a string-literal scan
+    // of the JSX would lose it; the param list cannot.
     expect(declaredScreens(rootStack, tabs)).toEqual([
       'Settings',
       'AdminFeedback',
+      'JournalEntry',
       'Habits',
       'Course',
       'Journal',
     ]);
+  });
+
+  it('reads the literal JSX names, so the spec can hold them to the param list', () => {
+    expect(stackScreenNames(rootStack)).toEqual(['Tabs', 'Settings', 'JournalEntry']);
+  });
+
+  it('declares nothing from a source with no param list, rather than guessing', () => {
+    expect(declaredScreens('const x = 1;', 'const y = 2;')).toEqual([]);
   });
 
   it('reports a declared screen neither walked nor skipped', () => {

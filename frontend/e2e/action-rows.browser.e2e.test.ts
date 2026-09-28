@@ -12,6 +12,7 @@ import {
   outsideViewportWidth,
   overlappingButtons,
   ROW_TOP_TOLERANCE,
+  stackScreenNames,
   SUBPIXEL_TOLERANCE,
   tableLine,
   unaccountedScreens,
@@ -52,6 +53,10 @@ import {
  *   2. Inside the viewport -- no button's box leaves the viewport's width.
  *   3. One row, one top -- buttons side by side have tops within
  *      `ROW_TOP_TOLERANCE`.
+ * Buttons in one scroller are compared in its content coordinates, so a
+ * list's rows below the fold are held to rules 1 and 3 like its first rows;
+ * buttons in different scroll containers are compared where both are on
+ * screen (`framed` in `actionRows.ts`).
  * Everything else the rule asks -- one decline as the corner X, confirm and
  * decline right-aligned together, a form's primary action placed, no lone
  * link under a card, one edge per group -- needs judgement and is the review
@@ -134,10 +139,12 @@ const NAVIGATION_DIR = join(__dirname, '..', 'src', 'navigation');
 /**
  * A page that breaks every assertion: two buttons overlapping, a row whose
  * tops differ by three pixels, a button hanging off the right edge of a 390px
- * viewport and one a vertical scroller cuts off there. Beside them, what must
- * stay silent: a lawful row, a control nested in a card, buttons hidden,
- * faded or under an aria-hidden sheet, a button below a scroller's fold level
- * with a footer outside it, and a pill a sideways rail holds past the edge.
+ * viewport and one a vertical scroller cuts off there, plus an overlap and a
+ * 12px-misaligned row far below that scroller's fold, which must be caught
+ * where they are laid out. Beside them, what must stay silent: a lawful row, a
+ * control nested in a card, buttons hidden, faded or under an aria-hidden
+ * sheet, a button below the scroller's fold level (in page coordinates) with a
+ * footer fixed outside it, and a pill a sideways rail holds past the edge.
  */
 const BROKEN_FIXTURE = `
 <!doctype html>
@@ -164,6 +171,10 @@ const BROKEN_FIXTURE = `
             overflow-x: hidden; overflow-y: auto">
   <div role="button" aria-label="Cut off" style="left: 330px; top: 10px"></div>
   <div role="button" aria-label="Below the fold" style="left: 16px; top: 150px"></div>
+  <div role="button" aria-label="Deep A" style="left: 16px; top: 1200px"></div>
+  <div role="button" aria-label="Deep B" style="left: 60px; top: 1210px"></div>
+  <div role="button" aria-label="Deep row left" style="left: 16px; top: 1500px"></div>
+  <div role="button" aria-label="Deep row right" style="left: 140px; top: 1512px"></div>
 </div>
 <div role="button" aria-label="Footer" style="left: 200px; top: 754px"></div>
 <div style="position: absolute; left: 0; top: 790px; width: 390px; height: 50px;
@@ -246,6 +257,7 @@ test('the sweep catches every planted violation on a deliberately broken page', 
   }
   expect(names(overlappingButtons(records, SUBPIXEL_TOLERANCE))).toEqual([
     ['Overlap A', 'Overlap B'],
+    ['Deep A', 'Deep B'],
   ]);
   expect(outsideViewportWidth(records, 390, SUBPIXEL_TOLERANCE).map((r) => r.name)).toEqual([
     'Off the edge',
@@ -253,14 +265,20 @@ test('the sweep catches every planted violation on a deliberately broken page', 
   ]);
   expect(names(misalignedRows(records, ROW_TOP_TOLERANCE, SUBPIXEL_TOLERANCE))).toEqual([
     ['Row left', 'Row right'],
+    ['Deep row left', 'Deep row right'],
   ]);
 });
 
 test('every screen the app declares is walked or skipped with a reason', () => {
+  const rootStack = readFileSync(join(NAVIGATION_DIR, 'RootStack.tsx'), 'utf8');
   const declared = declaredScreens(
-    readFileSync(join(NAVIGATION_DIR, 'RootStack.tsx'), 'utf8'),
+    rootStack,
     readFileSync(join(NAVIGATION_DIR, 'BottomTabs.tsx'), 'utf8'),
   );
+  // Every screen the JSX registers is a param-list key, so reading the list misses none.
+  expect(
+    stackScreenNames(rootStack).filter((name) => name !== 'Tabs' && !declared.includes(name)),
+  ).toEqual([]);
   expect(declared).toContain('JournalEntry');
   expect(declared).toContain('Journal');
   expect(
@@ -272,6 +290,9 @@ test('every screen the app declares is walked or skipped with a reason', () => {
   ).toEqual([]);
   // A skip must name a screen that exists, or it is exempting nothing.
   expect([...SKIPPED_NAMES].filter((name) => !declared.includes(name))).toEqual([]);
+  // A button skip on a route the walk never opens is never checked for staleness.
+  const walked = new Set(WALKED.map((r) => r.name));
+  expect(SKIPPED_BUTTONS.filter((skip) => !walked.has(skip.route))).toEqual([]);
 });
 
 test('every button on every route stays clear of the others, inside the viewport and on one top per row at both viewports', async ({

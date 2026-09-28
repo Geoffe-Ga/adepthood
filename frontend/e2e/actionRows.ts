@@ -41,6 +41,12 @@ export interface ButtonRecord extends Box {
    * clips nothing here -- a button it cuts off at the edge stays cut off.
    */
   swipe: Box;
+  /**
+   * The document index of the nearest ancestor that scrolls on either axis,
+   * or null when the button scrolls with the page itself. Two buttons with
+   * the same scroller are compared by their unclipped boxes (see `framed`).
+   */
+  scroller: number | null;
   /** Position in document order, so ancestry can be read without the DOM. */
   index: number;
   /** How many elements the element contains: `index < other <= index + span` is a descendant. */
@@ -74,16 +80,22 @@ function boxOnPage(rect: DOMRect): Box {
   return { x: rect.x, y: rect.y, w: rect.width, h: rect.height };
 }
 
+/** The nearest ancestor whose overflow scrolls (sideways only, when asked), or null. */
+function scrollerOnPage(el: Element, sidewaysOnly: boolean): Element | null {
+  let scroller = el.parentElement;
+  while (scroller !== null && !scrollsOnPage(scroller, sidewaysOnly)) {
+    scroller = scroller.parentElement;
+  }
+  return scroller;
+}
+
 /**
  * The part of `rect` inside the nearest scrolling ancestor (sideways-scrolling
  * only, when asked); `rect` when none scrolls. A side is zero or negative when
  * the scroller has clipped the whole button away.
  */
 function clippedOnPage(el: Element, rect: Box, sidewaysOnly: boolean): Box {
-  let scroller = el.parentElement;
-  while (scroller !== null && !scrollsOnPage(scroller, sidewaysOnly)) {
-    scroller = scroller.parentElement;
-  }
+  const scroller = scrollerOnPage(el, sidewaysOnly);
   if (scroller === null) return rect;
   const clip = scroller.getBoundingClientRect();
   const x = Math.max(rect.x, clip.x);
@@ -115,17 +127,20 @@ function nameOnPage(el: HTMLElement): string {
 function collectButtons(): ButtonRecord[] {
   const records: ButtonRecord[] = [];
   const all = [...document.body.querySelectorAll<HTMLElement>('*')];
+  const order = new Map<Element, number>(all.map((el, index) => [el, index]));
   for (const [index, el] of all.entries()) {
     const isButton = el.getAttribute('role') === 'button' || el.tagName === 'BUTTON';
     if (!isButton || !shownOnPage(el)) continue;
     const rect = boxOnPage(el.getBoundingClientRect());
     if (rect.w <= 0 || rect.h <= 0) continue;
+    const scroller = scrollerOnPage(el, false);
     records.push({
       name: nameOnPage(el),
       testId: el.getAttribute('data-testid'),
       ...rect,
       visible: clippedOnPage(el, rect, false),
       swipe: clippedOnPage(el, rect, true),
+      scroller: scroller === null ? null : (order.get(scroller) ?? null),
       index,
       span: el.querySelectorAll('*').length,
     });
@@ -137,6 +152,7 @@ function collectButtons(): ButtonRecord[] {
 const PAGE_FUNCTIONS: readonly ((...args: never[]) => unknown)[] = [
   scrollsOnPage,
   boxOnPage,
+  scrollerOnPage,
   clippedOnPage,
   shownOnPage,
   nameOnPage,
@@ -187,14 +203,7 @@ function related(a: ButtonRecord, b: ButtonRecord): boolean {
   return contains(a, b) || contains(b, a);
 }
 
-/**
- * Every unrelated pair of buttons, in document order.
- *
- * A button its scroller has clipped away entirely -- a tile below the grid's
- * fold -- has a visible box with a zero or negative side, and such a box can
- * neither overlap nor share a row with anything under the predicates below,
- * so no separate "is it on screen" filter is needed (or could be observed).
- */
+/** Every unrelated pair of buttons, in document order. */
 function unrelatedPairs(records: readonly ButtonRecord[]): Array<[ButtonRecord, ButtonRecord]> {
   const pairs: Array<[ButtonRecord, ButtonRecord]> = [];
   for (const [index, a] of records.entries()) {
@@ -206,17 +215,36 @@ function unrelatedPairs(records: readonly ButtonRecord[]): Array<[ButtonRecord, 
 }
 
 /**
- * Every pair of unrelated buttons whose VISIBLE parts overlap by more than
+ * The two boxes a pair is compared in.
+ *
+ * In ONE scroller, their unclipped boxes -- which is comparing them in the
+ * scroller's content coordinates: those differ from page coordinates by the
+ * scroller's own offset and scroll position, the same for both buttons, so
+ * every overlap and every difference of tops is identical in either. Both
+ * buttons move together, so where they are laid out is where they will be
+ * seen, however far below the fold that is -- a Settings list's lower rows are
+ * held to the rules like its first. In DIFFERENT scroll containers (a list row against a footer fixed
+ * outside the list), their relation changes as the list scrolls, so they are
+ * compared only where both are on screen: the boxes their scrollers leave
+ * visible. A box its scroller has clipped away entirely has a zero or negative
+ * side, and can then neither overlap nor share a row with anything.
+ */
+function framed(a: ButtonRecord, b: ButtonRecord): [Box, Box] {
+  return a.scroller === b.scroller ? [a, b] : [a.visible, b.visible];
+}
+
+/**
+ * Every pair of unrelated buttons whose boxes overlap by more than
  * `tolerance` on both axes -- two controls a finger cannot tell apart.
  */
 export function overlappingButtons(
   records: readonly ButtonRecord[],
   tolerance: number,
 ): Array<[ButtonRecord, ButtonRecord]> {
-  return unrelatedPairs(records).filter(
-    ([a, b]) =>
-      sharedX(a.visible, b.visible) > tolerance && sharedY(a.visible, b.visible) > tolerance,
-  );
+  return unrelatedPairs(records).filter(([a, b]) => {
+    const [boxA, boxB] = framed(a, b);
+    return sharedX(boxA, boxB) > tolerance && sharedY(boxA, boxB) > tolerance;
+  });
 }
 
 /**
@@ -244,8 +272,8 @@ function centreWithin(a: Box, b: Box): boolean {
 /**
  * Every pair of unrelated buttons that share a row but not a top.
  *
- * Two buttons share a row when they sit side by side: their visible boxes do
- * not overlap horizontally (boxes overlapping on both axes are the overlap
+ * Two buttons share a row when they sit side by side: their boxes (`framed`)
+ * do not overlap horizontally (boxes overlapping on both axes are the overlap
  * rule's finding) and each one's vertical centre lies within the other's
  * vertical extent. Mutual centres, not mere vertical overlap: a 44px corner X
  * beside the top lines of a 160px pressable block overlaps it vertically but
@@ -259,7 +287,7 @@ export function misalignedRows(
   tolerance: number,
 ): Array<[ButtonRecord, ButtonRecord]> {
   return unrelatedPairs(records).filter(([a, b]) => {
-    const [boxA, boxB] = [a.visible, b.visible];
+    const [boxA, boxB] = framed(a, b);
     const sameRow =
       sharedX(boxA, boxB) <= tolerance && centreWithin(boxA, boxB) && centreWithin(boxB, boxA);
     return sameRow && Math.abs(boxA.y - boxB.y) > rowTolerance;
@@ -293,27 +321,51 @@ export function applyButtonSkips(
 
 /** `name="X"` on a `Stack.Screen`, attribute on its own line or not. */
 const STACK_SCREEN_NAME = /\bname="(\w+)"/g;
-/** Where `RootTabParamList`'s body opens, and the column-zero line that closes it. */
-const TAB_PARAM_LIST_OPEN = 'export type RootTabParamList = {';
-const TAB_PARAM_LIST_CLOSE = '\n};';
-/** One `Name:` key at the start of a line inside that body. */
-const TAB_KEY = /^\s*([A-Z]\w*)\s*:/gm;
+/** A param-list key: an upper-case name at the type's own two-space indent. */
+const PARAM_LIST_KEY = /^ {2}([A-Z]\w*)\??\s*:/gm;
+/** The column-zero line that closes a param-list type. */
+const PARAM_LIST_CLOSE = '\n};';
+/** The tab shell: a RootStack route, but a navigator rather than a screen. */
+const TAB_SHELL = 'Tabs';
 
 /**
- * Every screen the app declares: each `RootStack.tsx` screen except the tab
- * shell `Tabs` itself, then each key of `RootTabParamList` in `BottomTabs.tsx`.
- * Read from source so a new screen cannot join the app without the sweep
- * either walking it or saying why not.
+ * The keys of `export type <typeName> = { ... };` in `source`, in order, or
+ * nothing when the type is absent. Nested object types sit deeper than two
+ * spaces and their keys are lower-case, so only the list's own keys match.
+ */
+function paramListKeys(source: string, typeName: string): string[] {
+  const open = `export type ${typeName} = {`;
+  const start = source.indexOf(open);
+  const end = start === -1 ? -1 : source.indexOf(PARAM_LIST_CLOSE, start);
+  if (end === -1) return [];
+  const body = source.slice(start + open.length, end);
+  return [...body.matchAll(PARAM_LIST_KEY)].map((match) => match[1] ?? '').filter(Boolean);
+}
+
+/**
+ * Every screen the app declares: each key of `RootStackParamList` except the
+ * tab shell, then each key of `RootTabParamList`. Read from the param lists,
+ * not from the JSX, because a screen registered as `name={ROUTE}` is as real
+ * as one registered as `name="Route"` -- and navigation is typed against these
+ * lists, so a screen cannot be navigated to without a key here. Read from
+ * source so a new screen cannot join the app without the sweep either walking
+ * it or saying why not.
  */
 export function declaredScreens(rootStackSource: string, tabsSource: string): string[] {
-  const stack = [...rootStackSource.matchAll(STACK_SCREEN_NAME)]
+  const stack = paramListKeys(rootStackSource, 'RootStackParamList').filter(
+    (name) => name !== TAB_SHELL,
+  );
+  return [...stack, ...paramListKeys(tabsSource, 'RootTabParamList')];
+}
+
+/**
+ * The `Stack.Screen` names spelled as string literals in the JSX -- the
+ * cross-check that no registered screen is missing from the param list.
+ */
+export function stackScreenNames(rootStackSource: string): string[] {
+  return [...rootStackSource.matchAll(STACK_SCREEN_NAME)]
     .map((match) => match[1] ?? '')
-    .filter((name) => name !== '' && name !== 'Tabs');
-  const start = tabsSource.indexOf(TAB_PARAM_LIST_OPEN);
-  const end = start === -1 ? -1 : tabsSource.indexOf(TAB_PARAM_LIST_CLOSE, start);
-  const body = end === -1 ? '' : tabsSource.slice(start + TAB_PARAM_LIST_OPEN.length, end);
-  const tabs = [...body.matchAll(TAB_KEY)].map((match) => match[1] ?? '').filter(Boolean);
-  return [...stack, ...tabs];
+    .filter(Boolean);
 }
 
 /** Declared screens the sweep neither walks nor skips with a reason. */
