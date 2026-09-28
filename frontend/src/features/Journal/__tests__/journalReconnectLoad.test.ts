@@ -1,7 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  LOADED_TIER_STATE,
   carriedTierEscalation,
+  confirmTierWrite,
+  knownTier,
   reconcileUnloadedDraft,
   shouldReloadEntryOnReconnect,
   type EntryReloadGate,
@@ -135,5 +138,45 @@ describe('carriedTierEscalation (#2935)', () => {
     ['personal', 'public', null],
   ])('stored %s, typed under %s -> %s', (stored, typedUnder, expected) => {
     expect(carriedTierEscalation(stored, typedUnder)).toBe(expected);
+  });
+});
+
+describe('confirmTierWrite / knownTier (#2935)', () => {
+  const ok = (seq: number, stored: JournalClassification) => ({ seq, ok: true as const, stored });
+  const fail = (seq: number) => ({ seq, ok: false as const });
+
+  it('starts at the loaded tier, known', () => {
+    expect(knownTier(LOADED_TIER_STATE, 'public')).toBe('public');
+  });
+
+  it('follows a newer success', () => {
+    expect(knownTier(confirmTierWrite(LOADED_TIER_STATE, ok(1, 'personal')), 'public')).toBe(
+      'personal',
+    );
+  });
+
+  it('ignores a success older than the one it already has (out-of-order response)', () => {
+    const newer = confirmTierWrite(LOADED_TIER_STATE, ok(2, 'public'));
+    expect(knownTier(confirmTierWrite(newer, ok(1, 'personal')), 'public')).toBe('public');
+  });
+
+  it('becomes unknown on a newer failure', () => {
+    const confirmed = confirmTierWrite(LOADED_TIER_STATE, ok(1, 'personal'));
+    expect(knownTier(confirmTierWrite(confirmed, fail(2)), 'public')).toBeNull();
+  });
+
+  it('ignores a failure older than its last success', () => {
+    const confirmed = confirmTierWrite(LOADED_TIER_STATE, ok(2, 'personal'));
+    expect(knownTier(confirmTierWrite(confirmed, fail(1)), 'public')).toBe('personal');
+  });
+
+  it('stays unknown on a success older than the failure', () => {
+    const unknown = confirmTierWrite(LOADED_TIER_STATE, fail(2));
+    expect(knownTier(confirmTierWrite(unknown, ok(1, 'intimate')), 'public')).toBeNull();
+  });
+
+  it('is known again on a success newer than the failure', () => {
+    const unknown = confirmTierWrite(LOADED_TIER_STATE, fail(1));
+    expect(knownTier(confirmTierWrite(unknown, ok(2, 'intimate')), 'public')).toBe('intimate');
   });
 });

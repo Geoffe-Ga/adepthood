@@ -40,7 +40,14 @@ import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
-import { carriedTierEscalation, reconcileUnloadedDraft } from './journalReconnectLoad';
+import {
+  LOADED_TIER_STATE,
+  carriedTierEscalation,
+  confirmTierWrite,
+  knownTier,
+  reconcileUnloadedDraft,
+  type TierWriteOutcome,
+} from './journalReconnectLoad';
 import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRetry';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
@@ -593,15 +600,19 @@ interface RefPersist<T> {
  * it. Assumes one PATCH in flight at a time; ``previous`` is the optimistic ref,
  * not the last-persisted value. Shared by the privacy-tier and Aspect-chord
  * controls; ``toPatch`` must be referentially stable to keep ``change`` stable.
+ * The tier path guarantees that assumption with a write queue (#2935) and
+ * passes ``report``, which hears each sent write's outcome, numbered in send
+ * order; the chord path passes neither and is unchanged.
  */
 function useRefPersist<T>(
   entryIdRef: React.MutableRefObject<number | null>,
   entryUnsettledRef: React.MutableRefObject<boolean>,
   initial: T,
   toPatch: (_value: T) => JournalEntryUpdate,
-  onConfirmed?: (_value: T, _stored: JournalMessage | null) => void,
+  report?: (_outcome: PersistOutcome<T>) => void,
 ): RefPersist<T> {
   const ref = useRef<T>(initial);
+  const seqRef = useRef(0);
   const change = useCallback(
     async (value: T): Promise<PersistResult<T>> => {
       // Never PATCH until the entry's load settles (still in flight or failed) —
@@ -611,32 +622,58 @@ function useRefPersist<T>(
       ref.current = value;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
       if (entryIdRef.current == null) return { revertTo: null, state: null };
+      const seq = ++seqRef.current;
       try {
         const stored = await journal.update(entryIdRef.current, toPatch(value));
         // Only a write the server accepted is ever reported as confirmed (#2935).
-        onConfirmed?.(value, stored);
+        report?.({ seq, ok: true, value, stored });
         return { revertTo: null, state: 'saved' };
       } catch (error) {
-        // A rapid superseding change already owns the ref and the UI — leave both
-        // to it rather than reverting to this now-stale value.
-        if (ref.current !== value) return { revertTo: null, state: null };
-        // The server commits the stricter Intimate tier before asking Creek to
-        // withdraw. Keep that safer truth selected and expose its retry path;
-        // reverting to Personal would visually contradict persisted privacy.
-        if (isVaultWithdrawalPending(error)) {
-          onConfirmed?.(value, null);
-          return { revertTo: null, state: 'vaultWithdrawalPending' };
-        }
-        ref.current = previous;
-        return { revertTo: previous, state: 'failed' };
+        return failedWrite({ error, seq, value, previous, ref, report });
       }
     },
-    [entryIdRef, entryUnsettledRef, toPatch, onConfirmed],
+    [entryIdRef, entryUnsettledRef, toPatch, report],
   );
   const seed = useCallback((value: T): void => {
     ref.current = value;
   }, []);
   return { ref, change, seed };
+}
+
+/** One sent persist write's outcome, numbered in send order (#2935). */
+type PersistOutcome<T> =
+  { seq: number; ok: true; value: T; stored: JournalMessage | null } | { seq: number; ok: false };
+
+interface FailedWrite<T> {
+  error: unknown;
+  seq: number;
+  value: T;
+  previous: T;
+  ref: React.MutableRefObject<T>;
+  report?: (_outcome: PersistOutcome<T>) => void;
+}
+
+/** Settle a rejected persist write: keep, revert, or report pending withdrawal. */
+function failedWrite<T>({
+  error,
+  seq,
+  value,
+  previous,
+  ref,
+  report,
+}: FailedWrite<T>): PersistResult<T> {
+  const withdrawalPending = isVaultWithdrawalPending(error);
+  // A failed response does not say what the server committed (#2935), except a
+  // pending vault withdrawal: the server commits Intimate before asking Creek.
+  report?.(withdrawalPending ? { seq, ok: true, value, stored: null } : { seq, ok: false });
+  // A rapid superseding change already owns the ref and the UI — leave both
+  // to it rather than reverting to this now-stale value.
+  if (ref.current !== value) return { revertTo: null, state: null };
+  // Keep that safer truth selected and expose its retry path; reverting to
+  // Personal would visually contradict persisted privacy.
+  if (withdrawalPending) return { revertTo: null, state: 'vaultWithdrawalPending' };
+  ref.current = previous;
+  return { revertTo: previous, state: 'failed' };
 }
 
 // Module-level so the mappers stay referentially stable across renders, keeping
@@ -997,11 +1034,14 @@ function usePersistControls(
   reporter: SaveReporter,
   entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
-  // Told of every tier the server ACCEPTED, with the tier it reports storing (#2935).
-  const tierConfirmedRef = useRef<TierConfirmed>(() => undefined);
-  const onTierConfirmed = useCallback(
-    (tier: JournalClassification, stored: JournalMessage | null) =>
-      tierConfirmedRef.current(stored?.classification ?? tier),
+  // Told of every sent tier write's outcome, in send order (#2935); a success
+  // carries the tier the server reports storing.
+  const tierOutcomeRef = useRef<TierOutcome>(() => undefined);
+  const onTierOutcome = useCallback(
+    (o: PersistOutcome<JournalClassification>) =>
+      tierOutcomeRef.current(
+        o.ok ? { seq: o.seq, ok: true, stored: o.stored?.classification ?? o.value } : o,
+      ),
     [],
   );
   const {
@@ -1013,7 +1053,7 @@ function usePersistControls(
     entryUnsettledRef,
     DEFAULT_TIER,
     classificationToPatch,
-    onTierConfirmed,
+    onTierOutcome,
   );
   const {
     ref: chordRef,
@@ -1031,7 +1071,7 @@ function usePersistControls(
     classificationRef,
     chordRef,
     seedPersist,
-    tierConfirmedRef,
+    tierOutcomeRef,
     persistClassification: useLanePersist(changeClassification, reporter, classificationFailure),
     persistChord: useLanePersist(changeChord, reporter, chordFailure),
   };
@@ -1043,12 +1083,12 @@ function persistPorts(persist: ReturnType<typeof usePersistControls>) {
     changeClassification: persist.persistClassification,
     changeChord: persist.persistChord,
     seedPersist: persist.seedPersist,
-    tierConfirmedRef: persist.tierConfirmedRef,
+    tierOutcomeRef: persist.tierOutcomeRef,
   };
 }
 
-/** Receives each tier the server confirmed storing (#2935). */
-type TierConfirmed = (_tier: JournalClassification) => void;
+/** Receives each sent tier write's outcome (#2935). */
+type TierOutcome = (_outcome: TierWriteOutcome) => void;
 
 /** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
 type DraftWriters = SaveTimer & { finish: RunFinish };
@@ -1720,8 +1760,8 @@ interface HeldTextGate {
   heldRef: React.MutableRefObject<boolean>;
   /** Told after every tier write settles (success or not), to re-check release. */
   tierSettledRef: React.MutableRefObject<TierSettled>;
-  /** Told of every tier the server confirmed storing: the only proof of a tier. */
-  tierConfirmedRef: React.MutableRefObject<TierConfirmed>;
+  /** Told of every sent tier write's outcome: the only proof of a tier. */
+  tierOutcomeRef: React.MutableRefObject<TierOutcome>;
   /** Tier writes on their way (the writer's, a retry's, or an escalation). */
   tierWritesRef: React.MutableRefObject<number>;
   /** The tiers those in-flight writes carry. */
@@ -1764,13 +1804,14 @@ function useHeldTextGate(
   );
   const gatedFinish = useGatedFinish(finish, heldRef);
   const { track, ...writes } = useTierWriteCount();
+  const queuedChange = useTierWriteQueue(changeClassification);
   const reportingChange = useCallback(
     async (tier: JournalClassification) => {
-      const revertTo = await track(tier, () => changeClassification(tier));
+      const revertTo = await track(tier, () => queuedChange(tier));
       tierSettledRef.current();
       return revertTo;
     },
-    [changeClassification, track],
+    [queuedChange, track],
   );
   const gated = {
     ...saving,
@@ -1784,7 +1825,7 @@ function useHeldTextGate(
     heldRef,
     tierSettledRef,
     ...writes,
-    tierConfirmedRef: saving.tierConfirmedRef,
+    tierOutcomeRef: saving.tierOutcomeRef,
   };
 }
 
@@ -1796,6 +1837,55 @@ function useGatedFinish(finish: RunFinish, heldRef: React.MutableRefObject<boole
       return finish(title, body);
     },
     [finish, heldRef],
+  );
+}
+
+/** A tier write the queue has not sent yet, and the caller waiting on it. */
+interface QueuedTierWrite {
+  tier: JournalClassification;
+  resolve: (_revertTo: JournalClassification | null) => void;
+}
+
+/**
+ * Serialize this entry's tier writes (#2935): at most one tier PATCH is ever in
+ * flight, so the server commits them in the order they are sent and responses
+ * arrive in that order. Every writer (taps, the #2930 retry, the escalation)
+ * goes through here. A write asked for while one is out waits; a newer one
+ * replaces it (last tap wins), and the replaced caller resolves as superseded
+ * without anything being sent. The control's own state still moves at once.
+ */
+function useTierWriteQueue(
+  change: (_tier: JournalClassification) => Promise<JournalClassification | null>,
+): (_tier: JournalClassification) => Promise<JournalClassification | null> {
+  const busyRef = useRef(false);
+  const nextRef = useRef<QueuedTierWrite | null>(null);
+  const send = useCallback(
+    async (tier: JournalClassification): Promise<JournalClassification | null> => {
+      busyRef.current = true;
+      try {
+        const revertTo = await change(tier);
+        // A newer choice is already queued and owns the control: never revert
+        // the screen over it (the same rule useRefPersist applies to a superseded
+        // write).
+        return nextRef.current == null ? revertTo : null;
+      } finally {
+        busyRef.current = false;
+        const next = nextRef.current;
+        nextRef.current = null;
+        if (next != null) void send(next.tier).then(next.resolve);
+      }
+    },
+    [change],
+  );
+  return useCallback(
+    (tier: JournalClassification) => {
+      if (!busyRef.current) return send(tier);
+      return new Promise<JournalClassification | null>((resolve) => {
+        nextRef.current?.resolve(null);
+        nextRef.current = { tier, resolve };
+      });
+    },
+    [send],
   );
 }
 
@@ -1866,23 +1956,25 @@ function usePutBackOnce(
   );
 }
 
-/** The server-confirmed tier: the last accepted write, else the tier it loaded with. */
+/**
+ * The server-confirmed tier (#2935): the newest accepted write (by send order),
+ * else the tier the entry loaded with; null while a newer write has failed,
+ * since a failed response does not say what the server committed.
+ */
 function useConfirmedTier(
-  tierConfirmedRef: React.MutableRefObject<TierConfirmed>,
-): (_hold: CarryHold) => JournalClassification {
-  const confirmedRef = useRef<JournalClassification | null>(null);
-  tierConfirmedRef.current = (tier) => {
-    confirmedRef.current = tier;
+  tierOutcomeRef: React.MutableRefObject<TierOutcome>,
+): (_hold: CarryHold) => JournalClassification | null {
+  const stateRef = useRef(LOADED_TIER_STATE);
+  tierOutcomeRef.current = (outcome) => {
+    stateRef.current = confirmTierWrite(stateRef.current, outcome);
   };
-  return useCallback((hold: CarryHold) => confirmedRef.current ?? hold.storedTier, []);
+  return useCallback((hold: CarryHold) => knownTier(stateRef.current, hold.storedTier), []);
 }
 
 interface CarryEscalationState {
   escalatingRef: React.MutableRefObject<boolean>;
   setWaiting: (_waiting: boolean) => void;
   holdRef: React.MutableRefObject<CarryHold | null>;
-  /** The tier the server has confirmed storing, as far as this page knows. */
-  confirmedTier: (_hold: CarryHold) => JournalClassification;
 }
 
 /**
@@ -1890,18 +1982,18 @@ interface CarryEscalationState {
  * the stricter of the tier on screen and the typed-under tier (the planRetry
  * rule, via isTierLooser), so nothing looser than the screen is ever sent. It
  * never releases anything itself: release follows confirmed server writes
- * alone (``tierSettledRef``). Afterwards, if the writer's stricter tier is
- * still not the confirmed one (this write may have landed after theirs), it is
- * re-sent once; words still held then wait, with Retry.
+ * alone (``tierSettledRef``). Tier writes are serialized (``useTierWriteQueue``),
+ * so no later write can land before an earlier one; words still held when it
+ * settles wait, with Retry.
  */
 function useCarryEscalation(
   retrySource: Pick<RetrySource, 'applyClassification' | 'displayedTier'>,
-  gate: Pick<HeldTextGate, 'heldRef' | 'tierWritesRef'>,
+  gate: Pick<HeldTextGate, 'heldRef'>,
   state: CarryEscalationState,
 ): (_hold: CarryHold) => Promise<void> {
   const { applyClassification, displayedTier } = retrySource;
-  const { heldRef, tierWritesRef } = gate;
-  const { escalatingRef, setWaiting, holdRef, confirmedTier } = state;
+  const { heldRef } = gate;
+  const { escalatingRef, setWaiting, holdRef } = state;
   return useCallback(
     async (hold: CarryHold) => {
       const shown = displayedTier();
@@ -1913,23 +2005,9 @@ function useCarryEscalation(
       } finally {
         escalatingRef.current = false;
       }
-      const writerTier = displayedTier();
-      const unconfirmed = isTierLooser(confirmedTier(hold), writerTier);
-      if (tierWritesRef.current === 0 && isTierLooser(sent, writerTier) && unconfirmed) {
-        await applyClassification(writerTier);
-      }
       if (holdRef.current === hold) setWaiting(true);
     },
-    [
-      applyClassification,
-      displayedTier,
-      heldRef,
-      tierWritesRef,
-      escalatingRef,
-      setWaiting,
-      holdRef,
-      confirmedTier,
-    ],
+    [applyClassification, displayedTier, heldRef, escalatingRef, setWaiting, holdRef],
   );
 }
 
@@ -1953,19 +2031,14 @@ function useCarryRelease(
   retrySource: RetrySource,
   gate: HeldTextGate,
 ): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'> {
-  const { heldRef, tierSettledRef, tierWritesRef, tierConfirmedRef, inFlightTiersRef } = gate;
+  const { heldRef, tierSettledRef, tierWritesRef, tierOutcomeRef, inFlightTiersRef } = gate;
   const [waiting, setWaiting] = useState(false);
   const holdRef = useRef(entry.carryHold);
   holdRef.current = entry.carryHold;
   const escalatingRef = useRef(false);
-  const confirmedTier = useConfirmedTier(tierConfirmedRef);
+  const confirmedTier = useConfirmedTier(tierOutcomeRef);
   const putBack = usePutBackOnce(holdRef, useCarryPutBack(entry, save, heldRef, setWaiting));
-  const escalate = useCarryEscalation(retrySource, gate, {
-    escalatingRef,
-    setWaiting,
-    holdRef,
-    confirmedTier,
-  });
+  const escalate = useCarryEscalation(retrySource, gate, { escalatingRef, setWaiting, holdRef });
 
   const releaseCarry = useCallback(async () => {
     const hold = holdRef.current;
@@ -1992,7 +2065,8 @@ function useCarryRelease(
     // looser choice of the writer's is still out, the words stay held.
     if (hold == null || !heldRef.current) return;
     if (inFlightTiersRef.current.some((tier) => !strictEnough(hold, tier))) return;
-    if (strictEnough(hold, confirmedTier(hold))) putBack(hold);
+    const known = confirmedTier(hold);
+    if (known != null && strictEnough(hold, known)) putBack(hold);
   };
   return {
     releaseCarry,

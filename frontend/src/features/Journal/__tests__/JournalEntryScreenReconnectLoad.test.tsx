@@ -1065,7 +1065,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         expect(tierSelected(screen, 'intimate')).toBe(true);
       });
 
-      it("honours the writer's stricter choice mid-escalation, and never lets the escalation lower it", async () => {
+      it("sends the writer's stricter choice after the escalation, and never lowers it", async () => {
         const escalation = deferred<JournalMessage>();
         mockGet
           .mockRejectedValueOnce(offlineError())
@@ -1078,21 +1078,20 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
           expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }),
         );
 
+        // Tier writes are serialized (round 8): the tap waits for the escalation.
         await pressTierAndSettle(screen, 'intimate');
-        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
-        await advance(AUTOSAVE_MS);
-        expect(updatesCarrying(TYPED)).toHaveLength(1);
-
-        // The escalation lands on the server AFTER the writer's Intimate, so the
-        // row now reads Personal; the page must re-assert the stricter tier.
-        const sentBefore = mockUpdate.mock.calls.length;
+        expect(mockUpdate).not.toHaveBeenCalledWith(7, { classification: 'intimate' });
         await act(async () => {
           escalation.resolve(entry({ classification: 'personal' }));
         });
-        await advance(0);
-        expect(mockUpdate.mock.calls.slice(sentBefore)).toEqual([
-          [7, { classification: 'intimate' }],
-        ]);
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        const tiers = mockUpdate.mock.calls
+          .map(([, p]) => (p as { classification?: string }).classification)
+          .filter((t) => t != null);
+        expect(tiers).toEqual(['personal', 'intimate']);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
         expect(tierSelected(screen, 'intimate')).toBe(true);
       });
 
@@ -1108,6 +1107,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
   });
 
   describe('release follows confirmed server writes only (#2935 round 7)', () => {
+    const MAX_SETTLE_ROUNDS = 12;
     const STRICTNESS: Record<JournalClassification, number> = {
       public: 0,
       personal: 1,
@@ -1123,6 +1123,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const tierWrites: {
         tier: JournalClassification;
         settle: (ok: boolean) => Promise<void>;
+        settled: boolean;
       }[] = [];
       const messages: { message: string; rowTier: JournalClassification }[] = [];
       const state = {
@@ -1130,6 +1131,12 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         autoSettle: false,
         /** When set, a successful tier write stores (and reports) this tier instead. */
         storesAs: null as JournalClassification | null,
+        /**
+         * Commit order ≠ response order: the server commits each tier write the
+         * moment it arrives, whatever its response later says, and responses
+         * are delivered whenever the test settles them.
+         */
+        commitAtSend: false,
       };
       mockUpdate.mockImplementation((_id, payload) => {
         const p = payload as { classification?: JournalClassification; message?: string };
@@ -1140,20 +1147,26 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
             return Promise.resolve(entry({ classification: tier }));
           }
           const write = deferred<JournalMessage>();
-          tierWrites.push({
+          const committed = state.storesAs ?? tier;
+          if (state.commitAtSend) state.row = committed;
+          const record = {
             tier,
-            settle: async (ok) => {
+            settled: false,
+            settle: async (ok: boolean) => {
+              record.settled = true;
               await act(async () => {
                 if (ok) {
-                  state.row = state.storesAs ?? tier;
-                  write.resolve(entry({ classification: state.row }));
+                  const stored = state.commitAtSend ? committed : (state.storesAs ?? tier);
+                  if (!state.commitAtSend) state.row = stored;
+                  write.resolve(entry({ classification: stored }));
                 } else {
                   write.reject(new Error('network'));
                 }
               });
               await advance(0);
             },
-          });
+          };
+          tierWrites.push(record);
           return write.promise;
         }
         if (p.message != null) messages.push({ message: p.message, rowTier: state.row });
@@ -1163,11 +1176,12 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     }
 
     /** Stored public, words typed under Personal, the escalation to Personal out. */
-    async function escalationOut() {
+    async function escalationOut(options: { commitAtSend?: boolean } = {}) {
       mockGet
         .mockRejectedValueOnce(offlineError())
         .mockResolvedValueOnce(entry({ classification: 'public' }));
       const server = serverDouble();
+      server.state.commitAtSend = options.commitAtSend ?? false;
       const screen = await openFailed();
       await typeBody(screen, TYPED);
       await reconnect();
@@ -1181,6 +1195,23 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         within(screen.getByTestId('journal-page')).getByTestId(`privacy-tier-${tier}`),
       );
       await advance(0);
+    }
+
+    /**
+     * Deliver responses in ``preference`` order (by write index) wherever that
+     * write has been sent, until every write the page sends has a response.
+     */
+    async function settleAll(
+      server: ReturnType<typeof serverDouble>,
+      preference: number[],
+      outcome: (index: number) => boolean,
+    ) {
+      for (let round = 0; round < MAX_SETTLE_ROUNDS; round += 1) {
+        const order = [...preference, ...server.tierWrites.map((_w, i) => i)];
+        const index = order.find((i) => server.tierWrites[i]?.settled === false);
+        if (index === undefined) return;
+        await server.tierWrites[index]?.settle(outcome(index));
+      }
     }
 
     function carried(server: ReturnType<typeof serverDouble>) {
@@ -1198,16 +1229,14 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
     });
 
-    it('a failed re-assert never releases the held words', async () => {
+    it('a queued stricter tap the server stores looser never releases', async () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'intimate');
+      await server.tierWrites[0]?.settle(false);
+      expect(server.tierWrites.map((w) => w.tier)).toEqual(['personal', 'intimate']);
+
       server.state.storesAs = 'public';
       await server.tierWrites[1]?.settle(true);
-      server.state.storesAs = null;
-      await server.tierWrites[0]?.settle(false);
-      expect(server.tierWrites.map((w) => w.tier)).toEqual(['personal', 'intimate', 'intimate']);
-
-      await server.tierWrites[2]?.settle(false);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(server.messages).toEqual([]);
@@ -1215,13 +1244,55 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
     });
 
+    it('review (a): out-of-order responses never release onto a looser committed row', async () => {
+      const { screen, server } = await escalationOut({ commitAtSend: true });
+      await tapTier(screen, 'public');
+
+      // The public response is delivered first wherever it has been sent.
+      await settleAll(server, [1, 0], () => true);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.state.row).toBe('public');
+      expect(server.messages).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+    });
+
+    it('review (b): a looser write that fails after committing never releases', async () => {
+      const { screen, server } = await escalationOut({ commitAtSend: true });
+      await tapTier(screen, 'public');
+
+      await settleAll(server, [0, 1], (i) => i === 0);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.state.row).toBe('public');
+      expect(server.messages).toEqual([]);
+      expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
+      expect(screen.getByRole('button', { name: RETRY_NAME })).toBeTruthy();
+    });
+
+    it('queues a tap behind the write in flight and sends only the last one', async () => {
+      const { screen, server } = await escalationOut();
+
+      await tapTier(screen, 'public');
+      await tapTier(screen, 'intimate');
+      expect(server.tierWrites.map((w) => w.tier)).toEqual(['personal']);
+      expect(tierSelected(screen, 'intimate')).toBe(true);
+
+      await server.tierWrites[0]?.settle(true);
+      expect(server.tierWrites.map((w) => w.tier)).toEqual(['personal', 'intimate']);
+      await server.tierWrites[1]?.settle(true);
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(server.state.row).toBe('intimate');
+      expect(carried(server)).toHaveLength(1);
+    });
+
     it('repro B: tapping the shown tier then failing never releases', async () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'personal');
-      expect(server.tierWrites).toHaveLength(2);
 
-      await server.tierWrites[1]?.settle(false);
-      await server.tierWrites[0]?.settle(false);
+      await settleAll(server, [1, 0], () => false);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(server.messages).toEqual([]);
@@ -1250,8 +1321,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'personal');
 
-      await server.tierWrites[1]?.settle(true);
-      await server.tierWrites[0]?.settle(false);
+      await settleAll(server, [1, 0], (i) => i === 1);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(carried(server)).toEqual([expect.objectContaining({ rowTier: 'personal' })]);
@@ -1278,9 +1348,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'intimate');
 
-      await server.tierWrites[0]?.settle(false);
-      await server.tierWrites[1]?.settle(true);
-      server.state.autoSettle = true;
+      await settleAll(server, [0, 1], (i) => i === 1);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(carried(server)).toHaveLength(1);
@@ -1292,34 +1360,26 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     type Order = 'escalation-first' | 'tap-first';
     const TAPS: Tap[] = ['personal', 'intimate', 'public'];
     const ORDERS: Order[] = ['escalation-first', 'tap-first'];
-    const cases: [boolean, Tap, boolean, Order][] = [true, false].flatMap((escalationOk) =>
-      TAPS.flatMap((tap) =>
-        [true, false].flatMap((tapOk) =>
-          ORDERS.map((order): [boolean, Tap, boolean, Order] => [escalationOk, tap, tapOk, order]),
-        ),
-      ),
+    type Case = [boolean, Tap, boolean, Order, boolean];
+    const BOOLS = [true, false];
+    type Setup = [boolean, Tap, boolean];
+    const setups: Setup[] = BOOLS.flatMap((e) =>
+      TAPS.flatMap((tap) => BOOLS.map((k): Setup => [e, tap, k])),
+    );
+    const cases: Case[] = setups.flatMap(([escalationOk, tap, tapOk]) =>
+      ORDERS.flatMap((order): Case[] => [
+        [escalationOk, tap, tapOk, order, false],
+        [escalationOk, tap, tapOk, order, true],
+      ]),
     );
 
     it.each(cases)(
-      'escalation ok=%s, tap %s ok=%s, %s: carried words go out only under a confirmed strict tier',
-      async (escalationOk, tap, tapOk, order) => {
-        const { screen, server } = await escalationOut();
+      'escalation ok=%s, tap %s ok=%s, %s, commit-at-send=%s: carried words go out only under a confirmed strict tier',
+      async (escalationOk, tap, tapOk, order, commitAtSend) => {
+        const { screen, server } = await escalationOut({ commitAtSend });
         await tapTier(screen, tap);
-        const [escalation, writer] = [server.tierWrites[0], server.tierWrites[1]];
-        const firstPair: [typeof escalation, boolean][] =
-          order === 'escalation-first'
-            ? [
-                [escalation, escalationOk],
-                [writer, tapOk],
-              ]
-            : [
-                [writer, tapOk],
-                [escalation, escalationOk],
-              ];
-        for (const [write, ok] of firstPair) await write?.settle(ok);
-        // Any re-assert the page sends afterwards simply succeeds.
-        server.state.autoSettle = true;
-        for (const later of server.tierWrites.slice(2)) await later.settle(true);
+        const outcome = (i: number) => (i === 0 ? escalationOk : i === 1 ? tapOk : true);
+        await settleAll(server, order === 'escalation-first' ? [0, 1] : [1, 0], outcome);
         await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
         const sent = carried(server);

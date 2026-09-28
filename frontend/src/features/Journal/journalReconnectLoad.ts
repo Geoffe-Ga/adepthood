@@ -106,3 +106,54 @@ export function carriedTierEscalation(
 ): JournalClassification | null {
   return isTierLooser(stored, typedUnder) ? typedUnder : null;
 }
+
+/**
+ * What this page knows the server has stored as the entry's tier (#2935).
+ *
+ * ``seq`` is the send order of the tier write that last set it (0 for the tier
+ * the entry loaded with, when ``tier`` is null). ``unknownSince`` is set by a
+ * failed write newer than that: a failed response does not say what the server
+ * committed, so until a still newer write succeeds the tier is unknown.
+ */
+export interface ConfirmedTierState {
+  tier: JournalClassification | null;
+  seq: number;
+  unknownSince: number | null;
+}
+
+/** The state before any tier write: the tier the entry loaded with, known. */
+export const LOADED_TIER_STATE: ConfirmedTierState = { tier: null, seq: 0, unknownSince: null };
+
+/** The outcome of one tier write, tagged with its send order. */
+export type TierWriteOutcome =
+  { seq: number; ok: true; stored: JournalClassification } | { seq: number; ok: false };
+
+/**
+ * Fold one tier write's outcome into what is known. Outcomes can arrive out of
+ * send order, so a success counts only if it is newer than the last one, and a
+ * failure makes the tier unknown only if it is newer than the last success.
+ */
+export function confirmTierWrite(
+  state: ConfirmedTierState,
+  outcome: TierWriteOutcome,
+): ConfirmedTierState {
+  if (outcome.seq <= state.seq) return state;
+  if (!outcome.ok) {
+    return { ...state, unknownSince: Math.max(state.unknownSince ?? 0, outcome.seq) };
+  }
+  const stillUnknown = state.unknownSince != null && state.unknownSince > outcome.seq;
+  return {
+    tier: outcome.stored,
+    seq: outcome.seq,
+    unknownSince: stillUnknown ? state.unknownSince : null,
+  };
+}
+
+/** The confirmed tier, ``loaded`` standing in for the load's; null while unknown. */
+export function knownTier(
+  state: ConfirmedTierState,
+  loaded: JournalClassification,
+): JournalClassification | null {
+  if (state.unknownSince != null) return null;
+  return state.tier ?? loaded;
+}
