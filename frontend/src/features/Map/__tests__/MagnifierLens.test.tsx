@@ -6,7 +6,7 @@ import { act, create } from 'react-test-renderer';
 
 import { lensCenterForStage, lensFrame } from '../magnifierGeometry';
 import type { LensCaption } from '../magnifierGeometry';
-import MagnifierLens from '../MagnifierLens';
+import MagnifierLens, { lensTouchStyle } from '../MagnifierLens';
 import { stageWavePoint } from '../waveGeometry';
 
 // A deterministic per-stage caption stand-in for the store-fed lookup: each
@@ -33,6 +33,7 @@ interface RenderOptions {
   anchors?: Record<number, number>;
   onSettleStage?: jest.Mock;
   onOpenStage?: jest.Mock;
+  onDragActiveChange?: jest.Mock;
 }
 
 const renderLens = (options: RenderOptions = {}) => {
@@ -50,6 +51,7 @@ const renderLens = (options: RenderOptions = {}) => {
         captionForStage={captionForStage}
         onSettleStage={onSettleStage}
         onOpenStage={onOpenStage}
+        onDragActiveChange={options.onDragActiveChange}
       />,
     );
   });
@@ -503,5 +505,46 @@ describe('MagnifierLens', () => {
       timing.mockRestore();
       jest.useRealTimers();
     }
+  });
+});
+
+// #2657: the Map now scrolls, so while a finger holds the lens its scroller
+// must stand still -- otherwise the grid slides under the drag.
+describe('MagnifierLens holds the Map still while it is held', () => {
+  beforeEach(() => {
+    reducedMotionState.value = true;
+  });
+
+  it('reports the hold from the grant until the release, for a drag and for a tap', () => {
+    const onDragActiveChange = jest.fn();
+    const { tree } = renderLens({ onDragActiveChange });
+    const start = lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT);
+    drag(tree, { x: 150, y: start.y }, { x: 150, y: start.y - 100 });
+    expect(onDragActiveChange.mock.calls).toEqual([[true], [false]]);
+
+    onDragActiveChange.mockClear();
+    const lens = lensNode(tree);
+    act(() => {
+      lens.props.onResponderGrant(touch(150, start.y));
+      lens.props.onResponderRelease(touch(150, start.y));
+    });
+    expect(onDragActiveChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('releases the hold when the responder is taken away', () => {
+    const onDragActiveChange = jest.fn();
+    const { tree } = renderLens({ onDragActiveChange });
+    const lens = lensNode(tree);
+    act(() => {
+      lens.props.onResponderGrant(touch(150, 400));
+      lens.props.onResponderTerminate();
+    });
+    expect(onDragActiveChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('claims every touch on the lens for itself on web, and leaves native alone', () => {
+    expect(lensTouchStyle('web')).toEqual({ touchAction: 'none' });
+    expect(lensTouchStyle('ios')).toBeNull();
+    expect(lensTouchStyle('android')).toBeNull();
   });
 });

@@ -62,6 +62,20 @@ const WEB_GLASS_STYLE: ViewStyle | null =
       } as unknown as ViewStyle)
     : null;
 
+/**
+ * The lens claims every touch that starts on it (#2657). Inside the Map's
+ * scroller a browser decides at touchstart whether a finger pans the page, so
+ * a lens drag also scrolled the grid out from under the finger; toggling the
+ * scroller off on grant comes too late for that decision, and only the lens's
+ * own ``touch-action`` makes it in time. Web only: ``touchAction`` is a
+ * react-native-web CSS passthrough, and native's responder system already
+ * hands the gesture to the lens.
+ */
+export const lensTouchStyle = (os: string): ViewStyle | null =>
+  os === 'web' ? ({ touchAction: 'none' } as unknown as ViewStyle) : null;
+
+const LENS_TOUCH_STYLE = lensTouchStyle(Platform.OS);
+
 export interface MagnifierLensProps {
   /** Measured grid width in pixels. */
   gridWidth: number;
@@ -83,6 +97,11 @@ export interface MagnifierLensProps {
   onSettleStage: (_stageNumber: number) => void;
   /** A tap on the lens opens the focused stage's detail modal. */
   onOpenStage: (_stageNumber: number) => void;
+  /**
+   * True from the moment a finger takes the lens until it lets go (or loses
+   * the responder), so the Map's scroller can stand still under the drag.
+   */
+  onDragActiveChange?: (_active: boolean) => void;
 }
 
 /** The lens's animated machinery: its center, frost, and glide driver. */
@@ -224,6 +243,7 @@ interface LensDragParams {
   onHoverStage: (_stageNumber: number) => void;
   onSettleStage: (_stageNumber: number) => void;
   onOpenStage: (_stageNumber: number) => void;
+  onDragActiveChange?: (_active: boolean) => void;
 }
 
 /** The responder props implementing drag-to-explore + tap-to-open. */
@@ -285,6 +305,15 @@ const settleDraggedLens = (params: LensDragParams, dragOrigin: DragOrigin): void
   if (settled !== params.focusedStage) params.onSettleStage(settled);
 };
 
+/** A finger took the lens: stop any glide where it is and start a fresh drag there. */
+const grantLens = (motion: LensMotion, event: GestureResponderEvent): DragOrigin => {
+  motion.dragging.current = false;
+  motion.center.stopAnimation((value: LensCenter) => {
+    motion.lastCenter.current = value;
+  });
+  return newDragOrigin(event, motion.lastCenter.current);
+};
+
 /**
  * Drag the lens with a plain responder: releases within ``DRAG_TAP_SLOP`` are
  * taps (open the stage); real drags track the finger, re-caption the stage
@@ -317,26 +346,28 @@ const useLensDrag = (params: LensDragParams): LensDragHandlers => {
   };
 
   const settleDrag = (): void => settleDraggedLens(params, dragOrigin.current);
+  const release = (): void => params.onDragActiveChange?.(false);
 
   return {
     onStartShouldSetResponder: () => true,
     onResponderTerminationRequest: () => false,
     onResponderGrant: (event) => {
-      motion.dragging.current = false;
-      motion.center.stopAnimation((value: LensCenter) => {
-        motion.lastCenter.current = value;
-      });
-      dragOrigin.current = newDragOrigin(event, motion.lastCenter.current);
+      params.onDragActiveChange?.(true);
+      dragOrigin.current = grantLens(motion, event);
     },
     onResponderMove: handleMove,
     onResponderRelease: () => {
+      release();
       if (motion.dragging.current) {
         settleDrag();
         return;
       }
       params.onOpenStage(params.hoverStage);
     },
-    onResponderTerminate: settleDrag,
+    onResponderTerminate: () => {
+      release();
+      settleDrag();
+    },
   };
 };
 
@@ -495,6 +526,7 @@ const LensShell = ({
           { translateY: Animated.subtract(motion.center.y, new Animated.Value(frame.height / 2)) },
         ],
       },
+      LENS_TOUCH_STYLE,
     ]}
     {...handlers}
     accessible
@@ -505,13 +537,14 @@ const LensShell = ({
   </Animated.View>
 );
 
-export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
-  const { gridWidth, gridHeight, anchors, focusedStage, currentStage } = props;
-  const reducedMotion = useReducedMotion();
-  const frame = useMemo(() => lensFrame(gridWidth, gridHeight), [gridWidth, gridHeight]);
-  const [hoverStage, setHoverStage] = useState(focusedStage);
-
-  const restingCenter = useCallback(
+/** A stage's clamped resting center, stable until the geometry changes. */
+const useRestingCenter = (
+  anchors: StageAnchors,
+  frame: LensFrame,
+  gridWidth: number,
+  gridHeight: number,
+): ((_stageNumber: number) => LensCenter) =>
+  useCallback(
     (stageNumber: number): LensCenter =>
       clampLensCenter(
         lensCenterForStage(stageNumber, gridWidth, gridHeight, anchors),
@@ -521,6 +554,14 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
       ),
     [anchors, frame, gridWidth, gridHeight],
   );
+
+export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
+  const { gridWidth, gridHeight, anchors, focusedStage, currentStage } = props;
+  const reducedMotion = useReducedMotion();
+  const frame = useMemo(() => lensFrame(gridWidth, gridHeight), [gridWidth, gridHeight]);
+  const [hoverStage, setHoverStage] = useState(focusedStage);
+
+  const restingCenter = useRestingCenter(anchors, frame, gridWidth, gridHeight);
 
   const motion = useLensMotion(focusedStage, restingCenter, reducedMotion, setHoverStage);
   const dragHandlers = useLensDrag({
@@ -536,6 +577,7 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
     onHoverStage: setHoverStage,
     onSettleStage: props.onSettleStage,
     onOpenStage: props.onOpenStage,
+    onDragActiveChange: props.onDragActiveChange,
   });
 
   const isCurrent = hoverStage === currentStage;
