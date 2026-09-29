@@ -8,7 +8,7 @@
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { BookOpen, Camera, KeyRound, RefreshCw, X } from 'lucide-react-native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Animated,
   ScrollView,
@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -50,6 +51,7 @@ import {
 } from './journalReconnectLoad';
 import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRetry';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
+import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
 import MarginNote from './MarginNote';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
@@ -68,6 +70,7 @@ import { describeSuggestionFacts } from './suggestionFacts';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
+import { useMarginSlots } from './useMarginSlots';
 import { usePromotedQuoteHandoff } from './usePromotedQuoteHandoff';
 import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
 import { usePromotions } from './usePromotions';
@@ -2927,30 +2930,22 @@ function ReadColumn({
   );
 }
 
-type MarginItem =
-  | { key: string; anchor: number; note: Marginalia }
-  | { key: string; anchor: number; suggestion: CompletionSuggestion };
-
-/** Literary notes + actionable suggestions interleaved by anchor position. */
+/**
+ * Literary notes beside their passages, then the unanchored rows (actionable
+ * suggestions, notes with no drawn passage) trailing in creation order.
+ */
 interface MarginStreamProps {
-  notes: Marginalia[];
-  suggestions: CompletionSuggestion[];
+  items: MarginItem[];
+  /** Sit each note beside its passage; false keeps the document-order flow. */
+  align: boolean;
+  /** Bumped by the page's own layout, so a reflowed body is re-measured. */
+  layoutTick: number;
   acceptedCheckIns: Record<number, CheckInResult | null>;
   /** The signed-in person's zone -- the clock the facts line is named against. */
   userTimezone: string;
   onOpen: (_note: Marginalia) => void;
   onAccept: (_id: number) => void | Promise<void>;
   onDismiss: (_id: number) => void | Promise<void>;
-}
-
-function buildMarginItems(notes: Marginalia[], suggestions: CompletionSuggestion[]): MarginItem[] {
-  const items: MarginItem[] = [
-    ...notes.map((note) => ({ key: `note-${note.id}`, anchor: note.anchor_start, note })),
-    ...suggestions
-      .filter((s) => s.status !== 'dismissed')
-      .map((s) => ({ key: `suggestion-${s.id}`, anchor: s.anchor_start, suggestion: s })),
-  ];
-  return items.sort((a, b) => a.anchor - b.anchor);
 }
 
 /**
@@ -2988,19 +2983,44 @@ function ConnectedSuggestionNote({
   );
 }
 
+/**
+ * The margin's slots. Aligned (wide read view, once measured), each sits at the
+ * solver's top and the stream grows to hold the lowest, so every note stays
+ * reachable through the page's one scroll surface; otherwise they flow.
+ */
 function MarginStream({
-  notes,
-  suggestions,
+  items,
+  align,
+  layoutTick,
   acceptedCheckIns,
   userTimezone,
   onOpen,
   onAccept,
   onDismiss,
 }: MarginStreamProps) {
+  const { streamRef, onStreamLayout, onSlotLayout, slots } = useMarginSlots({
+    items,
+    align,
+    layoutTick,
+  });
   return (
-    <>
-      {buildMarginItems(notes, suggestions).map((item) => (
-        <View key={item.key} style={styles.marginNoteSlot}>
+    <View
+      ref={streamRef}
+      onLayout={onStreamLayout}
+      style={slots ? [styles.marginStream, { height: slots.extent }] : styles.marginStream}
+      testID="journal-margin-stream"
+    >
+      {items.map((item, index) => (
+        <View
+          key={item.key}
+          onLayout={(event) => onSlotLayout(item.key, event)}
+          style={
+            slots
+              ? [styles.marginNoteSlotAligned, { top: slots.tops[index] }]
+              : styles.marginNoteSlot
+          }
+          testID={`margin-slot-${item.key}`}
+        >
           {'note' in item ? (
             <MarginNote note={item.note} onOpen={onOpen} />
           ) : (
@@ -3014,7 +3034,7 @@ function MarginStream({
           )}
         </View>
       ))}
-    </>
+    </View>
   );
 }
 
@@ -3563,22 +3583,53 @@ function PageBodyColumn({
   );
 }
 
+/**
+ * The margin's items in their one order. "Drawn" is asked of the same body,
+ * notes and quotes the read view hands ``HighlightedBody``.
+ */
+function useMarginItems(ctl: Controller): MarginItem[] {
+  const notes = ctl.resonance.marginalia;
+  const suggestions = ctl.resonance.suggestions;
+  const body = ctl.autosave.body;
+  const quotes = ctl.quote.quotes;
+  return useMemo(
+    () => buildMarginItems(notes, suggestions, drawnNoteIds(body, notes, quotes)),
+    [notes, suggestions, body, quotes],
+  );
+}
+
 /** Build the margin's note/suggestion stream without making the page own its branches. */
-function JournalMargin({ ctl, narrow }: { ctl: Controller; narrow: boolean }) {
+function JournalMargin({
+  ctl,
+  narrow,
+  layoutTick,
+}: {
+  ctl: Controller;
+  narrow: boolean;
+  layoutTick: number;
+}) {
   const notes = ctl.resonance.marginalia;
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
+  const items = useMarginItems(ctl);
+  // Whatever sits above the notes lives in one head, so when any of it comes
+  // or goes -- and moves the stream without resizing it -- the head's own
+  // layout says so, and the notes are re-measured against their passages.
+  const [headTick, bumpHeadTick] = useReducer((tick: number) => tick + 1, 0);
   return (
     <View
       style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
       testID="journal-margin-column"
     >
-      <NoNotesNotice message={ctl.resonance.noNotesMessage} />
-      <ResonanceMargin error={ctl.resonance.error} />
+      <View onLayout={bumpHeadTick} testID="journal-margin-head">
+        <NoNotesNotice message={ctl.resonance.noNotesMessage} />
+        <ResonanceMargin error={ctl.resonance.error} />
+      </View>
       {notes.length > 0 || hasVisibleSuggestions ? (
         <MarginStream
-          notes={notes}
-          suggestions={suggestions}
+          items={items}
+          align={!narrow && !ctl.editGate.editMode}
+          layoutTick={layoutTick + headTick}
           acceptedCheckIns={ctl.resonance.acceptedCheckIns}
           userTimezone={ctl.userTimezone}
           onOpen={ctl.modal.onOpenNote}
@@ -3615,10 +3666,19 @@ function JournalPageSurface({
   compactControls: boolean;
   focus: FocusScrollHost;
 }): React.JSX.Element {
+  const [layoutTick, bumpLayoutTick] = useReducer((tick: number) => tick + 1, 0);
+  const onPageLayout = focus.onPageLayout;
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onPageLayout(event);
+      bumpLayoutTick();
+    },
+    [onPageLayout],
+  );
   return (
     <View
       ref={focus.pageRef}
-      onLayout={focus.onPageLayout}
+      onLayout={onLayout}
       style={[
         styles.page,
         narrow && styles.pageNarrow,
@@ -3633,7 +3693,7 @@ function JournalPageSurface({
           compactControls={compactControls}
         />
       </FocusScrollProvider>
-      <JournalMargin ctl={ctl} narrow={narrow} />
+      <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
     </View>
   );
 }

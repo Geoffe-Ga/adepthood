@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 // Every other JournalEntryScreen test resolves completionSuggestions.list empty; these pin the pending-card render and the dismissed-suggestion filter.
@@ -197,6 +197,44 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
 
     expect(await findByTestId('suggestion-90')).toBeTruthy();
     expect(await findByTestId('suggestion-90-accept')).toBeTruthy();
+  });
+
+  it('places a completion suggestion after every anchored margin note, even when its anchor comes first', async () => {
+    // "run" is characters 21-24 of the body, so the note's highlight is drawn
+    // and the note is anchored. The suggestion's anchor (2) comes first and it
+    // is the OLDER row -- so neither anchor order nor creation order alone would
+    // put the note first: only "drawn notes lead, unanchored rows trail" does.
+    mockGet.mockResolvedValue(entry({ id: 7, status: 'finished' }));
+    mockList.mockResolvedValue({
+      items: [
+        {
+          id: 51,
+          journal_entry_id: 7,
+          kind: 'theme',
+          anchor_start: 21,
+          anchor_end: 24,
+          anchor_text: 'run',
+          note: 'You keep moving.',
+          essay: null,
+          essay_generated_at: null,
+          status: 'active',
+          created_at: '2026-06-02T00:00:00Z',
+          updated_at: '2026-06-02T00:00:00Z',
+        },
+      ],
+    });
+    mockCompletionList.mockResolvedValue({
+      items: [suggestionRow({ created_at: '2026-06-01T00:00:00Z' })],
+    });
+
+    const view = renderScreen({ entryId: 7 });
+    await view.findByTestId('suggestion-90');
+    await view.findByTestId('margin-note-51');
+
+    const order = within(view.getByTestId('journal-margin-column'))
+      .queryAllByTestId(/^(margin-note|suggestion)-\d+$/)
+      .map((node) => String(node.props.testID));
+    expect(order).toEqual(['margin-note-51', 'suggestion-90']);
   });
 
   it('filters out a dismissed suggestion, leaving only the pending one in the margin', async () => {

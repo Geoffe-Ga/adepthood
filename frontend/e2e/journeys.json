@@ -478,6 +478,27 @@
     "coveredBy": "frontend/e2e/journal-live-edit-anchors.browser.e2e.test.ts"
   },
   {
+    "id": "journal.margin-notes-sit-beside-their-passages",
+    "description": "On a wide read view (>= 600px) each margin note sits beside the passage it annotates rather than stacking from the top of the column: a long page given two resonance passes (the stub quotes the last sentence, so the second pass follows an appended sentence) opens with both notes far down, the first level with its highlight and each at the top computeMarginSlots gives its measured anchor, within a pixel. The two passages share a line, so the second note is pushed below the first by at least the margin gap, in document order. The margin column grows to hold the lowest note, which hangs past the end of the writing, and after scrolling journal-page-scroll to its end that note is wholly on screen -- the column stays inside the page's one shared scroll surface, never a scroller of its own. At 390px the margin stacks under the writing and keeps its document-order flow, no slot absolutely positioned. A refused check-off (the accept route answered 500) raises the margin's error banner above the notes, moving the stream without resizing it: the note is re-placed against its passage, and since the banner pushed the stream past that passage the note is held at the stream's top, clear of the banner. Pinned only by Jest: completion suggestions and undrawn (stale or overlap-skipped) notes trailing the anchored ones in creation order, a non-finite measurement trailing, the flow layout until every slot is measured, edit mode staying in flow, and a re-measure on the page's own layout. Not claimed: native alignment (native keeps the flow layout; onTextLayout measurement is a follow-up) and body-to-margin scroll sync or tap-to-scroll, which belong to #2893.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /journal/{entry_id}/marginalia",
+        "POST /habits/",
+        "GET /journal/{entry_id}/suggestions"
+      ],
+      "tables": ["journalentry", "marginalia", "habit", "completionsuggestion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-margin-alignment.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.review-from-the-shelf-cta",
     "description": "On a review day the Journal shelf's one call to write is the due review -- a button named by its visible words, 'Write your Weekly Review' -- and the daily-page tip steps aside; pressing it opens a fresh page titled in the program's own words ('Weekly Review -- Week 1'). On day 9, when nothing is due, the daily page holds that slot and the quiet 'Start a review early' link opens a picker of the scopes still in progress (GET /reflections/current); choosing the week opens 'Weekly Review -- Week 2', and the saved page carries scope c1:w2. Closing it and reopening the picker offers 'Continue -- Weekly Review -- Week 2', which reopens that same page (same body, still exactly one c1:w2 entry). Not asserted in the browser, and pinned only by Jest and pytest: the stage, section and course CTAs, dismissing a review, the no-card-while-loading rule, the picker re-reading on refocus, the 409 reroute to the live review, the stage-10 section omission, and the timezone-local day count. The review composer's sources feed is covered by journal.fold-promoted-quote-into-reopened-reflection, not here. The shelf band's eyebrow, its set-aside count and the 'Start a review early' link share one edge and one face (#2949); that alignment is pinned by Jest and its geometry is deferred to the #2948 text-order census.",
     "crosses": {
