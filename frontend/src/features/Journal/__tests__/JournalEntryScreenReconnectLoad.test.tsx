@@ -858,6 +858,92 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(updatesCarrying(TYPED)).toHaveLength(1);
     });
 
+    it('never saves the words after Leave without them, even when a tier write confirms later', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      await pressClose(screen);
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(0);
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      screen.unmount();
+
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+      // No page-text PATCH at all from the screen the writer left.
+      const bodyWrites = mockUpdate.mock.calls.filter(
+        ([, p]) => (p as { message?: string }).message != null,
+      );
+      expect(bodyWrites).toEqual([]);
+    });
+
+    it('never saves the words when the tier confirms after Leave but before the screen goes', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      await pressClose(screen);
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(0);
+
+      // The navigation has not unmounted the screen yet when the write confirms.
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+    });
+
+    it('still puts the words back under StrictMode, whose effect re-run is not a leave', async () => {
+      // StrictMode runs the load effect twice on mount: both attempts fail offline.
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      const screen = render(<React.StrictMode>{screenElement({ entryId: 7 })}</React.StrictMode>);
+      await screen.findByTestId('journal-load-error');
+      await typeBody(screen, TYPED);
+      await reconnect();
+
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+    });
+
+    it('never saves the words when the screen goes away with a tier write still out', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      screen.unmount();
+
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+    });
+
     it('closes straight away when nothing is held and the page is the stored text', async () => {
       mockGet.mockResolvedValue(entry());
       const screen = renderScreen({ entryId: 7 });

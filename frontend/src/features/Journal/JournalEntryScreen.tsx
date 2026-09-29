@@ -531,6 +531,11 @@ interface AutosaveApi {
   resendCarryTier: () => Promise<void>;
   /** True when that re-send may be offered: words wait, and no tier write is out. */
   carryRetryReady: boolean;
+  /**
+   * Give up held words for good (#2935): the writer chose to leave without them.
+   * No later tier confirmation may put them back or save them.
+   */
+  abandonCarry: () => void;
 }
 
 /**
@@ -1929,20 +1934,43 @@ function useCarryPutBack(
 
 /**
  * Whichever confirmed write is strict enough first puts the words back; any
- * later one (a slower escalation) finds nothing held and changes nothing.
+ * later one (a slower escalation) finds nothing held and changes nothing. Once
+ * the carry is abandoned (the writer left without the words, or the screen
+ * went away), nothing ever puts them back or saves them (#2935).
  */
 function usePutBackOnce(
   holdRef: React.MutableRefObject<CarryHold | null>,
+  abandonedRef: React.MutableRefObject<boolean>,
   putBack: (_hold: CarryHold) => void,
 ): (_hold: CarryHold) => void {
   return useCallback(
     (hold: CarryHold) => {
-      if (holdRef.current !== hold) return;
+      if (abandonedRef.current || holdRef.current !== hold) return;
       holdRef.current = null;
       putBack(hold);
     },
-    [holdRef, putBack],
+    [holdRef, abandonedRef, putBack],
   );
+}
+
+/**
+ * The carry's abandonment (#2935): set by "Leave without them" and by unmount,
+ * so a tier write that confirms after the writer left cannot put the words
+ * back and save them from a screen that is gone. Reset on (re)mount, since
+ * StrictMode re-runs effects on a live screen.
+ */
+function useCarryAbandon() {
+  const abandonedRef = useRef(false);
+  useEffect(() => {
+    abandonedRef.current = false;
+    return () => {
+      abandonedRef.current = true;
+    };
+  }, []);
+  const abandonCarry = useCallback(() => {
+    abandonedRef.current = true;
+  }, []);
+  return { abandonedRef, abandonCarry };
 }
 
 /**
@@ -2000,6 +2028,10 @@ function useCarryEscalation(
   );
 }
 
+/** What the carried-words release hands the autosave API (#2935). */
+type CarryReleaseApi =
+  'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady' | 'abandonCarry';
+
 /**
  * Put held carried words back on the page and save them (#2935), as one normal
  * debounced autosave the save indicator reports.
@@ -2019,14 +2051,19 @@ function useCarryRelease(
   save: (_title: string, _body: string) => void,
   retrySource: RetrySource,
   gate: HeldTextGate,
-): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'> {
+): Pick<AutosaveApi, CarryReleaseApi> {
   const { heldRef, tierSettledRef, tierWritesRef, tierOutcomeRef, inFlightTiersRef } = gate;
   const [waiting, setWaiting] = useState(false);
   const holdRef = useRef(entry.carryHold);
   holdRef.current = entry.carryHold;
   const escalatingRef = useRef(false);
   const confirmedTier = useConfirmedTier(tierOutcomeRef);
-  const putBack = usePutBackOnce(holdRef, useCarryPutBack(entry, save, heldRef, setWaiting));
+  const { abandonedRef, abandonCarry } = useCarryAbandon();
+  const putBack = usePutBackOnce(
+    holdRef,
+    abandonedRef,
+    useCarryPutBack(entry, save, heldRef, setWaiting),
+  );
   const escalate = useCarryEscalation(retrySource, gate, { escalatingRef, setWaiting, holdRef });
 
   const releaseCarry = useCallback(async () => {
@@ -2062,6 +2099,7 @@ function useCarryRelease(
     resendCarryTier,
     carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null,
     carryRetryReady: waiting && !gate.tierWriteInFlight,
+    abandonCarry,
   };
 }
 
@@ -2099,8 +2137,7 @@ interface AutosaveBindings extends ChoiceHandlers {
 /** Project internal entry/persistence state onto the screen's autosave contract. */
 function buildAutosaveApi(
   entry: EntryState,
-  bindings: AutosaveBindings &
-    Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'>,
+  bindings: AutosaveBindings & Pick<AutosaveApi, CarryReleaseApi>,
   controlsLocked: boolean,
   loadedFromServer: boolean,
 ): AutosaveApi {
@@ -3936,7 +3973,11 @@ interface HeldExitGuard {
  * Pushing another screen on top keeps this one, and its held words, mounted,
  * so it is not an exit. Closing the app or browser tab cannot be intercepted.
  */
-function useHeldExitGuard(navigation: ScreenNavigation, held: boolean): HeldExitGuard {
+function useHeldExitGuard(
+  navigation: ScreenNavigation,
+  held: boolean,
+  abandonCarry: () => void,
+): HeldExitGuard {
   const [pending, setPending] = useState<PendingLeave>(null);
   const heldRef = useRef(held);
   heldRef.current = held;
@@ -3957,9 +3998,12 @@ function useHeldExitGuard(navigation: ScreenNavigation, held: boolean): HeldExit
   const stay = useCallback(() => setPending(null), []);
   const leave = useCallback(() => {
     leavingRef.current = true;
+    // Leaving without the words is final: no later tier confirmation may put
+    // them back or save them from a screen the writer left.
+    if (heldRef.current) abandonCarry();
     setPending(null);
     pending?.run();
-  }, [pending]);
+  }, [pending, abandonCarry]);
   return { held, request, pending: pending != null, stay, leave };
 }
 
@@ -3975,7 +4019,7 @@ function EntryExits({
   returnTo: CourseReturnTo;
   onOpenApiKey: () => void;
 }): React.JSX.Element {
-  const guard = useHeldExitGuard(navigation, ctl.autosave.carryHeld);
+  const guard = useHeldExitGuard(navigation, ctl.autosave.carryHeld, ctl.autosave.abandonCarry);
   const { stay } = guard;
   const { resendCarryTier } = ctl.autosave;
   const onRetry = useCallback(() => {
