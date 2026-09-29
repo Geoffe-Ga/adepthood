@@ -51,17 +51,17 @@ import { MagnifierLens } from './MagnifierLens';
 import styles from './Map.styles';
 import MapDrawer from './MapDrawer';
 import {
-  ARROW_LABEL_MAX_FONT_SIZE,
+  ARROW_LABEL_LADDER,
   fitRightLabel,
-  fitStageText,
+  fitStageLine,
   fittedTitleFontSize,
   labelCorner,
   MAP_ROWS,
   noteCorner,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   STAGE_DISPLAY,
-  STAGE_LINE_MAX_FONT_SIZE,
-  STAGE_PERSONA_MAX_FONT_SIZE,
+  STAGE_LINE_LADDER,
+  STAGE_PERSONA_LADDER,
   TITLE_BY_STAGE,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
@@ -192,31 +192,31 @@ interface StageTextBlockProps extends StageCellProps {
 // height of the box and stay vertically centered.
 
 /**
- * One left-column stage line, deterministically fitted to the block's measured
- * width (``fitStageText``); the native ``adjustsFontSizeToFit`` is only a
- * belt-and-braces net since react-native-web ignores it.
+ * One left-column stage line, fitted to the block's measured width on a ramp
+ * step of its ladder (``fitStageLine``): one line where a step fits, wrapped at
+ * the floor where none does. No ``adjustsFontSizeToFit``: on native it would
+ * shrink the copy off the ramp.
  */
 const FittedStageLine = ({
   text,
   color,
   width,
-  maxFontSize,
+  ladder,
   baseStyle,
 }: {
   text: string;
   color: string;
   width: number;
-  maxFontSize: number;
+  ladder: readonly number[];
   baseStyle: StyleProp<TextStyle>;
-}): React.JSX.Element => (
-  <Text
-    style={[baseStyle, { color, fontSize: fitStageText(text, width, maxFontSize) }]}
-    numberOfLines={1}
-    adjustsFontSizeToFit
-  >
-    {text}
-  </Text>
-);
+}): React.JSX.Element => {
+  const { fontSize, numberOfLines } = fitStageLine(text, width, ladder);
+  return (
+    <Text style={[baseStyle, { color, fontSize }]} numberOfLines={numberOfLines}>
+      {text}
+    </Text>
+  );
+};
 
 /** The three fitted stage lines (persona / descriptor / practice), stacked. */
 const StageLines = ({
@@ -231,21 +231,21 @@ const StageLines = ({
       text={display.persona}
       color={display.leftTextColor}
       width={width}
-      maxFontSize={STAGE_PERSONA_MAX_FONT_SIZE}
+      ladder={STAGE_PERSONA_LADDER}
       baseStyle={styles.personaText}
     />
     <FittedStageLine
       text={display.descriptor}
       color={display.leftTextColor}
       width={width}
-      maxFontSize={STAGE_LINE_MAX_FONT_SIZE}
+      ladder={STAGE_LINE_LADDER}
       baseStyle={styles.lineText}
     />
     <FittedStageLine
       text={display.practice}
       color={display.leftTextColor}
       width={width}
-      maxFontSize={STAGE_LINE_MAX_FONT_SIZE}
+      ladder={STAGE_LINE_LADDER}
       baseStyle={styles.lineText}
     />
   </>
@@ -292,7 +292,7 @@ const StageTextBlock = ({
 // padlock and unlock estimate, grouped against the corner opposite the wave's
 // return pole.
 // A stretch wrapper measures the full center-cell width so the word's fitted
-// size (fitStageText) shrinks only when the cell is genuinely too narrow.
+// ramp step (fitStageLine) steps down only when the cell is genuinely too narrow.
 const AspectLabelBlock = ({
   display,
   locked,
@@ -303,6 +303,7 @@ const AspectLabelBlock = ({
   const [width, setWidth] = useState(0);
   const corner = labelCorner(display.stageNumber);
   const blockStyle = corner === 'left' ? styles.labelBlockLeft : styles.labelBlockRight;
+  const { fontSize, numberOfLines } = fitStageLine(display.arrowLabel, width, ARROW_LABEL_LADDER);
   return (
     <View
       style={styles.labelFit}
@@ -310,14 +311,7 @@ const AspectLabelBlock = ({
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
     >
       <View style={blockStyle} testID={`aspect-label-${display.stageNumber}`}>
-        <Text
-          style={[
-            styles.arrowLabelText,
-            { fontSize: fitStageText(display.arrowLabel, width, ARROW_LABEL_MAX_FONT_SIZE) },
-          ]}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-        >
+        <Text style={[styles.arrowLabelText, { fontSize }]} numberOfLines={numberOfLines}>
           {display.arrowLabel}
         </Text>
         {locked ? <LockedNote stageNumber={display.stageNumber} corner={corner} /> : null}
@@ -327,10 +321,10 @@ const AspectLabelBlock = ({
 };
 
 /**
- * EMPTINESS / UNITY watermark sized to its measured cell width. The native
- * ``adjustsFontSizeToFit`` (kept as a belt-and-braces net) is a no-op on
- * react-native-web, so the deterministic ``fittedTitleFontSize`` does the real
- * work of guaranteeing a single un-truncated, un-hyphenated line everywhere.
+ * EMPTINESS / UNITY watermark sized to its measured cell width. Both lines take
+ * ``fittedTitleFontSize``'s one ramp step, fitted to the longer line, so the
+ * watermark reads at one size on a single un-hyphenated line everywhere; no
+ * ``adjustsFontSizeToFit``, which would shrink it off the ramp on native.
  */
 const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
   const [width, setWidth] = useState(0);
@@ -340,11 +334,7 @@ const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
       testID={`title-fit-${title}`}
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
     >
-      <Text
-        style={[styles.titleText, { fontSize: fittedTitleFontSize(title, width) }]}
-        adjustsFontSizeToFit
-        numberOfLines={1}
-      >
+      <Text style={[styles.titleText, { fontSize: fittedTitleFontSize(width) }]} numberOfLines={1}>
         {title}
       </Text>
     </View>
@@ -353,9 +343,9 @@ const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
 
 /**
  * Right-column aspect label sized to its measured cell width, mirroring the
- * ``FittedTitle`` idiom. The full word is preferred on one un-hyphenated line,
- * shrinking to fit; only a word too long for the floor size falls back to the
- * row's pre-hyphenated lines. The Android break props are unconditional (no-ops
+ * ``FittedTitle`` idiom. The full word is preferred on one un-hyphenated line
+ * at the largest ramp step it fits; only a word too long for the floor falls
+ * back to the row's pre-hyphenated lines. The Android break props are unconditional (no-ops
  * on iOS/web) so the platform never inserts its own mid-word break.
  */
 const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
@@ -410,12 +400,8 @@ const CenterContent = ({
 };
 
 interface StageCenterCellProps extends StageCellProps {
-  /** Index of the row this cell sits in, for anchor measurement. */
-  rowIndex: number;
   /** Draw the soft within-row rule above this stage (false for a row's top stage). */
   showTopDivider: boolean;
-  /** Record this cell's measured row-relative center on layout. */
-  onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
 
 const StageCenterCell = ({
@@ -424,19 +410,17 @@ const StageCenterCell = ({
   locked,
   current,
   onPress,
-  rowIndex,
   showTopDivider,
-  onCellLayout,
 }: StageCenterCellProps): React.JSX.Element => (
   <TouchableOpacity
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
       styles.centerStageCell,
+      current ? styles.currentStageCell : null,
       showTopDivider ? styles.horizontalDivider : null,
       locked ? styles.locked : null,
     ]}
     onPress={() => onPress(stage)}
-    onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
     accessibilityRole="button"
     accessibilityLabel={stageCenterCellLabel(stage.title, stage.subtitle, { locked, current })}
   >
@@ -475,70 +459,74 @@ const resolveRowStages = (row: MapRow, lookup: StageLookup): ResolvedStage[] =>
     .map((n) => ({ stage: lookup[n], display: STAGE_DISPLAY[n] }))
     .filter((r): r is ResolvedStage => !!r.stage && !!r.display);
 
-/** Left column of one row: the colored stage-text tap targets, stacked. */
-const RowLeftColumn = ({
-  resolved,
-  fullnessByStage,
-  currentStage,
-  onPress,
-}: {
-  resolved: ResolvedStage[];
-  fullnessByStage: FullnessLookup;
+/**
+ * One stage across the left and center columns: its colored text (the -0 tap
+ * target) beside its glyph cell (the -1 tap target), in one row that is never
+ * shorter than the taller of the two. The two cells share that row's height, so
+ * a stage whose copy wraps or whose locked note runs long grows its own band
+ * rather than spilling into the stage stacked with it, and its left and center
+ * rules still meet. The row's layout is the stage's measured center for the
+ * wave: it sits at the band's top edge, so its y is band-relative.
+ */
+interface StageRowProps extends ResolvedStage {
+  /** Index of the band this stage sits in, for anchor measurement. */
+  rowIndex: number;
+  /** The band's top stage, which sits on the rule the band itself draws. */
+  isTopOfBand: boolean;
+  /** Wheel-of-wholeness fullness (0..1) for this Aspect. */
+  fullness: number;
   currentStage: number | null;
   onPress: (_stage: StageData) => void;
-}): React.JSX.Element => (
-  <View style={styles.leftCell}>
-    {resolved.map(({ stage, display }, index) => (
-      <StageTextBlock
-        key={stage.stageNumber}
-        stage={stage}
-        display={display}
-        locked={!isStageUnlocked(stage, currentStage)}
-        current={stage.stageNumber === currentStage}
-        fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
-        // A row's top stage sits on the row boundary the group row already
-        // rules; only the stacked stage(s) below it carry the within-row line.
-        showTopDivider={index > 0}
-        onPress={onPress}
-      />
-    ))}
-  </View>
-);
+  /** Record this stage's measured band-relative center on layout. */
+  onCellLayout: UseStageAnchorsResult['onCellLayout'];
+}
 
-/** Center column of one row: the per-stage glyph cells that anchor the wave. */
-const RowCenterColumn = ({
-  resolved,
+const StageRow = ({
+  stage,
+  display,
   rowIndex,
+  isTopOfBand,
+  fullness,
   currentStage,
   onPress,
   onCellLayout,
-}: {
-  resolved: ResolvedStage[];
-  rowIndex: number;
-  currentStage: number | null;
-  onPress: (_stage: StageData) => void;
-  onCellLayout: UseStageAnchorsResult['onCellLayout'];
-}): React.JSX.Element => (
-  <View style={styles.centerCell}>
-    {resolved.map(({ stage, display }, index) => (
-      <StageCenterCell
-        key={stage.stageNumber}
-        stage={stage}
-        display={display}
-        locked={!isStageUnlocked(stage, currentStage)}
-        current={stage.stageNumber === currentStage}
-        onPress={onPress}
-        rowIndex={rowIndex}
-        // Match the left column: only stages stacked below a row's top stage
-        // carry the within-row rule, so left + center lines align.
-        showTopDivider={index > 0}
-        onCellLayout={onCellLayout}
-      />
-    ))}
-  </View>
-);
+}: StageRowProps): React.JSX.Element => {
+  const locked = !isStageUnlocked(stage, currentStage);
+  const current = stage.stageNumber === currentStage;
+  return (
+    <View
+      style={styles.stageRow}
+      testID={`stage-row-${display.stageNumber}`}
+      onLayout={(e) => onCellLayout(display.stageNumber, rowIndex, e)}
+    >
+      <View style={styles.leftCell}>
+        <StageTextBlock
+          stage={stage}
+          display={display}
+          locked={locked}
+          current={current}
+          fullness={fullness}
+          // A band's top stage sits on the rule the band itself draws; only the
+          // stage(s) stacked below it carry the within-band line, in both cells.
+          showTopDivider={!isTopOfBand}
+          onPress={onPress}
+        />
+      </View>
+      <View style={styles.centerCell}>
+        <StageCenterCell
+          stage={stage}
+          display={display}
+          locked={locked}
+          current={current}
+          onPress={onPress}
+          showTopDivider={!isTopOfBand}
+        />
+      </View>
+    </View>
+  );
+};
 
-/** One grid row: left text + center glyph stacked per stage, one aspect label. */
+/** One grid band: its stages' rows stacked beside one aspect label. */
 const MapRowView = ({
   row,
   rowIndex,
@@ -562,21 +550,25 @@ const MapRowView = ({
       testID={`map-row-${row.rightLabel}`}
       onLayout={(e) => onRowLayout(rowIndex, e)}
     >
-      <RowLeftColumn
-        resolved={resolved}
-        fullnessByStage={fullnessByStage}
-        currentStage={currentStage}
-        onPress={onPress}
-      />
-      <RowCenterColumn
-        resolved={resolved}
-        rowIndex={rowIndex}
-        currentStage={currentStage}
-        onPress={onPress}
-        onCellLayout={onCellLayout}
-      />
+      <View style={styles.bandStages}>
+        {resolved.map(({ stage, display }, index) => (
+          <StageRow
+            key={stage.stageNumber}
+            stage={stage}
+            display={display}
+            rowIndex={rowIndex}
+            isTopOfBand={index === 0}
+            fullness={fullnessByStage[stage.stageNumber] ?? THIN_FULLNESS}
+            currentStage={currentStage}
+            onPress={onPress}
+            onCellLayout={onCellLayout}
+          />
+        ))}
+      </View>
       <View style={styles.rightCell}>
-        <FittedRightLabel row={row} />
+        <View style={styles.rightLabelInset}>
+          <FittedRightLabel row={row} />
+        </View>
       </View>
     </View>
   );

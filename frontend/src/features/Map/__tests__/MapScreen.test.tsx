@@ -4,16 +4,23 @@ import React from 'react';
 import { Image, ScrollView, StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { ink, surface, touchTarget } from '../../../design/tokens';
+import { editorialType, ink, surface, touchTarget } from '../../../design/tokens';
 import { unlockTimeline } from '../journeyNarrative';
-import { focusScrollOffset, lensFrame } from '../magnifierGeometry';
+import {
+  focusScrollOffset,
+  lensFrame,
+  LENS_CAPTION_STACK,
+  LENS_MAX_HEIGHT,
+  LENS_MIN_HEIGHT,
+} from '../magnifierGeometry';
 import styles, { ANNOTATION_LANE_WIDTH, FIT_CONTENT, WAVE_KEEP_OUT } from '../Map.styles';
 import {
   ARROW_LABEL_MAX_FONT_SIZE,
   fitRightLabel,
-  fitStageText,
   fittedTitleFontSize,
+  GRID_COLUMN_FLEX,
   MAP_ROWS,
+  RIGHT_LABEL_LADDER,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   RIGHT_LABEL_MAX_FONT_SIZE,
   RIGHT_LABEL_MIN_FONT_SIZE,
@@ -563,7 +570,7 @@ describe('MapScreen', () => {
     expect(flat.fontSize).toBe(RIGHT_LABEL_MAX_FONT_SIZE);
   });
 
-  it('shrinks Awareness to a single fitted line with a reduced, ratio-consistent fontSize in a narrow right cell', () => {
+  it("steps Awareness down the ramp to one line, in its face's rhythm, in a narrow right cell", () => {
     const NARROW_CELL = 56;
     const tree = create(<MapScreen />);
     fireRightLabelLayout(tree, 'Awareness', NARROW_CELL);
@@ -575,9 +582,12 @@ describe('MapScreen', () => {
     };
     const expected = fitRightLabel('Awareness', ['Awareness'], NARROW_CELL);
     expect(flat.fontSize).toBe(expected.fontSize);
-    expect(flat.fontSize).toBeLessThan(RIGHT_LABEL_MAX_FONT_SIZE);
-    expect(flat.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
+    expect(flat.fontSize).toBe(RIGHT_LABEL_MIN_FONT_SIZE);
+    expect(RIGHT_LABEL_LADDER).toContain(flat.fontSize);
     expect(flat.lineHeight).toBeCloseTo((flat.fontSize as number) * RIGHT_LABEL_LINE_HEIGHT_RATIO);
+    expect(RIGHT_LABEL_LINE_HEIGHT_RATIO).toBe(
+      editorialType.marginNote.lineHeight / editorialType.marginNote.fontSize,
+    );
   });
 
   it('always carries android_hyphenationFrequency="none" and textBreakStrategy="simple", unconditionally', () => {
@@ -601,9 +611,21 @@ describe('MapScreen', () => {
 
   // --- right-cell edge padding ---
 
-  it('gives the right cell symmetric horizontal padding (no left-only padding)', () => {
-    expect(styles.rightCell.paddingHorizontal).toBeTruthy();
-    expect('paddingLeft' in styles.rightCell).toBe(false);
+  // Padding on the right cell itself comes off the free space before the flex
+  // split and shifts the center column off the fractions the wave is drawn to.
+  it('insets the right label inside its cell, leaving the cell unpadded so the columns keep their flex split', () => {
+    for (const side of ['padding', 'paddingHorizontal', 'paddingLeft', 'paddingRight']) {
+      expect(side in styles.rightCell).toBe(false);
+    }
+    expect(styles.rightCell.flex).toBe(GRID_COLUMN_FLEX.right);
+    expect(styles.rightLabelInset.paddingHorizontal).toBeGreaterThan(0);
+    const tree = create(<MapScreen />);
+    fireGridLayout(tree);
+    for (const row of MAP_ROWS) {
+      const band = tree.root.findByProps({ testID: `map-row-${row.rightLabel}` });
+      const inset = band.findByProps({ style: styles.rightLabelInset });
+      expect(inset.findByProps({ testID: rightLabelFitTestId(row.rightLabel) })).toBeTruthy();
+    }
   });
 
   it('drops the hardcoded fontSize/lineHeight from the base rightLabelText style (both are now computed per-fit)', () => {
@@ -692,7 +714,7 @@ describe('MapScreen', () => {
         });
       }
       for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
-        tree.root.findByProps({ testID: `stage-hotspot-${stage}-1` }).props.onLayout({
+        tree.root.findByProps({ testID: `stage-row-${stage}` }).props.onLayout({
           nativeEvent: {
             layout: {
               x: 0,
@@ -962,18 +984,18 @@ describe('MapScreen left-column stage text color', () => {
     }
   });
 
-  it('shrinks the EMPTINESS / UNITY title watermark to fit on one line', () => {
+  it('holds the EMPTINESS / UNITY watermark to one line without the native shrink, which leaves the ramp', () => {
     const tree = create(<MapScreen />);
     for (const title of ['EMPTINESS', 'UNITY']) {
       const node = tree.root.findByProps({ children: title });
-      expect(node.props.adjustsFontSizeToFit).toBe(true);
+      expect(node.props.adjustsFontSizeToFit).toBeUndefined();
       expect(node.props.numberOfLines).toBe(1);
     }
   });
 
-  it('sizes the title watermark from its measured cell width (react-native-web fit)', () => {
-    // adjustsFontSizeToFit is a no-op on react-native-web, so the title must
-    // carry a deterministic fitted fontSize computed from the measured width.
+  it('sizes both watermark lines at one ramp step from their measured cell width', () => {
+    // A phone's center cell: UNITY alone would fit the title face, EMPTINESS
+    // only the heading face, and the two lines share the smaller.
     const MEASURED_WIDTH = 140;
     const tree = create(<MapScreen />);
     for (const title of ['EMPTINESS', 'UNITY']) {
@@ -985,7 +1007,8 @@ describe('MapScreen left-column stage text color', () => {
       });
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
-      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
+      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH));
+      expect(flat.fontSize).toBe(editorialType.heading.fontSize);
     }
   });
 
@@ -1043,21 +1066,18 @@ describe('MapScreen stage-text fit-to-width', () => {
     return block.findAll((n: TestNode) => n.props.children === stage8.arrowLabel)[0];
   };
 
-  it('shrinks the long stage-8 persona and practice below their standard sizes in a narrow cell', () => {
+  it('steps the long stage-8 persona down to the ramp floor and wraps the practice there in a narrow cell', () => {
     const tree = create(<MapScreen />);
     driveLayout(tree, `stage-text-fit-${STAGE}`, NARROW_WIDTH);
-    const cases: ReadonlyArray<readonly [string, number]> = [
-      [stage8.persona, STAGE_PERSONA_MAX_FONT_SIZE],
-      [stage8.practice, STAGE_LINE_MAX_FONT_SIZE],
-    ];
-    for (const [line, maxFontSize] of cases) {
-      const fontSize = leftLineFontSize(tree, line);
-      expect(fontSize).toBeLessThan(maxFontSize);
-      expect(fontSize).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+    for (const line of [stage8.persona, stage8.practice]) {
+      expect(leftLineFontSize(tree, line)).toBe(STAGE_TEXT_MIN_FONT_SIZE);
+      // Too long for one line even at the floor: it wraps rather than leaving the ramp.
+      expect(leftLineNode(tree, line).props.numberOfLines).toBeUndefined();
     }
+    expect(STAGE_TEXT_MIN_FONT_SIZE).toBe(editorialType.caption.fontSize);
   });
 
-  it('keeps every stage-8 left line at its standard size in a wide cell', () => {
+  it('keeps every stage-8 left line at the top of its ladder, on one line, in a wide cell', () => {
     const tree = create(<MapScreen />);
     driveLayout(tree, `stage-text-fit-${STAGE}`, WIDE_WIDTH);
     const cases: ReadonlyArray<readonly [string, number]> = [
@@ -1066,8 +1086,8 @@ describe('MapScreen stage-text fit-to-width', () => {
       [stage8.practice, STAGE_LINE_MAX_FONT_SIZE],
     ];
     for (const [line, maxFontSize] of cases) {
-      expect(leftLineFontSize(tree, line)).toBe(fitStageText(line, WIDE_WIDTH, maxFontSize));
       expect(leftLineFontSize(tree, line)).toBe(maxFontSize);
+      expect(leftLineNode(tree, line).props.numberOfLines).toBe(1);
     }
   });
 
@@ -1078,31 +1098,30 @@ describe('MapScreen stage-text fit-to-width', () => {
     expect(leftLineFontSize(tree, stage8.practice)).toBe(STAGE_LINE_MAX_FONT_SIZE);
   });
 
-  it('shrinks the True Self arrow label below its ceiling in a narrow center cell', () => {
+  it('holds the True Self arrow label at the caption and lets it wrap in a narrow center cell', () => {
     const tree = create(<MapScreen />);
     driveLayout(tree, `aspect-label-fit-${STAGE}`, NARROW_WIDTH);
-    const flat = StyleSheet.flatten(arrowLabelNode(tree).props.style) as { fontSize?: number };
-    expect(flat.fontSize).toBeLessThan(ARROW_LABEL_MAX_FONT_SIZE);
-    expect(flat.fontSize).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
+    const label = arrowLabelNode(tree);
+    const flat = StyleSheet.flatten(label.props.style) as { fontSize?: number };
+    expect(flat.fontSize).toBe(ARROW_LABEL_MAX_FONT_SIZE);
+    expect(label.props.numberOfLines).toBeUndefined();
   });
 
-  it('keeps the True Self arrow label at its ceiling in a wide center cell', () => {
+  it('keeps the True Self arrow label at its ceiling on one line in a wide center cell', () => {
     const tree = create(<MapScreen />);
     driveLayout(tree, `aspect-label-fit-${STAGE}`, WIDE_WIDTH);
-    const flat = StyleSheet.flatten(arrowLabelNode(tree).props.style) as { fontSize?: number };
+    const label = arrowLabelNode(tree);
+    const flat = StyleSheet.flatten(label.props.style) as { fontSize?: number };
     expect(flat.fontSize).toBe(ARROW_LABEL_MAX_FONT_SIZE);
+    expect(label.props.numberOfLines).toBe(1);
   });
 
-  it('guards every fitted stage-8 text to a single line with the native shrink net', () => {
+  it('never hands the fitted stage-8 text to the native shrink, which would leave the ramp', () => {
     const tree = create(<MapScreen />);
     for (const line of [stage8.persona, stage8.descriptor, stage8.practice]) {
-      const node = leftLineNode(tree, line);
-      expect(node.props.numberOfLines).toBe(1);
-      expect(node.props.adjustsFontSizeToFit).toBe(true);
+      expect(leftLineNode(tree, line).props.adjustsFontSizeToFit).toBeUndefined();
     }
-    const label = arrowLabelNode(tree);
-    expect(label.props.numberOfLines).toBe(1);
-    expect(label.props.adjustsFontSizeToFit).toBe(true);
+    expect(arrowLabelNode(tree).props.adjustsFontSizeToFit).toBeUndefined();
   });
 
   it('keeps the stage-8 corner hug and nested countdown intact around the fit wrapper', () => {
@@ -1142,7 +1161,7 @@ describe('MapScreen locked title-row unlock estimate', () => {
         color?: string;
         textAlign?: string;
       };
-      expect(flat.fontSize).toBe(9);
+      expect(flat.fontSize).toBe(editorialType.caption.fontSize);
       expect(flat.color).toBe(ink.muted);
       expect(flat.textAlign).toBe(textAlign);
       // The estimate shares its lane with the padlock, whose host parent is the lane.
@@ -1185,7 +1204,7 @@ describe('MapScreen locked title-row unlock estimate', () => {
       });
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
-      expect(flat.fontSize).toBe(fittedTitleFontSize(title, MEASURED_WIDTH));
+      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH));
     }
   });
 });
@@ -1334,6 +1353,69 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
       const flat = StyleSheet.flatten(band.props.style) as { minHeight?: string; flex?: number };
       expect(flat.minHeight).toBe(FIT_CONTENT);
       expect(flat.flex).toBe(row.stageNumbers.length);
+    }
+  });
+
+  // #2960: at the ramp's 13px a stage's copy can wrap and its locked note runs
+  // long, so a stage takes the height it needs -- and its two cells take it
+  // together, or the left and center rules would stop meeting.
+  it('gives each stage one row across the left and center columns, never shorter than its content', () => {
+    const tree = create(<MapScreen />);
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      const row = tree.root.findByProps({ testID: `stage-row-${stage}` });
+      const flat = StyleSheet.flatten(row.props.style) as {
+        flexDirection?: string;
+        minHeight?: string;
+        flex?: number;
+      };
+      expect(flat).toEqual(
+        expect.objectContaining({ flexDirection: 'row', minHeight: FIT_CONTENT, flex: 1 }),
+      );
+      const hotspots = row
+        .findAll((n: TestNode) => /^stage-hotspot-\d+-[01]$/u.test(String(n.props.testID)))
+        .map((n: TestNode) => String(n.props.testID));
+      expect([...new Set(hotspots)].sort()).toEqual([
+        `stage-hotspot-${stage}-0`,
+        `stage-hotspot-${stage}-1`,
+      ]);
+    }
+  });
+
+  it("makes the current stage's cell at least as tall as the smallest lens, so the lens's caption stays in its own stage", () => {
+    const tree = create(<MapScreen />);
+    const minHeightOf = (stage: number): number | string | undefined =>
+      (
+        StyleSheet.flatten(
+          tree.root.findByProps({ testID: `stage-hotspot-${stage}-1` }).props.style,
+        ) as { minHeight?: number | string }
+      ).minHeight;
+    expect(styles.currentStageCell.minHeight).toBe(LENS_MIN_HEIGHT);
+    expect(LENS_MIN_HEIGHT).toBeGreaterThan(touchTarget.minimum);
+    // A taller lens pushed off centre by the grid's edge moves its caption by
+    // less than the glass the caption keeps clear on each side.
+    expect((LENS_MAX_HEIGHT - LENS_MIN_HEIGHT) / 2).toBeLessThan(
+      (LENS_MIN_HEIGHT - LENS_CAPTION_STACK) / 2,
+    );
+    // The harness's current stage is stage 1.
+    expect(minHeightOf(1)).toBe(LENS_MIN_HEIGHT);
+    for (let stage = 2; stage <= STAGE_COUNT; stage += 1) {
+      expect(minHeightOf(stage)).toBe(touchTarget.minimum);
+    }
+  });
+
+  it("keeps the connector in flow without a top margin, a connector's length off the band edge", () => {
+    expect(styles.connector.height).toBeGreaterThan(0);
+    expect('position' in styles.connector).toBe(false);
+    expect('marginTop' in styles.connector).toBe(false);
+  });
+
+  it("stacks a band's stage rows beside its aspect label, spanning the left and center columns", () => {
+    const tree = create(<MapScreen />);
+    const band = tree.root.findByProps({ testID: 'map-row-Wisdom' });
+    const stack = band.findByProps({ style: styles.bandStages });
+    expect(styles.bandStages.flex).toBe(GRID_COLUMN_FLEX.left + GRID_COLUMN_FLEX.center);
+    for (const stage of [8, 7]) {
+      expect(stack.findByProps({ testID: `stage-row-${stage}` })).toBeTruthy();
     }
   });
 
