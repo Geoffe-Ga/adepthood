@@ -2,6 +2,8 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
+import { captureNetInfoListener, type NetInfoHandle } from './netInfoTestKit';
+
 /**
  * A resonance pass reads the words the server holds, so it must never run
  * over a page whose latest write did not land (#2980).
@@ -16,6 +18,7 @@ import React from 'react';
  * page is unsaved.
  */
 import type { JournalMessage, ResonanceResponse } from '@/api';
+import { NetworkStatusProvider } from '@/context/NetworkStatusContext';
 import { EMPTY_BODY_MESSAGE, UNSAVED_PAGE_MESSAGE } from '@/features/Journal/useResonance';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';
 
@@ -43,6 +46,8 @@ jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
 jest.mock('@/api', () => ({
+  // NetworkStatusProvider registers the client's online getter on mount.
+  setNetworkOnlineGetter: jest.fn(),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -112,9 +117,19 @@ function resonancePayload(): ResonanceResponse {
 
 function renderScreen(params?: { entryId?: number }) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
-  const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
+  const navigation = {
+    navigate: jest.fn(),
+    goBack: jest.fn(),
+    push: jest.fn(),
+    dispatch: jest.fn(),
+    addListener: jest.fn(() => () => undefined),
+  };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
-  return render(<Screen navigation={navigation} route={route} autosaveDelayMs={AUTOSAVE_MS} />);
+  return render(
+    <NetworkStatusProvider>
+      <Screen navigation={navigation} route={route} autosaveDelayMs={AUTOSAVE_MS} />
+    </NetworkStatusProvider>,
+  );
 }
 
 type Screen = ReturnType<typeof renderScreen>;
@@ -152,8 +167,11 @@ function marginError(screen: Screen): unknown {
   return screen.getByTestId('journal-resonance-error').props.children;
 }
 
+let net: NetInfoHandle;
+
 beforeEach(() => {
   jest.useFakeTimers();
+  net = captureNetInfoListener();
   mockGet.mockReset();
   mockCreate.mockReset();
   mockUpdate.mockReset();
@@ -221,6 +239,64 @@ describe('JournalEntryScreen — no resonance pass over a page whose save failed
     expect(mockGenerate.mock.calls[0]?.[0]).toBe(ENTRY_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('journal-resonance-error')).toBeNull();
+  });
+});
+
+describe('JournalEntryScreen — no resonance pass while carried words are held (#2935)', () => {
+  const SERVER_BODY = 'Saved words.';
+  const TYPED = 'Words written while the page would not open.';
+  const CARRIED_BODY = `${SERVER_BODY}\n\n${TYPED}`;
+  const RETRY_NAME = 'Retry saving this entry';
+
+  /** The rejection the API client raises for a GET short-circuited while offline. */
+  function offlineError(): Error {
+    return Object.assign(new Error('network_error'), { status: 0 });
+  }
+
+  it('runs no pass over the stored copy while offline-typed words are held, then one pass once they save', async () => {
+    // Stored looser than the tier shown while typing, and the escalation fails:
+    // the typed words are held off the page, so every flush reports not-durable.
+    mockGet
+      .mockRejectedValueOnce(offlineError())
+      .mockResolvedValueOnce(entry({ classification: 'public' }));
+    mockUpdate.mockRejectedValueOnce(new Error('network')).mockResolvedValue(entry());
+    const screen = renderScreen({ entryId: ENTRY_ID });
+    await screen.findByTestId('journal-load-error');
+    fireEvent.changeText(screen.getByTestId('journal-body-input'), TYPED);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(AUTOSAVE_MS);
+    });
+    await net.emit(false);
+    await net.emit(true);
+    await screen.findByTestId('journal-carry-waiting');
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(DEFAULT_IDLE_DELAY_MS);
+    });
+    expect(screen.getByTestId('journal-body-input').props.value).toBe(SERVER_BODY);
+
+    await pressResonance(screen);
+
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockDetect).not.toHaveBeenCalled();
+    expect(screen.queryByText(EMPTY_BODY_MESSAGE)).toBeNull();
+    expect(marginError(screen)).toBe(UNSAVED_PAGE_MESSAGE);
+    expect(screen.queryByTestId('journal-resonance-refill')).toBeNull();
+
+    // The retry confirms the stricter tier, which puts the words back and saves them.
+    fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+    await waitFor(() =>
+      expect(screen.getByTestId('journal-body-input').props.value).toBe(CARRIED_BODY),
+    );
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(AUTOSAVE_MS);
+    });
+    expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+
+    await pressResonance(screen);
+
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
+    expect(mockGenerate.mock.calls[0]?.[0]).toBe(ENTRY_ID);
     expect(screen.queryByTestId('journal-resonance-error')).toBeNull();
   });
 });
