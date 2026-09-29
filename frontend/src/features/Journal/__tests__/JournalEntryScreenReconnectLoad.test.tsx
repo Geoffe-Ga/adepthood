@@ -1047,11 +1047,24 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         expect(updatesCarrying(TYPED)).toHaveLength(1);
       });
 
-      it('never lets a Retry pressed during the change send a looser tier', async () => {
-        const { screen, intimate } = await heldWithWriterTierInFlight();
-        const retry = screen.queryByRole('button', { name: RETRY_NAME });
-        if (retry != null) fireEvent.press(retry);
+      it('ignores a Retry pressed in the same instant as the tier change', async () => {
+        // Retry is still on screen when the writer taps Intimate and then Retry
+        // before React re-renders (both presses in one act, so the second hits
+        // the Retry rendered as ready). resendCarryTier itself must refuse while
+        // the tap's write is out: a second tier write would race the writer's.
+        const screen = await heldAfterFailedEscalation();
+        const intimate = deferred<JournalMessage>();
+        mockUpdate.mockClear();
+        mockUpdate.mockReturnValueOnce(intimate.promise);
+        const retry = screen.getByRole('button', { name: RETRY_NAME });
+        act(() => {
+          fireEvent.press(
+            within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+          );
+          fireEvent.press(retry);
+        });
         await advance(0);
+        expect(mockUpdate.mock.calls).toEqual([[7, { classification: 'intimate' }]]);
 
         await act(async () => {
           intimate.resolve(entry({ classification: 'intimate' }));
@@ -1198,20 +1211,19 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     }
 
     /**
-     * Deliver responses in ``preference`` order (by write index) wherever that
-     * write has been sent, until every write the page sends has a response.
+     * Answer every tier write the page sends, ``outcome(index)`` deciding each.
+     * Tier writes are serialized (round 8): only one is ever out, so responses
+     * can only arrive in send order. Out-of-order delivery is pinned where it
+     * can still be expressed, in the ``confirmTierWrite`` unit rows.
      */
     async function settleAll(
       server: ReturnType<typeof serverDouble>,
-      preference: number[],
       outcome: (index: number) => boolean,
-      afterFirst?: () => Promise<void>,
     ) {
       for (let round = 0; round < MAX_SETTLE_ROUNDS; round += 1) {
-        if (round === 1 && afterFirst) await afterFirst();
-        const order = [...preference, ...server.tierWrites.map((_w, i) => i)];
-        const index = order.find((i) => server.tierWrites[i]?.settled === false);
-        if (index === undefined) return;
+        const index = server.tierWrites.findIndex((w) => !w.settled);
+        if (index === -1) return;
+        expect(server.tierWrites.filter((w) => !w.settled)).toHaveLength(1);
         await server.tierWrites[index]?.settle(outcome(index));
       }
     }
@@ -1246,12 +1258,12 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(screen.getByTestId('journal-carry-waiting')).toBeTruthy();
     });
 
-    it('review (a): out-of-order responses never release onto a looser committed row', async () => {
+    it('review (a): a looser tap committed on arrival never releases onto its row', async () => {
       const { screen, server } = await escalationOut({ commitAtSend: true });
       await tapTier(screen, 'public');
 
-      // The public response is delivered first wherever it has been sent.
-      await settleAll(server, [1, 0], () => true);
+      // Both succeed, in send order (the only order serialized writes allow).
+      await settleAll(server, () => true);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(server.state.row).toBe('public');
@@ -1264,7 +1276,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut({ commitAtSend: true });
       await tapTier(screen, 'public');
 
-      await settleAll(server, [0, 1], (i) => i === 0);
+      await settleAll(server, (i) => i === 0);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(server.state.row).toBe('public');
@@ -1294,7 +1306,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'personal');
 
-      await settleAll(server, [1, 0], () => false);
+      await settleAll(server, () => false);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(server.messages).toEqual([]);
@@ -1323,7 +1335,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'personal');
 
-      await settleAll(server, [1, 0], (i) => i === 1);
+      await settleAll(server, (i) => i === 1);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(carried(server)).toEqual([expect.objectContaining({ rowTier: 'personal' })]);
@@ -1350,7 +1362,7 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       const { screen, server } = await escalationOut();
       await tapTier(screen, 'intimate');
 
-      await settleAll(server, [0, 1], (i) => i === 1);
+      await settleAll(server, (i) => i === 1);
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(carried(server)).toHaveLength(1);
@@ -1359,38 +1371,64 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
     });
 
     type Tap = 'personal' | 'intimate' | 'public';
-    type Order = 'escalation-first' | 'tap-first';
     const TAPS: Tap[] = ['personal', 'intimate', 'public'];
-    const ORDERS: Order[] = ['escalation-first', 'tap-first'];
-    type Case = [boolean, Tap, boolean, Order, boolean, boolean];
     const BOOLS = [true, false];
+    type Case = [boolean, Tap, boolean, boolean, boolean];
+    // No response-order dimension: tier writes are serialized, so every
+    // response arrives in send order (see ``settleAll``).
     type Setup = [boolean, Tap, boolean];
     const setups: Setup[] = BOOLS.flatMap((e) =>
       TAPS.flatMap((tap) => BOOLS.map((k): Setup => [e, tap, k])),
     );
     const cases: Case[] = setups.flatMap(([escalationOk, tap, tapOk]) =>
-      ORDERS.flatMap((order): Case[] =>
-        [false, true].flatMap((commitAtSend): Case[] => [
-          [escalationOk, tap, tapOk, order, commitAtSend, false],
-          [escalationOk, tap, tapOk, order, commitAtSend, true],
-        ]),
+      BOOLS.flatMap((commitAtSend) =>
+        BOOLS.map((retry): Case => [escalationOk, tap, tapOk, commitAtSend, retry]),
       ),
     );
 
+    /**
+     * The escalation out with the writer's tap queued behind it. With
+     * ``retryWhileQueued`` the first escalation fails and Retry re-sends it,
+     * and then, with the tap still waiting, a reconnect fires the #2930 retry
+     * of that failed tier. Returns the escalation's write index.
+     */
+    async function tapQueuedBehindEscalation(
+      commitAtSend: boolean,
+      tap: Tap,
+      retryWhileQueued: boolean,
+    ) {
+      const { screen, server } = await escalationOut({ commitAtSend });
+      if (retryWhileQueued) {
+        await server.tierWrites[0]?.settle(false);
+        fireEvent.press(screen.getByRole('button', { name: RETRY_NAME }));
+        await advance(0);
+      }
+      const escalation = server.tierWrites.length - 1;
+      await tapTier(screen, tap);
+      if (retryWhileQueued) await reconnect();
+      // The tap is still queued: nothing past the escalation has been sent.
+      expect(server.tierWrites).toHaveLength(escalation + 1);
+      return { screen, server, escalation };
+    }
+
     it.each(cases)(
-      'escalation ok=%s, tap %s ok=%s, %s, commit-at-send=%s, retry while queued=%s: carried words go out only under a confirmed strict tier',
-      async (escalationOk, tap, tapOk, order, commitAtSend, retryWhileQueued) => {
-        const { screen, server } = await escalationOut({ commitAtSend });
-        // The writer taps while the escalation is in flight: the tap is queued.
-        await tapTier(screen, tap);
-        const outcome = (i: number) => (i === 0 ? escalationOk : i === 1 ? tapOk : true);
-        // Optionally a #2930 reconnect retry fires with the tap still waiting.
-        const retry = retryWhileQueued ? reconnect : undefined;
-        await settleAll(server, order === 'escalation-first' ? [0, 1] : [1, 0], outcome, retry);
+      'escalation ok=%s, tap %s ok=%s, commit-at-send=%s, retry while the tap is queued=%s: carried words go out only under a confirmed strict tier',
+      async (escalationOk, tap, tapOk, commitAtSend, retryWhileQueued) => {
+        const { screen, server, escalation } = await tapQueuedBehindEscalation(
+          commitAtSend,
+          tap,
+          retryWhileQueued,
+        );
+        const outcome = (i: number) =>
+          i === escalation ? escalationOk : i === escalation + 1 ? tapOk : true;
+        await settleAll(server, outcome);
         await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
-        // Nothing sent after the tap is ever looser than the writer asked for.
-        for (const later of server.tierWrites.slice(1)) {
+        // The writer's tap is always sent, right after the escalation: no retry
+        // ever replaces it, and nothing sent after it is looser than it.
+        const after = server.tierWrites.slice(escalation + 1);
+        expect(after[0]?.tier).toBe(tap);
+        for (const later of after) {
           expect(STRICTNESS[later.tier]).toBeGreaterThanOrEqual(STRICTNESS[tap]);
         }
 
