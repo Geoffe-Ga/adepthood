@@ -6,6 +6,8 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { HELD_LEAVE_RELEASED_TITLE, HELD_LEAVE_TITLE } from '../HeldWordsLeaveDialog';
+
 import { captureNetInfoListener, type NetInfoHandle } from './netInfoTestKit';
 
 import type { JournalClassification, JournalMessage } from '@/api';
@@ -858,6 +860,129 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       expect(updatesCarrying(TYPED)).toHaveLength(1);
     });
 
+    it('never saves the words after Leave without them, even when a tier write confirms later', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      await pressClose(screen);
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(0);
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      screen.unmount();
+
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+      // No page-text PATCH at all from the screen the writer left.
+      const bodyWrites = mockUpdate.mock.calls.filter(
+        ([, p]) => (p as { message?: string }).message != null,
+      );
+      expect(bodyWrites).toEqual([]);
+    });
+
+    it('never saves the words when the tier confirms after Leave but before the screen goes', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      await pressClose(screen);
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(0);
+
+      // The navigation has not unmounted the screen yet when the write confirms.
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+      expect(bodyValue(screen)).not.toContain(TYPED);
+    });
+
+    it('still puts the words back under StrictMode, whose effect re-run is not a leave', async () => {
+      // StrictMode runs the load effect twice on mount: both attempts fail offline.
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      const screen = render(<React.StrictMode>{screenElement({ entryId: 7 })}</React.StrictMode>);
+      await screen.findByTestId('journal-load-error');
+      await typeBody(screen, TYPED);
+      await reconnect();
+
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+    });
+
+    it('never saves the words when the screen goes away with a tier write still out', async () => {
+      const screen = await heldAfterFailedEscalation();
+      const intimate = deferred<JournalMessage>();
+      mockUpdate.mockClear();
+      mockUpdate.mockReturnValueOnce(intimate.promise);
+      fireEvent.press(
+        within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-intimate'),
+      );
+      await advance(0);
+      screen.unmount();
+
+      await act(async () => {
+        intimate.resolve(entry({ classification: 'intimate' }));
+      });
+      await advance(AUTOSAVE_MS * QUIET_WINDOWS);
+
+      expect(updatesCarrying(TYPED)).toEqual([]);
+    });
+
+    it('turns the open leave dialog into a saved note when the escalation puts the words back', async () => {
+      const escalation = deferred<JournalMessage>();
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      mockUpdate.mockReturnValueOnce(escalation.promise);
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await waitFor(() =>
+        expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }),
+      );
+      // Close while the escalation is out: the guard asks, with no Retry (in flight).
+      await pressClose(screen);
+      expect(screen.getByText(HELD_LEAVE_TITLE)).toBeTruthy();
+      expect(screen.queryByTestId('held-leave-retry')).toBeNull();
+
+      await act(async () => {
+        escalation.resolve(entry({ classification: 'personal' }));
+      });
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+      // Nothing waits on a tier any more: no Retry, no waiting note, and the
+      // dialog no longer says the words would be left behind.
+      expect(screen.queryByTestId('held-leave-retry')).toBeNull();
+      expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+      expect(screen.queryByText(HELD_LEAVE_TITLE)).toBeNull();
+      expect(screen.getByText(HELD_LEAVE_RELEASED_TITLE)).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(AUTOSAVE_MS);
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+    });
+
     it('closes straight away when nothing is held and the page is the stored text', async () => {
       mockGet.mockResolvedValue(entry());
       const screen = renderScreen({ entryId: 7 });
@@ -1106,6 +1231,37 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         expect(tiers).toEqual(['personal', 'intimate']);
         expect(updatesCarrying(TYPED)).toHaveLength(1);
         expect(tierSelected(screen, 'intimate')).toBe(true);
+      });
+
+      it('keeps the control on the tier sent when a failed tap had the #2930 retry queued behind it', async () => {
+        const screen = await heldAfterFailedEscalation();
+        const tap = deferred<JournalMessage>();
+        mockUpdate.mockClear();
+        mockUpdate
+          .mockReturnValueOnce(tap.promise)
+          .mockResolvedValueOnce(entry({ classification: 'personal' }));
+        fireEvent.press(
+          within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-personal'),
+        );
+        await advance(0);
+        // The reconnect's #2930 retry of the failed Personal waits behind the tap.
+        await reconnect();
+        await advance(0);
+
+        await act(async () => {
+          tap.reject(new Error('network'));
+        });
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        const tiers = mockUpdate.mock.calls
+          .map(([, p]) => (p as { classification?: string }).classification)
+          .filter((t) => t != null);
+        expect(tiers).toEqual(['personal', 'personal']);
+        // The server holds Personal, and so does the control.
+        expect(tierSelected(screen, 'personal')).toBe(true);
+        expect(tierSelected(screen, 'public')).toBe(false);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
       });
 
       it('does not offer Try saving again in the leave dialog meanwhile', async () => {

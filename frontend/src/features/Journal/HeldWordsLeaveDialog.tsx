@@ -3,7 +3,8 @@
  * still waiting to be put back (#2935). Those words live only in this screen
  * until they are saved, so leaving drops them; the page never lets that happen
  * silently. Staying is the default. Where the words wait on a privacy setting
- * that failed to save, trying that save again is offered too.
+ * that failed to save, trying that save again is offered too. If the words come
+ * back onto the page while it is open, it says so instead of warning.
  */
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
@@ -26,6 +27,15 @@ export const HELD_LEAVE_TITLE = 'Leave your offline words behind?';
 export const HELD_LEAVE_BODY =
   'The words you wrote while this page couldn’t open, and anything you’ve written here since, haven’t been saved yet. If you leave now, they won’t come with you.';
 
+/** The heading once the words are back on the page while the dialog is open. */
+export const HELD_LEAVE_RELEASED_TITLE = 'Your offline words are back';
+
+/** Leaving is safe again: the words are on the page and saving with it. */
+export const HELD_LEAVE_RELEASED_BODY =
+  'They’re on the page again and saving with it, so nothing is left behind if you leave.';
+
+export const HELD_LEAVE_RELEASED_LEAVE = 'Leave';
+
 export const HELD_LEAVE_STAY = 'Stay';
 export const HELD_LEAVE_RETRY = 'Try saving again';
 export const HELD_LEAVE_LEAVE = 'Leave without them';
@@ -36,7 +46,19 @@ export interface HeldWordsLeaveDialogProps {
   onLeave: () => void;
   /** Offered only when the words wait on a privacy setting that failed to save. */
   onRetry?: () => void;
+  /**
+   * The words came back onto the page while the dialog was open: nothing is
+   * left behind any more, so the dialog says so and leaving is plain.
+   */
+  released?: boolean;
 }
+
+const HELD_COPY = { title: HELD_LEAVE_TITLE, body: HELD_LEAVE_BODY, leave: HELD_LEAVE_LEAVE };
+const RELEASED_COPY = {
+  title: HELD_LEAVE_RELEASED_TITLE,
+  body: HELD_LEAVE_RELEASED_BODY,
+  leave: HELD_LEAVE_RELEASED_LEAVE,
+};
 
 interface ChoiceProps {
   label: string;
@@ -64,7 +86,9 @@ function HeldWordsLeaveDialog({
   onStay,
   onLeave,
   onRetry,
+  released = false,
 }: HeldWordsLeaveDialogProps): React.JSX.Element {
+  const copy = released ? RELEASED_COPY : HELD_COPY;
   return (
     <JournalModalShell
       visible={visible}
@@ -74,13 +98,13 @@ function HeldWordsLeaveDialog({
       cardTestID="held-leave-dialog"
       cardStyle={styles.card}
     >
-      <Text style={styles.title}>{HELD_LEAVE_TITLE}</Text>
-      <Text style={styles.body}>{HELD_LEAVE_BODY}</Text>
+      <Text style={styles.title}>{copy.title}</Text>
+      <Text style={styles.body}>{copy.body}</Text>
       <Choice label={HELD_LEAVE_STAY} onPress={onStay} testID="held-leave-stay" primary />
       {onRetry ? (
         <Choice label={HELD_LEAVE_RETRY} onPress={onRetry} testID="held-leave-retry" />
       ) : null}
-      <Choice label={HELD_LEAVE_LEAVE} onPress={onLeave} testID="held-leave-leave" />
+      <Choice label={copy.leave} onPress={onLeave} testID="held-leave-leave" />
     </JournalModalShell>
   );
 }

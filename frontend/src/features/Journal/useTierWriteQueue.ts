@@ -15,6 +15,9 @@
  *   request: one looser than it, or no stricter than a writer tap already
  *   waiting, is dropped and resolves with the request, so the control goes back
  *   to it. A stricter one waits behind the writer's tap and then raises it.
+ *
+ * A failed write never reverts the control below a queued system write that
+ * will still be sent: the control and the request follow that write instead.
  */
 import { useCallback, useRef } from 'react';
 
@@ -75,6 +78,21 @@ function admitWriterWrite(state: QueueState, write: QueuedWrite): void {
   state.queue = state.queue.filter((q) => q.kind !== 'writer');
 }
 
+/**
+ * What the control shows once a write settles with ``revertTo``: null keeps it.
+ * A newer writer choice waiting owns the control, so nothing reverts over it.
+ * A queued system write that will still be sent (no looser than the reverted
+ * request) is the tier the server gets next, so the control, and the request,
+ * follow it rather than revert below it.
+ */
+function controlAfter(state: QueueState, revertTo: Revert): Revert {
+  if (revertTo == null || state.queue.some((q) => q.kind === 'writer')) return null;
+  const system = state.queue.find((q) => q.kind === 'system' && !looserThanRequest(state, q.tier));
+  if (system == null) return revertTo;
+  state.requested = system.tier;
+  return null;
+}
+
 /** Send one write; when it settles, send whatever waits next. */
 async function sendWrite(state: QueueState, change: Change, write: QueuedWrite): Promise<void> {
   state.busy = true;
@@ -88,9 +106,7 @@ async function sendWrite(state: QueueState, change: Change, write: QueuedWrite):
     if (write.kind === 'writer' && revertTo != null && seq === state.requestSeq) {
       state.requested = revertTo;
     }
-    // A newer writer choice waits and owns the control: never revert over it.
-    const writerWaiting = state.queue.some((q) => q.kind === 'writer');
-    write.resolve(writerWaiting ? null : revertTo);
+    write.resolve(controlAfter(state, revertTo));
     state.busy = false;
     void sendNext(state, change);
   }
