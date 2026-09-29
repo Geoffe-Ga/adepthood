@@ -24,6 +24,7 @@ import {
   type JournalMarkdownLine,
 } from './journalMarkdown';
 import { bulletDecoration, renderMarkdownRun, webRole } from './ReadOnlyMarkdownText';
+import { lineSlice } from './renderedSpans';
 import StaleQuoteNotes from './StaleQuoteNotes';
 
 import type { Marginalia, PromotedQuote } from '@/api';
@@ -153,10 +154,6 @@ function RemoveQuoteCard({
   );
 }
 
-function segmentEnd(segment: AnchoredSegment): number {
-  return segment.start + Array.from(segment.text).length;
-}
-
 /** Visible Markdown content, or the literal syntax that is itself anchored. */
 function anchoredSliceContent(
   document: JournalMarkdownDocument,
@@ -241,10 +238,9 @@ function renderLine(
 ): React.ReactNode[] {
   const rendered: React.ReactNode[] = [];
   for (const segment of segments) {
-    const start = Math.max(line.start, segment.start);
-    const end = Math.min(line.end, segmentEnd(segment));
-    if (start >= end) continue;
-    rendered.push(renderAnchoredSlice(segment, start, end, render));
+    const slice = lineSlice(line, segment);
+    if (slice === null) continue;
+    rendered.push(renderAnchoredSlice(segment, slice.start, slice.end, render));
   }
   return rendered;
 }

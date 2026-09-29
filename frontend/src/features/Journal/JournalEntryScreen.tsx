@@ -2478,7 +2478,7 @@ function MarginStream({
       style={slots ? [styles.marginStream, { height: slots.extent }] : styles.marginStream}
       testID="journal-margin-stream"
     >
-      {items.map((item, index) => (
+      {(slots?.items ?? items).map((item, index) => (
         <View
           key={item.key}
           onLayout={(event) => onSlotLayout(item.key, event)}

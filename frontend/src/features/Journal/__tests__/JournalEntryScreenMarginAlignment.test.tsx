@@ -1,4 +1,4 @@
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeAll, beforeEach } from '@jest/globals';
 import { fireEvent, render, within, type RenderResult } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -119,11 +119,17 @@ const flat = (view: RenderResult, testID: string) =>
 
 const SLOT_IDS = ['margin-slot-note-1', 'margin-slot-note-2', 'margin-slot-suggestion-90'];
 
-async function renderWithNotes(overrides: Partial<JournalMessage> = {}): Promise<RenderResult> {
+/** RNTL's own default wait for a findBy query. */
+const DEFAULT_FIND_MS = 1000;
+
+async function renderWithNotes(
+  overrides: Partial<JournalMessage> = {},
+  findTimeout = DEFAULT_FIND_MS,
+): Promise<RenderResult> {
   mockGet.mockResolvedValue(entry(overrides));
   const view = renderScreen();
-  await view.findByTestId('margin-note-2');
-  await view.findByTestId('suggestion-90');
+  await view.findByTestId('margin-note-2', {}, { timeout: findTimeout });
+  await view.findByTestId('suggestion-90', {}, { timeout: findTimeout });
   return view;
 }
 
@@ -135,7 +141,7 @@ function withWidth<T>(width: number, run: () => Promise<T>): Promise<T> {
   return run().finally(() => spy.mockRestore());
 }
 
-beforeEach(() => {
+function arrangeColumn(): void {
   mockGet.mockReset();
   mockList.mockReset();
   mockList.mockResolvedValue({
@@ -149,7 +155,24 @@ beforeEach(() => {
   mockCompletionList.mockResolvedValue({ items: [suggestion({ id: 90, anchor_start: 0 })] });
   mockMeasure.mockReset();
   mockMeasure.mockReturnValue(ANCHOR_TOPS);
-});
+}
+
+/**
+ * The screen's first render in a worker pays for every module it pulls in
+ * lazily -- seconds on a cold, loaded machine -- which would otherwise be
+ * billed to whichever test happens to run first and time it out. Paying it
+ * once here, under its own generous budget, keeps each test timing only its
+ * own behaviour.
+ */
+const WARM_UP_BUDGET_MS = 60_000;
+
+beforeAll(async () => {
+  arrangeColumn();
+  const view = await renderWithNotes({}, WARM_UP_BUDGET_MS);
+  view.unmount();
+}, WARM_UP_BUDGET_MS);
+
+beforeEach(arrangeColumn);
 
 describe('JournalEntryScreen -- margin notes beside their passages (#2418)', () => {
   it('keeps the flow layout until the slots and stream have been measured', async () => {
@@ -190,6 +213,29 @@ describe('JournalEntryScreen -- margin notes beside their passages (#2418)', () 
     expect(
       column.queryAllByTestId(/^margin-slot-/).map((node) => String(node.props.testID)),
     ).toEqual(SLOT_IDS);
+  });
+
+  it('renders a note whose passage went unmeasured where it sits: in the tail', async () => {
+    mockMeasure.mockReturnValue(new Map([[2, 100]]));
+    const view = await withWidth(1280, async () => {
+      const rendered = await renderWithNotes();
+      fireLayouts(rendered);
+      return rendered;
+    });
+
+    const column = within(view.getByTestId('journal-margin-column'));
+    const order = column.queryAllByTestId(/^margin-slot-/).map((node) => String(node.props.testID));
+    // Tree order (what a screen reader walks) is the order on screen.
+    expect(order).toEqual([
+      'margin-slot-note-2',
+      'margin-slot-note-1',
+      'margin-slot-suggestion-90',
+    ]);
+    expect(order.map((id) => flat(view, id).top)).toEqual([
+      100,
+      100 + NOTE_HEIGHT + GAP,
+      100 + 2 * (NOTE_HEIGHT + GAP),
+    ]);
   });
 
   it('re-measures when the page lays out again, so a reflowed body moves its notes', async () => {
