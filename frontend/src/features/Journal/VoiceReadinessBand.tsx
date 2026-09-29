@@ -25,7 +25,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { corpusDestinationForReadiness } from './corpusDestination';
-import ReflectionDismiss from './ReflectionDismiss';
+import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { corpus } from '@/api';
 import type { VoiceReadinessT } from '@/api/schemas';
@@ -48,6 +48,15 @@ import {
 
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
 const ACCENT_BAR_WIDTH = 3;
+
+/** The band's inner padding: the gap every edge of the note keeps from the card's rim. */
+const BAND_PADDING = SPACING.lg;
+
+/**
+ * Right-hand room the open area keeps so neither its text nor its hit area
+ * lies under the corner X (#2860 rule (a); the morning-pages tip's precedent).
+ */
+const CLOSE_CORNER_RESERVE = closeCornerReserve(BAND_PADDING);
 
 const BAND_LABEL = 'Where your reflections come from';
 // The decline is an icon-only X in the card's top-right corner (#2949, the
@@ -148,7 +157,7 @@ function VoiceReadinessBand(): React.JSX.Element | null {
   // buttons stay independently reachable by assistive tech (a pressable wrapper
   // would collapse the subtree and hide the one-tap decline).
   return (
-    <View style={styles.band}>
+    <View style={styles.band} testID="journal-voice-readiness-card">
       <TouchableOpacity
         style={styles.openArea}
         onPress={onOpen}
@@ -173,7 +182,7 @@ function VoiceReadinessBand(): React.JSX.Element | null {
 const styles = StyleSheet.create({
   band: {
     marginTop: SPACING.lg,
-    padding: SPACING.lg,
+    padding: BAND_PADDING,
     borderRadius: BORDER_RADIUS.md,
     // The same raised sheet and warm accent rule as the shelf's other bands,
     // so this reads as part of a matched set rather than an alert.
@@ -184,10 +193,11 @@ const styles = StyleSheet.create({
   },
   openArea: {
     minHeight: touchTarget.minimum,
-    // The close X is absolutely placed in the band's top-right corner, so the
-    // text column steps clear of its hit area: label, body and CTA never run
-    // under the glyph at any width.
-    paddingRight: touchTarget.minimum,
+    // The close X is absolutely placed in the band's top-right corner. A
+    // margin, not a padding: padding kept the text clear but left this
+    // pressable's own box -- and so its hit area -- running under the X, two
+    // buttons on one spot (#2860). The margin ends the box where the X begins.
+    marginRight: CLOSE_CORNER_RESERVE,
   },
   label: {
     ...editorialType.caption,

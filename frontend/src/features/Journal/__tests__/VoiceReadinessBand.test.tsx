@@ -16,7 +16,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { VoiceReadinessT } from '@/api/schemas';
-import { ink, touchTarget } from '@/design/tokens';
+import { SPACING, ink, touchTarget } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
 const mockReadiness = jest.fn() as jest.MockedFunction<() => Promise<VoiceReadinessT>>;
@@ -48,6 +48,7 @@ jest.mock('@react-navigation/native', () => ({
 const VoiceReadinessBand = require('../VoiceReadinessBand').default;
 
 const BAND = 'journal-voice-readiness-band';
+const CARD = 'journal-voice-readiness-card';
 const DISMISS = 'journal-voice-readiness-dismiss';
 
 const NOT_CONSENTED_COPY =
@@ -254,9 +255,14 @@ describe('VoiceReadinessBand — declining it', () => {
     expect(dismiss.props.accessibilityRole).toBe('button');
     expect(dismiss.props.accessibilityLabel).toMatch(/aside|Not now/);
 
-    // The text column steps clear of the X so the CTA never runs under it.
+    // The open area's box -- not just its text -- ends where the X's hit area
+    // begins, so the two buttons never share a spot (#2860). A padding would
+    // keep the words clear and leave the pressable itself under the glyph.
     const openArea = StyleSheet.flatten((await findByTestId(BAND)).props.style);
-    expect(openArea.paddingRight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    const band = StyleSheet.flatten((await findByTestId(CARD)).props.style);
+    expect(openArea.paddingRight).toBeUndefined();
+    expect(band.padding).toBe(SPACING.lg);
+    expect(openArea.marginRight).toBe(touchTarget.minimum - SPACING.lg);
   });
 
   it('keeps the CTA as the only visible text action in the band', async () => {
