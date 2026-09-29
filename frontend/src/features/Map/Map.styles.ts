@@ -447,6 +447,8 @@ const styles = StyleSheet.create({
   },
 
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------
+  // It sits on the Map's parchment, not a showcase band, so it reads in the
+  // canvas inks (#2979).
   beginAgain: {
     marginTop: spacing(1.5),
     alignItems: CENTER,
@@ -456,14 +458,14 @@ const styles = StyleSheet.create({
     fontFamily: editorialType.serif,
     fontSize: ACTION_SIZE,
     fontWeight: '700',
-    color: onShowcase.primary,
+    color: ink.primary,
     textAlign: CENTER,
   },
   beginAgainBody: {
     fontFamily: editorialType.serif,
     fontSize: CAPTION_SIZE,
     lineHeight: 20,
-    color: onShowcase.soft,
+    color: ink.soft,
     textAlign: CENTER,
   },
 
