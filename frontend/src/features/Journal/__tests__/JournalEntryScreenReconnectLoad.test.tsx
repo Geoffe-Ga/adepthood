@@ -1108,6 +1108,37 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
         expect(tierSelected(screen, 'intimate')).toBe(true);
       });
 
+      it('keeps the control on the tier sent when a failed tap had the #2930 retry queued behind it', async () => {
+        const screen = await heldAfterFailedEscalation();
+        const tap = deferred<JournalMessage>();
+        mockUpdate.mockClear();
+        mockUpdate
+          .mockReturnValueOnce(tap.promise)
+          .mockResolvedValueOnce(entry({ classification: 'personal' }));
+        fireEvent.press(
+          within(screen.getByTestId('journal-page')).getByTestId('privacy-tier-personal'),
+        );
+        await advance(0);
+        // The reconnect's #2930 retry of the failed Personal waits behind the tap.
+        await reconnect();
+        await advance(0);
+
+        await act(async () => {
+          tap.reject(new Error('network'));
+        });
+        await waitFor(() => expect(bodyValue(screen)).toContain(TYPED));
+        await advance(AUTOSAVE_MS);
+
+        const tiers = mockUpdate.mock.calls
+          .map(([, p]) => (p as { classification?: string }).classification)
+          .filter((t) => t != null);
+        expect(tiers).toEqual(['personal', 'personal']);
+        // The server holds Personal, and so does the control.
+        expect(tierSelected(screen, 'personal')).toBe(true);
+        expect(tierSelected(screen, 'public')).toBe(false);
+        expect(updatesCarrying(TYPED)).toHaveLength(1);
+      });
+
       it('does not offer Try saving again in the leave dialog meanwhile', async () => {
         const { screen } = await heldWithWriterTierInFlight();
 

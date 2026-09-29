@@ -118,6 +118,35 @@ describe('useTierWriteQueue (#2935)', () => {
     expect(queue().requestedTier()).toBe('intimate');
   });
 
+  it('writer fails with a stricter system write queued: the control follows the system write', async () => {
+    const { queue, sent, settle } = setup();
+    const tap = queue().enqueue('personal', 'writer');
+    const system = queue().enqueue('personal', 'system');
+
+    // The tap fails and would revert the control to Public, but the queued
+    // Personal write is still going out: the control must say what is sent.
+    await settle(0, 'public');
+
+    await expect(tap).resolves.toBeNull();
+    expect(queue().requestedTier()).toBe('personal');
+    expect(sent).toEqual(['personal', 'personal']);
+    await settle(1);
+    await expect(system).resolves.toBeNull();
+  });
+
+  it('writer fails with a looser system write queued: the control reverts and the system write drops', async () => {
+    const { queue, sent, settle } = setup();
+    const tap = queue().enqueue('public', 'writer');
+    const system = queue().enqueue('personal', 'system');
+
+    await settle(0, 'intimate');
+
+    // Reverting to Intimate out-asks the queued Personal, which is dropped.
+    await expect(tap).resolves.toBe('intimate');
+    await expect(system).resolves.toBe('intimate');
+    expect(sent).toEqual(['public']);
+  });
+
   it('keeps a newer writer request when an older writer write fails', async () => {
     const { queue, settle } = setup();
     const first = queue().enqueue('public', 'writer');
