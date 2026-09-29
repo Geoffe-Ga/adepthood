@@ -2,7 +2,7 @@
 import { StyleSheet } from 'react-native';
 
 import { legalFontSizes } from '../../../../e2e/textCensus';
-import { INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
+import { editorialType, INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
 import styles from '../Map.styles';
 import { stageExpressionsStyles } from '../StageExpressionsSection';
 
@@ -17,6 +17,13 @@ import { stageExpressionsStyles } from '../StageExpressionsSection';
 
 const PHONE_WIDTH = 390;
 const DESKTOP_WIDTH = 1280;
+/**
+ * The one static size still off the ramp, owned by the fitted-grid follow-up to
+ * #2960: at 13px the unlock estimate outgrows its half-lane at 390 and meets the
+ * wave (map-legibility), so it moves with the fitted grid text, not here.
+ */
+const PENDING_KEY = 'unlockTimeline';
+const PENDING_SIZE = 9;
 /** DESIGN.md "One face per role": no Map region shows more than three sizes. */
 const MAX_SIZES_PER_REGION = 3;
 
@@ -126,8 +133,20 @@ describe('Map text is on the type ramp (#2960)', () => {
     expect(Object.keys(REGION).filter((key) => !sized.includes(key))).toEqual([]);
   });
 
-  it('sets the lens, screen chrome and modal on sizes legal at both 390 and 1280', () => {
-    expect(offRamp(keysIn(['lens', 'chrome', 'modal']))).toEqual([]);
+  it('sets every static size, the grid ring included, on a step legal at both 390 and 1280', () => {
+    // Pinned to exactly the pending unlock estimate, so no other size can join it.
+    expect(offRamp(keysIn(['grid', 'lens', 'chrome', 'modal']))).toEqual([
+      `${PENDING_KEY}=${PENDING_SIZE}`,
+    ]);
+  });
+
+  it('sets the grid ring stage copy in the sans ramp, the serif kept for the watermark alone', () => {
+    const serif = keysIn(['grid']).filter(
+      (key) =>
+        (StyleSheet.flatten(sheets[key] as object) as { fontFamily?: string }).fontFamily ===
+        editorialType.serif,
+    );
+    expect(serif).toEqual(['titleText']);
   });
 
   it('holds tappable text to the interactive floor', () => {
@@ -135,10 +154,12 @@ describe('Map text is on the type ramp (#2960)', () => {
     expect(below).toEqual([]);
   });
 
-  it.each(['lens', 'chrome', 'modal'] as const)(
+  it.each(['grid', 'lens', 'chrome', 'modal'] as const)(
     'shows at most three sizes in the %s region',
     (region) => {
-      const sizes = new Set(keysIn([region]).map(sizeOf));
+      // The pending unlock estimate joins the grid's caption step once it is fitted.
+      const counted = keysIn([region]).filter((key) => key !== PENDING_KEY);
+      const sizes = new Set(counted.map(sizeOf));
       expect(sizes.size).toBeLessThanOrEqual(MAX_SIZES_PER_REGION);
     },
   );

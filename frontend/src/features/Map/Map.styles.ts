@@ -76,6 +76,8 @@ export const FIT_CONTENT = 'auto';
 // so each is one legal at the phone and the desktop ramp alike.
 /** Metadata and fine print: ``editorialType.caption``. */
 const CAPTION_SIZE = editorialType.caption.fontSize;
+/** The grid's persona line and padlocks: ``editorialType.marginNote``. */
+const MARGIN_SIZE = editorialType.marginNote.fontSize;
 /** Screen-state copy and the celebration: ``editorialType.note``. */
 const NOTE_SIZE = editorialType.note.fontSize;
 /** Tappable text and the lead line of a block: the interactive floor. */
@@ -207,11 +209,11 @@ const styles = StyleSheet.create({
   },
   personaText: {
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     textAlign: 'right',
   },
   lineText: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     textAlign: 'right',
   },
 
@@ -306,7 +308,7 @@ const styles = StyleSheet.create({
   },
   arrowLabelText: {
     fontWeight: '700',
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: ink.soft,
     flexShrink: 1,
   },
@@ -353,13 +355,13 @@ const styles = StyleSheet.create({
     paddingLeft: WAVE_KEEP_OUT,
   },
   lockText: {
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     color: ink.muted,
   },
   // Left-column padlock: pinned to the far left of the stage block's row,
   // vertically centered by the row's alignItems.
   lockLeft: {
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     color: ink.muted,
     marginRight: spacing(0.5),
   },
@@ -373,6 +375,8 @@ const styles = StyleSheet.create({
   // reads away from the wave strand.
   unlockTimeline: {
     flexShrink: 1,
+    // Still off the ramp: at 13px this copy outgrows its half-lane at 390 and
+    // meets the wave, so it moves with the fitted grid text (#2960 follow-up).
     fontSize: 9,
     color: ink.muted,
     paddingHorizontal: spacing(0.25),
