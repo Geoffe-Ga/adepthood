@@ -1,6 +1,7 @@
 /* global describe, it, expect */
 import {
   insideBox,
+  insidePill,
   insideViewport,
   STROKE_CLEARANCE_TOLERANCE_PX,
   strokeHits,
@@ -177,5 +178,46 @@ describe('within', () => {
     expect(within(record(11), SUBTREE)).toBe(true);
     expect(within(record(13), SUBTREE)).toBe(true);
     expect(within(record(14), SUBTREE)).toBe(false);
+  });
+});
+
+describe('insidePill', () => {
+  // A 100x40 pill with a 2px rim: the glass inside is 96x36, its ends are
+  // half-discs of radius 18 centred at x 20 and x 80 on the midline y 20.
+  const PILL: Box = { x: 0, y: 0, w: 100, h: 40 };
+  const RIM = 2;
+  const RADIUS = 18;
+  const LEFT_CENTRE_X = PILL.x + RIM + RADIUS;
+  const MID = PILL.y + PILL.h / 2;
+  const SLIVER = 5;
+
+  it('holds a box along the straight run, flush with the rim', () => {
+    const box = { x: LEFT_CENTRE_X, y: PILL.y + RIM, w: 60, h: SLIVER };
+    expect(insidePill(box, PILL, RIM, TOLERANCE)).toBe(true);
+  });
+
+  it('refuses a box whose top corner reaches past the rounded end', () => {
+    // (5, 2) sits hypot(15, 18) = 23.4 from the left end's centre.
+    const box = { x: PILL.x + SLIVER, y: PILL.y + RIM, w: 60, h: SLIVER };
+    expect(insidePill(box, PILL, RIM, TOLERANCE)).toBe(false);
+  });
+
+  it('forgives exactly the tolerance past the arc and no more', () => {
+    const at = (x: number): Box => ({ x, y: MID, w: SLIVER, h: 0 });
+    expect(insidePill(at(LEFT_CENTRE_X - RADIUS - TOLERANCE), PILL, RIM, TOLERANCE)).toBe(true);
+    expect(
+      insidePill(at(LEFT_CENTRE_X - RADIUS - TOLERANCE - HALF_STROKE), PILL, RIM, TOLERANCE),
+    ).toBe(false);
+  });
+
+  it('measures from inside the rim, not the outer edge of the pill', () => {
+    const onRim = { x: LEFT_CENTRE_X, y: PILL.y, w: 60, h: SLIVER };
+    expect(insidePill(onRim, PILL, RIM, TOLERANCE)).toBe(false);
+    expect(insidePill(onRim, PILL, 0, TOLERANCE)).toBe(true);
+  });
+
+  it('checks the far end too, not only the left one', () => {
+    const box = { x: PILL.x + PILL.w - SLIVER - 60, y: PILL.y + RIM, w: 60, h: SLIVER };
+    expect(insidePill(box, PILL, RIM, TOLERANCE)).toBe(false);
   });
 });

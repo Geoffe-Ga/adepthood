@@ -1,6 +1,8 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 
+import { StyleSheet } from 'react-native';
+
 import { STAGE_ORDER } from '../../../design/tokens';
 import {
   focusScrollOffset,
@@ -10,12 +12,18 @@ import {
   inertialStageTarget,
   lensCaption,
   lensCenterForStage,
+  LENS_BORDER_WIDTH,
+  LENS_CAPTION_STACK,
+  lensCaptionWidth,
   lensFrame,
+  LENS_MAX_HEIGHT,
+  LENS_MIN_HEIGHT,
   lensStageIdentity,
   MAGNIFICATION,
   magnifierTransform,
   nearestStage,
 } from '../magnifierGeometry';
+import styles from '../Map.styles';
 import { STAGE_DISPLAY, TITLE_BY_STAGE } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
@@ -38,9 +46,9 @@ describe('lensFrame', () => {
   });
 
   it('keeps the pill height within its band-derived bounds', () => {
-    // 600px / 10 stages = 60px band; 85% of it (51) sits below the 56 floor.
+    // 600px / 10 stages = 60px band; 85% of it (51) sits below the floor.
     const frame = lensFrame(GRID_WIDTH, GRID_HEIGHT);
-    expect(frame.height).toBe(56);
+    expect(frame.height).toBe(LENS_MIN_HEIGHT);
     // A very tall grid caps at the max height instead of growing panel-sized.
     const tall = lensFrame(GRID_WIDTH, 4000);
     expect(tall.height).toBe(84);
@@ -52,6 +60,78 @@ describe('lensFrame', () => {
   it('reports a full pill radius (half the height)', () => {
     const frame = lensFrame(GRID_WIDTH, GRID_HEIGHT);
     expect(frame.radius).toBe(frame.height / 2);
+  });
+});
+
+/**
+ * The serif ramp's own leading (``type(width)`` sets ``round(size * 1.25)``):
+ * a lens line set tighter than this would clip, so its size cannot grow
+ * without its line height, and so without the stack below.
+ */
+const LEADING_FLOOR = 1.25;
+
+type LensBox = { fontSize?: number; lineHeight?: number };
+type LensSpacing = { borderWidth?: number; paddingVertical?: number; marginBottom?: number };
+
+const flat = <T>(style: unknown): T => StyleSheet.flatten(style as object) as T;
+
+describe('the lens floor holds its caption stack (#2960)', () => {
+  const LENS_TEXT = ['youAreHereText', 'magnifierHeadline', 'magnifierDetail'] as const;
+  const stackFromStyles = (): number => {
+    const chip = flat<LensSpacing>(styles.youAreHere);
+    return (
+      2 * (chip.paddingVertical as number) +
+      (chip.marginBottom as number) +
+      LENS_TEXT.reduce((sum, key) => sum + (flat<LensBox>(styles[key]).lineHeight as number), 0)
+    );
+  };
+
+  it.each(['magnifierHeadline', 'magnifierDetail'] as const)(
+    'sets %s on an explicit line height no tighter than the ramp',
+    (key) => {
+      const { fontSize, lineHeight } = flat<LensBox>(styles[key]);
+      expect(lineHeight).toBeGreaterThanOrEqual((fontSize as number) * LEADING_FLOOR);
+    },
+  );
+
+  it('sets the all-caps chip on a line exactly its size: capitals hang no descenders', () => {
+    const { fontSize, lineHeight } = flat<LensBox>(styles.youAreHereText);
+    expect(lineHeight).toBe(fontSize);
+  });
+
+  it('declares the caption stack the styles actually lay out', () => {
+    expect(stackFromStyles()).toBe(LENS_CAPTION_STACK);
+    expect(flat<LensSpacing>(styles.magnifier).borderWidth).toBe(LENS_BORDER_WIDTH);
+  });
+
+  it('gives the smallest pill room past its stack, so the outer rows clear the rounded ends', () => {
+    expect(LENS_MIN_HEIGHT).toBeGreaterThan(LENS_CAPTION_STACK + 2 * LENS_BORDER_WIDTH);
+    expect(LENS_MIN_HEIGHT).toBeLessThanOrEqual(LENS_MAX_HEIGHT);
+    expect(lensFrame(GRID_WIDTH, GRID_HEIGHT).height).toBe(LENS_MIN_HEIGHT);
+  });
+});
+
+describe('lensCaptionWidth', () => {
+  it('narrows the caption to the glass chord at the outer rows of its stack', () => {
+    const frame = lensFrame(GRID_WIDTH, GRID_HEIGHT);
+    const width = lensCaptionWidth(frame);
+    const radius = (frame.height - 2 * LENS_BORDER_WIDTH) / 2;
+    const straightRun = frame.width - frame.height;
+    // The caption's outer corners sit exactly on the rounded end's arc.
+    expect(((width - straightRun) / 2) ** 2 + (LENS_CAPTION_STACK / 2) ** 2).toBeCloseTo(
+      radius ** 2,
+    );
+    expect(width).toBeGreaterThan(straightRun);
+    expect(width).toBeLessThan(frame.width - 2 * LENS_BORDER_WIDTH);
+  });
+
+  it('falls back to the straight run when the pill is no taller than its stack', () => {
+    const frame = { width: 200, height: LENS_CAPTION_STACK, radius: LENS_CAPTION_STACK / 2 };
+    expect(lensCaptionWidth(frame)).toBe(frame.width - frame.height);
+  });
+
+  it('never reports a negative width for a pill narrower than it is tall', () => {
+    expect(lensCaptionWidth({ width: 10, height: 80, radius: 40 })).toBe(0);
   });
 });
 

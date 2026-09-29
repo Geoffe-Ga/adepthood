@@ -16,6 +16,13 @@ import {
   uiType,
 } from '../../design/tokens';
 
+import {
+  LENS_BORDER_WIDTH,
+  LENS_CAPTION_LINE_HEIGHT,
+  LENS_CHIP_INSET,
+  LENS_CHIP_LINE_HEIGHT,
+  LENS_HEADLINE_LINE_HEIGHT,
+} from './magnifierGeometry';
 import { GRID_COLUMN_FLEX } from './mapLayout';
 
 // --- Grid weights for the three cells of every stage row -------------------
@@ -242,7 +249,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    borderWidth: 2,
+    borderWidth: LENS_BORDER_WIDTH,
     borderColor: accent.strong,
     backgroundColor: colors.mystical.glowLight,
     alignItems: CENTER,
@@ -261,30 +268,34 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     backgroundColor: colors.mystical.transparentLight,
   },
+  // Width set inline to the glass chord (lensCaptionWidth), which already
+  // keeps every line clear of the rim and the rounded ends.
   magnifierCaption: {
     alignItems: CENTER,
-    paddingHorizontal: spacing(1),
   },
   magnifierHeadline: {
     fontFamily: editorialType.serif,
     fontSize: ACTION_SIZE,
+    lineHeight: LENS_HEADLINE_LINE_HEIGHT,
     fontWeight: '700',
     color: ink.primary,
   },
   magnifierDetail: {
     fontSize: CAPTION_SIZE,
+    lineHeight: LENS_CAPTION_LINE_HEIGHT,
     color: ink.soft,
   },
   // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
-    marginBottom: spacing(0.25),
-    paddingVertical: spacing(0.25),
+    marginBottom: LENS_CHIP_INSET,
+    paddingVertical: LENS_CHIP_INSET,
     paddingHorizontal: spacing(0.5),
     borderRadius: radius.sm,
     backgroundColor: accent.strong,
   },
   youAreHereText: {
     fontSize: CAPTION_SIZE,
+    lineHeight: LENS_CHIP_LINE_HEIGHT,
     fontWeight: '700',
     color: colors.text.light,
     letterSpacing: 0.5,

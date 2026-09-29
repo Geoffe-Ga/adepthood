@@ -84,6 +84,10 @@ export interface MapMeasurement {
   wave: WaveSample;
   grid: Subtree | null;
   lens: Subtree | null;
+  /** The lens pill's rim width, read from its computed border. */
+  lensRim: number;
+  /** The "YOU ARE HERE" chip's painted box, or null when the lens wears none. */
+  chip: Box | null;
   scroll: ScrollFrame | null;
   hotspots: Hotspot[];
   bands: Band[];
@@ -191,12 +195,16 @@ function collectMap(census: TextRecord[], step: number): MapMeasurement {
   const overflowY = scrollEl === null ? '' : getComputedStyle(scrollEl).overflowY;
   const scrollSubtree =
     overflowY === 'auto' || overflowY === 'scroll' ? subtreeOf('map-scroll') : null;
+  const lensEl = byTestId('map-magnifier');
+  const chipEl = byTestId('you-are-here');
   return {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     census,
     wave: sampleWave(step),
     grid: subtreeOf('map-grid'),
     lens: subtreeOf('map-magnifier'),
+    lensRim: lensEl === null ? 0 : Number.parseFloat(getComputedStyle(lensEl).borderTopWidth),
+    chip: chipEl === null ? null : rectBox(chipEl.getBoundingClientRect()),
     scroll:
       scrollEl === null || scrollSubtree === null
         ? null
@@ -275,6 +283,29 @@ export function insideBox(inner: Box, outer: Box, tolerance: number): boolean {
     inner.x + inner.w <= outer.x + outer.w + tolerance &&
     inner.y + inner.h <= outer.y + outer.h + tolerance
   );
+}
+
+/**
+ * True when every corner of `box` lies on the glass of a horizontal pill: the
+ * `pill` box inset by its `rim`, whose ends are half-discs of half its inner
+ * height. A corner past a rounded end is measured to that end's centre, so a
+ * box can fill the straight run but not the pill's full bounding box.
+ */
+export function insidePill(box: Box, pill: Box, rim: number, tolerance: number): boolean {
+  const radius = (pill.h - 2 * rim) / 2;
+  const centreY = pill.y + pill.h / 2;
+  const leftCentreX = pill.x + rim + radius;
+  const rightCentreX = pill.x + pill.w - rim - radius;
+  const corners: Point[] = [
+    { x: box.x, y: box.y },
+    { x: box.x + box.w, y: box.y },
+    { x: box.x, y: box.y + box.h },
+    { x: box.x + box.w, y: box.y + box.h },
+  ];
+  return corners.every((corner) => {
+    const nearestX = Math.min(Math.max(corner.x, leftCentreX), rightCentreX);
+    return Math.hypot(corner.x - nearestX, corner.y - centreY) <= radius + tolerance;
+  });
 }
 
 /** True when `box` is wholly on screen, forgiving `tolerance` at each edge. */
