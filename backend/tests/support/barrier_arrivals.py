@@ -38,6 +38,11 @@ _T = TypeVar("_T")
 
 _ACTOR: ContextVar[str | None] = ContextVar("barrier_arrival_actor", default=None)
 
+#: Upper bound on how long a competing request may take to reach the barrier.
+#: Generous because it is only ever spent in full on failure: a slow runner uses
+#: what it needs, and a request that skips the barrier fails instead of hanging.
+BARRIER_ARRIVAL_TIMEOUT_SECONDS = 5.0
+
 
 class BarrierArrivals:
     """Record, per labelled request, that it reached one serializer's ``hold``."""

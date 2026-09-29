@@ -30,7 +30,7 @@ from services.account_egress_barrier import account_egress_barrier
 from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
-from tests.support.barrier_arrivals import BarrierArrivals
+from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
 
 _BODY = "I walked by the river and the willow bent without breaking."
 _ESSAY = "A warm letter about beginnings."
@@ -40,12 +40,6 @@ _ESSAY = "A warm letter about beginnings."
 #: *can* proceed will have, short enough that four of these do not lengthen the
 #: suite noticeably.
 _SERIALIZATION_PROBE_SECONDS = 0.05
-
-#: Upper bound on how long a competing request may take to reach the account
-#: egress barrier. Generous because it is only ever spent in full on failure: a
-#: slow runner uses what it needs, and a request that skips the barrier fails
-#: here instead of hanging the suite.
-_BARRIER_ARRIVAL_TIMEOUT_SECONDS = 5.0
 
 
 async def _waited_behind_the_held_dial(
@@ -60,7 +54,7 @@ async def _waited_behind_the_held_dial(
     the product is right about (#2986). A competitor that never reaches the
     barrier within the bound is, by definition, not serialized behind it.
     """
-    if not await arrivals.arrived(actor, within_seconds=_BARRIER_ARRIVAL_TIMEOUT_SECONDS):
+    if not await arrivals.arrived(actor, within_seconds=BARRIER_ARRIVAL_TIMEOUT_SECONDS):
         return False
     try:
         await asyncio.wait_for(asyncio.shield(competitor), timeout=_SERIALIZATION_PROBE_SECONDS)
