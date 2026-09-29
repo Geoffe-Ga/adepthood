@@ -49,18 +49,19 @@ import {
  *      nested `Text` spans are related and excluded.
  *   C. No raw markup -- no visible string carries `**`, `__`, `##` or `[x](`.
  *
- * What is REPORTED, not asserted: the off-ramp font sizes. The legal set is
- * computed from `type(width)`, `editorialType` and `uiType` (pinned to the
- * tokens by `src/design/__tests__/textCensus.test.ts`), and every size a
- * screen sets outside it is printed and written to the JSON. It is not a gate
- * at HEAD because `fontSize:` literals outside the tokens number in the
- * hundreds across dozens of files -- Map sets 8-12px, Course 21 and 48,
- * Settings 22 -- and a gate would red the lane on those screens at its first
- * run. Promoting `off-ramp={}` to an assertion is the exit criterion of the
- * per-screen remediation issues the epic files; until then the number is the
- * evidence. Everything that needs judgement -- one edge, one face per role,
- * scope -- is the summary line's `left edges=` and `faces=` columns and the
- * review step in `prompts/scans/text-order.md`.
+ * What is REPORTED, and asserted only where a screen has been brought onto
+ * the ramp: the off-ramp font sizes. The legal set is computed from
+ * `type(width)`, `editorialType` and `uiType` (pinned to the tokens by
+ * `src/design/__tests__/textCensus.test.ts`), and every size a screen sets
+ * outside it is printed and written to the JSON. It is not a gate everywhere
+ * because `fontSize:` literals outside the tokens still number in the hundreds
+ * across dozens of files -- Course 21 and 48, Settings 22 -- and a gate would
+ * red the lane on those screens. Promoting `off-ramp={}` to an assertion is the
+ * exit criterion of each per-screen remediation issue the epic files, and a
+ * route joins `OFF_RAMP_ASSERTED` when its issue lands: the Map first (#2960).
+ * Until then the number is the evidence. Everything that needs judgement -- one
+ * edge, one face per role, scope -- is the summary line's `left edges=` and
+ * `faces=` columns and the review step in `prompts/scans/text-order.md`.
  *
  * Artifacts land in `e2e/artifacts/text-order/<WxH>/<Route>.{png,json}`
  * (gitignored; CI publishes them as `text-order-census`). The PNG is the
@@ -75,6 +76,12 @@ import {
  */
 
 const ARTIFACT_DIR = join(__dirname, 'artifacts', 'text-order');
+/**
+ * Routes whose every size is on the ramp, so an off-ramp size there is a
+ * regression rather than backlog: the Map since #2960. Every other route stays
+ * report-only until its own remediation issue promotes it.
+ */
+const OFF_RAMP_ASSERTED: ReadonlySet<string> = new Set(['Map']);
 /** Twenty-two routes at two viewports, each a fresh page load plus a screenshot. */
 const WALK_TIMEOUT_MS = 10 * 60_000;
 /**
@@ -147,6 +154,9 @@ function report(viewport: Viewport, route: Route, records: TextRecord[]): void {
     )
     .toEqual([]);
   expect.soft(markup.map(describe), `${where}: raw markup on screen`).toEqual([]);
+  if (OFF_RAMP_ASSERTED.has(route.name)) {
+    expect.soft(offRamp, `${where}: off-ramp font sizes`).toEqual([]);
+  }
 }
 
 async function censusRoute(
