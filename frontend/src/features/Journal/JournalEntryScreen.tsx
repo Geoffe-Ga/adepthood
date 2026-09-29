@@ -4039,6 +4039,7 @@ function EntryExits({
         visible={guard.pending}
         onStay={stay}
         onLeave={guard.leave}
+        released={!ctl.autosave.carryHeld}
         onRetry={ctl.autosave.carryRetryReady ? onRetry : undefined}
       />
     </>

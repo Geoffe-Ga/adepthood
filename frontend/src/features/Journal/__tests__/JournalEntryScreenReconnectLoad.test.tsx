@@ -6,6 +6,8 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { HELD_LEAVE_RELEASED_TITLE, HELD_LEAVE_TITLE } from '../HeldWordsLeaveDialog';
+
 import { captureNetInfoListener, type NetInfoHandle } from './netInfoTestKit';
 
 import type { JournalClassification, JournalMessage } from '@/api';
@@ -942,6 +944,43 @@ describe('reconnect reload of an unloaded entry (#2935)', () => {
       await advance(AUTOSAVE_MS * QUIET_WINDOWS);
 
       expect(updatesCarrying(TYPED)).toEqual([]);
+    });
+
+    it('turns the open leave dialog into a saved note when the escalation puts the words back', async () => {
+      const escalation = deferred<JournalMessage>();
+      mockGet
+        .mockRejectedValueOnce(offlineError())
+        .mockResolvedValueOnce(entry({ classification: 'public' }));
+      mockUpdate.mockReturnValueOnce(escalation.promise);
+      const screen = await openFailed();
+      await typeBody(screen, TYPED);
+      await reconnect();
+      await waitFor(() =>
+        expect(mockUpdate).toHaveBeenCalledWith(7, { classification: 'personal' }),
+      );
+      // Close while the escalation is out: the guard asks, with no Retry (in flight).
+      await pressClose(screen);
+      expect(screen.getByText(HELD_LEAVE_TITLE)).toBeTruthy();
+      expect(screen.queryByTestId('held-leave-retry')).toBeNull();
+
+      await act(async () => {
+        escalation.resolve(entry({ classification: 'personal' }));
+      });
+      await waitFor(() => expect(bodyValue(screen)).toBe(CARRIED_BODY));
+      await advance(AUTOSAVE_MS);
+
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
+      // Nothing waits on a tier any more: no Retry, no waiting note, and the
+      // dialog no longer says the words would be left behind.
+      expect(screen.queryByTestId('held-leave-retry')).toBeNull();
+      expect(screen.queryByTestId('journal-carry-waiting')).toBeNull();
+      expect(screen.queryByText(HELD_LEAVE_TITLE)).toBeNull();
+      expect(screen.getByText(HELD_LEAVE_RELEASED_TITLE)).toBeTruthy();
+
+      fireEvent.press(screen.getByTestId('held-leave-leave'));
+      await advance(AUTOSAVE_MS);
+      expect(nav.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+      expect(updatesCarrying(TYPED)).toHaveLength(1);
     });
 
     it('closes straight away when nothing is held and the page is the stored text', async () => {
