@@ -30,6 +30,13 @@ export interface MarginSlots {
   extent: number;
 }
 
+/**
+ * The top of the note stream, in its own coordinates. Everything above it in
+ * the column -- the no-notes notice, the resonance error -- is not the notes'
+ * to cover, so a passage above this line places its note here instead.
+ */
+const STREAM_TOP = 0;
+
 /** A row's rank among rows of other kinds with the same creation time. */
 const NOTE_RANK = 0;
 const SUGGESTION_RANK = 1;
@@ -108,11 +115,15 @@ export function buildMarginItems(
   return [...head, ...tail.sort(byCreation).map((row) => row.item)];
 }
 
-/** An item's usable anchor top, or ``null`` when it has none to sit beside. */
+/**
+ * An item's usable anchor top, or ``null`` when it has none to sit beside. A
+ * passage above the stream (a banner above the notes pushed the stream past
+ * it) is held at the stream's top, so the note never covers the banner.
+ */
 function anchorTopOf(item: MarginItem, anchorTops: ReadonlyMap<number, number>): number | null {
   if (!item.anchored || !('note' in item)) return null;
   const top = anchorTops.get(item.note.id);
-  return top !== undefined && Number.isFinite(top) ? top : null;
+  return top !== undefined && Number.isFinite(top) ? Math.max(top, STREAM_TOP) : null;
 }
 
 /**

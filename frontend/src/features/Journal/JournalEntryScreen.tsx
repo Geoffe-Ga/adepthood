@@ -3037,18 +3037,24 @@ function JournalMargin({
   const suggestions = ctl.resonance.suggestions;
   const hasVisibleSuggestions = suggestions.some((s) => s.status !== 'dismissed');
   const items = useMarginItems(ctl);
+  // Whatever sits above the notes lives in one head, so when any of it comes
+  // or goes -- and moves the stream without resizing it -- the head's own
+  // layout says so, and the notes are re-measured against their passages.
+  const [headTick, bumpHeadTick] = useReducer((tick: number) => tick + 1, 0);
   return (
     <View
       style={[styles.marginColumn, narrow && styles.marginColumnNarrow]}
       testID="journal-margin-column"
     >
-      <NoNotesNotice message={ctl.resonance.noNotesMessage} />
-      <ResonanceMargin error={ctl.resonance.error} />
+      <View onLayout={bumpHeadTick} testID="journal-margin-head">
+        <NoNotesNotice message={ctl.resonance.noNotesMessage} />
+        <ResonanceMargin error={ctl.resonance.error} />
+      </View>
       {notes.length > 0 || hasVisibleSuggestions ? (
         <MarginStream
           items={items}
           align={!narrow && !ctl.editGate.editMode}
-          layoutTick={layoutTick}
+          layoutTick={layoutTick + headTick}
           acceptedCheckIns={ctl.resonance.acceptedCheckIns}
           userTimezone={ctl.userTimezone}
           onOpen={ctl.modal.onOpenNote}

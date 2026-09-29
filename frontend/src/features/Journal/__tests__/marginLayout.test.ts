@@ -186,6 +186,24 @@ describe('assignMarginSlots', () => {
     expect(slots?.tops).toEqual([20, tail, tail + NOTE_HEIGHT + GAP]);
   });
 
+  it('never lifts a note above the stream, where the banners above it live', () => {
+    // Note 1's passage sits above the stream's top (a banner pushed the stream
+    // down past it): it lands at the top instead, and note 2 clears it.
+    const items = noteItems([1, 2]);
+
+    const slots = assignMarginSlots(
+      items,
+      new Map([
+        [1, -80],
+        [2, 10],
+      ]),
+      heightsFor(items),
+      GAP,
+    );
+
+    expect(slots?.tops).toEqual([0, NOTE_HEIGHT + GAP]);
+  });
+
   it('keeps the flow layout until every slot has a finite height', () => {
     const items = noteItems([1, 2]);
     const anchors = new Map([

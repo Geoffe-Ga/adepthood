@@ -2,7 +2,14 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 
 import { computeMarginSlots } from '../src/features/Journal/computeMarginSlots';
 
-import { backendUrl, bearer, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  backendUrl,
+  bearer,
+  frontendUrl,
+  seedHabit,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 /**
  * Margin notes sit beside the passages they annotate, and stay reachable
@@ -193,4 +200,90 @@ test('margin notes sit beside their passages, apart, and within reach', async ({
   const [narrowFirst, narrowSecond] = narrow.slots;
   if (!narrowFirst || !narrowSecond) throw new Error('both notes must be measured');
   expect(narrowSecond.top).toBeGreaterThanOrEqual(narrowFirst.top + narrowFirst.height);
+});
+
+/** The refused check-off: every accept failure reaches the same margin banner. */
+const ACCEPT_ROUTE = '**/journal/suggestions/*/accept';
+const HABIT = 'Evening swim';
+const HABIT_PASSAGE = `I completed ${HABIT}.`;
+
+/**
+ * Something appearing ABOVE the notes -- here the margin's error banner after a
+ * refused check-off -- moves the stream down without resizing the stream or
+ * the page. The notes must follow their passages, not the stream: a note whose
+ * passage now lies above the stream's top sits at that top, clear of the
+ * banner, instead of hanging under it or over it.
+ */
+/**
+ * A one-note page whose passage is its first line, taller than the margin: the
+ * stub quotes the last sentence, so the note anchors on the habit line while it
+ * is the whole page, and the filler is appended after. Returns the entry and
+ * note ids.
+ */
+async function seedNoteAtTop(page: Page, token: string): Promise<[number, number]> {
+  await seedHabit(page.request, token, HABIT);
+  const created = await page.request.post(`${backendUrl()}/journal/`, {
+    headers: bearer(token),
+    data: { title: 'The swim', message: HABIT_PASSAGE },
+  });
+  expect(created.ok()).toBe(true);
+  const entryId = ((await created.json()) as { id: number }).id;
+  const [note] = await resonate(page.request, token, entryId);
+  expect(note?.anchor_text).toBe(HABIT_PASSAGE);
+  await patchEntry(page.request, token, entryId, { message: `${HABIT_PASSAGE}\n\n${FILLER}` });
+  await patchEntry(page.request, token, entryId, { status: 'finished' });
+  return [entryId, note?.id ?? 0];
+}
+
+/** The one note's passage top, slot top and stream top, in viewport px. */
+async function loneNote(
+  page: Page,
+  noteId: number,
+): Promise<{ anchor: number; slot: number; stream: number }> {
+  const measured = await geometry(page, [noteId]);
+  const [anchor] = measured.anchors;
+  const [slot] = measured.slots;
+  if (anchor === undefined || slot === undefined) throw new Error('the note must be measured');
+  return { anchor, slot: slot.top, stream: measured.streamTop };
+}
+
+test('a banner above the margin notes leaves each note beside its passage', async ({ page }) => {
+  await page.setViewportSize(WIDE_VIEWPORT);
+  const email = await signUp(page, 'journal-margin-banner');
+  const token = await tokenFor(page.request, email);
+  const [entryId, noteId] = await seedNoteAtTop(page, token);
+  await page.route(ACCEPT_ROUTE, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'boom' }),
+    });
+  });
+
+  await openEntry(page, entryId);
+  await expect(page.getByTestId(`margin-slot-note-${String(noteId)}`)).toHaveCSS(
+    'position',
+    'absolute',
+  );
+  const before = await loneNote(page, noteId);
+  expect(Math.abs(before.slot - before.anchor)).toBeLessThanOrEqual(LAYOUT_SLACK_PX);
+
+  await page.getByRole('button', { name: `Check off completed ${HABIT}`, exact: true }).click();
+  const banner = page.getByTestId('journal-resonance-error');
+  await expect(banner).toBeVisible();
+  const bannerBox = await banner.boundingBox();
+  if (bannerBox === null) throw new Error('the banner has no box');
+
+  // The note settles where its passage and the moved stream say.
+  await expect
+    .poll(async () => {
+      const now = await loneNote(page, noteId);
+      return Math.abs(now.slot - Math.max(now.anchor, now.stream));
+    })
+    .toBeLessThanOrEqual(LAYOUT_SLACK_PX);
+  const after = await loneNote(page, noteId);
+  // The banner pushed the stream past the passage: the case the note must be
+  // held at the stream's top for, rather than lifted over the banner.
+  expect(after.anchor).toBeLessThan(after.stream);
+  expect(after.slot).toBeGreaterThanOrEqual(bannerBox.y + bannerBox.height - LAYOUT_SLACK_PX);
 });

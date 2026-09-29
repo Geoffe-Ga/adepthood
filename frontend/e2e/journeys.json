@@ -467,7 +467,7 @@
   },
   {
     "id": "journal.margin-notes-sit-beside-their-passages",
-    "description": "On a wide read view (>= 600px) each margin note sits beside the passage it annotates rather than stacking from the top of the column: a long page given two resonance passes (the stub quotes the last sentence, so the second pass follows an appended sentence) opens with both notes far down, the first level with its highlight and each at the top computeMarginSlots gives its measured anchor, within a pixel. The two passages share a line, so the second note is pushed below the first by at least the margin gap, in document order. The margin column grows to hold the lowest note, which hangs past the end of the writing, and after scrolling journal-page-scroll to its end that note is wholly on screen -- the column stays inside the page's one shared scroll surface, never a scroller of its own. At 390px the margin stacks under the writing and keeps its document-order flow, no slot absolutely positioned. Pinned only by Jest: completion suggestions and undrawn (stale or overlap-skipped) notes trailing the anchored ones in creation order, a non-finite measurement trailing, the flow layout until every slot is measured, edit mode staying in flow, and a re-measure on the page's own layout. Not claimed: native alignment (native keeps the flow layout; onTextLayout measurement is a follow-up) and body-to-margin scroll sync or tap-to-scroll, which belong to #2893.",
+    "description": "On a wide read view (>= 600px) each margin note sits beside the passage it annotates rather than stacking from the top of the column: a long page given two resonance passes (the stub quotes the last sentence, so the second pass follows an appended sentence) opens with both notes far down, the first level with its highlight and each at the top computeMarginSlots gives its measured anchor, within a pixel. The two passages share a line, so the second note is pushed below the first by at least the margin gap, in document order. The margin column grows to hold the lowest note, which hangs past the end of the writing, and after scrolling journal-page-scroll to its end that note is wholly on screen -- the column stays inside the page's one shared scroll surface, never a scroller of its own. At 390px the margin stacks under the writing and keeps its document-order flow, no slot absolutely positioned. A refused check-off (the accept route answered 500) raises the margin's error banner above the notes, moving the stream without resizing it: the note is re-placed against its passage, and since the banner pushed the stream past that passage the note is held at the stream's top, clear of the banner. Pinned only by Jest: completion suggestions and undrawn (stale or overlap-skipped) notes trailing the anchored ones in creation order, a non-finite measurement trailing, the flow layout until every slot is measured, edit mode staying in flow, and a re-measure on the page's own layout. Not claimed: native alignment (native keeps the flow layout; onTextLayout measurement is a follow-up) and body-to-margin scroll sync or tap-to-scroll, which belong to #2893.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -477,9 +477,11 @@
         "POST /journal/{entry_id}/resonance",
         "GET /journal/",
         "GET /journal/{entry_id}",
-        "GET /journal/{entry_id}/marginalia"
+        "GET /journal/{entry_id}/marginalia",
+        "POST /habits/",
+        "GET /journal/{entry_id}/suggestions"
       ],
-      "tables": ["journalentry", "marginalia"]
+      "tables": ["journalentry", "marginalia", "habit", "completionsuggestion"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-margin-alignment.browser.e2e.test.ts"

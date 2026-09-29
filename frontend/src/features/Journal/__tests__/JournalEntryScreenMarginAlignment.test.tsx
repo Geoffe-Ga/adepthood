@@ -212,6 +212,29 @@ describe('JournalEntryScreen -- margin notes beside their passages (#2418)', () 
     expect(SLOT_IDS.map((id) => flat(view, id).top)).toEqual([400, 700, 700 + NOTE_HEIGHT + GAP]);
   });
 
+  it('re-measures when something above the notes appears, though nothing resizes', async () => {
+    const view = await withWidth(1280, async () => {
+      const rendered = await renderWithNotes();
+      fireLayouts(rendered);
+      // A banner mounts above the stream: the stream moves down, so every
+      // passage now sits higher relative to it -- but only the head grew.
+      mockMeasure.mockReturnValue(
+        new Map([
+          [1, 20],
+          [2, 300],
+        ]),
+      );
+      const head = rendered.getByTestId('journal-margin-head');
+      // Its own handler, not one it would bubble up to: fireEvent walks up to
+      // the page's onLayout otherwise, and a head nobody observes would pass.
+      expect(head.props.onLayout).toEqual(expect.any(Function));
+      fireEvent(head, 'layout', layout(OFFER_HEIGHT));
+      return rendered;
+    });
+
+    expect(SLOT_IDS.map((id) => flat(view, id).top)).toEqual([20, 300, 300 + NOTE_HEIGHT + GAP]);
+  });
+
   it('drops back to the flow when a wide page turns narrow after aligning', async () => {
     const rn = require('react-native');
     const spy = jest
