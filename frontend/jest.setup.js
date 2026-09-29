@@ -276,3 +276,16 @@ jest.mock('react-test-renderer', () => {
   };
   return { ...actual, create };
 });
+
+// One wall-clock budget for every `waitFor` / `findBy*`, instead of RNTL's
+// one-second default (#2943). The value and the measurements behind it live
+// in `src/testing/asyncBudget.ts`, where `asyncBudget.test.tsx` checks it is
+// applied and stays below Jest's test timeout; no test file sets its own.
+//
+// RNTL's config module is required directly rather than through the package
+// entry: it has no dependencies, so this loads neither RNTL's renderer nor
+// React Native before each test file's own hoisted `jest.mock` calls run. It
+// is the same module instance the test file's RNTL import reads from.
+require('@testing-library/react-native/build/config').configure({
+  asyncUtilTimeout: require('./src/testing/asyncBudget').ASYNC_UTIL_TIMEOUT_MS,
+});
