@@ -12,8 +12,8 @@ on:
       # and ~450 Jest suites) into PRs with no frontend change -- see the
       # .pre-commit-config.yaml note below. So only the security-relevant script
       # is listed, not all of scripts/frontend/: audit-gate.mjs is what reads
-      # .audit-allowlist.json and enforces the 2026-11-08 expiry on the two
-      # image-size advisories, and it was previously unguarded by any CI at all.
+      # .audit-allowlist.json and enforces the hard expiry on every allowlisted
+      # advisory, and it was previously unguarded by any CI at all.
       # A tweak to lint.sh or format.sh still triggers nothing, which is the
       # existing tradeoff kept intact.
       - "scripts/frontend/audit-gate.mjs"
@@ -26,8 +26,8 @@ on:
       # and ~450 Jest suites) into PRs with no frontend change -- see the
       # .pre-commit-config.yaml note below. So only the security-relevant script
       # is listed, not all of scripts/frontend/: audit-gate.mjs is what reads
-      # .audit-allowlist.json and enforces the 2026-11-08 expiry on the two
-      # image-size advisories, and it was previously unguarded by any CI at all.
+      # .audit-allowlist.json and enforces the hard expiry on every allowlisted
+      # advisory, and it was previously unguarded by any CI at all.
       # A tweak to lint.sh or format.sh still triggers nothing, which is the
       # existing tradeoff kept intact.
       - "scripts/frontend/audit-gate.mjs"
