@@ -69,6 +69,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-live-edit-anchors.browser.e2e.test.ts',
   'journal-live-markdown.browser.e2e.test.ts',
   'journal-lost-answer.browser.e2e.test.ts',
+  'journal-margin-alignment.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
