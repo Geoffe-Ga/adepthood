@@ -63,7 +63,7 @@ import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExpl
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
-import { useResonance } from './useResonance';
+import { PAGE_NOT_SAVED, type PassFlushResult, useResonance } from './useResonance';
 import { useResonanceExplainer } from './useResonanceExplainer';
 import {
   useReconnectRetry,
@@ -450,6 +450,14 @@ interface AutosaveApi {
    * id alone would vouch for words the server does not hold.
    */
   flushDurable: () => Promise<number | null>;
+  /**
+   * Persist the latest text for a resonance pass: the entry id when the text is
+   * durable, ``null`` for an empty new page, and ``PAGE_NOT_SAVED`` when the write
+   * did not land -- so a pass never reads, or charges for, the server's older
+   * copy, and the margin never tells a writer whose save failed to write more
+   * (#2980; the durable rule is #2885's ``flushDurable``).
+   */
+  flushForPass: () => Promise<PassFlushResult>;
   /** Persist only if needed and report durable success independently of an id. */
   flushForExit: () => Promise<boolean>;
   /**
@@ -1211,6 +1219,7 @@ function useBoundWriters(
 ): {
   flushNow: () => Promise<number | null>;
   flushDurableNow: () => Promise<number | null>;
+  flushForPassNow: () => Promise<PassFlushResult>;
   flushForExitNow: () => Promise<boolean>;
   finishNow: () => Promise<number>;
 } {
@@ -1221,6 +1230,12 @@ function useBoundWriters(
   const flushDurableNow = useCallback(async () => {
     const result = await flush(titleRef.current, bodyRef.current);
     return result.durable ? result.entryId : null;
+  }, [flush, titleRef, bodyRef]);
+  // Durability is checked before the id: a failed create has no id yet, and it
+  // is still an unsaved page rather than an empty one.
+  const flushForPassNow = useCallback(async (): Promise<PassFlushResult> => {
+    const result = await flush(titleRef.current, bodyRef.current);
+    return result.durable ? result.entryId : PAGE_NOT_SAVED;
   }, [flush, titleRef, bodyRef]);
   const flushForExitNow = useCallback(async () => {
     for (;;) {
@@ -1240,7 +1255,7 @@ function useBoundWriters(
     adoptStoredBody(await settleStoredBody(finished, sent));
     return finished.id;
   }, [finish, titleRef, bodyRef, adoptStoredBody, settleStoredBody]);
-  return { flushNow, flushDurableNow, flushForExitNow, finishNow };
+  return { flushNow, flushDurableNow, flushForPassNow, flushForExitNow, finishNow };
 }
 
 /** Referentially-stable change handlers; each save reads the other field's ref. */
@@ -1572,6 +1587,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   onChangeBody: (_next: string) => void;
   flush: () => Promise<number | null>;
   flushDurable: () => Promise<number | null>;
+  flushForPass: () => Promise<PassFlushResult>;
   flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
 }
@@ -1636,13 +1652,8 @@ function useAutosaveBindings(
     entry.setBody,
   );
   const adoptStoredBody = useAdoptStoredBody(entry.bodyRef, entry.setBody);
-  const { flushNow, flushDurableNow, flushForExitNow, finishNow } = useBoundWriters(
-    saving.flush,
-    saving.finish,
-    entry.titleRef,
-    entry.bodyRef,
-    adoptStoredBody,
-  );
+  const { flushNow, flushDurableNow, flushForPassNow, flushForExitNow, finishNow } =
+    useBoundWriters(saving.flush, saving.finish, entry.titleRef, entry.bodyRef, adoptStoredBody);
   const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
     entry,
     saving.changeClassification,
@@ -1657,6 +1668,7 @@ function useAutosaveBindings(
     onChangeBody,
     flush: flushNow,
     flushDurable: flushDurableNow,
+    flushForPass: flushForPassNow,
     flushForExit: flushForExitNow,
     finish: finishNow,
     ...choices,
@@ -2820,7 +2832,7 @@ function useEntryEditGate(
  * it -- a late-night check-off would otherwise land on the wrong day. Given its
  * own hook so the controller reads one line here, as it does at every other seam.
  */
-function useEntryResonance(routeEntryId: number | null, flush: () => Promise<number | null>) {
+function useEntryResonance(routeEntryId: number | null, flush: () => Promise<PassFlushResult>) {
   const { userTimezone } = useAuth();
   // The zone is handed back as well as in: the margin's offer cards name the
   // day their accept will log against, and that has to be the same clock this
@@ -2848,7 +2860,7 @@ interface ResonanceSeamInput {
  * gate here rather than have to notice it among the controller's other seams.
  */
 function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
-  const { resonance, userTimezone } = useEntryResonance(routeEntryId, autosave.flush);
+  const { resonance, userTimezone } = useEntryResonance(routeEntryId, autosave.flushForPass);
   const explainer = useResonanceExplainer(resonance.requestResonance);
   const gate = deriveResonanceGate({
     // A photograph-capture handoff (justSaved) offers resonance immediately,

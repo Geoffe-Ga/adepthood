@@ -38,7 +38,29 @@ import { habitManager } from '@/features/Habits/services/habitManager';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 import { useHabitStore } from '@/store/useHabitStore';
 
-const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
+/** The margin's answer when there is truly nothing on the page to resonate with. */
+export const EMPTY_BODY_MESSAGE = 'Write a little first, then ask for its resonance.';
+
+/**
+ * What a pass's flush answers when the page has words but the latest write of
+ * them did not land (offline, 5xx, a failed create). Distinct from ``null``
+ * (nothing to save) so the writer is never told to "write a little first"
+ * after writing, and distinct from an id so no pass reads -- and charges for --
+ * the older copy the server still holds (#2980).
+ */
+export const PAGE_NOT_SAVED = 'unsaved' as const;
+
+/** A pass's flush: the durable entry id, ``null`` for an empty page, or unsaved. */
+export type PassFlushResult = number | null | typeof PAGE_NOT_SAVED;
+
+/**
+ * The margin's answer when the save did not land. The footer's "Couldn't save"
+ * and Retry still own the save itself; this only says why no pass ran, and that
+ * nothing was spent on it.
+ */
+export const UNSAVED_PAGE_MESSAGE =
+  "Your latest words haven't saved yet, so resonance would read an older copy. Once they save, ask again — nothing was spent.";
+
 const completionsCheckedAfterResonanceError = (reason: string): string =>
   `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits; you can try resonance again whenever you like.`;
 const completionsUncheckedAfterResonanceError = (reason: string): string =>
@@ -84,8 +106,12 @@ interface MarginErrorApi {
 
 export interface UseResonanceArgs {
   routeEntryId: number | null;
-  /** Persist the latest text and resolve to the entry id (from the writing surface). */
-  flush: () => Promise<number | null>;
+  /**
+   * Persist the latest text and resolve to the entry id -- only when that text
+   * is durable on the server. ``null`` means the page is empty; ``PAGE_NOT_SAVED``
+   * means the write did not land, so no pass may run over the stored copy (#2980).
+   */
+  flush: () => Promise<PassFlushResult>;
   /**
    * The auth-hydrated IANA zone, threaded as every ``loadHabits`` caller
    * threads it: an accepted habit's refresh buckets "today" by this, and the
@@ -403,7 +429,7 @@ function useLatestPassState(): LatestPassState {
 }
 
 interface GeneratePassDeps {
-  flush: () => Promise<number | null>;
+  flush: () => Promise<PassFlushResult>;
   setMarginalia: Dispatch<SetStateAction<Marginalia[]>>;
   mergeFromGenerate: (_incoming: CompletionSuggestion[]) => void;
   latestPass: Pick<LatestPassState, 'clear' | 'receive'>;
@@ -487,6 +513,24 @@ function generateForPayer(entryId: number, apiKey?: string | null) {
     : resonance.generate(entryId, undefined, apiKey);
 }
 
+/**
+ * The entry id a pass may run over, or ``null`` after saying why it may not.
+ *
+ * Compared by identity, never truthiness: an unsaved page and an empty one are
+ * different complaints, and only a durable id reaches the charged call.
+ */
+function passEntryId(flushed: PassFlushResult, report: (_message: string) => void): number | null {
+  if (flushed === PAGE_NOT_SAVED) {
+    report(UNSAVED_PAGE_MESSAGE);
+    return null;
+  }
+  if (flushed === null) {
+    report(EMPTY_BODY_MESSAGE);
+    return null;
+  }
+  return flushed;
+}
+
 /** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const { flush, setMarginalia, mergeFromGenerate, latestPass, reportPassError, clearError } = deps;
@@ -509,11 +553,8 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       clearLatestPass();
       let entryId: number | null = null;
       try {
-        entryId = await flush();
-        if (entryId == null) {
-          reportPassError(EMPTY_BODY_MESSAGE);
-          return 'failed';
-        }
+        entryId = passEntryId(await flush(), reportPassError);
+        if (entryId == null) return 'failed';
         const result = await generateForPayer(entryId, apiKey);
         setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
         mergeFromGenerate(result.suggestions);
