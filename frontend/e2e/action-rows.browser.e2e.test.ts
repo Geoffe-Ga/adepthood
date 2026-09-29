@@ -114,6 +114,37 @@ const SKIPPED_BUTTONS: readonly ButtonSkip[] = [
   },
 ];
 
+/**
+ * Controls a route must show before it is measured, beyond its anchor. The
+ * anchor says the screen has arrived; a band that fetches its own state after
+ * mount can arrive a frame or a second later, and a sweep that measured
+ * whichever came first would hold that band to the rules only on the runs
+ * where it happened to be quicker (#2860: the voice-readiness band's open area
+ * ran under its own corner X, and the sweep saw it one run in several).
+ */
+const SETTLES_ON: Readonly<Record<string, readonly string[]>> = {
+  Journal: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
+};
+
+/**
+ * The readiness the shelf's voice-readiness band is served during the walk: a
+ * not-yet-consented account, the state that shows the band. A lane account is
+ * in that state already, but the band's presence is the point of the check,
+ * so it is pinned here rather than left to whatever the seed happens to leave.
+ * The sentence is the server's own `not_consented` copy in length and shape.
+ */
+const SPEAKING_READINESS = {
+  ready: false,
+  state: 'not_consented',
+  message:
+    'Right now your reflections are drawn from your last few days of writing. Sorting ' +
+    'your journal into your own corpus is a separate decision, and it is yours to make ' +
+    'whenever you like — say yes and everything you have already put down gets sorted ' +
+    'too. Perfectly fine to leave as it is.',
+  grounding_source: 'recent_entries',
+  classified_fragment_count: 0,
+} as const;
+
 /** Screens the text census does not walk (yet) that this sweep does. */
 const EXTRA_ROUTES: readonly Route[] = [
   {
@@ -194,6 +225,9 @@ const names = (pairs: Array<[ButtonRecord, ButtonRecord]>): string[][] =>
 async function reach(page: Page, route: Route, context: WalkContext): Promise<string | null> {
   try {
     await openRoute(page, route, context);
+    for (const testId of SETTLES_ON[route.name] ?? []) {
+      await expect(page.getByTestId(testId).first()).toBeVisible();
+    }
     return null;
   } catch (error: unknown) {
     return error instanceof Error ? error.message : String(error);
@@ -310,6 +344,14 @@ test('every button on every route stays clear of the others, inside the viewport
   // The HTTP-cache hazard `text-order.browser.e2e.test.ts` records: routing a
   // request disables Chromium's cache for it, and nothing else changes.
   await page.route(`${backendUrl()}/**`, (route) => route.continue());
+  // Registered after the catch-all, so it wins for this one path (Playwright
+  // tries the most recently added handler first). The real response is still
+  // fetched so its CORS headers carry over; only the body is pinned.
+  await page.route(`${backendUrl()}/corpus/voice-readiness`, async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    return route.fulfill({ response, json: SPEAKING_READINESS });
+  });
   const context = await seedCensusAccount(page.request, await tokenFor(page.request, email));
 
   for (const viewport of VIEWPORTS) {

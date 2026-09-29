@@ -7,7 +7,9 @@
 // npm audit that failed for a reason unrelated to vulnerabilities.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { advisoryReport, evaluate, EXIT } from "./audit-gate.mjs";
 
@@ -170,4 +172,171 @@ test("string `via` entries (transitive pointers, not advisories) are ignored", (
   const report = { vulnerabilities: { glob: { via: ["minimatch"] } } };
 
   assert.equal(advisoryReport(report).size, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Committed-state invariants (#2159)
+//
+// image-size (GHSA-w3rx-r6r6-pgpr, GHSA-5p2g-fcmc-qvqq) was allowlisted because
+// metro <= 0.84.4 declared it. metro 0.84.5+ dropped the dependency, the
+// lockfile moved the metro family forward, and both entries were deleted. These
+// tests read the committed files directly -- never through the gate's
+// loadAllowlist(), which falls back to [] on a missing or corrupt file -- so the
+// edge cannot quietly return and the dead suppressions cannot quietly come back.
+
+const IMAGE_SIZE = "image-size";
+const METRO = "metro";
+const METRO_SIBLING_PREFIX = "metro-";
+const GHSA_IMAGE_SIZE_ICNS = "GHSA-w3rx-r6r6-pgpr";
+const GHSA_IMAGE_SIZE_JXL_HEIF = "GHSA-5p2g-fcmc-qvqq";
+const IMAGE_SIZE_ADVISORIES = new Set([GHSA_IMAGE_SIZE_ICNS, GHSA_IMAGE_SIZE_JXL_HEIF]);
+const IMAGE_SIZE_ISSUE = 2159;
+/** metro plus its 13 exact-pinned metro-* siblings, in each resolved copy. */
+const METRO_FAMILY_SIZE = 14;
+const LOCK_KEY_SEPARATOR = "node_modules/";
+const LOCKFILE_PATH = fileURLToPath(new URL("../../frontend/package-lock.json", import.meta.url));
+const ALLOWLIST_PATH = fileURLToPath(new URL("../../frontend/.audit-allowlist.json", import.meta.url));
+
+/** Lockfile `packages` keys whose installed package name satisfies `predicate`. */
+function lockPackageKeysNamed(lock, predicate) {
+  return Object.keys(lock.packages).filter((key) =>
+    predicate(key.split(LOCK_KEY_SEPARATOR).pop()),
+  );
+}
+
+function isMetroFamily(name) {
+  return name === METRO || name.startsWith(METRO_SIBLING_PREFIX);
+}
+
+/**
+ * Throw unless the lock resolves at least one full metro family and no metro
+ * or metro-* entry declares image-size. An empty family fails too, so a broken
+ * predicate cannot make the check pass vacuously.
+ */
+function assertMetroFamilyImageSizeFree(lock) {
+  const family = lockPackageKeysNamed(lock, isMetroFamily);
+  assert.ok(
+    family.length >= METRO_FAMILY_SIZE,
+    `expected >= ${METRO_FAMILY_SIZE} metro-family lockfile entries, found ${family.length}`,
+  );
+  const offenders = family
+    .filter((key) => lock.packages[key].dependencies?.[IMAGE_SIZE] !== undefined)
+    .map((key) => `${key}@${lock.packages[key].version}`);
+  assert.deepEqual(
+    offenders,
+    [],
+    `metro-family entries declare ${IMAGE_SIZE} again (see #${IMAGE_SIZE_ISSUE})`,
+  );
+}
+
+/**
+ * Throw unless the allowlist keeps its policy `$comment` and an `allow` array
+ * with no entry for either image-size advisory or for #2159.
+ */
+function assertNoImageSizeSuppression(allowlist) {
+  assert.ok(
+    Array.isArray(allowlist.$comment) && allowlist.$comment.length > 0,
+    "frontend/.audit-allowlist.json lost its policy $comment",
+  );
+  assert.ok(Array.isArray(allowlist.allow), "frontend/.audit-allowlist.json has no allow array");
+  const stale = allowlist.allow.filter(
+    (entry) => IMAGE_SIZE_ADVISORIES.has(entry.id) || entry.issue === IMAGE_SIZE_ISSUE,
+  );
+  assert.deepEqual(stale, [], `dead ${IMAGE_SIZE} suppressions are back; see #${IMAGE_SIZE_ISSUE}`);
+}
+
+function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+/** A synthetic lock with one full metro family at `version`, deps per entry. */
+function metroFamilyLock(dependencies) {
+  const siblings = [
+    "babel-transformer", "cache", "cache-key", "config", "core", "file-map",
+    "minify-terser", "resolver", "runtime", "source-map", "symbolicate",
+    "transform-plugins", "transform-worker",
+  ];
+  const packages = { "": {}, [`node_modules/${METRO}`]: { version: "0.84.6", dependencies } };
+  for (const sibling of siblings) {
+    packages[`node_modules/${METRO_SIBLING_PREFIX}${sibling}`] = { version: "0.84.6" };
+  }
+  packages["node_modules/@expo/metro"] = { version: "56.0.2" };
+  packages["node_modules/metronome"] = { version: "1.0.0", dependencies: { [IMAGE_SIZE]: "^1.0.2" } };
+  return { packages };
+}
+
+test("lockPackageKeysNamed matches the installed name exactly, nested or hoisted", () => {
+  const lock = {
+    packages: {
+      "": {},
+      [`node_modules/${IMAGE_SIZE}`]: {},
+      [`node_modules/${METRO}/node_modules/${IMAGE_SIZE}`]: {},
+      [`node_modules/${IMAGE_SIZE}-extra`]: {},
+      [`node_modules/@x/${IMAGE_SIZE}`]: {},
+    },
+  };
+
+  assert.deepEqual(lockPackageKeysNamed(lock, (name) => name === IMAGE_SIZE), [
+    `node_modules/${IMAGE_SIZE}`,
+    `node_modules/${METRO}/node_modules/${IMAGE_SIZE}`,
+  ]);
+});
+
+test("the metro-family check passes a clean family and ignores look-alike names", () => {
+  assert.doesNotThrow(() => assertMetroFamilyImageSizeFree(metroFamilyLock({})));
+});
+
+test("the metro-family check names a metro entry that still declares image-size", () => {
+  const lock = metroFamilyLock({ [IMAGE_SIZE]: "^1.0.2" });
+
+  assert.throws(() => assertMetroFamilyImageSizeFree(lock), /node_modules\/metro@0\.84\.6/);
+});
+
+test("the metro-family check fails rather than passing vacuously on no metro", () => {
+  assert.throws(() => assertMetroFamilyImageSizeFree({ packages: { "": {} } }), /found 0/);
+});
+
+const POLICY_COMMENT = ["policy"];
+const UNRELATED_ENTRY = { id: GHSA_OTHER, package: "brace-expansion", issue: 1975 };
+
+test("the allowlist check accepts an unrelated owner-approved entry", () => {
+  assert.doesNotThrow(() =>
+    assertNoImageSizeSuppression({ $comment: POLICY_COMMENT, allow: [UNRELATED_ENTRY] }),
+  );
+});
+
+test("the allowlist check rejects either image-size GHSA, whatever issue it cites", () => {
+  for (const id of [GHSA_IMAGE_SIZE_ICNS, GHSA_IMAGE_SIZE_JXL_HEIF]) {
+    const allowlist = { $comment: POLICY_COMMENT, allow: [{ id, issue: 1 }] };
+
+    assert.throws(() => assertNoImageSizeSuppression(allowlist), /dead image-size suppressions/);
+  }
+});
+
+test("the allowlist check rejects any entry still tracked by #2159", () => {
+  const allowlist = { $comment: POLICY_COMMENT, allow: [{ id: GHSA_OTHER, issue: IMAGE_SIZE_ISSUE }] };
+
+  assert.throws(() => assertNoImageSizeSuppression(allowlist), /dead image-size suppressions/);
+});
+
+test("the allowlist check rejects a file that lost its policy $comment", () => {
+  assert.throws(() => assertNoImageSizeSuppression({ allow: [] }), /lost its policy \$comment/);
+});
+
+test("the committed lockfile resolves no image-size (#2159)", () => {
+  const lock = readJson(LOCKFILE_PATH);
+
+  assert.deepEqual(
+    lockPackageKeysNamed(lock, (name) => name === IMAGE_SIZE),
+    [],
+    `${IMAGE_SIZE} is back in frontend/package-lock.json; see #${IMAGE_SIZE_ISSUE}`,
+  );
+});
+
+test("no committed metro-family entry declares image-size (#2159)", () => {
+  assertMetroFamilyImageSizeFree(readJson(LOCKFILE_PATH));
+});
+
+test("the committed allowlist keeps its $comment and holds no image-size entry (#2159)", () => {
+  assertNoImageSizeSuppression(readJson(ALLOWLIST_PATH));
 });
