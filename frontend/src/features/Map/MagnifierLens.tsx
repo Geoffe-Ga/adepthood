@@ -22,6 +22,7 @@ import {
   DRAG_TAP_SLOP,
   glideDurationMs,
   inertialStageTarget,
+  lensCaptionWidth,
   lensStageIdentity,
   lensCenterForStage,
   lensFrame,
@@ -458,11 +459,17 @@ const LensGlass = ({
 const LensCaptionBlock = ({
   caption,
   isCurrent,
+  frame,
 }: {
   caption: LensCaption;
   isCurrent: boolean;
+  frame: LensFrame;
 }): React.JSX.Element => (
-  <View style={styles.magnifierCaption} pointerEvents="none">
+  <View
+    style={[styles.magnifierCaption, { width: lensCaptionWidth(frame) }]}
+    pointerEvents="none"
+    testID="magnifier-caption"
+  >
     {isCurrent ? (
       <View style={styles.youAreHere} testID="you-are-here">
         <Text style={styles.youAreHereText}>YOU ARE HERE</Text>
@@ -596,7 +603,7 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
         gridHeight={gridHeight}
         anchors={anchors}
       />
-      <LensCaptionBlock caption={caption} isCurrent={isCurrent} />
+      <LensCaptionBlock caption={caption} isCurrent={isCurrent} frame={frame} />
     </LensShell>
   );
 };

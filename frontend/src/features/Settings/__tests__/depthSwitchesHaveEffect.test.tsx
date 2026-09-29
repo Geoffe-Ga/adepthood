@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 /**
@@ -81,6 +81,7 @@ import { depthPreferences } from '@/api';
 import type { DepthPreferences } from '@/api';
 import DrawerNavSection from '@/components/drawer/DrawerNavSection';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
+import { settle } from '@/testing/asyncSettle';
 
 /** Each switch under Choose-your-depths, and the destination it governs. */
 const DESTINATION_BY_SWITCH: ReadonlyMap<string, string> = new Map([
@@ -105,16 +106,14 @@ describe('the Sangha switch and the Digital Sangha door', () => {
 
     fireEvent(getByTestId('depth-toggle-sangha'), 'valueChange', false);
 
-    await waitFor(() => {
-      expect(queryByTestId('settings-group-sangha')).toBeNull();
-    });
+    await settle();
+    expect(queryByTestId('settings-group-sangha')).toBeNull();
     expect(queryByTestId('settings-row-sangha-discord')).toBeNull();
 
     fireEvent(getByTestId('depth-toggle-sangha'), 'valueChange', true);
 
-    await waitFor(() => {
-      expect(queryByTestId('settings-group-sangha')).toBeTruthy();
-    });
+    await settle();
+    expect(queryByTestId('settings-group-sangha')).toBeTruthy();
     expect(queryByTestId('settings-row-sangha-discord')).toBeTruthy();
 
     expect(depthPreferences.update).toHaveBeenNthCalledWith(1, { enable_sangha: false }, TOKEN);
@@ -139,17 +138,15 @@ describe('the ring switches and their drawer rows', () => {
 
     fireEvent(getByTestId(`depth-toggle-${ring}`), 'valueChange', false);
 
-    await waitFor(() => {
-      expect(queryByTestId(`drawer-nav-${row}`)).toBeNull();
-    });
+    await settle();
+    expect(queryByTestId(`drawer-nav-${row}`)).toBeNull();
     expect(getByTestId('drawer-nav-Journal')).toBeTruthy();
     expect(getByTestId('drawer-nav-Map')).toBeTruthy();
 
     fireEvent(getByTestId(`depth-toggle-${ring}`), 'valueChange', true);
 
-    await waitFor(() => {
-      expect(queryByTestId(`drawer-nav-${row}`)).toBeTruthy();
-    });
+    await settle();
+    expect(queryByTestId(`drawer-nav-${row}`)).toBeTruthy();
   });
 });
 

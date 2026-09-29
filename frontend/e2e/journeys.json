@@ -222,6 +222,18 @@
     "coveredBy": "frontend/e2e/journal.e2e.test.ts"
   },
   {
+    "id": "journal.open-offline-loads-on-reconnect",
+    "description": "A writer saves a page, returns to the shelf, loses their connection, and opens that page anyway: the client short-circuits the GET, so the page shows its load-error banner and will not save (#2935). When the device comes back online, the real browser sees the load run again by itself, the banner clear, and the stored body appear; the writer then edits the page without reopening it, and the PATCH lands and is read back from the server. The seam suite JournalEntryScreenReconnectLoad.test.tsx pins what the browser cannot isolate: exactly one reload per offline-to-online edge and none while merely online, no duplicate or in-flight reload, a failed reload that retries only on the next edge, a fresh page that never loads, words typed while the entry was unloaded kept below the stored body and saved once, never auto-saved into a finished entry (the edit-confirm dialog says they are waiting and they save only after Edit), never saved under a looser stored tier than the one shown while typing (the entry is escalated first; page saves, the exit flush and Finish are held while it is in flight; if it fails the words stay off the page with a note and return only after a retry or the writer's own choice confirms a strict enough tier; a looser choice keeps them held), and no exit (Close, Back to reading, back gesture or hardware back) leaves held words behind without the writer's explicit choice in a Stay / Leave without them dialog, no stale pre-load debounce writing over the stored body, and no carry of those words into a different route entry. journalReconnectLoad.test.ts pins the reload gate and the carry rules term by term.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/{entry_id}", "PATCH /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-reconnect-load.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.begin-a-dated-morning-page",
     "description": "A writer sees that ordinary New entry still opens without a title, closes it, then takes the morning-pages invitation. The real browser lands on a fresh JournalEntry titled with that account/browser's local YYYY-MM-DD plus Daily Journal, and the writer can immediately replace the generated title. The shelf component test pins the exact prefillTitle navigation parameter, the tip test freezes a UTC instant across the prior-day America/Los_Angeles boundary, and the saved Journaling-practice quick-launch suite pins the same shared title contract.",
     "crosses": {
@@ -464,6 +476,27 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-live-edit-anchors.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.margin-notes-sit-beside-their-passages",
+    "description": "On a wide read view (>= 600px) each margin note sits beside the passage it annotates rather than stacking from the top of the column: a long page given two resonance passes (the stub quotes the last sentence, so the second pass follows an appended sentence) opens with both notes far down, the first level with its highlight and each at the top computeMarginSlots gives its measured anchor, within a pixel. The two passages share a line, so the second note is pushed below the first by at least the margin gap, in document order. The margin column grows to hold the lowest note, which hangs past the end of the writing, and after scrolling journal-page-scroll to its end that note is wholly on screen -- the column stays inside the page's one shared scroll surface, never a scroller of its own. At 390px the margin stacks under the writing and keeps its document-order flow, no slot absolutely positioned. A refused check-off (the accept route answered 500) raises the margin's error banner above the notes, moving the stream without resizing it: the note is re-placed against its passage, and since the banner pushed the stream past that passage the note is held at the stream's top, clear of the banner. Pinned only by Jest: completion suggestions and undrawn (stale or overlap-skipped) notes trailing the anchored ones in creation order, a non-finite measurement trailing, the flow layout until every slot is measured, edit mode staying in flow, and a re-measure on the page's own layout. Not claimed: native alignment (native keeps the flow layout; onTextLayout measurement is a follow-up) and body-to-margin scroll sync or tap-to-scroll, which belong to #2893.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "GET /journal/{entry_id}/marginalia",
+        "POST /habits/",
+        "GET /journal/{entry_id}/suggestions"
+      ],
+      "tables": ["journalentry", "marginalia", "habit", "completionsuggestion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-margin-alignment.browser.e2e.test.ts"
   },
   {
     "id": "journal.review-from-the-shelf-cta",
@@ -870,7 +903,7 @@
   },
   {
     "id": "map.stage-annotations-legible",
-    "description": "Someone reads the Map at any viewport and every stage annotation stays legible: the Aspect word, a locked stage's padlock and \"Unlocks ...\" estimate, and a finished stage's check badge each stay off the wave's painted stroke, off each other and on screen, inside their own stage's cell and band, and a window too short for the table scrolls it rather than painting one stage onto the next (#2657). The covering spec measures three states -- fresh (stage 1, stages 2-10 locked), partial (stage 5, stages 1-4 finished, second cycle so the cycle caption shows) and completed (stage 10 finished, Begin again showing) -- at 1280x720 and 390x844, plus a 1280x560 window for fresh and completed, each in one settled frame: two animation frames, then the text census and a sample of every wave path every 2px of arc (getPointAtLength through getScreenCTM) in the same evaluate. The current stage moves the only way it can, through tests.e2e.program_anchor (90 and 240 days back); per-stage completion has no writer at all, so the spec lets GET /stages and GET /stages/program-calendar reach the lane's server and rewrites only progress and cycle_number on the response -- nothing on the Map is stubbed. Before any rule runs it proves it measured something: a wave with length, and exactly as many unlock lines, padlocks in each column and badges as the state has locked and finished stages. The rules are pure functions in frontend/e2e/mapGeometry.ts pinned by src/design/__tests__/mapGeometry.test.ts. Each measure waits for its state to be established -- the calendar's stage in the journey read and under the lens's YOU ARE HERE chip, the cycle caption, Begin again -- and asserts those markers in the measured frame. A fourth test drags the lens with real touches (Input.dispatchTouchEvent in a touch context at 390x664, where the fresh Map scrolls): the lens moves and the Map's scroller stays put, while the same gesture on the table's text does scroll it. The magnifier pill and the EMPTINESS / UNITY watermark the converging wave rises through by design are the only intended covers. Screenshots and the measured frame land in e2e/artifacts/map-legibility/ for review; there is no pixel baseline.",
+    "description": "Someone reads the Map at any viewport and every stage annotation stays legible: the Aspect word, a locked stage's padlock and \"Unlocks ...\" estimate, and a finished stage's check badge each stay off the wave's painted stroke, off each other and on screen, inside their own stage's cell and band, and a window too short for the table scrolls it rather than painting one stage onto the next (#2657); the lens's own caption -- the YOU ARE HERE chip, the stage title and subtitle -- stays on the glass, inside the rim and clear of the pill's rounded ends, so a caption set larger must grow the pill (#2960). The covering spec measures three states -- fresh (stage 1, stages 2-10 locked), partial (stage 5, stages 1-4 finished, second cycle so the cycle caption shows) and completed (stage 10 finished, Begin again showing) -- at 1280x720 and 390x844, plus a 1280x560 window for fresh and completed, each in one settled frame: two animation frames, then the text census and a sample of every wave path every 2px of arc (getPointAtLength through getScreenCTM) in the same evaluate. The current stage moves the only way it can, through tests.e2e.program_anchor (90 and 240 days back); per-stage completion has no writer at all, so the spec lets GET /stages and GET /stages/program-calendar reach the lane's server and rewrites only progress and cycle_number on the response -- nothing on the Map is stubbed. Before any rule runs it proves it measured something: a wave with length, and exactly as many unlock lines, padlocks in each column and badges as the state has locked and finished stages. The rules are pure functions in frontend/e2e/mapGeometry.ts pinned by src/design/__tests__/mapGeometry.test.ts. Each measure waits for its state to be established -- the calendar's stage in the journey read and under the lens's YOU ARE HERE chip, the cycle caption, Begin again -- and asserts those markers in the measured frame. A fourth test drags the lens with real touches (Input.dispatchTouchEvent in a touch context at 390x664, where the fresh Map scrolls): the lens moves and the Map's scroller stays put, while the same gesture on the table's text does scroll it. The magnifier pill and the EMPTINESS / UNITY watermark the converging wave rises through by design are the only intended covers. Screenshots and the measured frame land in e2e/artifacts/map-legibility/ for review; there is no pixel baseline.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["auth", "stages"],

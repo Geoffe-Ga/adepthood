@@ -1,10 +1,10 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
-import { Animated } from 'react-native';
+import { Animated, StyleSheet, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { lensCenterForStage, lensFrame } from '../magnifierGeometry';
+import { lensCaptionWidth, lensCenterForStage, lensFrame } from '../magnifierGeometry';
 import type { LensCaption } from '../magnifierGeometry';
 import MagnifierLens, { lensTouchStyle } from '../MagnifierLens';
 import { stageWavePoint } from '../waveGeometry';
@@ -128,6 +128,20 @@ describe('MagnifierLens', () => {
   it('shows the YOU ARE HERE chip when resting on the current stage', () => {
     const { tree } = renderLens({ focusedStage: 1, currentStage: 1 });
     expect(tree.root.findByProps({ testID: 'you-are-here' })).toBeTruthy();
+  });
+
+  it('sets the caption to the glass chord, so no line reaches the rounded ends (#2960)', () => {
+    const { tree } = renderLens({ focusedStage: 1, currentStage: 1 });
+    const caption = tree.root.findByProps({ testID: 'magnifier-caption' });
+    const flat = StyleSheet.flatten(caption.props.style) as { width?: number };
+    expect(flat.width).toBe(lensCaptionWidth(lensFrame(GRID_WIDTH, GRID_HEIGHT)));
+  });
+
+  it('writes the chip in capitals, which its descender-free line height relies on', () => {
+    const { tree } = renderLens({ focusedStage: 1, currentStage: 1 });
+    const chip = tree.root.findByProps({ testID: 'you-are-here' });
+    const text = String(chip.findByType(Text).props.children);
+    expect(text).toBe(text.toUpperCase());
   });
 
   it('hides the chip when focused away from the current stage', () => {

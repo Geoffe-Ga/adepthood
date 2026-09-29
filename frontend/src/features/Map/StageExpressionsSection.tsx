@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { StageExpression, StageManifestation } from '../../api';
-import { editorialType, onShowcase, radius, showcase, spacing } from '../../design/tokens';
+import { editorialType, onShowcase, radius, showcase, spacing, uiType } from '../../design/tokens';
 
 // The two faces of a stage in each Wavelength phase read as facets of one wave,
 // never a ranking of the person: an integrated (medicinal) expression beside a
@@ -81,6 +81,10 @@ export const StageExpressionsSection = ({
 };
 
 const EYEBROW_LETTER_SPACING = 0.6;
+/** Eyebrows, headings and canon descriptions: the caption step of the ramp (#2960). */
+const CAPTION_SIZE = editorialType.caption.fontSize;
+/** The canon name leads its card at the modal's lead-line step. */
+const NAME_SIZE = uiType.button.fontSize;
 
 const styles = StyleSheet.create({
   section: {
@@ -93,7 +97,7 @@ const styles = StyleSheet.create({
   // Small, non-interactive caption eyebrow naming the Wavelength phase.
   phaseEyebrow: {
     fontFamily: editorialType.serif,
-    fontSize: 11,
+    fontSize: CAPTION_SIZE,
     fontWeight: '700',
     letterSpacing: EYEBROW_LETTER_SPACING,
     textTransform: 'uppercase',
@@ -111,20 +115,23 @@ const styles = StyleSheet.create({
     gap: spacing(0.25),
   },
   expressionHeading: {
-    fontSize: 11,
+    fontSize: CAPTION_SIZE,
     fontWeight: '600',
     letterSpacing: EYEBROW_LETTER_SPACING,
     color: onShowcase.soft,
   },
   expressionName: {
     fontFamily: editorialType.serif,
-    fontSize: 14,
+    fontSize: NAME_SIZE,
     fontWeight: '700',
     color: onShowcase.primary,
   },
   expressionDescription: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: CAPTION_SIZE,
+    lineHeight: editorialType.caption.lineHeight,
     color: onShowcase.soft,
   },
 });
+
+/** The section's styles, exported so the Map type-ramp test can audit their sizes (#2960). */
+export { styles as stageExpressionsStyles };

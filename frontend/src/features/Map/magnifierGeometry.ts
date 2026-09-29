@@ -9,7 +9,7 @@
  * through, so its per-stage resting points sit exactly on the strand.
  */
 
-import { STAGE_ORDER } from '../../design/tokens';
+import { editorialType, spacing, STAGE_ORDER } from '../../design/tokens';
 
 import { STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import { STAGE_COUNT } from './stageData';
@@ -32,11 +32,47 @@ const LENS_WIDTH_SCALE = 1.08;
 /** Lens height as a fraction of one nominal stage band (gridHeight / stages). */
 const LENS_BAND_FRACTION = 0.85;
 
-/** Smallest pill tall enough for the chip + caption + a 44dp-order tap target. */
-const LENS_MIN_HEIGHT = 56;
+/** The glass rim's stroke width, drawn inside the pill's box. */
+export const LENS_BORDER_WIDTH = 2;
+
+/**
+ * Line height of the "YOU ARE HERE" chip: exactly its caption size, because
+ * an all-capitals line hangs no descenders to leave room for.
+ */
+export const LENS_CHIP_LINE_HEIGHT = editorialType.caption.fontSize;
+
+/** Line height of the stage subtitle: the caption step. */
+export const LENS_CAPTION_LINE_HEIGHT = editorialType.caption.lineHeight;
+
+/** Line height of the stage title: the interactive-floor (action) step. */
+export const LENS_HEADLINE_LINE_HEIGHT = editorialType.action.lineHeight;
+
+/** The chip's vertical padding, and the gap between the chip and the title. */
+export const LENS_CHIP_INSET = spacing(0.25);
+
+/** The caption's full height: the padded chip and its gap, the title, the subtitle. */
+export const LENS_CAPTION_STACK =
+  2 * LENS_CHIP_INSET +
+  LENS_CHIP_LINE_HEIGHT +
+  LENS_CHIP_INSET +
+  LENS_HEADLINE_LINE_HEIGHT +
+  LENS_CAPTION_LINE_HEIGHT;
+
+/**
+ * Glass kept free above and below the caption, so its outer rows sit where the
+ * pill's rounded ends have already opened out rather than at their tips.
+ */
+const LENS_END_CLEARANCE = spacing(0.5);
+
+/**
+ * Smallest pill tall enough for its caption (#2960): the stack, the clearance
+ * either side of it and the rim. Derived rather than guessed, so a caption that
+ * grows grows the pill with it; it is also above a 44dp-order tap target.
+ */
+export const LENS_MIN_HEIGHT = LENS_CAPTION_STACK + 2 * (LENS_END_CLEARANCE + LENS_BORDER_WIDTH);
 
 /** Tallest pill; beyond this the "pill" reads as a panel and hides the map. */
-const LENS_MAX_HEIGHT = 84;
+export const LENS_MAX_HEIGHT = 84;
 
 /** Finger travel below which a touch release still reads as a tap, in pixels. */
 export const DRAG_TAP_SLOP = 6;
@@ -80,6 +116,21 @@ export const lensFrame = (gridWidth: number, gridHeight: number): LensFrame => {
     clamp(band * LENS_BAND_FRACTION, LENS_MIN_HEIGHT, LENS_MAX_HEIGHT),
   );
   return { width, height, radius: height / 2 };
+};
+
+/**
+ * How wide the caption may run: the chord of the glass at the caption's outer
+ * rows (half the stack above and below the midline). A pill's ends are
+ * half-discs, so a caption as wide as the pill would poke its top and bottom
+ * corners through the rounded ends; bounding it by this chord keeps every line
+ * on the glass, and a line longer than the chord truncates (``numberOfLines``).
+ * A pill no taller than its stack leaves only the straight run.
+ */
+export const lensCaptionWidth = (frame: LensFrame): number => {
+  const radius = (frame.height - 2 * LENS_BORDER_WIDTH) / 2;
+  const halfRow = Math.min(LENS_CAPTION_STACK / 2, radius);
+  const straightRun = frame.width - frame.height;
+  return Math.max(0, straightRun + 2 * Math.sqrt(radius ** 2 - halfRow ** 2));
 };
 
 /**

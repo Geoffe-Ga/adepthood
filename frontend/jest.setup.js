@@ -1,4 +1,130 @@
 /* eslint-disable */
+// Contain a test abandoned mid real-timer `act()`, so one timeout costs
+// exactly one failure. This must stay at the very top of the file.
+//
+// The fake-timer containment further down only helps when the abandoned test
+// was waiting on a fake timer it can drain. A test starved past `testTimeout`
+// by CPU load is usually parked on *real* work instead: an
+// `await act(async () => ...)` whose body is awaiting something that will not
+// settle before jest-circus gives up on it. The consequence is identical --
+// React's act scope depth stays above zero (it is only decremented in the
+// continuation of the promise the callback returned), every later `act()` in
+// the file queues its render work instead of committing it, and the
+// neighbouring tests fail with `Can't access .root on unmounted test renderer`
+// -- but there is no fake clock to run.
+//
+// So every async act scope is raced, *inside* the callback handed to React's
+// real `act`, against a rejection this file owns. After each test, any scope
+// still open is one its test abandoned; rejecting it makes React's rejection
+// path run `popActScope`, which restores the depth before the next test
+// starts. The race has to sit inside the callback: racing the thenable `act`
+// returns from outside would leave React awaiting the original, never-settling
+// promise, and `popActScope` would never run.
+//
+// Reject, never resolve. Resolving would *resume* the abandoned test body
+// after its `await act(...)`, and its remaining renders, presses and mock
+// calls would then run inside whichever test is live -- after `clearMocks` has
+// reset that test's call counts -- which is the phantom-failure class again
+// under another name. A rejection unwinds the abandoned body instead, into a
+// test jest-circus has already reported.
+//
+// Both React Native Testing Library (`build/act.js`) and react-test-renderer
+// capture `React.act` when they load, so the wrapper is installed here, before
+// anything else in this file can require either of them. A synchronous act is
+// passed through untouched, so it stays synchronous.
+//
+// `__tests__/timeoutCascade.test.ts` guards this with a real-timer fixture.
+const React = require('react');
+// Node's `timers` module is never faked by Jest, so this yields one real
+// macrotask even inside a fake-timer test.
+const { setImmediate: realSetImmediate } = require('timers');
+
+class AbandonedTestError extends Error {
+  constructor() {
+    super('act() scope abandoned: its test ended (usually a timeout) before the scope settled');
+    this.name = 'AbandonedTestError';
+  }
+}
+
+const openActScopes = new Set();
+const realAct = React.act;
+const isThenable = (value) =>
+  value !== null && typeof value === 'object' && typeof value.then === 'function';
+
+React.act = (callback) =>
+  realAct(() => {
+    const result = callback();
+    if (!isThenable(result)) {
+      return result;
+    }
+    // A hand-rolled thenable rather than `Promise.race(...)`: it forwards the
+    // callback's settlement to React in the same microtask the callback's own
+    // promise would have, so a test that happens to lean on act's exact
+    // microtask timing (an `await expect(act(...)).resolves`, say, which does
+    // not really await the thenable) sees no difference.
+    return {
+      then(onFulfilled, onRejected) {
+        let settled = false;
+        const settleOnce = (handler) => (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          openActScopes.delete(abandon);
+          handler(value);
+        };
+        const abandon = settleOnce(onRejected);
+        openActScopes.add(abandon);
+        return result.then(settleOnce(onFulfilled), abandon);
+      },
+    };
+  });
+
+const abandonOpenActScopes = () => {
+  const abandoned = openActScopes.size;
+  for (const abandon of openActScopes) {
+    abandon(new AbandonedTestError());
+  }
+  openActScopes.clear();
+  return abandoned;
+};
+
+// Rejecting runs React's rejection continuation synchronously, so the depth is
+// back to zero before the next hook -- including RNTL's cleanup unmount.
+afterEach(() => {
+  abandonOpenActScopes();
+});
+
+const yieldOneRealMacrotask = () => new Promise((resolve) => realSetImmediate(resolve));
+
+// An abandoned test is not always parked *inside* an act scope when it is
+// abandoned. RNTL's `waitFor` under fake timers loops `act()` -> a real
+// `setImmediate` -> `act()`, and React itself finishes an async scope on a
+// real `setImmediate` after popping it, so a body can be caught between two
+// scopes with none open. It then resumes a macrotask or two later and opens a
+// fresh scope inside whichever test runs next. So before each test, this
+// yields real macrotasks until QUIET_ROUNDS pass in a row with nothing to
+// reject, rejecting any scope a straggler opens meanwhile -- which also
+// unwinds the loop that opened it. It is a `beforeEach` rather than part of
+// the `afterEach` above on purpose: by now the previous test's tree has been
+// unmounted and its animation frames cancelled, so yielding lets nothing of
+// that test run against a live tree. The `timeoutCascadeBetweenActs` fixture
+// is caught within the first quiet round here (with the rounds in an
+// `afterEach`, before cleanup, it needed two); the rest is margin for a
+// straggler that takes a turn or two longer to re-enter `act()`.
+// MAX_ABANDON_ROUNDS only guards against something that reopens a scope on
+// every turn forever.
+const QUIET_ROUNDS = 3;
+const MAX_ABANDON_ROUNDS = 50;
+
+beforeEach(async () => {
+  let quiet = 0;
+  for (let round = 0; round < MAX_ABANDON_ROUNDS && quiet < QUIET_ROUNDS; round += 1) {
+    await yieldOneRealMacrotask();
+    quiet = abandonOpenActScopes() === 0 ? quiet + 1 : 0;
+  }
+});
+
 // Jest setup: mock ``react-native-reanimated`` so its worklet plugin does
 // not run in the test transform (PR #298 review fix).  Earlier we tried
 // scoping the babel plugin to ``env.production``, but that also stripped
@@ -149,4 +275,17 @@ jest.mock('react-test-renderer', () => {
     return renderer;
   };
   return { ...actual, create };
+});
+
+// One wall-clock budget for every `waitFor` / `findBy*`, instead of RNTL's
+// one-second default (#2943). The value and the measurements behind it live
+// in `src/testing/asyncBudget.ts`, where `asyncBudget.test.tsx` checks it is
+// applied and stays below Jest's test timeout; no test file sets its own.
+//
+// RNTL's config module is required directly rather than through the package
+// entry: it has no dependencies, so this loads neither RNTL's renderer nor
+// React Native before each test file's own hoisted `jest.mock` calls run. It
+// is the same module instance the test file's RNTL import reads from.
+require('@testing-library/react-native/build/config').configure({
+  asyncUtilTimeout: require('./src/testing/asyncBudget').ASYNC_UTIL_TIMEOUT_MS,
 });

@@ -33,7 +33,9 @@ import pytest
 from domain.frequencies import Frequency
 from models.corpus_fragment import CorpusSource
 from services import frequency_classification as fc
+from services.account_egress_barrier import account_egress_barrier
 from services.botmason import STUB_MODEL_NAME, LLMResponse
+from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
 from tests.test_account_egress_barrier import signup
 
 if TYPE_CHECKING:
@@ -62,10 +64,11 @@ DIAL_SENT: Final = "classification-sent"
 
 _SETTLE_TIMEOUT_SECONDS: Final = 20.0
 
-#: How long the revocation is given to commit while a dial is held open. Under
-#: a hold taken across the whole sweep it cannot, which is the defect; under a
-#: hold taken per dial it waits only for the dial in flight, which is the
-#: narrowest wait an ordering can impose.
+#: How long the revocation is given to commit while a dial is held open, once it
+#: is provably queued on the account barrier. Under a hold taken across the
+#: whole sweep it cannot, which is the defect; under a hold taken per dial it
+#: waits only for the dial in flight, which is the narrowest wait an ordering
+#: can impose.
 _OVERTAKE_PROBE_SECONDS: Final = 1.0
 
 
@@ -139,6 +142,7 @@ async def test_a_revocation_is_effective_while_the_grant_is_still_sweeping(
     """
     classifier = PausedClassifier()
     monkeypatch.setattr(fc, "generate_response", classifier)
+    arrivals = BarrierArrivals.install(monkeypatch, account_egress_barrier)
     headers, _email = await signup(concurrent_async_client, "revoke_mid_sweep")
     for body in _BODIES:
         await _write(concurrent_async_client, headers, body)
@@ -146,13 +150,30 @@ async def test_a_revocation_is_effective_while_the_grant_is_still_sweeping(
     granting = asyncio.create_task(_decide(concurrent_async_client, headers, granted=True))
     await asyncio.wait_for(classifier.started.wait(), timeout=_SETTLE_TIMEOUT_SECONDS)
     classifier.order.append(STOP_ASKED)
-    revoking = asyncio.create_task(_decide(concurrent_async_client, headers, granted=False))
-    await asyncio.wait({revoking}, timeout=_OVERTAKE_PROBE_SECONDS)
-    classifier.release.set()
+    revoking = arrivals.start(
+        "revocation", _decide(concurrent_async_client, headers, granted=False)
+    )
+    # Wait for the revocation to *reach* the barrier before releasing the dial.
+    # A bare timeout cannot tell "queued behind the dial" from "still in
+    # authentication on a slow runner", and releasing on the second lets the
+    # sweep's next dial take the barrier first for a reason the product is
+    # right about (#2986). Bounded, and released in ``finally``, so a
+    # revocation that never arrives fails below instead of hanging.
+    try:
+        revocation_queued = await arrivals.arrived(
+            "revocation", within_seconds=BARRIER_ARRIVAL_TIMEOUT_SECONDS
+        )
+        await asyncio.wait({revoking}, timeout=_OVERTAKE_PROBE_SECONDS)
+    finally:
+        classifier.release.set()
     granted, revoked = await asyncio.wait_for(
         asyncio.gather(granting, revoking), timeout=_SETTLE_TIMEOUT_SECONDS
     )
 
+    assert revocation_queued, (
+        "the revocation never reached the account barrier, so nothing orders its "
+        "purge against the sweep's in-flight fragment"
+    )
     assert granted.status_code == HTTPStatus.OK, granted.text
     assert revoked.status_code == HTTPStatus.OK, revoked.text
     assert revoked.json()["granted"] is False

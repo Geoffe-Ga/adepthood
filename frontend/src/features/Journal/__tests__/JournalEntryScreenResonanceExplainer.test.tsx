@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, configure, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 /**
@@ -130,17 +130,6 @@ jest.mock('@/storage/resonanceExplainerStorage', () => ({
   saveResonanceExplainerDismissed: (...a: unknown[]) =>
     (mockSaveDismissed as unknown as (...x: unknown[]) => unknown)(...a),
 }));
-
-/**
- * A wider find budget than the one-second default.
- *
- * The disclosure renders inside a Modal on top of the whole entry screen, and
- * under `--coverage` every module in that tree is instrumented; the default
- * budget is thin enough there to time out on a card that does arrive. This
- * weakens no assertion — each `findBy` below still fails if the card never
- * comes — it only stops a slow machine from reading as a missing gate.
- */
-configure({ asyncUtilTimeout: 5_000 });
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
