@@ -7,6 +7,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 
+import { settle } from '@/testing/asyncSettle';
+
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
   title: 'Stage 1',
@@ -89,7 +91,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, waitFor } = require('@testing-library/react-native');
+const { render } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
 describe('CourseScreen with an unmatched route stage number', () => {
@@ -103,10 +105,12 @@ describe('CourseScreen with an unmatched route stage number', () => {
   it('hides the stage cover and metadata when the route stage is not in the loaded list', async () => {
     const view = render(<CourseScreen />);
 
-    await waitFor(() => expect(view.getByTestId('content-list')).toBeTruthy());
+    await settle();
+    expect(view.getByTestId('content-list')).toBeTruthy();
     expect(view.queryByTestId('stage-cover')).toBeNull();
     expect(view.queryByTestId('stage-metadata')).toBeNull();
-    await waitFor(() => expect(view.getByText('0/0 completed')).toBeTruthy());
+    await settle();
+    expect(view.getByText('0/0 completed')).toBeTruthy();
     expect(view.getByText('No Content Yet')).toBeTruthy();
   });
 });

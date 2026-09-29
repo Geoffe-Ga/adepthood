@@ -8,6 +8,8 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
+import { settle } from '@/testing/asyncSettle';
+
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
   title: 'Stage 1',
@@ -139,7 +141,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
+const { render, fireEvent, act } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
 const { revealControls } = require('./readerGeometry');
@@ -162,14 +164,16 @@ describe('CourseScreen -- write a note on a passage', () => {
 
   it('navigates to JournalEntry with the returnTo params and keeps the reader mounted', async () => {
     mockRouteParams = { stageNumber: 1 };
-    const { getByTestId, findByTestId } = render(<CourseScreen />);
+    const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('content-card-5')).toBeTruthy());
+    await settle();
+    expect(getByTestId('content-card-5')).toBeTruthy();
     await act(async () => {
       fireEvent.press(getByTestId('content-card-5'));
     });
 
-    const scrollView = await findByTestId('reader-markdown');
+    await settle();
+    const scrollView = getByTestId('reader-markdown');
     fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 300 } } });
 
     fireEvent.press(getByTestId('reader-write-note-affordance'));
@@ -190,10 +194,11 @@ describe('CourseScreen -- write a note on a passage', () => {
 
   it('auto-opens the returned content restored to its scroll offset once the stage content has loaded', async () => {
     mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 300 };
-    const { findByTestId } = render(<CourseScreen />);
+    const { getByTestId } = render(<CourseScreen />);
 
-    await findByTestId('chapter-reader');
-    const scrollView = await findByTestId('reader-markdown');
+    await settle();
+    getByTestId('chapter-reader');
+    const scrollView = getByTestId('reader-markdown');
     expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 300 });
   });
 
@@ -201,40 +206,45 @@ describe('CourseScreen -- write a note on a passage', () => {
     // Resolved through the real linking config: the query values arrive as
     // strings and only the ``parse`` step makes ``contentId`` match an item.
     mockRouteParams = tabParamsFromPath('course/1?contentId=5&scrollOffset=300', 'Course');
-    const { findByTestId } = render(<CourseScreen />);
+    const { getByTestId } = render(<CourseScreen />);
 
-    await findByTestId('chapter-reader');
-    const scrollView = await findByTestId('reader-markdown');
+    await settle();
+    getByTestId('chapter-reader');
+    const scrollView = getByTestId('reader-markdown');
     expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 300 });
   });
 
   it('lets the reader be closed after a restore without re-opening from the stale param', async () => {
     mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 300 };
-    const { getByTestId, findByTestId, queryByTestId } = render(<CourseScreen />);
+    const { getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await findByTestId('chapter-reader');
+    await settle();
+    getByTestId('chapter-reader');
     await act(async () => {
       fireEvent.press(getByTestId('reader-back-button'));
     });
 
-    await waitFor(() => expect(queryByTestId('chapter-reader')).toBeNull());
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
     // The stale contentId param must not drag the reader back open.
     expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
   it('renders the landing normally for an unknown contentId, without crashing', async () => {
     mockRouteParams = { stageNumber: 1, contentId: 9999, scrollOffset: 10 };
-    const { findByTestId, queryByTestId } = render(<CourseScreen />);
+    const { getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await findByTestId('content-list');
+    await settle();
+    getByTestId('content-list');
     expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
   it('does not open a locked item from a warm return', async () => {
     mockRouteParams = { stageNumber: 1, contentId: 6, scrollOffset: 20 };
-    const { findByTestId, queryByTestId } = render(<CourseScreen />);
+    const { getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await findByTestId('content-list');
+    await settle();
+    getByTestId('content-list');
     expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
@@ -264,9 +274,10 @@ describe('CourseScreen -- write a note on a passage', () => {
     mockStageContent.mockResolvedValue(twoUnlocked);
     // Warm return restores chapter 5 to a scroll offset (the passage-note flow).
     mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 300 };
-    const { getByTestId, findByTestId } = render(<CourseScreen />);
+    const { getByTestId } = render(<CourseScreen />);
 
-    const restored = await findByTestId('reader-markdown');
+    await settle();
+    const restored = getByTestId('reader-markdown');
     expect(restored.props.contentOffset).toEqual({ x: 0, y: 300 });
     expect(mockContentBody).toHaveBeenCalledTimes(1);
     // The chapter controls are due only at the essay's end.
@@ -279,19 +290,22 @@ describe('CourseScreen -- write a note on a passage', () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
     });
 
-    await waitFor(() => expect(mockContentBody).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(mockContentBody).toHaveBeenCalledTimes(2);
     expect(getByTestId('reader-markdown').props.contentOffset).not.toEqual({ x: 0, y: 300 });
   });
 
   it('does not re-open or re-apply the scroll offset when a warm return matches the already-open item', async () => {
     mockRouteParams = { stageNumber: 1 };
-    const { getByTestId, findByTestId, rerender } = render(<CourseScreen />);
+    const { getByTestId, rerender } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('content-card-5')).toBeTruthy());
+    await settle();
+    expect(getByTestId('content-card-5')).toBeTruthy();
     await act(async () => {
       fireEvent.press(getByTestId('content-card-5'));
     });
-    await findByTestId('reader-markdown');
+    await settle();
+    getByTestId('reader-markdown');
     expect(mockContentBody).toHaveBeenCalledTimes(1);
 
     mockRouteParams = { stageNumber: 1, contentId: 5, scrollOffset: 777 };

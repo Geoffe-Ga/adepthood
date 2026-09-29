@@ -3,7 +3,7 @@
 // drawer. Mirrors CourseDrawer.test.tsx's headerLeftStore harness, adding a
 // stable navigate spy so the shared nav rows have somewhere to route.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
+import { render, fireEvent, act } from '@testing-library/react-native';
 import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
@@ -12,6 +12,7 @@ import type { RootTabParamList } from '../../../navigation/BottomTabs';
 import CourseScreen from '../CourseScreen';
 
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
+import { settle } from '@/testing/asyncSettle';
 
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
@@ -152,10 +153,12 @@ describe('Course header drawer nav section', () => {
 
   it("renders the nav section before the drawer's own rows, with a trailing divider", async () => {
     const { getByTestId, getByLabelText, toJSON } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByTestId('course-drawer-stage-1')).toBeTruthy());
+    await settle();
+    expect(getByTestId('course-drawer-stage-1')).toBeTruthy();
 
     expect(getByTestId('drawer-nav-Course')).toBeTruthy();
     expect(getByTestId('drawer-nav-divider')).toBeTruthy();
@@ -182,10 +185,12 @@ describe('Course header drawer nav section', () => {
     // (the program calendar), so stage 2 can only come from the link itself.
     mockRouteParams = tabParamsFromPath('course/2', 'Course');
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByTestId('course-drawer-stage-2')).toBeTruthy());
+    await settle();
+    expect(getByTestId('course-drawer-stage-2')).toBeTruthy();
 
     expect(getByTestId('course-drawer-stage-2').props.accessibilityState.selected).toBe(true);
     expect(getByTestId('course-drawer-stage-1').props.accessibilityState.selected).toBe(false);
@@ -193,7 +198,8 @@ describe('Course header drawer nav section', () => {
 
   it('marks the Course nav row selected', async () => {
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
@@ -202,7 +208,8 @@ describe('Course header drawer nav section', () => {
 
   it('navigating to a different screen from the nav section closes the drawer', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
     fireEvent.press(getByTestId('drawer-nav-Journal'));
@@ -257,46 +264,55 @@ describe('Course drawer while reading a chapter', () => {
 
   it('opens the drawer over the reader when the hamburger is tapped while reading', async () => {
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
-    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
-    await waitFor(() => expect(getByTestId('screen-drawer-panel')).toBeTruthy());
+    await settle();
+    expect(getByTestId('screen-drawer-panel')).toBeTruthy();
   });
 
   it('switches the reader in place when a chapter is tapped in the drawer while reading', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
-    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByTestId('course-drawer-chapter-2')).toBeTruthy());
+    await settle();
+    expect(getByTestId('course-drawer-chapter-2')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('course-drawer-chapter-2'));
     });
 
-    await waitFor(() => expect(queryByTestId('screen-drawer-panel')).toBeNull());
+    await settle();
+    expect(queryByTestId('screen-drawer-panel')).toBeNull();
     expect(getByTestId('chapter-reader')).toBeTruthy();
   });
 
   it('does not leak the landing stage-selector into the reading view when the drawer is open', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
-    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import type { ScaledSize } from 'react-native';
 
@@ -14,6 +14,7 @@ import {
   type Page,
 } from '@/api';
 import { breakpoints, touchTarget } from '@/design/tokens';
+import { settle } from '@/testing/asyncSettle';
 
 const mockCapabilities = jest.fn<() => Promise<{ feedback_triage: boolean }>>();
 const mockList = jest.fn<() => Promise<Page<FeedbackTriageSummaryT>>>();
@@ -66,7 +67,8 @@ describe('AdminFeedbackScreen — the server decides who sees it', () => {
     mockCapabilities.mockRejectedValue(new ApiError(HTTP_FORBIDDEN, 'admin_required'));
     const screen = render(<AdminFeedbackScreen />);
 
-    await waitFor(() => expect(screen.getByTestId('admin-feedback-not-admin')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('admin-feedback-not-admin')).toBeTruthy();
     expect(screen.queryByTestId('inbox-list')).toBeNull();
     expect(mockList).not.toHaveBeenCalled();
   });
@@ -84,7 +86,8 @@ describe('AdminFeedbackScreen — the server decides who sees it', () => {
     mockCapabilities.mockResolvedValue({ feedback_triage: true });
     const screen = render(<AdminFeedbackScreen />);
 
-    await waitFor(() => expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy();
     expect(mockList).toHaveBeenCalled();
   });
 });
@@ -96,12 +99,14 @@ describe('AdminFeedbackScreen — layout', () => {
 
   it('stacks on a phone: the list, then the report in its place', async () => {
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('admin-feedback-stacked')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('admin-feedback-stacked')).toBeTruthy();
     expect(screen.queryByTestId('admin-feedback-split')).toBeNull();
 
     fireEvent.press(screen.getByTestId('inbox-row-FB-23456789'));
 
-    await waitFor(() => expect(screen.getByTestId('detail-pane')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('detail-pane')).toBeTruthy();
     expect(screen.queryByTestId('inbox-list')).toBeNull();
     fireEvent.press(screen.getByTestId('detail-back'));
     expect(screen.getByTestId('inbox-list')).toBeTruthy();
@@ -110,11 +115,13 @@ describe('AdminFeedbackScreen — layout', () => {
   it('splits at the large breakpoint: the list and the report side by side', async () => {
     atWidth(DESKTOP);
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('admin-feedback-split')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('admin-feedback-split')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('inbox-row-FB-23456789'));
 
-    await waitFor(() => expect(screen.getByTestId('detail-pane')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('detail-pane')).toBeTruthy();
     expect(screen.getByTestId('inbox-list')).toBeTruthy();
     expect(screen.queryByTestId('detail-back')).toBeNull();
   });
@@ -124,9 +131,11 @@ describe('DetailPane — three sources, kept apart', () => {
   async function openReport(): Promise<ReturnType<typeof render>> {
     mockCapabilities.mockResolvedValue({ feedback_triage: true });
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy();
     fireEvent.press(screen.getByTestId('inbox-row-FB-23456789'));
-    await waitFor(() => expect(screen.getByTestId('evidence-reporter-said')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('evidence-reporter-said')).toBeTruthy();
     return screen;
   }
 
@@ -181,8 +190,10 @@ describe('DetailPane — three sources, kept apart', () => {
 
     fireEvent.press(screen.getByTestId('triage-transition-planned'));
 
-    await waitFor(() => expect(mockTransition).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByTestId('triage-transition-planned')).toBeNull());
+    await settle();
+    expect(mockTransition).toHaveBeenCalled();
+    await settle();
+    expect(screen.queryByTestId('triage-transition-planned')).toBeNull();
     expect(mockTransition).toHaveBeenCalledWith('FB-23456789', 'planned', 'operator-token');
   });
 });
@@ -191,9 +202,11 @@ describe("DetailPane — the draft is the operator's own words", () => {
   it("shows the reporter's words for reference beside empty operator fields", async () => {
     mockCapabilities.mockResolvedValue({ feedback_triage: true });
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-row-FB-23456789')).toBeTruthy();
     fireEvent.press(screen.getByTestId('inbox-row-FB-23456789'));
-    await waitFor(() => expect(screen.getByTestId('draft-panel')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('draft-panel')).toBeTruthy();
 
     expect(
       within(screen.getByTestId('evidence-reporter-said')).getByText(REPORTER_PROSE),
