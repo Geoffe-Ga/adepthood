@@ -68,6 +68,45 @@ function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
 }
 
 const keys = (items: readonly MarginItem[]): string[] => items.map((item) => item.key);
+const byKey = (a: MarginItem, b: MarginItem): number => a.key.localeCompare(b.key);
+
+const SEED = 2418;
+const PROPERTY_RUNS = 2000;
+const MAX_NOTES = 8;
+const MAX_OFFERS = 3;
+const MAX_TOP = 1500;
+const MAX_HEIGHT = 200;
+/** The share of drawn notes whose passage goes unmeasured in a random column. */
+const MISSING_ANCHOR_RATE = 0.2;
+
+/** A small deterministic PRNG (mulberry32), so a failing case replays exactly. */
+function seededRandom(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Random drawn notes and offers, some anchors missing, some above the stream. */
+function randomColumn(random: () => number) {
+  const count = 1 + Math.floor(random() * MAX_NOTES);
+  const notes = Array.from({ length: count }, (_, index) =>
+    note({ id: index + 1, anchor_start: Math.floor(random() * BODY.length) }),
+  );
+  const offers = Array.from({ length: Math.floor(random() * MAX_OFFERS) }, (_, index) =>
+    suggestion({ id: 100 + index }),
+  );
+  const items = buildMarginItems(notes, offers, new Set(notes.map((n) => n.id)));
+  const anchors = new Map<number, number>();
+  for (const n of notes) {
+    if (random() >= MISSING_ANCHOR_RATE) anchors.set(n.id, random() * MAX_TOP - MAX_HEIGHT);
+  }
+  const heights = new Map(items.map((item) => [item.key, 1 + random() * MAX_HEIGHT]));
+  return { items, anchors, heights };
+}
 
 describe('drawnNoteIds', () => {
   it('keeps exactly the notes whose highlight the body draws', () => {
@@ -163,7 +202,30 @@ describe('assignMarginSlots', () => {
       GAP,
     );
 
-    expect(slots?.tops).toEqual([50, 300 + NOTE_HEIGHT + GAP, 300]);
+    // Note 2 has no passage to sit beside, so it moves to the tail -- in the
+    // rendered order as well as on screen, so the two can never disagree.
+    expect(slots?.items.map((item) => item.key)).toEqual(['note-1', 'note-3', 'note-2']);
+    expect(slots?.tops).toEqual([50, 300, 300 + NOTE_HEIGHT + GAP]);
+  });
+
+  it('merges a note that lost its passage into the tail by creation time', () => {
+    const items = buildMarginItems(
+      [note({ id: 1, anchor_start: 2 }), note({ id: 2, created_at: '2026-06-03T00:00:00Z' })],
+      [
+        suggestion({ id: 90, created_at: '2026-06-02T00:00:00Z' }),
+        suggestion({ id: 91, created_at: '2026-06-04T00:00:00Z' }),
+      ],
+      new Set([1, 2]),
+    );
+
+    const slots = assignMarginSlots(items, new Map([[1, 0]]), heightsFor(items), GAP);
+
+    expect(slots?.items.map((item) => item.key)).toEqual([
+      'note-1',
+      'suggestion-90',
+      'note-2',
+      'suggestion-91',
+    ]);
   });
 
   it('treats an infinite anchor and an unanchored item as trailing', () => {
@@ -232,9 +294,7 @@ describe('assignMarginSlots', () => {
     expect(assignMarginSlots([], new Map(), new Map(), GAP)).toBeNull();
   });
 
-  it('reports the extent as the lowest bottom edge, not the last item’s', () => {
-    // Note 2's anchor is unmeasurable, so it trails below note 3 even though it
-    // comes before it in document order: the last item is not the lowest one.
+  it('reports the extent as the lowest bottom edge', () => {
     const items = noteItems([1, 2, 3]);
 
     const slots = assignMarginSlots(
@@ -249,6 +309,25 @@ describe('assignMarginSlots', () => {
     );
 
     const trailingTop = 300 + NOTE_HEIGHT + GAP;
-    expect(slots).toEqual({ tops: [50, trailingTop, 300], extent: trailingTop + NOTE_HEIGHT });
+    expect(slots?.extent).toBe(trailingTop + NOTE_HEIGHT);
+  });
+
+  it('keeps tops non-decreasing in rendered order, whatever anchors are missing', () => {
+    const random = seededRandom(SEED);
+    for (let run = 0; run < PROPERTY_RUNS; run += 1) {
+      const { items, anchors, heights } = randomColumn(random);
+      const slots = assignMarginSlots(items, anchors, heights, GAP);
+      if (slots === null) continue;
+      expect([...slots.items].sort(byKey)).toEqual([...items].sort(byKey));
+      slots.tops.forEach((top, index) => {
+        if (index === 0) return;
+        const previous = slots.items[index - 1]!;
+        // Tree order is screen order: each slot starts at or below the bottom
+        // of the one rendered before it, plus the gap.
+        expect(top).toBeGreaterThanOrEqual(
+          slots.tops[index - 1]! + heights.get(previous.key)! + GAP,
+        );
+      });
+    }
   });
 });

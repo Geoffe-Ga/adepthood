@@ -15,9 +15,10 @@
  *    plain flow layout until then.
  */
 import { computeMarginSlots } from './computeMarginSlots';
-import { buildAnchoredSegments } from './highlightSegments';
 
-import type { CompletionSuggestion, Marginalia, PromotedQuote } from '@/api';
+import type { CompletionSuggestion, Marginalia } from '@/api';
+
+export { drawnNoteIds } from './renderedSpans';
 
 /** One slot in the margin: a literary note or an actionable suggestion. */
 export type MarginItem =
@@ -26,6 +27,8 @@ export type MarginItem =
 
 /** A resolved aligned column: each slot's top, and how tall the stream must be. */
 export interface MarginSlots {
+  /** The items in placed (top-to-bottom) order: render them in this order. */
+  items: MarginItem[];
   tops: number[];
   extent: number;
 }
@@ -41,40 +44,33 @@ const STREAM_TOP = 0;
 const NOTE_RANK = 0;
 const SUGGESTION_RANK = 1;
 
-/**
- * The ids of the notes the read view draws a highlight for.
- *
- * Asks ``buildAnchoredSegments`` itself, with the arguments ``HighlightedBody``
- * gets, so "drawn" has one definition: a stale, out-of-range, or overlap-skipped
- * note is excluded by the very rule that keeps it out of the body.
- */
-export function drawnNoteIds(
-  body: string,
-  notes: Marginalia[],
-  quotes: PromotedQuote[],
-): ReadonlySet<number> {
-  const ids = new Set<number>();
-  for (const segment of buildAnchoredSegments(body, notes, quotes)) {
-    if (segment.note) ids.add(segment.note.id);
-  }
-  return ids;
-}
-
 /** A creation time as a sortable number; an unparseable one sorts last. */
 function createdAt(value: string): number {
   const time = Date.parse(value);
   return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
 }
 
-interface TailRow {
-  item: MarginItem;
+/** Where a trailing item falls: creation time, then note-before-suggestion, then id. */
+interface TailKey {
   time: number;
   rank: number;
   id: number;
 }
 
-/** Compare two trailing rows: creation time, then note-before-suggestion, then id. */
-function byCreation(a: TailRow, b: TailRow): number {
+function tailKey(item: MarginItem): TailKey {
+  return 'note' in item
+    ? { time: createdAt(item.note.created_at), rank: NOTE_RANK, id: item.note.id }
+    : {
+        time: createdAt(item.suggestion.created_at),
+        rank: SUGGESTION_RANK,
+        id: item.suggestion.id,
+      };
+}
+
+/** Compare two trailing items by {@link tailKey}. */
+function byCreation(first: MarginItem, second: MarginItem): number {
+  const a = tailKey(first);
+  const b = tailKey(second);
   // Two +Infinity times subtract to NaN; treat that as a tie, not an order.
   const byTime = a.time === b.time ? 0 : a.time - b.time;
   return byTime || a.rank - b.rank || a.id - b.id;
@@ -94,25 +90,19 @@ export function buildMarginItems(
     .filter((note) => drawn.has(note.id))
     .sort((a, b) => a.anchor_start - b.anchor_start || a.id - b.id)
     .map((note): MarginItem => ({ key: `note-${note.id}`, anchored: true, note }));
-  const tail: TailRow[] = [
+  const tail: MarginItem[] = [
     ...notes
       .filter((note) => !drawn.has(note.id))
-      .map((note) => ({
-        item: { key: `note-${note.id}`, anchored: false, note } as const,
-        time: createdAt(note.created_at),
-        rank: NOTE_RANK,
-        id: note.id,
-      })),
+      .map((note): MarginItem => ({ key: `note-${note.id}`, anchored: false, note })),
     ...suggestions
       .filter((s) => s.status !== 'dismissed')
-      .map((suggestion) => ({
-        item: { key: `suggestion-${suggestion.id}`, anchored: false, suggestion } as const,
-        time: createdAt(suggestion.created_at),
-        rank: SUGGESTION_RANK,
-        id: suggestion.id,
+      .map((suggestion): MarginItem => ({
+        key: `suggestion-${suggestion.id}`,
+        anchored: false,
+        suggestion,
       })),
   ];
-  return [...head, ...tail.sort(byCreation).map((row) => row.item)];
+  return [...head, ...tail.sort(byCreation)];
 }
 
 /**
@@ -129,16 +119,21 @@ function anchorTopOf(item: MarginItem, anchorTops: ReadonlyMap<number, number>):
 /**
  * Resolve every slot's top beside its passage, or ``null`` to keep the flow.
  *
+ * A drawn note whose passage went unmeasured (missing or non-finite top) has
+ * nothing to sit beside, so it joins the tail -- merged by creation time -- in
+ * the returned order as well as on screen. The caller renders ``items`` in the
+ * order returned, so the tree (and a screen reader) always reads the column
+ * top to bottom: tops are non-decreasing in that order.
+ *
  * @param items - The margin's items, in {@link buildMarginItems} order.
  * @param anchorTops - Note id to its highlight's top, in the stream's own
- *   coordinates. A missing or non-finite top makes that note trail -- the
- *   solver has no NaN guard, so none may reach it.
+ *   coordinates. The solver has no NaN guard, so no non-finite top reaches it.
  * @param heights - Item key to its slot's measured height.
  * @param gap - The clearance between slots; callers pass
  *   ``journalLayout.marginNoteGap``.
  * @returns ``null`` until every slot has a finite height and at least one
- *   note has a finite anchor top; otherwise the tops and the stream's extent
- *   (the lowest bottom edge, which is not always the last item's).
+ *   note has a finite anchor top; otherwise the items in placed order, their
+ *   tops, and the stream's extent (the lowest bottom edge).
  */
 export function assignMarginSlots(
   items: readonly MarginItem[],
@@ -146,12 +141,17 @@ export function assignMarginSlots(
   heights: ReadonlyMap<string, number>,
   gap: number,
 ): MarginSlots | null {
-  const sizes = items.map((item) => heights.get(item.key));
-  const measured = sizes.filter((h): h is number => h !== undefined && Number.isFinite(h));
-  if (measured.length !== items.length) return null;
-  const anchors = items.map((item) => anchorTopOf(item, anchorTops));
-  if (anchors.every((top) => top === null)) return null;
-  const tops = computeMarginSlots(anchors, measured, gap);
-  const extent = Math.max(...tops.map((top, index) => top + (measured[index] ?? Number.NaN)));
-  return { tops, extent };
+  if (!items.every((item) => Number.isFinite(heights.get(item.key)))) return null;
+  const placed = items.filter((item) => anchorTopOf(item, anchorTops) !== null);
+  if (placed.length === 0) return null;
+  const trailing = items.filter((item) => anchorTopOf(item, anchorTops) === null);
+  const ordered = [...placed, ...trailing.sort(byCreation)];
+  const sizes = ordered.map((item) => heights.get(item.key) ?? Number.NaN);
+  const tops = computeMarginSlots(
+    ordered.map((item) => anchorTopOf(item, anchorTops)),
+    sizes,
+    gap,
+  );
+  const extent = Math.max(...tops.map((top, index) => top + (sizes[index] ?? Number.NaN)));
+  return { items: ordered, tops, extent };
 }
