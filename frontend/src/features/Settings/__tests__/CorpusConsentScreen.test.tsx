@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import {
@@ -12,6 +12,7 @@ import {
 import CorpusConsentScreen from '../CorpusConsentScreen';
 
 import { corpusConsent, type CorpusConsent } from '@/api';
+import { settle } from '@/testing/asyncSettle';
 
 /**
  * The screen that lets somebody turn the corpus on, and — the part that needs
@@ -57,7 +58,8 @@ function listReturns(...sources: CorpusConsent[]): void {
 async function renderLoaded(...sources: CorpusConsent[]) {
   listReturns(...sources);
   const view = render(<CorpusConsentScreen />);
-  await waitFor(() => expect(mockList).toHaveBeenCalled());
+  await settle();
+  expect(mockList).toHaveBeenCalled();
   return view;
 }
 
@@ -108,7 +110,8 @@ describe('CorpusConsentScreen — agreeing', () => {
 
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
 
-    await waitFor(() => expect(mockSet).toHaveBeenCalledWith('journal', true));
+    await settle();
+    expect(mockSet).toHaveBeenCalledWith('journal', true);
   });
 
   test('shows the state the server reported back, not the one that was tapped', async () => {
@@ -117,9 +120,8 @@ describe('CorpusConsentScreen — agreeing', () => {
 
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
 
-    await waitFor(() =>
-      expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(true),
-    );
+    await settle();
+    expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(true);
     expect(getByTestId('corpus-consent-status-journal').props.children).toMatch(/2026/);
   });
 
@@ -129,7 +131,8 @@ describe('CorpusConsentScreen — agreeing', () => {
 
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
 
-    await waitFor(() => expect(getByTestId('corpus-consent-error')).toBeTruthy());
+    await settle();
+    expect(getByTestId('corpus-consent-error')).toBeTruthy();
     expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(false);
   });
 });
@@ -163,10 +166,10 @@ describe('CorpusConsentScreen — withdrawing', () => {
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', false);
     fireEvent.press(getByTestId('corpus-consent-revoke-confirm-journal'));
 
-    await waitFor(() => expect(mockSet).toHaveBeenCalledWith('journal', false));
-    await waitFor(() =>
-      expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(false),
-    );
+    await settle();
+    expect(mockSet).toHaveBeenCalledWith('journal', false);
+    await settle();
+    expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(false);
     expect(queryByTestId('corpus-consent-revoke-journal')).toBeNull();
   });
 
@@ -177,7 +180,8 @@ describe('CorpusConsentScreen — withdrawing', () => {
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', false);
     fireEvent.press(getByTestId('corpus-consent-revoke-confirm-journal'));
 
-    await waitFor(() => expect(getByTestId('corpus-consent-error')).toBeTruthy());
+    await settle();
+    expect(getByTestId('corpus-consent-error')).toBeTruthy();
     expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(true);
   });
 });
@@ -188,7 +192,8 @@ describe('CorpusConsentScreen — when the server cannot be reached', () => {
 
     const { getByTestId, queryByTestId } = render(<CorpusConsentScreen />);
 
-    await waitFor(() => expect(getByTestId('corpus-consent-error')).toBeTruthy());
+    await settle();
+    expect(getByTestId('corpus-consent-error')).toBeTruthy();
     expect(queryByTestId('corpus-consent-switch-journal')).toBeNull();
   });
 });

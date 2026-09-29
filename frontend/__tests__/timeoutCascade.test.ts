@@ -22,7 +22,13 @@ import { describe, expect, it } from '@jest/globals';
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
 const JEST_BIN = join(FRONTEND_ROOT, 'node_modules', '.bin', 'jest');
-const FIXTURE = join('__tests__', 'fixtures', 'timeoutCascade.test.tsx');
+const FIXTURES = join('__tests__', 'fixtures');
+/** A test abandoned mid-`act` under fake timers. */
+const FAKE_TIMER_FIXTURE = join(FIXTURES, 'timeoutCascade.test.tsx');
+/** A test abandoned mid-`act` on real timers, on a promise nothing settles. */
+const REAL_TIMER_FIXTURE = join(FIXTURES, 'timeoutCascadeRealTimers.test.tsx');
+/** A test abandoned while looping act() across real macrotasks. */
+const BETWEEN_ACTS_FIXTURE = join(FIXTURES, 'timeoutCascadeBetweenActs.test.tsx');
 
 /** Short enough that the fixture's first test is abandoned mid-`act`. */
 const FIXTURE_TIMEOUT_MS = 40;
@@ -32,15 +38,15 @@ const CHILD_BUDGET_MS = 120_000;
 const PHANTOM_FAILURE = "Can't access .root on unmounted test renderer";
 
 /**
- * Run the fixture in its own Jest process and return everything it printed.
+ * Run a fixture in its own Jest process and return everything it printed.
  *
  * Jest exits non-zero here by design — the fixture's first test is *meant* to
  * time out — so a throw is the expected path, not an error.
  */
-function runFixture(): string {
+function runFixture(fixture: string): string {
   const args = [
     '--runTestsByPath',
-    FIXTURE,
+    fixture,
     `--testTimeout=${FIXTURE_TIMEOUT_MS}`,
     // The fixtures directory is excluded from the normal suite; re-include it
     // by replacing the ignore list with Jest's default.
@@ -63,19 +69,40 @@ function runFixture(): string {
 }
 
 describe('test-timeout cascade containment', () => {
+  /**
+   * The blast radius every fixture must show: all four collected, and only the
+   * one built to time out actually failed.
+   */
+  function expectExactlyOneFailure(output: string): void {
+    // Non-emptiness first: a mistyped path collects zero tests and every
+    // assertion below would then pass against a run that proved nothing.
+    expect(output).toContain('Tests:');
+    expect(output).toContain(`Exceeded timeout of ${FIXTURE_TIMEOUT_MS} ms`);
+
+    expect(output).toContain('Tests:       1 failed, 3 passed, 4 total');
+    expect(output).not.toContain(PHANTOM_FAILURE);
+  }
+
   it(
     'costs exactly one failure when a test times out inside act()',
     () => {
-      const output = runFixture();
+      expectExactlyOneFailure(runFixture(FAKE_TIMER_FIXTURE));
+    },
+    CHILD_BUDGET_MS,
+  );
 
-      // Non-emptiness first: a mistyped path collects zero tests and every
-      // assertion below would then pass against a run that proved nothing.
-      expect(output).toContain('Tests:');
-      expect(output).toContain(`Exceeded timeout of ${FIXTURE_TIMEOUT_MS} ms`);
+  it(
+    'costs exactly one failure when a test is abandoned mid real-timer act()',
+    () => {
+      expectExactlyOneFailure(runFixture(REAL_TIMER_FIXTURE));
+    },
+    CHILD_BUDGET_MS,
+  );
 
-      // All four collected, and only the one built to time out actually failed.
-      expect(output).toContain('Tests:       1 failed, 3 passed, 4 total');
-      expect(output).not.toContain(PHANTOM_FAILURE);
+  it(
+    'costs exactly one failure when a test is abandoned between act() scopes',
+    () => {
+      expectExactlyOneFailure(runFixture(BETWEEN_ACTS_FIXTURE));
     },
     CHILD_BUDGET_MS,
   );

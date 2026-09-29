@@ -10,6 +10,8 @@ import { StyleSheet } from 'react-native';
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { ink, resolveStageColor, STAGE_ORDER, surface } from '../../../design/tokens';
 
+import { settle } from '@/testing/asyncSettle';
+
 const makeStage = (overrides: Partial<Stage> = {}): Stage => ({
   id: 1,
   title: 'Stage',
@@ -152,14 +154,7 @@ jest.mock('react-native-safe-area-context', () => {
 // These modules are required after the jest.mock calls above so the mocks are
 // in place before the module-under-test loads; import/order is off for the block.
 /* eslint-disable import/order */
-const {
-  render,
-  waitFor,
-  fireEvent,
-  act,
-  within,
-  renderHook,
-} = require('@testing-library/react-native');
+const { render, fireEvent, act, within, renderHook } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 const { default: CourseDrawer, useCourseDrawerContent } = require('../CourseDrawer');
 /* eslint-enable import/order */
@@ -195,7 +190,8 @@ describe('Course header drawer', () => {
 
   it('installs a header-left drawer toggle and opens the drawer on press', async () => {
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     expect(mockSetOptions).toHaveBeenCalled();
     const setOptionsCalls = mockSetOptions.mock.calls;
@@ -211,15 +207,15 @@ describe('Course header drawer', () => {
 
   it('groups chapters under ten colored stage headers, marking completed and locked stages', async () => {
     const { getByTestId, getByLabelText, getByText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
-    await waitFor(() => {
-      for (let n = 1; n <= 10; n += 1) {
-        expect(getByTestId(`course-drawer-stage-${n}`)).toBeTruthy();
-      }
-    });
+    await settle();
+    for (let n = 1; n <= 10; n += 1) {
+      expect(getByTestId(`course-drawer-stage-${n}`)).toBeTruthy();
+    }
 
     // Unlocked stages show their own chapter titles. Stage 2 is the selected
     // stage, so its chapter also renders in the body panel -- scope the check to
@@ -266,20 +262,21 @@ describe('Course header drawer', () => {
 
   it('renders a locked stage header as disabled, with its titles-only chapter rows below it, and pressing the header selects nothing', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
     // Locked stages fetch too, now that a locked stage's own listing returns a
     // titles-only contract instead of being skipped.
-    await waitFor(() =>
-      expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true),
-    );
+    await settle();
+    expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true);
 
     const header4 = getByTestId('course-drawer-stage-4');
     expect(header4.props.accessibilityState.disabled).toBe(true);
 
-    await waitFor(() => expect(getByTestId('course-drawer-chapter-401')).toBeTruthy());
+    await settle();
+    expect(getByTestId('course-drawer-chapter-401')).toBeTruthy();
     const row401 = getByTestId('course-drawer-chapter-401');
     expect(row401.props.accessibilityState.disabled).toBe(true);
     expect(within(row401).getByText('🔒')).toBeTruthy();
@@ -298,11 +295,14 @@ describe('Course header drawer', () => {
     const { getByTestId, getByLabelText, getByText, queryByTestId } = render(
       <CourseScreenWithHeader />,
     );
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
-    await waitFor(() => expect(mockStageContent).toHaveBeenCalledWith(2));
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByText('Stage 1 Chapter A')).toBeTruthy());
+    await settle();
+    expect(getByText('Stage 1 Chapter A')).toBeTruthy();
 
     mockStageContent.mockClear();
     mockStageProgress.mockClear();
@@ -311,23 +311,25 @@ describe('Course header drawer', () => {
       fireEvent.press(getByTestId('course-drawer-chapter-101'));
     });
 
-    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     expect(queryByTestId('screen-drawer')).toBeNull();
 
-    await waitFor(() => {
-      expect(mockStageContent).toHaveBeenCalledWith(1);
-      expect(mockStageProgress).toHaveBeenCalledWith(1);
-    });
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(1);
+    expect(mockStageProgress).toHaveBeenCalledWith(1);
   });
 
   it('a locked chapter row is disabled and pressing it opens nothing, keeping the drawer open', async () => {
-    const { getByTestId, getByLabelText, getByText, queryByTestId } = render(
-      <CourseScreenWithHeader />,
-    );
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
-    await waitFor(() => expect(getByText('Stage 2 Chapter B')).toBeTruthy());
+    await settle();
+    // Scoped to the drawer: once everything has settled, the selected stage's
+    // own chapter list renders the same title outside it.
+    expect(within(getByTestId('screen-drawer-panel')).getByText('Stage 2 Chapter B')).toBeTruthy();
 
     const lockedRow = getByTestId('course-drawer-chapter-202');
     expect(lockedRow.props.accessibilityState.disabled).toBe(true);
@@ -340,8 +342,10 @@ describe('Course header drawer', () => {
 
   it('fetches content for every stage when the drawer first opens, and caches across reopens', async () => {
     const { getByTestId, getByLabelText } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
-    await waitFor(() => expect(mockStageContent).toHaveBeenCalledWith(2));
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
 
     // Before opening: only the initially-selected stage was fetched.
     const stagesFetchedBeforeOpen = new Set(mockStageContent.mock.calls.map((call) => call[0]));
@@ -349,12 +353,11 @@ describe('Course header drawer', () => {
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
-    await waitFor(() => {
-      const fetched = new Set(mockStageContent.mock.calls.map((call) => call[0]));
-      for (let n = 1; n <= 10; n += 1) {
-        expect(fetched.has(n)).toBe(true);
-      }
-    });
+    await settle();
+    const fetched = new Set(mockStageContent.mock.calls.map((call) => call[0]));
+    for (let n = 1; n <= 10; n += 1) {
+      expect(fetched.has(n)).toBe(true);
+    }
 
     const callCountAfterOpen = mockStageContent.mock.calls.length;
 
@@ -377,18 +380,18 @@ describe('Course header drawer', () => {
     expect(mockStageContent).not.toHaveBeenCalled();
 
     rerender({ stages: nineStages, isOpen: true });
-    await waitFor(() => {
-      for (let n = 1; n <= 9; n += 1) {
-        expect(result.current.sections[n]?.status).toBe('loaded');
-      }
-    });
+    await settle();
+    for (let n = 1; n <= 9; n += 1) {
+      expect(result.current.sections[n]?.status).toBe('loaded');
+    }
     expect(mockStageContent.mock.calls.length).toBe(9);
     expect(result.current.sections[10]).toBeUndefined();
 
     // Stage 10 becomes known while the drawer stays open: it has no section
     // entry yet, so it must fetch even though the drawer already opened once.
     rerender({ stages: TEN_STAGES, isOpen: true });
-    await waitFor(() => expect(result.current.sections[10]?.status).toBe('loaded'));
+    await settle();
+    expect(result.current.sections[10]?.status).toBe('loaded');
     expect(mockStageContent.mock.calls.some((call) => call[0] === 10)).toBe(true);
 
     const callCountAfterTenLoaded = mockStageContent.mock.calls.length;
@@ -408,14 +411,15 @@ describe('Course header drawer', () => {
     });
 
     const { getByTestId, getByLabelText, queryByTestId } = render(<CourseScreenWithHeader />);
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
-    await waitFor(() =>
-      expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true),
-    );
-    await waitFor(() => expect(getByTestId('course-drawer-stage-4')).toBeTruthy());
+    await settle();
+    expect(mockStageContent.mock.calls.some((call) => call[0] === 4)).toBe(true);
+    await settle();
+    expect(getByTestId('course-drawer-stage-4')).toBeTruthy();
 
     // Let the rejection settle before asserting on its absence.
     await act(async () => {
@@ -439,11 +443,13 @@ describe('Course header drawer', () => {
     const { getByTestId, getByLabelText, getByText, queryByText, queryByTestId } = render(
       <CourseScreenWithHeader />,
     );
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     fireEvent.press(getByLabelText('Open Course menu'));
 
-    await waitFor(() => expect(getByTestId('course-drawer-retry-3')).toBeTruthy());
+    await settle();
+    expect(getByTestId('course-drawer-retry-3')).toBeTruthy();
     // Sibling sections still render their chapters. Stage 2 is the selected
     // stage, so scope its check to the drawer row to stay unambiguous.
     expect(getByText('Stage 1 Chapter A')).toBeTruthy();
@@ -461,7 +467,8 @@ describe('Course header drawer', () => {
       fireEvent.press(getByTestId('course-drawer-retry-3'));
     });
 
-    await waitFor(() => expect(getByText('Stage 3 Chapter A')).toBeTruthy());
+    await settle();
+    expect(getByText('Stage 3 Chapter A')).toBeTruthy();
     expect(queryByTestId('course-drawer-retry-3')).toBeNull();
 
     expect(mockStageContent.mock.calls.filter((c) => c[0] === 1).length).toBe(stage1CallsBefore);

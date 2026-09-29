@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import AdminFeedbackScreen from '../AdminFeedbackScreen';
@@ -13,6 +13,7 @@ import {
   type FeedbackTriageSummaryT,
   type Page,
 } from '@/api';
+import { settle } from '@/testing/asyncSettle';
 
 type Detail = Promise<FeedbackTriageDetailT>;
 const mockCapabilities = jest.fn<() => Promise<{ feedback_triage: boolean }>>();
@@ -57,9 +58,11 @@ function page(items: FeedbackTriageSummaryT[], hasMore = false): Page<FeedbackTr
 
 async function openReport(): Promise<ReturnType<typeof render>> {
   const screen = render(<AdminFeedbackScreen />);
-  await waitFor(() => expect(screen.getByTestId(ROW)).toBeTruthy());
+  await settle();
+  expect(screen.getByTestId(ROW)).toBeTruthy();
   fireEvent.press(screen.getByTestId(ROW));
-  await waitFor(() => expect(screen.getByTestId('triage-actions')).toBeTruthy());
+  await settle();
+  expect(screen.getByTestId('triage-actions')).toBeTruthy();
   return screen;
 }
 
@@ -91,8 +94,10 @@ describe('triage flows', () => {
     fireEvent.changeText(screen.getByTestId('triage-duplicate-target'), '  FB-34567892 ');
     fireEvent.press(screen.getByTestId('triage-link-duplicate'));
 
-    await waitFor(() => expect(mockLink).toHaveBeenCalledWith('FB-23456789', 'FB-34567892'));
-    await waitFor(() => expect(screen.getByTestId('triage-unlink-duplicate')).toBeTruthy());
+    await settle();
+    expect(mockLink).toHaveBeenCalledWith('FB-23456789', 'FB-34567892');
+    await settle();
+    expect(screen.getByTestId('triage-unlink-duplicate')).toBeTruthy();
   });
 
   it('clears a duplicate link', async () => {
@@ -104,8 +109,10 @@ describe('triage flows', () => {
 
     fireEvent.press(screen.getByTestId('triage-unlink-duplicate'));
 
-    await waitFor(() => expect(mockUnlink).toHaveBeenCalledWith('FB-23456789'));
-    await waitFor(() => expect(screen.queryByTestId('triage-unlink-duplicate')).toBeNull());
+    await settle();
+    expect(mockUnlink).toHaveBeenCalledWith('FB-23456789');
+    await settle();
+    expect(screen.queryByTestId('triage-unlink-duplicate')).toBeNull();
   });
 
   it('adds a note and empties the composer', async () => {
@@ -115,7 +122,8 @@ describe('triage flows', () => {
     fireEvent.changeText(screen.getByTestId('triage-note-body'), 'Reproduced.');
     fireEvent.press(screen.getByTestId('triage-add-note'));
 
-    await waitFor(() => expect(mockNote).toHaveBeenCalledWith('FB-23456789', 'Reproduced.'));
+    await settle();
+    expect(mockNote).toHaveBeenCalledWith('FB-23456789', 'Reproduced.');
     expect(screen.getByTestId('triage-note-body').props.value).toBe('');
   });
 
@@ -126,12 +134,12 @@ describe('triage flows', () => {
     fireEvent.changeText(screen.getByTestId('triage-note-body'), 'a long careful note');
     fireEvent.press(screen.getByTestId('triage-add-note'));
 
-    await waitFor(() => expect(mockNote).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(
-        screen.getByText('That change was not saved. Refresh the report and try again.'),
-      ).toBeTruthy(),
-    );
+    await settle();
+    expect(mockNote).toHaveBeenCalled();
+    await settle();
+    expect(
+      screen.getByText('That change was not saved. Refresh the report and try again.'),
+    ).toBeTruthy();
     expect(screen.getByTestId('triage-note-body').props.value).toBe('a long careful note');
   });
 
@@ -147,7 +155,8 @@ describe('triage flows', () => {
 
     fireEvent.press(screen.getByTestId('triage-transition-planned'));
 
-    await waitFor(() => expect(mockList.mock.calls.length).toBe(listedBefore + 1));
+    await settle();
+    expect(mockList.mock.calls.length).toBe(listedBefore + 1);
     expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 0 });
   });
 
@@ -158,36 +167,38 @@ describe('triage flows', () => {
     fireEvent.changeText(screen.getByTestId('triage-note-body'), 'x');
     fireEvent.press(screen.getByTestId('triage-add-note'));
 
-    await waitFor(() =>
-      expect(
-        screen.getByText('That change was not saved. Refresh the report and try again.'),
-      ).toBeTruthy(),
-    );
+    await settle();
+    expect(
+      screen.getByText('That change was not saved. Refresh the report and try again.'),
+    ).toBeTruthy();
   });
 
   it('offers a retry when the report will not load', async () => {
     mockDetail.mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'));
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId(ROW)).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId(ROW)).toBeTruthy();
     fireEvent.press(screen.getByTestId(ROW));
-    await waitFor(() => expect(screen.getByTestId('detail-retry')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('detail-retry')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('detail-retry'));
 
-    await waitFor(() => expect(screen.getByTestId('evidence-reporter-said')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('evidence-reporter-said')).toBeTruthy();
   });
 });
 
 describe('the inbox list', () => {
   it('filters by status', async () => {
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId(ROW)).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId(ROW)).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('inbox-filter-planned'));
 
-    await waitFor(() =>
-      expect(mockList).toHaveBeenLastCalledWith({ status: 'planned' }, { limit: 25, offset: 0 }),
-    );
+    await settle();
+    expect(mockList).toHaveBeenLastCalledWith({ status: 'planned' }, { limit: 25, offset: 0 });
   });
 
   it('pages forward and appends', async () => {
@@ -195,11 +206,13 @@ describe('the inbox list', () => {
       .mockResolvedValueOnce(page([summary()], true))
       .mockResolvedValueOnce(page([summary({ public_id: 'FB-34567892' })]));
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('inbox-load-more')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-load-more')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('inbox-load-more'));
 
-    await waitFor(() => expect(screen.getByTestId('inbox-row-FB-34567892')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-row-FB-34567892')).toBeTruthy();
     expect(screen.getByTestId(ROW)).toBeTruthy();
     expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 25 });
   });
@@ -207,17 +220,20 @@ describe('the inbox list', () => {
   it('says when nothing matches', async () => {
     mockList.mockResolvedValue(page([]));
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByText('No reports match this filter.')).toBeTruthy());
+    await settle();
+    expect(screen.getByText('No reports match this filter.')).toBeTruthy();
   });
 
   it('offers a retry when the list will not load', async () => {
     mockList.mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'));
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('inbox-retry')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('inbox-retry')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('inbox-retry'));
 
-    await waitFor(() => expect(screen.getByTestId(ROW)).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId(ROW)).toBeTruthy();
   });
 });
 
@@ -225,11 +241,13 @@ describe('when access cannot be confirmed', () => {
   it('says so and asks again on request', async () => {
     mockCapabilities.mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'));
     const screen = render(<AdminFeedbackScreen />);
-    await waitFor(() => expect(screen.getByTestId('admin-feedback-unavailable')).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId('admin-feedback-unavailable')).toBeTruthy();
     expect(mockList).not.toHaveBeenCalled();
 
     fireEvent.press(screen.getByTestId('admin-feedback-recheck'));
 
-    await waitFor(() => expect(screen.getByTestId(ROW)).toBeTruthy());
+    await settle();
+    expect(screen.getByTestId(ROW)).toBeTruthy();
   });
 });

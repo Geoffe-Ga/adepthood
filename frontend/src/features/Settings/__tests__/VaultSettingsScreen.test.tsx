@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import {
@@ -49,6 +49,7 @@ import {
   type VaultConnection,
 } from '@/api';
 import habitStyles from '@/features/Habits/Habits.styles';
+import { settle } from '@/testing/asyncSettle';
 
 /**
  * The private-vault screen, now that there is something behind it.
@@ -150,14 +151,16 @@ function deferred<T>(): Deferred<T> {
 async function renderVault(connection: VaultConnection = NOT_CONNECTED) {
   mockConnection.mockResolvedValue(connection);
   const view = render(<VaultSettingsScreen />);
-  await waitFor(() => expect(view.queryByTestId('vault-loading')).toBeNull());
+  await settle();
+  expect(view.queryByTestId('vault-loading')).toBeNull();
   return view;
 }
 
 async function renderUnreachable() {
   mockConnection.mockRejectedValue(new ApiError(HTTP_SERVER_ERROR, 'internal_error'));
   const view = render(<VaultSettingsScreen />);
-  await waitFor(() => expect(view.getByTestId('vault-error')).toBeTruthy());
+  await settle();
+  expect(view.getByTestId('vault-error')).toBeTruthy();
   return view;
 }
 
@@ -304,7 +307,8 @@ describe('VaultSettingsScreen — managed private vault', () => {
     mockConnection.mockResolvedValue(NOT_CONNECTED);
     const navigate = jest.fn();
     const view = render(<VaultSettingsScreen navigation={{ navigate }} />);
-    await waitFor(() => expect(view.queryByTestId('vault-loading')).toBeNull());
+    await settle();
+    expect(view.queryByTestId('vault-loading')).toBeNull();
 
     fireEvent.press(view.getByTestId('open-vault-activation'));
 

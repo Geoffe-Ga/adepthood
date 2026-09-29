@@ -22,6 +22,7 @@ import time
 from collections.abc import AsyncGenerator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Protocol
 from unittest.mock import AsyncMock
 
@@ -53,7 +54,13 @@ from services.creek_vault_client import (
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
+from services.creek_vault_pipeline import (
+    _BACKGROUND_STAGE_BUDGET_SECONDS as PRODUCTION_BACKGROUND_STAGE_BUDGET_SECONDS,
+)
 from services.creek_vault_pipeline import _BACKGROUND_TASKS as BACKGROUND_TASKS
+from services.creek_vault_pipeline import (
+    _DEEP_RUN_BUDGET_SECONDS as PRODUCTION_DEEP_RUN_BUDGET_SECONDS,
+)
 from services.creek_vault_pipeline import (
     _JOURNAL_RUN_BUDGET_SECONDS as PRODUCTION_JOURNAL_BUDGET_SECONDS,
 )
@@ -94,6 +101,15 @@ _CONCURRENT_RACE_SETTLE_SECONDS = 2.0
 # held for several whole clocks after Creek has already accepted its job.
 _SUBMIT_BUDGET_SECONDS = 0.005
 _SUBMIT_HELD_PAST_BUDGET_SECONDS = _SUBMIT_BUDGET_SECONDS * 10
+
+# #2943: the embeddings rung's stage clock, and how many of them Creek holds
+# the accepted submit for. The hold runs on the event loop after the stage
+# timer is armed, so the clock expires inside the submit however loaded the
+# machine is; the ratio only needs to exceed one.
+_EMBEDDINGS_STAGE_CLOCK_SECONDS = 0.01
+_EMBEDDINGS_HELD_CLOCKS = 5
+# How far beyond a budget a clock step lands, so the lapse is never a tie.
+_CLOCK_STEP_MARGIN_SECONDS = 1.0
 
 # How many journal budgets the adapter's whole-request deadline spans in
 # production, so a scaled-down test keeps the real relationship between them.
@@ -901,6 +917,27 @@ async def test_a_submit_the_vault_accepted_is_not_abandoned_when_the_budget_expi
     assert landed[0].attempt_count == 1
 
 
+class _SteppableClock:
+    """A ``time.monotonic`` the test can move forward, standing in for load.
+
+    Only the pipeline module's own ``time`` name is rebound to it, so the
+    stage deadlines it computes can be made to lapse at a chosen instant
+    instead of whenever a loaded machine happens to get there.
+    """
+
+    def __init__(self) -> None:
+        """Start level with the real monotonic clock."""
+        self._offset = 0.0
+
+    def monotonic(self) -> float:
+        """Return the real monotonic time plus every step taken so far."""
+        return time.monotonic() + self._offset
+
+    def advance_past(self, seconds: float) -> None:
+        """Move the clock beyond any deadline set up to ``seconds`` ago."""
+        self._offset += seconds + _CLOCK_STEP_MARGIN_SECONDS
+
+
 @pytest.mark.asyncio
 async def test_an_accepted_embedding_job_is_not_abandoned_when_the_budget_expires_during_it(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
@@ -908,46 +945,93 @@ async def test_an_accepted_embedding_job_is_not_abandoned_when_the_budget_expire
 ) -> None:
     """Embedding preparation is the other job-admitting submit, and keeps its handle too.
 
-    Both admissions are held for ten budgets after Creek accepts them. The
-    held classification guarantees the foreground hands off at its first rung,
-    so the embeddings submit is always made by the continuation under the
-    background stage budget, and that budget always expires inside it.
-    Cancelling the submit would lose the job and make reconciliation admit a
-    second one.
+    Every step is sequenced by the fake vault rather than by a wall-clock
+    ratio, so load cannot reorder it (#2943):
+
+    - accepting the classification steps the pipeline's monotonic clock past
+      the whole run budget, so the foreground always hands off at its first
+      rung and the embeddings submit is always made by the continuation;
+    - the temporal rung, which the ladder runs just before embeddings, narrows
+      the background stage clock for the next rung only;
+    - accepting the embeddings job then holds its answer for several of those
+      clocks on the event loop. The stage timer is armed before the submit is
+      sent, so the clock always expires inside the submit.
+
+    Cancelling the submit there would lose the job and make reconciliation
+    admit a second one. The classification's terminal status is held until the
+    foreground has returned, so its record can be read before the continuation
+    moves it.
     """
-    monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
-    monkeypatch.setattr(pipeline, "_BACKGROUND_STAGE_BUDGET_SECONDS", _SUBMIT_BUDGET_SECONDS)
-    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    clock = _SteppableClock()
+    monkeypatch.setattr(pipeline, "time", SimpleNamespace(monotonic=clock.monotonic))
+    embeddings_index = pipeline.LADDER.index(VaultPipelineStage.EMBEDDINGS)
+    rung_before_embeddings = pipeline.LINK_STAGE_BY_PIPELINE_STAGE[
+        pipeline.LADDER[embeddings_index - 1]
+    ]
     recorder = _DurableJobRecorder()
+    events: list[str] = []
     embedding_accepted = asyncio.Event()
+    classification_release = asyncio.Event()
 
-    async def _accept_embeddings_then_answer_late(request: httpx.Request) -> httpx.Response:
-        response = recorder(request)
-        is_embeddings = request.url.path == _LINKS_PATH and json.loads(request.content) == {
-            "method": VaultLinkStage.EMBEDDINGS.value
+    def _is_link(request: httpx.Request, stage: VaultLinkStage) -> bool:
+        return request.url.path == _LINKS_PATH and json.loads(request.content) == {
+            "method": stage.value
         }
-        if is_embeddings:
+
+    async def _sequence_the_ladder(request: httpx.Request) -> httpx.Response:
+        response = recorder(request)
+        if request.url.path == _CLASSIFICATIONS_PATH:
+            events.append("classification accepted")
+            clock.advance_past(PRODUCTION_DEEP_RUN_BUDGET_SECONDS)
+        elif (
+            request.url.path == f"{_JOBS_PREFIX}{recorder.CLASSIFICATION_JOB}"
+            and response.json().get("state") == "succeeded"
+        ):
+            await classification_release.wait()
+        elif _is_link(request, rung_before_embeddings):
+            monkeypatch.setattr(
+                pipeline, "_BACKGROUND_STAGE_BUDGET_SECONDS", _EMBEDDINGS_STAGE_CLOCK_SECONDS
+            )
+        elif _is_link(request, VaultLinkStage.EMBEDDINGS):
+            events.append("embeddings accepted")
             embedding_accepted.set()
-        if is_embeddings or request.url.path == _CLASSIFICATIONS_PATH:
-            await asyncio.sleep(_SUBMIT_HELD_PAST_BUDGET_SECONDS)
+            await asyncio.sleep(_EMBEDDINGS_STAGE_CLOCK_SECONDS * _EMBEDDINGS_HELD_CLOCKS)
+            monkeypatch.setattr(
+                pipeline,
+                "_BACKGROUND_STAGE_BUDGET_SECONDS",
+                PRODUCTION_BACKGROUND_STAGE_BUDGET_SECONDS,
+            )
         return response
 
-    http = httpx.AsyncClient(transport=httpx.MockTransport(_accept_embeddings_then_answer_late))
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_sequence_the_ladder))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
     recorder.requests.clear()
     recorder.bodies.clear()
 
     async with concurrent_session_factory() as session:
-        await drive_vault_pipeline(
-            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+        # Bounded because the classification's terminal status is held: a
+        # foreground that did not hand off would wait for it forever.
+        await asyncio.wait_for(
+            drive_vault_pipeline(
+                session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.DOCUMENT_IMPORT
+            ),
+            timeout=_CONCURRENT_RACE_SETTLE_SECONDS,
         )
+    async with concurrent_session_factory() as session:
+        immediate = await _rows(session)
+    assert [(row.stage, row.outcome, row.job_id) for row in immediate] == [
+        ("classify", VaultPipelineOutcome.ATTEMPTED, recorder.CLASSIFICATION_JOB)
+    ]
+
+    classification_release.set()
     await _wait_for_background_pipeline()
     await http.aclose()
 
     assert embedding_accepted.is_set()
+    assert events == ["classification accepted", "embeddings accepted"]
     assert recorder.bodies.count({"method": VaultLinkStage.EMBEDDINGS.value}) == 1
     async with concurrent_session_factory() as session:
         landed = await _rows(session)
