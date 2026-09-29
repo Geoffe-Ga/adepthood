@@ -339,8 +339,25 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: colors.danger,
   },
+  carryWaitingText: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
   marginNoteSlot: {
     marginBottom: journalLayout.marginNoteGap,
+  },
+  /** The margin's note stream: the origin its aligned slots are placed from. */
+  marginStream: {
+    position: 'relative',
+  },
+  /**
+   * A slot placed beside its passage (#2418): pinned to the stream's full width,
+   * its ``top`` supplied by the solver. The solver owns the gap, so no margin.
+   */
+  marginNoteSlotAligned: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
   },
   controlLink: {
     ...editorialType.action,

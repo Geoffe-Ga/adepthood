@@ -13,8 +13,16 @@ import {
   spacing,
   surface,
   touchTarget,
+  uiType,
 } from '../../design/tokens';
 
+import {
+  LENS_BORDER_WIDTH,
+  LENS_CAPTION_LINE_HEIGHT,
+  LENS_CHIP_INSET,
+  LENS_CHIP_LINE_HEIGHT,
+  LENS_HEADLINE_LINE_HEIGHT,
+} from './magnifierGeometry';
 import { GRID_COLUMN_FLEX } from './mapLayout';
 
 // --- Grid weights for the three cells of every stage row -------------------
@@ -70,6 +78,22 @@ export const WAVE_KEEP_OUT = spacing(0.5);
  */
 export const FIT_CONTENT = 'auto';
 
+// --- The type ramp (#2960) -------------------------------------------------
+// Every size below is a Candle & Ink step. A StyleSheet cannot see the window,
+// so each is one legal at the phone and the desktop ramp alike.
+/** Metadata and fine print: ``editorialType.caption``. */
+const CAPTION_SIZE = editorialType.caption.fontSize;
+/** The grid's persona line and padlocks: ``editorialType.marginNote``. */
+const MARGIN_SIZE = editorialType.marginNote.fontSize;
+/** Screen-state copy and the celebration: ``editorialType.note``. */
+const NOTE_SIZE = editorialType.note.fontSize;
+/** Tappable text and the lead line of a block: the interactive floor. */
+const ACTION_SIZE = uiType.button.fontSize;
+/** The modal's title and its close glyph: ``editorialType.heading``. */
+const HEADING_SIZE = editorialType.heading.fontSize;
+/** A round badge sized to hold one caption glyph on its own line height. */
+const BADGE_DIAMETER = editorialType.caption.lineHeight;
+
 /**
  * Styles for the Map's spiral-of-becoming grid + the rich stage-detail modal.
  * The grid is token-only and laid out purely with flex; the modal keeps the
@@ -90,12 +114,12 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     color: ink.primary,
-    fontSize: 14,
+    fontSize: NOTE_SIZE,
     marginTop: spacing(1),
   },
   errorText: {
     color: colors.danger,
-    fontSize: 14,
+    fontSize: NOTE_SIZE,
     textAlign: CENTER,
     paddingHorizontal: spacing(2),
   },
@@ -103,14 +127,14 @@ const styles = StyleSheet.create({
   // plain ink rather than the alarm colour; the hint/retry are shared.
   emptyText: {
     color: ink.primary,
-    fontSize: 14,
+    fontSize: NOTE_SIZE,
     textAlign: CENTER,
     paddingHorizontal: spacing(2),
   },
   // The human "what to do next" line under the verbatim server message.
   errorHint: {
     color: ink.muted,
-    fontSize: 14,
+    fontSize: NOTE_SIZE,
     lineHeight: 20,
     textAlign: CENTER,
     marginTop: spacing(1),
@@ -192,11 +216,11 @@ const styles = StyleSheet.create({
   },
   personaText: {
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     textAlign: 'right',
   },
   lineText: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     textAlign: 'right',
   },
 
@@ -225,7 +249,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    borderWidth: 2,
+    borderWidth: LENS_BORDER_WIDTH,
     borderColor: accent.strong,
     backgroundColor: colors.mystical.glowLight,
     alignItems: CENTER,
@@ -244,30 +268,34 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     backgroundColor: colors.mystical.transparentLight,
   },
+  // Width set inline to the glass chord (lensCaptionWidth), which already
+  // keeps every line clear of the rim and the rounded ends.
   magnifierCaption: {
     alignItems: CENTER,
-    paddingHorizontal: spacing(1),
   },
   magnifierHeadline: {
     fontFamily: editorialType.serif,
-    fontSize: 16,
+    fontSize: ACTION_SIZE,
+    lineHeight: LENS_HEADLINE_LINE_HEIGHT,
     fontWeight: '700',
     color: ink.primary,
   },
   magnifierDetail: {
-    fontSize: 10,
+    fontSize: CAPTION_SIZE,
+    lineHeight: LENS_CAPTION_LINE_HEIGHT,
     color: ink.soft,
   },
   // "You are here" chip riding the lens when it rests on the current stage.
   youAreHere: {
-    marginBottom: spacing(0.25),
-    paddingVertical: spacing(0.25),
+    marginBottom: LENS_CHIP_INSET,
+    paddingVertical: LENS_CHIP_INSET,
     paddingHorizontal: spacing(0.5),
     borderRadius: radius.sm,
     backgroundColor: accent.strong,
   },
   youAreHereText: {
-    fontSize: 9,
+    fontSize: CAPTION_SIZE,
+    lineHeight: LENS_CHIP_LINE_HEIGHT,
     fontWeight: '700',
     color: colors.text.light,
     letterSpacing: 0.5,
@@ -291,7 +319,7 @@ const styles = StyleSheet.create({
   },
   arrowLabelText: {
     fontWeight: '700',
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: ink.soft,
     flexShrink: 1,
   },
@@ -338,13 +366,13 @@ const styles = StyleSheet.create({
     paddingLeft: WAVE_KEEP_OUT,
   },
   lockText: {
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     color: ink.muted,
   },
   // Left-column padlock: pinned to the far left of the stage block's row,
   // vertically centered by the row's alignItems.
   lockLeft: {
-    fontSize: 14,
+    fontSize: MARGIN_SIZE,
     color: ink.muted,
     marginRight: spacing(0.5),
   },
@@ -358,6 +386,8 @@ const styles = StyleSheet.create({
   // reads away from the wave strand.
   unlockTimeline: {
     flexShrink: 1,
+    // Still off the ramp: at 13px this copy outgrows its half-lane at 390 and
+    // meets the wave, so it moves with the fitted grid text (#2960 follow-up).
     fontSize: 9,
     color: ink.muted,
     paddingHorizontal: spacing(0.25),
@@ -385,7 +415,7 @@ const styles = StyleSheet.create({
   },
   celebrationText: {
     fontFamily: editorialType.serif,
-    fontSize: 15,
+    fontSize: NOTE_SIZE,
     fontWeight: '700',
     color: onShowcase.primary,
     textAlign: CENTER,
@@ -402,7 +432,7 @@ const styles = StyleSheet.create({
   },
   journeyReadText: {
     fontFamily: editorialType.serif,
-    fontSize: 16,
+    fontSize: ACTION_SIZE,
     fontWeight: '700',
     color: ink.primary,
     letterSpacing: 0.5,
@@ -410,7 +440,7 @@ const styles = StyleSheet.create({
   // Subtle "Cycle N" caption in the journey header (a wheel, not a rank).
   cycleIndicator: {
     fontFamily: editorialType.serif,
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: ink.muted,
     marginTop: spacing(0.25),
     letterSpacing: 0.5,
@@ -424,14 +454,14 @@ const styles = StyleSheet.create({
   },
   beginAgainHeading: {
     fontFamily: editorialType.serif,
-    fontSize: 16,
+    fontSize: ACTION_SIZE,
     fontWeight: '700',
     color: onShowcase.primary,
     textAlign: CENTER,
   },
   beginAgainBody: {
     fontFamily: editorialType.serif,
-    fontSize: 13,
+    fontSize: CAPTION_SIZE,
     lineHeight: 20,
     color: onShowcase.soft,
     textAlign: CENTER,
@@ -442,9 +472,9 @@ const styles = StyleSheet.create({
   completedBadge: {
     position: 'absolute',
     bottom: spacing(0.25),
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: BADGE_DIAMETER,
+    height: BADGE_DIAMETER,
+    borderRadius: BADGE_DIAMETER / 2,
     backgroundColor: colors.success,
     alignItems: CENTER,
     justifyContent: CENTER,
@@ -456,7 +486,7 @@ const styles = StyleSheet.create({
     right: spacing(0.25),
   },
   completedBadgeText: {
-    fontSize: 11,
+    fontSize: CAPTION_SIZE,
     color: colors.text.light,
     fontWeight: '700',
   },
@@ -499,7 +529,7 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   closeText: {
-    fontSize: 22,
+    fontSize: HEADING_SIZE,
     fontWeight: '600',
     color: onShowcase.soft,
   },
@@ -520,12 +550,11 @@ const styles = StyleSheet.create({
 
   // Title and subtitle
   modalTitle: {
-    ...editorialType.title,
-    fontSize: 22,
+    ...editorialType.heading,
     color: onShowcase.primary,
   },
   modalSubtitle: {
-    fontSize: 14,
+    fontSize: ACTION_SIZE,
     color: onShowcase.soft,
     marginBottom: spacing(1.5),
     fontStyle: 'italic',
@@ -534,7 +563,7 @@ const styles = StyleSheet.create({
   // One-sentence progression read.
   progressionSentence: {
     fontFamily: editorialType.serif,
-    fontSize: 15,
+    fontSize: ACTION_SIZE,
     lineHeight: 22,
     color: onShowcase.primary,
     marginBottom: spacing(1.5),
@@ -555,12 +584,12 @@ const styles = StyleSheet.create({
     alignItems: CENTER,
   },
   rankedStatValue: {
-    fontSize: 20,
+    fontSize: HEADING_SIZE,
     fontWeight: '700',
     color: onShowcase.primary,
   },
   rankedStatLabel: {
-    fontSize: 10,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.muted,
     textAlign: CENTER,
     marginTop: spacing(0.25),
@@ -571,7 +600,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing(1.5),
   },
   progressLabel: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.soft,
     marginBottom: spacing(0.5),
   },
@@ -595,18 +624,18 @@ const styles = StyleSheet.create({
     marginBottom: spacing(0.5),
   },
   metadataLabel: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.soft,
     width: 100,
     fontWeight: '600',
   },
   metadataValue: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.primary,
     flex: 1,
   },
   freeWillDescription: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.soft,
     marginTop: spacing(0.5),
     lineHeight: 18,
@@ -635,7 +664,7 @@ const styles = StyleSheet.create({
     backgroundColor: accent.primary,
   },
   primaryActionText: {
-    fontSize: 15,
+    fontSize: ACTION_SIZE,
     color: colors.text.light,
     fontWeight: '700',
   },
@@ -654,7 +683,7 @@ const styles = StyleSheet.create({
     justifyContent: CENTER,
   },
   secondaryActionText: {
-    fontSize: 13,
+    fontSize: ACTION_SIZE,
     color: onShowcase.primary,
     fontWeight: '600',
   },
@@ -670,12 +699,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(1),
   },
   historyTitle: {
-    fontSize: 14,
+    fontSize: ACTION_SIZE,
     fontWeight: '700',
     color: onShowcase.primary,
   },
   historyToggle: {
-    fontSize: 12,
+    fontSize: ACTION_SIZE,
     color: onShowcase.soft,
   },
   historyStatus: {
@@ -683,14 +712,14 @@ const styles = StyleSheet.create({
     alignItems: CENTER,
   },
   historyEmpty: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.soft,
     fontStyle: 'italic',
     paddingVertical: spacing(1),
     textAlign: CENTER,
   },
   historyErrorText: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: colors.danger,
     textAlign: CENTER,
     marginBottom: spacing(1),
@@ -700,8 +729,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(2),
   },
   historyRetryText: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...uiType.button,
     color: onShowcase.primary,
   },
   refreshBanner: {
@@ -719,7 +747,7 @@ const styles = StyleSheet.create({
   },
   refreshBannerText: {
     flex: 1,
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: colors.text.light,
     marginRight: spacing(1.5),
   },
@@ -730,12 +758,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.secondary,
   },
   refreshRetryText: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...uiType.button,
     color: colors.text.light,
   },
   historySubheading: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     fontWeight: '600',
     color: onShowcase.soft,
     marginTop: spacing(1),
@@ -747,16 +774,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing(0.5),
   },
   historyItemIcon: {
-    fontSize: 16,
+    fontSize: ACTION_SIZE,
     marginRight: spacing(0.75),
   },
   historyItemName: {
-    fontSize: 12,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.primary,
     flex: 1,
   },
   historyItemDetail: {
-    fontSize: 11,
+    fontSize: CAPTION_SIZE,
     color: onShowcase.soft,
   },
   goalBadges: {
@@ -765,14 +792,14 @@ const styles = StyleSheet.create({
     marginLeft: spacing(0.5),
   },
   goalBadge: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: BADGE_DIAMETER,
+    height: BADGE_DIAMETER,
+    borderRadius: BADGE_DIAMETER / 2,
     alignItems: CENTER,
     justifyContent: CENTER,
   },
   goalBadgeText: {
-    fontSize: 8,
+    fontSize: CAPTION_SIZE,
     fontWeight: '700',
     color: colors.text.light,
   },

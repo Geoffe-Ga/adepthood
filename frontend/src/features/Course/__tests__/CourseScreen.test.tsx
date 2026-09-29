@@ -8,6 +8,8 @@ import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
+import { settle } from '@/testing/asyncSettle';
+
 function backgroundColorOf(style: StyleProp<ViewStyle>): string {
   const flat = StyleSheet.flatten(style) ?? {};
   return (flat.backgroundColor as string | undefined) ?? '';
@@ -180,7 +182,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+const { render, fireEvent, act, within } = require('@testing-library/react-native');
 const CourseScreen = require('../CourseScreen').default;
 
 const { readToTheEnd } = require('./readerGeometry');
@@ -241,7 +243,8 @@ describe('CourseScreen', () => {
   it('renders the stage selector and content list inside the shared content-capped container', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     const container = getByTestId('content-container');
     expect(within(container).getByTestId('stage-selector')).toBeTruthy();
@@ -251,7 +254,8 @@ describe('CourseScreen', () => {
   it('gives the shared content-capped container a bounded fill so native scroll/touch chains hold', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('stage-selector')).toBeTruthy());
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     const flat = StyleSheet.flatten(getByTestId('content-container').props.style);
     expect(flat.flex).toBe(1);
@@ -260,11 +264,10 @@ describe('CourseScreen', () => {
   it('defaults to the stage the server reports as current', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(mockStageContent).toHaveBeenCalledWith(2);
-      expect(mockStageProgress).toHaveBeenCalledWith(2);
-      expect(getByTestId('stage-selector')).toBeTruthy();
-    });
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
+    expect(mockStageProgress).toHaveBeenCalledWith(2);
+    expect(getByTestId('stage-selector')).toBeTruthy();
   });
 
   it('takes the server stage over the completion count when they disagree', async () => {
@@ -287,103 +290,94 @@ describe('CourseScreen', () => {
 
     render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(mockStageContent).toHaveBeenCalledWith(4);
-      expect(mockStageProgress).toHaveBeenCalledWith(4);
-    });
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(4);
+    expect(mockStageProgress).toHaveBeenCalledWith(4);
     expect(mockStageContent).not.toHaveBeenCalledWith(2);
   });
 
   it('displays stage metadata for selected stage', async () => {
     const { getByTestId, getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-metadata')).toBeTruthy();
-      expect(getByText('Stage 2')).toBeTruthy();
-      expect(getByText('Second stage')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-metadata')).toBeTruthy();
+    expect(getByText('Stage 2')).toBeTruthy();
+    expect(getByText('Second stage')).toBeTruthy();
   });
 
   it('displays progress bar with correct completion count', async () => {
     const { getByTestId, getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('progress-bar')).toBeTruthy();
-      expect(getByText('1/2 completed')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('progress-bar')).toBeTruthy();
+    expect(getByText('1/2 completed')).toBeTruthy();
   });
 
   it('renders the stage cover with the serif stage name and reading progress', async () => {
     const { getByTestId, getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-cover')).toBeTruthy();
-      expect(getByTestId('stage-cover-progress')).toBeTruthy();
-      // The cover shows the serif stage title and its own reading-progress line.
-      expect(getByText('Stage 2')).toBeTruthy();
-      expect(getByText('1 of 2 read')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-cover')).toBeTruthy();
+    expect(getByTestId('stage-cover-progress')).toBeTruthy();
+    // The cover shows the serif stage title and its own reading-progress line.
+    expect(getByText('Stage 2')).toBeTruthy();
+    expect(getByText('1 of 2 read')).toBeTruthy();
   });
 
   it('celebrates on the cover when the stage is fully read', async () => {
     mockStageProgress.mockResolvedValue({ total_items: 2, read_items: 2, progress_percent: 100 });
     const { getByText, getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-cover-celebration')).toBeTruthy();
-      expect(getByText('✓ Stage complete')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-cover-celebration')).toBeTruthy();
+    expect(getByText('✓ Stage complete')).toBeTruthy();
   });
 
   it('renders content items in the list', async () => {
     const { getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-      expect(getByText('Reflection Prompt')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
+    expect(getByText('Reflection Prompt')).toBeTruthy();
   });
 
   it('fades the bottom edge of the landing page into the canvas ground', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('content-list')).toBeTruthy());
+    await settle();
+    expect(getByTestId('content-list')).toBeTruthy();
     expect(getByTestId('bottom-fade')).toBeTruthy();
   });
 
   it('does not fade the bottom edge of the chapter reader (desk ground)', async () => {
     const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     expect(queryByTestId('bottom-fade')).toBeNull();
   });
 
   it('loads new content when a different stage is selected', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-selector')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     // Tap stage 1
     await act(async () => {
       fireEvent.press(getByTestId('stage-pill-1'));
     });
 
-    await waitFor(() => {
-      expect(mockStageContent).toHaveBeenCalledWith(1);
-      expect(mockStageProgress).toHaveBeenCalledWith(1);
-    });
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(1);
+    expect(mockStageProgress).toHaveBeenCalledWith(1);
   });
 
   it('selects the stage from a NEW navigation to the already-mounted Course tab', async () => {
@@ -391,9 +385,8 @@ describe('CourseScreen', () => {
     // stage (the server's current stage, 2) as the default selection.
     const { getByTestId, rerender } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
-    });
+    await settle();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
     expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(false);
 
     // A second Map->Course deep-link reaches the still-mounted tab carrying a
@@ -403,9 +396,8 @@ describe('CourseScreen', () => {
       rerender(<CourseScreen />);
     });
 
-    await waitFor(() => {
-      expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
-    });
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
     expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(false);
   });
 
@@ -414,9 +406,8 @@ describe('CourseScreen', () => {
     mockRouteParams = { stageNumber: 1 };
     const { getByTestId, rerender } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
-    });
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
     const contentCallsAfterMount = mockStageContent.mock.calls.length;
     const stagesCallsAfterMount = mockStagesList.mock.calls.length;
 
@@ -442,9 +433,8 @@ describe('CourseScreen', () => {
       mockRouteParams = tabParamsFromPath('course/1', 'Course');
       const { getByTestId, getByText } = render(<CourseScreen />);
 
-      await waitFor(() => {
-        expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
-      });
+      await settle();
+      expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
       expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(false);
       expect(getByTestId('stage-cover')).toBeTruthy();
       expect(getByTestId('stage-metadata')).toBeTruthy();
@@ -458,9 +448,8 @@ describe('CourseScreen', () => {
         mockRouteParams = tabParamsFromPath(path, 'Course');
         const { getByTestId } = render(<CourseScreen />);
 
-        await waitFor(() => {
-          expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
-        });
+        await settle();
+        expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
         expect(getByTestId('stage-cover')).toBeTruthy();
         expect(getByTestId('stage-metadata')).toBeTruthy();
         expect(mockStageContent).toHaveBeenCalledWith(2);
@@ -528,20 +517,24 @@ describe('CourseScreen', () => {
 
     const { getByTestId, getByText, queryByText } = render(<CourseScreen />);
 
-    await waitFor(() => expect(deferredCalls.length).toBe(1));
+    await settle();
+    expect(deferredCalls.length).toBe(1);
     resolveDeferred(0, stageOneContent);
     await flushMicrotasks();
-    await waitFor(() => expect(getByText('Stage One Essay')).toBeTruthy());
+    await settle();
+    expect(getByText('Stage One Essay')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('stage-pill-2'));
     });
-    await waitFor(() => expect(deferredCalls.length).toBe(2));
+    await settle();
+    expect(deferredCalls.length).toBe(2);
 
     await act(async () => {
       fireEvent.press(getByTestId('stage-pill-1'));
     });
-    await waitFor(() => expect(deferredCalls.length).toBe(3));
+    await settle();
+    expect(deferredCalls.length).toBe(3);
 
     // Resolve the current stage-1 fetch first.
     resolveDeferred(2, stageOneContent);
@@ -558,25 +551,22 @@ describe('CourseScreen', () => {
   it('opens content viewer when tapping an unlocked item', async () => {
     const { getByText, getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
   });
 
   it('does not open viewer when tapping a locked item', async () => {
     const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Reflection Prompt')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Reflection Prompt')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-2'));
@@ -586,17 +576,19 @@ describe('CourseScreen', () => {
   });
 
   it('opens a site resource in the reader and returns to the course on back', async () => {
-    const { getByTestId, findByText, queryByTestId } = render(<CourseScreen />);
+    const { getByTestId, getByText, queryByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => expect(getByTestId('site-resources-panel')).toBeTruthy());
+    await settle();
+    expect(getByTestId('site-resources-panel')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('site-resource-chip-philosophy'));
     });
 
-    await waitFor(() => expect(getByTestId('chapter-reader')).toBeTruthy());
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     expect(mockSiteResourceBody).toHaveBeenCalledWith('philosophy');
-    await findByText('philosophy');
+    getByText('philosophy');
 
     await act(async () => {
       fireEvent.press(getByTestId('reader-back-button'));
@@ -609,28 +601,25 @@ describe('CourseScreen', () => {
   it('returns from content viewer when back is pressed', async () => {
     const { getByText, getByTestId, queryByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
 
     // Open viewer
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
 
     // Go back
     await act(async () => {
       fireEvent.press(getByTestId('reader-back-button'));
     });
 
-    await waitFor(() => {
-      expect(queryByTestId('chapter-reader')).toBeNull();
-      expect(getByTestId('content-list')).toBeTruthy();
-    });
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
+    expect(getByTestId('content-list')).toBeTruthy();
   });
 
   it('navigates to the next chapter when chapter-nav-next is pressed', async () => {
@@ -658,17 +647,15 @@ describe('CourseScreen', () => {
 
     const { getByText, getByTestId, findByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Chapter One')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Chapter One')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     // The chapter controls are due only at the essay's end.
     await readToTheEnd(findByTestId);
 
@@ -676,25 +663,22 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
     });
 
-    await waitFor(() => {
-      expect(mockContentBody).toHaveBeenCalledWith(2);
-    });
+    await settle();
+    expect(mockContentBody).toHaveBeenCalledWith(2);
   });
 
   it('returns to the course list when Done is pressed on the last chapter', async () => {
     const { getByText, getByTestId, queryByTestId, findByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
 
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     // The chapter controls are due only at the essay's end.
     await readToTheEnd(findByTestId);
 
@@ -702,9 +686,8 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('chapter-nav-next'));
     });
 
-    await waitFor(() => {
-      expect(queryByTestId('chapter-reader')).toBeNull();
-    });
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
     expect(getByText('Welcome Essay')).toBeTruthy();
   });
 
@@ -713,9 +696,8 @@ describe('CourseScreen', () => {
 
     const { getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('No Content Yet')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('No Content Yet')).toBeTruthy();
   });
 
   it('navigates to Journal with reflection params, and a way back to the course, when Reflect is pressed', async () => {
@@ -734,18 +716,16 @@ describe('CourseScreen', () => {
 
     const { getByText, getByTestId, queryByTestId, findByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
 
     // Open the content viewer
     await act(async () => {
       fireEvent.press(getByTestId('content-card-1'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
     // The chapter controls are due only at the essay's end.
     await readToTheEnd(findByTestId);
 
@@ -762,9 +742,8 @@ describe('CourseScreen', () => {
     });
     // No scrollOffset rides along: this path closes the reader, so there is no
     // reading position left to restore.
-    await waitFor(() => {
-      expect(queryByTestId('chapter-reader')).toBeNull();
-    });
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
   });
 
   it('renders the stage intro card and opens it in the reader when an intro exists', async () => {
@@ -778,9 +757,8 @@ describe('CourseScreen', () => {
 
     const { getByTestId, getByText } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('stage-intro-card')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-intro-card')).toBeTruthy();
     expect(getByText('Welcome to Beige')).toBeTruthy();
     expect(getByText('What Beige is about.')).toBeTruthy();
 
@@ -788,18 +766,16 @@ describe('CourseScreen', () => {
       fireEvent.press(getByTestId('stage-intro-card'));
     });
 
-    await waitFor(() => {
-      expect(getByTestId('chapter-reader')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
   });
 
   it('shows no intro card and no error banner when the stage has no intro', async () => {
     // Default mockStageIntro rejects with a 404 — a normal, non-error state.
     const { getByText, queryByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(getByText('Welcome Essay')).toBeTruthy();
     expect(queryByTestId('stage-intro-card')).toBeNull();
     expect(queryByTestId('course-error')).toBeNull();
   });
@@ -814,18 +790,16 @@ describe('CourseScreen', () => {
     });
 
     const { getByTestId } = render(<CourseScreen />);
-    await waitFor(() => {
-      expect(getByTestId('stage-selector')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('stage-selector')).toBeTruthy();
 
     // Stage 2 is the default selection, so press stage 1 for a genuine change.
     await act(async () => {
       fireEvent.press(getByTestId('stage-pill-1'));
     });
 
-    await waitFor(() => {
-      expect(mockStageIntro).toHaveBeenCalledWith(1);
-    });
+    await settle();
+    expect(mockStageIntro).toHaveBeenCalledWith(1);
   });
 });
 
@@ -843,9 +817,8 @@ describe('single scroll surface', () => {
   it('hosts the stage header inside the chapter list', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('content-list')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('content-list')).toBeTruthy();
 
     const list = within(getByTestId('content-list'));
     expect(list.getByTestId('stage-cover')).toBeTruthy();
@@ -859,9 +832,8 @@ describe('single scroll surface', () => {
 
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('content-list')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('content-list')).toBeTruthy();
 
     const list = within(getByTestId('content-list'));
     expect(list.getByTestId('stage-cover')).toBeTruthy();
@@ -873,9 +845,8 @@ describe('single scroll surface', () => {
 
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(within(getByTestId('content-list')).getByTestId('course-error')).toBeTruthy();
-    });
+    await settle();
+    expect(within(getByTestId('content-list')).getByTestId('course-error')).toBeTruthy();
 
     const listOnError = within(getByTestId('content-list'));
     expect(getByTestId('stage-cover')).toBeTruthy();
@@ -884,18 +855,16 @@ describe('single scroll surface', () => {
       fireEvent.press(listOnError.getByTestId('course-retry'));
     });
 
-    await waitFor(() => {
-      expect(within(getByTestId('content-list')).getByText('Welcome Essay')).toBeTruthy();
-    });
+    await settle();
+    expect(within(getByTestId('content-list')).getByText('Welcome Essay')).toBeTruthy();
     expect(within(getByTestId('content-list')).queryByTestId('course-error')).toBeNull();
   });
 
   it('renders both the header and chapter items in the same list', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(getByTestId('content-list')).toBeTruthy();
-    });
+    await settle();
+    expect(getByTestId('content-list')).toBeTruthy();
 
     const list = within(getByTestId('content-list'));
     expect(list.getByText('Welcome Essay')).toBeTruthy();
@@ -920,21 +889,19 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
     // Default selection is stage 2 (Purple).
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(
-        STAGE_COLORS['Purple'],
-      );
-    });
+    await settle();
+    expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(
+      STAGE_COLORS['Purple'],
+    );
   });
 
   it('tints the course progress bar fill with the same selected stage color', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(
-        STAGE_COLORS['Purple'],
-      );
-    });
+    await settle();
+    expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(
+      STAGE_COLORS['Purple'],
+    );
   });
 
   it('falls back to the neutral color when the stage color is unrecognized', async () => {
@@ -952,11 +919,8 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
 
     const { getByTestId } = render(<CourseScreen />);
 
-    await waitFor(() => {
-      expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(
-        colors.neutral,
-      );
-      expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(colors.neutral);
-    });
+    await settle();
+    expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(colors.neutral);
+    expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(colors.neutral);
   });
 });

@@ -26,18 +26,41 @@ from main import app
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from services import marginalia as marginalia_service
+from services.account_egress_barrier import account_egress_barrier
 from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
+from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
 
 _BODY = "I walked by the river and the willow bent without breaking."
 _ESSAY = "A warm letter about beginnings."
 
 #: How long a competing mutation is given to overtake a dial that is being held
-#: open. Long enough that a request which *can* proceed will have, short enough
-#: that four of these do not lengthen the suite noticeably. Matched to the
-#: literal the two mirror-race tests below already used.
+#: open, *once it is provably at the barrier*. Long enough that a request which
+#: *can* proceed will have, short enough that four of these do not lengthen the
+#: suite noticeably.
 _SERIALIZATION_PROBE_SECONDS = 0.05
+
+
+async def _waited_behind_the_held_dial(
+    arrivals: BarrierArrivals, actor: str, competitor: asyncio.Task[object]
+) -> bool:
+    """Whether ``competitor`` queued on the account barrier and stayed behind the dial.
+
+    Waits for the competitor to *reach* the barrier before probing, rather than
+    inferring it from a short timeout: on a slow runner a request still in
+    authentication also fails to finish within the probe, and releasing the
+    dial then lets the holder's next critical section go first for a reason
+    the product is right about (#2986). A competitor that never reaches the
+    barrier within the bound is, by definition, not serialized behind it.
+    """
+    if not await arrivals.arrived(actor, within_seconds=BARRIER_ARRIVAL_TIMEOUT_SECONDS):
+        return False
+    try:
+        await asyncio.wait_for(asyncio.shield(competitor), timeout=_SERIALIZATION_PROBE_SECONDS)
+    except TimeoutError:
+        return True
+    return False
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
@@ -512,6 +535,7 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
     vault = _RecordingDraftVault(None)
     _wire_vault(vault)
 
+    arrivals = BarrierArrivals.install(monkeypatch, account_egress_barrier)
     expansion = asyncio.create_task(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
@@ -519,12 +543,13 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
-    patch = asyncio.create_task(
+    patch = arrivals.start(
+        "patch",
         concurrent_async_client.patch(
             f"/journal/{entry_id}",
             json={"classification": "intimate"},
             headers=headers,
-        )
+        ),
     )
 
     # The account egress barrier (#2642) orders the *generation* dial, which
@@ -535,18 +560,15 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
     # dials and its waiters are served in order. The property this test exists
     # for is unchanged and now holds by ordering rather than by luck: the entry
     # is INTIMATE before the mirror reads it, so nothing is ever sent.
-    patch_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(patch), timeout=_SERIALIZATION_PROBE_SECONDS)
-    except TimeoutError:
-        patch_was_serialized = True
+        patch_was_serialized = await _waited_behind_the_held_dial(arrivals, "patch", patch)
     finally:
         finish_generation.set()
 
     expanded = await expansion
     patched = await patch
 
-    assert patch_was_serialized, "the privacy PATCH overtook the in-flight generation"
+    assert patch_was_serialized, "the privacy PATCH did not queue behind the in-flight generation"
     assert patched.status_code == HTTPStatus.OK
     assert expanded.status_code == HTTPStatus.OK
     assert expanded.json()["essay"] == _ESSAY
@@ -569,6 +591,7 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
     vault = _BlockingDraftVault()
     _wire_vault(vault)
 
+    arrivals = BarrierArrivals.install(monkeypatch, account_egress_barrier)
     expansion = asyncio.create_task(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
@@ -576,26 +599,24 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
         )
     )
     await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
-    patch = asyncio.create_task(
+    patch = arrivals.start(
+        "patch",
         concurrent_async_client.patch(
             f"/journal/{entry_id}",
             json={"classification": "intimate"},
             headers=headers,
-        )
+        ),
     )
 
-    patch_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(patch), timeout=_SERIALIZATION_PROBE_SECONDS)
-    except TimeoutError:
-        patch_was_serialized = True
+        patch_was_serialized = await _waited_behind_the_held_dial(arrivals, "patch", patch)
     finally:
         vault.finish_upsert.set()
 
     expanded = await expansion
     patched = await patch
 
-    assert patch_was_serialized, "the privacy PATCH overtook the in-flight PUT"
+    assert patch_was_serialized, "the privacy PATCH did not queue behind the in-flight PUT"
     assert expanded.status_code == HTTPStatus.OK
     assert patched.status_code == HTTPStatus.OK
     assert patched.json()["classification"] == "intimate"
@@ -640,6 +661,7 @@ async def test_delete_during_generation_prevents_the_later_mirror(
     vault = _RecordingDraftVault(None)
     _wire_vault(vault)
 
+    arrivals = BarrierArrivals.install(monkeypatch, account_egress_barrier)
     expansion = asyncio.create_task(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
@@ -647,28 +669,26 @@ async def test_delete_during_generation_prevents_the_later_mirror(
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
-    deletion = asyncio.create_task(
+    deletion = arrivals.start(
+        "deletion",
         concurrent_async_client.delete(
             f"/journal/{entry_id}",
             headers=headers,
-        )
+        ),
     )
 
     # Serialized behind the generation dial for the same reason the privacy
     # PATCH above is, and with the same consequence: the withdrawal completes
     # between the two dials, so the mirror reads a deleted row and sends nothing.
-    delete_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(deletion), timeout=_SERIALIZATION_PROBE_SECONDS)
-    except TimeoutError:
-        delete_was_serialized = True
+        delete_was_serialized = await _waited_behind_the_held_dial(arrivals, "deletion", deletion)
     finally:
         finish_generation.set()
 
     expanded = await expansion
     deleted = await deletion
 
-    assert delete_was_serialized, "the DELETE overtook the in-flight generation"
+    assert delete_was_serialized, "the DELETE did not queue behind the in-flight generation"
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert expanded.status_code == HTTPStatus.OK
     assert vault.upserts == []
@@ -690,6 +710,7 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
     vault = _BlockingDraftVault()
     _wire_vault(vault)
 
+    arrivals = BarrierArrivals.install(monkeypatch, account_egress_barrier)
     expansion = asyncio.create_task(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
@@ -697,25 +718,23 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
         )
     )
     await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
-    deletion = asyncio.create_task(
+    deletion = arrivals.start(
+        "deletion",
         concurrent_async_client.delete(
             f"/journal/{entry_id}",
             headers=headers,
-        )
+        ),
     )
 
-    delete_was_serialized = False
     try:
-        await asyncio.wait_for(asyncio.shield(deletion), timeout=_SERIALIZATION_PROBE_SECONDS)
-    except TimeoutError:
-        delete_was_serialized = True
+        delete_was_serialized = await _waited_behind_the_held_dial(arrivals, "deletion", deletion)
     finally:
         vault.finish_upsert.set()
 
     expanded = await expansion
     deleted = await deletion
 
-    assert delete_was_serialized, "DELETE overtook the in-flight Voice Draft PUT"
+    assert delete_was_serialized, "DELETE did not queue behind the in-flight Voice Draft PUT"
     assert expanded.status_code == HTTPStatus.OK
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert vault.operations == ["put", "delete"]

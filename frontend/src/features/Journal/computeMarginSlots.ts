@@ -14,8 +14,8 @@
  *    One ordered pass resolves the whole column, including cascades.
  * 2. **Input order is document order.** ``tops[i]`` is item ``i``'s top; the
  *    solver never re-sorts. Sequencing is the caller's job and is already
- *    solved — ``buildMarginItems`` sorts by ``anchor_start`` in
- *    ``JournalEntryScreen.tsx`` — so passing anchors out of document order
+ *    solved — ``buildMarginItems`` in ``marginLayout.ts`` leads with the
+ *    drawn notes by ``anchor_start`` — so passing anchors out of document order
  *    still yields a valid non-overlapping column, just in the order given.
  *
  * An item whose ``anchorTop`` is ``null`` or ``undefined`` is *unanchored*:
@@ -27,8 +27,8 @@
  *
  * There is no clamping. The first anchored item lands on its anchor even when
  * that anchor is negative, and a note taller than the column pushes everything
- * after it deterministically rather than being folded back — the column (a
- * scroll surface under #2418) is what grows. A future measurement bug therefore
+ * after it deterministically rather than being folded back — the column is
+ * what grows, inside the page's one shared scroll surface (#2418). A future measurement bug therefore
  * shows up as a wrong offset instead of being silently rewritten to zero.
  */
 
