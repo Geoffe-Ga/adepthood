@@ -6,6 +6,7 @@ import { expect, test, type CDPSession, type Locator, type Page } from '@playwri
 import { signUp } from './journalHabitsBrowserSupport';
 import {
   insideBox,
+  insidePill,
   insideViewport,
   mapMeasureScript,
   STROKE_CLEARANCE_TOLERANCE_PX,
@@ -51,7 +52,10 @@ import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from 
  *   4. each unlock line and padlock sits inside its own stage's cell;
  *   5. each stage cell's text stays inside the cell, the cell inside its band
  *      and the band inside the grid, so a short window scrolls (a real
- *      scroller, by computed overflow) instead of painting one stage on the next.
+ *      scroller, by computed overflow) instead of painting one stage on the next;
+ *   6. the lens's own caption -- the YOU ARE HERE chip, the stage title and
+ *      subtitle -- stays on the glass, inside the rim and clear of the pill's
+ *      rounded ends, so a caption that grows must grow the pill (#2960).
  *
  * Every rule is a pure function in `mapGeometry.ts`, pinned by
  * `src/design/__tests__/mapGeometry.test.ts`. Before any rule runs the spec
@@ -160,6 +164,27 @@ function assertStateMarkers(m: MapMeasurement, state: MapState, where: string): 
     const shown = m.census.some((record) => (record.testId ?? '').startsWith(marker));
     expect(shown, `${where}: ${marker} in the measured frame`).toBe(true);
   }
+}
+
+/**
+ * The lens's own caption -- the chip and every line under it -- stays on the
+ * glass: inside the rim and clear of the pill's rounded ends (#2960).
+ */
+function lensFindings(m: MapMeasurement): string[] {
+  const { lens } = m;
+  if (lens === null) return [];
+  const caption: Array<{ what: string; box: Box }> = [
+    ...(m.chip === null ? [] : [{ what: 'the YOU ARE HERE chip', box: m.chip }]),
+    ...m.census
+      .filter((record) => within(record, lens))
+      .map((record) => ({ what: `"${record.text}"`, box: record as Box })),
+  ];
+  return caption
+    .filter(({ box }) => !insidePill(box, lens.box, m.lensRim, SUBPIXEL_TOLERANCE))
+    .map(
+      ({ what, box }) =>
+        `${what} at ${describeBox(box)} leaves the lens at ${describeBox(lens.box)}`,
+    );
 }
 
 /** Rule 2: what the wave's paint reaches, intended covers aside. */
@@ -278,6 +303,7 @@ async function holdLegibility(page: Page, state: MapState, size: Size): Promise<
   expect.soft(offscreenFindings(m), `${where}: text off screen`).toEqual([]);
   expect.soft(associationFindings(m), `${where}: annotations outside their stage`).toEqual([]);
   expect.soft(bandFindings(m), `${where}: stage text outside its band`).toEqual([]);
+  expect.soft(lensFindings(m), `${where}: lens caption off the glass`).toEqual([]);
 
   const scrolls = m.scroll !== null && m.scroll.scrollHeight > m.scroll.clientHeight;
   if (size === SHORT_VIEWPORT) {

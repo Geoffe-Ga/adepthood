@@ -179,6 +179,16 @@ describe('MapScreen', () => {
     expect(() => tree.root.findByProps({ testID: 'stage-modal' })).toThrow();
   });
 
+  it('names the close glyph for a screen reader rather than announcing a bare ×', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    const close = tree.root.findByProps({ testID: 'close-modal' });
+    expect(close.props.accessibilityRole).toBe('button');
+    expect(close.props.accessibilityLabel).toBe('Close stage details');
+  });
+
   it('closes modal when tapping outside content', () => {
     const tree = create(<MapScreen />);
     act(() => {
