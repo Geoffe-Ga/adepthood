@@ -57,7 +57,12 @@ jest.mock('@/api', () => {
   };
 });
 
-const { useResonance } = require('../useResonance');
+const {
+  useResonance,
+  EMPTY_BODY_MESSAGE,
+  PAGE_NOT_SAVED,
+  UNSAVED_PAGE_MESSAGE,
+} = require('../useResonance');
 
 beforeEach(() => {
   mockList.mockReset();
@@ -167,6 +172,49 @@ describe('useResonance', () => {
     });
     expect(mockGenerate).not.toHaveBeenCalled();
     expect(result.current.error).toBeTruthy();
+    expect(result.current.error).toBe(EMPTY_BODY_MESSAGE);
+  });
+
+  it('does not generate, or report an empty page, when the save did not land (#2980)', async () => {
+    const flush = jest.fn(async () => PAGE_NOT_SAVED);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 42, flush, userTimezone: TEST_TIMEZONE }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.requestResonance>> | undefined;
+    await act(async () => {
+      outcome = await result.current.requestResonance();
+    });
+
+    expect(outcome).toBe('failed');
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockDetect).not.toHaveBeenCalled();
+    expect(result.current.error).not.toBe(EMPTY_BODY_MESSAGE);
+    expect(result.current.error).toBe(UNSAVED_PAGE_MESSAGE);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('runs the pass exactly once after an unsaved flush later lands (#2980)', async () => {
+    const flush = jest.fn<() => Promise<number | typeof PAGE_NOT_SAVED>>();
+    flush.mockResolvedValueOnce(PAGE_NOT_SAVED).mockResolvedValue(42);
+    mockGenerate.mockResolvedValue(resonancePayload({ marginalia: [note({ id: 5 })] }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 42, flush, userTimezone: TEST_TIMEZONE }),
+    );
+
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(mockGenerate).not.toHaveBeenCalled();
+
+    let outcome: Awaited<ReturnType<typeof result.current.requestResonance>> | undefined;
+    await act(async () => {
+      outcome = await result.current.requestResonance();
+    });
+    expect(outcome).toBe('completed');
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).toHaveBeenCalledWith(42);
+    expect(result.current.error).toBeNull();
   });
 
   it('a slow initial load resolving after a generate pass keeps the generated notes and suggestions', async () => {
