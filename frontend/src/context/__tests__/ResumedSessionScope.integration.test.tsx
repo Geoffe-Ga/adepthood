@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, test, expect, jest, beforeEach, afterEach */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, renderHook, waitFor } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import React from 'react';
 
 import { auth as authApi } from '@/api';
@@ -11,6 +11,7 @@ import * as authStorage from '@/storage/authStorage';
 import { loadHabits, saveHabits } from '@/storage/habitStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
 import { DEVICE_OWNER_KEY, getActiveUser, setActiveUser } from '@/storage/userScope';
+import { settle } from '@/testing/asyncSettle';
 
 /**
  * Which namespace a *resumed* session reads.
@@ -120,7 +121,8 @@ async function coldStart(storedToken: string | null) {
   setActiveUser(null);
   mockAuthStorage.loadToken.mockResolvedValue(storedToken);
   const { result, unmount } = renderHook(() => useAuth(), { wrapper });
-  await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
+  await settle();
+  expect(result.current.authStatus).not.toBe('loading');
   return { result, unmount };
 }
 

@@ -1,10 +1,11 @@
 /* global describe, it, expect, beforeEach, jest */
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import PrivateVaultActivationScreen from '../PrivateVaultActivationScreen';
 
 import { vaultActivation, type VaultActivation } from '@/api';
+import { settle } from '@/testing/asyncSettle';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -53,7 +54,8 @@ const navigation = { goBack: jest.fn() };
 async function renderActivation(status: VaultActivation = INACTIVE) {
   mockStatus.mockResolvedValue(status);
   const view = render(<PrivateVaultActivationScreen navigation={navigation} />);
-  await waitFor(() => expect(view.queryByTestId('activation-loading')).toBeNull());
+  await settle();
+  expect(view.queryByTestId('activation-loading')).toBeNull();
   return view;
 }
 
@@ -192,7 +194,8 @@ describe('resumable progress and honest custody', () => {
     mockStatus.mockRejectedValue(new Error('offline'));
     const view = render(<PrivateVaultActivationScreen navigation={navigation} />);
 
-    await waitFor(() => expect(view.getByTestId('activation-load-error')).toBeTruthy());
+    await settle();
+    expect(view.getByTestId('activation-load-error')).toBeTruthy();
     expect(view.getByText(/Your journal still works/u)).toBeTruthy();
   });
 });
