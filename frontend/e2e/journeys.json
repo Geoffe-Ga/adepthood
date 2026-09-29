@@ -1566,6 +1566,27 @@
     "coveredBy": "frontend/e2e/text-order.browser.e2e.test.ts"
   },
   {
+    "id": "design.action-rows-are-orderly",
+    "description": "Every screen's controls are in order: the Action rows rules in frontend/src/design/DESIGN.md (#2860) -- (a) a card's one decline is the top-right X, (b) confirm and decline share one right-aligned row with the decline tertiary, (c) a form's primary action is full-width or centred at the bottom, (d) no lone text link under a card on its own line, (e) sibling controls share one baseline and one edge. The covering Playwright spec signs up through the UI, seeds the same account as the text census (ten habits, one adopted practice with a share link, one journal entry) over the API, then walks every route e2e/routeWalk.ts reaches plus Promoted quotes at 390x844 and 1280x720. For each screen it reads every visible accessibilityRole=button box in ONE settled frame (two requestAnimationFrames inside one evaluate), prints one line per button (viewport, screen, testID, box, name), and writes e2e/artifacts/action-rows/<viewport>/<route>.{png,json}, which CI publishes as action-row-sweep with if: always(). Three consequences of the rules are asserted because geometry can hold them: no two unrelated buttons overlap by more than a pixel, no button leaves the viewport's width (a sideways-scrolling rail excepted), and buttons side by side -- each one's vertical centre inside the other's extent -- have tops within 2px. A deliberately broken fixture page proves the walker catches each violation, and an inventory test, read from RootStackParamList and RootTabParamList, fails any screen neither walked nor skipped and any button skip on a route the walk never opens. Buttons in one scroller are compared in its content coordinates, so rows below the fold are held to the rules too; buttons in different scroll containers are compared where both are on screen. AdminFeedback (admin gate) and JournalPhotograph (no camera; a read page would be a paid transcription) are skipped with reasons logged every run, as is one button: the Map's draggable magnifier lens, which parks over the current stage's own hotspots by design and is left to the review step while every other Map control is held to the rules; a skipped button whose control has left its screen fails the sweep. Rules (a) to (e) themselves are a review step over the screenshots, not assertions; nothing the walk does spends.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "habits", "practices", "userPractices", "practiceShare", "journal"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "GET /practices/",
+        "POST /user-practices/",
+        "POST /practices/{practice_id}/share-link",
+        "GET /practices/share/{token}",
+        "POST /journal/"
+      ],
+      "tables": ["user", "habit", "practice", "userpractice", "practicesharelink", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/action-rows.browser.e2e.test.ts"
+  },
+  {
     "id": "navigation.stage-deep-link-opens-that-stage",
     "description": "Someone opens a stage deep link -- /practice/1 or /course/1, typed, bookmarked or tapped from outside the app -- and lands on that stage. React Navigation hands a path segment to the screen as a string while the screens compare stage numbers strictly, so before #2958 the linking config's missing parse step made /practice/1 show 'No practice set for this stage yet.' to an account whose adopted practice is stage 1 (the #2948 census finding), and made /course/1 render with no stage cover, no metadata and no stage chip selected. The spec seeds a fresh account's stage-1 adoption over the API, loads /practice/1 and asserts the adopted practice's name and Begin control with no empty state, then loads /course/1 (the course half: GET /course/stages/{stage_number}/content) and asserts the stage cover, the stage metadata and stage-pill-1 carrying the accent border (stagePillActive) while stage-pill-2 stays transparent -- react-native-web emits no aria-selected for the pill, so the spec reads the computed border colour. Only the browser takes the URL from the address bar through the web linking layer to the screen and on to a real server.",
     "crosses": {
