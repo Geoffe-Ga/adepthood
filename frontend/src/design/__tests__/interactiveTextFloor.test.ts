@@ -108,6 +108,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/FromYourCreekPanel.tsx::caption',
   'features/Journal/FromYourCreekPanel.tsx::sectionHeading',
   'features/Journal/JournalEntry.styles.ts::aspectChordSectionLabel',
+  // Audited: the carried-words notice (#2935) is read, never tapped — its Retry
+  // is the footer's own button.
+  'features/Journal/JournalEntry.styles.ts::carryWaitingText',
   'features/Journal/JournalEntry.styles.ts::loadErrorText',
   'features/Journal/JournalEntry.styles.ts::marginError',
   // Audited: the no-notes explanation is read, never tapped — the retry

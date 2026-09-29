@@ -339,6 +339,10 @@ const styles = StyleSheet.create({
     ...editorialType.caption,
     color: colors.danger,
   },
+  carryWaitingText: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+  },
   marginNoteSlot: {
     marginBottom: journalLayout.marginNoteGap,
   },

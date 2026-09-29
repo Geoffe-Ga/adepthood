@@ -42,6 +42,11 @@ const TIER_OPTIONS: readonly TierOption[] = [
   { tier: 'intimate', label: 'Intimate', hint: 'Never sent to AI; resonance is paused.' },
 ];
 
+/** The visible name of a tier, as the control labels it. */
+export function tierLabel(tier: PrivacyTier): string {
+  return TIER_OPTIONS.find((option) => option.tier === tier)?.label ?? tier;
+}
+
 export interface PrivacyTierControlProps {
   /** The currently-selected tier; defaults to ``personal`` when omitted. */
   value?: PrivacyTier;

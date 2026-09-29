@@ -35,14 +35,23 @@ import GetResonanceButton, {
   shouldShowResonance,
   type ResonanceButtonLayout,
 } from './GetResonanceButton';
+import HeldWordsLeaveDialog from './HeldWordsLeaveDialog';
 import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
 import styles from './JournalEntry.styles';
-import type { RetryFailure, SaveState } from './journalSaveRetry';
+import {
+  LOADED_TIER_STATE,
+  carriedTierEscalation,
+  confirmTierWrite,
+  knownTier,
+  reconcileUnloadedDraft,
+  type TierWriteOutcome,
+} from './journalReconnectLoad';
+import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRetry';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import MarginNote from './MarginNote';
-import PrivacyTierControl, { DEFAULT_TIER } from './PrivacyTierControl';
+import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
 import QuoteInclusionHint from './QuoteInclusionHint';
@@ -56,6 +65,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeSuggestionFacts } from './suggestionFacts';
+import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
 import { usePromotedQuoteHandoff } from './usePromotedQuoteHandoff';
@@ -73,6 +83,7 @@ import {
   type SaveReporter,
   type SaveRetry,
 } from './useSaveRetry';
+import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
 import { countWords, wordCountLabel } from './wordCount';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -202,6 +213,39 @@ const VAULT_WITHDRAWAL_PENDING_HINT =
  */
 function hintStateWhileFolding(state: SaveState, foldingIn: boolean): SaveState {
   return foldingIn ? 'saving' : state;
+}
+
+/** What the footer says, and offers, while offline words are held (#2935). */
+interface HeldFooter {
+  label: string;
+  /** Retry re-sends the tier the words were typed under. */
+  canRetry: boolean;
+}
+
+/** What the writing footer's Retry does, and the held state it shows. */
+interface SaveFooterActions {
+  retry: () => Promise<void>;
+  held: HeldFooter | null;
+}
+
+/** The hint while held words wait on no particular tier (e.g. mid-escalation). */
+const HELD_HINT = 'Not saved yet';
+
+/** The hint while held words wait on the entry being made ``tier`` or stricter. */
+function heldHintCopy(tier: JournalClassification): string {
+  return `${HELD_HINT} — waiting until this entry is ${tierLabel(tier)} or more private`;
+}
+
+/** The footer's held state, or null when nothing is held. */
+function heldFooterFor(
+  autosave: Pick<AutosaveApi, 'carryHeld' | 'carryWaitingTier' | 'carryRetryReady'>,
+): HeldFooter | null {
+  if (!autosave.carryHeld) return null;
+  const tier = autosave.carryWaitingTier;
+  return {
+    label: tier == null ? HELD_HINT : heldHintCopy(tier),
+    canRetry: autosave.carryRetryReady,
+  };
 }
 
 function savedHintLabel(state: SaveState): string {
@@ -477,6 +521,16 @@ interface AutosaveApi {
   reflectionScopeKey?: string;
   /** What the footer's Retry and the reconnect retry re-send through (#2930). */
   retrySource: RetrySource;
+  /** True while words typed during an unloaded load wait to be put back (#2935). */
+  carryHeld: boolean;
+  /** Put held carried words on the page and save them (#2935). */
+  releaseCarry: () => Promise<void>;
+  /** The tier held words wait on after a failed escalation (#2935), else null. */
+  carryWaitingTier: JournalClassification | null;
+  /** Re-send the escalation to the tier held words were typed under (#2935). */
+  resendCarryTier: () => Promise<void>;
+  /** True when that re-send may be offered: words wait, and no tier write is out. */
+  carryRetryReady: boolean;
 }
 
 /**
@@ -499,39 +553,19 @@ interface RetrySource {
   isWriteInFlight: () => boolean;
 }
 
-/** Load an existing entry once (by route id) and hand it to ``apply``. */
-function useEntryLoadEffect(
-  routeEntryId: number | null,
-  apply: (_entry: JournalMessage) => void,
-  onError: () => void,
-): void {
-  useEffect(() => {
-    if (routeEntryId == null) return undefined;
-    let active = true;
-    void journal
-      .get(routeEntryId)
-      .then((entry) => {
-        if (active) apply(entry);
-      })
-      .catch(() => {
-        // A failed load flags the entry as unloaded so autosave is gated off and
-        // the screen surfaces a banner; the untouched entry is never overwritten.
-        if (active) onError();
-      });
-    return () => {
-      active = false;
-    };
-  }, [routeEntryId, apply, onError]);
-}
-
-/** Clear a pending timeout on unmount. */
-function useTimerCleanup(timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>) {
+/** Clear a pending timeout on unmount, and return a way to cancel it sooner
+ *  (e.g. a debounce made stale by a load, #2935). */
+function useTimerCleanup(timerRef: TimerRef): () => void {
   useEffect(
     () => () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     },
     [timerRef],
   );
+  return useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, [timerRef]);
 }
 
 /** A tier/chord PATCH's result; null when nothing was sent or a later change superseded it. */
@@ -567,14 +601,19 @@ interface RefPersist<T> {
  * it. Assumes one PATCH in flight at a time; ``previous`` is the optimistic ref,
  * not the last-persisted value. Shared by the privacy-tier and Aspect-chord
  * controls; ``toPatch`` must be referentially stable to keep ``change`` stable.
+ * The tier path guarantees that assumption with a write queue (#2935) and
+ * passes ``report``, which hears each sent write's outcome, numbered in send
+ * order; the chord path passes neither and is unchanged.
  */
 function useRefPersist<T>(
   entryIdRef: React.MutableRefObject<number | null>,
   entryUnsettledRef: React.MutableRefObject<boolean>,
   initial: T,
   toPatch: (_value: T) => JournalEntryUpdate,
+  report?: (_outcome: PersistOutcome<T>) => void,
 ): RefPersist<T> {
   const ref = useRef<T>(initial);
+  const seqRef = useRef(0);
   const change = useCallback(
     async (value: T): Promise<PersistResult<T>> => {
       // Never PATCH until the entry's load settles (still in flight or failed) —
@@ -584,29 +623,58 @@ function useRefPersist<T>(
       ref.current = value;
       // Create-time: the ref rides the next journal.create, nothing to PATCH yet.
       if (entryIdRef.current == null) return { revertTo: null, state: null };
+      const seq = ++seqRef.current;
       try {
-        await journal.update(entryIdRef.current, toPatch(value));
+        const stored = await journal.update(entryIdRef.current, toPatch(value));
+        // Only a write the server accepted is ever reported as confirmed (#2935).
+        report?.({ seq, ok: true, value, stored });
         return { revertTo: null, state: 'saved' };
       } catch (error) {
-        // A rapid superseding change already owns the ref and the UI — leave both
-        // to it rather than reverting to this now-stale value.
-        if (ref.current !== value) return { revertTo: null, state: null };
-        // The server commits the stricter Intimate tier before asking Creek to
-        // withdraw. Keep that safer truth selected and expose its retry path;
-        // reverting to Personal would visually contradict persisted privacy.
-        if (isVaultWithdrawalPending(error)) {
-          return { revertTo: null, state: 'vaultWithdrawalPending' };
-        }
-        ref.current = previous;
-        return { revertTo: previous, state: 'failed' };
+        return failedWrite({ error, seq, value, previous, ref, report });
       }
     },
-    [entryIdRef, entryUnsettledRef, toPatch],
+    [entryIdRef, entryUnsettledRef, toPatch, report],
   );
   const seed = useCallback((value: T): void => {
     ref.current = value;
   }, []);
   return { ref, change, seed };
+}
+
+/** One sent persist write's outcome, numbered in send order (#2935). */
+type PersistOutcome<T> =
+  { seq: number; ok: true; value: T; stored: JournalMessage | null } | { seq: number; ok: false };
+
+interface FailedWrite<T> {
+  error: unknown;
+  seq: number;
+  value: T;
+  previous: T;
+  ref: React.MutableRefObject<T>;
+  report?: (_outcome: PersistOutcome<T>) => void;
+}
+
+/** Settle a rejected persist write: keep, revert, or report pending withdrawal. */
+function failedWrite<T>({
+  error,
+  seq,
+  value,
+  previous,
+  ref,
+  report,
+}: FailedWrite<T>): PersistResult<T> {
+  const withdrawalPending = isVaultWithdrawalPending(error);
+  // A failed response does not say what the server committed (#2935), except a
+  // pending vault withdrawal: the server commits Intimate before asking Creek.
+  report?.(withdrawalPending ? { seq, ok: true, value, stored: null } : { seq, ok: false });
+  // A rapid superseding change already owns the ref and the UI — leave both
+  // to it rather than reverting to this now-stale value.
+  if (ref.current !== value) return { revertTo: null, state: null };
+  // Keep that safer truth selected and expose its retry path; reverting to
+  // Personal would visually contradict persisted privacy.
+  if (withdrawalPending) return { revertTo: null, state: 'vaultWithdrawalPending' };
+  ref.current = previous;
+  return { revertTo: previous, state: 'failed' };
 }
 
 // Module-level so the mappers stay referentially stable across renders, keeping
@@ -967,6 +1035,16 @@ function usePersistControls(
   reporter: SaveReporter,
   entryUnsettledRef: React.MutableRefObject<boolean>,
 ) {
+  // Told of every sent tier write's outcome, in send order (#2935); a success
+  // carries the tier the server reports storing.
+  const tierOutcomeRef = useRef<TierOutcome>(() => undefined);
+  const onTierOutcome = useCallback(
+    (o: PersistOutcome<JournalClassification>) =>
+      tierOutcomeRef.current(
+        o.ok ? { seq: o.seq, ok: true, stored: o.stored?.classification ?? o.value } : o,
+      ),
+    [],
+  );
   const {
     ref: classificationRef,
     change: changeClassification,
@@ -976,6 +1054,7 @@ function usePersistControls(
     entryUnsettledRef,
     DEFAULT_TIER,
     classificationToPatch,
+    onTierOutcome,
   );
   const {
     ref: chordRef,
@@ -993,10 +1072,26 @@ function usePersistControls(
     classificationRef,
     chordRef,
     seedPersist,
+    tierOutcomeRef,
     persistClassification: useLanePersist(changeClassification, reporter, classificationFailure),
     persistChord: useLanePersist(changeChord, reporter, chordFailure),
   };
 }
+
+/** The tier/chord writers and seeds the draft saver hands on. */
+function persistPorts(persist: ReturnType<typeof usePersistControls>) {
+  return {
+    changeClassification: persist.persistClassification,
+    /** The #2930 retry's and the escalation's path; the gate queues it apart. */
+    changeClassificationSystem: persist.persistClassification,
+    changeChord: persist.persistChord,
+    seedPersist: persist.seedPersist,
+    tierOutcomeRef: persist.tierOutcomeRef,
+  };
+}
+
+/** Receives each sent tier write's outcome (#2935). */
+type TierOutcome = (_outcome: TierWriteOutcome) => void;
 
 /** The debounced save + immediate flush + atomic finish, over one shared ref bundle. */
 type DraftWriters = SaveTimer & { finish: RunFinish };
@@ -1131,7 +1226,7 @@ function useDebouncedSave(
   const [entryId, setEntryId] = useState<number | null>(routeEntryId);
   const refs = useDraftRefs(routeEntryId, { onSaved, onConflict, ctx, entryUnsettled });
   const persist = usePersistControls(refs.entryIdRef, reporter, refs.entryUnsettledRef);
-  useTimerCleanup(refs.timerRef);
+  const cancelPending = useTimerCleanup(refs.timerRef);
 
   const { save, flush, finish } = useDraftWriters(
     { ...refs, classificationRef: persist.classificationRef, chordRef: persist.chordRef },
@@ -1154,7 +1249,6 @@ function useDebouncedSave(
     },
     [finish],
   );
-  const seedDurableText = useDurableTextSeeder(refs.durableTextRef);
 
   return {
     entryId,
@@ -1164,10 +1258,9 @@ function useDebouncedSave(
     save,
     flush: flushAndTrack,
     finish: finishAndTrack,
-    changeClassification: persist.persistClassification,
-    changeChord: persist.persistChord,
-    seedPersist: persist.seedPersist,
-    seedDurableText,
+    ...persistPorts(persist),
+    seedDurableText: useDurableTextSeeder(refs.durableTextRef),
+    cancelPending,
   };
 }
 
@@ -1295,12 +1388,40 @@ interface EntryState {
   loadError: string | null;
   /** Flips true once an existing entry's values have been applied to state. */
   loaded: boolean;
+  /** Words typed while the entry was unloaded, held after its load until they
+   *  can be put on the page and saved safely (#2935); null when there are none. */
+  carryHold: CarryHold | null;
+  setCarryHold: (_hold: CarryHold | null) => void;
   reflectionLevel?: ReflectionLevel;
   reflectionScopeKey?: string;
 }
 
+/** What the page held when it opened on an entry, before its load landed. */
+interface CarryBaseline extends InitialText {
+  entryId: number;
+  /** The tier the page showed while the writer typed into it unloaded. */
+  classification: JournalClassification;
+}
+
+/**
+ * Words a load carried (#2935): what the writer typed into the unloaded page and
+ * what that page opened with, so they can be merged onto the page as it stands
+ * whenever they are put back, and the stricter tier the stored entry must move
+ * to before they are saved (null when its stored tier is already as strict).
+ */
+interface CarryHold {
+  typed: InitialText;
+  baseline: InitialText;
+  tier: JournalClassification | null;
+  /** The tier the server held when the entry loaded: confirmed until a write says otherwise. */
+  storedTier: JournalClassification;
+}
+
 interface MutableEntryState extends EntryState {
-  setLoadError: (_message: string) => void;
+  /** Cleared (null) when a load succeeds, so a reconnect reload lifts the banner. */
+  setLoadError: (_message: string | null) => void;
+  /** The opening baseline, for the FIRST load of the route entry only (#2935). */
+  carryBaselineRef: React.MutableRefObject<CarryBaseline | null>;
   setLoaded: (_loaded: boolean) => void;
   setReflectionLevel: (_level: ReflectionLevel | undefined) => void;
   setReflectionScopeKey: (_scopeKey: string | undefined) => void;
@@ -1314,8 +1435,26 @@ function reflectionLevelFromWire(value: string | null | undefined): ReflectionLe
     : undefined;
 }
 
+/**
+ * The refs that let a load keep words typed while the entry was unloaded
+ * (#2935). The baseline is what the page opened with, tied to the route entry
+ * id, and is used by that entry's first successful load only.
+ */
+function useCarryRefs(
+  routeEntryId: number | null,
+  initialText: InitialText,
+  classification: JournalClassification,
+) {
+  const carryBaselineRef = useRef<CarryBaseline | null>(
+    routeEntryId == null ? null : { entryId: routeEntryId, ...initialText, classification },
+  );
+  const [carryHold, setCarryHold] = useState<CarryHold | null>(null);
+  return { carryBaselineRef, carryHold, setCarryHold };
+}
+
 /** Local fields and setters; server hydration stays in the smaller hook below. */
 function useLocalEntryState(
+  routeEntryId: number | null,
   initialText: InitialText,
   initialClassification: JournalClassification,
   initialReflectionLevel?: ReflectionLevel,
@@ -1335,7 +1474,10 @@ function useLocalEntryState(
   const titleRef = useRef(initialTitle);
   const bodyRef = useRef(initialText.body);
   const loadedTextRef = useRef<DraftText | null>(null);
+  const opening = { title: initialTitle, body: initialText.body };
+  const carry = useCarryRefs(routeEntryId, opening, initialClassification);
   return {
+    ...carry,
     title,
     body,
     status,
@@ -1387,57 +1529,99 @@ function useRouteScopeSync(
   }, [routeReflectionLevel, routeReflectionScopeKey, setReflectionLevel, setReflectionScopeKey]);
 }
 
-/** Stable load applicator, separated so the state owner remains reviewably small. */
-function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
-  const {
-    titleRef,
-    bodyRef,
-    loadedTextRef,
-    setTitle,
-    setBody,
-    setStatus,
-    setClassification,
-    setChord,
-    setReflectionLevel,
-    setReflectionScopeKey,
-    setLoaded,
-  } = state;
-  return useCallback(
-    (entry: JournalMessage) => {
-      titleRef.current = singleLineTitle(entry.title ?? '');
-      bodyRef.current = entry.message;
-      loadedTextRef.current = { title: titleRef.current, body: bodyRef.current };
-      setTitle(titleRef.current);
-      setBody(bodyRef.current);
-      setStatus(entry.status ?? 'draft');
-      setClassification(entry.classification ?? DEFAULT_TIER);
-      setChord({
-        primary: entry.primary_aspect ?? null,
-        secondary: entry.secondary_aspect ?? null,
-      });
-      setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
-      setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
-      setLoaded(true);
-    },
-    [
-      bodyRef,
-      loadedTextRef,
-      setBody,
-      setChord,
-      setClassification,
-      setLoaded,
-      setReflectionLevel,
-      setReflectionScopeKey,
-      setStatus,
-      setTitle,
-      titleRef,
-    ],
-  );
+/**
+ * The words this load must hold for later (#2935), or null. The baseline is
+ * single-use and must name this entry, so nothing typed on one entry reaches
+ * another; the tier is the escalation, if any, the carried words need first.
+ */
+function carryHoldFor(
+  baseline: CarryBaseline | null,
+  local: InitialText,
+  server: InitialText,
+  entry: JournalMessage,
+): CarryHold | null {
+  if (baseline?.entryId !== entry.id) return null;
+  if (!reconcileUnloadedDraft(server, local, baseline).carried) return null;
+  const stored = entry.classification ?? DEFAULT_TIER;
+  return {
+    typed: local,
+    baseline: { title: baseline.title, body: baseline.body },
+    tier: carriedTierEscalation(stored, baseline.classification),
+    storedTier: stored,
+  };
 }
 
-/** The entry's editable state (title/body/status/tier) + one-time load-on-open.
- *  ``initialClassification`` pre-selects the tier for a fresh entry (e.g. the
- *  capture flow's intimate offramp); an existing entry's load overrides it. */
+/**
+ * Put the stored title and body on the page (#2935).
+ *
+ * The page and ``loadedTextRef`` always take the exact stored text, so the
+ * durable-text seed only ever blesses what the server holds and an exit flush
+ * never writes words the writer has not yet been able to see saved. Words typed
+ * while this entry was unloaded are HELD, not dropped: ``useCarryRelease`` puts
+ * them on the page and saves them once that is safe (after Edit on a finished
+ * entry, and only under a tier at least as strict as the one they were typed
+ * under).
+ */
+function applyServerText(state: MutableEntryState, entry: JournalMessage): void {
+  const { titleRef, bodyRef, carryBaselineRef } = state;
+  const server = { title: singleLineTitle(entry.title ?? ''), body: entry.message };
+  const baseline = carryBaselineRef.current;
+  carryBaselineRef.current = null;
+  const local = { title: titleRef.current, body: bodyRef.current };
+  state.setCarryHold(carryHoldFor(baseline, local, server, entry));
+  state.loadedTextRef.current = server;
+  titleRef.current = server.title;
+  bodyRef.current = server.body;
+  state.setTitle(server.title);
+  state.setBody(server.body);
+}
+
+/** Put the stored status, tier, chord and scope on the page, and lift the gate. */
+function applyServerFields(state: MutableEntryState, entry: JournalMessage): void {
+  state.setStatus(entry.status ?? 'draft');
+  state.setClassification(entry.classification ?? DEFAULT_TIER);
+  state.setChord({
+    primary: entry.primary_aspect ?? null,
+    secondary: entry.secondary_aspect ?? null,
+  });
+  state.setReflectionLevel(reflectionLevelFromWire(entry.reflection_level));
+  state.setReflectionScopeKey(entry.reflection_scope_key ?? undefined);
+  state.setLoadError(null);
+  state.setLoaded(true);
+}
+
+/**
+ * Stable load applicator, separated so the state owner remains reviewably small.
+ *
+ * Its identity never changes: the load effect is keyed on it, so a dependency
+ * that changed between renders would re-run the GET on every render. Every
+ * setter and ref it touches is itself stable, so it reads them through a ref.
+ */
+function useApplyLoadedEntry(state: MutableEntryState): (_entry: JournalMessage) => void {
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  return useCallback((entry: JournalMessage) => {
+    applyServerText(stateRef.current, entry);
+    applyServerFields(stateRef.current, entry);
+  }, []);
+}
+
+/** Drop the carry baseline once the screen is reused for a different entry, so
+ *  words typed on the entry it opened on are never carried into another. */
+function useDropCarryOnRouteChange(
+  routeEntryId: number | null,
+  carryBaselineRef: MutableEntryState['carryBaselineRef'],
+): void {
+  const openedOnRef = useRef(routeEntryId);
+  useEffect(() => {
+    if (routeEntryId !== openedOnRef.current) carryBaselineRef.current = null;
+  }, [routeEntryId, carryBaselineRef]);
+}
+
+/** The entry's editable state (title/body/status/tier) + load-on-open, re-run on
+ *  reconnect after a failed load (#2935). ``initialClassification`` pre-selects
+ *  the tier for a fresh entry (e.g. the capture flow's intimate offramp); an
+ *  existing entry's load overrides it. */
 function useEntryState(
   routeEntryId: number | null,
   initialText: InitialText,
@@ -1446,20 +1630,24 @@ function useEntryState(
   initialReflectionScopeKey?: string,
 ): EntryState {
   const state = useLocalEntryState(
+    routeEntryId,
     initialText,
     initialClassification,
     initialReflectionLevel,
     initialReflectionScopeKey,
   );
   useRouteScopeSync(state, initialReflectionLevel, initialReflectionScopeKey);
-  const applyLoadedEntry = useApplyLoadedEntry(state);
+  useDropCarryOnRouteChange(routeEntryId, state.carryBaselineRef);
+  const apply = useApplyLoadedEntry(state);
   const { setLoadError } = state;
-
-  useEntryLoadEffect(
+  const onError = useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]);
+  useEntryLoad({
     routeEntryId,
-    applyLoadedEntry,
-    useCallback(() => setLoadError(LOAD_ERROR_MESSAGE), [setLoadError]),
-  );
+    loaded: state.loaded,
+    loadFailed: state.loadError != null,
+    apply,
+    onError,
+  });
   return state;
 }
 
@@ -1497,14 +1685,26 @@ function useChoiceApplier<T>(
 /** Reflect a privacy/chord choice in local state, then persist it (ref or PATCH). */
 function useChoiceHandlers(
   entry: EntryState,
-  changeClassification: (_tier: JournalClassification) => Promise<JournalClassification | null>,
+  tierWriters: Pick<
+    ReturnType<typeof useDebouncedSave>,
+    'changeClassification' | 'changeClassificationSystem'
+  >,
   changeChord: (_next: AspectChordValue) => Promise<AspectChordValue | null>,
 ): ChoiceHandlers & ChoiceAppliers {
-  const applyClassification = useChoiceApplier(entry.setClassification, changeClassification);
+  // The writer's tap and the retry/escalation reach the tier queue as different
+  // kinds (#2935): only a tap is the writer's request.
+  const tapClassification = useChoiceApplier(
+    entry.setClassification,
+    tierWriters.changeClassification,
+  );
+  const applyClassification = useChoiceApplier(
+    entry.setClassification,
+    tierWriters.changeClassificationSystem,
+  );
   const applyChord = useChoiceApplier(entry.setChord, changeChord);
   const onChangeClassification = useCallback(
-    (tier: JournalClassification) => void applyClassification(tier),
-    [applyClassification],
+    (tier: JournalClassification) => void tapClassification(tier),
+    [tapClassification],
   );
   const onChangeChord = useCallback(
     (next: AspectChordValue) => void applyChord(next),
@@ -1546,6 +1746,326 @@ function useSeedDurableTextOnLoad(
 }
 
 /**
+ * Drop a debounce armed before the entry loaded (#2935). It holds text typed
+ * into the unloaded page, which the load has since replaced; left armed, it
+ * would fire once the gate lifts and write that stale text (for example an
+ * untouched pre-fill) over the stored entry. Words worth keeping were already
+ * captured as the carry hold, which saves them through its own path.
+ */
+function useDropStaleSaveOnLoad(loaded: boolean, cancelPending: () => void): void {
+  useEffect(() => {
+    if (loaded) cancelPending();
+  }, [loaded, cancelPending]);
+}
+
+/** True when ``tier`` is at least as strict as the tier held words need. */
+function strictEnough(hold: CarryHold, tier: JournalClassification): boolean {
+  return hold.tier == null || !isTierLooser(tier, hold.tier);
+}
+
+/** Said by Finish while held words wait on a stricter tier (#2935). */
+const CARRY_HELD_FINISH_ERROR = 'Cannot finish while carried words wait on a stricter tier.';
+
+type TierSettled = () => void;
+
+/** The writers the page uses, gated while a tier escalation is owed (#2935). */
+interface HeldTextGate {
+  saving: ReturnType<typeof useDebouncedSave>;
+  /** True while page text must not be written: an escalation is in flight or failed. */
+  heldRef: React.MutableRefObject<boolean>;
+  /** Told after every tier write settles (success or not), to re-check release. */
+  tierSettledRef: React.MutableRefObject<TierSettled>;
+  /** Told of every sent tier write's outcome: the only proof of a tier. */
+  tierOutcomeRef: React.MutableRefObject<TierOutcome>;
+  /** Tier writes on their way (the writer's, a retry's, or an escalation). */
+  tierWritesRef: React.MutableRefObject<number>;
+  /** The tiers those in-flight writes carry. */
+  inFlightTiersRef: React.MutableRefObject<JournalClassification[]>;
+  /** True while any tier write is on its way, for what the page offers. */
+  tierWriteInFlight: boolean;
+}
+
+/**
+ * Gate every page-text writer while a privacy escalation is owed (#2935).
+ *
+ * Words typed while the control shows the stricter tier must never reach a row
+ * still stored under the looser one. So while ``heldRef`` is set (from the
+ * moment the escalation is sent until a tier at least as strict is confirmed),
+ * the debounced save is dropped (the next release saves the page as it then
+ * stands), every flush reports not-durable, and Finish refuses. Every tier write reports back through
+ * ``tierSettledRef`` so the release can react to a retry or the writer's choice.
+ */
+function useHeldTextGate(
+  saving: ReturnType<typeof useDebouncedSave>,
+  carryHeld: boolean,
+): HeldTextGate {
+  const heldRef = useRef(false);
+  // Held words (even with no escalation owed, e.g. a finished entry after
+  // Cancel) mean no flush may report the page saved: the words are not on it.
+  const carryHeldRef = useRef(carryHeld);
+  carryHeldRef.current = carryHeld;
+  const tierSettledRef = useRef<TierSettled>(() => undefined);
+  const { save, flush, finish, entryId } = saving;
+  const gatedSave = useCallback(
+    (title: string, body: string) => {
+      if (!heldRef.current) save(title, body);
+    },
+    [save],
+  );
+  const gatedFlush = useCallback(
+    async (title: string, body: string): Promise<FlushResult> =>
+      heldRef.current || carryHeldRef.current ? { durable: false, entryId } : flush(title, body),
+    [flush, entryId],
+  );
+  const gatedFinish = useGatedFinish(finish, heldRef);
+  const { writers, ...writes } = useTierWrites(saving, tierSettledRef);
+  const gated = { ...saving, save: gatedSave, flush: gatedFlush, finish: gatedFinish, ...writers };
+  return {
+    saving: gated,
+    heldRef,
+    tierSettledRef,
+    ...writes,
+    tierOutcomeRef: saving.tierOutcomeRef,
+  };
+}
+
+/** Finish refuses while held words wait on a stricter tier (#2935). */
+function useGatedFinish(finish: RunFinish, heldRef: React.MutableRefObject<boolean>): RunFinish {
+  return useCallback<RunFinish>(
+    async (title, body) => {
+      if (heldRef.current) throw new Error(CARRY_HELD_FINISH_ERROR);
+      return finish(title, body);
+    },
+    [finish, heldRef],
+  );
+}
+
+/**
+ * This entry's tier writers, all through one serialized queue (#2935): the
+ * writer's taps (``changeClassification``) and the #2930 retry and escalation
+ * (``changeClassificationSystem``), which never replace a queued tap. Every
+ * reader of "the tier the writer chose" (``displayedTier``: the #2930 retry's
+ * floor and the escalation's target) reads the writer's latest request, queued
+ * or sent, and only falls back to the last-sent persist ref before any tap.
+ */
+function useTierWrites(
+  saving: ReturnType<typeof useDebouncedSave>,
+  tierSettledRef: React.MutableRefObject<TierSettled>,
+) {
+  const { changeClassification, displayedTier: sentTier } = saving;
+  const { track, ...writes } = useTierWriteCount();
+  const queue = useTierWriteQueue(changeClassification);
+  const { enqueue, requestedTier } = queue;
+  const write = useCallback(
+    async (tier: JournalClassification, kind: TierWriteKind) => {
+      const revertTo = await track(tier, () => enqueue(tier, kind));
+      tierSettledRef.current();
+      return revertTo;
+    },
+    [enqueue, track, tierSettledRef],
+  );
+  const writers = {
+    changeClassification: useCallback(
+      (tier: JournalClassification) => write(tier, 'writer'),
+      [write],
+    ),
+    changeClassificationSystem: useCallback(
+      (tier: JournalClassification) => write(tier, 'system'),
+      [write],
+    ),
+    displayedTier: useCallback(() => requestedTier() ?? sentTier(), [requestedTier, sentTier]),
+  };
+  return { writers, ...writes };
+}
+
+/** Count tier writes in flight: a ref for decisions, a flag for rendering. */
+function useTierWriteCount() {
+  const tierWritesRef = useRef(0);
+  const inFlightTiersRef = useRef<JournalClassification[]>([]);
+  const [tierWriteInFlight, setTierWriteInFlight] = useState(false);
+  const track = useCallback(
+    async <T,>(tier: JournalClassification, write: () => Promise<T>): Promise<T> => {
+      tierWritesRef.current += 1;
+      inFlightTiersRef.current = [...inFlightTiersRef.current, tier];
+      setTierWriteInFlight(true);
+      try {
+        return await write();
+      } finally {
+        tierWritesRef.current -= 1;
+        const at = inFlightTiersRef.current.indexOf(tier);
+        inFlightTiersRef.current = inFlightTiersRef.current.filter((_t, i) => i !== at);
+        setTierWriteInFlight(tierWritesRef.current > 0);
+      }
+    },
+    [],
+  );
+  return { tierWritesRef, inFlightTiersRef, tierWriteInFlight, track };
+}
+
+/** Merge held words onto the page as it now stands, lift the gate, and save. */
+function useCarryPutBack(
+  entry: EntryState,
+  save: (_title: string, _body: string) => void,
+  heldRef: React.MutableRefObject<boolean>,
+  setWaiting: (_waiting: boolean) => void,
+): (_hold: CarryHold) => void {
+  const { setCarryHold, titleRef, bodyRef, setTitle, setBody } = entry;
+  return useCallback(
+    (hold: CarryHold) => {
+      const page = { title: titleRef.current, body: bodyRef.current };
+      const merged = reconcileUnloadedDraft(page, hold.typed, hold.baseline);
+      setCarryHold(null);
+      setWaiting(false);
+      heldRef.current = false;
+      titleRef.current = merged.title;
+      bodyRef.current = merged.body;
+      setTitle(merged.title);
+      setBody(merged.body);
+      save(merged.title, merged.body);
+    },
+    [setCarryHold, setWaiting, heldRef, titleRef, bodyRef, setTitle, setBody, save],
+  );
+}
+
+/**
+ * Whichever confirmed write is strict enough first puts the words back; any
+ * later one (a slower escalation) finds nothing held and changes nothing.
+ */
+function usePutBackOnce(
+  holdRef: React.MutableRefObject<CarryHold | null>,
+  putBack: (_hold: CarryHold) => void,
+): (_hold: CarryHold) => void {
+  return useCallback(
+    (hold: CarryHold) => {
+      if (holdRef.current !== hold) return;
+      holdRef.current = null;
+      putBack(hold);
+    },
+    [holdRef, putBack],
+  );
+}
+
+/**
+ * The server-confirmed tier (#2935): the newest accepted write (by send order),
+ * else the tier the entry loaded with; null while a newer write has failed,
+ * since a failed response does not say what the server committed.
+ */
+function useConfirmedTier(
+  tierOutcomeRef: React.MutableRefObject<TierOutcome>,
+): (_hold: CarryHold) => JournalClassification | null {
+  const stateRef = useRef(LOADED_TIER_STATE);
+  tierOutcomeRef.current = (outcome) => {
+    stateRef.current = confirmTierWrite(stateRef.current, outcome);
+  };
+  return useCallback((hold: CarryHold) => knownTier(stateRef.current, hold.storedTier), []);
+}
+
+interface CarryEscalationState {
+  escalatingRef: React.MutableRefObject<boolean>;
+  setWaiting: (_waiting: boolean) => void;
+  holdRef: React.MutableRefObject<CarryHold | null>;
+}
+
+/**
+ * Send the escalation held words need (#2935). It chooses only WHAT to send:
+ * the stricter of the tier on screen and the typed-under tier (the planRetry
+ * rule, via isTierLooser), so nothing looser than the screen is ever sent. It
+ * never releases anything itself: release follows confirmed server writes
+ * alone (``tierSettledRef``). Tier writes are serialized (``useTierWriteQueue``),
+ * so no later write can land before an earlier one; words still held when it
+ * settles wait, with Retry.
+ */
+function useCarryEscalation(
+  retrySource: Pick<RetrySource, 'applyClassification' | 'displayedTier'>,
+  gate: Pick<HeldTextGate, 'heldRef'>,
+  state: CarryEscalationState,
+): (_hold: CarryHold) => Promise<void> {
+  const { applyClassification, displayedTier } = retrySource;
+  const { heldRef } = gate;
+  const { escalatingRef, setWaiting, holdRef } = state;
+  return useCallback(
+    async (hold: CarryHold) => {
+      const shown = displayedTier();
+      const sent = carriedTierEscalation(shown, hold.tier ?? shown) ?? shown;
+      escalatingRef.current = true;
+      heldRef.current = true;
+      try {
+        await applyClassification(sent);
+      } finally {
+        escalatingRef.current = false;
+      }
+      if (holdRef.current === hold) setWaiting(true);
+    },
+    [applyClassification, displayedTier, heldRef, escalatingRef, setWaiting, holdRef],
+  );
+}
+
+/**
+ * Put held carried words back on the page and save them (#2935), as one normal
+ * debounced autosave the save indicator reports.
+ *
+ * Privacy tiers only ever escalate: when the words were typed under a stricter
+ * tier than the stored one, the entry is first moved to that tier through the
+ * ordinary tier writer, with every page-text write gated meanwhile. The words go
+ * back only once a tier at least that strict is confirmed. If the move fails,
+ * they stay held OFF the page (and ``carryWaitingTier`` says so), the gate stays
+ * on, and they return on the first later confirmation of a tier at least that
+ * strict: a #2930 retry of the failed tier, or the writer choosing one. A looser
+ * choice lifts nothing; leaving without the words is the held-exit guard's
+ * explicit choice, never a side effect.
+ */
+function useCarryRelease(
+  entry: EntryState,
+  save: (_title: string, _body: string) => void,
+  retrySource: RetrySource,
+  gate: HeldTextGate,
+): Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'> {
+  const { heldRef, tierSettledRef, tierWritesRef, tierOutcomeRef, inFlightTiersRef } = gate;
+  const [waiting, setWaiting] = useState(false);
+  const holdRef = useRef(entry.carryHold);
+  holdRef.current = entry.carryHold;
+  const escalatingRef = useRef(false);
+  const confirmedTier = useConfirmedTier(tierOutcomeRef);
+  const putBack = usePutBackOnce(holdRef, useCarryPutBack(entry, save, heldRef, setWaiting));
+  const escalate = useCarryEscalation(retrySource, gate, { escalatingRef, setWaiting, holdRef });
+
+  const releaseCarry = useCallback(async () => {
+    const hold = holdRef.current;
+    if (hold == null || escalatingRef.current || heldRef.current) return;
+    // Stored already at least as strict as the typed-under tier: nothing is owed.
+    if (hold.tier == null) {
+      putBack(hold);
+      return;
+    }
+    await escalate(hold);
+  }, [heldRef, putBack, escalate]);
+  // Retry, from the footer or the leave dialog: re-send the tier the words were
+  // typed under. Only a confirmed escalation puts them back (#2935).
+  const resendCarryTier = useCallback(async () => {
+    const hold = holdRef.current;
+    // Never on top of another tier write: it could land after, and lower, it.
+    if (hold == null || escalatingRef.current || tierWritesRef.current > 0) return;
+    await escalate(hold);
+  }, [escalate, tierWritesRef]);
+  tierSettledRef.current = () => {
+    const hold = holdRef.current;
+    // Release only when the tier the server CONFIRMED is at least as strict as
+    // the typed-under tier. Failures and optimistic taps never count, and while a
+    // looser choice of the writer's is still out, the words stay held.
+    if (hold == null || !heldRef.current) return;
+    if (inFlightTiersRef.current.some((tier) => !strictEnough(hold, tier))) return;
+    const known = confirmedTier(hold);
+    if (known != null && strictEnough(hold, known)) putBack(hold);
+  };
+  return {
+    releaseCarry,
+    resendCarryTier,
+    carryWaitingTier: waiting ? (entry.carryHold?.tier ?? null) : null,
+    carryRetryReady: waiting && !gate.tierWriteInFlight,
+  };
+}
+
+/**
  * Seed the persist ref for a NEW entry (no id to load) with the pre-set tier once
  * on mount, so the first ``journal.create`` carries it — the capture flow's
  * intimate offramp lands a genuinely intimate entry, not the personal default.
@@ -1579,7 +2099,8 @@ interface AutosaveBindings extends ChoiceHandlers {
 /** Project internal entry/persistence state onto the screen's autosave contract. */
 function buildAutosaveApi(
   entry: EntryState,
-  bindings: AutosaveBindings,
+  bindings: AutosaveBindings &
+    Pick<AutosaveApi, 'releaseCarry' | 'resendCarryTier' | 'carryWaitingTier' | 'carryRetryReady'>,
   controlsLocked: boolean,
   loadedFromServer: boolean,
 ): AutosaveApi {
@@ -1591,6 +2112,7 @@ function buildAutosaveApi(
     classification: entry.classification,
     chord: entry.chord,
     loadError: entry.loadError,
+    carryHeld: entry.carryHold != null,
     reflectionLevel: entry.reflectionLevel,
     reflectionScopeKey: entry.reflectionScopeKey,
     controlsLocked,
@@ -1645,7 +2167,7 @@ function useAutosaveBindings(
   );
   const { applyClassification, applyChord, ...choices } = useChoiceHandlers(
     entry,
-    saving.changeClassification,
+    saving,
     saving.changeChord,
   );
   const retrySource = useRetrySource(saving, flushNow, { applyClassification, applyChord });
@@ -1688,9 +2210,17 @@ function useJournalAutosave(
   const saving = useDebouncedSave(routeEntryId, delayMs, ctx, entryUnsettled, onSaved, onConflict);
   useSeedPersistOnLoad(entry, saving.seedPersist);
   useSeedDurableTextOnLoad(entry, saving.seedDurableText);
+  useDropStaleSaveOnLoad(entry.loaded, saving.cancelPending);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
-  const bindings = useAutosaveBindings(entry, saving);
-  return buildAutosaveApi(entry, bindings, entryUnsettled, routeEntryId != null && entry.loaded);
+  const gate = useHeldTextGate(saving, entry.carryHold != null);
+  const bindings = useAutosaveBindings(entry, gate.saving);
+  const carry = useCarryRelease(entry, saving.save, bindings.retrySource, gate);
+  return buildAutosaveApi(
+    entry,
+    { ...bindings, ...carry },
+    entryUnsettled,
+    routeEntryId != null && entry.loaded,
+  );
 }
 
 /** The Sources toggle's host ref, which the composer hands focus back to. */
@@ -1712,8 +2242,8 @@ interface WritingColumnProps {
   onChangeBody: (_next: string) => void;
   onChangeClassification: (_tier: JournalClassification) => void;
   onChangeChord: (_next: AspectChordValue) => void;
-  /** Re-send whatever failed to save (#2930). */
-  onRetrySave: () => Promise<void>;
+  /** Retry: re-send what failed (#2930), or held words' tier (#2935); and the held hint. */
+  onRetrySave: SaveFooterActions;
   onFinish?: () => void;
   /** True while the Finish write is in flight; drives the busy/disabled control. */
   finishing: boolean;
@@ -1844,20 +2374,22 @@ function WritingFields(
 function WritingFooter({
   body,
   saveState,
-  onRetry,
+  actions,
 }: {
   body: string;
   saveState: SaveState;
-  onRetry: () => Promise<void>;
+  actions: SaveFooterActions;
 }) {
+  const { retry: onRetry, held } = actions;
   const words = useMemo(() => countWords(body), [body]);
+  const canRetry = held == null ? saveState === 'error' : held.canRetry;
   return (
     <View style={styles.writingFooter}>
       <View style={styles.saveStatusRow}>
         <Text style={styles.savedHint} testID="journal-save-hint">
-          {savedHintLabel(saveState)}
+          {held?.label ?? savedHintLabel(saveState)}
         </Text>
-        {saveState === 'error' ? (
+        {canRetry ? (
           <TouchableOpacity
             style={styles.saveRetry}
             onPress={() => void onRetry()}
@@ -2019,7 +2551,7 @@ function WritingColumnContent({
         onBodySelectionChange={onBodySelectionChange}
         bodyPlaceholder={bodyPlaceholder}
       />
-      <WritingFooter body={body} saveState={saveState} onRetry={onRetrySave} />
+      <WritingFooter body={body} saveState={saveState} actions={onRetrySave} />
       <WritingControls
         onFinish={onFinish}
         finishing={finishing}
@@ -2796,13 +3328,42 @@ function useEntrySaveRetry(autosave: AutosaveApi, retryFinish: () => Promise<voi
   return retry;
 }
 
+/**
+ * Put words held by a load back on the page once editing is allowed (#2935).
+ *
+ * A draft is always editable, so they go straight back. A finished entry is
+ * read-only until the writer deliberately chooses Edit, so its held words are
+ * never written around that choice: the edit-confirm dialog is offered once,
+ * saying the words are waiting, and they return (and save) only after Edit,
+ * which also runs the edit's anchor refreshers. Cancel leaves them held, and
+ * the read view's own Edit offers them again.
+ */
+function useReleaseCarryWhenEditable(
+  autosave: Pick<AutosaveApi, 'carryHeld' | 'releaseCarry'>,
+  gate: { editMode: boolean; requestEdit: () => void },
+): void {
+  const offeredRef = useRef(false);
+  const { carryHeld, releaseCarry } = autosave;
+  const { editMode, requestEdit } = gate;
+  useEffect(() => {
+    if (!carryHeld) return;
+    if (editMode) {
+      void releaseCarry();
+      return;
+    }
+    if (offeredRef.current) return;
+    offeredRef.current = true;
+    requestEdit();
+  }, [carryHeld, editMode, releaseCarry, requestEdit]);
+}
+
 /** The finished-entry edit gate wired from the autosave's status + finish write. */
 function useEntryEditGate(
   autosave: AutosaveApi,
   navigation: ScreenNavigation,
   onConfirmEdit: () => void,
 ) {
-  return useEditGate({
+  const gate = useEditGate({
     status: autosave.status,
     setStatus: autosave.setStatus,
     finish: autosave.finish,
@@ -2810,6 +3371,8 @@ function useEntryEditGate(
     navigation,
     onConfirmEdit,
   });
+  useReleaseCarryWhenEditable(autosave, gate);
+  return { ...gate, carriedWords: autosave.carryHeld };
 }
 
 /**
@@ -2938,6 +3501,18 @@ function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
 }
 
 /** The body column: the editable writing surface, or the read-mode highlighted view. */
+/**
+ * The footer's Retry and held state. Retry re-sends the held words' tier while
+ * they wait on one (#2935), else whatever failed to save (#2930).
+ */
+function saveFooterFor(ctl: Controller): SaveFooterActions {
+  const held = heldFooterFor(ctl.autosave);
+  if (ctl.autosave.carryWaitingTier != null) {
+    return { retry: ctl.autosave.resendCarryTier, held };
+  }
+  return { retry: () => ctl.saveRetry.retryFailedSave('tap'), held };
+}
+
 function PageBodyColumn({
   ctl,
   bodyPlaceholder,
@@ -2962,7 +3537,7 @@ function PageBodyColumn({
       onChangeBody={ctl.handleBody}
       onChangeClassification={ctl.autosave.onChangeClassification}
       onChangeChord={ctl.autosave.onChangeChord}
-      onRetrySave={() => ctl.saveRetry.retryFailedSave('tap')}
+      onRetrySave={saveFooterFor(ctl)}
       onFinish={canOfferFinish ? markFinished : undefined}
       finishing={ctl.editGate.finishing}
       finishError={ctl.editGate.finishError}
@@ -2981,7 +3556,7 @@ function PageBodyColumn({
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
       resonance={buildReadResonanceAction(ctl)}
-      justSaved={ctl.justSaved}
+      justSaved={ctl.justSaved && !ctl.autosave.carryHeld}
       onOpen={ctl.modal.onOpenNote}
       onEdit={requestEdit}
     />
@@ -3177,6 +3752,41 @@ function LoadErrorBanner({ message }: { message: string | null }): React.JSX.Ele
   );
 }
 
+/** What the page says while carried words wait on a stricter tier (#2935). */
+export function carryWaitingCopy(tier: JournalClassification): string {
+  return `The words you wrote while this page couldn’t open are waiting here, not yet saved. They’ll come back once this entry is saved as ${tierLabel(tier)} or more private — tap Retry, or choose that setting.`;
+}
+
+/** Say that carried words are waiting on a stricter tier, until they come back. */
+function CarryWaitingNote({
+  tier,
+}: {
+  tier: JournalClassification | null;
+}): React.JSX.Element | null {
+  if (tier == null) return null;
+  return (
+    <View style={styles.loadErrorBanner}>
+      <Text style={styles.carryWaitingText} testID="journal-carry-waiting">
+        {carryWaitingCopy(tier)}
+      </Text>
+    </View>
+  );
+}
+
+/** The page's standing notices: a failed load, and words waiting on a tier. */
+function EntryNotices({
+  autosave,
+}: {
+  autosave: Pick<AutosaveApi, 'loadError' | 'carryWaitingTier'>;
+}): React.JSX.Element {
+  return (
+    <>
+      <LoadErrorBanner message={autosave.loadError} />
+      <CarryWaitingNote tier={autosave.carryWaitingTier} />
+    </>
+  );
+}
+
 /** The reader location "Back to reading" returns to, carrying the scroll offset. */
 type CourseReturnTo = NonNullable<RootStackParamList['JournalEntry']>['returnTo'];
 
@@ -3192,16 +3802,26 @@ function ReturnToReadingLink({
   returnTo,
   navigation,
   flush,
+  guard,
 }: {
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   flush: () => Promise<number | null>;
+  guard: Pick<HeldExitGuard, 'held' | 'request'>;
 }): React.JSX.Element | null {
+  const { held, request } = guard;
   const onPress = useCallback(() => {
     if (returnTo == null) return;
+    const back = () =>
+      navigation.navigate('Tabs', { screen: returnTo.screen, params: returnTo.params });
+    // While words are held nothing can be flushed; the guard asks before leaving.
+    if (held) {
+      request(back);
+      return;
+    }
     void flush();
-    navigation.navigate('Tabs', { screen: returnTo.screen, params: returnTo.params });
-  }, [returnTo, navigation, flush]);
+    back();
+  }, [returnTo, navigation, flush, held, request]);
   if (returnTo == null) return null;
   return (
     <TouchableOpacity
@@ -3251,21 +3871,25 @@ function ApiKeySettingsLink({ onPress }: { onPress: () => void }): React.JSX.Ele
 function CloseEntryLink({
   navigation,
   flush,
+  guard,
 }: {
   navigation: ScreenNavigation;
   flush: () => Promise<boolean>;
+  guard: Pick<HeldExitGuard, 'held' | 'request'>;
 }): React.JSX.Element {
   const [closing, setClosing] = useState(false);
+  const { held, request } = guard;
   const onPress = useCallback(async () => {
     if (closing) return;
     setClosing(true);
+    const toJournal = () => navigation.navigate('Tabs', { screen: 'Journal' });
+    // While words are held the flush is never durable, so Close cannot report the
+    // page saved; the guard asks instead of closing silently or sticking.
     const durable = await flush();
-    if (durable) {
-      navigation.navigate('Tabs', { screen: 'Journal' });
-      return;
-    }
     setClosing(false);
-  }, [closing, flush, navigation]);
+    if (durable) toJournal();
+    else if (held) request(toJournal);
+  }, [closing, flush, navigation, held, request]);
   return (
     <TouchableOpacity
       style={styles.entryIconButton}
@@ -3278,6 +3902,102 @@ function CloseEntryLink({
     >
       <X color={accent.primary} size={24} accessible={false} />
     </TouchableOpacity>
+  );
+}
+
+/** A leave that finishes the stack removal the guard held back. */
+function dispatchLeave(
+  navigation: ScreenNavigation,
+  action: Parameters<ScreenNavigation['dispatch']>[0],
+): () => void {
+  return () => navigation.dispatch(action);
+}
+
+/** A leave the held-exit guard is holding back until the writer chooses. */
+type PendingLeave = { run: () => void } | null;
+
+/** The held-exit guard's controls (#2935). */
+interface HeldExitGuard {
+  /** True while offline words wait to be put back: every exit asks first. */
+  held: boolean;
+  /** Run ``leave`` now, or, while words are held, ask before running it. */
+  request: (_leave: () => void) => void;
+  pending: boolean;
+  stay: () => void;
+  leave: () => void;
+}
+
+/**
+ * Guard every exit while offline words are held (#2935). The in-page exits
+ * (Close, Back to reading) call ``request``; everything that removes this
+ * screen from the stack (the back gesture, hardware or browser back, a
+ * navigate that pops it) is caught by ``beforeRemove``. Either way the writer
+ * is asked, and leaving without the words is only ever their explicit choice.
+ * Pushing another screen on top keeps this one, and its held words, mounted,
+ * so it is not an exit. Closing the app or browser tab cannot be intercepted.
+ */
+function useHeldExitGuard(navigation: ScreenNavigation, held: boolean): HeldExitGuard {
+  const [pending, setPending] = useState<PendingLeave>(null);
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const leavingRef = useRef(false);
+  useEffect(
+    () =>
+      navigation.addListener?.('beforeRemove', (event) => {
+        if (!heldRef.current || leavingRef.current) return;
+        event.preventDefault();
+        setPending({ run: dispatchLeave(navigation, event.data.action) });
+      }),
+    [navigation],
+  );
+  const request = useCallback((leave: () => void) => {
+    if (heldRef.current) setPending({ run: leave });
+    else leave();
+  }, []);
+  const stay = useCallback(() => setPending(null), []);
+  const leave = useCallback(() => {
+    leavingRef.current = true;
+    setPending(null);
+    pending?.run();
+  }, [pending]);
+  return { held, request, pending: pending != null, stay, leave };
+}
+
+/** The exit row plus the dialog its guard asks with (#2935). */
+function EntryExits({
+  ctl,
+  navigation,
+  returnTo,
+  onOpenApiKey,
+}: {
+  ctl: Controller;
+  navigation: ScreenNavigation;
+  returnTo: CourseReturnTo;
+  onOpenApiKey: () => void;
+}): React.JSX.Element {
+  const guard = useHeldExitGuard(navigation, ctl.autosave.carryHeld);
+  const { stay } = guard;
+  const { resendCarryTier } = ctl.autosave;
+  const onRetry = useCallback(() => {
+    stay();
+    void resendCarryTier();
+  }, [stay, resendCarryTier]);
+  return (
+    <>
+      <EntryExitControls
+        ctl={ctl}
+        returnTo={returnTo}
+        navigation={navigation}
+        onOpenApiKey={onOpenApiKey}
+        guard={guard}
+      />
+      <HeldWordsLeaveDialog
+        visible={guard.pending}
+        onStay={stay}
+        onLeave={guard.leave}
+        onRetry={ctl.autosave.carryRetryReady ? onRetry : undefined}
+      />
+    </>
   );
 }
 
@@ -3294,19 +4014,26 @@ function EntryExitControls({
   returnTo,
   navigation,
   onOpenApiKey,
+  guard,
 }: {
   ctl: Controller;
   returnTo: CourseReturnTo;
   navigation: ScreenNavigation;
   onOpenApiKey: () => void;
+  guard: HeldExitGuard;
 }): React.JSX.Element {
   const { flush, flushForExit } = ctl.autosave;
   return (
     <View style={styles.entryExitRow} testID="journal-entry-exit-row">
-      <ReturnToReadingLink returnTo={returnTo} navigation={navigation} flush={flush} />
+      <ReturnToReadingLink
+        returnTo={returnTo}
+        navigation={navigation}
+        flush={flush}
+        guard={guard}
+      />
       <ApiKeySettingsLink onPress={onOpenApiKey} />
       {ctl.editGate.editMode ? <PhotographPageButton onPress={ctl.photograph.openCapture} /> : null}
-      <CloseEntryLink navigation={navigation} flush={flushForExit} />
+      <CloseEntryLink navigation={navigation} flush={flushForExit} guard={guard} />
     </View>
   );
 }
@@ -3515,6 +4242,7 @@ function EntryOverlays({
       />
       <EditConfirmDialog
         visible={editGate.confirmOpen}
+        carriedWords={editGate.carriedWords}
         onEdit={editGate.confirmEdit}
         onStartNew={editGate.startNew}
         onCancel={editGate.cancelEdit}
@@ -3739,11 +4467,11 @@ function JournalEntryScreen({
       <EntryCareSurfaces ctl={ctl} />
       <EntryCreekSurface ctl={ctl} />
       <EntryCorpusInvitation ctl={ctl} navigation={navigation} />
-      <LoadErrorBanner message={ctl.autosave.loadError} />
-      <EntryExitControls
+      <EntryNotices autosave={ctl.autosave} />
+      <EntryExits
         ctl={ctl}
-        returnTo={route.params?.returnTo}
         navigation={navigation}
+        returnTo={route.params?.returnTo}
         onOpenApiKey={openApiKey}
       />
       <EntryComposeRow

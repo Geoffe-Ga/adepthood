@@ -20,6 +20,8 @@ import {
 
 export interface EditConfirmDialogProps {
   visible: boolean;
+  /** Words typed while the page could not open are waiting to go back on it (#2935). */
+  carriedWords?: boolean;
   onEdit: () => void;
   onStartNew: () => void;
   onCancel: () => void;
@@ -47,8 +49,13 @@ function Choice({ label, onPress, a11y, testID, primary = false }: ChoiceProps) 
   );
 }
 
+/** Said when words typed while the entry could not open are waiting (#2935). */
+export const CARRIED_WORDS_NOTE =
+  'The words you wrote while this page couldn’t open are waiting here, not yet saved. Choose Edit to add them below your entry.';
+
 function EditConfirmDialog({
   visible,
+  carriedWords = false,
   onEdit,
   onStartNew,
   onCancel,
@@ -67,6 +74,11 @@ function EditConfirmDialog({
         This entry has its resonance. Editing it may move or unsettle the margin notes — they’ll
         re-anchor where they still fit and dim where they no longer do.
       </Text>
+      {carriedWords ? (
+        <Text style={styles.body} testID="edit-confirm-carried-note">
+          {CARRIED_WORDS_NOTE}
+        </Text>
+      ) : null}
       <Choice
         label="Edit"
         onPress={onEdit}
