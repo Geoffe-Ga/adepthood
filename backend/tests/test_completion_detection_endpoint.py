@@ -30,6 +30,7 @@ from services.botmason import (
     LLMProviderError,
     LLMResponse,
 )
+from services.usage import DEFAULT_MONTHLY_CAP
 
 _BODY = "I meditated by the river and the willow bent without breaking."
 _NOTE = {"kind": "theme", "quote": "the willow bent without breaking", "note": "It holds."}
@@ -154,7 +155,7 @@ async def test_one_press_returns_marginalia_and_suggestions_on_one_charge(
     assert s["target_type"] == "habit"
     assert s["goal_id"] is not None
     assert "user_id" not in s  # enumeration-safe
-    assert body["remaining_messages"] == 49  # exactly one charge (50 cap - 1)
+    assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1  # exactly one charge
     persisted = (
         await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
     ).scalar_one()
@@ -234,7 +235,7 @@ async def test_resonance_does_not_duplicate_an_independently_detected_offer(
     assert reflected.status_code == HTTPStatus.OK
     assert len(reflected.json()["marginalia"]) == 1
     assert reflected.json()["suggestions"] == []
-    assert reflected.json()["remaining_messages"] == 49
+    assert reflected.json()["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1
     persisted = (
         await db_session.execute(select(func.count()).select_from(CompletionSuggestion))
     ).scalar_one()
@@ -356,7 +357,7 @@ async def test_detection_failure_is_best_effort(
     body = resp.json()
     assert body["suggestions"] == []
     assert len(body["marginalia"]) == 1  # literary notes intact
-    assert body["remaining_messages"] == 49  # charged; no rollback
+    assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1  # charged; no rollback
     marg = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert marg == 1  # the resonance pass was not rolled back
     records = _detection_warnings(caplog)
@@ -389,7 +390,7 @@ async def test_detection_credit_exhaustion_names_the_provider(
     body = resp.json()
     assert body["suggestions"] == []
     assert len(body["marginalia"]) == 1  # literary notes intact
-    assert body["remaining_messages"] == 49  # charged; no rollback
+    assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1  # charged; no rollback
     marg = (await db_session.execute(select(func.count()).select_from(Marginalia))).scalar_one()
     assert marg == 1  # the resonance pass was not rolled back
     records = _detection_warnings(caplog)
