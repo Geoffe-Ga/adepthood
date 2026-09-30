@@ -77,7 +77,11 @@ const INITIAL_STATE: ShelfState = {
 interface Shelf extends ShelfState {
   /** Fetch and append the next page; a no-op while one is in flight. */
   loadMore: () => void;
-  /** Re-read from the top after a failure. */
+  /**
+   * Ask again for the page that failed: the first page when the shelf is
+   * empty, otherwise the next page after the letters already shown, which stay
+   * on the shelf.
+   */
   retry: () => void;
 }
 
@@ -87,8 +91,9 @@ function reading(previous: ShelfState): ShelfState {
 }
 
 /**
- * Updater that lands a page: the first one replaces the shelf, a later one is
- * appended, so a retry cannot leave a stale tail behind a fresh head.
+ * Updater that lands a page: the first page replaces the shelf, so a retried
+ * first read cannot leave a stale tail behind a fresh head; any later page,
+ * including one asked again after a failed Older letters read, is appended.
  */
 function pageLanded(page: VoiceDraftListResponse, offset: number) {
   return (previous: ShelfState): ShelfState => ({
@@ -111,12 +116,18 @@ function readFailed(message: string) {
 }
 
 /**
- * Own the shelf's pages: read the first on mount, append on demand, and start
- * over on retry.
+ * Own the shelf's pages: read the first on mount, append on demand, and on
+ * retry ask again for the page that failed, keeping the letters already read.
  *
- * Reads are numbered by a generation counter rather than a boolean, so a page
- * still in flight when the reader retries settles into nothing instead of
- * appending itself behind the fresh first page.
+ * The retry offset is derived, not stored: a failed read keeps the rows and
+ * Older letters always asks for ``items.length``, so while an error sits
+ * beside rows, ``items.length`` is exactly the offset that failed. If a future
+ * read at offset 0 ever keeps the rows (a refresh, say), store a
+ * ``failedOffset`` the way ``usePromotedQuoteSection`` does instead.
+ *
+ * Reads are numbered by a generation counter rather than a boolean, so when a
+ * failed first read is retried, a page still in flight settles into nothing
+ * instead of appending itself behind the fresh first page.
  */
 function useVoiceDraftShelf(): Shelf {
   const [state, setState] = useState<ShelfState>(INITIAL_STATE);
@@ -154,11 +165,18 @@ function useVoiceDraftShelf(): Shelf {
   }, [hasMore, loading, items.length, read]);
 
   const retry = useCallback(() => {
-    // Abandon whatever is in flight so its page cannot land after this one.
+    if (items.length > 0) {
+      // A later page failed and the letters above it are sound, so ask for
+      // that page again. Nothing is in flight while the retry control shows.
+      read(items.length);
+      return;
+    }
+    // The first read failed: abandon whatever is in flight so its page cannot
+    // land after this one, and read from the top.
     generation.current += 1;
     inFlight.current = false;
     read(0);
-  }, [read]);
+  }, [items.length, read]);
 
   return { ...state, loadMore, retry };
 }
