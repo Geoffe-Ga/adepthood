@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
-import { colors, STAGE_COLORS } from '../../../design/tokens';
+import { colors, rhythm, STAGE_COLORS } from '../../../design/tokens';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 
 import { settle } from '@/testing/asyncSettle';
@@ -303,6 +303,26 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-metadata')).toBeTruthy();
     expect(getByText('Stage 2')).toBeTruthy();
     expect(getByText('Second stage')).toBeTruthy();
+  });
+
+  it('hangs the "Start here" band from the screen gutter with the rest of the landing', async () => {
+    const { getByText } = render(<CourseScreen />);
+
+    await settle();
+    // The nearest ancestor that sets a horizontal inset is the one the heading
+    // hangs from: without the band's gutter it sat flush at x=0 (#2964).
+    interface Node {
+      props: { style?: StyleProp<ViewStyle> };
+      parent: Node | null;
+    }
+    let node: Node | null = (getByText('Start here') as Node).parent;
+    let inset: number | undefined;
+    while (node && inset === undefined) {
+      const padding = StyleSheet.flatten(node.props.style)?.paddingHorizontal;
+      inset = typeof padding === 'number' ? padding : undefined;
+      node = node.parent;
+    }
+    expect(inset).toBe(rhythm.screenPaddingH);
   });
 
   it('displays progress bar with correct completion count', async () => {

@@ -8,6 +8,8 @@
 // stale message on screen. Modelled on
 // frontend/src/features/Map/__tests__/MapScreenColdStart.test.tsx.
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { Hourglass, TriangleAlert } from 'lucide-react-native';
+import { Text } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 
@@ -69,7 +71,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, fireEvent, act } = require('@testing-library/react-native');
+const { render, fireEvent, act, within } = require('@testing-library/react-native');
 // The suite requires the screen after the mock consts above are initialised —
 // a static import would pull it in first and hit them in their temporal dead
 // zone. Every other CourseScreen suite loads it the same way.
@@ -129,6 +131,23 @@ describe('CourseScreen — the cold-start spinner has a bounded wait', () => {
     const retry = view.getByTestId('course-loading-retry');
     expect(retry.props.accessibilityRole).toBe('button');
     expect(retry.props.accessibilityLabel).toBe(TRY_AGAIN);
+    act(() => view.unmount());
+  });
+
+  it('heads the timeout with a drawn, hidden hourglass icon rather than an emoji', () => {
+    const view = render(<CourseScreen />);
+    act(() => {
+      jest.advanceTimersByTime(TIMEOUT_MS);
+    });
+
+    const state = within(view.getByTestId('course-loading-timeout'));
+    expect(state.UNSAFE_getByType(Hourglass).props.size).toBe(CourseScreenModule.STATE_ICON_SIZE);
+    expect(state.UNSAFE_queryAllByType(TriangleAlert)).toHaveLength(0);
+    const slot = view.getByTestId('course-loading-timeout-icon', { includeHiddenElements: true });
+    expect(slot.props.accessibilityElementsHidden).toBe(true);
+    expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(within(slot).UNSAFE_queryAllByType(Text)).toHaveLength(0);
+    expect(view.queryByText('⏳', { includeHiddenElements: true })).toBeNull();
     act(() => view.unmount());
   });
 

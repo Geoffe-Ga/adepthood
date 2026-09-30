@@ -88,10 +88,21 @@ function collectCaptionUsageIds(): string[] {
 const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'components/care/CareResourceCard.tsx::resourceWhat',
   'components/drawer/DrawerSearch.tsx::resultCount',
+  // Audited (#2964): a chapter card's subtitle and the intro card's label sit
+  // inside a pressable card whose whole surface is the tap target (its title is
+  // at INTERACTIVE_TEXT_MIN); neither is itself pressable.
+  'features/Course/Course.styles.ts::contentCardSubtitle',
+  'features/Course/Course.styles.ts::introCardLabel',
+  // Read-only landing metadata: the stage progress count, the resources panel's
+  // heading (its chips use uiType.button) and the stage detail label/value rows.
+  'features/Course/Course.styles.ts::progressBarLabel',
   'features/Course/Course.styles.ts::readerEyebrow',
+  'features/Course/Course.styles.ts::resourcesHeading',
   'features/Course/Course.styles.ts::sectionBandLabel',
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
+  'features/Course/Course.styles.ts::stageDetailLabel',
+  'features/Course/Course.styles.ts::stageDetailValue',
   'features/Journal/CompletionSuggestionNote.tsx::streak',
   // Audited: the contraction reflection's notice line reports a call that did
   // not carry (a start or a decline). It is read, never pressed -- the card's
