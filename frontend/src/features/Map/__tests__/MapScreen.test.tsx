@@ -1,7 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import React from 'react';
-import { Image, ScrollView, StyleSheet } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import { editorialType, ink, surface, touchTarget } from '../../../design/tokens';
@@ -23,7 +23,6 @@ import {
   RIGHT_LABEL_LADDER,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   RIGHT_LABEL_MAX_FONT_SIZE,
-  RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
   STAGE_LINE_MAX_FONT_SIZE,
   STAGE_PERSONA_MAX_FONT_SIZE,
@@ -565,12 +564,12 @@ describe('MapScreen', () => {
     const tree = create(<MapScreen />);
     fireRightLabelLayout(tree, 'Understanding', WIDE_CELL);
     const node = tree.root.findByProps({ children: 'Understanding' });
-    expect(node.props.numberOfLines).toBe(1);
+    expect(node.props.numberOfLines).toBeUndefined();
     const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
     expect(flat.fontSize).toBe(RIGHT_LABEL_MAX_FONT_SIZE);
   });
 
-  it("hyphenates Awareness on the ramp, one line each, in its face's rhythm, in a narrow right cell", () => {
+  it("hyphenates Awareness on the ramp, in its face's rhythm, in a narrow right cell", () => {
     const NARROW_CELL = 56;
     const tree = create(<MapScreen />);
     fireRightLabelLayout(tree, 'Awareness', NARROW_CELL);
@@ -578,7 +577,6 @@ describe('MapScreen', () => {
     expect(expected.lines).toEqual(['Aware-', 'ness']);
     for (const line of expected.lines) {
       const node = tree.root.findByProps({ children: line });
-      expect(node.props.numberOfLines).toBe(1);
       const flat = StyleSheet.flatten(node.props.style) as {
         fontSize?: number;
         lineHeight?: number;
@@ -594,17 +592,26 @@ describe('MapScreen', () => {
     );
   });
 
-  it('lets a label line wrap, never cut to an ellipsis, in a right cell too narrow for it on the ramp', () => {
-    // A 320 phone's right cell: Yes-And- runs wider than it at the 13px floor.
-    const NARROWEST_PHONE_CELL = 48;
+  it('never caps a right-label line, so no face can cut one to an ellipsis, at any cell width', () => {
+    // The glyph estimate is not conservative for every serif face (Wisdom runs
+    // 0.672em in DejaVu Serif), so a capped line could still be cut: leaving
+    // every line uncapped lets a wide one wrap while a fitting one stays put.
+    const CELL_WIDTHS = [0, 40, 48, 53, 56, 59, 70, 105, 180, 400];
     const tree = create(<MapScreen />);
-    fireRightLabelLayout(tree, 'Yes-And-Ness', NARROWEST_PHONE_CELL);
-    for (const line of ['Yes-And-', 'Ness']) {
-      const node = tree.root.findByProps({ children: line });
-      expect(node.props.numberOfLines).toBeUndefined();
-      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
-      expect(flat.fontSize).toBe(RIGHT_LABEL_MIN_FONT_SIZE);
+    fireGridLayout(tree);
+    const capped: string[] = [];
+    for (const width of CELL_WIDTHS) {
+      for (const row of MAP_ROWS) {
+        fireRightLabelLayout(tree, row.rightLabel, width);
+        const wrapper = tree.root.findByProps({ testID: rightLabelFitTestId(row.rightLabel) });
+        const lines = wrapper.findAllByType(Text);
+        expect(lines.length).toBeGreaterThan(0);
+        if (lines.some((node: TestNode) => node.props.numberOfLines !== undefined)) {
+          capped.push(`${row.rightLabel}@${String(width)}`);
+        }
+      }
     }
+    expect(capped).toEqual([]);
   });
 
   it('always carries android_hyphenationFrequency="none" and textBreakStrategy="simple", unconditionally', () => {
