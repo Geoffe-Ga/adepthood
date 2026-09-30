@@ -130,8 +130,11 @@ Eight rules, each one a reviewer can answer yes or no:
   screen's title, it is that screen's one title heading: the body neither
   paints the title again nor adds a header named by it, visible or not
   (`ScreenHeader` takes `titleHidden`), because on web both render as `h1` and
-  a screen reader announces the title twice. The eyebrow and lead stay
-  ordinary text (#2962). A body heading that says something else — a
+  a screen reader announces the title twice. The stack header is the title
+  heading on every platform: iOS and web mark it natively, and Android, whose
+  Toolbar title carries no heading, gets it through the header-role
+  `headerTitle` in `NAV_SCREEN_OPTIONS` (`navigation/navScreenOptions.tsx`).
+  The eyebrow and lead stay ordinary text (#2962). A body heading that says something else — a
   post-delete receipt, a form's own name that differs from the stack title —
   stays, as a header.
 

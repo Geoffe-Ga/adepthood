@@ -25,9 +25,9 @@ import VaultSettingsScreen from '../features/Settings/VaultSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
 import BottomTabs from './BottomTabs';
+import { NAV_SCREEN_OPTIONS } from './navScreenOptions';
 
 import type { JournalClassification, ReflectionLevel } from '@/api';
-import { accent, fonts, ink } from '@/design/tokens';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
 export interface CreatePracticePrefill {
@@ -155,13 +155,6 @@ export type RootStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-
-// Header background/border come from the warm navTheme; here we add the
-// editorial serif title + terracotta back/tint.
-const NAV_SCREEN_OPTIONS = {
-  headerTintColor: accent.primary,
-  headerTitleStyle: { fontFamily: fonts.serif, color: ink.primary },
-} as const;
 
 /**
  * Root stack for the authenticated app. Hosts the bottom-tabs shell plus
