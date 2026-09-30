@@ -5,7 +5,7 @@ import { Text, StyleSheet } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import renderer from 'react-test-renderer';
 
-import { spacing, touchTarget, tileDensity } from '../../../design/tokens';
+import { spacing, touchTarget, tileDensity, type } from '../../../design/tokens';
 import type { Habit } from '../Habits.types';
 import { useTileLayout, HabitTile } from '../HabitTile';
 
@@ -182,10 +182,29 @@ describe('HabitTile density pass', () => {
     expect(style.paddingHorizontal).toBe(spacing(1, scale));
   });
 
-  it('pins the habit name font size unchanged by the density pass', () => {
+  const nameFontSize = (): number | undefined => {
     const { getByText } = render(<HabitTile habit={baseHabit} tz="UTC" />);
-    const nameNode = getByText(baseHabit.name);
-    const nameStyleFlat = StyleSheet.flatten(nameNode.props.style);
-    expect(nameStyleFlat.fontSize).toBe(spacing(2, scale));
+    return StyleSheet.flatten(getByText(baseHabit.name).props.style).fontSize;
+  };
+
+  // #2961: the name is set on the type ramp's label face, not the layout scale.
+  it('pins the habit name font size to the type ramp label face', () => {
+    expect(nameFontSize()).toBe(type(width).label.fontSize);
+  });
+
+  // The ramp follows width alone: a short viewport no longer takes the layout
+  // scale's 0.85 height factor, so the tile keeps its phone text and its header.
+  it('keeps the name size and header on a short viewport', () => {
+    const shortHeight = 640;
+    mockWindowDimensions(width, shortHeight);
+    expect(nameFontSize()).toBe(type(width).label.fontSize);
+
+    const { getByTestId } = render(<HabitTile habit={baseHabit} tz="UTC" />);
+    const header = getByTestId('habit-header');
+    expect(header).toHaveTextContent(new RegExp(baseHabit.name, 'i'));
+    expect(header).toHaveTextContent(/3 DAYS/);
+    expect(renderTileLayout(PHONE_INSETS).tileMinHeight).toBeGreaterThanOrEqual(
+      touchTarget.minimum,
+    );
   });
 });
