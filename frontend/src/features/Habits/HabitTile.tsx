@@ -68,6 +68,7 @@ interface HabitHeaderProps {
   streakText: string;
   hasCompletedGoal: boolean;
   iconInline: boolean;
+  streakStacked: boolean;
   onIconPress?: () => void;
 }
 
@@ -91,23 +92,30 @@ const getStreakStyle = (
 const HABIT_TEXT_COLOR = colors.text.secondaryAccessible;
 
 const nameStyle = (fontSize: number) => ({
-  flex: 1 as const,
   fontSize,
   fontWeight: '700' as const,
   textTransform: 'uppercase' as const,
   color: HABIT_TEXT_COLOR,
 });
 
+/** Beside the streak, the name takes the row's remaining width. */
+const NAME_IN_ROW = { flex: 1 as const };
+/** Under the name, the streak hugs its own text instead of stretching the column. */
+const STREAK_UNDER_NAME = { alignSelf: 'flex-start' as const };
+
 const StreakText = ({
   streakText,
   streakStyle,
   fontSize,
+  underName,
 }: {
   streakText: string;
   streakStyle: object;
   fontSize: number;
+  underName: boolean;
 }) => (
   <Text
+    testID="habit-streak"
     style={[
       {
         fontSize,
@@ -115,27 +123,73 @@ const StreakText = ({
         color: HABIT_TEXT_COLOR,
       },
       streakStyle,
+      underName && STREAK_UNDER_NAME,
     ]}
   >
     {streakText}
   </Text>
 );
 
-const HeaderRow = ({
-  name,
-  streakText,
-  streakStyle,
-  gridType,
-}: {
+interface NameAndStreakProps {
   name: string;
   streakText: string;
   streakStyle: object;
   gridType: HabitGridType;
-}) => (
+  stacked: boolean;
+}
+
+/**
+ * The tile's name and streak (#2961). On a tile too narrow to carry both on
+ * one row -- the achieved-today badge alone needs ~190px there -- the streak
+ * moves to its own line under the name. That is a layout decision, not a flex
+ * negotiation, so it holds the same on web and native: native Text does not
+ * shrink, so a badge beside the name would squeeze a long single-word name
+ * into a mid-word break, and on web the badge itself wraps.
+ */
+const NameAndStreak = ({ name, streakText, streakStyle, gridType, stacked }: NameAndStreakProps) =>
+  stacked ? (
+    <View testID="habit-name-stack" style={NAME_IN_ROW}>
+      <Text style={nameStyle(gridType.name)}>{name}</Text>
+      <StreakText
+        streakText={streakText}
+        streakStyle={streakStyle}
+        fontSize={gridType.streak}
+        underName
+      />
+    </View>
+  ) : (
+    <>
+      <Text style={[NAME_IN_ROW, nameStyle(gridType.name)]}>{name}</Text>
+      <StreakText
+        streakText={streakText}
+        streakStyle={streakStyle}
+        fontSize={gridType.streak}
+        underName={false}
+      />
+    </>
+  );
+
+const HeaderRow = (props: Omit<NameAndStreakProps, 'stacked'>) => (
   <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-    <Text style={nameStyle(gridType.name)}>{name}</Text>
-    <StreakText streakText={streakText} streakStyle={streakStyle} fontSize={gridType.streak} />
+    <NameAndStreak {...props} stacked={false} />
   </View>
+);
+
+/** The habit's emoji, tappable to change it. */
+const HabitIconButton = ({
+  icon,
+  fontSize,
+  onPress,
+  style,
+}: {
+  icon: string;
+  fontSize: number;
+  onPress?: () => void;
+  style?: object;
+}) => (
+  <TouchableOpacity onPress={onPress} testID="habit-icon" style={style}>
+    <Text style={{ fontSize }}>{icon}</Text>
+  </TouchableOpacity>
 );
 
 const HabitHeader = ({
@@ -147,6 +201,7 @@ const HabitHeader = ({
   streakText,
   hasCompletedGoal,
   iconInline,
+  streakStacked,
   onIconPress,
 }: HabitHeaderProps) => {
   const streakStyle = getStreakStyle(hasCompletedGoal, stageColor, achievedTextColor, scale);
@@ -154,15 +209,19 @@ const HabitHeader = ({
   if (iconInline) {
     return (
       <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity
+        <HabitIconButton
+          icon={habit.icon}
+          fontSize={gridType.iconInline}
           onPress={onIconPress}
-          testID="habit-icon"
           style={{ marginRight: spacing(1, scale) }}
-        >
-          <Text style={{ fontSize: gridType.iconInline }}>{habit.icon}</Text>
-        </TouchableOpacity>
-        <Text style={nameStyle(gridType.name)}>{habit.name}</Text>
-        <StreakText streakText={streakText} streakStyle={streakStyle} fontSize={gridType.streak} />
+        />
+        <NameAndStreak
+          name={habit.name}
+          streakText={streakText}
+          streakStyle={streakStyle}
+          gridType={gridType}
+          stacked={streakStacked}
+        />
       </View>
     );
   }
@@ -173,9 +232,7 @@ const HabitHeader = ({
         testID="habit-icon-top"
         style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
       >
-        <TouchableOpacity onPress={onIconPress} testID="habit-icon">
-          <Text style={{ fontSize: gridType.iconStacked }}>{habit.icon}</Text>
-        </TouchableOpacity>
+        <HabitIconButton icon={habit.icon} fontSize={gridType.iconStacked} onPress={onIconPress} />
       </View>
       <HeaderRow
         name={habit.name}
@@ -208,6 +265,16 @@ export const TILE_BORDER_WIDTH = 3;
 const habitGridChrome = (scale: number, gridGutter: number): number =>
   2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
 
+/**
+ * Below this tile width the streak sits under the name rather than beside it
+ * (#2961). On the type ramp the achieved-today badge needs ~190px and a long
+ * single-word name ~120px, plus the inline icon and the tile's own border and
+ * padding: a row only carries them all from about 380px. A 390px phone keeps
+ * the single row; 320-375px phones stack. Measured by the
+ * `e2e/habits-viewport.browser.e2e.test.ts` passes at 320x568 and 360x640.
+ */
+export const STACKED_STREAK_MAX_TILE_WIDTH = 380;
+
 export const useTileLayout = () => {
   const { width, contentWidth, height, columns, scale, gridGutter } = useResponsive();
   const insets = useSafeAreaInsets();
@@ -223,9 +290,10 @@ export const useTileLayout = () => {
   // than off the raw (uncapped) window width.
   const tileWidth = contentWidth / columns;
   const iconInline = columns === 1 || tileWidth < 400;
+  const streakStacked = iconInline && tileWidth < STACKED_STREAK_MAX_TILE_WIDTH;
   // Text follows the viewport width alone (the type ramp), not the layout scale.
   const gridType = useMemo(() => habitGridType(width), [width]);
-  return { columns, scale, gridGutter, tileMinHeight, iconInline, gridType };
+  return { columns, scale, gridGutter, tileMinHeight, iconInline, streakStacked, gridType };
 };
 
 /** A tile marker spec carries its resolved `Goal` for tooltip formatting. */
@@ -711,14 +779,13 @@ const UnlockedTile = ({
   onLogUnit,
   tz,
 }: UnlockedTileProps) => {
-  const { scale, gridGutter, tileMinHeight, iconInline, gridType } = useTileLayout();
+  const { scale, gridGutter, tileMinHeight, iconInline, streakStacked, gridType } = useTileLayout();
   const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
     habit,
     tz,
     stageColor,
   );
 
-  const streakText = formatStreakText(habit.streak, hasCompletedGoal);
   const barHeight = Math.max(8, spacing(2, scale));
 
   return (
@@ -734,9 +801,10 @@ const UnlockedTile = ({
         achievedTextColor={achievedTextColor}
         scale={scale}
         gridType={gridType}
-        streakText={streakText}
+        streakText={formatStreakText(habit.streak, hasCompletedGoal)}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
+        streakStacked={streakStacked}
         onIconPress={onIconPress}
       />
       <TileProgressSection
