@@ -1,11 +1,19 @@
 import React from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
+import { TitleHost } from './TitleHost';
+
 import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
 
 interface ScreenHeaderProps {
   /** The serif display title (rendered with `accessibilityRole="header"`). */
   title: string;
+  /**
+   * Set when the stack header already paints ``title`` (#2962): the body then
+   * paints no title and keeps a childless ``TitleHost`` header named by it in
+   * the title's place, so the eyebrow and lead still read as ordinary text.
+   */
+  titleHidden?: boolean;
   /** Small-caps caption above the title. */
   eyebrow?: string;
   /** Optional lead paragraph beneath the title. */
@@ -24,6 +32,7 @@ const EYEBROW_LETTER_SPACING = 1.5;
  */
 export const ScreenHeader = ({
   title,
+  titleHidden,
   eyebrow,
   lead,
   action,
@@ -35,9 +44,13 @@ export const ScreenHeader = ({
     <View style={styles.row} testID={testID}>
       <View style={styles.text}>
         {eyebrow ? <Text style={[t.caption, styles.eyebrow]}>{eyebrow.toUpperCase()}</Text> : null}
-        <Text style={[t.display, styles.title]} accessibilityRole="header">
-          {title}
-        </Text>
+        {titleHidden ? (
+          <TitleHost title={title} testID={testID ? `${testID}-title` : undefined} />
+        ) : (
+          <Text style={[t.display, styles.title]} accessibilityRole="header">
+            {title}
+          </Text>
+        )}
         {lead ? <Text style={[t.body, styles.lead]}>{lead}</Text> : null}
       </View>
       {action ? <View style={styles.action}>{action}</View> : null}
