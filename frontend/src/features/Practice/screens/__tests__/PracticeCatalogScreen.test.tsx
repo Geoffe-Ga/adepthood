@@ -2,11 +2,13 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Flower2, Hourglass, Shuffle } from 'lucide-react-native';
 import React from 'react';
-import { Alert, StyleSheet } from 'react-native';
+import { Alert, StyleSheet, Text } from 'react-native';
 
 import type { PracticeItem, UserPractice } from '@/api';
 import { surface } from '@/design/tokens';
+import { FALLBACK_MODE_ICON } from '@/features/Practice/components/ModePicker';
 
 // Async practice load settling is marginal against Jest's 5s default under CI parallel-worker contention; give this suite headroom.
 jest.setTimeout(15000);
@@ -108,6 +110,15 @@ jest.mock('@/api', () => ({
 
 const { PracticeCatalogScreen } = require('../PracticeCatalogScreen');
 
+/** Mode icon slots are hidden from assistive tech, so queries must opt in to see them. */
+const HIDDEN = { includeHiddenElements: true } as const;
+
+/** A mode icon slot is decoration: hidden from VoiceOver and TalkBack alike. */
+function expectDecorative(slot: { props: Record<string, unknown> }): void {
+  expect(slot.props.accessibilityElementsHidden).toBe(true);
+  expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
+}
+
 function renderScreen(overrides: Partial<React.ComponentProps<typeof PracticeCatalogScreen>> = {}) {
   const loadPractices = jest.fn(async () => [presetA, presetB, myDraft]) as jest.MockedFunction<
     (_stage: number) => Promise<PracticeItem[]>
@@ -200,10 +211,17 @@ describe('PracticeCatalogScreen — row presentation', () => {
     expect(view.getAllByText('Stage 1')).toHaveLength(1);
   });
 
-  it('gives each row the mode-specific emoji as a leading visual anchor', async () => {
+  it('gives each row the mode-specific lucide icon as a decorative leading anchor', async () => {
     const { view } = renderScreen();
     await waitForLoad();
-    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('⏳');
+    const slot = view.getByTestId('practice-catalog-row-1-icon', HIDDEN);
+    expect(slot.findByType(Hourglass)).toBeTruthy();
+    expectDecorative(slot);
+    expect(slot.findAllByType(Text)).toHaveLength(0);
+    // The icon is decoration: the row's accessible name is still its label.
+    expect(view.getByTestId('practice-catalog-row-1').props.accessibilityLabel).toBe(
+      'Concentration on the breath. Meditation timer, 10 minutes.',
+    );
   });
 
   it('falls back to a generic label and icon when the mode is unrecognised', async () => {
@@ -214,7 +232,13 @@ describe('PracticeCatalogScreen — row presentation', () => {
     const { view } = renderScreen({ loadPractices: jest.fn(async () => [unknown]) });
     await waitForLoad();
     expect(view.getByText('Practice · 10 min')).toBeTruthy();
-    expect(view.getByTestId('practice-catalog-row-1-icon').props.children).toBe('🧘');
+    const slot = view.getByTestId('practice-catalog-row-1-icon', HIDDEN);
+    expect(slot.findByType(FALLBACK_MODE_ICON)).toBeTruthy();
+    expect(FALLBACK_MODE_ICON).toBe(Flower2);
+    expectDecorative(slot);
+    expect(view.getByTestId('practice-catalog-row-1').props.accessibilityLabel).toBe(
+      'Concentration on the breath. Practice, 10 minutes.',
+    );
   });
 });
 
@@ -418,6 +442,12 @@ describe('PracticeCatalogScreen — recently used', () => {
     expect(view.getByTestId('practice-catalog-recently-used')).toBeTruthy();
     const recentRow = view.getByTestId('practice-catalog-recent-row-2');
     expect(recentRow).toBeTruthy();
+    const slot = view.getByTestId('practice-catalog-recent-row-2-icon', HIDDEN);
+    expect(slot.findByType(Shuffle)).toBeTruthy();
+    expectDecorative(slot);
+    expect(recentRow.props.accessibilityLabel).toBe(
+      'Awareness bells preset. Random interval bell, 20 minutes.',
+    );
     fireEvent.press(recentRow);
     expect(navigateToDetail).toHaveBeenCalledWith(2);
   });
