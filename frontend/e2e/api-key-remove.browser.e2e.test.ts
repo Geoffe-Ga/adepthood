@@ -51,6 +51,7 @@ const KEY_ENTROPY_BYTES = 24;
 interface Usage {
   monthly_messages_used: number;
   offering_balance: number;
+  monthly_cap: number;
 }
 
 /** Every POST this browser sends whose path matches `route`, in order. */
@@ -195,7 +196,7 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   await page.getByRole('link', { name: 'Go back' }).click();
   await page.getByRole('button', { name: 'Get resonance' }).click();
   await expect(page.getByTestId('resonance-explainer-cost')).toContainText(
-    'one of your 50 BotMason messages',
+    `one of your ${String(walletBefore.monthly_cap)} BotMason messages`,
   );
   await expect(page.getByTestId('resonance-explainer-cost')).not.toContainText(
     'Your own API key pays',
@@ -207,11 +208,18 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
     .poll(async () => (await usage(page, token)).monthly_messages_used)
     .toBe(walletBefore.monthly_messages_used + 1);
 
-  // 5. The getter, still in the same session: opening a margin note the shared
-  //    pass wrote asks for its essay with no explicit key, so the request's
-  //    header comes from the getter alone -- and it no longer carries the key.
+  // 5. The getter, still in the same session: asking for the essay of a margin
+  //    note the shared pass wrote sends no explicit key, so the request's header
+  //    comes from the getter alone -- and it no longer carries the key. A first
+  //    letter is priced (#623), so opening the note only offers it, at the
+  //    shared allowance's price; the explicit ask is what sends the request.
   const note = page.locator('[data-testid^="margin-note-"]:not([data-testid*="stale"])').first();
   await note.click();
+  await expect(page.getByTestId('essay-ask-cost')).toContainText(
+    `one of your ${String(walletBefore.monthly_cap)} BotMason messages`,
+  );
+  expect(essays.length).toBe(0);
+  await page.getByTestId('essay-ask').click();
   await expect.poll(() => essays.length).toBe(1);
   expect(essays[0]?.headers()[LLM_KEY_HEADER]).toBeUndefined();
   await expect(page.getByTestId('essay-text')).toBeVisible();
