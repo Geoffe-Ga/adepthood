@@ -1,6 +1,6 @@
 import { StyleSheet } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, accent, colors, ink } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, accent, colors, ink, type as typeRamp } from '@/design/tokens';
 
 /**
  * Vertical padding for the action buttons on the Settings form screens.
@@ -32,7 +32,17 @@ export const SETTINGS_CARD_LABEL_LETTER_SPACING = 0.5;
  * each screen.
  */
 export const settingsFormStyles = StyleSheet.create({
-  title: { fontSize: 22, fontWeight: '700', marginBottom: SPACING.md, color: ink.primary },
+  /** Spacing and ink only: the face is ``settingsFormType(width).title``. */
+  title: { marginBottom: SPACING.md, color: ink.primary },
+  /**
+   * The small uppercase card label ("Stored on this device", "Current time
+   * zone"); the face is ``settingsFormType(width).cardLabel``. Never a control.
+   */
+  cardLabel: {
+    color: ink.muted,
+    textTransform: 'uppercase',
+    letterSpacing: SETTINGS_CARD_LABEL_LETTER_SPACING,
+  },
   body: {
     fontSize: 14,
     color: ink.soft,
@@ -56,3 +66,15 @@ export const settingsFormStyles = StyleSheet.create({
   linkRow: { marginTop: SPACING.xl, alignItems: 'center' },
   link: { color: accent.primary, fontWeight: '600' },
 });
+
+/**
+ * The width-dependent faces of the Settings form family (#2962), from the
+ * Candle & Ink ramp: a form title grows with the window (26 on a phone, 30 on
+ * a desktop), and a card label is the ramp caption. A StyleSheet cannot read
+ * the width, so each screen spreads these under the matching
+ * ``settingsFormStyles`` entry, which carries only spacing and ink.
+ */
+export const settingsFormType = (width: number) => {
+  const t = typeRamp(width);
+  return { title: t.title, cardLabel: t.caption } as const;
+};

@@ -1,8 +1,15 @@
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
-import { settingsFormStyles } from './shared/settingsFormLayout';
+import { settingsFormStyles, settingsFormType } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
@@ -112,26 +119,31 @@ const Receipt = ({
 }: {
   receipt: AccountDeletionReceipt;
   onDone: () => void;
-}): React.JSX.Element => (
-  <View testID="delete-account-receipt">
-    <Text style={settingsFormStyles.title}>Your account is gone</Text>
-    <Text style={settingsFormStyles.body}>
-      {`We removed ${receipt.rows_erased} records belonging to you. There is nothing left to restore.`}
-    </Text>
-    <Text style={styles.vaultGuidance} testID="delete-account-vault-guidance">
-      {receipt.vault.guidance}
-    </Text>
-    <TouchableOpacity
-      onPress={onDone}
-      style={settingsFormStyles.primaryButton}
-      testID="delete-account-done"
-      accessibilityLabel="Done"
-      accessibilityRole="button"
-    >
-      <Text style={settingsFormStyles.primaryButtonText}>Done</Text>
-    </TouchableOpacity>
-  </View>
-);
+}): React.JSX.Element => {
+  const face = settingsFormType(useWindowDimensions().width);
+  return (
+    <View testID="delete-account-receipt">
+      <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
+        Your account is gone
+      </Text>
+      <Text style={settingsFormStyles.body}>
+        {`We removed ${receipt.rows_erased} records belonging to you. There is nothing left to restore.`}
+      </Text>
+      <Text style={styles.vaultGuidance} testID="delete-account-vault-guidance">
+        {receipt.vault.guidance}
+      </Text>
+      <TouchableOpacity
+        onPress={onDone}
+        style={settingsFormStyles.primaryButton}
+        testID="delete-account-done"
+        accessibilityLabel="Done"
+        accessibilityRole="button"
+      >
+        <Text style={settingsFormStyles.primaryButtonText}>Done</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 function useDeleteHandler(
   form: SettingsFormState,
@@ -160,6 +172,7 @@ export default function DeleteAccountScreen(): React.JSX.Element {
     [setDraft, setError],
   );
   const onDone = useCallback(() => void logout(), [logout]);
+  const face = settingsFormType(useWindowDimensions().width);
 
   return (
     <ScreenScaffold scroll testID="delete-account-screen">
@@ -167,7 +180,7 @@ export default function DeleteAccountScreen(): React.JSX.Element {
         <Receipt receipt={receipt} onDone={onDone} />
       ) : (
         <>
-          <Text style={settingsFormStyles.title}>Delete account</Text>
+          <Text style={[face.title, settingsFormStyles.title]}>Delete account</Text>
           <Text style={styles.warning} testID="delete-account-warning">
             {IRREVERSIBLE_LEAD}
           </Text>
@@ -221,3 +234,5 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
   },
 });
+
+export { styles as deleteAccountStyles };
