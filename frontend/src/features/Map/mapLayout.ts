@@ -15,7 +15,7 @@
 
 import { editorialType, uiType } from '../../design/tokens';
 
-import { isLeftReturning } from './stageData';
+import { isLeftReturning, STAGE_COUNT } from './stageData';
 
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
@@ -383,6 +383,20 @@ export const MAP_ROWS: readonly MapRow[] = [
  */
 export const labelCorner = (stageNumber: number): 'left' | 'right' =>
   isLeftReturning(stageNumber) ? 'right' : 'left';
+
+/**
+ * Whether the current stage's cell is held to the lens's height (#2960). The
+ * lens rests centred on the current stage, and the grid's edges push it off
+ * centre -- the bottom edge up into stage 2's aspect label and unlock copy -- so
+ * a current stage's cell is at least ``LENS_MIN_HEIGHT`` and the caption stays
+ * in its own stage. The top stage is the exception: the top edge pushes the
+ * lens down onto stage 9, whose center cell then carries only its UNITY
+ * watermark, an intended cover (stage 9 is unlocked once stage 10 is current,
+ * and a title stage wears no aspect label). Holding it anyway lengthened the
+ * completed Map and pushed Begin again's button below a desktop window's fold.
+ */
+export const currentStageHoldsLensRoom = (stageNumber: number): boolean =>
+  stageNumber !== STAGE_COUNT;
 
 /**
  * Which corner of the center cell a locked stage's note (padlock + unlock

@@ -6,6 +6,7 @@ import { expect, test, type CDPSession, type Locator, type Page } from '@playwri
 import { signUp } from './journalHabitsBrowserSupport';
 import {
   clipsItsText,
+  hiddenBelowFold,
   insideBox,
   insidePill,
   insideViewport,
@@ -59,7 +60,12 @@ import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from 
  *      rounded ends, so a caption that grows must grow the pill (#2960);
  *   7. every line of every right-column aspect label reads whole -- never cut
  *      to an ellipsis -- and inside its own band, down to the narrowest phone
- *      (320) the app supports, where the label cell is at its thinnest (#2960).
+ *      (320) the app supports, where the label cell is at its thinnest (#2960);
+ *   8. at a desktop window the completed Map scrolls by no more than Begin
+ *      again's button: the whole table and Begin again's words read without
+ *      scrolling, so the ramp's larger text cannot push the end-of-arc
+ *      invitation below the fold (#2960). (A fresh Map must not scroll there
+ *      at all; see the end of `holdLegibility`.)
  *
  * A second test sweeps rule 7 across every phone width from 320 to 390.
  *
@@ -340,6 +346,13 @@ async function holdLegibility(page: Page, state: MapState, size: Size): Promise<
   expect.soft(lensFindings(m), `${where}: lens caption off the glass`).toEqual([]);
   expect.soft(m.labels.length, `${where}: aspect label lines measured`).toBeGreaterThan(0);
   expect.soft(labelFindings(m), `${where}: aspect labels cut or out of their band`).toEqual([]);
+  if (state === 'completed' && size === WIDE_VIEWPORT) {
+    // Rule 8: only Begin again's button may sit below a desktop window's fold.
+    const allowance = (m.beginAgainButton?.h ?? 0) + SUBPIXEL_TOLERANCE;
+    expect
+      .soft(hiddenBelowFold(m.scroll), `${where}: the Map hidden below a desktop window's fold`)
+      .toBeLessThanOrEqual(allowance);
+  }
 
   const scrolls = m.scroll !== null && m.scroll.scrollHeight > m.scroll.clientHeight;
   if (size === SHORT_VIEWPORT) {

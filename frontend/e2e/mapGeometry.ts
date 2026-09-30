@@ -110,6 +110,8 @@ export interface MapMeasurement {
   bands: Band[];
   badges: Array<{ id: string; box: Box }>;
   labels: LabelRun[];
+  /** Begin again's button, or null before the arc is complete. */
+  beginAgainButton: Box | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +237,7 @@ function collectMap(census: TextRecord[], step: number): MapMeasurement {
     overflowY === 'auto' || overflowY === 'scroll' ? subtreeOf('map-scroll') : null;
   const lensEl = byTestId('map-magnifier');
   const chipEl = byTestId('you-are-here');
+  const beginAgainEl = byTestId('begin-again-button');
   return {
     viewport: { width: window.innerWidth, height: window.innerHeight },
     census,
@@ -258,6 +261,7 @@ function collectMap(census: TextRecord[], step: number): MapMeasurement {
       box: rectBox(el.getBoundingClientRect()),
     })),
     labels: collectLabels(),
+    beginAgainButton: beginAgainEl === null ? null : rectBox(beginAgainEl.getBoundingClientRect()),
   };
 }
 
@@ -314,6 +318,13 @@ export function strokeHits(
   tolerance: number,
 ): Point[] {
   return points.filter((point) => halfStroke - distanceToBox(point, box) > tolerance);
+}
+
+/** How far the Map's scroller runs past its window: zero when it does not scroll. */
+export function hiddenBelowFold(
+  scroll: Pick<ScrollFrame, 'scrollHeight' | 'clientHeight'> | null,
+): number {
+  return scroll === null ? 0 : Math.max(0, scroll.scrollHeight - scroll.clientHeight);
 }
 
 /**

@@ -264,6 +264,7 @@ const styles = StyleSheet.create({
   // shorter than the smallest lens: its caption then stays inside the cell even
   // when the grid's edge pushes a taller lens off centre, since that push (half
   // of LENS_MAX_HEIGHT - LENS_MIN_HEIGHT) is less than the caption's clearance.
+  // The top stage goes without (currentStageHoldsLensRoom).
   currentStageCell: {
     minHeight: LENS_MIN_HEIGHT,
   },

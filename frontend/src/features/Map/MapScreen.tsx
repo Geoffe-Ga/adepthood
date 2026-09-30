@@ -52,6 +52,7 @@ import styles from './Map.styles';
 import MapDrawer from './MapDrawer';
 import {
   ARROW_LABEL_LADDER,
+  currentStageHoldsLensRoom,
   fitRightLabel,
   fitStageLine,
   fittedTitleFontSize,
@@ -422,7 +423,7 @@ const StageCenterCell = ({
     testID={`stage-hotspot-${display.stageNumber}-1`}
     style={[
       styles.centerStageCell,
-      current ? styles.currentStageCell : null,
+      current && currentStageHoldsLensRoom(display.stageNumber) ? styles.currentStageCell : null,
       showTopDivider ? styles.horizontalDivider : null,
       locked ? styles.locked : null,
     ]}

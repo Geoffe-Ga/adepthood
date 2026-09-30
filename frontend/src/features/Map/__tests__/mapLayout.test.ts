@@ -4,6 +4,7 @@ import { editorialType, ink, surface, uiType } from '../../../design/tokens';
 import {
   ARROW_LABEL_LADDER,
   ARROW_LABEL_MAX_FONT_SIZE,
+  currentStageHoldsLensRoom,
   fitRightLabel,
   fitStageLine,
   fittedTitleFontSize,
@@ -21,6 +22,7 @@ import {
   STAGE_PERSONA_LADDER,
   STAGE_PERSONA_MAX_FONT_SIZE,
   STAGE_TEXT_MIN_FONT_SIZE,
+  TITLE_BY_STAGE,
   TITLE_LADDER,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
@@ -299,6 +301,15 @@ describe('fittedTitleFontSize', () => {
 
   it('stops at the caption floor rather than leaving the ramp', () => {
     expect(fittedTitleFontSize(10)).toBe(TITLE_MIN_FONT_SIZE);
+  });
+});
+
+describe('currentStageHoldsLensRoom', () => {
+  it('holds every current stage to the lens except the top one, whose lens overhangs only a watermark', () => {
+    const holding = ALL_STAGES.filter((stage) => currentStageHoldsLensRoom(stage));
+    expect(holding).toEqual(ALL_STAGES.filter((stage) => stage !== STAGE_COUNT));
+    expect(currentStageHoldsLensRoom(STAGE_COUNT)).toBe(false);
+    expect(TITLE_BY_STAGE[STAGE_COUNT]).toBe(MAP_TITLE_LINES[0]);
   });
 });
 

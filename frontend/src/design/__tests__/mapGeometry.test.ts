@@ -1,6 +1,7 @@
 /* global describe, it, expect */
 import {
   clipsItsText,
+  hiddenBelowFold,
   insideBox,
   insidePill,
   insideViewport,
@@ -119,6 +120,21 @@ describe('insideBox', () => {
     ['bottom', { x: 10, y: 41, w: 10, h: 10 }],
   ])('forgives a box past the %s edge by exactly the tolerance', (_edge, inner) => {
     expect(insideBox(inner, OUTER, TOLERANCE)).toBe(true);
+  });
+});
+
+describe('hiddenBelowFold', () => {
+  it('is zero for a Map that does not scroll, or has no scroller', () => {
+    expect(hiddenBelowFold(null)).toBe(0);
+    expect(hiddenBelowFold({ scrollHeight: 621, clientHeight: 621 })).toBe(0);
+  });
+
+  it('is how far the content runs past the window', () => {
+    expect(hiddenBelowFold({ scrollHeight: 674, clientHeight: 621 })).toBe(53);
+  });
+
+  it('never goes negative for content shorter than its window', () => {
+    expect(hiddenBelowFold({ scrollHeight: 600, clientHeight: 621 })).toBe(0);
   });
 });
 

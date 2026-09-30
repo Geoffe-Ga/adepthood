@@ -1420,6 +1420,25 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
     }
   });
 
+  it('gives the top stage no lens room when it is current, so the completed Map keeps Begin again in view', () => {
+    // The lens pushed down by the grid's top edge overhangs only stage 9's
+    // UNITY watermark; holding stage 10's cell to the lens's height pushed
+    // Begin again's button below a 1280x720 window's fold (#2960).
+    mockMapState.currentStage = STAGE_COUNT;
+    mockMapState.derivedStage = STAGE_COUNT;
+    const tree = create(<MapScreen />);
+    expect(
+      tree.root.findByProps({ testID: `stage-hotspot-${String(STAGE_COUNT)}-1` }).props
+        .accessibilityLabel,
+    ).toMatch(/current/iu);
+    for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
+      const flat = StyleSheet.flatten(
+        tree.root.findByProps({ testID: `stage-hotspot-${stage}-1` }).props.style,
+      ) as { minHeight?: number | string };
+      expect(flat.minHeight).toBe(touchTarget.minimum);
+    }
+  });
+
   it("keeps the connector in flow without a top margin, a connector's length off the band edge", () => {
     expect(styles.connector.height).toBeGreaterThan(0);
     expect('position' in styles.connector).toBe(false);
