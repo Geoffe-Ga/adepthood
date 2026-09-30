@@ -23,6 +23,7 @@ import { swatchFor } from '../data/colorPalette';
 
 import {
   BORDER_RADIUS,
+  INTERACTIVE_TEXT_MIN,
   SPACING,
   STAGE_ORDER,
   accent,
@@ -283,7 +284,7 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
   selectedText: { color: accent.onPrimary },
   radioText: { ...editorialType.note, color: ink.primary },
-  filterText: { fontSize: 12, color: ink.primary, fontWeight: '600' },
+  filterText: { fontSize: INTERACTIVE_TEXT_MIN, color: ink.primary, fontWeight: '600' },
   pickerGrid: { flexDirection: 'row', gap: SPACING.xs },
   pickerColumn: { gap: SPACING.xs },
   pickerBox: {
@@ -299,5 +300,8 @@ const styles = StyleSheet.create({
   pickerText: { color: ink.primary, fontWeight: '700' },
   pickerDisabled: { opacity: 0.5 },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as stageSelectorStyles };
 
 export default StageSelector;

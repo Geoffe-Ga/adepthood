@@ -16,7 +16,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import type { PracticeStatsResponse } from '@/api';
 import { StatList, StatRow } from '@/components/StatRow';
-import { SPACING, ink } from '@/design/tokens';
+import { SPACING, editorialType, ink } from '@/design/tokens';
 import { formatTotalMinutes } from '@/features/Practice/utils/formatTotalMinutes';
 
 export interface PracticeStatsBlockProps {
@@ -49,11 +49,14 @@ export const PracticeStatsBlock = ({
 const styles = StyleSheet.create({
   block: { marginBottom: SPACING.md },
   heading: {
-    fontSize: 12,
+    fontSize: editorialType.caption.fontSize,
     fontWeight: '700',
     color: ink.soft,
     letterSpacing: 1,
   },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as practiceStatsBlockStyles };
 
 export default PracticeStatsBlock;

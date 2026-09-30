@@ -44,6 +44,8 @@ const ACCENT_PRIMARY_RGB = 'rgb(165, 87, 47)';
 const INK_SOFT_RGB = 'rgb(90, 80, 70)';
 /** How far outside the X the pointer goes to cancel a held press without firing it. */
 const CANCEL_OFFSET = 200;
+/** How long to wait for the pointer to rest on the X before pressing it. */
+const POINTER_ON_X_TIMEOUT_MS = 10_000;
 /** The card's text runs, top to bottom: label, title, body, CTA. */
 const CARD_TEXT = [
   'A practice to try',
@@ -175,6 +177,20 @@ async function closeInk(close: Locator): Promise<{ opacity: string; stroke: stri
 }
 
 /**
+ * Hover the X, then report whether the element at the X's centre, read in the
+ * same frame, is the X or inside it. False means the layout moved under the
+ * pointer, and the caller aims again.
+ */
+async function pointerRestsOn(page: Page, close: Locator): Promise<boolean> {
+  await close.hover();
+  return close.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    return hit !== null && element.contains(hit);
+  });
+}
+
+/**
  * While the X is held, the press feedback IS the accent: the control stays fully
  * opaque and the glyph turns accent. Jest cannot see this -- RNTL's `fireEvent`
  * skips Pressability's opacity path -- so a TouchableOpacity left at its default
@@ -192,7 +208,12 @@ async function assertHeldInk(page: Page): Promise<void> {
   // stable and aims at where it is at that moment.
   await page.waitForLoadState('networkidle');
   expect(await closeInk(close)).toEqual({ opacity: '1', stroke: INK_SOFT_RGB });
-  await close.hover();
+  // `hover` scrolls the X into view and aims at it, but at 390 the shelf can
+  // still move after that, leaving the pointer over whatever slid under it.
+  // Re-aim until the element under the pointer is the X itself, then press.
+  await expect
+    .poll(async () => pointerRestsOn(page, close), { timeout: POINTER_ON_X_TIMEOUT_MS })
+    .toBe(true);
 
   await page.mouse.down();
   await expect.poll(async () => (await closeInk(close)).stroke).toBe(ACCENT_PRIMARY_RGB);

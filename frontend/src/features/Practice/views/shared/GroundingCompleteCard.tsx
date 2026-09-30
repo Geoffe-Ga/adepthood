@@ -5,7 +5,7 @@ import type { SessionSurface } from '../sessionSurface';
 
 import { SessionCtaButton } from './SessionCtaButton';
 
-import { BORDER_RADIUS, SPACING, shadows } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, editorialType, fonts, shadows } from '@/design/tokens';
 
 interface GroundingCompleteCardProps {
   /** Copy describing what the user just finished, e.g. "You tallied every round." */
@@ -44,8 +44,12 @@ export const GroundingCompleteCard = ({
 /** Header layout + badge type shared by the grounding ritual headers. */
 export const groundingHeaderStyles = StyleSheet.create({
   header: { alignItems: 'center', marginBottom: SPACING.xl },
+  // A ramp step for its size alone: the digits keep the sans face and tabular
+  // figures, never the serif display face, whose old-style numerals jitter.
   badge: {
-    fontSize: 36,
+    fontFamily: fonts.sans,
+    fontSize: editorialType.display.fontSize,
+    fontVariant: ['tabular-nums'],
     fontWeight: '700',
     letterSpacing: 4,
     marginBottom: SPACING.sm,
@@ -62,7 +66,7 @@ const styles = StyleSheet.create({
     ...shadows.small,
   },
   completeTitle: {
-    fontSize: 22,
+    fontSize: editorialType.heading.fontSize,
     fontWeight: '600',
     marginBottom: SPACING.sm,
   },
@@ -72,3 +76,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg,
   },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as groundingCompleteStyles };
