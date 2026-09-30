@@ -283,6 +283,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <ScreenHeader
         eyebrow="Your account"
         title="Settings"
+        titleHidden
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />

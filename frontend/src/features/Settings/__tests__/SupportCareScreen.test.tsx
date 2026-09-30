@@ -83,6 +83,8 @@ jest.mock('@/components/care/CareResourceCard', () => {
 
 import SupportCareScreen from '../SupportCareScreen';
 
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
+
 // ---------------------------------------------------------------------------
 // Resource card presence
 // ---------------------------------------------------------------------------
@@ -157,5 +159,24 @@ describe('SupportCareScreen — limits line', () => {
   it('renders the CARE_LIMITS_LINE text', () => {
     const { getByText } = render(<SupportCareScreen />);
     expect(getByText('This complements professional care — it does not replace it.')).toBeTruthy();
+  });
+});
+
+describe('SupportCareScreen — navigation owns the title (#2962)', () => {
+  it('paints no "Support & care" title, keeps one header named by it, and moves no focus', () => {
+    const focus = watchFocusMoves();
+    const screen = render(<SupportCareScreen />);
+    expectNavigationOwnsTitle(screen, 'Support & care');
+    focus.expectNone();
+  });
+
+  it('keeps the care eyebrow and lead as ordinary text, outside the title header', () => {
+    const screen = render(<SupportCareScreen />);
+    const host = screen.getByRole('header', { name: 'Support & care' });
+    expect(screen.getByText('STANDING CARE TITLE')).toBeTruthy();
+    const lead = 'Support you can reach any time — not just when things are hard.';
+    expect(screen.getByText(lead)).toBeTruthy();
+    expect(within(host).queryByText('STANDING CARE TITLE')).toBeNull();
+    expect(within(host).queryByText(lead)).toBeNull();
   });
 });

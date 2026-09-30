@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { saveDataExport, type ExportFormat, type SavedExport } from './saveDataExport';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
-import { settingsFormStyles, settingsFormType } from './shared/settingsFormLayout';
+import { settingsFormStyles } from './shared/settingsFormLayout';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { TitleHost } from '@/components/layout/TitleHost';
 import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
 
 /**
@@ -130,11 +131,10 @@ export default function ExportDataScreen(): React.JSX.Element {
   const exportJson = useCallback(() => void run('json'), [run]);
   const exportMarkdown = useCallback(() => void run('markdown'), [run]);
   const busy = state.running !== null;
-  const face = settingsFormType(useWindowDimensions().width);
 
   return (
     <ScreenScaffold scroll testID="export-data-screen">
-      <Text style={[face.title, settingsFormStyles.title]}>Export my data</Text>
+      <TitleHost title="Export my data" />
       <Text style={settingsFormStyles.body} testID="export-data-lead">
         {LEAD}
       </Text>

@@ -15,6 +15,7 @@ import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsFor
 
 import { ApiError, users, type AccountDeletionReceipt } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { TitleHost } from '@/components/layout/TitleHost';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 
@@ -172,7 +173,6 @@ export default function DeleteAccountScreen(): React.JSX.Element {
     [setDraft, setError],
   );
   const onDone = useCallback(() => void logout(), [logout]);
-  const face = settingsFormType(useWindowDimensions().width);
 
   return (
     <ScreenScaffold scroll testID="delete-account-screen">
@@ -180,7 +180,7 @@ export default function DeleteAccountScreen(): React.JSX.Element {
         <Receipt receipt={receipt} onDone={onDone} />
       ) : (
         <>
-          <Text style={[face.title, settingsFormStyles.title]}>Delete account</Text>
+          <TitleHost title="Delete account" />
           <Text style={styles.warning} testID="delete-account-warning">
             {IRREVERSIBLE_LEAD}
           </Text>

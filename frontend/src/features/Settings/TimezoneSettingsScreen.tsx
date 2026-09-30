@@ -19,6 +19,7 @@ import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsFor
 
 import { ApiError, users } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { TitleHost } from '@/components/layout/TitleHost';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, ink, surface } from '@/design/tokens';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
@@ -85,12 +86,6 @@ function useSaveTimezoneHandler(
   const onError = useCallback((err: unknown) => saveErrorMessage(err, draft.trim()), [draft]);
   return useSettingsSubmit(form, { validate, perform, onError });
 }
-
-/** The form's title in the ramp's title face (#2962). */
-const FormTitle = ({ title }: { title: string }): React.JSX.Element => {
-  const face = settingsFormType(useWindowDimensions().width);
-  return <Text style={[face.title, settingsFormStyles.title]}>{title}</Text>;
-};
 
 interface ScreenBodyProps {
   currentZone: string;
@@ -178,7 +173,7 @@ const ScreenBody = ({
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
   <ScreenScaffold scroll testID="timezone-settings-screen">
-    <FormTitle title="Time zone" />
+    <TitleHost title="Time zone" />
     <Text style={settingsFormStyles.body}>
       Streaks and daily stats count days in this time zone. Update it if you moved or if it was
       detected wrong at signup.

@@ -4,6 +4,7 @@ import React from 'react';
 import type { ScaledSize } from 'react-native';
 
 import AdminFeedbackScreen from '../AdminFeedbackScreen';
+import { INBOX_LEAD, INBOX_TITLE, SETTINGS_ROW_LABEL } from '../copy';
 
 import { detail, OPERATOR_NOTE, REPORTER_PROSE, summary } from './fixtures';
 
@@ -15,6 +16,7 @@ import {
 } from '@/api';
 import { breakpoints, touchTarget } from '@/design/tokens';
 import { settle } from '@/testing/asyncSettle';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 const mockCapabilities = jest.fn<() => Promise<{ feedback_triage: boolean }>>();
 const mockList = jest.fn<() => Promise<Page<FeedbackTriageSummaryT>>>();
@@ -216,5 +218,22 @@ describe("DetailPane — the draft is the operator's own words", () => {
     expect(title.props.value).toBe('');
     expect(body.props.value).toBe('');
     expect(within(screen.getByTestId('draft-panel')).queryByText(REPORTER_PROSE)).toBeNull();
+  });
+});
+
+describe('AdminFeedbackScreen — navigation owns the title (#2962)', () => {
+  it('paints no inbox title, keeps one header named by it, and moves no focus', async () => {
+    mockCapabilities.mockResolvedValue({ feedback_triage: true });
+    const focus = watchFocusMoves();
+    const screen = render(<AdminFeedbackScreen />);
+    await settle();
+    expectNavigationOwnsTitle(screen, INBOX_TITLE);
+    expect(screen.getByText(INBOX_LEAD)).toBeTruthy();
+    focus.expectNone();
+  });
+
+  it('leaves the title and the Settings row label one unchanged string', () => {
+    expect(INBOX_TITLE).toBe('Beta feedback inbox');
+    expect(SETTINGS_ROW_LABEL).toBe(INBOX_TITLE);
   });
 });

@@ -99,7 +99,12 @@ const AdminFeedbackScreen = (): React.JSX.Element => {
   const { capability, recheck } = useAdminCapability();
   return (
     <ScreenScaffold scroll testID="admin-feedback-screen">
-      <ScreenHeader eyebrow={copy.INBOX_EYEBROW} title={copy.INBOX_TITLE} lead={copy.INBOX_LEAD} />
+      <ScreenHeader
+        eyebrow={copy.INBOX_EYEBROW}
+        title={copy.INBOX_TITLE}
+        titleHidden
+        lead={copy.INBOX_LEAD}
+      />
       {capability === 'admin' ? <Inbox /> : <Gate capability={capability} recheck={recheck} />}
     </ScreenScaffold>
   );
