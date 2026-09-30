@@ -141,9 +141,14 @@ describe('CourseScreen — the cold-start spinner has a bounded wait', () => {
     });
 
     const state = within(view.getByTestId('course-loading-timeout'));
-    expect(state.UNSAFE_getByType(Hourglass).props.size).toBe(CourseScreenModule.STATE_ICON_SIZE);
     expect(state.UNSAFE_queryAllByType(TriangleAlert)).toHaveLength(0);
     const slot = view.getByTestId('course-loading-timeout-icon', { includeHiddenElements: true });
+    // The icon must sit INSIDE the hidden slot, or the slot hides nothing.
+    expect(within(slot).UNSAFE_getByType(Hourglass).props.size).toBe(
+      CourseScreenModule.STATE_ICON_SIZE,
+    );
+    // react-native-web maps only aria-hidden to the DOM; the native props are dropped on web.
+    expect(slot.props['aria-hidden']).toBe(true);
     expect(slot.props.accessibilityElementsHidden).toBe(true);
     expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
     expect(within(slot).UNSAFE_queryAllByType(Text)).toHaveLength(0);

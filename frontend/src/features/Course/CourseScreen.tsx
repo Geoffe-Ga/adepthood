@@ -269,11 +269,15 @@ interface StateIconProps {
   testID: string;
 }
 
-/** Decorative: the state's title beside it already says what happened. */
+/**
+ * Decorative: the state's title beside it already says what happened. ``aria-hidden``
+ * hides it on web, where react-native-web drops the two native-only props.
+ */
 const StateIcon = ({ icon: Icon, testID }: StateIconProps): React.JSX.Element => (
   <View
     style={styles.emptyIcon}
     testID={testID}
+    aria-hidden
     accessibilityElementsHidden
     importantForAccessibility="no-hide-descendants"
   >

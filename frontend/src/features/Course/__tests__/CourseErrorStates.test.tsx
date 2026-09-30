@@ -152,9 +152,12 @@ describe('CourseScreen error + retry states', () => {
     await waitFor(() => expect(view.getByTestId('course-error')).toBeTruthy());
 
     const state = within(view.getByTestId('course-error'));
-    expect(state.UNSAFE_getByType(TriangleAlert).props.size).toBe(STATE_ICON_SIZE);
     expect(state.UNSAFE_queryAllByType(Hourglass)).toHaveLength(0);
     const slot = view.getByTestId('course-error-icon', { includeHiddenElements: true });
+    // The icon must sit INSIDE the hidden slot, or the slot hides nothing.
+    expect(within(slot).UNSAFE_getByType(TriangleAlert).props.size).toBe(STATE_ICON_SIZE);
+    // react-native-web maps only aria-hidden to the DOM; the native props are dropped on web.
+    expect(slot.props['aria-hidden']).toBe(true);
     expect(slot.props.accessibilityElementsHidden).toBe(true);
     expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
     // An icon, not a glyph: nothing in the slot is text the census would measure.
