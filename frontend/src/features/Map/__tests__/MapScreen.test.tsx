@@ -570,24 +570,41 @@ describe('MapScreen', () => {
     expect(flat.fontSize).toBe(RIGHT_LABEL_MAX_FONT_SIZE);
   });
 
-  it("steps Awareness down the ramp to one line, in its face's rhythm, in a narrow right cell", () => {
+  it("hyphenates Awareness on the ramp, one line each, in its face's rhythm, in a narrow right cell", () => {
     const NARROW_CELL = 56;
     const tree = create(<MapScreen />);
     fireRightLabelLayout(tree, 'Awareness', NARROW_CELL);
-    const node = tree.root.findByProps({ children: 'Awareness' });
-    expect(node.props.numberOfLines).toBe(1);
-    const flat = StyleSheet.flatten(node.props.style) as {
-      fontSize?: number;
-      lineHeight?: number;
-    };
-    const expected = fitRightLabel('Awareness', ['Awareness'], NARROW_CELL);
-    expect(flat.fontSize).toBe(expected.fontSize);
-    expect(flat.fontSize).toBe(RIGHT_LABEL_MIN_FONT_SIZE);
-    expect(RIGHT_LABEL_LADDER).toContain(flat.fontSize);
-    expect(flat.lineHeight).toBeCloseTo((flat.fontSize as number) * RIGHT_LABEL_LINE_HEIGHT_RATIO);
+    const expected = fitRightLabel('Awareness', ['Aware-', 'ness'], NARROW_CELL);
+    expect(expected.lines).toEqual(['Aware-', 'ness']);
+    for (const line of expected.lines) {
+      const node = tree.root.findByProps({ children: line });
+      expect(node.props.numberOfLines).toBe(1);
+      const flat = StyleSheet.flatten(node.props.style) as {
+        fontSize?: number;
+        lineHeight?: number;
+      };
+      expect(flat.fontSize).toBe(expected.fontSize);
+      expect(RIGHT_LABEL_LADDER).toContain(flat.fontSize);
+      expect(flat.lineHeight).toBeCloseTo(
+        (flat.fontSize as number) * RIGHT_LABEL_LINE_HEIGHT_RATIO,
+      );
+    }
     expect(RIGHT_LABEL_LINE_HEIGHT_RATIO).toBe(
       editorialType.marginNote.lineHeight / editorialType.marginNote.fontSize,
     );
+  });
+
+  it('lets a label line wrap, never cut to an ellipsis, in a right cell too narrow for it on the ramp', () => {
+    // A 320 phone's right cell: Yes-And- runs wider than it at the 13px floor.
+    const NARROWEST_PHONE_CELL = 48;
+    const tree = create(<MapScreen />);
+    fireRightLabelLayout(tree, 'Yes-And-Ness', NARROWEST_PHONE_CELL);
+    for (const line of ['Yes-And-', 'Ness']) {
+      const node = tree.root.findByProps({ children: line });
+      expect(node.props.numberOfLines).toBeUndefined();
+      const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
+      expect(flat.fontSize).toBe(RIGHT_LABEL_MIN_FONT_SIZE);
+    }
   });
 
   it('always carries android_hyphenationFrequency="none" and textBreakStrategy="simple", unconditionally', () => {

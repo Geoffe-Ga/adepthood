@@ -245,8 +245,8 @@ const styles = StyleSheet.create({
 
   // Right-column aspect label: serif face and ink only. Font size and line
   // height are computed per-fit at render time (fitRightLabel + the shared
-  // line-height ratio), so a long word shrinks to one line rather than being
-  // pinned to a fixed size.
+  // line-height ratio): a long word steps down the ramp, then takes its
+  // hyphenated lines, then wraps -- never cut to an ellipsis.
   rightLabelText: {
     fontFamily: editorialType.serif,
     color: ink.primary,

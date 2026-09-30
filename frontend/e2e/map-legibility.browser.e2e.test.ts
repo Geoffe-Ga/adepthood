@@ -5,6 +5,7 @@ import { expect, test, type CDPSession, type Locator, type Page } from '@playwri
 
 import { signUp } from './journalHabitsBrowserSupport';
 import {
+  clipsItsText,
   insideBox,
   insidePill,
   insideViewport,
@@ -55,7 +56,12 @@ import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from 
  *      scroller, by computed overflow) instead of painting one stage on the next;
  *   6. the lens's own caption -- the YOU ARE HERE chip, the stage title and
  *      subtitle -- stays on the glass, inside the rim and clear of the pill's
- *      rounded ends, so a caption that grows must grow the pill (#2960).
+ *      rounded ends, so a caption that grows must grow the pill (#2960);
+ *   7. every line of every right-column aspect label reads whole -- never cut
+ *      to an ellipsis -- and inside its own band, down to the narrowest phone
+ *      (320) the app supports, where the label cell is at its thinnest (#2960).
+ *
+ * A second test sweeps rule 7 across every phone width from 320 to 390.
  *
  * Every rule is a pure function in `mapGeometry.ts`, pinned by
  * `src/design/__tests__/mapGeometry.test.ts`. Before any rule runs the spec
@@ -71,6 +77,11 @@ import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from 
 const ARTIFACT_DIR = join(__dirname, 'artifacts', 'map-legibility');
 /** A desktop window too short for the table's ten stages: the Map must scroll, not overpaint. */
 const SHORT_VIEWPORT = { width: WIDE_VIEWPORT.width, height: 560 } as const;
+/**
+ * The narrowest phone the app supports (an iPhone SE's 320 CSS px), where the
+ * right-column label cell is at its thinnest.
+ */
+const NARROWEST_VIEWPORT = { width: 320, height: 568 } as const;
 /** Several full loads of the Map per test, each waiting on its fitted text. */
 const STATE_TIMEOUT_MS = 4 * 60_000;
 
@@ -279,6 +290,29 @@ function gridFindings(m: MapMeasurement): string[] {
     .map((band) => `${band.id} at ${describeBox(band.box)} leaves map-grid`);
 }
 
+/** A right-column label's band: `right-label-fit-<label>` sits in `map-row-<label>`. */
+const LABEL_WRAPPER_PREFIX = 'right-label-fit-';
+
+/** Rule 7: an aspect label line cut to an ellipsis, or outside its own band. */
+function labelFindings(m: MapMeasurement): string[] {
+  const findings: string[] = [];
+  for (const run of m.labels) {
+    const where = `"${run.text}" in ${run.id} at ${describeBox(run.box)}`;
+    if (clipsItsText(run, SUBPIXEL_TOLERANCE)) {
+      findings.push(
+        `${where} is cut: ${String(run.scrollWidth)}x${String(run.scrollHeight)} of text in a ` +
+          `${String(run.clientWidth)}x${String(run.clientHeight)} line`,
+      );
+    }
+    const bandId = `map-row-${run.id.slice(LABEL_WRAPPER_PREFIX.length)}`;
+    const band = m.bands.find((row) => row.id === bandId);
+    if (band === undefined || !insideBox(run.box, band.box, SUBPIXEL_TOLERANCE)) {
+      findings.push(`${where} leaves ${bandId}`);
+    }
+  }
+  return findings;
+}
+
 async function measure(page: Page, state: MapState, size: Size): Promise<MapMeasurement> {
   await page.setViewportSize(size);
   await openSettledMap(page, state);
@@ -304,6 +338,8 @@ async function holdLegibility(page: Page, state: MapState, size: Size): Promise<
   expect.soft(associationFindings(m), `${where}: annotations outside their stage`).toEqual([]);
   expect.soft(bandFindings(m), `${where}: stage text outside its band`).toEqual([]);
   expect.soft(lensFindings(m), `${where}: lens caption off the glass`).toEqual([]);
+  expect.soft(m.labels.length, `${where}: aspect label lines measured`).toBeGreaterThan(0);
+  expect.soft(labelFindings(m), `${where}: aspect labels cut or out of their band`).toEqual([]);
 
   const scrolls = m.scroll !== null && m.scroll.scrollHeight > m.scroll.clientHeight;
   if (size === SHORT_VIEWPORT) {
@@ -324,6 +360,25 @@ for (const [state, sizes] of Object.entries(CASES) as Array<[MapState, readonly 
     for (const size of sizes) await holdLegibility(page, state, size);
   });
 }
+
+/** The phone widths rule 7 is swept across, narrowest first. */
+const PHONE_WIDTH_STEP_PX = 5;
+const PHONE_WIDTHS = Array.from(
+  { length: (NARROW_VIEWPORT.width - NARROWEST_VIEWPORT.width) / PHONE_WIDTH_STEP_PX + 1 },
+  (_value, index) => NARROWEST_VIEWPORT.width + index * PHONE_WIDTH_STEP_PX,
+);
+
+test('every aspect label reads whole at every phone width from 320 to 390', async ({ page }) => {
+  test.setTimeout(STATE_TIMEOUT_MS);
+  await signUp(page, 'map-legibility-labels');
+  for (const width of PHONE_WIDTHS) {
+    const size = { width, height: NARROWEST_VIEWPORT.height };
+    const m = await measure(page, 'fresh', size);
+    const where = `fresh ${label(size)}`;
+    expect(m.labels.length, `${where}: aspect label lines measured`).toBeGreaterThan(0);
+    expect.soft(labelFindings(m), `${where}: aspect labels cut or out of their band`).toEqual([]);
+  }
+});
 
 /** A phone window short enough that the fresh Map overflows and scrolls. */
 const TOUCH_VIEWPORT = { width: NARROW_VIEWPORT.width, height: 664 } as const;

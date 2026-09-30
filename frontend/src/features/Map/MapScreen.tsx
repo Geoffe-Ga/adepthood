@@ -345,12 +345,18 @@ const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
  * Right-column aspect label sized to its measured cell width, mirroring the
  * ``FittedTitle`` idiom. The full word is preferred on one un-hyphenated line
  * at the largest ramp step it fits; only a word too long for the floor falls
- * back to the row's pre-hyphenated lines. The Android break props are unconditional (no-ops
- * on iOS/web) so the platform never inserts its own mid-word break.
+ * back to the row's pre-hyphenated lines. A line is held to one line only where
+ * it fits; one that fits no step wraps rather than truncating. The Android
+ * break props are unconditional (no-ops on iOS/web) so the platform never
+ * inserts its own hyphenation.
  */
 const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
   const [width, setWidth] = useState(0);
-  const { lines, fontSize } = fitRightLabel(row.rightLabel, row.rightLabelLines, width);
+  const { lines, fontSize, numberOfLines } = fitRightLabel(
+    row.rightLabel,
+    row.rightLabelLines,
+    width,
+  );
   const lineHeight = fontSize * RIGHT_LABEL_LINE_HEIGHT_RATIO;
   return (
     <View
@@ -361,7 +367,7 @@ const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
         <Text
           key={line}
           style={[styles.rightLabelText, { fontSize, lineHeight }]}
-          numberOfLines={1}
+          numberOfLines={numberOfLines}
           android_hyphenationFrequency="none"
           textBreakStrategy="simple"
         >

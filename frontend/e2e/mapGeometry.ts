@@ -77,6 +77,23 @@ export interface WaveSample {
   points: Point[];
 }
 
+/**
+ * One line of a right-column aspect label: the element that renders it, its
+ * box, and its content against its own box, so a line clipped to an ellipsis
+ * (its content wider or taller than the box it is shown in) can be told apart
+ * from one that fits or wraps.
+ */
+export interface LabelRun {
+  /** The `right-label-fit-<label>` wrapper the line belongs to. */
+  id: string;
+  text: string;
+  box: Box;
+  scrollWidth: number;
+  clientWidth: number;
+  scrollHeight: number;
+  clientHeight: number;
+}
+
 /** Everything the spec needs from one settled frame of the Map. */
 export interface MapMeasurement {
   viewport: ViewportSize;
@@ -92,6 +109,7 @@ export interface MapMeasurement {
   hotspots: Hotspot[];
   bands: Band[];
   badges: Array<{ id: string; box: Box }>;
+  labels: LabelRun[];
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +204,26 @@ function collectBands(): Band[] {
   }));
 }
 
+/** Whether an element has a non-blank text node of its own, children's aside. */
+function holdsOwnText(el: Element): boolean {
+  return [...el.childNodes].some((node) => node instanceof Text && node.data.trim() !== '');
+}
+
+/** Every line of every right-column aspect label: each element under a `right-label-fit-*` wrapper that holds its own text. */
+function collectLabels(): LabelRun[] {
+  return [...document.querySelectorAll('[data-testid^="right-label-fit-"]')].flatMap((wrapper) =>
+    [...wrapper.querySelectorAll('*')].filter(holdsOwnText).map((el) => ({
+      id: idOf(wrapper),
+      text: el.textContent ?? '',
+      box: rectBox(el.getBoundingClientRect()),
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    })),
+  );
+}
+
 /** Measure the Map. Called after `collectTextCensus`, in the same frame. */
 function collectMap(census: TextRecord[], step: number): MapMeasurement {
   const scrollEl = byTestId('map-scroll');
@@ -219,6 +257,7 @@ function collectMap(census: TextRecord[], step: number): MapMeasurement {
       id: idOf(el),
       box: rectBox(el.getBoundingClientRect()),
     })),
+    labels: collectLabels(),
   };
 }
 
@@ -231,6 +270,8 @@ const MAP_PAGE_FUNCTIONS: readonly ((...args: never[]) => unknown)[] = [
   sampleWave,
   collectHotspots,
   collectBands,
+  holdsOwnText,
+  collectLabels,
   collectMap,
 ];
 
@@ -273,6 +314,20 @@ export function strokeHits(
   tolerance: number,
 ): Point[] {
   return points.filter((point) => halfStroke - distanceToBox(point, box) > tolerance);
+}
+
+/**
+ * True when a line's content outruns the box it is shown in by more than
+ * `tolerance` on either axis: text cut to an ellipsis or clipped by its box,
+ * rather than fitted or wrapped.
+ */
+export function clipsItsText(
+  run: Pick<LabelRun, 'scrollWidth' | 'clientWidth' | 'scrollHeight' | 'clientHeight'>,
+  tolerance: number,
+): boolean {
+  return (
+    run.scrollWidth > run.clientWidth + tolerance || run.scrollHeight > run.clientHeight + tolerance
+  );
 }
 
 /** True when `inner` lies inside `outer`, forgiving `tolerance` at each edge. */

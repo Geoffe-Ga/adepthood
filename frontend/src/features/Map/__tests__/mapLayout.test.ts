@@ -130,6 +130,10 @@ describe('mapLayout', () => {
     expect(findRowByLabel('Understanding').rightLabelLines).toEqual(['Under-', 'standing']);
   });
 
+  it('hyphenates Awareness as Aware- / ness, for a 320 phone whose cell the word overruns at the floor', () => {
+    expect(findRowByLabel('Awareness').rightLabelLines).toEqual(['Aware-', 'ness']);
+  });
+
   it('hyphenates Yes-And-Ness as Yes-And- / Ness', () => {
     expect(findRowByLabel('Yes-And-Ness').rightLabelLines).toEqual(['Yes-And-', 'Ness']);
   });
@@ -301,21 +305,34 @@ describe('fittedTitleFontSize', () => {
 describe('fitRightLabel', () => {
   const understanding = findRowByLabel('Understanding');
   const yesAndNess = findRowByLabel('Yes-And-Ness');
+  const awareness = findRowByLabel('Awareness');
   const WIDE_CELL = 400;
   /** The right cell's content box on a 390 phone. */
   const PHONE_CELL = 59;
+  /** The right cell's content box on a 320 phone, the narrowest the app supports. */
+  const NARROWEST_PHONE_CELL = 48;
+  /** Every measured cell width the sweep checks: one past unmeasured, up to a wide desktop. */
+  const MAX_SWEPT_CELL = 1600;
 
   const estimatedLineWidth = (line: string, fontSize: number): number =>
     line.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH;
 
   it('renders the full label on one line at the ceiling before layout reports a width', () => {
     const result = fitRightLabel(understanding.rightLabel, understanding.rightLabelLines, 0);
-    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+    expect(result).toEqual({
+      lines: ['Understanding'],
+      fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
   it('keeps Understanding whole at the ceiling wherever it fits', () => {
     const result = fitRightLabel('Understanding', understanding.rightLabelLines, WIDE_CELL);
-    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+    expect(result).toEqual({
+      lines: ['Understanding'],
+      fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
   it('prefers the whole word one step down before it hyphenates', () => {
@@ -323,16 +340,24 @@ describe('fitRightLabel', () => {
     expect(fitRightLabel('Understanding', understanding.rightLabelLines, 105)).toEqual({
       lines: ['Understanding'],
       fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+      numberOfLines: 1,
     });
     expect(fitRightLabel('Understanding', understanding.rightLabelLines, 104)).toEqual({
       lines: ['Under-', 'standing'],
       fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+      numberOfLines: 1,
     });
   });
 
   it('hyphenates Understanding at a phone right cell rather than shrinking below the ramp', () => {
+    // standing at 13px: 8 * 13 * 0.62 = 64.48, over the cell by the estimate,
+    // so the lines stay free to wrap rather than being cut.
     const result = fitRightLabel('Understanding', understanding.rightLabelLines, PHONE_CELL);
-    expect(result).toEqual({ lines: ['Under-', 'standing'], fontSize: RIGHT_LABEL_MIN_FONT_SIZE });
+    expect(result).toEqual({
+      lines: ['Under-', 'standing'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
   });
 
   it('sizes the fallback lines together off the longest of them', () => {
@@ -356,9 +381,52 @@ describe('fitRightLabel', () => {
     }
   });
 
-  it('holds a single-word label whole at the floor when no fallback exists', () => {
+  it('lets a label that fits no step, even hyphenated, wrap at the floor instead of cutting it to an ellipsis', () => {
     const result = fitRightLabel('Awareness', ['Awareness'], 40);
-    expect(result).toEqual({ lines: ['Awareness'], fontSize: RIGHT_LABEL_MIN_FONT_SIZE });
+    expect(result).toEqual({
+      lines: ['Awareness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
+  });
+
+  it('hyphenates Awareness in a 320 phone cell and lets Yes-And- wrap at its hyphen there', () => {
+    // Aware- at 13px: 6 * 13 * 0.62 = 48.36, a hair over the cell by the
+    // estimate, so the line may wrap; the real serif glyphs run far narrower.
+    expect(
+      fitRightLabel(awareness.rightLabel, awareness.rightLabelLines, NARROWEST_PHONE_CELL),
+    ).toEqual({
+      lines: ['Aware-', 'ness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
+    // Yes-And- at 13px: 8 * 13 * 0.62 = 64.48, and 50px of real glyphs: too
+    // wide for the 48px line either way, so it must be free to wrap.
+    expect(
+      fitRightLabel(yesAndNess.rightLabel, yesAndNess.rightLabelLines, NARROWEST_PHONE_CELL),
+    ).toEqual({
+      lines: ['Yes-And-', 'Ness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
+  });
+
+  it('caps a label to one line per line only where every line fits by the estimate, at every cell width', () => {
+    /** Whether the fit's line cap disagrees with the estimate at this width. */
+    const miscapped = (label: string, lines: readonly string[], width: number): boolean => {
+      const result = fitRightLabel(label, lines, width);
+      const fits = result.lines.every((line) => estimatedLineWidth(line, result.fontSize) <= width);
+      return (result.numberOfLines === 1) !== fits;
+    };
+    const wrong: string[] = [];
+    for (let width = 1; width <= MAX_SWEPT_CELL; width += 1) {
+      for (const row of MAP_ROWS) {
+        if (miscapped(row.rightLabel, row.rightLabelLines, width)) {
+          wrong.push(`${row.rightLabel}@${String(width)}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   it('falls back to the pre-hyphenated Yes-And-Ness lines instead of inserting a new hyphen', () => {

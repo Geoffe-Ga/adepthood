@@ -190,22 +190,27 @@ export const RIGHT_LABEL_LINE_HEIGHT_RATIO =
  * is preferred on one un-hyphenated line at the largest step it fits; only when
  * it fits no step does it fall back to the row's pre-hyphenated
  * ``fallbackLines``, which share the largest step their longest line fits (the
- * floor when none does). An unmeasured width (<= 0) renders the whole label at
- * the ceiling until layout reports.
+ * floor when none does). Each line is capped to one line (``numberOfLines``)
+ * only when it fits there; a line that fits no step -- a 320 phone's cell is
+ * thinner than some words at the floor -- is left uncapped, so it wraps at its
+ * hyphen or its edge instead of being cut to an ellipsis. An unmeasured width
+ * (<= 0) renders the whole label at the ceiling until layout reports.
  */
 export const fitRightLabel = (
   label: string,
   fallbackLines: readonly string[],
   width: number,
-): { lines: string[]; fontSize: number } => {
+): { lines: string[]; fontSize: number; numberOfLines: 1 | undefined } => {
   const whole = fitToLadder(label, width, MIXED_CASE_BUDGET, RIGHT_LABEL_LADDER);
-  if (whole.fits) return { lines: [label], fontSize: whole.fontSize };
-  const fallbackFontSize = Math.min(
-    ...fallbackLines.map(
-      (line) => fitToLadder(line, width, MIXED_CASE_BUDGET, RIGHT_LABEL_LADDER).fontSize,
-    ),
+  if (whole.fits) return { lines: [label], fontSize: whole.fontSize, numberOfLines: 1 };
+  const fitted = fallbackLines.map((line) =>
+    fitToLadder(line, width, MIXED_CASE_BUDGET, RIGHT_LABEL_LADDER),
   );
-  return { lines: [...fallbackLines], fontSize: fallbackFontSize };
+  return {
+    lines: [...fallbackLines],
+    fontSize: Math.min(...fitted.map((line) => line.fontSize)),
+    numberOfLines: fitted.every((line) => line.fits) ? 1 : undefined,
+  };
 };
 
 /** Ceiling for the bold persona line: ``editorialType.marginNote``. */
@@ -359,7 +364,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
  * "feminine" stage above a warm-color "masculine" stage.
  */
 export const MAP_ROWS: readonly MapRow[] = [
-  { rightLabel: 'Awareness', rightLabelLines: ['Awareness'], stageNumbers: [10] },
+  { rightLabel: 'Awareness', rightLabelLines: ['Aware-', 'ness'], stageNumbers: [10] },
   { rightLabel: 'Being', rightLabelLines: ['Being'], stageNumbers: [9] },
   { rightLabel: 'Wisdom', rightLabelLines: ['Wisdom'], stageNumbers: [8, 7] },
   { rightLabel: 'Understanding', rightLabelLines: ['Under-', 'standing'], stageNumbers: [6, 5] },
