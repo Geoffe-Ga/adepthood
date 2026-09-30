@@ -30,6 +30,10 @@ from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 
+# A server-paid first letter must say the writer saw its price (#623); without
+# it the route answers 409 before it charges or dials anything.
+_ESSAY_ASK = {"price_acknowledged": True}
+
 _BODY = "I walked by the river and the willow bent without breaking."
 _PRICED_MODEL = "gpt-4o-mini"
 
@@ -367,7 +371,9 @@ async def test_essay_priced_call_writes_one_row(
 
     monkeypatch.setattr(marginalia_service, "generate_response", _complete)
 
-    resp = await async_client.post(f"/journal/marginalia/{marg_id}/essay", headers=headers)
+    resp = await async_client.post(
+        f"/journal/marginalia/{marg_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
     assert resp.status_code == HTTPStatus.OK
 
     rows = await _usage_rows_for_entry(db_session, entry_id)

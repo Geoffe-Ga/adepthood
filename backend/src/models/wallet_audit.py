@@ -84,6 +84,18 @@ REASON_REFUND_NO_NOTES = "refund_no_notes"
 # trail honest about *why* the slot came back — a rising count here is a
 # provider-health signal where ``refund_no_notes`` is a reflection-quality one.
 REASON_REFUND_FAILED_RESONANCE = "refund_failed_pass"
+# ``refund_failed_essay`` — the essay-expansion twin of
+# ``refund_failed_pass``: a first letter whose deduction had already
+# committed before the dial, and which then failed (a provider error, a spent
+# provider balance, or a persistence failure after the call).  Kept apart
+# from the pass token so essay failures can be counted on their own
+# (#623, ``prompts/claude-comms/2026-09-05-resonance-economy-decision.md``).
+REASON_REFUND_FAILED_ESSAY = "refund_failed_essay"
+# ``refund_no_essay`` — the essay twin of ``refund_no_notes``: the provider
+# answered, but the answer was not a letter (refused or blank), so nothing
+# was cached and the writer received nothing.  The provider call is still
+# metered; only the charge comes back.
+REASON_REFUND_NO_ESSAY = "refund_no_essay"
 
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable

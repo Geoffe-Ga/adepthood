@@ -1483,6 +1483,118 @@
         "title": "EntryStatus",
         "type": "string"
       },
+      "EssayRequest": {
+        "description": "Optional body for ``POST /journal/marginalia/{id}/essay`` (#623).\n\n``price_acknowledged`` is the client saying \"the writer saw the price and\nasked\". A server-paid first letter costs one wallet unit, and the in-repo\nrule is that a charged depth is offered with its price on it -- so the\nserver refuses to charge without it rather than trusting every installed\nclient to have stopped asking on open. Cached, BYOK and intimate requests\nare never charged and need no body at all.",
+        "properties": {
+          "price_acknowledged": {
+            "default": false,
+            "title": "Price Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "title": "EssayRequest",
+        "type": "object"
+      },
+      "EssayResponse": {
+        "description": "A margin note after an essay request, plus the wallet it left behind.\n\nThe balances mirror :class:`ResonanceResponse` so a client reads one shape\nfor \"what this cost me\" on both charged journal depths. They sit on a\nsubclass rather than on :class:`MarginaliaResponse` itself so note listings\ndo not grow a wallet read per row.",
+        "properties": {
+          "anchor_end": {
+            "title": "Anchor End",
+            "type": "integer"
+          },
+          "anchor_start": {
+            "title": "Anchor Start",
+            "type": "integer"
+          },
+          "anchor_text": {
+            "title": "Anchor Text",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "essay": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Essay"
+          },
+          "essay_generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Essay Generated At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "journal_entry_id": {
+            "title": "Journal Entry Id",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MarginaliaKind"
+          },
+          "monthly_reset_date": {
+            "format": "date-time",
+            "title": "Monthly Reset Date",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "remaining_balance": {
+            "title": "Remaining Balance",
+            "type": "integer"
+          },
+          "remaining_messages": {
+            "title": "Remaining Messages",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MarginaliaStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "journal_entry_id",
+          "kind",
+          "anchor_start",
+          "anchor_end",
+          "anchor_text",
+          "note",
+          "essay",
+          "essay_generated_at",
+          "status",
+          "created_at",
+          "updated_at",
+          "remaining_messages",
+          "remaining_balance",
+          "monthly_reset_date"
+        ],
+        "title": "EssayResponse",
+        "type": "object"
+      },
       "FeedbackAppAttached": {
         "description": "The allowlisted diagnostic envelope the client attached.",
         "properties": {
@@ -16309,7 +16421,7 @@
     },
     "/journal/marginalia/{marginalia_id}/essay": {
       "post": {
-        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call. Ownership is enforced via the marginalia's own ``user_id`` (404\notherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again.",
+        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call or charge. Ownership is enforced via the marginalia's own\n``user_id`` (404 otherwise). A server-paid first letter costs\n``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``\n(409 otherwise, before any charge); a failed or empty letter is refunded.\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again. Every answer carries the wallet balances.",
         "operationId": "expand_marginalia_essay_journal_marginalia__marginalia_id__essay_post",
         "parameters": [
           {
@@ -16357,12 +16469,29 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EssayRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarginaliaResponse"
+                  "$ref": "#/components/schemas/EssayResponse"
                 }
               }
             },

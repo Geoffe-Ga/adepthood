@@ -43,6 +43,10 @@ from tests.test_account_egress_barrier import (
     signup,
 )
 
+# A server-paid first letter must say the writer saw its price (#623); without
+# it the route answers 409 before it charges or dials anything.
+_ESSAY_ASK = {"price_acknowledged": True}
+
 #: The journal body both routes transmit. Distinctive so an assertion about
 #: "what went out" names the thing that went out.
 _BODY = "I meditated by the river and the willow bent without breaking."
@@ -250,7 +254,9 @@ async def test_marginalia_essay_never_dials_after_the_deletion_response(
     note_id = await _seed_marginalia(concurrent_session_factory, user_id, entry_id)
 
     expanding = asyncio.create_task(
-        concurrent_async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+        )
     )
     await _race_against_deletion(concurrent_async_client, headers, email, provider, expanding)
 
@@ -394,7 +400,9 @@ async def test_the_essay_never_dials_a_body_the_patch_already_made_intimate(
     )
 
     expanding = asyncio.create_task(
-        concurrent_async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+        )
     )
     await asyncio.wait_for(door.reached.wait(), timeout=_SETTLE_TIMEOUT_SECONDS)
     patched = await concurrent_async_client.patch(
