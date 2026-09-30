@@ -33,6 +33,12 @@ import VoiceDraftsShelfScreen from '../VoiceDraftsShelfScreen';
 
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
+/** Letters on the shelf, top to bottom, so an append can be told from a prepend. */
+const SHELF_ROW = /^voice-draft-\d+$/;
+function shelfOrder(screen: ReturnType<typeof render>): string[] {
+  return screen.getAllByTestId(SHELF_ROW).map((row) => String(row.props.testID));
+}
+
 interface Draft {
   marginalia_id: number;
   journal_entry_id: number;
@@ -137,7 +143,7 @@ describe('the Voice Drafts shelf', () => {
     await waitFor(() => expect(screen.getByTestId('voice-draft-9')).toBeTruthy());
     expect(mockList).toHaveBeenLastCalledWith({ offset: 1 });
     // The first page stays on the shelf; a page load is an append, not a swap.
-    expect(screen.getByTestId('voice-draft-4')).toBeTruthy();
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9']);
     // Nothing left to load, so the row retires rather than asking forever.
     await waitFor(() => expect(screen.queryByTestId('voice-drafts-load-more')).toBeNull());
   });
@@ -169,8 +175,8 @@ describe('the Voice Drafts shelf', () => {
     // The retry asks again for the page that failed, not the first page.
     expect(mockList).toHaveBeenLastCalledWith({ offset: 2 });
     expect(mockList).toHaveBeenCalledTimes(4);
-    expect(screen.getByTestId('voice-draft-4')).toBeTruthy();
-    expect(screen.getByTestId('voice-draft-9')).toBeTruthy();
+    // The retried page lands under the letters already shown, not above them.
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9', 'voice-draft-11']);
     expect(screen.queryByTestId('voice-drafts-error')).toBeNull();
   });
 
@@ -200,8 +206,7 @@ describe('the Voice Drafts shelf', () => {
     expect(mockList).toHaveBeenLastCalledWith({ offset: 2 });
     await waitFor(() => expect(screen.getByTestId('voice-draft-11')).toBeTruthy());
 
-    expect(screen.getByTestId('voice-draft-4')).toBeTruthy();
-    expect(screen.getByTestId('voice-draft-9')).toBeTruthy();
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9', 'voice-draft-11']);
     expect(screen.queryByTestId('voice-drafts-error')).toBeNull();
     expect(mockList).toHaveBeenCalledTimes(5);
   });
