@@ -55,6 +55,8 @@ const NARROW_VIEWPORT = { width: 390, height: 844 };
  * so this is where the text has the least room relative to its size.
  */
 const SMALL_VIEWPORT = { width: 320, height: 568 };
+/** The common compact Android phone -- the other width the header must stay tidy at. */
+const COMPACT_VIEWPORT = { width: 360, height: 640 };
 const CTA_NAME = 'Perform Energy Scaffolding';
 
 /**
@@ -73,6 +75,17 @@ const SEEDED_HABITS: ReadonlyArray<{ name: string; icon: string }> = [
   { name: 'Gratitude Practice', icon: '\u{1F64F}' },
   { name: 'Deep Work', icon: '\u{1F4A1}' },
 ];
+
+/**
+ * Seeded habits made achieved-today, so their streak renders as the coloured
+ * "N DAYS — ACHIEVED TODAY!" badge -- the widest text a tile header carries
+ * (#2961). One long single-word name, one multi-word name: the badge must not
+ * push either into a mid-word break.
+ */
+const ACHIEVED_HABITS: readonly string[] = ['Journalling', 'Gratitude Practice'];
+const ACHIEVED_BADGE_TEXT = 'ACHIEVED TODAY';
+/** Subtractive limits per tier, loosest first, as the goal editor orders them. */
+const SUBTRACTIVE_LIMITS: Readonly<Record<string, number>> = { low: 30, clear: 10, stretch: 0 };
 
 interface Box {
   x: number;
@@ -171,6 +184,53 @@ async function seedHabits(request: APIRequestContext, email: string): Promise<vo
     if (!created.ok()) {
       throw new Error(`seeding "${habit.name}" failed with ${created.status()}`);
     }
+  }
+  await markAchievedToday(request, session.token);
+}
+
+interface SeededGoal {
+  id: number;
+  title: string;
+  description?: string | null;
+  tier: string;
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  goal_group_id?: number | null;
+  days_of_week?: number[] | null;
+}
+
+/**
+ * Turn each `ACHIEVED_HABITS` row subtractive with a zero stretch limit: with no
+ * log today every tier is met, so the tile shows its achieved-today badge. The
+ * same public route the goal editor uses -- no fixture flag, no database write.
+ */
+async function markAchievedToday(request: APIRequestContext, token: string): Promise<void> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const listed = await request.get(`${backendUrl()}/habits/`, { headers });
+  if (!listed.ok()) throw new Error(`listing seeded habits failed with ${listed.status()}`);
+  const rows = (await listed.json()) as { name: string; goals?: SeededGoal[] }[];
+  const goals = rows
+    .filter((row) => ACHIEVED_HABITS.includes(row.name))
+    .flatMap((row) => row.goals ?? []);
+  if (goals.length === 0) throw new Error('no goals found on the achieved-today habits');
+  for (const goal of goals) {
+    const updated = await request.put(`${backendUrl()}/goals/${String(goal.id)}`, {
+      headers,
+      data: {
+        title: goal.title,
+        description: goal.description ?? null,
+        tier: goal.tier,
+        target: SUBTRACTIVE_LIMITS[goal.tier] ?? 0,
+        target_unit: goal.target_unit,
+        frequency: goal.frequency,
+        frequency_unit: goal.frequency_unit,
+        is_additive: false,
+        goal_group_id: goal.goal_group_id ?? null,
+        days_of_week: goal.days_of_week ?? null,
+      },
+    });
+    if (!updated.ok()) throw new Error(`goal ${goal.id} update failed with ${updated.status()}`);
   }
 }
 
@@ -280,6 +340,82 @@ async function expectTileTextFits(page: Page, label: string): Promise<void> {
   expect.soft(misfits, `${label}: tile or pager text does not fit`).toEqual([]);
 }
 
+/** How an achieved tile's header text broke into lines. */
+interface HeaderLines {
+  name: string;
+  badgeLines: number;
+  nameLines: number;
+  midWordBreaks: string[];
+}
+
+/**
+ * Assertion 4 (#2961) -- an achieved tile's header stays tidy.
+ *
+ * The achieved-today badge is the widest text a tile header carries. It must
+ * stay on one line (beside the name, or on a row of its own), and the name
+ * beside it may wrap only between words, never inside one. Lines are read off
+ * each character's own client rect, so this measures the browser's actual
+ * line breaks rather than inferring them from box heights.
+ */
+async function expectAchievedHeadersTidy(page: Page, label: string): Promise<void> {
+  const found: HeaderLines[] = [];
+  for (const name of ACHIEVED_HABITS) {
+    const tile = tiles(page).filter({ hasText: name });
+    await tile.scrollIntoViewIfNeeded();
+    found.push(
+      await tile.evaluate(
+        (el, args) => {
+          const ownText = (node: Element): Text | undefined =>
+            Array.from(node.childNodes).find(
+              (child): child is Text =>
+                child.nodeType === Node.TEXT_NODE && (child.textContent ?? '').trim() !== '',
+            );
+          const nodes = Array.from(el.querySelectorAll('*'));
+          const textOf = (match: (_t: string) => boolean): Text | undefined =>
+            nodes.map(ownText).find((t) => t !== undefined && match(t.textContent ?? ''));
+          /** Each character's line top, or null for a collapsed (zero-width) space. */
+          const tops = (text: Text | undefined): (number | null)[] => {
+            const value = text?.textContent ?? '';
+            return Array.from(value).map((_ch, i) => {
+              const range = document.createRange();
+              range.setStart(text as Text, i);
+              range.setEnd(text as Text, i + 1);
+              const rect = Array.from(range.getClientRects()).find((box) => box.width > 0);
+              return rect === undefined ? null : Math.round(rect.top);
+            });
+          };
+          const lineCount = (lineTops: (number | null)[]): number =>
+            new Set(lineTops.filter((top) => top !== null)).size;
+          const nameText = textOf((t) => t === args.name);
+          const badgeText = textOf((t) => t.includes(args.badge));
+          const nameValue = nameText?.textContent ?? '';
+          const nameTops = tops(nameText);
+          const midWordBreaks = nameTops.flatMap((top, i) => {
+            const next = nameTops[i + 1];
+            const inWord = nameValue[i] !== ' ' && nameValue[i + 1] !== ' ';
+            const broke = top !== null && next !== null && next !== undefined && top !== next;
+            return inWord && broke
+              ? [`${nameValue.slice(0, i + 1)}|${nameValue.slice(i + 1)}`]
+              : [];
+          });
+          return {
+            name: args.name,
+            badgeLines: badgeText === undefined ? 0 : lineCount(tops(badgeText)),
+            nameLines: lineCount(nameTops),
+            midWordBreaks,
+          };
+        },
+        { name, badge: ACHIEVED_BADGE_TEXT },
+      ),
+    );
+  }
+  console.log(`[2961/${label}] achieved headers=${JSON.stringify(found)}`);
+  for (const header of found) {
+    expect.soft(header.badgeLines, `${label}: ${header.name}'s badge wraps`).toBe(1);
+    expect.soft(header.midWordBreaks, `${label}: ${header.name} breaks inside a word`).toEqual([]);
+  }
+}
+
 /** Every tile on a full page lies inside the grid's box, scrolling if it must. */
 async function expectEveryTileReachable(page: Page, label: string): Promise<void> {
   const box = await boxOf(grid(page), 'the habits grid');
@@ -316,6 +452,32 @@ async function expectEveryTileReachable(page: Page, label: string): Promise<void
     .toBeLessThanOrEqual(after.y + after.height + SUBPIXEL_TOLERANCE);
 }
 
+/**
+ * Every assertion at one viewport. The previous pass may have left the grid
+ * scrolled to its end, so each starts from the top.
+ */
+async function measureAt(
+  page: Page,
+  label: string,
+  viewport?: { width: number; height: number },
+): Promise<void> {
+  if (viewport !== undefined) {
+    await grid(page).evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page.setViewportSize(viewport);
+    await expect(tiles(page).first()).toBeVisible();
+  }
+  await report(page, label);
+  await expectNoOverlap(page, label);
+  await expectTileTextFits(page, label);
+  await expectAchievedHeadersTidy(page, label);
+  await grid(page).evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await expectEveryTileReachable(page, label);
+}
+
 test('a full page of habits clears its footer controls and every tile is reachable', async ({
   page,
 }) => {
@@ -326,31 +488,15 @@ test('a full page of habits clears its footer controls and every tile is reachab
   await openHabits(page);
 
   expect(await tiles(page).count()).toBe(SEEDED_HABITS.length);
-  await report(page, 'wide');
-  await expectNoOverlap(page, 'wide');
-  await expectTileTextFits(page, 'wide');
-  await expectEveryTileReachable(page, 'wide');
+  await measureAt(page, 'wide');
 
   // The same page, re-laid-out for a phone: one column of ten rows. Driven on
   // this page rather than in a second project so the run pays one signup.
-  await page.setViewportSize(NARROW_VIEWPORT);
-  await expect(tiles(page).first()).toBeVisible();
-  await report(page, 'narrow');
-  await expectNoOverlap(page, 'narrow');
-  await expectTileTextFits(page, 'narrow');
-  await expectEveryTileReachable(page, 'narrow');
-
-  // The smallest, shortest phone: text sized by width alone must still fit.
-  // The narrow pass left the grid scrolled to its end; start this one at the top.
-  await grid(page).evaluate((el) => {
-    el.scrollTop = 0;
-  });
-  await page.setViewportSize(SMALL_VIEWPORT);
-  await expect(tiles(page).first()).toBeVisible();
-  await report(page, 'small');
-  await expectNoOverlap(page, 'small');
-  await expectTileTextFits(page, 'small');
-  await expectEveryTileReachable(page, 'small');
+  await measureAt(page, 'narrow', NARROW_VIEWPORT);
+  // The narrowest phones (#2961): text sized by width alone must still fit, and
+  // the achieved badge must not crowd the name. 320x568 is also below 700px tall.
+  await measureAt(page, 'compact', COMPACT_VIEWPORT);
+  await measureAt(page, 'small', SMALL_VIEWPORT);
 
   await page.setViewportSize(WIDE_VIEWPORT);
 });
