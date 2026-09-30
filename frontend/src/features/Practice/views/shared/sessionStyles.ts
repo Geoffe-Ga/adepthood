@@ -3,7 +3,7 @@
 // StyleSheet.create or compose them in flat style arrays.
 import type { TextStyle, ViewStyle } from 'react-native';
 
-import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, editorialType, fonts, shadows } from '@/design/tokens';
 
 /** Minimum width for a full-bleed session CTA. */
 const SESSION_BUTTON_MIN_WIDTH = 220;
@@ -43,9 +43,15 @@ export const SESSION_BUTTON_DISABLED: ViewStyle = { opacity: 0.5 };
 /** Centered session ground padding. */
 export const SESSION_CONTAINER: ViewStyle = { alignItems: 'center', padding: SPACING.xl };
 
-/** Large tabular mm:ss timer readout. */
+/**
+ * Large tabular mm:ss timer readout, at the display ramp step. Only the size
+ * comes from the ramp: the digits keep the sans face and tabular figures so a
+ * ticking mm:ss never jitters, where the serif display face would set
+ * old-style numerals.
+ */
 export const MEDITATION_TIMER_LABEL: TextStyle = {
-  fontSize: 36,
+  fontFamily: fonts.sans,
+  fontSize: editorialType.display.fontSize,
   fontWeight: '300',
   fontVariant: ['tabular-nums'],
   marginBottom: SPACING.lg,

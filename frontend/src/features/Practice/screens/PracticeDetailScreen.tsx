@@ -19,6 +19,7 @@ import { formatApiError } from '@/api/errorMessages';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import {
   BORDER_RADIUS,
+  INTERACTIVE_TEXT_MIN,
   SPACING,
   accent,
   colors,
@@ -618,7 +619,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
     borderRadius: BORDER_RADIUS.sm,
   },
-  badgeText: { color: ink.primary, fontSize: 12, fontWeight: '600' },
+  badgeText: { color: ink.primary, fontSize: editorialType.caption.fontSize, fontWeight: '600' },
   bodyBlock: {
     backgroundColor: surface.raised,
     borderRadius: BORDER_RADIUS.lg,
@@ -628,7 +629,7 @@ const styles = StyleSheet.create({
   },
   section: { marginBottom: SPACING.sm },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: editorialType.caption.fontSize,
     fontWeight: '700',
     color: ink.soft,
     textTransform: 'uppercase',
@@ -646,7 +647,7 @@ const styles = StyleSheet.create({
     borderColor: surface.hairline,
   },
   actionButtonPrimary: { backgroundColor: accent.primary, borderColor: accent.primary },
-  actionButtonText: { color: ink.primary, fontWeight: '600', fontSize: 13 },
+  actionButtonText: { color: ink.primary, fontWeight: '600', fontSize: INTERACTIVE_TEXT_MIN },
   actionButtonTextPrimary: { color: accent.onPrimary },
   disabledButton: { opacity: 0.5 },
   pickerCard: {
@@ -663,7 +664,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   pickerCancel: { marginTop: SPACING.sm, alignSelf: 'flex-end' },
-  pickerCancelText: { color: accent.primary, fontWeight: '600', fontSize: 13 },
+  pickerCancelText: { color: accent.primary, fontWeight: '600', fontSize: INTERACTIVE_TEXT_MIN },
   errorBlock: {
     flex: 1,
     padding: SPACING.lg,
@@ -674,5 +675,8 @@ const styles = StyleSheet.create({
   },
   errorText: { color: colors.destructive.text, fontSize: 13, marginBottom: SPACING.sm },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as practiceDetailStyles };
 
 export default PracticeDetailScreen;
