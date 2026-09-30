@@ -22,6 +22,7 @@ import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
 import { MAX_HABITS } from './constants';
+import { habitGridType } from './habitGridType';
 import styles from './Habits.styles';
 import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
 import HabitTile, { useTileLayout } from './HabitTile';
@@ -307,7 +308,8 @@ interface PaginationBarProps {
   pageCount: number;
   onPrev: () => void;
   onNext: () => void;
-  scale: number;
+  /** Viewport width; the bar's text follows the type ramp for it. */
+  width: number;
   stageStart?: number;
   stageEnd?: number;
   /** Signed-page bounds flags; legacy callers omit them and fall back to 0-based math. */
@@ -322,14 +324,14 @@ export const PaginationBar = ({
   pageCount,
   onPrev,
   onNext,
-  scale,
+  width,
   stageStart,
   stageEnd,
   canPrev = page > 0,
   canNext = page < pageCount - 1,
   pagePosition = page + 1,
 }: PaginationBarProps) => {
-  const textSize = { fontSize: spacing(1.75, scale) };
+  const { paginationControl, paginationLabel } = habitGridType(width);
   // The visible label names the stage range this page covers; the page position
   // (redundant for sighted users who read the range) is folded into this same
   // Text's accessibility label so screen readers announce where they are. The
@@ -349,10 +351,10 @@ export const PaginationBar = ({
         accessibilityState={{ disabled: !canPrev }}
         style={[styles.paginationButton, !canPrev && styles.disabledButton]}
       >
-        <Text style={[styles.paginationButtonText, textSize]}>Prev</Text>
+        <Text style={[styles.paginationButtonText, { fontSize: paginationControl }]}>Prev</Text>
       </TouchableOpacity>
       <Text
-        style={[styles.paginationLabel, textSize]}
+        style={[styles.paginationLabel, { fontSize: paginationLabel }]}
         testID="pagination-label"
         accessibilityLabel={positionLabel}
       >
@@ -367,7 +369,7 @@ export const PaginationBar = ({
         accessibilityState={{ disabled: !canNext }}
         style={[styles.paginationButton, !canNext && styles.disabledButton]}
       >
-        <Text style={[styles.paginationButtonText, textSize]}>Next</Text>
+        <Text style={[styles.paginationButtonText, { fontSize: paginationControl }]}>Next</Text>
       </TouchableOpacity>
     </View>
   );
@@ -620,7 +622,7 @@ const HabitsBody = ({
         pageCount={pagination.pageCount}
         onPrev={pagination.onPrev}
         onNext={pagination.onNext}
-        scale={pagination.scale}
+        width={pagination.width}
         stageStart={pagination.stageStart}
         stageEnd={pagination.stageEnd}
         canPrev={pagination.canPrev}
@@ -741,7 +743,7 @@ const pagePositionOf = (pagination: ReturnType<typeof usePagination>): number =>
 
 const buildPaginationProps = (
   pagination: ReturnType<typeof usePagination>,
-  scale: number,
+  width: number,
 ): PaginationBarProps | null => {
   if (pagination.pageCount <= 1) return null;
   const { start, end } = stageRangeForPage(pagination.page, HABITS_PER_PAGE);
@@ -750,7 +752,7 @@ const buildPaginationProps = (
     pageCount: pagination.pageCount,
     onPrev: pagination.goPrev,
     onNext: pagination.goNext,
-    scale,
+    width,
     stageStart: start,
     stageEnd: end,
     canPrev: pagination.canPrev,
@@ -834,12 +836,12 @@ const HabitsScreenDrawer = ({
 const HabitsScreen = () => {
   const state = useHabitsScreenState();
   const { habits, modals, actions, ui, responsive, pagination } = state;
-  const { columns, gridGutter, scale, isLG, isXL } = responsive;
+  const { columns, gridGutter, scale, width, isLG, isXL } = responsive;
   const drawer = useScreenDrawer('Habits');
   const { barVisible, toggleBarVisible } = usePaginationBarVisibility();
   // The in-body bar is suppressed while hidden; the drawer's pager stays wired
   // regardless so the user can always page or re-show the bar.
-  const paginationProps = barVisible ? buildPaginationProps(pagination, scale) : null;
+  const paginationProps = barVisible ? buildPaginationProps(pagination, width) : null;
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <ContentContainer fill>

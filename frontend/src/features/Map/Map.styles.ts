@@ -22,6 +22,7 @@ import {
   LENS_CHIP_INSET,
   LENS_CHIP_LINE_HEIGHT,
   LENS_HEADLINE_LINE_HEIGHT,
+  LENS_MIN_HEIGHT,
 } from './magnifierGeometry';
 import { GRID_COLUMN_FLEX } from './mapLayout';
 
@@ -169,9 +170,21 @@ const styles = StyleSheet.create({
   grid: {
     flex: 1,
   },
-  // One stage row; flex weight set inline to stageNumbers.length so a paired
-  // row is twice the height of a single-stage row, never shorter than its text.
+  // One aspect band; flex weight set inline to stageNumbers.length so a paired
+  // band is twice the height of a single-stage band, never shorter than its text.
   groupRow: {
+    flexDirection: 'row',
+    minHeight: FIT_CONTENT,
+  },
+  // The band's stages, stacked, spanning the left and center columns.
+  bandStages: {
+    flex: LEFT_FLEX + CENTER_FLEX,
+  },
+  // One stage's left and center cells side by side: they share one height, and
+  // the row never shrinks below the taller cell's content, so a stage that
+  // needs more room takes it from the band instead of its stacked neighbour.
+  stageRow: {
+    flex: 1,
     flexDirection: 'row',
     minHeight: FIT_CONTENT,
   },
@@ -185,9 +198,15 @@ const styles = StyleSheet.create({
     borderRightWidth: GRID_LINE_WIDTH,
     borderRightColor: GRID_LINE_COLOR,
   },
+  // No padding on the flex item itself: padding here comes off the free space
+  // before the flex split, which shifted the center column about 10px left of
+  // the GRID_COLUMN_FLEX fractions the wave is drawn to. The inset below keeps
+  // the label off the edges without moving the columns.
   rightCell: {
     flex: RIGHT_FLEX,
     justifyContent: CENTER,
+  },
+  rightLabelInset: {
     paddingHorizontal: spacing(1),
   },
   // Shared soft horizontal rule: a row boundary (applied to the group row) or a
@@ -226,8 +245,8 @@ const styles = StyleSheet.create({
 
   // Right-column aspect label: serif face and ink only. Font size and line
   // height are computed per-fit at render time (fitRightLabel + the shared
-  // line-height ratio), so a long word shrinks to one line rather than being
-  // pinned to a fixed size.
+  // line-height ratio): a long word steps down the ramp, then takes its
+  // hyphenated lines, then wraps -- never cut to an ellipsis.
   rightLabelText: {
     fontFamily: editorialType.serif,
     color: ink.primary,
@@ -240,6 +259,14 @@ const styles = StyleSheet.create({
     alignItems: CENTER,
     justifyContent: CENTER,
     paddingHorizontal: spacing(0.5),
+  },
+  // The lens rests centred on the current stage, so that stage's cell is never
+  // shorter than the smallest lens: its caption then stays inside the cell even
+  // when the grid's edge pushes a taller lens off centre, since that push (half
+  // of LENS_MAX_HEIGHT - LENS_MIN_HEIGHT) is less than the caption's clearance.
+  // The top stage goes without (currentStageHoldsLensRoom).
+  currentStageCell: {
+    minHeight: LENS_MIN_HEIGHT,
   },
   // --- The glass magnifier lens (the "you are here" box, grown up) ----------
   // A translucent pill floating over the center column. Width / height /
@@ -337,11 +364,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textAlign: CENTER,
   },
-  // Thin connector between a stage and the one below it.
+  // Thin connector between a stage and the one below it. It also holds the
+  // stage's words a connector's length off the band edge, where the wave
+  // crosses the centreline.
   connector: {
     width: 2,
     height: spacing(1),
-    marginTop: spacing(0.25),
     backgroundColor: surface.hairline,
   },
 
@@ -386,9 +414,7 @@ const styles = StyleSheet.create({
   // reads away from the wave strand.
   unlockTimeline: {
     flexShrink: 1,
-    // Still off the ramp: at 13px this copy outgrows its half-lane at 390 and
-    // meets the wave, so it moves with the fitted grid text (#2960 follow-up).
-    fontSize: 9,
+    fontSize: CAPTION_SIZE,
     color: ink.muted,
     paddingHorizontal: spacing(0.25),
   },
@@ -447,6 +473,8 @@ const styles = StyleSheet.create({
   },
 
   // --- Begin-again affordance (end-of-arc, declinable) ----------------------
+  // It sits on the Map's parchment, not a showcase band, so it reads in the
+  // canvas inks (#2979).
   beginAgain: {
     marginTop: spacing(1.5),
     alignItems: CENTER,
@@ -456,14 +484,14 @@ const styles = StyleSheet.create({
     fontFamily: editorialType.serif,
     fontSize: ACTION_SIZE,
     fontWeight: '700',
-    color: onShowcase.primary,
+    color: ink.primary,
     textAlign: CENTER,
   },
   beginAgainBody: {
     fontFamily: editorialType.serif,
     fontSize: CAPTION_SIZE,
     lineHeight: 20,
-    color: onShowcase.soft,
+    color: ink.soft,
     textAlign: CENTER,
   },
 

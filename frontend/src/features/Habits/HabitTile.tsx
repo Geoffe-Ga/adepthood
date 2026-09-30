@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -18,6 +18,7 @@ import { useDayKey } from '../../utils/dayRollover';
 import ConfirmDialog from './components/ConfirmDialog';
 import { MAX_HABITS } from './constants';
 import { TIER_LABELS, type TierType } from './goalMarker';
+import { habitGridType, type HabitGridType } from './habitGridType';
 import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
@@ -63,9 +64,11 @@ interface HabitHeaderProps {
   stageColor: string;
   achievedTextColor: string;
   scale: number;
+  gridType: HabitGridType;
   streakText: string;
   hasCompletedGoal: boolean;
   iconInline: boolean;
+  streakStacked: boolean;
   onIconPress?: () => void;
 }
 
@@ -88,52 +91,105 @@ const getStreakStyle = (
 // calmer / less abrasive against the tile.
 const HABIT_TEXT_COLOR = colors.text.secondaryAccessible;
 
-const nameStyle = (scale: number) => ({
-  flex: 1 as const,
-  fontSize: spacing(2, scale),
+const nameStyle = (fontSize: number) => ({
+  fontSize,
   fontWeight: '700' as const,
   textTransform: 'uppercase' as const,
   color: HABIT_TEXT_COLOR,
 });
 
+/** Beside the streak, the name takes the row's remaining width. */
+const NAME_IN_ROW = { flex: 1 as const };
+/** Under the name, the streak hugs its own text instead of stretching the column. */
+const STREAK_UNDER_NAME = { alignSelf: 'flex-start' as const };
+
 const StreakText = ({
   streakText,
   streakStyle,
-  scale,
+  fontSize,
+  underName,
 }: {
   streakText: string;
   streakStyle: object;
-  scale: number;
+  fontSize: number;
+  underName: boolean;
 }) => (
   <Text
+    testID="habit-streak"
     style={[
       {
-        fontSize: spacing(1.5, scale),
+        fontSize,
         textTransform: 'uppercase' as const,
         color: HABIT_TEXT_COLOR,
       },
       streakStyle,
+      underName && STREAK_UNDER_NAME,
     ]}
   >
     {streakText}
   </Text>
 );
 
-const HeaderRow = ({
-  name,
-  streakText,
-  streakStyle,
-  scale,
-}: {
+interface NameAndStreakProps {
   name: string;
   streakText: string;
   streakStyle: object;
-  scale: number;
-}) => (
+  gridType: HabitGridType;
+  stacked: boolean;
+}
+
+/**
+ * The tile's name and streak (#2961). On a tile too narrow to carry both on
+ * one row -- the achieved-today badge alone needs ~190px there -- the streak
+ * moves to its own line under the name. That is a layout decision, not a flex
+ * negotiation, so it holds the same on web and native: native Text does not
+ * shrink, so a badge beside the name would squeeze a long single-word name
+ * into a mid-word break, and on web the badge itself wraps.
+ */
+const NameAndStreak = ({ name, streakText, streakStyle, gridType, stacked }: NameAndStreakProps) =>
+  stacked ? (
+    <View testID="habit-name-stack" style={NAME_IN_ROW}>
+      <Text style={nameStyle(gridType.name)}>{name}</Text>
+      <StreakText
+        streakText={streakText}
+        streakStyle={streakStyle}
+        fontSize={gridType.streak}
+        underName
+      />
+    </View>
+  ) : (
+    <>
+      <Text style={[NAME_IN_ROW, nameStyle(gridType.name)]}>{name}</Text>
+      <StreakText
+        streakText={streakText}
+        streakStyle={streakStyle}
+        fontSize={gridType.streak}
+        underName={false}
+      />
+    </>
+  );
+
+const HeaderRow = (props: Omit<NameAndStreakProps, 'stacked'>) => (
   <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-    <Text style={nameStyle(scale)}>{name}</Text>
-    <StreakText streakText={streakText} streakStyle={streakStyle} scale={scale} />
+    <NameAndStreak {...props} stacked={false} />
   </View>
+);
+
+/** The habit's emoji, tappable to change it. */
+const HabitIconButton = ({
+  icon,
+  fontSize,
+  onPress,
+  style,
+}: {
+  icon: string;
+  fontSize: number;
+  onPress?: () => void;
+  style?: object;
+}) => (
+  <TouchableOpacity onPress={onPress} testID="habit-icon" style={style}>
+    <Text style={{ fontSize }}>{icon}</Text>
+  </TouchableOpacity>
 );
 
 const HabitHeader = ({
@@ -141,9 +197,11 @@ const HabitHeader = ({
   stageColor,
   achievedTextColor,
   scale,
+  gridType,
   streakText,
   hasCompletedGoal,
   iconInline,
+  streakStacked,
   onIconPress,
 }: HabitHeaderProps) => {
   const streakStyle = getStreakStyle(hasCompletedGoal, stageColor, achievedTextColor, scale);
@@ -151,15 +209,19 @@ const HabitHeader = ({
   if (iconInline) {
     return (
       <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <TouchableOpacity
+        <HabitIconButton
+          icon={habit.icon}
+          fontSize={gridType.iconInline}
           onPress={onIconPress}
-          testID="habit-icon"
           style={{ marginRight: spacing(1, scale) }}
-        >
-          <Text style={{ fontSize: spacing(3, scale) }}>{habit.icon}</Text>
-        </TouchableOpacity>
-        <Text style={nameStyle(scale)}>{habit.name}</Text>
-        <StreakText streakText={streakText} streakStyle={streakStyle} scale={scale} />
+        />
+        <NameAndStreak
+          name={habit.name}
+          streakText={streakText}
+          streakStyle={streakStyle}
+          gridType={gridType}
+          stacked={streakStacked}
+        />
       </View>
     );
   }
@@ -170,15 +232,13 @@ const HabitHeader = ({
         testID="habit-icon-top"
         style={{ alignItems: 'center', marginBottom: spacing(1, scale) }}
       >
-        <TouchableOpacity onPress={onIconPress} testID="habit-icon">
-          <Text style={{ fontSize: spacing(4, scale) }}>{habit.icon}</Text>
-        </TouchableOpacity>
+        <HabitIconButton icon={habit.icon} fontSize={gridType.iconStacked} onPress={onIconPress} />
       </View>
       <HeaderRow
         name={habit.name}
         streakText={streakText}
         streakStyle={streakStyle}
-        scale={scale}
+        gridType={gridType}
       />
     </>
   );
@@ -205,8 +265,18 @@ export const TILE_BORDER_WIDTH = 3;
 const habitGridChrome = (scale: number, gridGutter: number): number =>
   2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
 
+/**
+ * Below this tile width the streak sits under the name rather than beside it
+ * (#2961). On the type ramp the achieved-today badge needs ~190px and a long
+ * single-word name ~120px, plus the inline icon and the tile's own border and
+ * padding: a row only carries them all from about 380px. A 390px phone keeps
+ * the single row; 320-375px phones stack. Measured by the
+ * `e2e/habits-viewport.browser.e2e.test.ts` passes at 320x568 and 360x640.
+ */
+export const STACKED_STREAK_MAX_TILE_WIDTH = 380;
+
 export const useTileLayout = () => {
-  const { contentWidth, height, columns, scale, gridGutter } = useResponsive();
+  const { width, contentWidth, height, columns, scale, gridGutter } = useResponsive();
   const insets = useSafeAreaInsets();
   const rows = columns === 2 ? MAX_HABITS / columns : MAX_HABITS;
   const chrome = habitGridChrome(scale, gridGutter);
@@ -220,7 +290,10 @@ export const useTileLayout = () => {
   // than off the raw (uncapped) window width.
   const tileWidth = contentWidth / columns;
   const iconInline = columns === 1 || tileWidth < 400;
-  return { columns, scale, gridGutter, tileMinHeight, iconInline };
+  const streakStacked = iconInline && tileWidth < STACKED_STREAK_MAX_TILE_WIDTH;
+  // Text follows the viewport width alone (the type ramp), not the layout scale.
+  const gridType = useMemo(() => habitGridType(width), [width]);
+  return { columns, scale, gridGutter, tileMinHeight, iconInline, streakStacked, gridType };
 };
 
 /** A tile marker spec carries its resolved `Goal` for tooltip formatting. */
@@ -228,21 +301,21 @@ interface TileMarkerSpec extends TierMarkerSpec {
   goal: Goal;
 }
 
-/** Tile tooltip body: the tier progress line, sized to scale with the tile. */
+/** Tile tooltip body: the tier progress line, set on the grid's type ramp. */
 const TileTooltipText = ({
   goal,
   habit,
   tz,
-  scale,
+  fontSize,
 }: {
   goal: Goal;
   habit: Habit;
   tz: string;
-  scale: number;
+  fontSize: number;
 }) => (
   <Text
     style={{
-      fontSize: spacing(1.5, scale),
+      fontSize,
       color: '#333',
       fontFamily: 'serif',
       fontStyle: 'italic',
@@ -305,18 +378,10 @@ const tileMarkerInteraction = (
     ? fillMarkerInteraction(tier, setTooltip, starFill)
     : tooltipOnlyInteraction(tier, setTooltip);
 
-interface ProgressBarProps {
-  habit: Habit;
-  barHeight: number;
+/** The bar's own fill, plus everything its tier-star overlay needs. */
+interface ProgressBarProps extends TileMarkerLayerProps {
   progressPercentage: number;
   progressBarColor: string;
-  markers: TileMarkerSpec[];
-  scale: number;
-  tooltip: TierType | null;
-  setTooltip: (_v: TierType | null) => void;
-  tz: string;
-  starFill: StarFillControls;
-  hasLogUnit: boolean;
 }
 
 const COLOR_TRANSITION_MS = 400;
@@ -379,6 +444,7 @@ interface TileMarkerLayerProps {
   habit: Habit;
   tz: string;
   scale: number;
+  tooltipFontSize: number;
   barHeight: number;
   markers: TileMarkerSpec[];
   tooltip: TierType | null;
@@ -392,6 +458,7 @@ const TileMarkerLayer = ({
   habit,
   tz,
   scale,
+  tooltipFontSize,
   barHeight,
   markers,
   tooltip,
@@ -407,24 +474,19 @@ const TileMarkerLayer = ({
     setTooltip={setTooltip}
     markerTestIDPrefix="marker"
     tooltipTestIDPrefix="tooltip"
-    renderTooltip={(m) => <TileTooltipText goal={m.goal} habit={habit} tz={tz} scale={scale} />}
+    renderTooltip={(m) => (
+      <TileTooltipText goal={m.goal} habit={habit} tz={tz} fontSize={tooltipFontSize} />
+    )}
     resolveInteraction={(m) => tileMarkerInteraction(m.tier, setTooltip, starFill, hasLogUnit)}
   />
 );
 
 const ProgressBar = ({
-  habit,
-  barHeight,
   progressPercentage,
   progressBarColor,
-  markers,
-  scale,
-  tooltip,
-  setTooltip,
-  tz,
-  starFill,
-  hasLogUnit,
+  ...markerLayer
 }: ProgressBarProps) => {
+  const { barHeight, scale } = markerLayer;
   const { fadeAnim, prevColor } = useColorTransition(progressBarColor);
   const borderR = barHeight / 2;
 
@@ -447,17 +509,7 @@ const ProgressBar = ({
             borderRadius={borderR}
           />
         </View>
-        <TileMarkerLayer
-          habit={habit}
-          tz={tz}
-          scale={scale}
-          barHeight={barHeight}
-          markers={markers}
-          tooltip={tooltip}
-          setTooltip={setTooltip}
-          starFill={starFill}
-          hasLogUnit={hasLogUnit}
-        />
+        <TileMarkerLayer {...markerLayer} />
       </View>
     </View>
   );
@@ -531,6 +583,7 @@ interface LockedTileProps {
   habit: Habit;
   stageColor: string;
   scale: number;
+  gridType: HabitGridType;
   gridGutter: number;
   tileMinHeight: number;
   onUnlockHabit?: (_habitId: number) => void;
@@ -577,6 +630,7 @@ const LockedTileButton = ({
   habit,
   stageColor,
   scale,
+  gridType,
   gridGutter,
   tileMinHeight,
   onUnlock,
@@ -591,13 +645,13 @@ const LockedTileButton = ({
     style={getLockedTileStyle(stageColor, scale, gridGutter, tileMinHeight)}
   >
     <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <Text style={{ fontSize: spacing(2, scale), marginRight: spacing(1, scale) }}>🔒</Text>
-      <Text style={{ ...LOCKED_NAME_STYLE, fontSize: spacing(2, scale) }}>{habit.name}</Text>
+      <Text style={{ fontSize: gridType.lockGlyph, marginRight: spacing(1, scale) }}>🔒</Text>
+      <Text style={{ ...LOCKED_NAME_STYLE, fontSize: gridType.lockedName }}>{habit.name}</Text>
     </View>
     <Text
       testID="unlock-label"
       style={{
-        fontSize: spacing(1.5, scale),
+        fontSize: gridType.lockedSubtitle,
         color: '#999',
         marginTop: spacing(0.5, scale),
         fontStyle: 'italic',
@@ -657,6 +711,7 @@ interface TileProgressSectionProps {
   habit: Habit;
   tz: string;
   scale: number;
+  tooltipFontSize: number;
   barHeight: number;
   progressPercentage: number;
   progressBarColor: string;
@@ -675,6 +730,7 @@ const TileProgressSection = ({
   habit,
   tz,
   scale,
+  tooltipFontSize,
   barHeight,
   progressPercentage,
   progressBarColor,
@@ -700,6 +756,7 @@ const TileProgressSection = ({
       progressBarColor={progressBarColor}
       markers={markers}
       scale={scale}
+      tooltipFontSize={tooltipFontSize}
       tooltip={tooltip}
       setTooltip={setTooltip}
       tz={tz}
@@ -708,6 +765,9 @@ const TileProgressSection = ({
     />
   );
 };
+
+const formatStreakText = (streak: number, hasCompletedGoal: boolean): string =>
+  `${streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
 
 const UnlockedTile = ({
   habit,
@@ -719,15 +779,13 @@ const UnlockedTile = ({
   onLogUnit,
   tz,
 }: UnlockedTileProps) => {
-  const { scale, gridGutter, tileMinHeight, iconInline } = useTileLayout();
+  const { scale, gridGutter, tileMinHeight, iconInline, streakStacked, gridType } = useTileLayout();
   const { progressPercentage, progressBarColor, hasCompletedGoal, markers } = useHabitTileData(
     habit,
     tz,
     stageColor,
   );
 
-  const streakText =
-    `${habit.streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
   const barHeight = Math.max(8, spacing(2, scale));
 
   return (
@@ -742,15 +800,18 @@ const UnlockedTile = ({
         stageColor={stageColor}
         achievedTextColor={achievedTextColor}
         scale={scale}
-        streakText={streakText}
+        gridType={gridType}
+        streakText={formatStreakText(habit.streak, hasCompletedGoal)}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
+        streakStacked={streakStacked}
         onIconPress={onIconPress}
       />
       <TileProgressSection
         habit={habit}
         tz={tz}
         scale={scale}
+        tooltipFontSize={gridType.tooltip}
         barHeight={barHeight}
         progressPercentage={progressPercentage}
         progressBarColor={progressBarColor}
@@ -774,7 +835,7 @@ const HabitTileComponent = ({
   achievedTextColor = '#fff',
   globalIndex = 0,
 }: HabitTileProps) => {
-  const { scale, gridGutter, tileMinHeight } = useTileLayout();
+  const { scale, gridGutter, tileMinHeight, gridType } = useTileLayout();
   const color = stageColor ?? STAGE_COLORS[habit.stage] ?? '#000';
 
   // Handlers are always provided (so they stay stable for React.memo), but
@@ -787,6 +848,7 @@ const HabitTileComponent = ({
         habit={habit}
         stageColor={color}
         scale={scale}
+        gridType={gridType}
         gridGutter={gridGutter}
         tileMinHeight={tileMinHeight}
         onUnlockHabit={onUnlockHabit}

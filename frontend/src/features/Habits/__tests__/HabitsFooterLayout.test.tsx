@@ -90,6 +90,7 @@ jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: (
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
 
+import { type } from '../../../design/tokens';
 import HabitsScreen, { EnergyCTA, ErrorBanner, ModeBar } from '../HabitsScreen';
 
 const noop = (): void => {};
@@ -179,5 +180,28 @@ describe('habits pagination stays operable while a mode is active', () => {
     expect(readLabel()).toEqual(first);
 
     screen.unmount();
+  });
+});
+
+// #2961: the screen hands the pager the viewport width, and the pager sets its
+// range label on the type ramp for that width (not on the layout scale).
+describe('habits pagination label follows the type ramp', () => {
+  it('sizes the in-body Stages label on the ramp label face for the window width', async () => {
+    const desktopWidth = 1280;
+    const desktopHeight = 720;
+    const dimensions = jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({ width: desktopWidth, height: desktopHeight, scale: 1, fontScale: 1 });
+    try {
+      const screen = render(<HabitsScreen />);
+      await waitFor(() => {
+        expect(screen.getByTestId('pagination-label')).toBeTruthy();
+      });
+      const label = StyleSheet.flatten(screen.getByTestId('pagination-label').props.style);
+      expect(label.fontSize).toBe(type(desktopWidth).label.fontSize);
+      screen.unmount();
+    } finally {
+      dimensions.mockRestore();
+    }
   });
 });
