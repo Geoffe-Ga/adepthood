@@ -96,7 +96,7 @@ describe('HabitsScreen chrome accessibility', () => {
   describe('PaginationBar', () => {
     it('labels prev/next and disables prev on the first page', () => {
       const { getByLabelText } = render(
-        <PaginationBar page={0} pageCount={3} onPrev={noop} onNext={noop} scale={1} />,
+        <PaginationBar page={0} pageCount={3} onPrev={noop} onNext={noop} width={390} />,
       );
       expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: true });
       expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: false });
@@ -104,7 +104,7 @@ describe('HabitsScreen chrome accessibility', () => {
 
     it('enables prev and disables next on the last page', () => {
       const { getByLabelText } = render(
-        <PaginationBar page={2} pageCount={3} onPrev={noop} onNext={noop} scale={1} />,
+        <PaginationBar page={2} pageCount={3} onPrev={noop} onNext={noop} width={390} />,
       );
       expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: false });
       expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: true });
@@ -112,7 +112,7 @@ describe('HabitsScreen chrome accessibility', () => {
 
     it('enables both controls on a middle page', () => {
       const { getByLabelText } = render(
-        <PaginationBar page={1} pageCount={3} onPrev={noop} onNext={noop} scale={1} />,
+        <PaginationBar page={1} pageCount={3} onPrev={noop} onNext={noop} width={390} />,
       );
       expect(getByLabelText('Previous page').props.accessibilityState).toEqual({ disabled: false });
       expect(getByLabelText('Next page').props.accessibilityState).toEqual({ disabled: false });
@@ -125,7 +125,7 @@ describe('HabitsScreen chrome accessibility', () => {
           pageCount={2}
           onPrev={noop}
           onNext={noop}
-          scale={1}
+          width={390}
           stageStart={1}
           stageEnd={10}
         />,
@@ -146,7 +146,7 @@ describe('HabitsScreen chrome accessibility', () => {
           pageCount={2}
           onPrev={noop}
           onNext={noop}
-          scale={1}
+          width={390}
           stageStart={11}
           stageEnd={20}
         />,
