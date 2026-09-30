@@ -136,7 +136,7 @@ describe('HabitsContent', () => {
         renderItem={renderRow}
         onRetry={jest.fn()}
         onAddHabit={jest.fn()}
-        pagination={{ page: 0, pageCount: 3, onPrev: jest.fn(), onNext: jest.fn(), scale: 1 }}
+        pagination={{ page: 0, pageCount: 3, onPrev: jest.fn(), onNext: jest.fn(), width: 390 }}
       />,
     );
     expect(getByTestId('habits-pagination')).toBeTruthy();
@@ -176,7 +176,7 @@ describe('HabitsContent', () => {
           pageCount: 2,
           onPrev: jest.fn(),
           onNext: jest.fn(),
-          scale: 1,
+          width: 390,
           stageStart: 11,
           stageEnd: 20,
         }}
@@ -203,7 +203,7 @@ describe('HabitsContent', () => {
           pageCount: 2,
           onPrev: jest.fn(),
           onNext: jest.fn(),
-          scale: 1,
+          width: 390,
           stageStart: 1,
           stageEnd: 10,
         }}
