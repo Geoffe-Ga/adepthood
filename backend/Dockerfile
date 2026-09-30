@@ -21,9 +21,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Runtime dependency for asyncpg
+# Runtime dependencies for asyncpg and the one-shot privilege drop. ``setpriv``
+# applies no-new-privileges while clearing supplementary groups, so neither the
+# migration nor application process can regain the bootstrap identity.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 && \
+    apt-get install -y --no-install-recommends libpq5 util-linux && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local
@@ -53,12 +55,20 @@ COPY backend/migrations/ migrations/
 COPY backend/content/ content/
 
 # Keep runtime file-mount ownership deterministic across Railway deployments.
-# The bearer bootstrap chowns each credential to this identity with mode 0400;
-# pinning both ids prevents a base-image allocation change from locking the
-# application out or making a differently owned credential look trustworthy.
+# The operator installs each credential for this identity with mode 0400; the
+# bootstrap changes only the mount directory. Pinning both ids prevents a
+# base-image allocation change from locking the application out or making a
+# differently owned credential look trustworthy.
 RUN groupadd --gid 10001 appuser && \
     useradd --uid 10001 --gid 10001 --create-home appuser
-USER 10001:10001
+
+# Railway volumes are root-owned when first attached. The entrypoint performs
+# one root-only operation: it initializes the fixed secret mount directory.
+# It then irreversibly drops to the pinned identity before running CMD; bearer
+# files and the rest of the volume are never recursively changed.
+COPY --chmod=0555 backend/docker/backend-entrypoint.sh /usr/local/bin/adepthood-backend-entrypoint
+COPY --chmod=0555 backend/docker/verify-secrets-mount.sh /usr/local/bin/adepthood-verify-secrets-mount
+ENTRYPOINT ["/usr/local/bin/adepthood-backend-entrypoint"]
 
 EXPOSE 8000
 

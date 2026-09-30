@@ -21,6 +21,7 @@ from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
 from routers import vault_provisioning_internal
+from services import creek_provisioning_client as provisioning_client
 from services import journal_encryption
 from services.creek_provisioning import (
     reconcile_vault_teardowns,
@@ -157,6 +158,8 @@ def _encrypted_handoff(
     control_token_file = tmp_path / "control-token"
     control_token_file.write_text("control-test-token-" + "t" * 48, encoding="utf-8")
     control_token_file.chmod(0o400)
+    monkeypatch.setattr(provisioning_client, "HANDOFF_AUTH_FILE_PATH", token_file)
+    monkeypatch.setattr(provisioning_client, "PROVISIONING_AUTH_FILE_PATH", control_token_file)
     monkeypatch.setenv("CREEK_PROVISIONING_HANDOFF_AUTH_FILE", str(token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(control_token_file))
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://creek-control.example.test")

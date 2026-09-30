@@ -76,6 +76,8 @@ PASS_FACTS: dict[str, dict[str, object]] = {
         "mount_directory_mode": "0700",
         "mounted_file_mode": "0400",
         "regular_files_without_symlinks": True,
+        "mounted_files_have_single_links": True,
+        "control_and_handoff_bearers_distinct": True,
         "runtime_volume_bootstrap": True,
         "eligible_accounts": 1,
         "ineligible_allocations": 0,
@@ -236,6 +238,7 @@ _PREREQUISITE_ARTIFACT_KINDS = frozenset(
         "deployments_health",
         "emergency_stop",
         "exact_main",
+        "fleet_report",
         "independent_review",
         "invoice_cost",
         "provider_outage",
@@ -405,6 +408,7 @@ _REVIEW_FIELDS = frozenset(
         "verdict",
         "reference_kind",
         "reference_number",
+        "artifact_kind",
         "artifact_sha256",
     }
 )
@@ -876,6 +880,7 @@ def _validate_prerequisite_review(
                 {
                     "verdict": "LGTM",
                     "reference_kind": "github_issuecomment",
+                    "artifact_kind": "independent_review",
                 },
             ),
             review.get("reviewed_creek_sha") == revisions.get("creek_sha"),

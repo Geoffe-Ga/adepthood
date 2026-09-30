@@ -34,6 +34,8 @@
         "mount_directory_mode": null,
         "mounted_file_mode": null,
         "regular_files_without_symlinks": null,
+        "mounted_files_have_single_links": null,
+        "control_and_handoff_bearers_distinct": null,
         "runtime_volume_bootstrap": null,
         "eligible_accounts": null,
         "ineligible_allocations": null

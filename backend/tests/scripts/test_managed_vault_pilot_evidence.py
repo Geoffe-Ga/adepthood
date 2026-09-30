@@ -21,6 +21,8 @@ from scripts import managed_vault_pilot_evidence as evidence
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TEMPLATE = _REPO_ROOT / "docs" / "qa" / "managed-vault-pilot-evidence.template.json"
 _RUNBOOK = _REPO_ROOT / "docs" / "qa" / "managed-vault-pilot-proof.md"
+_ENV_EXAMPLE = _REPO_ROOT / "backend" / ".env.example"
+_DEPLOYMENT = _REPO_ROOT / "DEPLOYMENT.md"
 _SHA = "a" * 40
 _OTHER_SHA = "b" * 40
 _DIGEST = f"sha256:{'c' * 64}"
@@ -36,6 +38,7 @@ _PREREQUISITE_ARTIFACT_KINDS = (
     "deployments_health",
     "emergency_stop",
     "exact_main",
+    "fleet_report",
     "independent_review",
     "invoice_cost",
     "provider_outage",
@@ -57,6 +60,8 @@ _PASS_FACTS: dict[str, dict[str, object]] = {
         "mount_directory_mode": "0700",
         "mounted_file_mode": "0400",
         "regular_files_without_symlinks": True,
+        "mounted_files_have_single_links": True,
+        "control_and_handoff_bearers_distinct": True,
         "runtime_volume_bootstrap": True,
         "eligible_accounts": 1,
         "ineligible_allocations": 0,
@@ -170,7 +175,8 @@ def _common_drill(**extra: object) -> dict[str, object]:
     }
 
 
-def _passed_prerequisite() -> dict[str, object]:
+def _current_creek_prerequisite_model_dump() -> dict[str, object]:
+    """Freeze Creek's current ``PilotPrerequisite.model_dump()`` wire shape."""
     return {
         "schema_version": "1.0.0",
         "status": "passed",
@@ -322,6 +328,7 @@ def _passed_prerequisite() -> dict[str, object]:
             "verdict": "LGTM",
             "reference_kind": "github_issuecomment",
             "reference_number": 123456,
+            "artifact_kind": "independent_review",
             "artifact_sha256": _artifact_digest("independent_review"),
         },
         "artifacts": [
@@ -357,7 +364,7 @@ def _passed_record() -> dict[str, object]:
             "custody_mode": "provider_managed",
             "attested_confidential": False,
         },
-        "creek_pilot_prerequisite": _passed_prerequisite(),
+        "creek_pilot_prerequisite": _current_creek_prerequisite_model_dump(),
         "checks": {
             check: {
                 "outcome": "passed",
@@ -419,6 +426,22 @@ def test_operator_runbook_preserves_the_live_authorization_boundary() -> None:
     assert "does not close #2871" in text
 
 
+def test_operator_configuration_names_the_only_accepted_bearer_paths() -> None:
+    env_example = _ENV_EXAMPLE.read_text(encoding="utf-8")
+    deployment = _DEPLOYMENT.read_text(encoding="utf-8")
+    for env_var, path in (
+        ("CREEK_PROVISIONING_AUTH_FILE", "/run/adepthood-secrets/creek-control-bearer"),
+        (
+            "CREEK_PROVISIONING_HANDOFF_AUTH_FILE",
+            "/run/adepthood-secrets/creek-handoff-bearer",
+        ),
+    ):
+        assert f"{env_var}=  # when configured, must equal {path}" in env_example
+        assert f"`{path}`" in deployment
+    assert "CREEK_MANAGED_VAULT_ALERT_EMAIL=" in env_example
+    assert "`CREEK_MANAGED_VAULT_ALERT_EMAIL`" in deployment
+
+
 def test_operator_runbook_names_every_secret_and_privacy_boundary() -> None:
     text = _RUNBOOK.read_text(encoding="utf-8")
 
@@ -459,6 +482,10 @@ def test_operator_runbook_pins_the_nonroot_railway_bootstrap_boundary() -> None:
         "atomic rename",
         "Railway SSH/SFTP",
         "RAILWAY_RUN_UID=0",
+        "startup bootstrap",
+        "drops to `10001:10001`",
+        "/proc/self/mountinfo",
+        "ephemeral container storage",
         "4,096 bytes",
         "/run/adepthood-secrets/creek-control-bearer",
         "/run/adepthood-secrets/creek-handoff-bearer",
@@ -490,6 +517,19 @@ def test_operator_runbook_closes_every_acceptance_row_and_uses_the_validator() -
 
 def test_exact_completed_record_passes() -> None:
     assert evidence.validate_record(_passed_record(), require_passed=True) == ()
+
+
+def test_current_creek_pilot_prerequisite_model_dump_is_accepted() -> None:
+    prerequisite = _current_creek_prerequisite_model_dump()
+    review = cast("dict[str, object]", prerequisite["independent_review"])
+    artifacts = cast("list[dict[str, object]]", prerequisite["artifacts"])
+    record = _passed_record()
+    record["creek_pilot_prerequisite"] = prerequisite
+
+    assert review["artifact_kind"] == "independent_review"
+    assert {item["kind"] for item in artifacts} == set(_PREREQUISITE_ARTIFACT_KINDS)
+    assert "fleet_report" in {item["kind"] for item in artifacts}
+    assert evidence.validate_record(record, require_passed=True) == ()
 
 
 def test_passed_record_requires_closed_creek_prerequisite() -> None:
@@ -566,7 +606,7 @@ def test_creek_prerequisite_binds_source_and_deployments_to_outer_record() -> No
 
 def test_creek_prerequisite_artifacts_are_exact_immutable_and_time_bounded() -> None:
     mutations: list[object] = []
-    missing = _passed_prerequisite()["artifacts"]
+    missing = _current_creek_prerequisite_model_dump()["artifacts"]
     assert isinstance(missing, list)
     mutations.append(missing[:-1])
     duplicate = copy.deepcopy(missing)
@@ -681,6 +721,18 @@ def test_passed_record_cannot_hide_pending_or_failed_check() -> None:
             "required invariants",
         ),
         ("intimate_zero_remote_contact", "model_call_delta", 1, "required invariants"),
+        (
+            "railway_secret_file_mounts",
+            "mounted_files_have_single_links",
+            False,
+            "required invariants",
+        ),
+        (
+            "railway_secret_file_mounts",
+            "control_and_handoff_bearers_distinct",
+            False,
+            "required invariants",
+        ),
         (
             "confirmed_idempotent_teardown",
             "allocation_scoped_volumes",

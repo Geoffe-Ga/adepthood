@@ -7,17 +7,24 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
+from pathlib import Path
 from typing import Annotated, Final, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from services.creek_vault_url import classify_vault_url
+from services.managed_vault_activation_config import (
+    HANDOFF_AUTH_FILE_ENV_VAR,
+    PROVISIONING_AUTH_FILE_ENV_VAR,
+)
 from services.secure_mounted_secret import read_secure_mounted_secret
 
 PROVISIONING_URL_ENV_VAR: Final[str] = "CREEK_PROVISIONING_URL"
-PROVISIONING_AUTH_FILE_ENV_VAR: Final[str] = "CREEK_PROVISIONING_AUTH_FILE"
-HANDOFF_AUTH_FILE_ENV_VAR: Final[str] = "CREEK_PROVISIONING_HANDOFF_AUTH_FILE"
+PROVISIONING_AUTH_FILE_PATH: Final[Path] = Path("/run/adepthood-secrets/creek-control-bearer")
+HANDOFF_AUTH_FILE_PATH: Final[Path] = Path("/run/adepthood-secrets/creek-handoff-bearer")
+E2E_MOUNT_ROOT_ENV_VAR: Final[str] = "ADEPTHOOD_E2E_MANAGED_VAULT_SECRET_ROOT"
+_E2E_ADMIN_DATABASE_URL_ENV_VAR: Final[str] = "E2E_ADMIN_DATABASE_URL"
 
 FAILURE_PROVIDER_UNAVAILABLE: Final[str] = "provider_unavailable"
 FAILURE_PROVIDER_REJECTED: Final[str] = "provider_rejected"
@@ -291,8 +298,53 @@ _HTTP_POOL = _HttpClientPool()
 
 def _read_mounted_token(env_var: str) -> str | None:
     """Read a non-empty bearer from its mounted file without logging its value."""
-    raw_path = os.getenv(env_var, "").strip()
-    return read_secure_mounted_secret(raw_path)
+    expected_path = _expected_mounted_token_path(env_var)
+    configured_path = os.getenv(env_var, "")
+    if expected_path is None or configured_path != str(expected_path):
+        return None
+    return read_secure_mounted_secret(configured_path)
+
+
+def _expected_mounted_token_path(env_var: str) -> Path | None:
+    e2e_root = _e2e_secret_root()
+    if env_var == PROVISIONING_AUTH_FILE_ENV_VAR:
+        return (
+            e2e_root / PROVISIONING_AUTH_FILE_PATH.name
+            if e2e_root is not None
+            else PROVISIONING_AUTH_FILE_PATH
+        )
+    if env_var == HANDOFF_AUTH_FILE_ENV_VAR:
+        return (
+            e2e_root / HANDOFF_AUTH_FILE_PATH.name
+            if e2e_root is not None
+            else HANDOFF_AUTH_FILE_PATH
+        )
+    return None
+
+
+def _e2e_secret_root() -> Path | None:
+    """Allow exact leaf names under a disposable root only in the real-wire lane."""
+    if os.getenv("ENV", "") != "e2e":
+        return None
+    if not os.getenv(_E2E_ADMIN_DATABASE_URL_ENV_VAR, "").strip():
+        return None
+    configured = os.getenv(E2E_MOUNT_ROOT_ENV_VAR, "")
+    if not configured:
+        return None
+    root = Path(configured)
+    return root if root.is_absolute() else None
+
+
+def mounted_token_is_readable(env_var: str) -> bool:
+    """Report whether one named bearer is at its fixed secure mount path."""
+    return _read_mounted_token(env_var) is not None
+
+
+def mounted_bearers_are_distinct() -> bool:
+    """Require separate control and callback credentials without exposing either."""
+    control = _read_mounted_token(PROVISIONING_AUTH_FILE_ENV_VAR)
+    handoff = _read_mounted_token(HANDOFF_AUTH_FILE_ENV_VAR)
+    return control is not None and handoff is not None and not hmac.compare_digest(control, handoff)
 
 
 def handoff_bearer_is_valid(authorization: str | None) -> bool:

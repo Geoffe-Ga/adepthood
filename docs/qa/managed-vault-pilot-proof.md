@@ -55,18 +55,39 @@ Bearer bytes belong in two separately rotated owner-readable file mounts:
 
 In each case the bearer is a mounted file value, never an environment value,
 argument, deploy command, log field, screenshot, artifact, or evidence value.
-The backend image runs at the pinned numeric identity `10001:10001`; do not
-assume a platform default such as uid 1000. With managed activation disabled,
-attach the dedicated runtime volume and use an authorized root-capable
-Railway SSH/SFTP session for its one-time bootstrap. Do not run or redeploy the
-application image as root and do not set `RAILWAY_RUN_UID=0`.
+The backend image pins the application identity at `10001:10001`; do not assume
+a platform default such as uid 1000. Railway initially presents a newly attached
+volume as root-owned, so the image starts through a fixed root startup bootstrap.
+When managed activation is unset or explicitly false, the bootstrap skips the
+volume only when the secret path is absent and both managed bearer-path
+settings are unset, then still drops to `10001:10001`; ordinary and BYOV
+service startup therefore does not depend on a managed-pilot mount. A disabled
+preparation deploy with the path present must prove the exact durable mount
+before it is normalized. Retaining either bearer path for existing lifecycle
+recovery also requires that exact mount and refuses startup if the attachment
+is missing; a present ephemeral directory is never accepted. A true or
+malformed activation setting is an enabled/preparing state and must follow the
+durable mount path below rather than silently behaving as disabled.
+That bootstrap initializes and chowns only `/run/adepthood-secrets` to
+`10001:10001` with mode `0700`. Before any mutation it rejects a symlink, a
+non-directory, or a path that is not its own exact entry in
+`/proc/self/mountinfo`; a missing Railway volume therefore refuses startup
+instead of silently using ephemeral container storage. It clears supplementary groups, sets
+no-new-privileges, and irreversibly drops to `10001:10001` before Alembic or
+uvicorn starts. It never walks or rewrites bearer files, and the application
+never runs as root. Do not override the entrypoint and do not set
+`RAILWAY_RUN_UID=0`.
 
-Create the runtime-volume mount directory `/run/adepthood-secrets` as
-`10001:10001` with mode `0700`; it and its contents are not Docker image layers.
-Prepare each bearer locally as a `0400` file, then upload it into that protected
-directory as an owner-only `.new` file. A bearer value is never a Railway variable
-and is never pasted into a shell, argument, log, or transcript. Set
-the staged file owner to `10001:10001` and its exact mode to `0400`. Validate
+With managed activation disabled, attach the dedicated runtime volume and
+deploy the ordinary image once so its startup bootstrap prepares the mount.
+Then open an authorized Railway SSH/SFTP session and record its effective
+numeric identity; root access is neither assumed nor required. A root session
+must install the staged file as `10001:10001`, while a `10001:10001` session
+creates it directly. Prepare each bearer locally as a `0400` file, then upload
+it into that protected directory as an owner-only
+`.new` file. A bearer value is never a Railway variable and is never pasted
+into a shell, argument, log, or transcript. The staged file must be owned by
+`10001:10001` and have exact mode `0400`. Validate
 with `lstat`/file-descriptor metadata only: it must be a regular non-symlink,
 owner-matched, non-empty, and at most 4,096 bytes. Use an atomic rename on the
 same volume to install `/run/adepthood-secrets/creek-control-bearer` and
@@ -125,7 +146,8 @@ Schema version `1.0.0` binds Creek source/contract revisions, separate
 control-plane and vault image digests, exact control/worker/routing deployment
 and fleet schedule revisions, provider authorization, short-lived scoped token
 placement and final revocation, TLS/health/storage checks, the five fault
-drills, allocation-scoped cardinality, report/alert/reconcile outcomes, both
+drills, allocation-scoped cardinality, the canonical `fleet_report` artifact,
+report/alert/reconcile outcomes, both
 restore drills, non-destructive emergency recovery, reconciled aggregate cost,
 exact-main gates, independent exact-head LGTM, and the exact set of private
 artifact timestamps and SHA-256 hashes. The outer validator binds those source,
@@ -143,8 +165,9 @@ one-account allowlist, then enable new activation. Redeploy without printing
 environment values. The Adepthood
 startup event must report a ready rollout and cohort count only. Privately
 capture metadata-only proof of uid/gid `10001:10001`, directory mode `0700`,
-file mode `0400`, regular/non-symlink status, the completed runtime volume
-bootstrap, and the 1–4,096-byte bounds. A second authenticated synthetic account
+file mode `0400`, regular/non-symlink and single-link status, distinct control
+and handoff bearer values (boolean only; never values or digests), the completed
+runtime volume bootstrap, and the 1–4,096-byte bounds. A second authenticated synthetic account
 must receive the same unavailable response as every ineligible account and
 create no Adepthood activation row or Creek request. Record these closed facts
 as `railway_secret_file_mounts`.

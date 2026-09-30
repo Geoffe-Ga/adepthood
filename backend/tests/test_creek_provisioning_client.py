@@ -9,10 +9,15 @@ from pathlib import Path
 import httpx
 import pytest
 
+from services import creek_provisioning_client as provisioning_client
 from services.creek_provisioning_client import (
+    HANDOFF_AUTH_FILE_ENV_VAR,
+    PROVISIONING_AUTH_FILE_ENV_VAR,
     HttpCreekProvisioningClient,
     ProvisioningUnavailableError,
     get_creek_provisioning_client,
+    handoff_bearer_is_valid,
+    mounted_token_is_readable,
 )
 
 _TOKEN = "control-plane-bearer-" + "t" * 48
@@ -205,6 +210,7 @@ def test_insecure_control_plane_url_never_builds_a_bearer_transport(
     token_file = tmp_path / "control-token"
     token_file.write_text(_TOKEN, encoding="utf-8")
     token_file.chmod(0o400)
+    monkeypatch.setattr(provisioning_client, "PROVISIONING_AUTH_FILE_PATH", token_file)
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "http://control.example.test")
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(token_file))
 
@@ -234,6 +240,7 @@ def test_unsafe_control_bearer_file_never_builds_a_transport(
     else:
         token_file.write_text(_TOKEN, encoding="utf-8")
         token_file.chmod(0o640)
+    monkeypatch.setattr(provisioning_client, "PROVISIONING_AUTH_FILE_PATH", token_file)
     monkeypatch.setenv("CREEK_PROVISIONING_URL", "https://control.example.test")
     monkeypatch.setenv("CREEK_PROVISIONING_AUTH_FILE", str(token_file))
 
@@ -245,3 +252,77 @@ def test_unsafe_control_bearer_file_never_builds_a_transport(
     client = get_creek_provisioning_client()
 
     assert client.__class__.__name__ == "_UnavailableProvisioningClient"
+
+
+def test_real_wire_e2e_root_uses_exact_leaf_names_and_strict_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    control = tmp_path / provisioning_client.PROVISIONING_AUTH_FILE_PATH.name
+    handoff = tmp_path / provisioning_client.HANDOFF_AUTH_FILE_PATH.name
+    control.write_text(_TOKEN, encoding="utf-8")
+    handoff.write_text("handoff-token-" + "h" * 48, encoding="utf-8")
+    control.chmod(0o400)
+    handoff.chmod(0o400)
+    monkeypatch.setenv("ENV", "e2e")
+    monkeypatch.setenv("E2E_ADMIN_DATABASE_URL", "postgresql://fixture.invalid/test")
+    monkeypatch.setenv(provisioning_client.E2E_MOUNT_ROOT_ENV_VAR, str(tmp_path))
+    monkeypatch.setenv(PROVISIONING_AUTH_FILE_ENV_VAR, str(control))
+    monkeypatch.setenv(HANDOFF_AUTH_FILE_ENV_VAR, str(handoff))
+
+    assert mounted_token_is_readable(PROVISIONING_AUTH_FILE_ENV_VAR) is True
+    assert handoff_bearer_is_valid("Bearer handoff-token-" + "h" * 48) is True
+
+    control.chmod(0o600)
+
+    assert mounted_token_is_readable(PROVISIONING_AUTH_FILE_ENV_VAR) is False
+
+
+@pytest.mark.parametrize("environment", [None, "development", "staging", "production"])
+def test_deployed_environments_refuse_the_e2e_secret_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    environment: str | None,
+) -> None:
+    control = tmp_path / provisioning_client.PROVISIONING_AUTH_FILE_PATH.name
+    control.write_text(_TOKEN, encoding="utf-8")
+    control.chmod(0o400)
+    if environment is None:
+        monkeypatch.delenv("ENV", raising=False)
+    else:
+        monkeypatch.setenv("ENV", environment)
+    monkeypatch.setenv("E2E_ADMIN_DATABASE_URL", "postgresql://fixture.invalid/test")
+    monkeypatch.setenv(provisioning_client.E2E_MOUNT_ROOT_ENV_VAR, str(tmp_path))
+    monkeypatch.setenv(PROVISIONING_AUTH_FILE_ENV_VAR, str(control))
+
+    assert mounted_token_is_readable(PROVISIONING_AUTH_FILE_ENV_VAR) is False
+
+
+def test_disabled_existing_lifecycle_accepts_only_fixed_mounted_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Emergency-disable preserves existing calls without accepting /tmp secrets."""
+    control = tmp_path / "mounted-control"
+    handoff = tmp_path / "mounted-handoff"
+    outside = tmp_path / "outside-token"
+    for path, value in (
+        (control, _TOKEN),
+        (handoff, "handoff-token-" + "h" * 48),
+        (outside, "outside-token-" + "o" * 48),
+    ):
+        path.write_text(value, encoding="utf-8")
+        path.chmod(0o400)
+    monkeypatch.setattr(provisioning_client, "PROVISIONING_AUTH_FILE_PATH", control)
+    monkeypatch.setattr(provisioning_client, "HANDOFF_AUTH_FILE_PATH", handoff)
+    monkeypatch.setenv("CREEK_MANAGED_VAULT_ACTIVATION_ENABLED", "false")
+
+    monkeypatch.setenv(PROVISIONING_AUTH_FILE_ENV_VAR, str(outside))
+    monkeypatch.setenv(HANDOFF_AUTH_FILE_ENV_VAR, str(outside))
+    assert mounted_token_is_readable(PROVISIONING_AUTH_FILE_ENV_VAR) is False
+    assert handoff_bearer_is_valid("Bearer outside-token-" + "o" * 48) is False
+
+    monkeypatch.setenv(PROVISIONING_AUTH_FILE_ENV_VAR, str(control))
+    monkeypatch.setenv(HANDOFF_AUTH_FILE_ENV_VAR, str(handoff))
+    assert mounted_token_is_readable(PROVISIONING_AUTH_FILE_ENV_VAR) is True
+    assert handoff_bearer_is_valid("Bearer handoff-token-" + "h" * 48) is True

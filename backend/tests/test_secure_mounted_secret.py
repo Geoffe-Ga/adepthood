@@ -47,6 +47,13 @@ def test_nonregular_or_linked_secret_path_fails_closed(tmp_path: Path, kind: str
     assert read_secure_mounted_secret(str(secret)) is None
 
 
+def test_multiply_linked_secret_file_fails_closed(tmp_path: Path) -> None:
+    secret = _secure_file(tmp_path / "control")
+    os.link(secret, tmp_path / "second-name")
+
+    assert read_secure_mounted_secret(str(secret)) is None
+
+
 def test_relative_secret_path_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

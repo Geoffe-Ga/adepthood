@@ -18,6 +18,7 @@ _IDENTITY_FIELDS: Final[tuple[str, ...]] = (
     "st_size",
     "st_mtime_ns",
     "st_ctime_ns",
+    "st_nlink",
 )
 
 
@@ -26,6 +27,7 @@ def _is_secure_regular_file(metadata: os.stat_result, *, effective_uid: int) -> 
     return (
         stat.S_ISREG(metadata.st_mode)
         and metadata.st_uid == effective_uid
+        and metadata.st_nlink == 1
         and stat.S_IMODE(metadata.st_mode) == _REQUIRED_MODE
         and metadata.st_size <= MAX_MOUNTED_SECRET_BYTES
     )

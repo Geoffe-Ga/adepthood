@@ -116,7 +116,7 @@ from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
 
 logger = logging.getLogger(__name__)
 
-VALID_ENVIRONMENTS = {"development", "staging", "production"}
+VALID_ENVIRONMENTS = {"development", "e2e", "staging", "production"}
 _PROVISIONING_RECOVERY_INTERVAL_SECONDS: Final[float] = 30.0
 
 # Local development origins.  ``localhost`` and ``127.0.0.1`` resolve to the
@@ -286,13 +286,14 @@ def get_cors_origins(env: str | None = None) -> list[str]:
             f"Unknown ENV value '{env}'. Must be one of: {', '.join(sorted(VALID_ENVIRONMENTS))}"
         )
 
-    if env == "development":
+    if env in {"development", "e2e"}:
         # BUG-INFRA-006: warn loudly when PROD_DOMAIN is set in dev so
         # developers notice misconfiguration before staging rollout.
         if os.getenv("PROD_DOMAIN"):
             logger.warning(
-                "PROD_DOMAIN is set but ENV=development — production origins ignored. "
-                "Set ENV=staging or ENV=production to honour PROD_DOMAIN."
+                "PROD_DOMAIN is set but ENV=%s — production origins ignored. "
+                "Set ENV=staging or ENV=production to honour PROD_DOMAIN.",
+                env,
             )
         return list(DEV_ORIGINS)
 

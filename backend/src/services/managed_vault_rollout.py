@@ -9,21 +9,23 @@ from typing import Final
 
 from pydantic import EmailStr, TypeAdapter, ValidationError
 
+from services import managed_vault_activation_config
 from services.creek_provisioning_client import (
     HANDOFF_AUTH_FILE_ENV_VAR,
     PROVISIONING_AUTH_FILE_ENV_VAR,
     PROVISIONING_URL_ENV_VAR,
+    mounted_bearers_are_distinct,
+    mounted_token_is_readable,
 )
 from services.creek_vault_url import classify_vault_url
-from services.secure_mounted_secret import read_secure_mounted_secret
 
-MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ACTIVATION_ENABLED"
+MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = (
+    managed_vault_activation_config.MANAGED_VAULT_ENABLED_ENV_VAR
+)
 MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_PILOT_USER_IDS"
 MANAGED_VAULT_ALERT_EMAIL_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ALERT_EMAIL"
 MAX_PILOT_ACCOUNTS: Final[int] = 100
 
-_TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES: Final[frozenset[str]] = frozenset({"", "0", "false", "no", "off"})
 _EMAIL_ADAPTER: Final = TypeAdapter(EmailStr)
 
 
@@ -49,8 +51,7 @@ class ManagedVaultRollout:
 
 
 def _mounted_secret_is_readable(env_var: str) -> bool:
-    path = os.getenv(env_var, "").strip()
-    return read_secure_mounted_secret(path) is not None
+    return mounted_token_is_readable(env_var)
 
 
 def managed_vault_alert_destination() -> str | None:
@@ -65,12 +66,7 @@ def managed_vault_alert_destination() -> str | None:
 
 
 def _parse_enabled() -> bool | None:
-    raw = os.getenv(MANAGED_VAULT_ENABLED_ENV_VAR, "").strip().lower()
-    if raw in _TRUE_VALUES:
-        return True
-    if raw in _FALSE_VALUES:
-        return False
-    return None
+    return managed_vault_activation_config.parse_managed_vault_activation_enabled()
 
 
 def _parse_pilot_ids() -> frozenset[int] | None:
@@ -99,11 +95,14 @@ def _provisioning_url_defects() -> list[str]:
 
 
 def _mounted_secret_defects() -> list[str]:
-    return [
+    defects = [
         env_var
         for env_var in (PROVISIONING_AUTH_FILE_ENV_VAR, HANDOFF_AUTH_FILE_ENV_VAR)
         if not _mounted_secret_is_readable(env_var)
     ]
+    if not defects and not mounted_bearers_are_distinct():
+        defects.append(HANDOFF_AUTH_FILE_ENV_VAR)
+    return defects
 
 
 def _alert_destination_defects() -> list[str]:
