@@ -27,6 +27,7 @@
 
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { LucideIcon } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -56,7 +57,9 @@ import {
 } from '@/design/tokens';
 import CopyToStageDialog from '@/features/Practice/components/CopyToStageDialog';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
+import ModeIcon from '@/features/Practice/components/ModeIcon';
 import {
+  FALLBACK_MODE_ICON,
   MODE_CATEGORIES,
   resolvePickableMode,
   type PickableMode,
@@ -541,7 +544,7 @@ const RecentRow = ({ recent, onDetail }: RecentRowProps): React.JSX.Element => {
       style={[styles.row, styles.recentRow]}
       testID={`practice-catalog-recent-row-${recent.id}`}
     >
-      <Text style={styles.rowIcon}>{icon}</Text>
+      <ModeIcon icon={icon} testID={`practice-catalog-recent-row-${recent.id}-icon`} />
       <View style={styles.rowText}>
         <Text style={styles.rowName} numberOfLines={1}>
           {recent.name}
@@ -729,14 +732,18 @@ interface PracticeRowProps {
 }
 
 // Derived from MODE_CATEGORIES so adding a mode propagates here automatically.
-const MODE_PRESENTATION: Readonly<Record<PickableMode, { label: string; icon: string }>> =
-  Object.fromEntries(
-    MODE_CATEGORIES.flatMap((category) =>
-      category.modes.map((entry) => [entry.mode, { label: entry.label, icon: entry.icon }]),
-    ),
-  ) as Record<PickableMode, { label: string; icon: string }>;
+interface ModePresentation {
+  label: string;
+  icon: LucideIcon;
+}
 
-const FALLBACK_PRESENTATION = { label: 'Practice', icon: '🧘' } as const;
+const MODE_PRESENTATION: Readonly<Record<PickableMode, ModePresentation>> = Object.fromEntries(
+  MODE_CATEGORIES.flatMap((category) =>
+    category.modes.map((entry) => [entry.mode, { label: entry.label, icon: entry.icon }]),
+  ),
+) as Record<PickableMode, ModePresentation>;
+
+const FALLBACK_PRESENTATION: ModePresentation = { label: 'Practice', icon: FALLBACK_MODE_ICON };
 
 const PracticeRowComponent = ({
   practice,
@@ -759,10 +766,8 @@ const PracticeRowComponent = ({
         style={styles.row}
         testID={`practice-catalog-row-${practice.id}`}
       >
-        {/* Decorative; TouchableOpacity merges children, so screen readers use accessibilityLabel. */}
-        <Text style={styles.rowIcon} testID={`practice-catalog-row-${practice.id}-icon`}>
-          {icon}
-        </Text>
+        {/* Decorative; screen readers announce the row's accessibilityLabel. */}
+        <ModeIcon icon={icon} testID={`practice-catalog-row-${practice.id}-icon`} />
         <View style={styles.rowText}>
           <Text style={styles.rowName} numberOfLines={1}>
             {practice.name}
@@ -923,7 +928,6 @@ const styles = StyleSheet.create({
     ...surfaceShadow.card,
   },
   rowUseText: { color: accent.onPrimary, fontWeight: '700', fontSize: INTERACTIVE_TEXT_MIN },
-  rowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
   rowText: { flex: 1 },
   rowName: { fontSize: 15, fontWeight: '700', color: ink.primary },
   rowSubtitle: {
