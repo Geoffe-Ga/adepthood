@@ -73,6 +73,7 @@ import SettingsHubScreen from '../SettingsHubScreen';
 
 import { ApiError } from '@/api';
 import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -595,5 +596,18 @@ describe('SettingsHubScreen — the operator inbox entry', () => {
 
     await waitFor(() => expect(mockCapabilities).toHaveBeenCalled());
     expect(queryByTestId(ROW)).toBeNull();
+  });
+});
+
+describe('SettingsHubScreen — navigation owns the title (#2962)', () => {
+  test('paints no "Settings" title, keeps one header named by it, and moves no focus', async () => {
+    const focus = watchFocusMoves();
+    const screen = render(<SettingsHubScreen />);
+    await waitFor(() => expect(mockCapabilities).toHaveBeenCalled());
+    expectNavigationOwnsTitle(screen, 'Settings');
+    expect(screen.getByText('YOUR ACCOUNT')).toBeTruthy();
+    expect(screen.getByText('Manage how Adepthood works for you.')).toBeTruthy();
+    expect(screen.getByTestId('settings-row-support')).toBeTruthy();
+    focus.expectNone();
   });
 });

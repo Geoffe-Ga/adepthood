@@ -31,6 +31,8 @@ jest.mock('@/api', () => ({
 
 import VoiceDraftsShelfScreen from '../VoiceDraftsShelfScreen';
 
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
+
 interface Draft {
   marginalia_id: number;
   journal_entry_id: number;
@@ -190,5 +192,17 @@ describe('the Voice Drafts shelf', () => {
     // Nor the count of what is on screen, which is the same nudge cheaply made.
     expect(text).not.toMatch(/\b3\b/);
     expect(text.toLowerCase()).not.toMatch(/you have|unread|waiting for you|new draft/);
+  });
+});
+
+describe('the Voice Drafts shelf — navigation owns the title (#2962)', () => {
+  it('paints no "Voice drafts" title, keeps one header named by it, and moves no focus', async () => {
+    mockList.mockResolvedValueOnce(page([]));
+    const focus = watchFocusMoves();
+    const screen = render(<VoiceDraftsShelfScreen />);
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-empty')).toBeTruthy());
+    expectNavigationOwnsTitle(screen, 'Voice drafts');
+    expect(screen.getByText('IN YOUR OWN WORDS')).toBeTruthy();
+    focus.expectNone();
   });
 });

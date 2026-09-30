@@ -463,7 +463,7 @@ const PromotedQuotesScreen = ({ route }: PromotedQuotesScreenProps = {}): React.
         ) : null
       }
     >
-      <ScreenHeader eyebrow={SCREEN_EYEBROW} title={SCREEN_TITLE} lead={SCREEN_LEAD} />
+      <ScreenHeader eyebrow={SCREEN_EYEBROW} title={SCREEN_TITLE} titleHidden lead={SCREEN_LEAD} />
       <Button
         variant="secondary"
         label={WRITE_REVIEW_LABEL}

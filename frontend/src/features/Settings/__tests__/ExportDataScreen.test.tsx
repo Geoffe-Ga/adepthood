@@ -6,6 +6,8 @@ import React from 'react';
 import ExportDataScreen from '../ExportDataScreen';
 import { saveDataExport, type SavedExport } from '../saveDataExport';
 
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
+
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 jest.mock('../saveDataExport', () => ({
@@ -130,5 +132,15 @@ describe('ExportDataScreen', () => {
     );
     release(JSON_RESULT);
     await waitFor(() => expect(getByTestId('export-data-receipt')).toBeTruthy());
+  });
+});
+
+describe('ExportDataScreen — navigation owns the title (#2962)', () => {
+  test('paints no "Export my data" title, keeps one header named by it, and moves no focus', () => {
+    const focus = watchFocusMoves();
+    const screen = render(<ExportDataScreen />);
+    expectNavigationOwnsTitle(screen, 'Export my data');
+    expect(screen.getByTestId('export-data-lead')).toBeTruthy();
+    focus.expectNone();
   });
 });

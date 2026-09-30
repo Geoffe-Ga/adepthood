@@ -7,6 +7,7 @@ import DeleteAccountScreen from '../DeleteAccountScreen';
 
 import { ApiError, users, type AccountDeletionReceipt } from '@/api';
 import { useAuth } from '@/context/AuthContext';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -133,5 +134,26 @@ describe('DeleteAccountScreen', () => {
     );
     expect(queryByTestId('delete-account-receipt')).toBeNull();
     expect(logout).not.toHaveBeenCalled();
+  });
+});
+
+describe('DeleteAccountScreen — navigation owns the title (#2962)', () => {
+  test('paints no "Delete account" title, keeps one header named by it, and moves no focus', () => {
+    setAuthState();
+    const focus = watchFocusMoves();
+    const screen = render(<DeleteAccountScreen />);
+    expectNavigationOwnsTitle(screen, 'Delete account');
+    focus.expectNone();
+  });
+
+  test('opens on the irreversible warning as ordinary text, with no header in the body', () => {
+    setAuthState();
+    const screen = render(<DeleteAccountScreen />);
+    const warning = screen.getByTestId('delete-account-warning');
+    expect(warning.props.children).toMatch(
+      /^Deleting your account is immediate and irreversible\./,
+    );
+    expect(warning.props.accessibilityRole).toBeUndefined();
+    expect(screen.queryAllByRole('header')).toHaveLength(0);
   });
 });

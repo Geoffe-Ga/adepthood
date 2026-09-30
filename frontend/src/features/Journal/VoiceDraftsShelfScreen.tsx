@@ -342,7 +342,7 @@ const VoiceDraftsShelfScreen = (): React.JSX.Element => {
 
   return (
     <ScreenScaffold scroll testID="voice-drafts-shelf">
-      <ScreenHeader eyebrow={SCREEN_EYEBROW} title={SCREEN_TITLE} lead={SCREEN_LEAD} />
+      <ScreenHeader eyebrow={SCREEN_EYEBROW} title={SCREEN_TITLE} titleHidden lead={SCREEN_LEAD} />
       <ShelfBody shelf={shelf} onOpen={setOpen} />
       <LetterCard draft={open} onClose={close} onOpenPage={openPage} />
     </ScreenScaffold>

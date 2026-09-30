@@ -371,7 +371,7 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
     marginBottom: rhythm.sectionGap,
   },
-  noticeTitle: { color: ink.primary, fontWeight: '700', fontSize: 17, marginBottom: SPACING.sm },
+  noticeTitle: { color: ink.primary, fontWeight: '700', fontSize: 18, marginBottom: SPACING.sm },
   sectionTitle: { color: ink.primary, fontWeight: '700', fontSize: 20, marginBottom: SPACING.sm },
   body: { color: ink.soft, fontSize: 16, lineHeight: 24, marginBottom: SPACING.md },
   floor: {
@@ -416,4 +416,5 @@ const styles = StyleSheet.create({
   },
 });
 
+export { styles as privateVaultActivationStyles };
 export default PrivateVaultActivationScreen;

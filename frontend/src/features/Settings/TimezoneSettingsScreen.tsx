@@ -1,11 +1,18 @@
 import React, { useCallback, useMemo } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
-  SETTINGS_CARD_LABEL_LETTER_SPACING,
   SETTINGS_MONOSPACE_FONT,
   settingsFormStyles,
+  settingsFormType,
 } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
@@ -52,14 +59,17 @@ interface Props {
   navigation?: { goBack?: () => void };
 }
 
-const CurrentZoneCard = ({ zone }: { zone: string }): React.JSX.Element => (
-  <View style={styles.currentCard}>
-    <Text style={styles.currentLabel}>Current time zone</Text>
-    <Text style={styles.currentValue} testID="current-timezone">
-      {zone}
-    </Text>
-  </View>
-);
+const CurrentZoneCard = ({ zone }: { zone: string }): React.JSX.Element => {
+  const face = settingsFormType(useWindowDimensions().width);
+  return (
+    <View style={styles.currentCard}>
+      <Text style={[face.cardLabel, settingsFormStyles.cardLabel]}>Current time zone</Text>
+      <Text style={styles.currentValue} testID="current-timezone">
+        {zone}
+      </Text>
+    </View>
+  );
+};
 
 function useSaveTimezoneHandler(
   form: SettingsFormState,
@@ -162,7 +172,6 @@ const ScreenBody = ({
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
   <ScreenScaffold scroll testID="timezone-settings-screen">
-    <Text style={settingsFormStyles.title}>Time zone</Text>
     <Text style={settingsFormStyles.body}>
       Streaks and daily stats count days in this time zone. Update it if you moved or if it was
       detected wrong at signup.
@@ -228,12 +237,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
     backgroundColor: surface.raised,
   },
-  currentLabel: {
-    fontSize: 12,
-    color: ink.muted,
-    textTransform: 'uppercase',
-    letterSpacing: SETTINGS_CARD_LABEL_LETTER_SPACING,
-  },
   currentValue: {
     fontSize: 18,
     fontFamily: SETTINGS_MONOSPACE_FONT,
@@ -261,3 +264,5 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: { fontSize: 14, color: ink.primary, fontWeight: '600' },
 });
+
+export { styles as timezoneSettingsStyles };

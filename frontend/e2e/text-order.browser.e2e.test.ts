@@ -55,11 +55,12 @@ import {
  * `src/design/__tests__/textCensus.test.ts`), and every size a screen sets
  * outside it is printed and written to the JSON. It is not a gate everywhere
  * because `fontSize:` literals outside the tokens still number in the hundreds
- * across dozens of files -- Course 21 and 48, Settings 22 -- and a gate would
+ * across dozens of files -- Course 21 and 48, for one -- and a gate would
  * red the lane on those screens. Promoting `off-ramp={}` to an assertion is the
  * exit criterion of each per-screen remediation issue the epic files, and a
  * route joins `OFF_RAMP_ASSERTED` when its issue lands: the Map first (#2960),
- * then the Practice player, catalog and details (#2963).
+ * then the Practice player, catalog and details (#2963), then the Settings
+ * form family (#2962).
  * Until then the number is the evidence. Everything that needs judgement -- one
  * edge, one face per role, scope -- is the summary line's `left edges=` and
  * `faces=` columns and the review step in `prompts/scans/text-order.md`.
@@ -80,14 +81,21 @@ const ARTIFACT_DIR = join(__dirname, 'artifacts', 'text-order');
 /**
  * Routes whose every size is on the ramp, so an off-ramp size there is a
  * regression rather than backlog: the Map since #2960; the Practice player,
- * catalog and details since #2963. Every other route stays report-only until
- * its own remediation issue promotes it.
+ * catalog and details since #2963; and the Settings form family, managed-vault
+ * activation and the shared-practice preview since #2962. Every other route
+ * stays report-only until its own remediation issue promotes it.
  */
 const OFF_RAMP_ASSERTED: ReadonlySet<string> = new Set([
+  'ApiKeySettings',
   'Catalog',
+  'DeleteAccount',
+  'ExportData',
   'Map',
   'Practice',
   'PracticeDetail',
+  'SharePreview',
+  'TimezoneSettings',
+  'VaultActivation',
 ]);
 /** Twenty-two routes at two viewports, each a fresh page load plus a screenshot. */
 const WALK_TIMEOUT_MS = 10 * 60_000;

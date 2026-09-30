@@ -10,6 +10,7 @@ import PromotedQuotesScreen, {
 } from '../PromotedQuotesScreen';
 
 import type { PromotedQuoteListItem, PromotedQuoteListResponse } from '@/api';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 /**
  * ``PromotedQuotesScreen`` (#2865) — every quote the writer has promoted, found
@@ -359,5 +360,17 @@ describe('reinsertByCreatedDesc', () => {
 
   it('never duplicates a row that is already present', () => {
     expect(reinsertByCreatedDesc([a, b], b).map((q) => q.id)).toEqual([1, 2]);
+  });
+});
+
+describe('PromotedQuotesScreen — navigation owns the title (#2962)', () => {
+  it('paints no "Promoted quotes" title, keeps one header named by it, and moves no focus', async () => {
+    serve(page([WAITING], 1), page([USED], 1));
+    const focus = watchFocusMoves();
+    const screen = render(<PromotedQuotesScreen />);
+    expect(await screen.findByText('Not yet in a review (1)')).toBeTruthy();
+    expectNavigationOwnsTitle(screen, 'Promoted quotes');
+    expect(screen.getByText('CARRIED FORWARD')).toBeTruthy();
+    focus.expectNone();
   });
 });

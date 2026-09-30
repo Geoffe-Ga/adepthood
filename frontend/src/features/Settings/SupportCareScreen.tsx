@@ -21,6 +21,7 @@ const SupportCareScreen = (): React.JSX.Element => (
     <ScreenHeader
       eyebrow={STANDING_CARE.title}
       title="Support & care"
+      titleHidden
       lead="Support you can reach any time — not just when things are hard."
     />
     <Text style={styles.message} accessibilityRole="header">

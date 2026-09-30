@@ -7,6 +7,7 @@ import TimezoneSettingsScreen from '../TimezoneSettingsScreen';
 
 import { ApiError, users } from '@/api';
 import { useAuth } from '@/context/AuthContext';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
@@ -147,5 +148,16 @@ describe('TimezoneSettingsScreen', () => {
 
     expect(mockUpdateMyTimezone).not.toHaveBeenCalled();
     expect(getByTestId('timezone-error')).toBeTruthy();
+  });
+});
+
+describe('TimezoneSettingsScreen — navigation owns the title (#2962)', () => {
+  test('paints no "Time zone" title, keeps one header named by it, and moves no focus', () => {
+    setAuthState();
+    const focus = watchFocusMoves();
+    const screen = render(<TimezoneSettingsScreen />);
+    expectNavigationOwnsTitle(screen, 'Time zone');
+    expect(screen.getByText(/Streaks and daily stats count days in this time zone/)).toBeTruthy();
+    focus.expectNone();
   });
 });

@@ -94,6 +94,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
+  'screen-title-heading.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
 ].sort();
