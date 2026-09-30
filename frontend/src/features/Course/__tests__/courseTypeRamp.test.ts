@@ -194,10 +194,10 @@ function resolveKey(lines: string[], lineIndex: number): string | null {
   return null;
 }
 
-/** `file::styleKey` for every line of the Course feature matching `pattern`. */
-function usagesMatching(pattern: RegExp): string[] {
+/** `file::styleKey` for every line of the given Course sources matching `pattern`. */
+function usagesMatching(pattern: RegExp, files: readonly string[] = courseSources()): string[] {
   const found: string[] = [];
-  for (const file of courseSources()) {
+  for (const file of files) {
     const lines = readFileSync(path.join(FEATURE_ROOT, file), 'utf8').split('\n');
     lines.forEach((line, index) => {
       if (!pattern.test(line)) return;
@@ -209,6 +209,14 @@ function usagesMatching(pattern: RegExp): string[] {
 
 const UPPERCASE_USAGE = /textTransform:\s*'uppercase'/;
 const FONT_SIZE_LITERAL = /fontSize:\s*\d/;
+/**
+ * Any ``fontSize`` a component could set: a key (``fontSize: SIZE``), a shorthand
+ * (``{ fontSize }``) or a prop (``fontSize={SIZE}``). Prose that merely names the
+ * property, as a comment may, is not followed by one of these.
+ */
+const FONT_SIZE_ANY = /\bfontSize\b\s*[:,}=]/;
+/** The one Course source allowed to set a face: every size it sets is checked above. */
+const STYLE_SHEET = 'Course.styles.ts';
 
 describe('Course landing, reader chrome and chapter Markdown are on the type ramp (#2964)', () => {
   it('derives the static-legal sizes as the 390 and 1280 ramps intersected', () => {
@@ -245,6 +253,15 @@ describe('Course landing, reader chrome and chapter Markdown are on the type ram
 
   it('sets no font size as a numeric literal anywhere in the Course feature', () => {
     expect(usagesMatching(FONT_SIZE_LITERAL)).toEqual([]);
+  });
+
+  // The sheet is flattened and checked size by size above, but a component that set
+  // its own size, even through a named constant, would reach no check here and, in
+  // the reader, no census either. So components take their faces from the sheet.
+  it('sets no font size in any Course component: faces come from Course.styles.ts', () => {
+    const components = courseSources().filter((file) => file !== STYLE_SHEET);
+    expect(components).toContain('ChapterReader.tsx');
+    expect(usagesMatching(FONT_SIZE_ANY, components)).toEqual([]);
   });
 
   it('spends small caps only on the Chapters spine and the reader sheet eyebrow', () => {
