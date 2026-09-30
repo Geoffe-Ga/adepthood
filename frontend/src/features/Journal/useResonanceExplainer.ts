@@ -32,11 +32,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 
-import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
+import { loadCostState, UNKNOWN_COST_STATE, type ResonanceCostState } from './resonanceCost';
 import type { ResonanceRequestOutcome } from './useResonance';
 import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
 
-import { botmasonUsage } from '@/api';
 import { useApiKey } from '@/context/ApiKeyContext';
 import {
   loadResonanceExplainerDismissed,
@@ -71,62 +70,11 @@ export interface ResonanceExplainerGate {
   monthlyCap: number | null;
   refillReason: ResonanceRefillReason;
   onCancelRefill: () => void;
-}
-
-const UNKNOWN_COST = resonanceExplainerCost(false, null);
-
-interface ResonanceCostState {
-  copy: string;
-  canContinue: boolean;
-  loading: boolean;
-  monthlyResetDate: string | null;
-  monthlyCap: number | null;
-}
-
-const UNKNOWN_COST_STATE: ResonanceCostState = {
-  copy: UNKNOWN_COST,
-  canContinue: true,
-  loading: false,
-  monthlyResetDate: null,
-  monthlyCap: null,
-};
-
-type Usage = Awaited<ReturnType<typeof botmasonUsage.get>>;
-
-function costStateFromUsage(usage: Usage): ResonanceCostState {
-  return {
-    copy: resonanceExplainerCost(
-      false,
-      usage.monthly_cap,
-      usage.monthly_messages_remaining,
-      usage.offering_balance,
-    ),
-    canContinue: resonanceExplainerCanContinue(
-      false,
-      usage.monthly_messages_remaining,
-      usage.offering_balance,
-    ),
-    loading: false,
-    monthlyResetDate: usage.monthly_reset_date,
-    monthlyCap: usage.monthly_cap,
-  };
-}
-
-async function loadCostState(apiKey: string | null): Promise<ResonanceCostState> {
-  if (apiKey !== null) {
-    return {
-      copy: resonanceExplainerCost(true, null),
-      canContinue: true,
-      loading: false,
-      monthlyResetDate: null,
-      monthlyCap: null,
-    };
-  }
-  try {
-    return costStateFromUsage(await botmasonUsage.get());
-  } catch {
-    return UNKNOWN_COST_STATE;
-  }
+  /**
+   * Open the same refill remedy for a 402 that arrived somewhere other than the
+   * pass — a note's first letter spends from the same wallet (#623).
+   */
+  showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>;
 }
 
 /**
@@ -156,7 +104,7 @@ function useResonanceCost(): {
     if (apiKey === null) {
       setCurrent({ ...UNKNOWN_COST_STATE, canContinue: false, loading: true });
     }
-    const next = await loadCostState(apiKey);
+    const next = await loadCostState(apiKey !== null);
     if (!mountedRef.current || generationRef.current !== generation) return null;
     setCurrent(next);
     return next;
@@ -291,24 +239,19 @@ function useHydratedPress(
   return useMemo(() => ({ onPress, cancel }), [cancel, onPress]);
 }
 
-function useFundingAwareRequest(
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+/**
+ * Open the refill remedy for a server 402, then fill in the reset date.
+ *
+ * The server's 402 is already authoritative. Open the remedy immediately; a
+ * follow-up read only refreshes the date and must never hold the dialog. Shared
+ * by the pass and by a note's letter, which spend from the same wallet.
+ */
+function useShowRefillFor(
   cost: ReturnType<typeof useResonanceCost>,
   surfaces: ReturnType<typeof useDisclosureSurfaces>,
-) {
-  const generationRef = useRef(0);
-  const run = useCallback(
-    async (payerKey: string | null): Promise<void> => {
-      const requestGeneration = ++generationRef.current;
-      const outcome = await requestResonance(payerKey);
-      if (
-        generationRef.current !== requestGeneration ||
-        (outcome !== 'funding_required' && outcome !== 'key_required')
-      )
-        return;
-      const reason = outcome === 'key_required' ? 'key_required' : 'wallet_exhausted';
-      // The server's 402 is already authoritative. Open the remedy immediately;
-      // a follow-up read only refreshes the date and must never hold the dialog.
+): (_reason: ResonanceRefillReason) => Promise<void> {
+  return useCallback(
+    async (reason: ResonanceRefillReason): Promise<void> => {
       const generation = surfaces.showRefill(
         cost.current.monthlyResetDate,
         cost.current.monthlyCap,
@@ -320,7 +263,27 @@ function useFundingAwareRequest(
         surfaces.updateRefill(generation, latest.monthlyResetDate, latest.monthlyCap);
       }
     },
-    [cost, requestResonance, surfaces],
+    [cost, surfaces],
+  );
+}
+
+function useFundingAwareRequest(
+  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>,
+) {
+  const generationRef = useRef(0);
+  const run = useCallback(
+    async (payerKey: string | null): Promise<void> => {
+      const requestGeneration = ++generationRef.current;
+      const outcome = await requestResonance(payerKey);
+      if (
+        generationRef.current !== requestGeneration ||
+        (outcome !== 'funding_required' && outcome !== 'key_required')
+      )
+        return;
+      await showRefillFor(outcome === 'key_required' ? 'key_required' : 'wallet_exhausted');
+    },
+    [requestResonance, showRefillFor],
   );
   const cancel = useCallback(() => {
     generationRef.current += 1;
@@ -456,10 +419,11 @@ interface GateParts {
   onPress: () => Promise<void>;
   onContinue: () => void;
   cancelPending: () => void;
+  showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>;
 }
 
 function gateFromParts(parts: GateParts): ResonanceExplainerGate {
-  const { decision, surfaces, cost, onPress, onContinue, cancelPending } = parts;
+  const { decision, surfaces, cost, onPress, onContinue, cancelPending, showRefillFor } = parts;
   return {
     onPress,
     pending: decision.pending,
@@ -476,6 +440,7 @@ function gateFromParts(parts: GateParts): ResonanceExplainerGate {
     monthlyCap: surfaces.monthlyCap,
     refillReason: surfaces.refillReason,
     onCancelRefill: surfaces.onCancelRefill,
+    showRefillFor,
   };
 }
 
@@ -490,7 +455,8 @@ export function useResonanceExplainer(
   const surfaces = useDisclosureSurfaces(flag);
   const cost = useResonanceCost();
   const disclosedKeyRef = useRef<string | null>(null);
-  const funding = useFundingAwareRequest(requestResonance, cost, surfaces);
+  const showRefillFor = useShowRefillFor(cost, surfaces);
+  const funding = useFundingAwareRequest(requestResonance, showRefillFor);
   const decision = useDisclosureDecision({
     cost,
     disclosedKeyRef,
@@ -525,5 +491,6 @@ export function useResonanceExplainer(
     onPress: hydratedPress.onPress,
     onContinue,
     cancelPending,
+    showRefillFor,
   });
 }

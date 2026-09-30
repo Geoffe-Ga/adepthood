@@ -28,26 +28,50 @@ export const RESONANCE_EXPLAINER_WHAT =
 
 const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
 
-/** The price, derived from who pays and the allowance this deployment serves. */
+/** What a resonance pass is called in its price line. */
+const READING = 'reading';
+
+/**
+ * The price, derived from who pays and the allowance this deployment serves.
+ *
+ * ``noun`` names the charged thing — a ``reading`` (the pass, and the default,
+ * so the pass's copy is unchanged) or a ``letter`` (a note's first essay, via
+ * {@link essayExplainerCost}). One function, so the two prices can never be
+ * worded differently for the same wallet.
+ */
 export function resonanceExplainerCost(
   hasKey: boolean,
   monthlyCap: number | null,
   monthlyRemaining: number | null = null,
   offeringBalance: number | null = null,
+  noun: string = READING,
 ): string {
   if (hasKey) {
-    return 'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.';
+    return `Your own API key pays for this ${noun}. Nothing is drawn from your BotMason messages.`;
   }
   if (monthlyRemaining === 0 && offeringBalance === 0) {
-    return `You have no BotMason monthly messages or offerings available for this reading. ${ADD_KEY}`;
+    return `You have no BotMason monthly messages or offerings available for this ${noun}. ${ADD_KEY}`;
   }
   if (monthlyCap === 0 || monthlyRemaining === 0) {
-    return `This reading spends one BotMason offering. ${ADD_KEY}`;
+    return `This ${noun} spends one BotMason offering. ${ADD_KEY}`;
   }
   if (monthlyCap !== null) {
-    return `This reading spends one of your ${monthlyCap} BotMason messages for the month. ${ADD_KEY}`;
+    return `This ${noun} spends one of your ${monthlyCap} BotMason messages for the month. ${ADD_KEY}`;
   }
-  return `This reading spends one BotMason message from your account. ${ADD_KEY}`;
+  return `This ${noun} spends one BotMason message from your account. ${ADD_KEY}`;
+}
+
+/** What a note's first letter is called in its price line. */
+export const ESSAY_NOUN = 'letter';
+
+/** The price of a note's first letter: the same wallet and wording as a reading. */
+export function essayExplainerCost(
+  hasKey: boolean,
+  monthlyCap: number | null,
+  monthlyRemaining: number | null = null,
+  offeringBalance: number | null = null,
+): string {
+  return resonanceExplainerCost(hasKey, monthlyCap, monthlyRemaining, offeringBalance, ESSAY_NOUN);
 }
 
 /** Whether the known payer snapshot can fund a pass; unknown reads stay retryable. */
@@ -76,3 +100,26 @@ export const RESONANCE_EXPLAINER_DONT_SHOW_A11Y =
   'Don’t show this note again before a resonance reading';
 
 export const RESONANCE_EXPLAINER_SCRIM_A11Y = 'Dismiss the resonance note';
+
+/*
+ * The essay offer (#623). A note's first letter is a charged depth too, so it
+ * is offered with its price on it rather than written the moment the note is
+ * opened. Same shape and same flatness as the reading: what it does, where the
+ * entry goes, what it costs, and that declining — or waiting — is free. The
+ * last line is the one thing a letter has that a reading does not: once
+ * written, it is kept, and opening it again costs nothing.
+ */
+
+/** What asking does, and the fact that the entry leaves the device to do it. */
+export const ESSAY_ASK_WHAT =
+  'A letter expands this margin note into a longer reflection. To write it, the text of this entry is sent to an AI model.';
+
+/** That either answer is fine, and that a written letter is never charged again. */
+export const ESSAY_ASK_CHOICE =
+  'Once written, the letter stays with this note, and opening it again costs nothing. You can ask now, or later, or never.';
+
+export const ESSAY_ASK_PROCEED = 'Ask for the letter';
+export const ESSAY_ASK_PROCEED_A11Y = 'Ask for the letter for this note';
+
+export const ESSAY_ASK_CANCEL = 'Not now';
+export const ESSAY_ASK_CANCEL_A11Y = 'Not now — do not write this letter';

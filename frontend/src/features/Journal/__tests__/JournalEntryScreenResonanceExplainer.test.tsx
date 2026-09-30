@@ -23,6 +23,9 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockGenerate = jest.fn() as jest.MockedFunction<
   (_id: number, _token?: string, _apiKey?: string | null) => Promise<ResonanceResponse>
 >;
+const mockEssay = jest.fn() as jest.MockedFunction<
+  (_id: number, _options?: { priceAcknowledged?: boolean }) => Promise<unknown>
+>;
 const mockDetect = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ checked: boolean; items: unknown[] }>
 >;
@@ -98,6 +101,7 @@ jest.mock('@/api', () => ({
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     generate: (...a: unknown[]) => (mockGenerate as unknown as (...x: unknown[]) => unknown)(...a),
+    essay: (...a: unknown[]) => (mockEssay as unknown as (...x: unknown[]) => unknown)(...a),
   },
   completionSuggestions: {
     list: jest.fn(() => Promise.resolve({ items: [] })),
@@ -181,6 +185,7 @@ beforeEach(() => {
   mockList.mockReset();
   mockGenerate.mockReset();
   mockDetect.mockReset();
+  mockEssay.mockReset();
   mockUsage.mockReset();
   mockLoadDismissed.mockReset();
   mockSaveDismissed.mockReset();
@@ -725,6 +730,49 @@ describe('JournalEntryScreen — a press that lands before the flag is read', ()
     // The press is honoured against the answer it waited for -- it neither
     // fell through to the charge nor was dropped on the floor.
     expect(await findByTestId('resonance-explainer')).toBeTruthy();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A note's first letter spends from the same wallet as the pass (#623), so an
+ * empty wallet on the letter must reach the same refill remedy — not a generic
+ * error inside the essay card.
+ */
+describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () => {
+  const NOTE = {
+    id: 31,
+    journal_entry_id: 7,
+    kind: 'theme',
+    anchor_start: 2,
+    anchor_end: 6,
+    anchor_text: 'page',
+    note: 'A page, again.',
+    essay: null,
+    essay_generated_at: null,
+    status: 'active',
+    created_at: '2026-06-01T00:00:00Z',
+    updated_at: '2026-06-01T00:00:00Z',
+  };
+
+  it.each([
+    ['insufficient_offerings', /BotMason balance has run out/u],
+    ['llm_key_required', /deployment needs an API key/u],
+  ])('closes the note and opens the refill dialog on a 402 %s', async (detail, copy) => {
+    mockList.mockResolvedValue({ items: [NOTE] });
+    mockEssay.mockRejectedValueOnce(apiError(402, detail));
+    const view = renderScreen();
+    fireEvent.press(await view.findByTestId(`margin-note-${NOTE.id}`));
+    expect(await view.findByTestId('essay-offer')).toBeTruthy();
+    expect(mockEssay).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('essay-ask'));
+    });
+
+    expect(mockEssay).toHaveBeenCalledWith(NOTE.id, { priceAcknowledged: true });
+    expect(await view.findByTestId('journal-resonance-refill')).toHaveTextContent(copy);
+    await waitFor(() => expect(view.queryByTestId('essay-offer')).toBeNull());
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 });

@@ -1,9 +1,15 @@
 /**
  * ``ResonanceEssayModal`` — a margin note expanded into its letter-like essay,
- * hovering over the (still-visible, dimmed) page. Lazily fetches the essay the
- * first time a note is opened and caches it back to the note via
- * ``onEssayLoaded`` so re-opening is instant. A warm editorial reading card, not
- * a chat reply.
+ * hovering over the (still-visible, dimmed) page. A warm editorial reading card,
+ * not a chat reply.
+ *
+ * A note's first letter is a charged depth (#623): the server spends one unit of
+ * the BotMason wallet to write it unless the writer's own key pays. So a note
+ * with no letter opens on an *offer* — what a letter is, where the entry goes,
+ * what it costs, and two equal arms — and only "Ask for the letter" asks. A
+ * letter already written opens straight to the letter, because reopening it is
+ * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
+ * so the screen can show the same refill remedy a resonance pass gets.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -15,7 +21,19 @@ import {
   View,
 } from 'react-native';
 
+import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
+import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import JournalModalShell from './JournalModalShell';
+import { loadCostState, unknownCostState } from './resonanceCost';
+import {
+  ESSAY_ASK_CANCEL,
+  ESSAY_ASK_CANCEL_A11Y,
+  ESSAY_ASK_CHOICE,
+  ESSAY_ASK_PROCEED,
+  ESSAY_ASK_PROCEED_A11Y,
+  ESSAY_ASK_WHAT,
+  ESSAY_NOUN,
+} from './resonanceExplainerCopy';
 
 import { resonance } from '@/api';
 import type { Marginalia } from '@/api';
@@ -26,6 +44,10 @@ export interface ResonanceEssayModalProps {
   note: Marginalia | null;
   onClose: () => void;
   onEssayLoaded?: (_note: Marginalia) => void;
+  /** Whether the writer's own API key pays, which decides the price line. */
+  hasOwnKey?: boolean;
+  /** A 402 on the ask: the wallet is empty, or a key is required. */
+  onFundingRequired?: (_outcome: FundingOutcome) => void;
 }
 
 /** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
@@ -35,7 +57,12 @@ interface EssayState {
   essay: string | null;
   loading: boolean;
   error: string | null;
+  /** The note has no letter yet: show its price and wait for the writer to ask. */
+  offer: boolean;
 }
+
+const OFFER_STATE: EssayState = { essay: null, loading: false, error: null, offer: true };
+const LOADING_STATE: EssayState = { essay: null, loading: true, error: null, offer: false };
 
 /**
  * Why an ask for a note's letter settled without one, keyed by note id.
@@ -49,30 +76,33 @@ interface EssayState {
 type UnansweredNotes = Map<number, string>;
 
 /**
- * The state a note can be shown from without asking the server, or ``null``
- * when it must be asked for: its own cached letter, else a remembered ask that
- * produced none. A blank cached essay counts as missing, so an empty body is
- * never rendered.
+ * The state a note is shown from: its own cached letter, else a remembered ask
+ * that produced none, else the priced offer. A blank cached essay counts as
+ * missing, so an empty body is never rendered.
  */
-function settledState(note: Marginalia, unanswered: UnansweredNotes): EssayState | null {
-  if (note.essay) return { essay: note.essay, loading: false, error: null };
+function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState {
+  if (note.essay) return { essay: note.essay, loading: false, error: null, offer: false };
   const remembered = unanswered.get(note.id);
-  if (remembered !== undefined) return { essay: null, loading: false, error: remembered };
-  return null;
+  if (remembered !== undefined) {
+    return { essay: null, loading: false, error: remembered, offer: false };
+  }
+  return OFFER_STATE;
 }
 
-/** The two ways an ask settles, handed to {@link askForEssay} by the hook. */
+/** The three ways an ask settles, handed to {@link askForEssay} by the hook. */
 interface EssaySettlers {
   /** A real letter arrived, and should be cached back onto the note. */
   onLetter: (_updated: Marginalia) => void;
   /** The ask produced no letter: a refusal, an intimate entry, or a failure. */
   onUnanswered: (_message: string) => void;
+  /** The ask was refused for want of a payer; nothing was spent. */
+  onFunding: (_outcome: FundingOutcome) => void;
 }
 
-/** Ask the server for one note's letter and route the outcome to ``settlers``. */
+/** Ask the server for one note's letter, price acknowledged, and route the outcome. */
 function askForEssay(noteId: number, settlers: EssaySettlers): void {
   resonance
-    .essay(noteId)
+    .essay(noteId, { priceAcknowledged: true })
     .then((updated) => {
       if (updated.essay) {
         settlers.onLetter(updated);
@@ -80,73 +110,180 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
       }
       settlers.onUnanswered(BLANK_ESSAY_MESSAGE);
     })
-    .catch((err: unknown) => settlers.onUnanswered(formatApiError(err)));
+    .catch((err: unknown) => {
+      const funding = fundingOutcome(err);
+      if (funding !== null) {
+        settlers.onFunding(funding);
+        return;
+      }
+      settlers.onUnanswered(formatApiError(err));
+    });
 }
 
-/** Lazily load the note's essay (unless it already carries one). */
-function useEssay(
-  note: Marginalia | null,
-  onEssayLoaded?: (_n: Marginalia) => void,
-): EssayState & {
-  retry: () => void;
-} {
-  const [state, setState] = useState<EssayState>({ essay: null, loading: false, error: null });
-  const [attempt, setAttempt] = useState(0);
-  // Notes already asked about, that came back with no letter (#2435). A ref, so
-  // it survives closing and reopening the modal and dies with the screen: an
-  // automatic re-ask on every reopen is what this stops, while leaving a
-  // refusal — which is transient — askable again both on purpose (``retry``)
-  // and on a later visit.
-  const unansweredRef = useRef<UnansweredNotes>(new Map());
-  const retry = useCallback(() => {
-    // The deliberate ask: forget the remembered outcome first, or the effect
-    // below would answer from memory instead of the server.
-    if (note != null) unansweredRef.current.delete(note.id);
-    setAttempt((a) => a + 1);
-  }, [note]);
-  // Hold the callback in a ref so a non-memoised caller can't retrigger fetches:
-  // the fetch effect depends only on the note + retry attempt.
-  const onLoadedRef = useRef(onEssayLoaded);
+/** The letter's price line, read only while the offer is on screen. */
+function useEssayCost(showing: boolean, hasOwnKey: boolean): string {
+  const [copy, setCopy] = useState(() => unknownCostState(ESSAY_NOUN).copy);
   useEffect(() => {
-    onLoadedRef.current = onEssayLoaded;
-  }, [onEssayLoaded]);
-
-  useEffect(() => {
-    if (note == null) return undefined;
-    // Already answered — by the note's own letter, or by an earlier ask for this
-    // note that produced none. Say so again rather than asking the server the
-    // same question every time the note is reopened (#2435).
-    const settled = settledState(note, unansweredRef.current);
-    if (settled !== null) {
-      setState(settled);
-      return undefined;
-    }
+    if (!showing) return undefined;
     let active = true;
-    setState({ essay: null, loading: true, error: null });
-    askForEssay(note.id, {
-      onLetter: (updated) => {
-        if (!active) return;
-        // The note carries the letter from here on, via ``onEssayLoaded``.
-        setState({ essay: updated.essay, loading: false, error: null });
-        onLoadedRef.current?.(updated);
-      },
-      // Remembered even if the modal has since closed: the ask did happen and
-      // produced nothing, so reopening should show that, not ask again.
-      onUnanswered: (message) => {
-        unansweredRef.current.set(note.id, message);
-        if (active) setState({ essay: null, loading: false, error: message });
-      },
+    void loadCostState(hasOwnKey, ESSAY_NOUN).then((next) => {
+      if (active) setCopy(next.copy);
     });
     return () => {
       active = false;
     };
-  }, [note, attempt]);
+  }, [showing, hasOwnKey]);
+  return copy;
+}
 
-  return { ...state, retry };
+interface EssayCallbacks {
+  onEssayLoaded?: (_n: Marginalia) => void;
+  onFundingRequired?: (_outcome: FundingOutcome) => void;
+}
+
+/** Hold the latest callbacks so a non-memoised caller can't retrigger anything. */
+function useLatest<T>(value: T): React.MutableRefObject<T> {
+  const ref = useRef(value);
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return ref;
+}
+
+/**
+ * What the modal shows for ``note``, re-derived *during render* when the note
+ * changes rather than an effect later: an effect would paint one frame of the
+ * previous state first, so a cached letter could flash the offer and read the
+ * wallet for a price it will never charge. React's documented "adjust state
+ * when a prop changes" pattern.
+ */
+function useShownState(
+  note: Marginalia | null,
+  unanswered: UnansweredNotes,
+): [EssayState, React.Dispatch<React.SetStateAction<EssayState>>] {
+  const [state, setState] = useState<EssayState>(() =>
+    note == null ? OFFER_STATE : initialState(note, unanswered),
+  );
+  const [shownFor, setShownFor] = useState<Marginalia | null>(note);
+  if (shownFor !== note) {
+    setShownFor(note);
+    setState(note == null ? OFFER_STATE : initialState(note, unanswered));
+  }
+  return [state, setState];
+}
+
+/**
+ * A counter bumped whenever the modal's note changes or it unmounts, so an
+ * answer that lands afterwards is not applied to a card the writer has left.
+ */
+function useShowingGeneration(note: Marginalia | null): React.MutableRefObject<number> {
+  const showingRef = useRef(0);
+  useEffect(() => {
+    showingRef.current += 1;
+  }, [note]);
+  useEffect(
+    () => () => {
+      showingRef.current += 1;
+    },
+    [],
+  );
+  return showingRef;
+}
+
+/** The note's letter: shown, offered at its price, or asked for on purpose. */
+function useEssay(
+  note: Marginalia | null,
+  callbacks: EssayCallbacks,
+): EssayState & { ask: () => void; retry: () => void } {
+  // Notes already asked about, that came back with no letter (#2435). A ref, so
+  // it survives closing and reopening the modal and dies with the screen:
+  // reopening shows that outcome rather than the offer again, while ``retry``
+  // forgets it and returns the writer to the offer — never to an automatic ask.
+  const unansweredRef = useRef<UnansweredNotes>(new Map());
+  const [state, setState] = useShownState(note, unansweredRef.current);
+  const showingRef = useShowingGeneration(note);
+  const callbacksRef = useLatest(callbacks);
+
+  const ask = useCallback(() => {
+    if (note == null) return;
+    const showing = showingRef.current;
+    const isCurrent = (): boolean => showingRef.current === showing;
+    setState(LOADING_STATE);
+    askForEssay(note.id, {
+      onLetter: (updated) => {
+        if (!isCurrent()) return;
+        // The note carries the letter from here on, via ``onEssayLoaded``.
+        setState({ essay: updated.essay, loading: false, error: null, offer: false });
+        callbacksRef.current.onEssayLoaded?.(updated);
+      },
+      // Remembered even if the modal has since closed: the ask did happen and
+      // produced nothing, so reopening should show that, not offer again.
+      onUnanswered: (message) => {
+        unansweredRef.current.set(note.id, message);
+        if (isCurrent()) setState({ essay: null, loading: false, error: message, offer: false });
+      },
+      onFunding: (outcome) => {
+        if (!isCurrent()) return;
+        setState(OFFER_STATE);
+        callbacksRef.current.onFundingRequired?.(outcome);
+      },
+    });
+  }, [callbacksRef, note, setState, showingRef]);
+
+  const retry = useCallback(() => {
+    if (note != null) unansweredRef.current.delete(note.id);
+    setState(OFFER_STATE);
+  }, [note, setState]);
+
+  return { ...state, ask, retry };
+}
+
+/** The priced offer: what a letter is, what it costs, and two equal arms. */
+function EssayOffer({
+  cost,
+  onAsk,
+  onDecline,
+}: {
+  cost: string;
+  onAsk: () => void;
+  onDecline: () => void;
+}): React.JSX.Element {
+  return (
+    <View testID="essay-offer">
+      <Text style={explainerStyles.body} testID="essay-ask-what">
+        {ESSAY_ASK_WHAT}
+      </Text>
+      <Text style={explainerStyles.body} testID="essay-ask-cost">
+        {cost}
+      </Text>
+      <Text style={explainerStyles.body} testID="essay-ask-choice">
+        {ESSAY_ASK_CHOICE}
+      </Text>
+      <ExplainerActionPair
+        cancel={{
+          label: ESSAY_ASK_CANCEL,
+          accessibilityLabel: ESSAY_ASK_CANCEL_A11Y,
+          testID: 'essay-not-now',
+          onPress: onDecline,
+        }}
+        proceed={{
+          label: ESSAY_ASK_PROCEED,
+          accessibilityLabel: ESSAY_ASK_PROCEED_A11Y,
+          testID: 'essay-ask',
+          onPress: onAsk,
+        }}
+      />
+    </View>
+  );
 }
 
 /** The body region: spinner, the essay, or a friendly error with retry. */
-function EssayBody({ essay, loading, error, retry }: EssayState & { retry: () => void }) {
+function EssayBody({
+  essay,
+  loading,
+  error,
+  retry,
+}: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
   }
@@ -169,8 +306,14 @@ function ResonanceEssayModal({
   note,
   onClose,
   onEssayLoaded,
+  hasOwnKey = false,
+  onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
-  const { essay, loading, error, retry } = useEssay(note, onEssayLoaded);
+  const { essay, loading, error, offer, ask, retry } = useEssay(note, {
+    onEssayLoaded,
+    onFundingRequired,
+  });
+  const cost = useEssayCost(note != null && offer, hasOwnKey);
 
   return (
     <JournalModalShell
@@ -198,7 +341,11 @@ function ResonanceEssayModal({
         “{note?.anchor_text}”
       </Text>
       <ScrollView contentContainerStyle={styles.bodyScroll}>
-        <EssayBody essay={essay} loading={loading} error={error} retry={retry} />
+        {offer ? (
+          <EssayOffer cost={cost} onAsk={ask} onDecline={onClose} />
+        ) : (
+          <EssayBody essay={essay} loading={loading} error={error} retry={retry} />
+        )}
       </ScrollView>
     </JournalModalShell>
   );
