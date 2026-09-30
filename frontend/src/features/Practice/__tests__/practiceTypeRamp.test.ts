@@ -3,6 +3,7 @@ import { StyleSheet } from 'react-native';
 
 import { legalFontSizes } from '../../../../e2e/textCensus';
 import { fonts, INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
+import { modePickerStyles } from '../components/ModePicker';
 import { practiceStatsBlockStyles } from '../components/PracticeStatsBlock';
 import { stageSelectorStyles } from '../components/StageSelector';
 import { catalogListStyles } from '../screens/PracticeCatalogList';
@@ -14,8 +15,8 @@ import {
 } from '../views/shared';
 
 /**
- * Every size the Practice player, catalog and details set sits on the Candle &
- * Ink type ramp (#2963).
+ * Every size the Practice player, catalog, details and mode picker set sits on the
+ * Candle & Ink type ramp (#2963).
  *
  * A StyleSheet literal cannot know the window width, so a static size must be
  * legal at the phone AND the desktop profile the text census measures: the
@@ -25,13 +26,6 @@ import {
 
 const PHONE_WIDTH = 390;
 const DESKTOP_WIDTH = 1280;
-/**
- * The one static size still off the ramp: the catalog row's emoji mode icon,
- * which the lucide icon swap (#2963 part 2) replaces with a drawn glyph, so it
- * leaves the census rather than moving to a step.
- */
-const PENDING_KEY = 'catalog.rowIcon';
-const PENDING_SIZE = 24;
 /** DESIGN.md "One face per role": no Practice region shows more than three sizes. */
 const MAX_SIZES_PER_REGION = 3;
 
@@ -46,7 +40,8 @@ type Region =
   | 'stagePicker'
   | 'detailHeader'
   | 'detailSections'
-  | 'detailActions';
+  | 'detailActions'
+  | 'modePicker';
 
 const REGIONS: readonly Region[] = [
   'player',
@@ -57,6 +52,7 @@ const REGIONS: readonly Region[] = [
   'detailHeader',
   'detailSections',
   'detailActions',
+  'modePicker',
 ];
 
 /** Every key the reader taps, sized or not, keyed to the one region it paints. */
@@ -69,8 +65,7 @@ const REGION: Readonly<Record<string, Region>> = {
   // The catalog's filter chips: the stage row and the mode-category row.
   'catalog.chipText': 'catalogChips',
   'stage.filterText': 'catalogChips',
-  // A catalog row: icon, name, subtitle and its Use button.
-  'catalog.rowIcon': 'catalogRows',
+  // A catalog row: name, subtitle and its Use button (its mode icon is drawn, not text).
   'catalog.rowName': 'catalogRows',
   'catalog.rowSubtitle': 'catalogRows',
   'catalog.rowUseText': 'catalogRows',
@@ -95,6 +90,12 @@ const REGION: Readonly<Record<string, Region>> = {
   'detail.pickerHeading': 'detailActions',
   'detail.pickerCancelText': 'detailActions',
   'detail.errorText': 'detailActions',
+  // The Create Practice wizard's mode picker: category, mode rows and New tag.
+  'picker.categoryTitle': 'modePicker',
+  'picker.categoryBlurb': 'modePicker',
+  'picker.rowLabel': 'modePicker',
+  'picker.rowDescription': 'modePicker',
+  'picker.newBadgeText': 'modePicker',
 };
 
 /** Text the reader taps: held to the interactive floor, never a caption. */
@@ -122,6 +123,7 @@ const sheets: Readonly<Record<string, unknown>> = {
   ...namespaced('stage', stageSelectorStyles),
   ...namespaced('stats', practiceStatsBlockStyles),
   ...namespaced('detail', practiceDetailStyles),
+  ...namespaced('picker', modePickerStyles),
 };
 
 interface FlatText {
@@ -157,8 +159,7 @@ describe('Practice player, catalog and details text is on the type ramp (#2963)'
   });
 
   it('sets every static size on a step legal at both 390 and 1280', () => {
-    // Pinned to exactly the pending emoji icon, so no other size can join it.
-    expect(offRamp(keysIn(REGIONS))).toEqual([`${PENDING_KEY}=${PENDING_SIZE}`]);
+    expect(offRamp(keysIn(REGIONS))).toEqual([]);
   });
 
   it.each(READOUT)('sets the %s readout on a ramp step, in sans with tabular figures', (key) => {
@@ -177,9 +178,7 @@ describe('Practice player, catalog and details text is on the type ramp (#2963)'
   });
 
   it.each(REGIONS)('shows at most three sizes in the %s region', (region) => {
-    // The pending emoji icon leaves the census once it is a drawn glyph.
-    const counted = keysIn([region]).filter((key) => key !== PENDING_KEY);
-    const sizes = new Set(counted.map(sizeOf));
+    const sizes = new Set(keysIn([region]).map(sizeOf));
     expect(sizes.size).toBeLessThanOrEqual(MAX_SIZES_PER_REGION);
   });
 });

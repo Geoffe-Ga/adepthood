@@ -2,9 +2,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
-import ModePicker, { MODE_CATEGORIES, type PickableMode } from '../ModePicker';
+import ModeIcon from '../ModeIcon';
+import ModePicker, { FALLBACK_MODE_ICON, MODE_CATEGORIES, type PickableMode } from '../ModePicker';
 
 import { colors, surface } from '@/design/tokens';
 
@@ -44,6 +45,42 @@ describe('ModePicker — categories', () => {
       }
     }
   });
+});
+
+// #2963: each mode reads by a drawn lucide glyph, not an emoji, and the glyph
+// is decoration — the row's accessibilityLabel stays its whole accessible name.
+describe('ModePicker — mode icons', () => {
+  const entries = MODE_CATEGORIES.flatMap((category) => category.modes);
+
+  it('gives every mode its own lucide icon, distinct from the fallback', () => {
+    const icons = entries.map((entry) => entry.icon);
+    expect(icons.every((icon) => typeof icon === 'function' || typeof icon === 'object')).toBe(
+      true,
+    );
+    expect(new Set(icons).size).toBe(entries.length);
+    expect(icons).not.toContain(FALLBACK_MODE_ICON);
+  });
+
+  it.each(entries.map((entry) => [entry.mode, entry] as const))(
+    'draws the %s icon through the shared decorative ModeIcon, with no emoji text',
+    (mode, entry) => {
+      const { getByTestId } = render(<ModePicker onSelect={jest.fn()} />);
+      const row = getByTestId(`mode-picker-mode-${mode}`);
+      const icon = row.findByType(ModeIcon);
+      expect(icon.props.icon).toBe(entry.icon);
+      const slot = getByTestId(`mode-picker-icon-${mode}`, { includeHiddenElements: true });
+      expect(slot.props.accessibilityElementsHidden).toBe(true);
+      expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
+      // The only text left in the row is its label and description (and New).
+      const texts: unknown[] = row
+        .findAllByType(Text)
+        .map((node: { props: { children?: unknown } }) => node.props.children);
+      const allowed: unknown[] = [entry.label, entry.description, 'New'];
+      expect(texts).toEqual(expect.arrayContaining([entry.label, entry.description]));
+      expect(texts.filter((text) => !allowed.includes(text))).toEqual([]);
+      expect(row.props.accessibilityLabel).toBe(entry.label);
+    },
+  );
 });
 
 describe('ModePicker — selection', () => {

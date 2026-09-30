@@ -10,10 +10,27 @@
  * choice and routes to the matching mode form on selection.
  */
 
+import {
+  Anchor,
+  Bell,
+  Drum,
+  Dumbbell,
+  Flower2,
+  Hash,
+  Hourglass,
+  Layers,
+  Leaf,
+  type LucideIcon,
+  Shuffle,
+  Sparkles,
+  Timer,
+} from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
+
+import ModeIcon from './ModeIcon';
 
 import {
   BORDER_RADIUS,
@@ -50,7 +67,8 @@ const NEW_MODES = new Set<PickableMode>([
 interface ModeEntry {
   mode: PickableMode;
   label: string;
-  icon: string;
+  /** Decorative lucide glyph; the row's label is its accessible name. */
+  icon: LucideIcon;
   description: string;
 }
 
@@ -61,6 +79,12 @@ interface ModeCategory {
   modes: readonly ModeEntry[];
 }
 
+/**
+ * Icon for a practice whose mode the client does not know (a newer server mode):
+ * the Practice destination's own glyph, so the row still reads as "a practice".
+ */
+export const FALLBACK_MODE_ICON: LucideIcon = Flower2;
+
 export const MODE_CATEGORIES: readonly ModeCategory[] = [
   {
     key: 'timers',
@@ -70,13 +94,13 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       {
         mode: 'meditation_timer',
         label: 'Meditation timer',
-        icon: '⏳',
+        icon: Hourglass,
         description: 'A bounded sit with optional bells.',
       },
       {
         mode: 'count_up',
         label: 'Count up',
-        icon: '⏱',
+        icon: Timer,
         description: 'Open-ended; you decide when to stop.',
       },
     ],
@@ -89,19 +113,19 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       {
         mode: 'metronome',
         label: 'Metronome',
-        icon: '🥁',
+        icon: Drum,
         description: 'Steady BPM tick over a timed window.',
       },
       {
         mode: 'interval_bell',
         label: 'Interval bell',
-        icon: '🔔',
+        icon: Bell,
         description: 'Evenly spaced bells or custom offsets.',
       },
       {
         mode: 'random_interval_bell',
         label: 'Random interval bell',
-        icon: '🔀',
+        icon: Shuffle,
         description: 'Mindfulness bells at unpredictable gaps.',
       },
     ],
@@ -114,19 +138,19 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       {
         mode: 'sense_grounding',
         label: 'Sense grounding',
-        icon: '🌿',
+        icon: Leaf,
         description: 'Walk through prompts across the five senses.',
       },
       {
         mode: 'tallied_grounding',
         label: 'Tallied grounding',
-        icon: '🔢',
+        icon: Hash,
         description: 'Rounds of find-N-of-each: shapes, colors, sounds.',
       },
       {
         mode: 'mindful_anchor',
         label: 'Mindful anchor',
-        icon: '🌱',
+        icon: Anchor,
         description: 'Pick one anchor — touch grass, mindful eating, a sip.',
       },
     ],
@@ -139,13 +163,13 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       {
         mode: 'tarot',
         label: 'Tarot',
-        icon: '🃏',
+        icon: Sparkles,
         description: 'Draw a card from the major arcana and sit with it.',
       },
       {
         mode: 'card_meditation',
         label: 'Card meditation',
-        icon: '🎴',
+        icon: Layers,
         description: 'Bundled or custom deck — phone photos work.',
       },
     ],
@@ -158,7 +182,7 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
       {
         mode: 'rep_counter',
         label: 'Rep counter',
-        icon: '💪',
+        icon: Dumbbell,
         description: 'Tap to log each rep against a target.',
       },
     ],
@@ -235,9 +259,7 @@ const ModeRow = ({ entry, selected, onSelect }: ModeRowProps): React.JSX.Element
     style={[styles.row, selected && styles.rowSelected]}
     testID={`mode-picker-mode-${entry.mode}`}
   >
-    <Text style={styles.rowIcon} accessibilityElementsHidden>
-      {entry.icon}
-    </Text>
+    <ModeIcon icon={entry.icon} testID={`mode-picker-icon-${entry.mode}`} />
     <View style={styles.rowText}>
       <View style={styles.rowLabelLine}>
         <Text style={styles.rowLabel}>{entry.label}</Text>
@@ -276,7 +298,6 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
   },
   rowSelected: { backgroundColor: surface.sunken },
-  rowIcon: { fontSize: 22, width: 28, textAlign: 'center' },
   rowText: { flex: 1 },
   rowLabelLine: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
   rowLabel: { ...editorialType.note, color: ink.primary },
@@ -291,7 +312,14 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: BORDER_RADIUS.sm,
   },
-  newBadgeText: { color: accent.onPrimary, fontSize: 10, fontWeight: '700' },
+  newBadgeText: {
+    color: accent.onPrimary,
+    fontSize: editorialType.caption.fontSize,
+    fontWeight: '700',
+  },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as modePickerStyles };
 
 export default ModePicker;
