@@ -49,6 +49,12 @@ const SUBPIXEL_TOLERANCE = 1;
 const WIDE_VIEWPORT = { width: 1280, height: 720 };
 /** The phone profile, where the grid flips to one column of ten rows. */
 const NARROW_VIEWPORT = { width: 390, height: 844 };
+/**
+ * The narrowest, shortest phone (#2961). Below 700px tall the layout scale
+ * shrinks by 0.85, but the grid's text follows the type ramp -- width only --
+ * so this is where the text has the least room relative to its size.
+ */
+const SMALL_VIEWPORT = { width: 320, height: 568 };
 const CTA_NAME = 'Perform Energy Scaffolding';
 
 /**
@@ -221,6 +227,59 @@ async function expectNoOverlap(page: Page, label: string): Promise<void> {
     .toBeLessThanOrEqual(cta.y + SUBPIXEL_TOLERANCE);
 }
 
+/** A text node that leaves its box, or is clipped inside it. */
+interface TextMisfit {
+  owner: string;
+  text: string;
+  reason: string;
+}
+
+/**
+ * Assertion 3 (#2961) -- every text node on the tiles and the pager fits.
+ *
+ * The grid's text is set on the type ramp by width alone, so at a narrow or
+ * short viewport it is larger relative to its box than the layout-scaled sizes
+ * it replaced. Each node that renders text must sit wholly inside its owning
+ * tile (or the pagination bar), and must not overflow its own box -- a clipped
+ * or ellipsised node reports a scroll extent wider or taller than its client
+ * box. Tiles are measured wherever they lie in the grid's scroller; containment
+ * is against the tile, which scrolls with its text.
+ */
+async function expectTileTextFits(page: Page, label: string): Promise<void> {
+  const owners = page.locator('[data-testid="habit-tile"], [data-testid="habits-pagination"]');
+  const tolerance = SUBPIXEL_TOLERANCE;
+  const misfits: TextMisfit[] = await owners.evaluateAll((elements, tol) => {
+    const ownTextOf = (node: Element): string =>
+      Array.from(node.childNodes)
+        .filter((child) => child.nodeType === Node.TEXT_NODE)
+        .map((child) => child.textContent ?? '')
+        .join('')
+        .trim();
+    const leaves = (inner: DOMRect, outer: DOMRect): boolean =>
+      inner.left < outer.left - tol ||
+      inner.top < outer.top - tol ||
+      inner.right > outer.right + tol ||
+      inner.bottom > outer.bottom + tol;
+    const isClipped = (node: Element): boolean =>
+      node.scrollWidth > node.clientWidth + tol || node.scrollHeight > node.clientHeight + tol;
+    return elements.flatMap((owner) => {
+      const ownerBox = owner.getBoundingClientRect();
+      const ownerName = owner.getAttribute('data-testid') ?? 'owner';
+      return Array.from(owner.querySelectorAll('*')).flatMap((node) => {
+        const text = ownTextOf(node);
+        if (text === '') return [];
+        const reasons = [
+          leaves(node.getBoundingClientRect(), ownerBox) ? 'outside its owner' : '',
+          isClipped(node) ? 'clipped' : '',
+        ].filter((reason) => reason !== '');
+        return reasons.map((reason) => ({ owner: ownerName, text, reason }));
+      });
+    });
+  }, tolerance);
+  console.log(`[2961/${label}] text misfits=${JSON.stringify(misfits)}`);
+  expect.soft(misfits, `${label}: tile or pager text does not fit`).toEqual([]);
+}
+
 /** Every tile on a full page lies inside the grid's box, scrolling if it must. */
 async function expectEveryTileReachable(page: Page, label: string): Promise<void> {
   const box = await boxOf(grid(page), 'the habits grid');
@@ -269,6 +328,7 @@ test('a full page of habits clears its footer controls and every tile is reachab
   expect(await tiles(page).count()).toBe(SEEDED_HABITS.length);
   await report(page, 'wide');
   await expectNoOverlap(page, 'wide');
+  await expectTileTextFits(page, 'wide');
   await expectEveryTileReachable(page, 'wide');
 
   // The same page, re-laid-out for a phone: one column of ten rows. Driven on
@@ -277,7 +337,20 @@ test('a full page of habits clears its footer controls and every tile is reachab
   await expect(tiles(page).first()).toBeVisible();
   await report(page, 'narrow');
   await expectNoOverlap(page, 'narrow');
+  await expectTileTextFits(page, 'narrow');
   await expectEveryTileReachable(page, 'narrow');
+
+  // The smallest, shortest phone: text sized by width alone must still fit.
+  // The narrow pass left the grid scrolled to its end; start this one at the top.
+  await grid(page).evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  await page.setViewportSize(SMALL_VIEWPORT);
+  await expect(tiles(page).first()).toBeVisible();
+  await report(page, 'small');
+  await expectNoOverlap(page, 'small');
+  await expectTileTextFits(page, 'small');
+  await expectEveryTileReachable(page, 'small');
 
   await page.setViewportSize(WIDE_VIEWPORT);
 });
