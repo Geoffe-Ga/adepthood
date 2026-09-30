@@ -7,7 +7,15 @@ import { StyleSheet } from 'react-native';
 import { COLOR_PALETTE } from '../../data/colorPalette';
 import StageSelector from '../StageSelector';
 
-import { accent, BORDER_RADIUS, editorialType, ink, STAGE_ORDER, surface } from '@/design/tokens';
+import {
+  accent,
+  BORDER_RADIUS,
+  editorialType,
+  ink,
+  INTERACTIVE_TEXT_MIN,
+  STAGE_ORDER,
+  surface,
+} from '@/design/tokens';
 
 const flatten = (style: unknown): Record<string, unknown> =>
   StyleSheet.flatten(style as never) as Record<string, unknown>;
@@ -177,7 +185,7 @@ describe('StageSelector — filter variant', () => {
     expect(getByTestId('filter-3').props.accessibilityLabel).toBe('Stage 3');
   });
 
-  it('applies the fixed filter-chip text style', () => {
+  it('applies the filter-chip text style at the interactive floor', () => {
     const { getByText } = render(
       <StageSelector
         variant="filter"
@@ -187,7 +195,11 @@ describe('StageSelector — filter variant', () => {
       />,
     );
     const text = flatten(getByText('Stage 3').props.style);
-    expect(text).toEqual({ fontSize: 12, fontWeight: '600', color: ink.primary });
+    expect(text).toEqual({
+      fontSize: INTERACTIVE_TEXT_MIN,
+      fontWeight: '600',
+      color: ink.primary,
+    });
   });
 
   it('sets rowTestID on the wrapping row when provided', () => {

@@ -45,6 +45,7 @@ import { EmptyState } from '@/components/feedback/EmptyState';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import {
   BORDER_RADIUS,
+  INTERACTIVE_TEXT_MIN,
   SPACING,
   accent,
   colors,
@@ -871,7 +872,7 @@ const styles = StyleSheet.create({
     backgroundColor: surface.raised,
   },
   chipSelected: { backgroundColor: accent.primary, borderColor: accent.primary },
-  chipText: { fontSize: 12, color: ink.primary, fontWeight: '600' },
+  chipText: { fontSize: INTERACTIVE_TEXT_MIN, color: ink.primary, fontWeight: '600' },
   chipTextSelected: { color: accent.onPrimary },
   loadingBlock: { padding: SPACING.lg, alignItems: 'center' },
   errorBlock: { padding: SPACING.lg, alignItems: 'center', gap: SPACING.sm },
@@ -884,7 +885,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: surface.hairline,
   },
-  retryButtonText: { color: ink.primary, fontWeight: '600' },
+  retryButtonText: { color: ink.primary, fontWeight: '600', fontSize: INTERACTIVE_TEXT_MIN },
   section: { marginTop: SPACING.md },
   sectionTitle: {
     fontSize: 14,
@@ -921,7 +922,7 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.lg,
     ...surfaceShadow.card,
   },
-  rowUseText: { color: accent.onPrimary, fontWeight: '700', fontSize: 14 },
+  rowUseText: { color: accent.onPrimary, fontWeight: '700', fontSize: INTERACTIVE_TEXT_MIN },
   rowIcon: { fontSize: 24, width: 32, textAlign: 'center' },
   rowText: { flex: 1 },
   rowName: { fontSize: 15, fontWeight: '700', color: ink.primary },
@@ -931,3 +932,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 });
+
+/** The sheet, exported so the type-ramp test (#2963) can read every size it sets. */
+export { styles as catalogListStyles };

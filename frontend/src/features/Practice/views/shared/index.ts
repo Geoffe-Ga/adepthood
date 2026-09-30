@@ -1,4 +1,8 @@
-export { GroundingCompleteCard, groundingHeaderStyles } from './GroundingCompleteCard';
+export {
+  GroundingCompleteCard,
+  groundingCompleteStyles,
+  groundingHeaderStyles,
+} from './GroundingCompleteCard';
 export { MeditationCardShell } from './MeditationCardShell';
 export { SessionCtaButton } from './SessionCtaButton';
 export { SessionContainer } from './SessionContainer';
