@@ -4,6 +4,16 @@ import { StyleSheet } from 'react-native';
 import { legalFontSizes } from '../../../../e2e/textCensus';
 import { editorialType, INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
 import styles from '../Map.styles';
+import {
+  ARROW_LABEL_LADDER,
+  fitRightLabel,
+  fitStageLine,
+  fittedTitleFontSize,
+  MAP_ROWS,
+  STAGE_DISPLAY,
+  STAGE_LINE_LADDER,
+  STAGE_PERSONA_LADDER,
+} from '../mapLayout';
 import { stageExpressionsStyles } from '../StageExpressionsSection';
 
 /**
@@ -17,13 +27,8 @@ import { stageExpressionsStyles } from '../StageExpressionsSection';
 
 const PHONE_WIDTH = 390;
 const DESKTOP_WIDTH = 1280;
-/**
- * The one static size still off the ramp, owned by the fitted-grid follow-up to
- * #2960: at 13px the unlock estimate outgrows its half-lane at 390 and meets the
- * wave (map-legibility), so it moves with the fitted grid text, not here.
- */
-const PENDING_KEY = 'unlockTimeline';
-const PENDING_SIZE = 9;
+/** The widest window the fitted grid is swept across, a pixel at a time. */
+const WIDEST_SWEPT_WIDTH = 1600;
 /** DESIGN.md "One face per role": no Map region shows more than three sizes. */
 const MAX_SIZES_PER_REGION = 3;
 
@@ -134,10 +139,7 @@ describe('Map text is on the type ramp (#2960)', () => {
   });
 
   it('sets every static size, the grid ring included, on a step legal at both 390 and 1280', () => {
-    // Pinned to exactly the pending unlock estimate, so no other size can join it.
-    expect(offRamp(keysIn(['grid', 'lens', 'chrome', 'modal']))).toEqual([
-      `${PENDING_KEY}=${PENDING_SIZE}`,
-    ]);
+    expect(offRamp(keysIn(['grid', 'lens', 'chrome', 'modal']))).toEqual([]);
   });
 
   it('sets the grid ring stage copy in the sans ramp, the serif kept for the watermark alone', () => {
@@ -157,10 +159,52 @@ describe('Map text is on the type ramp (#2960)', () => {
   it.each(['grid', 'lens', 'chrome', 'modal'] as const)(
     'shows at most three sizes in the %s region',
     (region) => {
-      // The pending unlock estimate joins the grid's caption step once it is fitted.
-      const counted = keysIn([region]).filter((key) => key !== PENDING_KEY);
-      const sizes = new Set(counted.map(sizeOf));
+      const sizes = new Set(keysIn([region]).map(sizeOf));
       expect(sizes.size).toBeLessThanOrEqual(MAX_SIZES_PER_REGION);
     },
   );
+
+  it('fits the grid stage copy, aspect labels and watermark only to ramp steps at every width', () => {
+    const found = new Set<string>();
+    for (let width = 0; width <= WIDEST_SWEPT_WIDTH; width += 1) {
+      for (const [size, what] of fittedGridSizes(width)) {
+        if (!STATIC_LEGAL.has(size)) found.add(`${what}=${size}`);
+      }
+    }
+    expect([...found].sort()).toEqual([]);
+  });
+
+  it('shows at most three sizes in the grid ring at every width, the fitted ones included', () => {
+    // titleText's static size is always overridden by the fitted watermark size.
+    const statics = keysIn(['grid'])
+      .filter((key) => key !== 'titleText')
+      .map((key) => sizeOf(key) as number);
+    const crowded: string[] = [];
+    for (let width = 0; width <= WIDEST_SWEPT_WIDTH; width += 1) {
+      const sizes = new Set([...statics, ...fittedGridSizes(width).map(([size]) => size)]);
+      if (sizes.size > MAX_SIZES_PER_REGION) crowded.push(`${width}: ${[...sizes].join(',')}`);
+    }
+    expect(crowded).toEqual([]);
+  });
 });
+
+/** Every size the grid ring fits at render time for a cell ``width`` wide, with what it sizes. */
+function fittedGridSizes(width: number): Array<readonly [number, string]> {
+  const stages = Object.values(STAGE_DISPLAY).flatMap((display) => [
+    [fitStageLine(display.persona, width, STAGE_PERSONA_LADDER).fontSize, display.persona] as const,
+    [
+      fitStageLine(display.descriptor, width, STAGE_LINE_LADDER).fontSize,
+      display.descriptor,
+    ] as const,
+    [fitStageLine(display.practice, width, STAGE_LINE_LADDER).fontSize, display.practice] as const,
+    [
+      fitStageLine(display.arrowLabel, width, ARROW_LABEL_LADDER).fontSize,
+      display.arrowLabel,
+    ] as const,
+  ]);
+  const labels = MAP_ROWS.map(
+    (row) =>
+      [fitRightLabel(row.rightLabel, row.rightLabelLines, width).fontSize, row.rightLabel] as const,
+  );
+  return [...stages, ...labels, [fittedTitleFontSize(width), 'watermark'] as const];
+}

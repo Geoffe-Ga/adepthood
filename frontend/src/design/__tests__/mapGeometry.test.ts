@@ -1,5 +1,7 @@
 /* global describe, it, expect */
 import {
+  clipsItsText,
+  hiddenBelowFold,
   insideBox,
   insidePill,
   insideViewport,
@@ -118,6 +120,45 @@ describe('insideBox', () => {
     ['bottom', { x: 10, y: 41, w: 10, h: 10 }],
   ])('forgives a box past the %s edge by exactly the tolerance', (_edge, inner) => {
     expect(insideBox(inner, OUTER, TOLERANCE)).toBe(true);
+  });
+});
+
+describe('hiddenBelowFold', () => {
+  it('is zero for a Map that does not scroll, or has no scroller', () => {
+    expect(hiddenBelowFold(null)).toBe(0);
+    expect(hiddenBelowFold({ scrollHeight: 621, clientHeight: 621 })).toBe(0);
+  });
+
+  it('is how far the content runs past the window', () => {
+    expect(hiddenBelowFold({ scrollHeight: 674, clientHeight: 621 })).toBe(53);
+  });
+
+  it('never goes negative for content shorter than its window', () => {
+    expect(hiddenBelowFold({ scrollHeight: 600, clientHeight: 621 })).toBe(0);
+  });
+});
+
+describe('clipsItsText', () => {
+  /** A 48px line whose content fits its box exactly. */
+  const FITTED = { scrollWidth: 48, clientWidth: 48, scrollHeight: 18, clientHeight: 18 };
+
+  it('passes a line whose content fits its box exactly', () => {
+    expect(clipsItsText(FITTED, TOLERANCE)).toBe(false);
+  });
+
+  it.each([
+    ['width', { ...FITTED, scrollWidth: FITTED.clientWidth + TOLERANCE }],
+    ['height', { ...FITTED, scrollHeight: FITTED.clientHeight + TOLERANCE }],
+  ])('forgives content past its box in %s by exactly the tolerance', (_axis, run) => {
+    expect(clipsItsText(run, TOLERANCE)).toBe(false);
+  });
+
+  it.each([
+    // "Awareness" at 13px in a 320 phone's right cell: 56px of word in a 48px line.
+    ['width', { ...FITTED, scrollWidth: 56 }],
+    ['height', { ...FITTED, scrollHeight: FITTED.clientHeight + TOLERANCE + ONE_PX }],
+  ])('reports content cut by its box in %s', (_axis, run) => {
+    expect(clipsItsText(run, TOLERANCE)).toBe(true);
   });
 });
 
