@@ -6,7 +6,6 @@ import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import { settingsFormStyles } from './shared/settingsFormLayout';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { TitleHost } from '@/components/layout/TitleHost';
 import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
 
 /**
@@ -134,7 +133,6 @@ export default function ExportDataScreen(): React.JSX.Element {
 
   return (
     <ScreenScaffold scroll testID="export-data-screen">
-      <TitleHost title="Export my data" />
       <Text style={settingsFormStyles.body} testID="export-data-lead">
         {LEAD}
       </Text>

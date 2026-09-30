@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { render, within } from '@testing-library/react-native';
+import { render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -10,46 +10,29 @@ import { ScreenHeader } from '../ScreenHeader';
 const JEST_WINDOW_WIDTH = 750;
 
 /**
- * ``titleHidden`` (#2962): navigation paints the title, so the header paints
- * only its eyebrow and lead and keeps one header node named by the title.
+ * ``titleHidden`` (#2962): the stack header paints the title and is the
+ * screen's one heading for it, so the body paints no title and adds no header.
  */
 describe('ScreenHeader titleHidden', () => {
   const props = { eyebrow: 'Your account', title: 'Settings', lead: 'Manage it.' } as const;
 
-  it('does not paint the title, and keeps exactly one header named by it', () => {
-    const { queryByText, getAllByRole } = render(<ScreenHeader {...props} titleHidden />);
+  it('neither paints the title nor adds a header named by it', () => {
+    const { queryByText, queryAllByRole } = render(<ScreenHeader {...props} titleHidden />);
     expect(queryByText('Settings')).toBeNull();
-    expect(getAllByRole('header')).toHaveLength(1);
-    expect(getAllByRole('header', { name: 'Settings' })).toHaveLength(1);
+    expect(queryAllByRole('header')).toHaveLength(0);
+    expect(queryAllByRole('header', { name: 'Settings' })).toHaveLength(0);
   });
 
-  it('keeps the eyebrow and lead as ordinary text outside the header node', () => {
-    const { getByText, getByRole } = render(<ScreenHeader {...props} titleHidden />);
-    const host = getByRole('header', { name: 'Settings' });
-    expect(getByText('YOUR ACCOUNT')).toBeTruthy();
-    expect(getByText('Manage it.')).toBeTruthy();
-    expect(within(host).queryByText('YOUR ACCOUNT')).toBeNull();
-    expect(within(host).queryByText('Manage it.')).toBeNull();
-    expect(host.props.children).toBeUndefined();
-    expect(host.props.accessibilityHint).toBeUndefined();
+  it('keeps the eyebrow and lead as ordinary text', () => {
+    const { getByText } = render(<ScreenHeader {...props} titleHidden />);
+    expect(getByText('YOUR ACCOUNT').props.accessibilityRole).toBeUndefined();
+    expect(getByText('Manage it.').props.accessibilityRole).toBeUndefined();
   });
 
-  it('adds no focus target', () => {
-    const { getByRole } = render(<ScreenHeader {...props} titleHidden />);
-    const host = getByRole('header', { name: 'Settings' });
-    expect(host.props.tabIndex).toBeUndefined();
-    expect(host.props.focusable).toBeUndefined();
-  });
-
-  it('keeps the header node with neither eyebrow nor lead', () => {
-    const { getAllByRole, queryByText } = render(<ScreenHeader title="Settings" titleHidden />);
-    expect(getAllByRole('header', { name: 'Settings' })).toHaveLength(1);
+  it('adds no header with neither eyebrow nor lead', () => {
+    const { queryAllByRole, queryByText } = render(<ScreenHeader title="Settings" titleHidden />);
+    expect(queryAllByRole('header')).toHaveLength(0);
     expect(queryByText('Settings')).toBeNull();
-  });
-
-  it('names the host testID after the header testID', () => {
-    const { getByTestId } = render(<ScreenHeader {...props} titleHidden testID="hub-header" />);
-    expect(getByTestId('hub-header-title').props.accessibilityRole).toBe('header');
   });
 
   it('still paints the title in the display face as the header when the prop is omitted', () => {

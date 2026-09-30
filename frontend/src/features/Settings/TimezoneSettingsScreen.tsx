@@ -19,7 +19,6 @@ import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsFor
 
 import { ApiError, users } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { TitleHost } from '@/components/layout/TitleHost';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, ink, surface } from '@/design/tokens';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
@@ -173,7 +172,6 @@ const ScreenBody = ({
   onBack,
 }: ScreenBodyProps): React.JSX.Element => (
   <ScreenScaffold scroll testID="timezone-settings-screen">
-    <TitleHost title="Time zone" />
     <Text style={settingsFormStyles.body}>
       Streaks and daily stats count days in this time zone. Update it if you moved or if it was
       detected wrong at signup.

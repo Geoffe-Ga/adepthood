@@ -127,17 +127,17 @@ Eight rules, each one a reviewer can answer yes or no:
   trailing slot and makes the action the row's affordance, rather than
   spelling both out in one link.
 - **Navigation owns the screen title.** When the stack header paints a
-  screen's title, the body does not paint it again: it keeps a childless
-  `TitleHost` (or `ScreenHeader` with `titleHidden`) — one header node named by
-  the title, wrapping nothing, with no hint and no focus — and its eyebrow and
-  lead stay ordinary text that reads on its own (#2962). Only a screen that
-  moves focus to its heading on open wraps its lead in the host, as the feedback
-  composer's `ComposerHeading` does (#2956).
+  screen's title, it is that screen's one title heading: the body neither
+  paints the title again nor adds a header named by it, visible or not
+  (`ScreenHeader` takes `titleHidden`), because on web both render as `h1` and
+  a screen reader announces the title twice. The eyebrow and lead stay
+  ordinary text (#2962). A body heading that says something else — a
+  post-delete receipt, a form's own name that differs from the stack title —
+  stays, as a header.
 
 **Primitives** — reach for these before adding a bare `<Text>`:
 `components/layout/ScreenHeader.tsx` (eyebrow → title → lead, right `action`
-slot, `titleHidden` when navigation paints the title),
-`components/layout/TitleHost.tsx`, `components/layout/EditorialSection.tsx` (titled band),
+slot, `titleHidden` when navigation paints the title), `components/layout/EditorialSection.tsx` (titled band),
 `components/RadioOption.tsx`, `components/StatRow.tsx`,
 `components/TextField.tsx`, `components/Button.tsx` variants, and
 `features/Journal/ReflectionDismiss.tsx` with `variant="close"` (the icon-only

@@ -170,13 +170,13 @@ describe('SupportCareScreen — navigation owns the title (#2962)', () => {
     focus.expectNone();
   });
 
-  it('keeps the care eyebrow and lead as ordinary text, outside the title header', () => {
+  it('keeps the care eyebrow and lead as ordinary text, the care message its one header', () => {
     const screen = render(<SupportCareScreen />);
-    const host = screen.getByRole('header', { name: 'Support & care' });
-    expect(screen.getByText('STANDING CARE TITLE')).toBeTruthy();
     const lead = 'Support you can reach any time — not just when things are hard.';
-    expect(screen.getByText(lead)).toBeTruthy();
-    expect(within(host).queryByText('STANDING CARE TITLE')).toBeNull();
-    expect(within(host).queryByText(lead)).toBeNull();
+    expect(screen.getByText('STANDING CARE TITLE').props.accessibilityRole).toBeUndefined();
+    expect(screen.getByText(lead).props.accessibilityRole).toBeUndefined();
+    expect(screen.getAllByRole('header').map((node) => node.props.children)).toEqual([
+      'Support is available whenever you need it. Here are some people who can help.',
+    ]);
   });
 });

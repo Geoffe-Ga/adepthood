@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import DeleteAccountScreen from '../DeleteAccountScreen';
@@ -146,14 +146,14 @@ describe('DeleteAccountScreen — navigation owns the title (#2962)', () => {
     focus.expectNone();
   });
 
-  test('keeps the irreversible warning as its own text, outside the title header', () => {
+  test('opens on the irreversible warning as ordinary text, with no header in the body', () => {
     setAuthState();
     const screen = render(<DeleteAccountScreen />);
-    const host = screen.getByRole('header', { name: 'Delete account' });
     const warning = screen.getByTestId('delete-account-warning');
     expect(warning.props.children).toMatch(
       /^Deleting your account is immediate and irreversible\./,
     );
-    expect(within(host).queryByTestId('delete-account-warning')).toBeNull();
+    expect(warning.props.accessibilityRole).toBeUndefined();
+    expect(screen.queryAllByRole('header')).toHaveLength(0);
   });
 });
