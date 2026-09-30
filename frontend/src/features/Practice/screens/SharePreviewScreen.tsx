@@ -25,6 +25,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -34,7 +35,7 @@ import {
   type ShareLinkImportResponse,
   type ShareLinkPreviewResponse,
 } from '@/api/practiceShare';
-import { BORDER_RADIUS, SPACING, colors } from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, ink, type as typeRamp } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
@@ -124,9 +125,12 @@ function useSharePreview(token: string) {
 }
 
 function PreviewHeader({ preview }: { preview: ShareLinkPreviewResponse }) {
+  const { width } = useWindowDimensions();
   return (
     <View style={styles.headerBlock}>
-      <Text style={styles.heading}>{preview.name}</Text>
+      <Text style={[typeRamp(width).title, styles.heading]} accessibilityRole="header">
+        {preview.name}
+      </Text>
       {preview.created_by_display_name && (
         <Text style={styles.subHeading} testID="share-preview-sender">
           Shared by {preview.created_by_display_name}
@@ -332,10 +336,9 @@ const styles = StyleSheet.create({
   headerBlock: {
     marginBottom: SPACING.lg,
   },
+  /** Ink and spacing only: the face is ``type(width).title`` (#2962). */
   heading: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.text.primary,
+    color: ink.primary,
     marginBottom: SPACING.xs,
   },
   subHeading: {
@@ -424,3 +427,5 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
 });
+
+export { styles as sharePreviewStyles };

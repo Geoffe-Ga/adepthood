@@ -89,7 +89,7 @@ screen has one place it belongs, one edge it shares with its siblings, and one
 face for its role. Buttons and their rows are governed by `## Action rows`
 below (#2860); this section governs text and does not restate it.
 
-Seven rules, each one a reviewer can answer yes or no:
+Eight rules, each one a reviewer can answer yes or no:
 
 - **Scope.** A string lives inside the component whose subject it describes —
   a hint about an option sits inside that option's box, a page's word count
@@ -126,10 +126,21 @@ Seven rules, each one a reviewer can answer yes or no:
   ("4 prompts set aside — show them") puts the count in the eyebrow row's
   trailing slot and makes the action the row's affordance, rather than
   spelling both out in one link.
+- **Navigation owns the screen title.** When the stack header paints a
+  screen's title, it is that screen's one title heading: the body neither
+  paints the title again nor adds a header named by it, visible or not
+  (`ScreenHeader` takes `titleHidden`), because on web both render as `h1` and
+  a screen reader announces the title twice. The stack header is the title
+  heading on every platform: iOS and web mark it natively, and Android, whose
+  Toolbar title carries no heading, gets it through the header-role
+  `headerTitle` in `NAV_SCREEN_OPTIONS` (`navigation/navScreenOptions.tsx`).
+  The eyebrow and lead stay ordinary text (#2962). A body heading that says something else — a
+  post-delete receipt, a form's own name that differs from the stack title —
+  stays, as a header.
 
 **Primitives** — reach for these before adding a bare `<Text>`:
 `components/layout/ScreenHeader.tsx` (eyebrow → title → lead, right `action`
-slot), `components/layout/EditorialSection.tsx` (titled band),
+slot, `titleHidden` when navigation paints the title), `components/layout/EditorialSection.tsx` (titled band),
 `components/RadioOption.tsx`, `components/StatRow.tsx`,
 `components/TextField.tsx`, `components/Button.tsx` variants, and
 `features/Journal/ReflectionDismiss.tsx` with `variant="close"` (the icon-only

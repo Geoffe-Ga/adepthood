@@ -6,6 +6,13 @@ import { accent, ink, rhythm, type as typeRamp } from '@/design/tokens';
 interface ScreenHeaderProps {
   /** The serif display title (rendered with `accessibilityRole="header"`). */
   title: string;
+  /**
+   * Set when the stack header already paints ``title`` (#2962): navigation is
+   * then the screen's one title heading, so the body paints no title and adds
+   * no header node for it -- a second one would announce the title twice. The
+   * eyebrow and lead still render as ordinary text.
+   */
+  titleHidden?: boolean;
   /** Small-caps caption above the title. */
   eyebrow?: string;
   /** Optional lead paragraph beneath the title. */
@@ -24,6 +31,7 @@ const EYEBROW_LETTER_SPACING = 1.5;
  */
 export const ScreenHeader = ({
   title,
+  titleHidden,
   eyebrow,
   lead,
   action,
@@ -35,9 +43,11 @@ export const ScreenHeader = ({
     <View style={styles.row} testID={testID}>
       <View style={styles.text}>
         {eyebrow ? <Text style={[t.caption, styles.eyebrow]}>{eyebrow.toUpperCase()}</Text> : null}
-        <Text style={[t.display, styles.title]} accessibilityRole="header">
-          {title}
-        </Text>
+        {titleHidden ? null : (
+          <Text style={[t.display, styles.title]} accessibilityRole="header">
+            {title}
+          </Text>
+        )}
         {lead ? <Text style={[t.body, styles.lead]}>{lead}</Text> : null}
       </View>
       {action ? <View style={styles.action}>{action}</View> : null}

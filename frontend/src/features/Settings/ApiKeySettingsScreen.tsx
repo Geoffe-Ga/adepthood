@@ -7,6 +7,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -17,9 +18,9 @@ import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
   SETTINGS_BUTTON_PADDING,
-  SETTINGS_CARD_LABEL_LETTER_SPACING,
   SETTINGS_MONOSPACE_FONT,
   settingsFormStyles,
+  settingsFormType,
 } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
@@ -108,22 +109,25 @@ const StoredKeyCard = ({
   apiKey,
   disabled,
   onRequestRemove,
-}: StoredKeyCardProps): React.JSX.Element => (
-  <View style={styles.storedCard} testID="stored-key-card">
-    <Text style={styles.storedLabel}>Stored on this device</Text>
-    <Text style={styles.storedValue}>{maskKey(apiKey)}</Text>
-    <TouchableOpacity
-      onPress={onRequestRemove}
-      style={[styles.button, styles.destructiveButton]}
-      disabled={disabled}
-      testID="remove-key-button"
-      accessibilityLabel="Remove stored API key"
-      accessibilityRole="button"
-    >
-      <Text style={styles.destructiveButtonText}>Remove key</Text>
-    </TouchableOpacity>
-  </View>
-);
+}: StoredKeyCardProps): React.JSX.Element => {
+  const face = settingsFormType(useWindowDimensions().width);
+  return (
+    <View style={styles.storedCard} testID="stored-key-card">
+      <Text style={[face.cardLabel, settingsFormStyles.cardLabel]}>Stored on this device</Text>
+      <Text style={styles.storedValue}>{maskKey(apiKey)}</Text>
+      <TouchableOpacity
+        onPress={onRequestRemove}
+        style={[styles.button, styles.destructiveButton]}
+        disabled={disabled}
+        testID="remove-key-button"
+        accessibilityLabel="Remove stored API key"
+        accessibilityRole="button"
+      >
+        <Text style={styles.destructiveButtonText}>Remove key</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 interface KeyInputRowProps {
   draft: string;
@@ -225,17 +229,22 @@ interface ScreenBodyProps {
   onOpenTimezone?: () => void;
 }
 
-const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => (
-  <>
-    <Text style={settingsFormStyles.title}>BotMason API Key</Text>
-    <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
-    {!apiKey && (
-      <Text style={styles.hint} testID="no-key-hint">
-        No key saved yet. BotMason will use the shared server key if one is configured.
+const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => {
+  const face = settingsFormType(useWindowDimensions().width);
+  return (
+    <>
+      <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
+        BotMason API Key
       </Text>
-    )}
-  </>
-);
+      <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
+      {!apiKey && (
+        <Text style={styles.hint} testID="no-key-hint">
+          No key saved yet. BotMason will use the shared server key if one is configured.
+        </Text>
+      )}
+    </>
+  );
+};
 
 const ProviderDirectory = (): React.JSX.Element => (
   <View style={styles.providerSection} testID="provider-directory">
@@ -484,12 +493,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
     backgroundColor: surface.raised,
   },
-  storedLabel: {
-    fontSize: 12,
-    color: ink.muted,
-    textTransform: 'uppercase',
-    letterSpacing: SETTINGS_CARD_LABEL_LETTER_SPACING,
-  },
   storedValue: {
     fontSize: 18,
     fontFamily: SETTINGS_MONOSPACE_FONT,
@@ -550,3 +553,5 @@ const styles = StyleSheet.create({
   providerHint: { fontSize: 13, color: ink.soft, marginTop: PROVIDER_HINT_MARGIN_TOP },
   detected: { color: colors.successText, marginBottom: SPACING.md, fontSize: 13 },
 });
+
+export { styles as apiKeySettingsStyles };

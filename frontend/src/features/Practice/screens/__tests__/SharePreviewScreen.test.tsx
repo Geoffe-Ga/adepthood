@@ -2,9 +2,11 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { Dimensions, StyleSheet } from 'react-native';
 
 import { ApiError } from '@/api';
 import type { ShareLinkImportResponse, ShareLinkPreviewResponse } from '@/api/practiceShare';
+import { ink, type as typeRamp } from '@/design/tokens';
 
 const samplePreview: ShareLinkPreviewResponse = {
   practice_id: 99,
@@ -160,5 +162,15 @@ describe('SharePreviewScreen', () => {
     await waitFor(() => {
       expect(mockPreview).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('heads the preview with the practice name in the ramp title face, in ink (#2962)', async () => {
+    mockPreview.mockResolvedValueOnce(samplePreview);
+    const { view } = renderScreen();
+    const heading = await view.findByRole('header', { name: samplePreview.name });
+    const style = StyleSheet.flatten(heading.props.style);
+    expect(style.fontSize).toBe(typeRamp(Dimensions.get('window').width).title.fontSize);
+    expect(style.fontFamily).toBe(typeRamp(Dimensions.get('window').width).title.fontFamily);
+    expect(style.color).toBe(ink.primary);
   });
 });

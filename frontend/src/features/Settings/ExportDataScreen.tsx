@@ -133,7 +133,6 @@ export default function ExportDataScreen(): React.JSX.Element {
 
   return (
     <ScreenScaffold scroll testID="export-data-screen">
-      <Text style={settingsFormStyles.title}>Export my data</Text>
       <Text style={settingsFormStyles.body} testID="export-data-lead">
         {LEAD}
       </Text>
@@ -200,3 +199,5 @@ const styles = StyleSheet.create({
   },
   listItem: { fontSize: 14, lineHeight: 20, color: ink.soft, marginBottom: SPACING.xs },
 });
+
+export { styles as exportDataStyles };
