@@ -13,7 +13,9 @@
  * match the supplied spiral PNG rather than the app-wide spiral-dynamics swatches.
  */
 
-import { isLeftReturning } from './stageData';
+import { editorialType, uiType } from '../../design/tokens';
+
+import { isLeftReturning, STAGE_COUNT } from './stageData';
 
 /** Flex weights of each stage row's three cells (left / center / right). */
 export const GRID_COLUMN_FLEX = { left: 2, center: 2, right: 1 } as const;
@@ -46,7 +48,7 @@ export interface StageDisplay {
 export interface MapRow {
   /** Aspect-of-wholeness label shown in the right column. */
   rightLabel: string;
-  /** Pre-hyphenated right-column label lines (<= 2), avoiding shrink-to-fit. */
+  /** Pre-hyphenated right-column label lines (<= 2), for a cell the whole word fits at no ramp step. */
   rightLabelLines: readonly string[];
   /** Stage numbers contained in this row, ordered top → bottom. */
   stageNumbers: readonly number[];
@@ -55,11 +57,39 @@ export interface MapRow {
 /** The serif title across the top of the spiral (top → bottom). */
 export const MAP_TITLE_LINES = ['EMPTINESS', 'UNITY'] as const;
 
-/** Ceiling for the title watermark — ``editorialType.title``'s 26px. */
-export const TITLE_MAX_FONT_SIZE = 26;
+// --- Fitting grid copy to the type ramp (#2960) ------------------------------
+// Every fitted size is a Candle & Ink step, never an integer in between: a line
+// steps down its ladder until it fits, and copy that fits nowhere on the ramp
+// wraps at the floor rather than shrinking off it.
 
-/** Floor below which the watermark would stop reading as a title. */
-export const TITLE_MIN_FONT_SIZE = 12;
+/** Every size the ramp sets at any width: the editorial faces and the button face. */
+const RAMP_STEPS: readonly number[] = [
+  editorialType.display.fontSize,
+  editorialType.title.fontSize,
+  editorialType.heading.fontSize,
+  editorialType.body.fontSize,
+  editorialType.note.fontSize,
+  editorialType.caption.fontSize,
+  editorialType.action.fontSize,
+  editorialType.marginNote.fontSize,
+  uiType.button.fontSize,
+];
+
+/** The ramp's steps from ``max`` down to ``min``, largest first, each once. */
+const rampBetween = (max: number, min: number): readonly number[] =>
+  [...new Set(RAMP_STEPS)].filter((step) => step >= min && step <= max).sort((a, b) => b - a);
+
+/** The floor of every fitted line: the caption, the smallest step on the ramp. */
+const FIT_FLOOR = editorialType.caption.fontSize;
+
+/** Ceiling for the title watermark: ``editorialType.title``. */
+export const TITLE_MAX_FONT_SIZE = editorialType.title.fontSize;
+
+/** Floor for the title watermark: the caption, below which it leaves the ramp. */
+export const TITLE_MIN_FONT_SIZE = FIT_FLOOR;
+
+/** The watermark's ladder: every ramp step from the title face down to the caption. */
+export const TITLE_LADDER = rampBetween(TITLE_MAX_FONT_SIZE, TITLE_MIN_FONT_SIZE);
 
 /** Letter spacing (px) the title style renders with; part of the fit budget. */
 export const TITLE_LETTER_SPACING = 1;
@@ -79,122 +109,145 @@ const TITLE_GLYPH_EM_WIDTH = 0.72;
  */
 export const MIXED_CASE_GLYPH_EM_WIDTH = 0.62;
 
-/** How a single line of copy is allowed to shrink: its glyph budget and its bounds. */
-interface FitBudget {
+/** A line's glyph budget: how wide each glyph runs at a given size. */
+interface GlyphBudget {
   /** Average glyph advance width in ems. */
   em: number;
-  /** Size below which the line would stop reading. */
-  min: number;
-  /** The line's standard size; copy that already fits renders at exactly this. */
-  max: number;
   /** Per-glyph letter spacing the style renders with, in px. */
   letterSpacing: number;
 }
 
+/** The mixed-case budget the stage copy, arrow labels and aspect labels share. */
+const MIXED_CASE_BUDGET: GlyphBudget = { em: MIXED_CASE_GLYPH_EM_WIDTH, letterSpacing: 0 };
+
+/** A ladder step and whether the line fits the width on one line at it. */
+interface LadderFit {
+  fontSize: number;
+  fits: boolean;
+}
+
 /**
- * Largest size within ``budget`` at which ``text`` fits ``width`` on one line.
+ * The largest step of ``ladder`` (sizes, largest first) at which ``text`` fits
+ * ``width`` on one line, or the ladder's floor with ``fits: false`` when no
+ * step does.
  *
- * The one estimator behind every fitted line on the Map — title watermark,
- * aspect label, stage copy — which differ only in the budget they hand it. The
- * native ``adjustsFontSizeToFit`` is a no-op on react-native-web, so this
- * deterministic size is the real single-line guarantee everywhere. An
- * unmeasured width (<= 0) or empty text renders at the ceiling until layout
- * reports.
+ * The one estimator behind every fitted line on the Map -- title watermark,
+ * aspect label, stage copy -- which differ only in their budget and ladder.
+ * The native ``adjustsFontSizeToFit`` is a no-op on react-native-web and
+ * shrinks off the ramp on native, so this deterministic step is the fit
+ * everywhere. An unmeasured width (<= 0) or empty text takes the top step
+ * until layout reports.
  */
-const fitToWidth = (text: string, width: number, budget: FitBudget): number => {
-  if (width <= 0 || text.length === 0) return budget.max;
-  const glyphBudget = width - budget.letterSpacing * text.length;
-  const fitted = Math.floor(glyphBudget / (text.length * budget.em));
-  return Math.max(budget.min, Math.min(budget.max, fitted));
+const fitToLadder = (
+  text: string,
+  width: number,
+  budget: GlyphBudget,
+  ladder: readonly number[],
+): LadderFit => {
+  const top = ladder[0] ?? FIT_FLOOR;
+  if (width <= 0 || text.length === 0) return { fontSize: top, fits: true };
+  const step = ladder.find(
+    (size) => text.length * (size * budget.em + budget.letterSpacing) <= width,
+  );
+  return step === undefined
+    ? { fontSize: ladder.at(-1) ?? FIT_FLOOR, fits: false }
+    : { fontSize: step, fits: true };
 };
 
+/** The longest title line, which sets the one size both lines share. */
+const LONGEST_TITLE_LINE = MAP_TITLE_LINES.reduce((longest, line) =>
+  line.length > longest.length ? line : longest,
+);
+
 /**
- * Largest font size (capped at ``TITLE_MAX_FONT_SIZE``) at which ``title``
- * fits ``width`` on a single line — EMPTINESS / UNITY must never truncate or
- * hyphenate on any target.
+ * The watermark's size for a center cell ``width`` wide: the largest step at
+ * which the LONGEST title line fits on one line, so EMPTINESS and UNITY always
+ * read at one size -- one face per role -- and neither truncates or hyphenates.
  */
-export const fittedTitleFontSize = (title: string, width: number): number =>
-  fitToWidth(title, width, {
-    em: TITLE_GLYPH_EM_WIDTH,
-    min: TITLE_MIN_FONT_SIZE,
-    max: TITLE_MAX_FONT_SIZE,
-    letterSpacing: TITLE_LETTER_SPACING,
-  });
+export const fittedTitleFontSize = (width: number): number =>
+  fitToLadder(
+    LONGEST_TITLE_LINE,
+    width,
+    { em: TITLE_GLYPH_EM_WIDTH, letterSpacing: TITLE_LETTER_SPACING },
+    TITLE_LADDER,
+  ).fontSize;
 
-/** Ceiling for a right-column aspect label — the legacy fixed size (15px). */
-export const RIGHT_LABEL_MAX_FONT_SIZE = 15;
+/** Ceiling for a right-column aspect label: ``editorialType.marginNote``. */
+export const RIGHT_LABEL_MAX_FONT_SIZE = editorialType.marginNote.fontSize;
 
-/** Floor below which an aspect label would stop reading as a label. */
-export const RIGHT_LABEL_MIN_FONT_SIZE = 9;
+/** Floor for an aspect label: the caption. */
+export const RIGHT_LABEL_MIN_FONT_SIZE = FIT_FLOOR;
 
-/** Line-height multiple the aspect label renders at — the legacy 19/15 rhythm. */
-export const RIGHT_LABEL_LINE_HEIGHT_RATIO = 19 / RIGHT_LABEL_MAX_FONT_SIZE;
+/** The aspect label's ladder, ceiling to floor. */
+export const RIGHT_LABEL_LADDER = rampBetween(RIGHT_LABEL_MAX_FONT_SIZE, RIGHT_LABEL_MIN_FONT_SIZE);
 
-/** Largest size (<= ceiling) at which ``line`` fits ``width`` on one line. */
-const fittedLabelLineFontSize = (line: string, width: number): number =>
-  fitToWidth(line, width, {
-    em: MIXED_CASE_GLYPH_EM_WIDTH,
-    min: RIGHT_LABEL_MIN_FONT_SIZE,
-    max: RIGHT_LABEL_MAX_FONT_SIZE,
-    letterSpacing: 0,
-  });
-
-/** Whether ``line`` at ``fontSize`` fits within ``width`` by the em estimate. */
-const labelLineFits = (line: string, fontSize: number, width: number): boolean =>
-  line.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH <= width;
+/** Line-height multiple the aspect label renders at: its margin-note face's rhythm. */
+export const RIGHT_LABEL_LINE_HEIGHT_RATIO =
+  editorialType.marginNote.lineHeight / editorialType.marginNote.fontSize;
 
 /**
- * Fits a right-column aspect label to its measured cell width. The label is
- * preferred on a single
- * un-hyphenated line, shrinking from the ceiling toward the floor until it fits;
- * only when even the floor size overflows does it fall back to the row's
- * pre-hyphenated ``fallbackLines`` (each fitted to the same cell). An unmeasured
- * width (<= 0) renders the full label at the ceiling until layout reports.
+ * Fits a right-column aspect label to its measured cell width. The whole label
+ * is preferred on one un-hyphenated line at the largest step it fits; only when
+ * it fits no step does it fall back to the row's pre-hyphenated
+ * ``fallbackLines``, which share the largest step their longest line fits (the
+ * floor when none does). The fit only sizes the label: the caller never caps a
+ * line's count, so a line that runs wider than the glyph estimate on some
+ * serif face wraps instead of being cut to an ellipsis, while a line that fits
+ * stays on one line. An unmeasured width (<= 0) renders the whole label at the
+ * ceiling until layout reports.
  */
 export const fitRightLabel = (
   label: string,
   fallbackLines: readonly string[],
   width: number,
 ): { lines: string[]; fontSize: number } => {
-  if (width <= 0) return { lines: [label], fontSize: RIGHT_LABEL_MAX_FONT_SIZE };
-
-  const singleFontSize = fittedLabelLineFontSize(label, width);
-  if (labelLineFits(label, singleFontSize, width)) {
-    return { lines: [label], fontSize: singleFontSize };
-  }
-
-  // Even at the floor the single word overflows — use the pre-hyphenated lines,
-  // sized to the largest font at which the longest of them still fits.
+  const whole = fitToLadder(label, width, MIXED_CASE_BUDGET, RIGHT_LABEL_LADDER);
+  if (whole.fits) return { lines: [label], fontSize: whole.fontSize };
   const fallbackFontSize = Math.min(
-    ...fallbackLines.map((line) => fittedLabelLineFontSize(line, width)),
+    ...fallbackLines.map(
+      (line) => fitToLadder(line, width, MIXED_CASE_BUDGET, RIGHT_LABEL_LADDER).fontSize,
+    ),
   );
   return { lines: [...fallbackLines], fontSize: fallbackFontSize };
 };
 
-/** Ceiling for the bold persona line — the legacy fixed size (14px). */
-export const STAGE_PERSONA_MAX_FONT_SIZE = 14;
+/** Ceiling for the bold persona line: ``editorialType.marginNote``. */
+export const STAGE_PERSONA_MAX_FONT_SIZE = editorialType.marginNote.fontSize;
 
-/** Ceiling for the descriptor / practice lines — the legacy fixed size (12px). */
-export const STAGE_LINE_MAX_FONT_SIZE = 12;
+/** Ceiling for the descriptor / practice lines: the caption. */
+export const STAGE_LINE_MAX_FONT_SIZE = editorialType.caption.fontSize;
 
-/** Ceiling for the center arrow label — the legacy fixed size (12px). */
-export const ARROW_LABEL_MAX_FONT_SIZE = 12;
+/** Ceiling for the center arrow label: the caption. */
+export const ARROW_LABEL_MAX_FONT_SIZE = editorialType.caption.fontSize;
 
-/** Floor below which the stage text would stop reading as legible copy. */
-export const STAGE_TEXT_MIN_FONT_SIZE = 9;
+/** Floor for all stage copy: the caption. */
+export const STAGE_TEXT_MIN_FONT_SIZE = FIT_FLOOR;
+
+/** The persona's ladder, ceiling to floor. */
+export const STAGE_PERSONA_LADDER = rampBetween(
+  STAGE_PERSONA_MAX_FONT_SIZE,
+  STAGE_TEXT_MIN_FONT_SIZE,
+);
+
+/** The descriptor / practice lines' ladder: the caption alone. */
+export const STAGE_LINE_LADDER = rampBetween(STAGE_LINE_MAX_FONT_SIZE, STAGE_TEXT_MIN_FONT_SIZE);
+
+/** The arrow label's ladder: the caption alone. */
+export const ARROW_LABEL_LADDER = rampBetween(ARROW_LABEL_MAX_FONT_SIZE, STAGE_TEXT_MIN_FONT_SIZE);
 
 /**
- * Largest size (<= ``maxFontSize``, the line's standard size) at which ``text``
- * fits ``width`` on one line. The standard size is the ceiling — text that
- * already fits renders at exactly that size — and the floor guards legibility.
+ * A stage line's fitted size and line budget: one line when it fits a step of
+ * its ladder, or no cap (``undefined``) when it fits none, so copy too long for
+ * the floor wraps inside its cell instead of truncating or leaving the ramp.
  */
-export const fitStageText = (text: string, width: number, maxFontSize: number): number =>
-  fitToWidth(text, width, {
-    em: MIXED_CASE_GLYPH_EM_WIDTH,
-    min: STAGE_TEXT_MIN_FONT_SIZE,
-    max: maxFontSize,
-    letterSpacing: 0,
-  });
+export const fitStageLine = (
+  text: string,
+  width: number,
+  ladder: readonly number[],
+): { fontSize: number; numberOfLines: 1 | undefined } => {
+  const { fontSize, fits } = fitToLadder(text, width, MIXED_CASE_BUDGET, ladder);
+  return { fontSize, numberOfLines: fits ? 1 : undefined };
+};
 
 /**
  * The title line each top stage carries in its own grid row (no absolute
@@ -309,10 +362,10 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
  * "feminine" stage above a warm-color "masculine" stage.
  */
 export const MAP_ROWS: readonly MapRow[] = [
-  { rightLabel: 'Awareness', rightLabelLines: ['Awareness'], stageNumbers: [10] },
+  { rightLabel: 'Awareness', rightLabelLines: ['Aware-', 'ness'], stageNumbers: [10] },
   { rightLabel: 'Being', rightLabelLines: ['Being'], stageNumbers: [9] },
   { rightLabel: 'Wisdom', rightLabelLines: ['Wisdom'], stageNumbers: [8, 7] },
-  { rightLabel: 'Understanding', rightLabelLines: ['Understanding'], stageNumbers: [6, 5] },
+  { rightLabel: 'Understanding', rightLabelLines: ['Under-', 'standing'], stageNumbers: [6, 5] },
   { rightLabel: 'Love', rightLabelLines: ['Love'], stageNumbers: [4, 3] },
   { rightLabel: 'Yes-And-Ness', rightLabelLines: ['Yes-And-', 'Ness'], stageNumbers: [2, 1] },
 ];
@@ -328,6 +381,20 @@ export const MAP_ROWS: readonly MapRow[] = [
  */
 export const labelCorner = (stageNumber: number): 'left' | 'right' =>
   isLeftReturning(stageNumber) ? 'right' : 'left';
+
+/**
+ * Whether the current stage's cell is held to the lens's height (#2960). The
+ * lens rests centred on the current stage, and the grid's edges push it off
+ * centre -- the bottom edge up into stage 2's aspect label and unlock copy -- so
+ * a current stage's cell is at least ``LENS_MIN_HEIGHT`` and the caption stays
+ * in its own stage. The top stage is the exception: the top edge pushes the
+ * lens down onto stage 9, whose center cell then carries only its UNITY
+ * watermark, an intended cover (stage 9 is unlocked once stage 10 is current,
+ * and a title stage wears no aspect label). Holding it anyway lengthened the
+ * completed Map and pushed Begin again's button below a desktop window's fold.
+ */
+export const currentStageHoldsLensRoom = (stageNumber: number): boolean =>
+  stageNumber !== STAGE_COUNT;
 
 /**
  * Which corner of the center cell a locked stage's note (padlock + unlock

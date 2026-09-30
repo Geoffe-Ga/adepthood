@@ -1,10 +1,12 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { ink, surface } from '../../../design/tokens';
+import { editorialType, ink, surface, uiType } from '../../../design/tokens';
 import {
+  ARROW_LABEL_LADDER,
   ARROW_LABEL_MAX_FONT_SIZE,
+  currentStageHoldsLensRoom,
   fitRightLabel,
-  fitStageText,
+  fitStageLine,
   fittedTitleFontSize,
   labelCorner,
   noteCorner,
@@ -12,11 +14,16 @@ import {
   MAP_TITLE_LINES,
   MIXED_CASE_GLYPH_EM_WIDTH,
   RIGHT_LABEL_MAX_FONT_SIZE,
+  RIGHT_LABEL_LADDER,
   RIGHT_LABEL_MIN_FONT_SIZE,
   STAGE_DISPLAY,
+  STAGE_LINE_LADDER,
   STAGE_LINE_MAX_FONT_SIZE,
+  STAGE_PERSONA_LADDER,
   STAGE_PERSONA_MAX_FONT_SIZE,
   STAGE_TEXT_MIN_FONT_SIZE,
+  TITLE_BY_STAGE,
+  TITLE_LADDER,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
 } from '../mapLayout';
@@ -100,7 +107,7 @@ describe('mapLayout', () => {
 
   it('gives every two-line right-label fallback two hyphenated lines, each within the cell width', () => {
     // Single-line fallbacks (the common case) carry the full, un-truncated
-    // word instead: fitRightLabel shrinks its font size to fit at render
+    // word instead: fitRightLabel steps it down the ramp to fit at render
     // time, so they are not bound by the old fixed-width hyphenation budget.
     MAP_ROWS.forEach((row) => {
       expect(row.rightLabelLines.length).toBeGreaterThanOrEqual(1);
@@ -120,10 +127,16 @@ describe('mapLayout', () => {
     });
   });
 
-  it('keeps Understanding as a single un-hyphenated fallback line (fitRightLabel shrinks it to fit)', () => {
-    const lines = findRowByLabel('Understanding').rightLabelLines;
-    expect(lines).toEqual(['Understanding']);
-    lines.forEach((line) => expect(line).not.toContain('-'));
+  it('hyphenates Understanding as Under- / standing, for a cell too narrow for the word on the ramp', () => {
+    // fitRightLabel still prefers the whole word wherever it fits at 13px or more.
+    expect(findRowByLabel('Understanding').rightLabelLines).toEqual(['Under-', 'standing']);
+  });
+
+  it('hyphenates Awareness as Aware- / ness, for every cell narrower than the word estimated at the floor', () => {
+    // Awareness at 13px: 9 * 13 * 0.62 = 72.54, so the fit takes these lines
+    // in every right cell narrower than that: every standard phone, 320 to
+    // 414 wide, not only the narrowest. A deliberate look change (#2960).
+    expect(findRowByLabel('Awareness').rightLabelLines).toEqual(['Aware-', 'ness']);
   });
 
   it('hyphenates Yes-And-Ness as Yes-And- / Ness', () => {
@@ -184,70 +197,189 @@ describe('noteCorner', () => {
   });
 });
 
+/** Every size the Candle & Ink ramp sets whatever the width: ``editorialType`` and the button face. */
+const RAMP_STEPS = new Set([
+  editorialType.display.fontSize,
+  editorialType.title.fontSize,
+  editorialType.heading.fontSize,
+  editorialType.body.fontSize,
+  editorialType.note.fontSize,
+  editorialType.caption.fontSize,
+  editorialType.action.fontSize,
+  editorialType.marginNote.fontSize,
+  uiType.button.fontSize,
+]);
+const RAMP_FLOOR = editorialType.caption.fontSize;
+/** A hair under a fit's exact edge, to prove the step changes there and not before. */
+const JUST_UNDER = 0.01;
+
+describe('the fitted grid sizes are ramp steps (#2960)', () => {
+  const BOUNDS = {
+    TITLE_MAX_FONT_SIZE,
+    TITLE_MIN_FONT_SIZE,
+    RIGHT_LABEL_MAX_FONT_SIZE,
+    RIGHT_LABEL_MIN_FONT_SIZE,
+    STAGE_PERSONA_MAX_FONT_SIZE,
+    STAGE_LINE_MAX_FONT_SIZE,
+    ARROW_LABEL_MAX_FONT_SIZE,
+    STAGE_TEXT_MIN_FONT_SIZE,
+  };
+
+  it.each(Object.entries(BOUNDS))(
+    '%s (%i) is a ramp step no smaller than the caption',
+    (_, size) => {
+      expect(RAMP_STEPS.has(size)).toBe(true);
+      expect(size).toBeGreaterThanOrEqual(RAMP_FLOOR);
+    },
+  );
+
+  it('reads each bound off the face it names', () => {
+    expect(TITLE_MAX_FONT_SIZE).toBe(editorialType.title.fontSize);
+    expect(RIGHT_LABEL_MAX_FONT_SIZE).toBe(editorialType.marginNote.fontSize);
+    expect(STAGE_PERSONA_MAX_FONT_SIZE).toBe(editorialType.marginNote.fontSize);
+    expect(STAGE_LINE_MAX_FONT_SIZE).toBe(editorialType.caption.fontSize);
+    expect(ARROW_LABEL_MAX_FONT_SIZE).toBe(editorialType.caption.fontSize);
+    for (const floor of [
+      TITLE_MIN_FONT_SIZE,
+      RIGHT_LABEL_MIN_FONT_SIZE,
+      STAGE_TEXT_MIN_FONT_SIZE,
+    ]) {
+      expect(floor).toBe(editorialType.caption.fontSize);
+    }
+  });
+
+  it('walks each ladder down every ramp step between its bounds, and no other size', () => {
+    expect(TITLE_LADDER).toEqual([26, 20, 18, 16, 15, 14, 13]);
+    expect(STAGE_PERSONA_LADDER).toEqual([14, 13]);
+    expect(RIGHT_LABEL_LADDER).toEqual([14, 13]);
+    expect(STAGE_LINE_LADDER).toEqual([13]);
+    expect(ARROW_LABEL_LADDER).toEqual([13]);
+    expect(TITLE_LADDER[0]).toBe(TITLE_MAX_FONT_SIZE);
+    expect(TITLE_LADDER.at(-1)).toBe(TITLE_MIN_FONT_SIZE);
+  });
+});
+
 describe('fittedTitleFontSize', () => {
   // The conservative glyph-advance estimate the fit is computed against; a
   // fitted size is correct when estimated line width never exceeds the cell.
   const GLYPH_EM_WIDTH = 0.72;
   const LETTER_SPACING = 1;
+  /** A title line's estimated width at ``fontSize``: its glyph advances plus its letter spacing. */
   const estimatedWidth = (title: string, fontSize: number): number =>
-    title.length * fontSize * GLYPH_EM_WIDTH + title.length * LETTER_SPACING;
+    title.length * (fontSize * GLYPH_EM_WIDTH + LETTER_SPACING);
+  const LONGEST_TITLE = 'EMPTINESS';
 
   it('renders at the ceiling before layout reports a width', () => {
-    expect(fittedTitleFontSize('EMPTINESS', 0)).toBe(TITLE_MAX_FONT_SIZE);
+    expect(fittedTitleFontSize(0)).toBe(TITLE_MAX_FONT_SIZE);
   });
 
-  it('caps a short word in a wide cell at the type ramp ceiling', () => {
-    expect(fittedTitleFontSize('UNITY', 400)).toBe(TITLE_MAX_FONT_SIZE);
+  it('holds the ceiling wherever the longest title line fits it', () => {
+    expect(fittedTitleFontSize(1000)).toBe(TITLE_MAX_FONT_SIZE);
   });
 
-  it('shrinks EMPTINESS so its estimated width fits a phone-width center cell', () => {
-    for (const width of [120, 140, 160, 200]) {
-      const size = fittedTitleFontSize('EMPTINESS', width);
-      expect(size).toBeLessThanOrEqual(TITLE_MAX_FONT_SIZE);
-      expect(estimatedWidth('EMPTINESS', size)).toBeLessThanOrEqual(width);
-    }
+  it('steps down the ramp at the exact width the longer line stops fitting', () => {
+    // EMPTINESS at 20px: 9 * (20 * 0.72 + 1) = 138.6.
+    const edge = estimatedWidth(LONGEST_TITLE, editorialType.heading.fontSize);
+    expect(fittedTitleFontSize(edge)).toBe(editorialType.heading.fontSize);
+    expect(fittedTitleFontSize(edge - JUST_UNDER)).toBe(editorialType.body.fontSize);
   });
 
-  it('never shrinks below the legibility floor', () => {
-    expect(fittedTitleFontSize('EMPTINESS', 10)).toBe(TITLE_MIN_FONT_SIZE);
+  it('sizes EMPTINESS and UNITY together, off the longer line, so the watermark shows one size', () => {
+    // A phone's center cell: UNITY alone would fit 26, EMPTINESS only 20.
+    const PHONE_CELL = 142;
+    expect(fittedTitleFontSize(PHONE_CELL)).toBe(editorialType.heading.fontSize);
+    expect(MAP_TITLE_LINES.map((line) => line.length).sort((a, b) => b - a)[0]).toBe(
+      LONGEST_TITLE.length,
+    );
   });
 
-  it('fits every configured title line, not just the current copy', () => {
-    const NARROW_CELL = 130;
-    for (const title of MAP_TITLE_LINES) {
-      const size = fittedTitleFontSize(title, NARROW_CELL);
-      expect(size).toBeGreaterThanOrEqual(TITLE_MIN_FONT_SIZE);
-      if (size > TITLE_MIN_FONT_SIZE) {
-        expect(estimatedWidth(title, size)).toBeLessThanOrEqual(NARROW_CELL);
+  it('keeps every title line inside the cell whenever a step fits', () => {
+    for (const width of [100, 120, 140, 160, 200, 400]) {
+      const size = fittedTitleFontSize(width);
+      for (const title of MAP_TITLE_LINES) {
+        expect(estimatedWidth(title, size)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it('stops at the caption floor rather than leaving the ramp', () => {
+    expect(fittedTitleFontSize(10)).toBe(TITLE_MIN_FONT_SIZE);
+  });
+});
+
+describe('currentStageHoldsLensRoom', () => {
+  it('holds every current stage to the lens except the top one, whose lens overhangs only a watermark', () => {
+    const holding = ALL_STAGES.filter((stage) => currentStageHoldsLensRoom(stage));
+    expect(holding).toEqual(ALL_STAGES.filter((stage) => stage !== STAGE_COUNT));
+    expect(currentStageHoldsLensRoom(STAGE_COUNT)).toBe(false);
+    expect(TITLE_BY_STAGE[STAGE_COUNT]).toBe(MAP_TITLE_LINES[0]);
   });
 });
 
 describe('fitRightLabel', () => {
-  const UNDERSTANDING_FALLBACK = ['Under-', 'standing'] as const;
-  const YES_AND_NESS_FALLBACK = ['Yes-And-', 'Ness'] as const;
-  const WIDE_CELL = 180;
-  const NARROW_PHONE_CELL = 56;
+  const understanding = findRowByLabel('Understanding');
+  const yesAndNess = findRowByLabel('Yes-And-Ness');
+  const awareness = findRowByLabel('Awareness');
+  const WIDE_CELL = 400;
+  /** The right cell's content box on a 390 phone. */
+  const PHONE_CELL = 59;
+  /** The right cell's content box on a 320 phone, the narrowest the app supports. */
+  const NARROWEST_PHONE_CELL = 48;
 
-  // Same conservative advance-width idiom fittedTitleFontSize's own tests use,
-  // scoped to the right label's own glyph budget.
   const estimatedLineWidth = (line: string, fontSize: number): number =>
     line.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH;
 
-  it('renders the full label on one un-hyphenated line at the ceiling before layout reports a width', () => {
-    const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, 0);
-    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+  it('renders the full label on one line at the ceiling before layout reports a width', () => {
+    const result = fitRightLabel(understanding.rightLabel, understanding.rightLabelLines, 0);
+    expect(result).toEqual({
+      lines: ['Understanding'],
+      fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+    });
   });
 
-  it('keeps Understanding on one line at the ceiling size in a wide cell', () => {
-    const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, WIDE_CELL);
-    expect(result).toEqual({ lines: ['Understanding'], fontSize: RIGHT_LABEL_MAX_FONT_SIZE });
+  it('keeps Understanding whole at the ceiling wherever it fits', () => {
+    const result = fitRightLabel('Understanding', understanding.rightLabelLines, WIDE_CELL);
+    expect(result).toEqual({
+      lines: ['Understanding'],
+      fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+    });
   });
 
-  it('keeps every returned line within the measured cell width whenever the size shrinks below the ceiling', () => {
+  it('prefers the whole word one step down before it hyphenates', () => {
+    // Understanding at 13px: 13 * 13 * 0.62 = 104.78; at 14px: 112.84.
+    expect(fitRightLabel('Understanding', understanding.rightLabelLines, 105)).toEqual({
+      lines: ['Understanding'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+    });
+    expect(fitRightLabel('Understanding', understanding.rightLabelLines, 104)).toEqual({
+      lines: ['Under-', 'standing'],
+      fontSize: RIGHT_LABEL_MAX_FONT_SIZE,
+    });
+  });
+
+  it('hyphenates Understanding at a phone right cell rather than shrinking below the ramp', () => {
+    // standing at 13px: 8 * 13 * 0.62 = 64.48, over the cell by the estimate,
+    // so the lines stay free to wrap rather than being cut.
+    const result = fitRightLabel('Understanding', understanding.rightLabelLines, PHONE_CELL);
+    expect(result).toEqual({
+      lines: ['Under-', 'standing'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+    });
+  });
+
+  it('sizes the fallback lines together off the longest of them', () => {
+    // standing at 14px: 8 * 14 * 0.62 = 69.44; at 13px: 64.48.
+    expect(fitRightLabel('Understanding', understanding.rightLabelLines, 70).fontSize).toBe(
+      RIGHT_LABEL_MAX_FONT_SIZE,
+    );
+    expect(fitRightLabel('Understanding', understanding.rightLabelLines, 69).fontSize).toBe(
+      RIGHT_LABEL_MIN_FONT_SIZE,
+    );
+  });
+
+  it('keeps every line inside the cell whenever it lands above the floor', () => {
     for (const width of [40, 56, 70, 90, 120, 150]) {
-      const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, width);
+      const result = fitRightLabel('Understanding', understanding.rightLabelLines, width);
       if (result.fontSize > RIGHT_LABEL_MIN_FONT_SIZE) {
         result.lines.forEach((line) => {
           expect(estimatedLineWidth(line, result.fontSize)).toBeLessThanOrEqual(width);
@@ -256,103 +388,93 @@ describe('fitRightLabel', () => {
     }
   });
 
-  it('clamps fontSize to the configured floor and ceiling for every width, including non-positive ones', () => {
-    for (const width of [-10, 0, 20, 56, 90, 180, 500]) {
-      const result = fitRightLabel('Understanding', UNDERSTANDING_FALLBACK, width);
-      expect(result.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
-      expect(result.fontSize).toBeLessThanOrEqual(RIGHT_LABEL_MAX_FONT_SIZE);
-    }
+  it('holds a label that fits no step, even hyphenated, at the floor, where it wraps rather than leaving the ramp', () => {
+    const result = fitRightLabel('Awareness', ['Awareness'], 40);
+    expect(result).toEqual({
+      lines: ['Awareness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+    });
   });
 
-  it('shrinks Awareness to fit a narrow phone cell on one line without splitting the word', () => {
-    const result = fitRightLabel('Awareness', ['Awareness'], NARROW_PHONE_CELL);
-    expect(result.lines).toEqual(['Awareness']);
-    expect(result.fontSize).toBeGreaterThanOrEqual(RIGHT_LABEL_MIN_FONT_SIZE);
-    expect(result.fontSize).toBeLessThan(RIGHT_LABEL_MAX_FONT_SIZE);
+  it('hyphenates Awareness and Yes-And-Ness at the floor in a 320 phone cell', () => {
+    // Aware- at 13px: 6 * 13 * 0.62 = 48.36, a hair over the cell by the
+    // estimate, so it takes the floor; the real serif glyphs run far narrower.
+    expect(
+      fitRightLabel(awareness.rightLabel, awareness.rightLabelLines, NARROWEST_PHONE_CELL),
+    ).toEqual({
+      lines: ['Aware-', 'ness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+    });
+    // Yes-And- at 13px: 8 * 13 * 0.62 = 64.48, and 50px of real glyphs: too
+    // wide for the 48px line either way, so it wraps at its hyphen.
+    expect(
+      fitRightLabel(yesAndNess.rightLabel, yesAndNess.rightLabelLines, NARROWEST_PHONE_CELL),
+    ).toEqual({
+      lines: ['Yes-And-', 'Ness'],
+      fontSize: RIGHT_LABEL_MIN_FONT_SIZE,
+    });
   });
 
   it('falls back to the pre-hyphenated Yes-And-Ness lines instead of inserting a new hyphen', () => {
-    const NARROW_WIDTH = 40;
-    const result = fitRightLabel('Yes-And-Ness', YES_AND_NESS_FALLBACK, NARROW_WIDTH);
+    const result = fitRightLabel(yesAndNess.rightLabel, yesAndNess.rightLabelLines, 40);
     expect(result.lines).toEqual(['Yes-And-', 'Ness']);
-    // Exactly the label's own two hyphens survive — none inserted elsewhere.
     const hyphenCount = (result.lines.join('').match(/-/g) ?? []).length;
     expect(hyphenCount).toBe(2);
   });
 });
 
-describe('fitStageText', () => {
+describe('fitStageLine', () => {
   const stage8 = requireDisplay(8);
   const WIDE_CELL = 400;
 
-  // Same conservative advance-width idiom the title / right-label fits use,
-  // scoped to the left-column stage text and arrow label glyph budget.
-  const estimatedWidth = (text: string, fontSize: number): number =>
-    text.length * fontSize * MIXED_CASE_GLYPH_EM_WIDTH;
-
-  it('pins the ceilings to the legacy fixed sizes and the shared floor / glyph budget', () => {
-    expect(STAGE_PERSONA_MAX_FONT_SIZE).toBe(14);
-    expect(STAGE_LINE_MAX_FONT_SIZE).toBe(12);
-    expect(ARROW_LABEL_MAX_FONT_SIZE).toBe(12);
-    expect(STAGE_TEXT_MIN_FONT_SIZE).toBe(9);
-    expect(MIXED_CASE_GLYPH_EM_WIDTH).toBe(0.62);
+  it('renders at the top of its ladder on one line before layout reports a width', () => {
+    expect(fitStageLine(stage8.persona, 0, STAGE_PERSONA_LADDER)).toEqual({
+      fontSize: STAGE_PERSONA_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
-  it('renders at the given ceiling before layout reports a width', () => {
-    expect(fitStageText(stage8.persona, 0, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
-      STAGE_PERSONA_MAX_FONT_SIZE,
-    );
+  it('renders empty text at the top of its ladder', () => {
+    expect(fitStageLine('', WIDE_CELL, STAGE_LINE_LADDER)).toEqual({
+      fontSize: STAGE_LINE_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
-  it('renders empty text at the given ceiling', () => {
-    expect(fitStageText('', WIDE_CELL, STAGE_LINE_MAX_FONT_SIZE)).toBe(STAGE_LINE_MAX_FONT_SIZE);
+  it('holds a line that fits at the top of its ladder, on one line', () => {
+    expect(fitStageLine(stage8.persona, WIDE_CELL, STAGE_PERSONA_LADDER)).toEqual({
+      fontSize: STAGE_PERSONA_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
+    expect(fitStageLine('Metta', 120, STAGE_LINE_LADDER)).toEqual({
+      fontSize: STAGE_LINE_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
-  it('caps a short line in a wide cell at its own ceiling', () => {
-    expect(fitStageText('Nondual', WIDE_CELL, STAGE_LINE_MAX_FONT_SIZE)).toBe(
-      STAGE_LINE_MAX_FONT_SIZE,
-    );
-    expect(fitStageText(stage8.persona, WIDE_CELL, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
-      STAGE_PERSONA_MAX_FONT_SIZE,
-    );
+  it('steps the persona down one ramp step at the exact width it stops fitting', () => {
+    // True Self Embodier: 18 glyphs, so 18 * 14 * 0.62 = 156.24 at the top step.
+    const edge = stage8.persona.length * (STAGE_PERSONA_MAX_FONT_SIZE * MIXED_CASE_GLYPH_EM_WIDTH);
+    expect(fitStageLine(stage8.persona, edge, STAGE_PERSONA_LADDER)).toEqual({
+      fontSize: STAGE_PERSONA_MAX_FONT_SIZE,
+      numberOfLines: 1,
+    });
+    expect(fitStageLine(stage8.persona, edge - JUST_UNDER, STAGE_PERSONA_LADDER)).toEqual({
+      fontSize: STAGE_TEXT_MIN_FONT_SIZE,
+      numberOfLines: 1,
+    });
   });
 
-  it('shrinks the stage-8 persona below its ceiling so its estimated width fits a narrow cell', () => {
-    for (const width of [60, 90, 120, 150]) {
-      const size = fitStageText(stage8.persona, width, STAGE_PERSONA_MAX_FONT_SIZE);
-      expect(size).toBeLessThan(STAGE_PERSONA_MAX_FONT_SIZE);
-      expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
-      if (size > STAGE_TEXT_MIN_FONT_SIZE) {
-        expect(estimatedWidth(stage8.persona, size)).toBeLessThanOrEqual(width);
-      }
-    }
-  });
-
-  it('shrinks the stage-8 practice below its ceiling so its estimated width fits a narrow cell', () => {
-    for (const width of [60, 90, 120, 150]) {
-      const size = fitStageText(stage8.practice, width, STAGE_LINE_MAX_FONT_SIZE);
-      expect(size).toBeLessThan(STAGE_LINE_MAX_FONT_SIZE);
-      expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
-      if (size > STAGE_TEXT_MIN_FONT_SIZE) {
-        expect(estimatedWidth(stage8.practice, size)).toBeLessThanOrEqual(width);
-      }
-    }
-  });
-
-  it('never shrinks below the legibility floor', () => {
-    expect(fitStageText(stage8.persona, 10, STAGE_PERSONA_MAX_FONT_SIZE)).toBe(
-      STAGE_TEXT_MIN_FONT_SIZE,
-    );
-  });
-
-  it('clamps between the floor and each ceiling for every width, including non-positive ones', () => {
-    for (const maxFontSize of [STAGE_PERSONA_MAX_FONT_SIZE, STAGE_LINE_MAX_FONT_SIZE]) {
-      for (const width of [-10, 0, 20, 60, 90, 180, 500]) {
-        const size = fitStageText(stage8.practice, width, maxFontSize);
-        expect(size).toBeGreaterThanOrEqual(STAGE_TEXT_MIN_FONT_SIZE);
-        expect(size).toBeLessThanOrEqual(maxFontSize);
-      }
-    }
+  it('wraps copy that cannot fit at the floor instead of leaving the ramp', () => {
+    // Concentration practice at 13px: 22 * 13 * 0.62 = 177.32 > 120.
+    expect(fitStageLine('Concentration practice', 120, STAGE_LINE_LADDER)).toEqual({
+      fontSize: STAGE_TEXT_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
+    expect(fitStageLine(stage8.persona, 10, STAGE_PERSONA_LADDER)).toEqual({
+      fontSize: STAGE_TEXT_MIN_FONT_SIZE,
+      numberOfLines: undefined,
+    });
   });
 });
 
