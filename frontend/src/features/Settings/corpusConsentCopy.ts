@@ -17,7 +17,7 @@
  * of this by reading recent entries, so no line here implies a diminished app,
  * a missed opportunity, or a decision still owed. Saying what a yes gives is not
  * selling: ``CORPUS_CONSENT_GAIN`` states what turning it on changes, under the
- * same says-what-the-code-does rule, and sits beside the lead rather than over it.
+ * same says-what-the-code-does rule, and follows the lead rather than replacing it.
  */
 
 import { HIGHER_SELF_GAIN } from './higherSelfCopy';
