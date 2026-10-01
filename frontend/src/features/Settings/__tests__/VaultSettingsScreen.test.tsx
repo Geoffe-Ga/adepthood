@@ -1,9 +1,14 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React from 'react';
 
 import {
+  HIGHER_SELF_GAIN,
   VAULT_ADDRESS_EXTRA_PARTS,
   VAULT_ADDRESS_INCOMPLETE,
   VAULT_ADDRESS_INSECURE,
@@ -12,6 +17,10 @@ import {
   VAULT_ADDRESS_PRIVATE,
   VAULT_ADDRESS_UNREADABLE,
   VAULT_ADD_HEADING,
+  VAULT_ADVANCED_EXPLAINER,
+  VAULT_ADVANCED_LEARN_MORE,
+  VAULT_ADVANCED_NOT,
+  VAULT_ADVANCED_TITLE,
   VAULT_CANCEL,
   VAULT_CONNECTION_UNKNOWN,
   VAULT_CONNECT_FAILED,
@@ -26,6 +35,8 @@ import {
   VAULT_KEY_REFUSED,
   VAULT_KEY_SHOW,
   VAULT_LOAD_FAILED,
+  VAULT_MANAGED_UNAVAILABLE_BODY,
+  VAULT_MANAGED_UNKNOWN_BODY,
   VAULT_NONE_CONNECTED,
   VAULT_PROMISE,
   VAULT_REPLACE_BUTTON,
@@ -39,6 +50,7 @@ import {
   VAULT_TITLE,
   VAULT_WHAT_IT_IS,
 } from '../vaultCopy';
+import { VAULT_RUN_YOUR_OWN_DOC_URL } from '../vaultLinks';
 import VaultSettingsScreen from '../VaultSettingsScreen';
 
 import {
@@ -48,6 +60,7 @@ import {
   type VaultActivation,
   type VaultConnection,
 } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import habitStyles from '@/features/Habits/Habits.styles';
 import { settle } from '@/testing/asyncSettle';
 
@@ -76,6 +89,11 @@ import { settle } from '@/testing/asyncSettle';
  */
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
+
+const mockOpenExternalUrl = jest.fn((_url: string) => Promise.resolve(true));
+jest.mock('@/utils/openExternalUrl', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}));
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api');
@@ -116,13 +134,35 @@ const AVAILABLE_ACTIVATION: VaultActivation = {
   custody_mode: null,
 };
 
-/** Copy blocks paired with the testID the screen renders them in. */
+/**
+ * The promise deck: copy blocks paired with the testID the screen renders them
+ * in, in reading order. Rendered on every path, folded or not.
+ */
 const COPY_BLOCKS: [string, string][] = [
   ['vault-what-it-is', VAULT_WHAT_IT_IS],
+  ['vault-higher-self-gain', HIGHER_SELF_GAIN],
   ['vault-floor', VAULT_FLOOR],
   ['vault-intimate', VAULT_INTIMATE],
+];
+
+/** What the Advanced fold holds besides the form, in reading order. */
+const FOLD_BLOCKS: [string, string][] = [
+  ['vault-advanced-explainer', VAULT_ADVANCED_EXPLAINER],
+  ['vault-advanced-not', VAULT_ADVANCED_NOT],
+  ['vault-advanced-learn-more', VAULT_ADVANCED_LEARN_MORE],
   ['vault-connect-intro', VAULT_CONNECT_INTRO],
 ];
+
+/** Everything the fold hides while it is closed. */
+const FOLDED_TEST_IDS = [
+  'vault-advanced-body',
+  ...FOLD_BLOCKS.map(([testID]) => testID),
+  'vault-address-input',
+  'vault-key-input',
+  'connect-vault-button',
+];
+
+const TOGGLE = 'vault-advanced-toggle';
 
 /** Every refusal code the connect route can answer with, and its sentence. */
 const REFUSALS: [string, string][] = [
@@ -165,6 +205,49 @@ async function renderUnreachable() {
 }
 
 type Rendered = Awaited<ReturnType<typeof renderVault>>;
+
+/** Whether the Advanced fold says it is open. */
+function foldExpanded(view: Rendered): boolean | undefined {
+  return view.getByTestId(TOGGLE).props.accessibilityState?.expanded;
+}
+
+/**
+ * Open the Advanced fold, which starts closed for anybody with no vault of their
+ * own connected. Strict on purpose: it refuses to "open" a fold that is already
+ * open, so every caller is also a check that the default is closed.
+ */
+function openAdvanced(view: Rendered): void {
+  expect(foldExpanded(view)).toBe(false);
+  fireEvent.press(view.getByTestId(TOGGLE));
+  expect(foldExpanded(view)).toBe(true);
+}
+
+/** Render with nothing connected and the fold opened, for tests about the form. */
+async function renderWithFormOpen(connection: VaultConnection = NOT_CONNECTED) {
+  const view = await renderVault(connection);
+  openAdvanced(view);
+  return view;
+}
+
+/** Render a failed read and open the fold, for tests about the form. */
+async function renderUnreachableWithFormOpen() {
+  const view = await renderUnreachable();
+  openAdvanced(view);
+  return view;
+}
+
+type TreeNode = { props?: { testID?: unknown }; children?: (TreeNode | string)[] | null };
+
+/** Every testID in the rendered tree, in reading (depth-first) order. */
+function testIDsInOrder(view: Rendered): string[] {
+  const walk = (node: TreeNode | TreeNode[] | string | null): string[] => {
+    if (node === null || typeof node === 'string') return [];
+    if (Array.isArray(node)) return node.flatMap(walk);
+    const own = typeof node.props?.testID === 'string' ? [node.props.testID] : [];
+    return [...own, ...(node.children ?? []).flatMap(walk)];
+  };
+  return walk(view.toJSON() as TreeNode | TreeNode[] | null);
+}
 
 async function submitConnection(view: Rendered, address: string, key: string): Promise<void> {
   fireEvent.changeText(view.getByTestId('vault-address-input'), address);
@@ -327,7 +410,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
       new_activation_available: false,
     });
 
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(view.getByTestId('managed-vault-unavailable')).toBeTruthy();
     expect(view.queryByTestId('open-vault-activation')).toBeNull();
@@ -342,7 +425,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
       new_activation_available: false,
     });
 
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(view.getByText('Continue managed vault setup')).toBeTruthy();
     expect(view.getByText('Continue setup')).toBeTruthy();
@@ -351,7 +434,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
   test('does not mistake an activation-status outage for account ineligibility', async () => {
     mockActivationStatus.mockRejectedValue(new Error('offline'));
 
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(view.getByText('Managed vault availability could not be checked')).toBeTruthy();
     expect(view.getByTestId('vault-address-input')).toBeTruthy();
@@ -411,7 +494,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
   });
 
   test('offers the empty state and the form when nothing is connected', async () => {
-    const { getByTestId, getByText, queryByTestId } = await renderVault(NOT_CONNECTED);
+    const { getByTestId, getByText, queryByTestId } = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(getByText(VAULT_NONE_CONNECTED)).toBeTruthy();
     expect(getByText(VAULT_ADD_HEADING)).toBeTruthy();
@@ -457,7 +540,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
   test('the unknown notice survives typing', async () => {
     // Typing clears the banner. The notice reports what the read found and so
     // must come from the connection state rather than riding on that banner.
-    const view = await renderUnreachable();
+    const view = await renderUnreachableWithFormOpen();
 
     fireEvent.changeText(view.getByTestId('vault-address-input'), VAULT_URL);
 
@@ -475,7 +558,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
   });
 
   test('offers the add heading when it could not check', async () => {
-    const view = await renderUnreachable();
+    const view = await renderUnreachableWithFormOpen();
 
     expect(view.getByText(VAULT_ADD_HEADING)).toBeTruthy();
     expect(view.queryByText(VAULT_REPLACE_HEADING)).toBeNull();
@@ -545,7 +628,7 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
   });
 
   test('asks before connecting when it could not check', async () => {
-    const view = await renderUnreachable();
+    const view = await renderUnreachableWithFormOpen();
 
     const raised = await pressConnectThroughDialog(
       view,
@@ -565,7 +648,7 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
   test('does not ask when the read said nothing is connected', async () => {
     // Confirming a first connection would charge every new vault a dialog for
     // a replacement that cannot be happening.
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     const raised = await pressConnectThroughDialog(
       view,
@@ -594,7 +677,7 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
 
 describe('VaultSettingsScreen — connecting', () => {
   test('sends exactly what was typed and reports the connection it made', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
@@ -605,7 +688,7 @@ describe('VaultSettingsScreen — connecting', () => {
   });
 
   test('asks for the address rather than sending an empty one', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, '', TYPED_KEY);
 
@@ -614,7 +697,7 @@ describe('VaultSettingsScreen — connecting', () => {
   });
 
   test('asks for the key rather than sending an address alone', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, '');
 
@@ -627,7 +710,7 @@ describe('VaultSettingsScreen — what the server refused', () => {
   for (const [code, sentence] of REFUSALS) {
     test(`answers "${code}" with the sentence written for it`, async () => {
       mockConnect.mockRejectedValue(new ApiError(HTTP_UNPROCESSABLE, code));
-      const view = await renderVault(NOT_CONNECTED);
+      const view = await renderWithFormOpen(NOT_CONNECTED);
 
       await submitConnection(view, 'not-a-vault', TYPED_KEY);
 
@@ -637,7 +720,7 @@ describe('VaultSettingsScreen — what the server refused', () => {
 
   test('falls back to the generic failure for a 422 code it does not know', async () => {
     mockConnect.mockRejectedValue(new ApiError(HTTP_UNPROCESSABLE, 'vault_url_from_the_future'));
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
@@ -646,7 +729,7 @@ describe('VaultSettingsScreen — what the server refused', () => {
 
   test('falls back to the generic failure for a fault that is not a refusal', async () => {
     mockConnect.mockRejectedValue(new ApiError(HTTP_SERVER_ERROR, 'internal_error'));
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
@@ -706,7 +789,7 @@ describe('VaultSettingsScreen — disconnecting', () => {
 
 describe('VaultSettingsScreen — the key is write-only', () => {
   test('masks the key until somebody asks to see it', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(view.getByTestId('vault-key-input').props.secureTextEntry).toBe(true);
 
@@ -717,7 +800,7 @@ describe('VaultSettingsScreen — the key is write-only', () => {
 
   test('renders the key nowhere, even in the sentence explaining a refusal', async () => {
     mockConnect.mockRejectedValue(new ApiError(HTTP_UNPROCESSABLE, 'vault_url_insecure_transport'));
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, 'http://vault.example', TYPED_KEY);
 
@@ -726,7 +809,7 @@ describe('VaultSettingsScreen — the key is write-only', () => {
   });
 
   test('clears the field once the key has been sent', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
@@ -734,7 +817,7 @@ describe('VaultSettingsScreen — the key is write-only', () => {
   });
 
   test('re-masks the key when a connect is sent', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
     fireEvent.press(view.getByText(VAULT_KEY_SHOW));
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
@@ -747,7 +830,7 @@ describe('VaultSettingsScreen — the key is write-only', () => {
     // The address is the part that was wrong, so the key stays put rather than
     // making somebody fetch it again -- but it goes back behind the mask.
     mockConnect.mockRejectedValue(new ApiError(HTTP_UNPROCESSABLE, 'vault_url_malformed'));
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
     fireEvent.press(view.getByText(VAULT_KEY_SHOW));
 
     await submitConnection(view, 'not-a-vault', TYPED_KEY);
@@ -759,7 +842,7 @@ describe('VaultSettingsScreen — the key is write-only', () => {
   test('keeps the reveal when nothing was sent', async () => {
     // A press blocked by a blank field never reached the wire, so the reset
     // belongs to the send rather than to the button.
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
     fireEvent.press(view.getByText(VAULT_KEY_SHOW));
 
     await submitConnection(view, '', TYPED_KEY);
@@ -788,12 +871,280 @@ describe('VaultSettingsScreen — the key is write-only', () => {
   });
 
   test('shows the address on the connected card and nothing key-shaped', async () => {
-    const view = await renderVault(NOT_CONNECTED);
+    const view = await renderWithFormOpen(NOT_CONNECTED);
 
     await submitConnection(view, VAULT_URL, TYPED_KEY);
 
     const card = within(view.getByTestId('vault-connected-card'));
     expect(card.getByText(VAULT_URL)).toBeTruthy();
     expect(card.queryAllByText(new RegExp(TYPED_KEY, 'u'))).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What saying yes gives, beside the floor (#3003)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — the gain sits directly above the floor', () => {
+  test('renders the promise deck in reading order, the floor right beneath the gain', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    const order = testIDsInOrder(view);
+    const deck = COPY_BLOCKS.map(([testID]) => order.indexOf(testID));
+
+    expect(deck.every((index) => index >= 0)).toBe(true);
+    expect(order.indexOf('vault-floor')).toBe(order.indexOf('vault-higher-self-gain') + 1);
+    expect(deck).toEqual([...deck].sort((a, b) => a - b));
+  });
+
+  test('keeps the eyebrow "Optional"', async () => {
+    const { getByText } = await renderVault(NOT_CONNECTED);
+
+    expect(getByText(/^Optional$/iu)).toBeTruthy();
+  });
+
+  test('keeps the managed custody disclosure, Creek operators and Intimate included', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+
+    expect(
+      within(view.getByTestId('managed-vault-offer')).getByText(
+        /Fly and privileged Adepthood or Creek operators can access its stored bytes; Intimate writing stays local\./u,
+      ),
+    ).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Advanced fold (#3007)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — the Advanced fold, closed by default', () => {
+  test('folds the connect form behind a closed Advanced header when nothing is connected', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    const toggle = view.getByTestId(TOGGLE);
+
+    expect(toggle.props.accessibilityRole).toBe('button');
+    expect(toggle.props.accessibilityLabel).toBe(VAULT_ADVANCED_TITLE);
+    expect(foldExpanded(view)).toBe(false);
+    expect(within(toggle).getByText(VAULT_ADVANCED_TITLE)).toBeTruthy();
+    for (const testID of FOLDED_TEST_IDS) {
+      expect(view.queryByTestId(testID)).toBeNull();
+    }
+  });
+
+  test('keeps the read-failure line visible while the Advanced fold is closed', async () => {
+    const view = await renderUnreachable();
+
+    expect(foldExpanded(view)).toBe(false);
+    expect(within(view.getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
+    for (const testID of FOLDED_TEST_IDS) {
+      expect(view.queryByTestId(testID)).toBeNull();
+    }
+  });
+
+  test('reads the feedback line after the fold, open or closed', async () => {
+    const view = await renderUnreachable();
+    const closed = testIDsInOrder(view);
+
+    expect(closed.indexOf('vault-error')).toBeGreaterThan(closed.indexOf(TOGGLE));
+
+    openAdvanced(view);
+    const open = testIDsInOrder(view);
+    expect(open.indexOf('vault-error')).toBeGreaterThan(open.indexOf('connect-vault-button'));
+  });
+
+  test('keeps the unknown and empty notices outside the fold', async () => {
+    const unknown = await renderUnreachable();
+    const unknownOrder = testIDsInOrder(unknown);
+    expect(unknownOrder.indexOf('vault-connection-unknown')).toBeLessThan(
+      unknownOrder.indexOf(TOGGLE),
+    );
+    unknown.unmount();
+
+    const empty = await renderVault(NOT_CONNECTED);
+    const emptyOrder = testIDsInOrder(empty);
+    expect(emptyOrder.indexOf('vault-none-connected')).toBeGreaterThanOrEqual(0);
+    expect(emptyOrder.indexOf('vault-none-connected')).toBeLessThan(emptyOrder.indexOf(TOGGLE));
+  });
+
+  test('hides its chevron from every reader and keeps the header named', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+
+    expect(view.UNSAFE_getByType(ChevronRight).props).toMatchObject(decorativeHidden());
+    expect(view.UNSAFE_queryByType(ChevronDown)).toBeNull();
+
+    fireEvent.press(view.getByTestId(TOGGLE));
+
+    expect(view.UNSAFE_getByType(ChevronDown).props).toMatchObject(decorativeHidden());
+    expect(view.UNSAFE_queryByType(ChevronRight)).toBeNull();
+  });
+});
+
+describe('VaultSettingsScreen — opening the Advanced fold', () => {
+  test('reveals the explanation, the guide link, the intro and the form, in that order', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+
+    openAdvanced(view);
+
+    const body = within(view.getByTestId('vault-advanced-body'));
+    for (const [testID, copy] of FOLD_BLOCKS) {
+      expect(body.getByTestId(testID)).toHaveTextContent(copy);
+    }
+    for (const testID of ['vault-address-input', 'vault-key-input', 'connect-vault-button']) {
+      expect(body.getByTestId(testID)).toBeTruthy();
+    }
+    const order = testIDsInOrder(view);
+    const reading = [...FOLD_BLOCKS.map(([testID]) => testID), 'vault-address-input'].map(
+      (testID) => order.indexOf(testID),
+    );
+    expect(reading).toEqual([...reading].sort((a, b) => a - b));
+  });
+
+  test('closes again on a second press', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    openAdvanced(view);
+
+    fireEvent.press(view.getByTestId(TOGGLE));
+
+    expect(foldExpanded(view)).toBe(false);
+    expect(view.queryByTestId('vault-address-input')).toBeNull();
+  });
+
+  test('opens the guide through the https-only opener, at the named docs URL', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    openAdvanced(view);
+    const link = view.getByTestId('vault-advanced-learn-more');
+
+    expect(link.props.accessibilityRole).toBe('link');
+    fireEvent.press(link);
+
+    expect(mockOpenExternalUrl).toHaveBeenCalledTimes(1);
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith(VAULT_RUN_YOUR_OWN_DOC_URL);
+  });
+
+  test('keeps the card inside the fold after a first connection, with the fold still open', async () => {
+    const view = await renderWithFormOpen(NOT_CONNECTED);
+
+    await submitConnection(view, VAULT_URL, TYPED_KEY);
+
+    expect(foldExpanded(view)).toBe(true);
+    expect(
+      within(view.getByTestId('vault-advanced-body')).getByTestId('vault-connected-card'),
+    ).toBeTruthy();
+    expect(within(view.getByTestId('vault-status')).getByText(VAULT_STATUS_CONNECTED)).toBeTruthy();
+  });
+});
+
+describe('VaultSettingsScreen — the Advanced fold with a vault of your own', () => {
+  test('opens on first render, so Disconnect needs no press to find', async () => {
+    const view = await renderVault(CONNECTED);
+
+    expect(foldExpanded(view)).toBe(true);
+    const body = within(view.getByTestId('vault-advanced-body'));
+    expect(body.getByTestId('vault-connected-card')).toBeTruthy();
+    expect(body.getByTestId('disconnect-vault-button')).toBeTruthy();
+    expect(view.getAllByTestId('vault-connected-card')).toHaveLength(1);
+  });
+
+  test('still asks before replacing it from inside the fold', async () => {
+    const view = await renderVault(CONNECTED);
+
+    const raised = await pressConnectThroughDialog(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'none',
+    );
+
+    expect(raised?.title).toBe(VAULT_REPLACE_CONFIRM_TITLE);
+    expect(view.getByTestId('vault-confirm-dialog')).toBeTruthy();
+  });
+
+  test('stays open after a disconnect, rather than resetting with the state', async () => {
+    const view = await renderVault(CONNECTED);
+
+    await pressDisconnect(view, 'confirm');
+
+    expect(foldExpanded(view)).toBe(true);
+    expect(view.getByTestId('vault-address-input')).toBeTruthy();
+    expect(
+      within(view.getByTestId('vault-status')).getByText(VAULT_STATUS_DISCONNECTED),
+    ).toBeTruthy();
+  });
+
+  test('stays closed for a vault the read could not name', async () => {
+    // A managed vault reads as "unknown" -- the server withholds its address --
+    // so only a vault somebody connected themselves opens the fold.
+    const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
+
+    expect(foldExpanded(view)).toBe(false);
+  });
+});
+
+describe('VaultSettingsScreen — the managed offer comes before the fold', () => {
+  test('renders the managed offer above the Advanced header', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    const order = testIDsInOrder(view);
+
+    expect(order.indexOf('managed-vault-offer')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('managed-vault-offer')).toBeLessThan(order.indexOf(TOGGLE));
+  });
+
+  test('says where the folded form is when managed vaults are not open yet', async () => {
+    mockActivationStatus.mockResolvedValue({
+      ...AVAILABLE_ACTIVATION,
+      new_activation_available: false,
+    });
+    const view = await renderVault(NOT_CONNECTED);
+    const order = testIDsInOrder(view);
+
+    expect(order.indexOf('managed-vault-unavailable')).toBeLessThan(order.indexOf(TOGGLE));
+    expect(
+      within(view.getByTestId('managed-vault-unavailable')).getByText(
+        VAULT_MANAGED_UNAVAILABLE_BODY,
+      ),
+    ).toBeTruthy();
+  });
+
+  test('says where the folded form is when availability could not be checked', async () => {
+    mockActivationStatus.mockRejectedValue(new Error('offline'));
+    const view = await renderVault(NOT_CONNECTED);
+    const order = testIDsInOrder(view);
+
+    expect(order.indexOf('managed-vault-unavailable')).toBeLessThan(order.indexOf(TOGGLE));
+    expect(
+      within(view.getByTestId('managed-vault-unavailable')).getByText(VAULT_MANAGED_UNKNOWN_BODY),
+    ).toBeTruthy();
+  });
+
+  test('never points "below" without naming the Advanced section', async () => {
+    mockActivationStatus.mockResolvedValue({
+      ...AVAILABLE_ACTIVATION,
+      new_activation_available: false,
+    });
+    const view = await renderVault(NOT_CONNECTED);
+
+    for (const node of view.queryAllByText(/below/u)) {
+      expect(node).toHaveTextContent(/under Advanced, below/u);
+    }
+  });
+});
+
+describe('VaultSettingsScreen — the fold is remembered for this visit only', () => {
+  test('the screen persists nothing about it', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src', 'features', 'Settings', 'VaultSettingsScreen.tsx'),
+      'utf8',
+    );
+
+    expect(source).not.toMatch(/AsyncStorage|SecureStore|localStorage/u);
+  });
+
+  test('a fresh visit starts closed again', async () => {
+    const first = await renderVault(NOT_CONNECTED);
+    openAdvanced(first);
+    first.unmount();
+
+    const second = await renderVault(NOT_CONNECTED);
+
+    expect(foldExpanded(second)).toBe(false);
   });
 });

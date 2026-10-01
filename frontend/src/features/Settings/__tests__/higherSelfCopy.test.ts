@@ -1,4 +1,3 @@
-/* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
 import { HIGHER_SELF_COPY_ENTRIES, HIGHER_SELF_GAIN } from '../higherSelfCopy';

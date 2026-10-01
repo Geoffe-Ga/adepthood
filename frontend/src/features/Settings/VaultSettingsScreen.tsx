@@ -1,13 +1,20 @@
 /**
- * ``VaultSettingsScreen`` — "Your Creek vault", reached from the Privacy
- * group in Settings, and the only place a person can attach a space of their
- * own to their account.
+ * ``VaultSettingsScreen`` — "Where your corpus lives", reached from the Your
+ * corpus group in Settings, and the only place a person can attach a space of
+ * their own to their account.
  *
  * Two things live here under one promise. The deck at the top describes a vault
  * to somebody who may never run one, and it renders on every path — including a
  * dead network — because the floor it states ("Adepthood is complete without a
  * vault") is true whether or not the server answered. Below it is the form,
  * which is the part that touches a credential.
+ *
+ * **The form is folded behind "Advanced" (#3007).** Most people will never run
+ * a vault of their own, so the fold explains what it is, who it is for and what
+ * it is not before it shows two fields. It starts closed, except for somebody
+ * whose own vault is connected, who should find Disconnect without a press. It
+ * is remembered for this visit only. The feedback line sits outside it, so a
+ * read that failed is still said while the fold is closed.
  *
  * **The key is write-only across the whole seam.** It goes out on one body and
  * comes back on no response: it is never persisted on the device, never logged,
@@ -28,8 +35,9 @@
  * report that nothing is attached, so the screen says so and a connect made
  * from that state asks before it sends. See ``vaultConnectionState``.
  */
+import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
-import type { Dispatch, SetStateAction } from 'react';
+import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -68,6 +76,10 @@ import {
   VAULT_ADDRESS_PRIVATE,
   VAULT_ADDRESS_UNREADABLE,
   VAULT_ADD_HEADING,
+  VAULT_ADVANCED_EXPLAINER,
+  VAULT_ADVANCED_LEARN_MORE,
+  VAULT_ADVANCED_NOT,
+  VAULT_ADVANCED_TITLE,
   VAULT_CANCEL,
   VAULT_CONNECTED_LABEL,
   VAULT_CONNECTING_BUTTON,
@@ -90,6 +102,8 @@ import {
   VAULT_KEY_REFUSED,
   VAULT_KEY_SHOW,
   VAULT_LOAD_FAILED,
+  VAULT_MANAGED_UNAVAILABLE_BODY,
+  VAULT_MANAGED_UNKNOWN_BODY,
   VAULT_NONE_CONNECTED,
   VAULT_PROMISE,
   VAULT_REPLACE_BUTTON,
@@ -102,16 +116,22 @@ import {
   VAULT_STATUS_DISCONNECTED,
   VAULT_TITLE,
   VAULT_WHAT_IT_IS,
+  HIGHER_SELF_GAIN,
 } from './vaultCopy';
+import { VAULT_RUN_YOUR_OWN_DOC_URL } from './vaultLinks';
 
 import { ApiError, vault, vaultActivation, type VaultActivation } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
+import { NAV_ICON_SIZE } from '@/components/drawer/navIcon';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
+  editorialType,
   ink,
   rhythm,
   surface,
@@ -119,6 +139,7 @@ import {
   type as typeRamp,
 } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 /** The status every refusal on this seam arrives with; other faults are generic. */
 const HTTP_UNPROCESSABLE = 422;
@@ -248,6 +269,11 @@ const VaultPromiseDeck = (): React.JSX.Element => {
       <Text style={[t.body, styles.body]} testID="vault-what-it-is">
         {VAULT_WHAT_IT_IS}
       </Text>
+      {/* What saying yes to sorting gives, with the floor directly beneath it, so
+          the gain is never read without the sentence that bounds it (#3003). */}
+      <Text style={[t.body, styles.body]} testID="vault-higher-self-gain">
+        {HIGHER_SELF_GAIN}
+      </Text>
       {/* No explicit label: the floor states its own optionality, and repeating
           the header's promise here would announce it twice in reading order. */}
       <Text style={[t.body, styles.body]} accessibilityRole="text" testID="vault-floor">
@@ -256,10 +282,78 @@ const VaultPromiseDeck = (): React.JSX.Element => {
       <Text style={[t.caption, styles.caption]} testID="vault-intimate">
         {VAULT_INTIMATE}
       </Text>
+    </>
+  );
+};
+
+/**
+ * What the fold says before the form: what it is, who it is for, what it is
+ * not, where to read more, and that connecting can be undone.
+ */
+const VaultAdvancedExplanation = (): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  return (
+    <>
+      <Text style={[t.body, styles.body]} testID="vault-advanced-explainer">
+        {VAULT_ADVANCED_EXPLAINER}
+      </Text>
+      <Text style={[t.caption, styles.caption]} testID="vault-advanced-not">
+        {VAULT_ADVANCED_NOT}
+      </Text>
+      <Text
+        style={styles.link}
+        accessibilityRole="link"
+        onPress={() => void openExternalUrl(VAULT_RUN_YOUR_OWN_DOC_URL)}
+        testID="vault-advanced-learn-more"
+      >
+        {VAULT_ADVANCED_LEARN_MORE}
+      </Text>
       <Text style={[t.caption, styles.caption]} testID="vault-connect-intro">
         {VAULT_CONNECT_INTRO}
       </Text>
     </>
+  );
+};
+
+interface VaultAdvancedFoldProps {
+  /** Whether the fold starts open. Read once, on mount; never persisted. */
+  initiallyOpen: boolean;
+  children: ReactNode;
+}
+
+/**
+ * The Advanced section the bring-your-own form lives behind.
+ *
+ * Plain component state seeded once: it is not keyed on the connection, so a
+ * disconnect made from inside it leaves it open on the form rather than
+ * snapping shut, and a fresh visit starts from the seed again. The chevron is
+ * decorative; the header's label is the section's name and its expanded state
+ * says the rest.
+ */
+const VaultAdvancedFold = ({ initiallyOpen, children }: VaultAdvancedFoldProps) => {
+  const [open, setOpen] = useState(initiallyOpen);
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <View style={styles.fold}>
+      <TouchableOpacity
+        onPress={() => setOpen((previous) => !previous)}
+        style={styles.foldHeader}
+        accessibilityRole="button"
+        accessibilityLabel={VAULT_ADVANCED_TITLE}
+        accessibilityState={{ expanded: open }}
+        testID="vault-advanced-toggle"
+      >
+        <Chevron color={accent.primary} size={NAV_ICON_SIZE} {...decorativeHidden()} />
+        <Text style={styles.foldTitle}>{VAULT_ADVANCED_TITLE}</Text>
+      </TouchableOpacity>
+      {open ? (
+        <View style={styles.foldBody} testID="vault-advanced-body">
+          <VaultAdvancedExplanation />
+          {children}
+        </View>
+      ) : null}
+    </View>
   );
 };
 
@@ -383,15 +477,16 @@ interface VaultConnectFormProps {
   secret: string;
   reveal: boolean;
   submitting: boolean;
-  error: string | null;
-  status: string | null;
   onChangeAddress: (_value: string) => void;
   onChangeSecret: (_value: string) => void;
   onToggleReveal: () => void;
   onConnect: () => void;
 }
 
-/** The two fields, the feedback, and the one button that sends them. */
+/**
+ * The two fields and the one button that sends them. The feedback line is
+ * rendered by the section, after the fold, so it is seen with the fold closed.
+ */
 const VaultConnectForm = (props: VaultConnectFormProps): React.JSX.Element => (
   <View>
     <Text style={styles.formHeading} accessibilityRole="header">
@@ -404,7 +499,6 @@ const VaultConnectForm = (props: VaultConnectFormProps): React.JSX.Element => (
       onChangeSecret={props.onChangeSecret}
       onToggleReveal={props.onToggleReveal}
     />
-    <SettingsFeedbackBanner idPrefix="vault" error={props.error} status={props.status} />
     <TouchableOpacity
       onPress={props.onConnect}
       style={settingsFormStyles.primaryButton}
@@ -692,33 +786,20 @@ function useVaultConnection(): VaultController {
   };
 }
 
-interface VaultConnectionNoticeProps {
-  state: VaultConnectionState;
-  busy: boolean;
-  onRequestDisconnect: () => void;
-}
-
 /**
- * What the read found: a card, a line, or the line that admits it does not know.
+ * What the read found, outside the fold: a line, or the line that admits it
+ * does not know. A vault of your own is answered by its card instead, inside
+ * the fold that opens for it, so this says nothing for that state.
  *
- * Three states and three answers, and the third is the reason the union exists.
  * Rendering the empty state over a read that failed tells somebody who has a
  * vault that they have none, which is the worst sentence this screen could say.
  */
 const VaultConnectionNotice = ({
   state,
-  busy,
-  onRequestDisconnect,
-}: VaultConnectionNoticeProps): React.JSX.Element => {
-  if (state.kind === 'connected') {
-    return (
-      <ConnectedVaultCard
-        address={state.address}
-        busy={busy}
-        onRequestDisconnect={onRequestDisconnect}
-      />
-    );
-  }
+}: {
+  state: VaultConnectionState;
+}): React.JSX.Element | null => {
+  if (state.kind === 'connected') return null;
   if (state.kind === 'unknown') {
     return (
       <Text style={settingsFormStyles.body} testID="vault-connection-unknown">
@@ -776,9 +857,7 @@ const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.
         : 'Managed vaults are opening gradually'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      {unknown
-        ? 'You can try again later or connect a vault you run below.'
-        : 'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run below.'}
+      {unknown ? VAULT_MANAGED_UNKNOWN_BODY : VAULT_MANAGED_UNAVAILABLE_BODY}
     </Text>
   </View>
 );
@@ -817,7 +896,38 @@ const ManagedActivationState = ({
   return <ManagedActivationOffer continuing={activation.active} onOpen={onOpen} />;
 };
 
-/** What the read found, plus managed activation and the bring-your-own form. */
+/** A vault of your own, and the form that connects or replaces one. */
+const VaultBringYourOwn = ({ controller }: { controller: VaultController }) => {
+  const { state, form } = controller;
+  return (
+    <>
+      {state.kind === 'connected' ? (
+        <ConnectedVaultCard
+          address={state.address}
+          busy={form.submitting}
+          onRequestDisconnect={controller.onRequestDisconnect}
+        />
+      ) : null}
+      <VaultConnectForm
+        heading={connectHeading(state)}
+        address={form.draft}
+        secret={controller.secret}
+        reveal={controller.reveal}
+        submitting={form.submitting}
+        onChangeAddress={controller.onChangeAddress}
+        onChangeSecret={controller.onChangeSecret}
+        onToggleReveal={controller.onToggleReveal}
+        onConnect={controller.onConnect}
+      />
+    </>
+  );
+};
+
+/**
+ * What the read found, then managed activation, then the Advanced fold with the
+ * bring-your-own card and form, then the one feedback line -- outside the fold,
+ * so a failed read is said while the fold is closed.
+ */
 const VaultConnectionSection = ({
   controller,
   navigation,
@@ -830,30 +940,17 @@ const VaultConnectionSection = ({
   const { state, form } = controller;
   return (
     <>
-      <VaultConnectionNotice
-        state={state}
-        busy={form.submitting}
-        onRequestDisconnect={controller.onRequestDisconnect}
-      />
+      <VaultConnectionNotice state={state} />
       {state.kind === 'none' ? (
         <ManagedActivationState
           activation={managedActivation}
           onOpen={() => navigation?.navigate?.('VaultActivation')}
         />
       ) : null}
-      <VaultConnectForm
-        heading={connectHeading(state)}
-        address={form.draft}
-        secret={controller.secret}
-        reveal={controller.reveal}
-        submitting={form.submitting}
-        error={form.error}
-        status={form.status}
-        onChangeAddress={controller.onChangeAddress}
-        onChangeSecret={controller.onChangeSecret}
-        onToggleReveal={controller.onToggleReveal}
-        onConnect={controller.onConnect}
-      />
+      <VaultAdvancedFold initiallyOpen={state.kind === 'connected'}>
+        <VaultBringYourOwn controller={controller} />
+      </VaultAdvancedFold>
+      <SettingsFeedbackBanner idPrefix="vault" error={form.error} status={form.status} />
     </>
   );
 };
@@ -957,6 +1054,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: SPACING.md,
     color: ink.primary,
+  },
+  fold: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: surface.hairline,
+    marginBottom: SPACING.xl,
+  },
+  foldHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    minHeight: touchTarget.minimum,
+    paddingVertical: SPACING.md,
+  },
+  foldTitle: {
+    ...editorialType.heading,
+    flex: 1,
+    color: ink.primary,
+  },
+  foldBody: {
+    paddingTop: SPACING.sm,
+  },
+  link: {
+    ...editorialType.action,
+    color: accent.primary,
+    textDecorationLine: 'underline',
+    alignSelf: 'flex-start',
+    marginBottom: rhythm.blockGap,
   },
   input: {
     borderWidth: 1,
