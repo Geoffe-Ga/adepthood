@@ -375,7 +375,7 @@ def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
 
 
 def test_the_resonance_disclosure_states_the_context_window_the_code_actually_sends() -> None:
-    """The in-app explainer counts the writing a pass sends by the code's own bound (#2998).
+    """The in-app explainer counts what a pass sends by the code's own bound (#2998).
 
     The explainer a writer reads before a resonance pass is the place they
     decide whether to send this entry at all, so its count of the *other*
@@ -393,6 +393,12 @@ def test_the_resonance_disclosure_states_the_context_window_the_code_actually_se
     wrong = {word for count, word in _NUMBER_WORDS.items() if count != GROUNDING_LIMIT}
     stale = sorted(word for word in wrong if f"up to {word} other pieces" in copy)
     assert not stale, f"the explainer also claims 'up to {stale}', contradicting itself"
+    # Completion detection rides on the same pass and sends the habit and
+    # practice names with their units (``build_detection_prompt``).
+    assert "names and units of your habits and practices" in copy, (
+        "the resonance explainer stopped disclosing the habit and practice names "
+        "that completion detection sends"
+    )
 
 
 def test_the_policy_says_the_corpus_is_off_until_the_reader_turns_it_on() -> None:
