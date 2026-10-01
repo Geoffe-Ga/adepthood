@@ -6,6 +6,7 @@ import {
   colors,
   editorialType,
   ink,
+  INTERACTIVE_TEXT_MIN,
   onShowcase,
   paperShadow,
   radius,
@@ -16,6 +17,7 @@ import {
   surface,
   surfaceShadow,
   touchTarget,
+  uiType,
 } from '../../design/tokens';
 
 const STAGE_PILL_SIZE = 40;
@@ -26,14 +28,17 @@ const CHAPTER_NAV_DISABLED_OPACITY = 0.5;
 // not to draw a box around it.
 const GLASS_HAIRLINE_WIDTH = 1;
 
-// Shared uppercase small-caps label face (muted); consumers add per-use margins.
-const upperLabel = {
-  fontSize: 12,
-  fontWeight: '600',
-  color: ink.muted,
-  textTransform: 'uppercase',
-  letterSpacing: 0.5,
-} as const;
+// The chapter title shares the reader header row with the Back link, so it
+// takes that button face's size and the row reads as one line of chrome.
+const READER_HEADER_ROW_SIZE = uiType.button.fontSize;
+// A pill's numeral and its completed check are the pill's tappable label.
+const STAGE_PILL_LABEL_SIZE = INTERACTIVE_TEXT_MIN;
+// A chapter card's type glyph and its status marker are drawn with text glyphs;
+// the type glyph sits at the reading size, the status marker at the interactive floor.
+const CARD_TYPE_GLYPH_SIZE = editorialType.body.fontSize;
+const CARD_STATUS_GLYPH_SIZE = INTERACTIVE_TEXT_MIN;
+// Both error titles (landing and reader) share one role and one size.
+const STATE_TITLE_SIZE = editorialType.body.fontSize;
 
 const styles = StyleSheet.create({
   container: {
@@ -52,7 +57,7 @@ const styles = StyleSheet.create({
     backgroundColor: surface.canvas,
   },
   stageSelectorContent: {
-    paddingHorizontal: SPACING.md,
+    paddingHorizontal: rhythm.screenPaddingH,
     gap: SPACING.sm,
   },
   stagePill: {
@@ -70,11 +75,11 @@ const styles = StyleSheet.create({
     ...shadows.medium,
   },
   stagePillText: {
-    fontSize: 14,
+    fontSize: STAGE_PILL_LABEL_SIZE,
     fontWeight: '700',
   },
   stagePillCheck: {
-    fontSize: 16,
+    fontSize: STAGE_PILL_LABEL_SIZE,
   },
 
   // Stage cover — the showcase "book cover" for the selected stage.
@@ -82,11 +87,10 @@ const styles = StyleSheet.create({
     marginHorizontal: rhythm.screenPaddingH,
     marginTop: SPACING.sm,
   },
+  // Sentence case: the landing spends its one small-caps role on "Chapters".
   stageCoverEyebrow: {
     ...editorialType.caption,
     color: onShowcase.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: SPACING.xs,
   },
   stageCoverTitle: {
@@ -122,7 +126,13 @@ const styles = StyleSheet.create({
     marginTop: SPACING.xs,
   },
 
-  // Editorial section band labels ("Start here" / "Chapters").
+  // "Start here": the titled band gets the screen gutter, so its heading and
+  // the intro card beneath it hang from the same edge as the rest of the page.
+  introBand: {
+    paddingHorizontal: rhythm.screenPaddingH,
+  },
+
+  // The "Chapters" band: the landing's one small-caps list spine.
   sectionBand: {
     paddingHorizontal: rhythm.screenPaddingH,
     marginTop: SPACING.md,
@@ -134,28 +144,26 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
-  // Stage metadata
+  // Stage metadata: each value stacks under its label, so both share the gutter.
   stageMetadata: {
-    paddingHorizontal: SPACING.lg,
+    paddingHorizontal: rhythm.screenPaddingH,
     paddingVertical: SPACING.md,
   },
   stageDetailRow: {
-    flexDirection: 'row',
-    gap: SPACING.md,
-    marginBottom: 4,
+    marginBottom: SPACING.xs,
   },
   stageDetailLabel: {
-    ...upperLabel,
+    ...editorialType.caption,
+    color: ink.muted,
   },
   stageDetailValue: {
-    fontSize: 12,
+    ...editorialType.caption,
     color: ink.soft,
   },
 
   // Stage introduction card — lifted onto a warm raised surface.
   introCard: {
     minHeight: touchTarget.minimum,
-    marginHorizontal: SPACING.lg,
     marginTop: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
@@ -164,23 +172,24 @@ const styles = StyleSheet.create({
     ...surfaceShadow.card,
   },
   introCardLabel: {
-    ...upperLabel,
+    ...editorialType.caption,
+    color: ink.muted,
     marginBottom: 2,
   },
   introCardTitle: {
-    fontSize: 16,
+    fontSize: INTERACTIVE_TEXT_MIN,
     fontWeight: '700',
     color: ink.primary,
   },
   introCardSummary: {
-    fontSize: 14,
+    ...editorialType.note,
     color: ink.soft,
-    marginTop: 4,
+    marginTop: SPACING.xs,
   },
 
   // Progress bar
   progressBarContainer: {
-    paddingHorizontal: SPACING.lg,
+    paddingHorizontal: rhythm.screenPaddingH,
     paddingVertical: SPACING.sm,
   },
   progressBarTrack: {
@@ -193,11 +202,11 @@ const styles = StyleSheet.create({
     height: PROGRESS_BAR_HEIGHT,
     borderRadius: PROGRESS_BAR_HEIGHT / 2,
   },
+  // Left-aligned: on the gutter with every other landing label.
   progressBarLabel: {
-    fontSize: 12,
+    ...editorialType.caption,
     color: ink.muted,
-    marginTop: 4,
-    textAlign: 'right',
+    marginTop: SPACING.xs,
   },
 
   // Content card — lifted onto a raised surface, separated by warm spacing.
@@ -227,26 +236,26 @@ const styles = StyleSheet.create({
     marginRight: SPACING.md,
   },
   contentCardIconText: {
-    fontSize: 18,
+    fontSize: CARD_TYPE_GLYPH_SIZE,
   },
   contentCardBody: {
     flex: 1,
   },
   contentCardTitle: {
-    fontSize: 15,
+    fontSize: INTERACTIVE_TEXT_MIN,
     fontWeight: '600',
     color: ink.primary,
     marginBottom: 2,
   },
   contentCardSubtitle: {
-    fontSize: 13,
+    ...editorialType.caption,
     color: ink.soft,
   },
   contentCardStatus: {
     marginLeft: SPACING.sm,
   },
   contentCardStatusText: {
-    fontSize: 16,
+    fontSize: CARD_STATUS_GLYPH_SIZE,
     color: ink.muted,
   },
 
@@ -267,13 +276,12 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
   },
   viewerBackText: {
-    fontSize: 16,
+    ...uiType.button,
     color: accent.primary,
-    fontWeight: '600',
   },
   viewerTitle: {
     flex: 1,
-    fontSize: 16,
+    fontSize: READER_HEADER_ROW_SIZE,
     fontWeight: '600',
     color: ink.primary,
   },
@@ -331,8 +339,7 @@ const styles = StyleSheet.create({
   },
   // Shared label for buttons painted on an accent surface (mark-read, reflect, retry).
   buttonLabelOnAccent: {
-    fontSize: 15,
-    fontWeight: '600',
+    ...uiType.button,
     color: surface.canvas,
   },
   markReadTextDone: {
@@ -380,22 +387,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: SPACING.xl,
   },
+  // The slot for the error / timeout state's drawn icon (CourseScreen).
   emptyIcon: {
-    fontSize: 48,
     marginBottom: SPACING.md,
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: STATE_TITLE_SIZE,
     fontWeight: '600',
     color: ink.primary,
     marginBottom: SPACING.sm,
     textAlign: 'center',
   },
   emptySubtitle: {
-    fontSize: 14,
+    ...editorialType.note,
     color: ink.soft,
     textAlign: 'center',
-    lineHeight: 20,
   },
 
   // Content list
@@ -456,14 +462,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
   },
   readerErrorTitle: {
-    fontSize: 16,
+    fontSize: STATE_TITLE_SIZE,
     fontWeight: '600',
     color: ink.primary,
     marginBottom: SPACING.sm,
     textAlign: 'center',
   },
   readerErrorSubtitle: {
-    fontSize: 14,
+    ...editorialType.note,
     color: ink.soft,
     marginBottom: SPACING.md,
     textAlign: 'center',
@@ -479,13 +485,14 @@ const styles = StyleSheet.create({
 
   // Site resources panel
   resourcesPanel: {
-    paddingHorizontal: SPACING.lg,
+    paddingHorizontal: rhythm.screenPaddingH,
     paddingTop: SPACING.md,
     paddingBottom: SPACING.sm,
     backgroundColor: surface.canvas,
   },
   resourcesHeading: {
-    ...upperLabel,
+    ...editorialType.caption,
+    color: ink.muted,
     marginBottom: SPACING.sm,
   },
   resourcesRow: {
@@ -499,9 +506,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: surface.sunken,
   },
+  // A chip is tapped, so its label sits at the interactive floor.
   resourceChipText: {
-    fontSize: 13,
-    fontWeight: '600',
+    ...uiType.button,
     color: ink.primary,
   },
 });
@@ -511,13 +518,16 @@ export default styles;
 /**
  * Styles consumed by ``react-native-markdown-display`` — keys follow the
  * library's rule names, values are plain RN styles built from design
- * tokens (no hardcoded colors/sizes).  Headings use the serif editorial face;
- * ``contentImage`` and the reader chrome above are ours.
+ * tokens (no hardcoded colors/sizes); ``contentImage`` is ours.
+ *
+ * Chapter text is long-form reading, so it takes the all-serif static
+ * ``editorialType`` faces (DESIGN.md "Type system"), not the ``type(width)``
+ * chrome ramp: that ramp's body is sans and shrinks to 15 on a narrow phone,
+ * and this map is a static sheet handed to ``<Markdown>`` with no width.
  */
 export const markdownStyles = StyleSheet.create({
   body: {
-    fontSize: 17,
-    lineHeight: 26,
+    ...editorialType.body,
     color: ink.primary,
   },
   heading1: {
@@ -527,16 +537,13 @@ export const markdownStyles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   heading2: {
-    fontFamily: editorialType.serif,
-    fontSize: 21,
-    fontWeight: '600',
+    ...editorialType.heading,
     color: ink.primary,
     marginTop: SPACING.md,
     marginBottom: SPACING.sm,
   },
   heading3: {
-    fontFamily: editorialType.serif,
-    fontSize: 18,
+    ...editorialType.body,
     fontWeight: '600',
     color: ink.primary,
     marginTop: SPACING.sm,

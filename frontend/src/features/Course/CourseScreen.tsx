@@ -1,5 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Hourglass, TriangleAlert } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,7 +26,7 @@ import { ContentContainer } from '../../components/layout/ContentContainer';
 import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
-import { resolveStageColor } from '../../design/tokens';
+import { ink, resolveStageColor } from '../../design/tokens';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
@@ -256,9 +257,37 @@ const CourseEmptyState = (): React.JSX.Element => (
   />
 );
 
+/**
+ * The drawn icon box heading the error and loading-timeout states. It keeps the
+ * footprint of the emoji it replaced (#2964), and it is an icon, not text, so it
+ * sets no font size and never reaches the text census.
+ */
+export const STATE_ICON_SIZE = 48;
+
+interface StateIconProps {
+  icon: typeof TriangleAlert;
+  testID: string;
+}
+
+/**
+ * Decorative: the state's title beside it already says what happened. ``aria-hidden``
+ * hides it on web, where react-native-web drops the two native-only props.
+ */
+const StateIcon = ({ icon: Icon, testID }: StateIconProps): React.JSX.Element => (
+  <View
+    style={styles.emptyIcon}
+    testID={testID}
+    aria-hidden
+    accessibilityElementsHidden
+    importantForAccessibility="no-hide-descendants"
+  >
+    <Icon size={STATE_ICON_SIZE} color={ink.muted} />
+  </View>
+);
+
 const CourseErrorState = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
   <View style={styles.emptyContainer} testID="course-error">
-    <Text style={styles.emptyIcon}>{'⚠️'}</Text>
+    <StateIcon icon={TriangleAlert} testID="course-error-icon" />
     <Text style={styles.emptyTitle}>Couldn&apos;t load the course</Text>
     <Text style={styles.emptySubtitle}>
       Something went wrong loading this stage. Check your connection and try again.
@@ -288,7 +317,7 @@ const CourseLoadingTimedOut = ({ onRetry }: { onRetry: () => void }): React.JSX.
     accessibilityRole="alert"
     accessibilityLiveRegion="polite"
   >
-    <Text style={styles.emptyIcon}>{'⏳'}</Text>
+    <StateIcon icon={Hourglass} testID="course-loading-timeout-icon" />
     <Text style={styles.emptyTitle}>The course is taking longer than it should</Text>
     <Text style={styles.emptySubtitle}>
       It may still be on its way. Check your connection and try again.
@@ -616,9 +645,11 @@ const StageHeader = ({
       spiralColor={selectedStageData?.spiral_dynamics_color}
       error={stageContent.error}
     />
-    <EditorialSection title="Start here">
-      <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
-    </EditorialSection>
+    <View style={styles.introBand}>
+      <EditorialSection title="Start here">
+        <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
+      </EditorialSection>
+    </View>
     <View style={styles.sectionBand}>
       <Text style={styles.sectionBandLabel}>Chapters</Text>
     </View>
