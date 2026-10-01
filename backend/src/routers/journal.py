@@ -1487,13 +1487,9 @@ async def _private_response(
 
 
 async def _withdrawn_under_hold(
-    session: AsyncSession,
-    entry: JournalEntry,
-    *,
-    spent: SpendResult | None,
-    care: CareResponse | None,
-) -> ResonanceResponse | None:
-    """Re-read the entry under the pass's hold; settle and answer if it is no longer passable.
+    session: AsyncSession, entry: JournalEntry, *, spent: SpendResult | None
+) -> bool:
+    """Re-read the entry under the pass's hold; settle and report whether it is withdrawn.
 
     The pass reads the intimate floor before it charges and before it waits
     for :func:`hold_account`. ``PATCH /journal/{entry_id}`` carrying
@@ -1507,14 +1503,19 @@ async def _withdrawn_under_hold(
       BotMason unit is refunded and the caller gets the uniform 404.
     * A row now ``intimate`` stops the whole pass: no vault, no cloud
       reflection, no completion detection. Any committed unit is refunded and
-      the private, unspent response comes back, still carrying ``care``,
-      because the privacy floor never suppresses crisis support.
+      this returns ``True``, so the caller answers with
+      :func:`_private_response` -- still carrying ``care``, because the privacy
+      floor never suppresses crisis support.
 
-    Otherwise this returns ``None`` and the refreshed ``entry.classification``
+    Otherwise this returns ``False`` and the refreshed ``entry.classification``
     is what the caller binds. The fresh value is used as-is, never the wider
     of the two readings: a lower classification maps to a narrower vault
     ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
     Tiers here only ever tighten what is sent.
+
+    Every path out of here has released the pooled connection -- the commit
+    after the refresh, or the refund's own rollback and commit -- so nothing
+    is held across the dials that follow.
     """
     await session.refresh(entry)
     await session.commit()
@@ -1523,8 +1524,8 @@ async def _withdrawn_under_hold(
         raise not_found("journal_entry")
     if entry.classification == JournalClassification.INTIMATE:
         await _refund_failed_pass(session, entry.user_id, spent)
-        return await _private_response(session, entry.user_id, care)
-    return None
+        return True
+    return False
 
 
 async def _care_only_response(
@@ -1946,9 +1947,8 @@ async def run_resonance(
     # waits only for the outbound half rather than for the wallet arithmetic.
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
-        withdrawn = await _withdrawn_under_hold(session, entry, spent=spent, care=care)
-        if withdrawn is not None:
-            return withdrawn
+        if await _withdrawn_under_hold(session, entry, spent=spent):
+            return await _private_response(session, current_user, care)
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
             body=message,
