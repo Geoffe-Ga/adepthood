@@ -670,6 +670,21 @@
     "coveredBy": "frontend/e2e/journal-essay-economy.e2e.test.ts"
   },
   {
+    "id": "journal.generation-guardrail-refusal",
+    "description": "Resonance or essay refused by a generation guardrail shows honest copy and costs nothing (#623). Under the owner-ratified limits (decision record §1: maximum 5 LLM generations/minute/user, maximum 2 concurrent generations/user, a configurable launch ceiling of 100 charged generations/day/user), a pass or a first letter asked for while two of the writer's generations are in flight is refused 429 generation_in_progress, and one past today's ceiling 429 daily_generation_limit_reached with Retry-After to the next UTC midnight; neither charges the wallet, writes an audit row or dials a provider. The margin line and the essay modal announce the refusal's own copy (wait for the one in flight; resets at midnight UTC), never the 402 refill invitation, and the essay modal offers no retry for the daily one. Uncovered because no e2e seam can put the account into either state: the daily ceiling counts walletaudit rows and the e2e lane has no database-seeding seam (the frontend has no pg client), lowering BOTMASON_DAILY_GENERATION_CEILING on the shared e2e server would refuse every other resonance spec, and holding two generations open needs a provider double the server lane does not expose. Pinned meanwhile by backend tests/routers/test_generation_guardrails_api.py (every refusal's 429, no charge, no dial, slot release on every exit) and by Jest: ResonanceEssayModal.test.tsx, JournalEntryScreenResonanceExplainer.test.tsx, generationRefusal.test.ts and errorMessages.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["generationslot", "walletaudit", "user"]
+    },
+    "status": "uncovered",
+    "issue": 623
+  },
+  {
     "id": "journal.short-entry-still-offers-habit-checkoff",
     "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. Detection also records the amount and the user-local day when the entry states them, so the accept logs that amount on that day rather than the goal's target on today; an entry stating neither behaves exactly as before. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior. The card states those facts before the writer consents rather than only after: the spec asserts the pending offer reads the amount and the day it will log, that the accept button a screen reader announces names them too, and that the persisted goalcompletion row carries that amount on that day rather than the goal's target on today. Once settled, the card names the day the server recorded the accept as logging (the suggestion's persisted logged_on, equal to goalcompletion.local_day), never a day re-derived from the detected day and the live clock: the spec asserts the settled text names that day straight after OK, and again after the entry is reopened the next day and hydrated from the suggestion list alone. The arm where the detected day differs from the logged day (a future or out-of-window detection that fell back to today) is not producible over the real wire, so it is pinned by JournalEntryScreenSuggestions and suggestionFacts instead.",
     "crosses": {
