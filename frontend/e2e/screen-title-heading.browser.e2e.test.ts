@@ -15,8 +15,10 @@ import { openRoute, ROUTES, VIEWPORTS, viewportLabel, type Route } from './route
  * as `h1`, so a body that repeats the title -- painted, or as an invisible
  * labelled header -- counts twice.
  *
- * Six of the eight screens are reached the way the text census reaches them
- * (`routeWalk.ts`). Promoted quotes opens from the Journal drawer. The beta
+ * Seven of the nine screens are reached the way the text census reaches them
+ * (`routeWalk.ts`). Managed-vault activation used to paint a paraphrase of its
+ * stack title, which a count by the title's own name cannot see, so on that
+ * screen the spec also counts the headings inside the body: there must be none. Promoted quotes opens from the Journal drawer. The beta
  * feedback inbox is reached through its Settings row, which appears only once
  * `GET /admin/capabilities` answers 200; a lane account is never an operator,
  * so that one answer is fulfilled in the browser. The screen's header does not
@@ -38,7 +40,22 @@ const WALKED_TITLES: Readonly<Record<string, string>> = {
   ExportData: 'Export my data',
   DeleteAccount: 'Delete account',
   SupportCare: 'Support & care',
+  VaultActivation: 'Create managed vault',
 };
+
+/**
+ * Walked screens whose body carries no heading of its own: any heading inside
+ * the route's anchor would repeat the stack title, in whatever words (#2995).
+ */
+const HEADINGLESS_BODIES: ReadonlySet<string> = new Set(['VaultActivation']);
+
+/**
+ * The walk opens every screen at both viewports -- eighteen route opens, each
+ * through the UI -- which runs about 45s on a loaded lane. A failing soft
+ * assert also waits out its retry before the walk moves on, so the default
+ * 60s would turn a real regression into a bare timeout.
+ */
+const WALK_TIMEOUT_MS = 3 * 60_000;
 
 const goTo = async (page: Page, path: string): Promise<void> => {
   await page.goto(`${frontendUrl()}${path}`);
@@ -82,11 +99,13 @@ function titledRoutes(): TitledRoute[] {
 test('each screen whose stack header paints its title has exactly one heading by that name, at both viewports', async ({
   page,
 }) => {
+  test.setTimeout(WALK_TIMEOUT_MS);
   const routes = titledRoutes();
   // Every walked screen named above must still be in the walk.
   expect(routes.map(({ route }) => route.name).sort()).toEqual(
     [...Object.keys(WALKED_TITLES), 'AdminFeedback', 'PromotedQuotes'].sort(),
   );
+  expect([...HEADINGLESS_BODIES].filter((name) => !(name in WALKED_TITLES))).toEqual([]);
   await signUp(page, 'screen-title-2962');
   await page.route(`${backendUrl()}/admin/capabilities`, (route) =>
     route.fulfill({ json: { feedback_triage: true } }),
@@ -102,6 +121,14 @@ test('each screen whose stack header paints its title has exactly one heading by
           `${viewportLabel(viewport)} ${route.label}: headings named "${title}"`,
         )
         .toHaveCount(1);
+      if (HEADINGLESS_BODIES.has(route.name)) {
+        await expect
+          .soft(
+            page.getByTestId(route.anchor).getByRole('heading'),
+            `${viewportLabel(viewport)} ${route.label}: headings inside the body`,
+          )
+          .toHaveCount(0);
+      }
     }
   }
 });
