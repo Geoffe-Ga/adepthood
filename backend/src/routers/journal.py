@@ -2746,6 +2746,29 @@ async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayRespo
     )
 
 
+# Where a cached letter was found (#623 PR3). ``pre_barrier`` is the ordinary
+# reopen; ``in_barrier`` is a concurrent first ask whose letter landed while
+# this request waited for the account hold.
+_CACHE_HIT_PRE_BARRIER = "pre_barrier"
+_CACHE_HIT_IN_BARRIER = "in_barrier"
+
+
+def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
+    """Record a free reopen of a letter already bought: ids and the stage only.
+
+    The ratified record asks for cache hits to be instrumented (§1:
+    "instrument actual input/output tokens, model, cost estimate, refunds, and
+    cache hits"). The stage rides in the message as well as in ``extra``
+    because the production formatter drops extras. Never the letter's text,
+    for the reason ``marginalia_essay_generated`` gives.
+    """
+    logger.info(
+        "marginalia_essay_cache_hit stage=%s",
+        stage,
+        extra={"user_id": note.user_id, "id": note.id, "stage": stage},
+    )
+
+
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -2770,6 +2793,7 @@ async def _expand_essay(
     if note is None:
         raise not_found("marginalia")
     if note.essay is not None:
+        _log_essay_cache_hit(note, _CACHE_HIT_PRE_BARRIER)
         return note
     entry = await _load_user_entry(session, note.journal_entry_id, user_id)
     if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
@@ -2856,6 +2880,7 @@ async def _cache_and_mirror_essay(
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
             # purchase -- no charge, no dial, no overwrite (#623).
+            _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
         if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
             return note
