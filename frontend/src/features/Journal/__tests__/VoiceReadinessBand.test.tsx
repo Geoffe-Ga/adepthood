@@ -53,13 +53,16 @@ const CARD = 'journal-voice-readiness-card';
 const DISMISS = 'journal-voice-readiness-dismiss';
 
 const NOT_CONSENTED_COPY =
-  'Right now your reflections are drawn from your last few days of writing. Sorting your ' +
-  'journal into your own corpus is a separate decision, and it is yours to make whenever ' +
-  'you like — say yes and everything you have already put down gets sorted too. Perfectly ' +
-  'fine to leave as it is.';
+  'Right now your reflections are drawn from your last few entries. Sorting is a separate ' +
+  'decision, yours to make whenever you like. Say yes to sorting, and everything you write ' +
+  'here, apart from Intimate entries and including what you have already written, is sorted ' +
+  'by Aspect. Each reflection from your Higher Self can then draw on a few of those passages, ' +
+  'leaning toward where you stand in the course, rather than only on your last few entries. ' +
+  'Perfectly fine to leave as it is.';
 const GATHERING_COPY =
-  'Your corpus is still filling out, so your reflections are drawn from recent days for ' +
-  'now. Bringing in work you did elsewhere fills it faster. Nothing is waiting on you.';
+  'Your corpus is still filling out, so for now your reflections have little or no sorted ' +
+  'writing to draw on. Bringing in work you did elsewhere fills it faster. Nothing is ' +
+  'waiting on you.';
 
 /** A readiness payload, defaulting to the state the great majority of accounts are in. */
 function readiness(overrides: Partial<VoiceReadinessT> = {}): VoiceReadinessT {

@@ -191,6 +191,53 @@ async def test_an_account_that_has_not_consented_is_not_merely_gathering(
         assert accelerator not in lowered
 
 
+def test_the_not_consented_band_says_what_saying_yes_gives_and_bounds_it() -> None:
+    """The band names the gain of the decision, in the words Settings uses (#3003).
+
+    The fallback is the last few *entries* -- ``GROUNDING_LIMIT`` of them -- not
+    a span of days, so the band says entries. The gain speaks of everything a
+    person writes, so it names the Intimate exclusion in the same sentence, and
+    it is the decision's gain by Aspect rather than a promise to read it all.
+    """
+    message = VOICE_READINESS_MESSAGES[VoiceReadinessState.NOT_CONSENTED]
+
+    assert message is not None
+    assert "last few entries" in message
+    assert "Say yes to sorting" in message
+    assert "sorted by Aspect" in message
+    assert "apart from Intimate entries" in message
+    assert "Perfectly fine to leave as it is." in message
+
+
+@pytest.mark.parametrize(
+    "state", [VoiceReadinessState.NOT_CONSENTED, VoiceReadinessState.GATHERING]
+)
+def test_no_band_sentence_names_days_plumbing_or_a_complete_reading(
+    state: VoiceReadinessState,
+) -> None:
+    """Neither speaking state promises a span of days, a reading of everything, or jargon."""
+    message = VOICE_READINESS_MESSAGES[state]
+
+    assert message is not None
+    lowered = message.lower()
+    for claim in ("days", "fragment", "has read", "perfect understanding", "retrieval", "ontolog"):
+        assert claim not in lowered
+
+
+def test_the_gathering_band_does_not_claim_recent_entries_alone() -> None:
+    """A consented account with a few sorted passages is already drawn from them.
+
+    ``gather_grounding`` answers from the corpus as soon as it holds anything, so
+    "drawn from recent days for now" was false for every gathering account with a
+    passage sorted. The sentence says how little is sorted instead.
+    """
+    message = VOICE_READINESS_MESSAGES[VoiceReadinessState.GATHERING]
+
+    assert message is not None
+    assert "little or no sorted writing" in message
+    assert "recent" not in message.lower()
+
+
 @pytest.mark.asyncio
 async def test_consent_outranks_a_corpus_that_would_otherwise_be_ready(
     db_session: AsyncSession,

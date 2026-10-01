@@ -97,3 +97,35 @@ describe('higherSelfCopy — claims nothing the grounding code lacks', () => {
     expect(groundingLimit()).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The literal text of one server band message, joined from its Python string
+ * pieces. Read between the state's key and the closing parenthesis of its
+ * parenthesised literal.
+ */
+function serverBandMessage(state: 'NOT_CONSENTED' | 'GATHERING'): string {
+  const source = readBackendSource('src', 'schemas', 'voice_readiness.py');
+  const start = source.indexOf(`VoiceReadinessState.${state}: (`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const end = source.indexOf('),', start);
+  const literal = source.slice(start, end);
+  return [...literal.matchAll(/"([^"]*)"/gu)].map((match) => match[1]).join('');
+}
+
+describe('higherSelfCopy — the voice-readiness band carries the same words', () => {
+  it('reads both speaking messages, so the checks below are not vacuous', () => {
+    expect(serverBandMessage('NOT_CONSENTED').length).toBeGreaterThan(0);
+    expect(serverBandMessage('GATHERING').length).toBeGreaterThan(0);
+  });
+
+  it('embeds the gain verbatim in the not-yet-decided band', () => {
+    expect(serverBandMessage('NOT_CONSENTED')).toContain(HIGHER_SELF_GAIN);
+  });
+
+  it('says entries, never days, in either band', () => {
+    expect(serverBandMessage('NOT_CONSENTED')).toMatch(/last few entries/u);
+    for (const state of ['NOT_CONSENTED', 'GATHERING'] as const) {
+      expect(serverBandMessage(state)).not.toMatch(/days/iu);
+    }
+  });
+});
