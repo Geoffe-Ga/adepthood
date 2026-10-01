@@ -6,6 +6,7 @@ import PrivateVaultActivationScreen from '../PrivateVaultActivationScreen';
 
 import { vaultActivation, type VaultActivation } from '@/api';
 import { settle } from '@/testing/asyncSettle';
+import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -197,5 +198,39 @@ describe('resumable progress and honest custody', () => {
     await settle();
     expect(view.getByTestId('activation-load-error')).toBeTruthy();
     expect(view.getByText(/Your journal still works/u)).toBeTruthy();
+  });
+});
+
+/** The stack header's title for this screen, as `RootStack.tsx` sets it. */
+const NAV_TITLE = 'Create managed vault';
+/** The paraphrase the body used to paint under it (#2995). */
+const RETIRED_BODY_TITLE = 'Create your managed vault';
+const EYEBROW = 'OPTIONAL STORAGE';
+const LEAD = 'An account-scoped managed cloud vault, activated only when you choose.';
+
+describe('PrivateVaultActivationScreen — navigation owns the title (#2962)', () => {
+  // Not the consent stage: its primary button is labelled NAV_TITLE, which is
+  // an action, not a second title.
+  it.each([
+    ['intro', INACTIVE],
+    ['unavailable', { ...INACTIVE, new_activation_available: false }],
+  ] as const)(
+    'paints no body title under the "Create managed vault" stack header on the %s stage, adds no header, and moves no focus',
+    async (_stage, status) => {
+      const focus = watchFocusMoves();
+      const view = await renderActivation(status);
+
+      expect(view.queryByText(RETIRED_BODY_TITLE)).toBeNull();
+      expect(view.queryAllByRole('header')).toHaveLength(0);
+      expectNavigationOwnsTitle(view, NAV_TITLE);
+      focus.expectNone();
+    },
+  );
+
+  it('keeps the eyebrow and lead as ordinary text', async () => {
+    const view = await renderActivation();
+
+    expect(view.getByText(EYEBROW).props.accessibilityRole).toBeUndefined();
+    expect(view.getByText(LEAD).props.accessibilityRole).toBeUndefined();
   });
 });
