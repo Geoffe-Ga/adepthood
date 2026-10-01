@@ -6,7 +6,7 @@ jest.mock('@/api', () => ({
 }));
 
 import { resetAllStores } from '../registry';
-import { useWritingHabitLinkStore } from '../useWritingHabitLinkStore';
+import { selectKnownUnlinked, useWritingHabitLinkStore } from '../useWritingHabitLinkStore';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 
@@ -187,5 +187,25 @@ describe('useWritingHabitLinkStore.reset', () => {
 
     expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
     expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
+  });
+});
+
+describe('selectKnownUnlinked (#3006)', () => {
+  const state = (habitId: number | null, hydrated: boolean) => ({
+    ...useWritingHabitLinkStore.getState(),
+    habitId,
+    hydrated,
+  });
+
+  it('is true only when the server has answered "nothing linked"', () => {
+    expect(selectKnownUnlinked(state(null, true))).toBe(true);
+  });
+
+  it('is false while unhydrated: the null default is not an answer', () => {
+    expect(selectKnownUnlinked(state(null, false))).toBe(false);
+  });
+
+  it('is false when a habit is linked', () => {
+    expect(selectKnownUnlinked(state(SERVER_HABIT_ID, true))).toBe(false);
   });
 });

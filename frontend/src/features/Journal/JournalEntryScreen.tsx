@@ -51,6 +51,7 @@ import {
   type TierWriteOutcome,
 } from './journalReconnectLoad';
 import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRetry';
+import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
 import MarginNote from './MarginNote';
@@ -4474,10 +4475,25 @@ function ResonanceControls({
  * remount the offer under a writer's thumb every time the page repainted. The
  * session it is handed is the one the note is about — the offer records it if
  * the writer keeps the session as a practice.
+ *
+ * The link-a-habit note (#3006) sits beside it and waits for the offer to have
+ * been answered, so the two never share a note: the offer while it is
+ * unanswered, the pointer to Settings after.
  */
 const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
-  <WritingSessionOffer result={result} />
+  <>
+    <WritingSessionOffer result={result} />
+    <LinkHabitNudge waitForAnsweredOffer />
+  </>
 );
+
+/**
+ * What a quick-launched session's note carries: never the keep-this offer (see
+ * ``useQuickLaunchedSession``), but the pointer to Settings when no habit is
+ * linked — a writer who launches a practice may never have been asked (#3006).
+ * Module-level for the same stable identity as ``renderSessionOffer``.
+ */
+const renderLaunchedSessionNote = (): React.ReactNode => <LinkHabitNudge />;
 
 /** The launch this page was opened with, when it was opened to run a practice. */
 type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writingSession'];
@@ -4487,7 +4503,9 @@ type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writi
  * offering to make one: the timer opens at the practice's length and already
  * running, the finished session is recorded against the selection, and the
  * "keep this as a practice?" offer is withheld — the writer answered that
- * question already, which is how the practice exists to be launched from.
+ * question already, which is how the practice exists to be launched from. The
+ * pointer to Settings for an unlinked timer is not withheld (#3006): it asks
+ * nothing, and a launched page is where a never-asked writer is likeliest.
  */
 function EntryWritingSurfaces({
   ctl,
@@ -4509,7 +4527,7 @@ function EntryWritingSurfaces({
         initialMinutes={session.initialMinutes}
         autoStart={session.autoStart}
         onSession={onSession}
-        renderOffer={session.launched ? undefined : renderSessionOffer}
+        renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
       />
       {narrow ? (
         <ResonanceControls

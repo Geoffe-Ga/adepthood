@@ -39,9 +39,15 @@ export interface CreatePracticePrefill {
   stageNumber?: number | null;
 }
 
+/**
+ * A part of Settings a caller can open it on (#3006): ``'writing-habit'`` opens
+ * the writing-timer habit picker in place and brings its row into view.
+ */
+export type SettingsFocus = 'writing-habit';
+
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<RootTabParamList>;
-  Settings: undefined;
+  Settings: { focus?: SettingsFocus } | undefined;
   SeedCorpus: undefined;
   CorpusConsent: undefined;
   ApiKeySettings: undefined;
