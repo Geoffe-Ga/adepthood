@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   ESSAY_ASK_WHAT,
+  RESONANCE_EXPLAINER_WHAT,
   essayExplainerCost,
   resonanceExplainerCost,
 } from '../resonanceExplainerCopy';
@@ -92,6 +93,23 @@ describe('ESSAY_ASK_WHAT names everything a letter sends to the model', () => {
   it('discloses the entry, the margin note, and excerpts of earlier letters', () => {
     expect(ESSAY_ASK_WHAT).toBe(
       'A letter expands this margin note into a longer reflection. To write it, the text of this entry, this margin note, and short excerpts of your earlier letters are sent to an AI model.',
+    );
+  });
+});
+
+describe('RESONANCE_EXPLAINER_WHAT names everything a reading sends to the model', () => {
+  // A pass sends the most when a vault degrades to the cloud, so the copy
+  // states that maximum (#2998). The reflection prompt (`build_prompt`)
+  // carries the entry in <entry>, up to GROUNDING_LIMIT (3, the privacy
+  // policy's "up to three") pieces of the writer's own writing in <prior> --
+  // corpus fragments from `gather_grounding`, which may be uploaded or
+  // imported documents, else recent entries -- and excerpts of earlier
+  // letters in <prior_letters> (`_prior_letter_essays`). Completion detection
+  // (`build_detection_prompt`) sends the entry again with the names and units
+  // of the writer's habits and practices.
+  it('discloses the entry, other writing, letter excerpts, and habit and practice names', () => {
+    expect(RESONANCE_EXPLAINER_WHAT).toBe(
+      'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry, up to three other pieces of your own writing, short excerpts of your earlier letters, and the names and units of your habits and practices are sent to an AI model.',
     );
   });
 });
