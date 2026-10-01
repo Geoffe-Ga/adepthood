@@ -9,7 +9,14 @@
  * that differs is the copy, which is why `errorOptions` is a parameter rather
  * than a constant — the timer talks about timer minutes, the manual form talks
  * about the window it refused.
+ *
+ * Once the server has the row, the saved payload is also handed to the
+ * linked-habit check-off (`usePracticeHabitCheckOff`), fire-and-forget: it
+ * runs after `commit`, never delays the save's own promise, and a failure
+ * inside it can neither fail nor roll back a session the server already holds.
  */
+import { usePracticeHabitCheckOff } from './usePracticeHabitCheckOff';
+
 import type { PracticeSessionCreate, PracticeSessionResponse } from '@/api';
 import { practiceSessions } from '@/api';
 import type { FormatErrorOptions } from '@/api/errorMessages';
@@ -46,6 +53,7 @@ export function useSaveSessionMutation({
   PracticeSessionCreate,
   PracticeSessionResponse
 > {
+  const checkOffLinkedHabit = usePracticeHabitCheckOff();
   return useOptimisticMutation<PracticeSessionCreate, PracticeSessionResponse>({
     apply: () => {
       setSaveError(null);
@@ -54,6 +62,14 @@ export function useSaveSessionMutation({
     commit: async (payload) => {
       const session = await practiceSessions.create(payload);
       commit();
+      // The row is the server's now. Whatever the check-off does next is its
+      // own affair: it must not be allowed to turn a saved session into a
+      // rolled-back one.
+      try {
+        checkOffLinkedHabit(payload);
+      } catch (err) {
+        console.warn('[useSaveSessionMutation] the linked-habit check-off threw', err);
+      }
       return session;
     },
     rollback: (_input, err) => {

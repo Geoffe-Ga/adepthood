@@ -336,7 +336,7 @@ describe('GoalModal cadence copy', () => {
         frequency: 3,
         frequency_unit: 'per_week',
       }),
-      '1 session, 3 times per week',
+      '1 session a day, 3 days a week',
     ],
     [
       makeGoal('low', {
@@ -345,7 +345,16 @@ describe('GoalModal cadence copy', () => {
         frequency: 4,
         frequency_unit: 'per_month',
       }),
-      '4 sessions, 4 times per month',
+      '4 sessions a day, 4 days a month',
+    ],
+    [
+      makeGoal('low', {
+        target: 2,
+        target_unit: 'sessions',
+        frequency: 1,
+        frequency_unit: 'per_week',
+      }),
+      '2 sessions a day, 1 day a week',
     ],
     [
       makeGoal('low', {
@@ -361,12 +370,12 @@ describe('GoalModal cadence copy', () => {
 
   it('uses the same weekly sentence in the tier row and tooltip without duplicated prepositions', () => {
     const { getByLabelText, getByTestId, getByText } = renderModal(weeklyHabit);
-    expect(getByLabelText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
-    expect(getByText('session, 3 times per week')).toBeTruthy();
+    expect(getByLabelText('Low Grit · 1 session a day, 3 days a week')).toBeTruthy();
+    expect(getByText('session a day, 3 days a week')).toBeTruthy();
 
     fireEvent(getByTestId('modal-marker-low'), 'mouseEnter');
-    expect(getByText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
-    expect(() => getByText(/per per/)).toThrow();
+    expect(getByText('Low Grit · 1 session a day, 3 days a week')).toBeTruthy();
+    expect(() => getByText(/a a /)).toThrow();
   });
 });
 

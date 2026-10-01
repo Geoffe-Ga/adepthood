@@ -33,6 +33,7 @@ import {
 import { useStarFill, type StarFillControls } from './hooks/useStarFill';
 import { longPressGestureStyle } from './longPressGestureStyle';
 import { STAR_LONG_PRESS_MS } from './starFill';
+import { formatStreakLabel, streakPeriodFor } from './streakLabel';
 import {
   TierMarkerOverlay,
   type MarkerInteraction,
@@ -51,10 +52,9 @@ const formatAmount = (value: number): string => String(Math.round(value * 100) /
 const formatGoalTooltip = (goal: Goal, habit: Habit, tz: string): string => {
   const label = TIER_LABELS[goal.tier];
   const progress = calculateTodaysProgress(habit, tz);
-  // Divide by the daily-normalized target the "met" star and bar use
-  // (getGoalTarget), not the raw weekly/monthly goal.target — otherwise a
-  // per_week/per_month goal whose star is filled still shows a sub-100%
-  // fraction because numerator (today) and denominator (week/month) mixed scales.
+  // Divide by the same per-day target the "met" star and bar use
+  // (getGoalTarget) so the fraction reaches 100% exactly when the star fills;
+  // `goal.target` is the per-day amount in every cadence.
   const target = getGoalTarget(goal);
   return `${label}: ${formatAmount(progress)}/${formatAmount(target)} ${goal.target_unit}`;
 };
@@ -766,9 +766,6 @@ const TileProgressSection = ({
   );
 };
 
-const formatStreakText = (streak: number, hasCompletedGoal: boolean): string =>
-  `${streak} days${hasCompletedGoal ? ' — Achieved Today!' : ''}`.toUpperCase();
-
 const UnlockedTile = ({
   habit,
   stageColor,
@@ -801,7 +798,7 @@ const UnlockedTile = ({
         achievedTextColor={achievedTextColor}
         scale={scale}
         gridType={gridType}
-        streakText={formatStreakText(habit.streak, hasCompletedGoal)}
+        streakText={formatStreakLabel(habit.streak, hasCompletedGoal, streakPeriodFor(habit, tz))}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
         streakStacked={streakStacked}

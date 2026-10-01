@@ -17,7 +17,6 @@ import {
   MIN_CHECK_OFF_ELAPSED_MS,
   checkOffLinkedHabit,
   isLinkableHabit,
-  planWritingCheckOff,
 } from '../writingHabitCheckOff';
 
 import type { ToastConfig } from '@/components/Toast';
@@ -29,6 +28,8 @@ const TZ = 'UTC';
 const HABIT_ID = 42;
 const LOW_TARGET = 2;
 const ELAPSED_MS = 60_000;
+const ELAPSED_MINUTES = 1;
+const TWENTY_MINUTES = 20;
 const NOW = new Date('2026-09-27T09:30:00Z');
 const SERVER_DAY_UNITS = LOW_TARGET;
 
@@ -64,6 +65,17 @@ const SERVER_READ = async (): Promise<boolean> => true;
 const withTodayUnits = (units: number): Habit =>
   makeHabit({ completions: [{ id: 't-1', timestamp: new Date(), completed_units: units }] });
 
+/** The habit the bug report named: "Journal", measured in minutes, 10 / 20 / 30. */
+const minuteHabit = (todayUnits = 0): Habit =>
+  makeHabit({
+    name: 'Journal',
+    goals: (['low', 'clear', 'stretch'] as const).map((tier, index) =>
+      makeGoal(tier, { target_unit: 'minutes', target: (index + 1) * 10 }),
+    ),
+    completions:
+      todayUnits > 0 ? [{ id: 't-1', timestamp: new Date(), completed_units: todayUnits }] : [],
+  });
+
 const serverResult = (dayUnits = SERVER_DAY_UNITS) => ({
   streak: 1,
   milestones: [],
@@ -77,6 +89,7 @@ const run = (overrides: Partial<Parameters<typeof checkOffLinkedHabit>[0]> = {})
   checkOffLinkedHabit({
     habitId: HABIT_ID,
     elapsedMs: ELAPSED_MS,
+    elapsedMinutes: ELAPSED_MINUTES,
     tz: TZ,
     showToast,
     now: () => NOW,
@@ -99,59 +112,13 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-describe('isLinkableHabit', () => {
+describe('isLinkableHabit — the shared gate, re-exported for the picker', () => {
   it('admits an additive, server-backed habit with all three tiers', () => {
     expect(isLinkableHabit(makeHabit())).toBe(true);
   });
 
-  it('refuses a subtractive habit: checking one off would record consumption', () => {
-    const goals = (['low', 'clear', 'stretch'] as const).map((tier) =>
-      makeGoal(tier, { is_additive: false }),
-    );
-    expect(isLinkableHabit(makeHabit({ goals }))).toBe(false);
-  });
-
   it('refuses a locked habit: nothing can be logged against one until it is open', () => {
     expect(isLinkableHabit(makeHabit({ revealed: false }))).toBe(false);
-    expect(isLinkableHabit(makeHabit({ revealed: undefined }))).toBe(false);
-  });
-
-  it('refuses a demo tile, whose ids name no server row', () => {
-    expect(isLinkableHabit(makeHabit({ isDemoSeed: true }))).toBe(false);
-  });
-
-  it('refuses a habit whose ids this device minted', () => {
-    expect(isLinkableHabit(makeHabit({ hasClientMintedIds: true }))).toBe(false);
-  });
-
-  it('refuses a habit still holding a pre-sync placeholder id', () => {
-    expect(isLinkableHabit(makeHabit({ id: -1 }))).toBe(false);
-  });
-
-  it('refuses a habit without the three-tier ladder', () => {
-    expect(isLinkableHabit(makeHabit({ goals: [makeGoal('low'), makeGoal('clear')] }))).toBe(false);
-  });
-});
-
-describe('planWritingCheckOff — "checked off" means the low tier is met today', () => {
-  it('plans exactly the gap to the low target', () => {
-    expect(planWritingCheckOff(makeHabit(), TZ)).toBe(LOW_TARGET);
-  });
-
-  it('plans only what is left when part of the low target is already logged', () => {
-    expect(planWritingCheckOff(withTodayUnits(1), TZ)).toBe(LOW_TARGET - 1);
-  });
-
-  it('plans nothing once the low target is met', () => {
-    expect(planWritingCheckOff(withTodayUnits(LOW_TARGET), TZ)).toBeNull();
-  });
-
-  it('plans nothing past the low target, rather than a negative correction', () => {
-    expect(planWritingCheckOff(withTodayUnits(LOW_TARGET + 1), TZ)).toBeNull();
-  });
-
-  it('plans nothing for a habit that cannot be linked', () => {
-    expect(planWritingCheckOff(makeHabit({ isDemoSeed: true }), TZ)).toBeNull();
   });
 });
 
@@ -190,6 +157,36 @@ describe('checkOffLinkedHabit', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
   });
 
+  it('a habit measured in minutes is credited the minutes written, not the gap to low', async () => {
+    useHabitStore.getState().setHabits([minuteHabit()]);
+    const prepare = jest.spyOn(habitManager, 'prepareLogUnit');
+
+    await run({ elapsedMs: TWENTY_MINUTES * 60_000, elapsedMinutes: TWENTY_MINUTES });
+
+    expect(prepare).toHaveBeenCalledWith(HABIT_ID, TWENTY_MINUTES, TZ, NOW);
+    const [payload] = mockCreate.mock.calls[0] as [Record<string, unknown>];
+    expect(payload.completed_units).toBe(TWENTY_MINUTES);
+    expect(showToast.mock.calls[0]?.[0].message).toBe(checkedOffToast('Journal'));
+  });
+
+  it('a second session on a minute habit posts its own minutes again: they accumulate', async () => {
+    useHabitStore.getState().setHabits([minuteHabit(TWENTY_MINUTES)]);
+
+    await run({ elapsedMs: TWENTY_MINUTES * 60_000, elapsedMinutes: TWENTY_MINUTES });
+
+    const [payload] = mockCreate.mock.calls[0] as [Record<string, unknown>];
+    expect(payload.completed_units).toBe(TWENTY_MINUTES);
+  });
+
+  it('a minute habit is not credited by a session that rounded to no minutes', async () => {
+    useHabitStore.getState().setHabits([minuteHabit()]);
+
+    await run({ elapsedMs: 20_000, elapsedMinutes: 0 });
+
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it('a zero-length session checks nothing off', async () => {
     const prepare = jest.spyOn(habitManager, 'prepareLogUnit');
 
@@ -199,8 +196,8 @@ describe('checkOffLinkedHabit', () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it('the shortest session that ran at all does check off', async () => {
-    await run({ elapsedMs: MIN_CHECK_OFF_ELAPSED_MS });
+  it('the shortest session that ran at all does check off a habit counted in pages', async () => {
+    await run({ elapsedMs: MIN_CHECK_OFF_ELAPSED_MS, elapsedMinutes: 0 });
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 

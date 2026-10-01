@@ -60,7 +60,7 @@ const findTier = (habit: Habit, tier: TierType): Goal | undefined =>
  * to do (missing tiers, id-less onboarding habit, or today's progress already
  * sits on the star).
  *
- * `deltaUnits` is the daily-equivalent gap between the tier's target and
+ * `deltaUnits` is the gap between the tier's per-day target and
  * today's logged units, so it works in every direction: positive fills an
  * additive bar rightward or drains a subtractive one leftward (consuming
  * allowance), negative walks either bar back toward the star. The percents

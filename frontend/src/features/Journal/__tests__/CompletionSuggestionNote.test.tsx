@@ -30,11 +30,12 @@ function suggestion(overrides: Partial<CompletionSuggestion> = {}): CompletionSu
   };
 }
 
-const checkIn = (streak: number): CheckInResult => ({
+const checkIn = (streak: number, streak_unit?: CheckInResult['streak_unit']): CheckInResult => ({
   streak,
   milestones: [],
   reason_code: 'streak_incremented',
   day_units: 1,
+  ...(streak_unit === undefined ? {} : { streak_unit }),
 });
 
 const noop = () => Promise.resolve();
@@ -198,6 +199,36 @@ describe('CompletionSuggestionNote', () => {
     expect(getByTestId('suggestion-7-checked')).toBeTruthy();
     expect(getByText(/Checked off/)).toBeTruthy();
     expect(getByText(/4-day streak/)).toBeTruthy();
+  });
+
+  it('accepted: names the streak in weeks or months when the check-in says so', () => {
+    const { getByText, rerender } = render(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted' })}
+        checkIn={checkIn(3, 'week')}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(getByText(/3-week streak/)).toBeTruthy();
+    rerender(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted' })}
+        checkIn={checkIn(1, 'month')}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(getByText(/1-month streak/)).toBeTruthy();
+    rerender(
+      <CompletionSuggestionNote
+        suggestion={suggestion({ status: 'accepted' })}
+        checkIn={checkIn(2, 'day')}
+        onAccept={noop}
+        onDismiss={noop}
+      />,
+    );
+    expect(getByText(/2-day streak/)).toBeTruthy();
   });
 
   it('accepted practice: renders "Logged" with no streak when check_in is null (#821)', () => {

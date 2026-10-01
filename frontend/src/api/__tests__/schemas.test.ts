@@ -2,6 +2,7 @@
 /* global describe, it, expect */
 import {
   apiGoalGroupSchema,
+  checkInResultSchema,
   completionSuggestionSchema,
   contentItemSchema,
   goalCompletionSchema,
@@ -745,5 +746,22 @@ describe('completionSuggestionSchema', () => {
     const withoutLoggedOn: Record<string, unknown> = { ...baseSuggestion };
     delete withoutLoggedOn.logged_on;
     expect(() => completionSuggestionSchema.parse(withoutLoggedOn)).toThrow();
+  });
+});
+
+describe('checkInResultSchema streak_unit', () => {
+  const base = { streak: 3, milestones: [], reason_code: 'streak_incremented', day_units: 1 };
+
+  it('accepts a payload without streak_unit (older servers)', () => {
+    const parsed = checkInResultSchema.parse(base);
+    expect(parsed.streak_unit).toBeUndefined();
+  });
+
+  it.each(['day', 'week', 'month'] as const)('keeps streak_unit %s', (unit) => {
+    expect(checkInResultSchema.parse({ ...base, streak_unit: unit }).streak_unit).toBe(unit);
+  });
+
+  it('rejects a unit outside day/week/month', () => {
+    expect(checkInResultSchema.safeParse({ ...base, streak_unit: 'year' }).success).toBe(false);
   });
 });

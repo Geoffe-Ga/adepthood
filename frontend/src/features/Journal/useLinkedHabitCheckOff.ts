@@ -13,6 +13,13 @@
  * calls the wrapped one first, then — only when a link is known — checks the
  * habit off, fire-and-forget: the page never waits on it and never hears of a
  * failure beyond a ``console.warn``.
+ *
+ * **Once per session.** A minute habit is credited the session's own minutes,
+ * which accumulate on the server, so a finish handler that fires twice with
+ * the same result would credit the sitting twice. The results already credited
+ * are remembered by identity (a ``WeakSet``, so nothing is retained once the
+ * page lets the result go) and a repeat is skipped; the wrapped handler still
+ * hears every call, as it always did.
  */
 import { useCallback, useEffect } from 'react';
 
@@ -24,6 +31,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
 type SessionHandler = (_result: WritingSessionResult) => void;
+
+/** The finished sessions already handed to the check-off. */
+const credited = new WeakSet<WritingSessionResult>();
 
 export function useLinkedHabitCheckOff(inner: SessionHandler): SessionHandler {
   const { token, userTimezone } = useAuth();
@@ -40,10 +50,12 @@ export function useLinkedHabitCheckOff(inner: SessionHandler): SessionHandler {
       // Read at the moment the session ends, not at render: a link chosen from
       // the offer mid-page must count for the very next session.
       const { habitId } = useWritingHabitLinkStore.getState();
-      if (habitId === null) return;
+      if (habitId === null || credited.has(result)) return;
+      credited.add(result);
       void checkOffLinkedHabit({
         habitId,
         elapsedMs: result.elapsedMs,
+        elapsedMinutes: result.elapsedMinutes,
         tz: userTimezone,
         showToast,
       });

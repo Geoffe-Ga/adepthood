@@ -179,6 +179,7 @@ describe('WelcomeGate — server hydration', () => {
         has_seen_welcome: boolean;
         energy_scaffolding_archived: boolean;
         writing_session_habit_id: number | null;
+        practice_session_habit_id: number | null;
       }>(() => undefined),
     );
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
@@ -193,6 +194,7 @@ describe('WelcomeGate — server hydration', () => {
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
       writing_session_habit_id: null,
+      practice_session_habit_id: null,
     });
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
     await waitFor(() => expect(mockUiFlagsGet).toHaveBeenCalledWith('jwt'));
@@ -205,6 +207,7 @@ describe('WelcomeGate — server hydration', () => {
       has_seen_welcome: false,
       energy_scaffolding_archived: false,
       writing_session_habit_id: null,
+      practice_session_habit_id: null,
     });
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
     await waitFor(() => expect(getByTestId('welcome-screen')).toBeTruthy());

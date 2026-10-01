@@ -37,6 +37,7 @@ import { FEEDBACK_TEST_IDS } from '@/features/Feedback/feedbackTestIds';
 import { openFeedbackComposer } from '@/features/Feedback/navigation';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import JournalSection from '@/features/Settings/JournalSection';
+import PracticeSection from '@/features/Settings/PracticeSection';
 import SanghaSection from '@/features/Settings/SanghaSection';
 import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -291,6 +292,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
       <PrivacySection onVault={openVault} />
       <ChooseDepthsSection />
       <JournalSection />
+      <PracticeSection />
       <SanghaSection />
       <YourDataSection onExportData={openExportData} />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />

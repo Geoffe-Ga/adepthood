@@ -37,6 +37,7 @@ import {
 import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStorage';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
+import { usePracticeHabitLinkStore } from '../../../store/usePracticeHabitLinkStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import { useWritingHabitLinkStore } from '../../../store/useWritingHabitLinkStore';
 import {
@@ -1568,9 +1569,13 @@ export const habitManager = {
     if (!isServerBackedHabit(target)) return;
     habitsApi
       .delete(habitId)
-      // The server unlinks a deleted habit from the writing timer itself
-      // (#2861); this keeps the on-device mirror from checking off a ghost.
-      .then(() => useWritingHabitLinkStore.getState().forgetHabit(habitId))
+      // The server unlinks a deleted habit from the writing timer (#2861) and
+      // the practice screen itself; this keeps the on-device mirrors from
+      // checking off a ghost.
+      .then(() => {
+        useWritingHabitLinkStore.getState().forgetHabit(habitId);
+        usePracticeHabitLinkStore.getState().forgetHabit(habitId);
+      })
       .catch(revertOnFailure(prev, DELETE_FAILED_COPY));
   },
 

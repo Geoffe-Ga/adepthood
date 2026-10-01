@@ -1,9 +1,15 @@
 // RED: ActiveRitualSession is not yet a forwardRef component and does not
 // export ActiveRitualSessionHandle -- both fail to compile/resolve until the
 // implementation-specialist adds openConfigurator() via useImperativeHandle.
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { act, render } from '@testing-library/react-native';
 import React, { createRef } from 'react';
+
+// ``useSaveSessionMutation`` reads the account zone for the linked-habit
+// check-off; nothing here is under an ``AuthProvider``.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'session-tok', userTimezone: 'UTC' }),
+}));
 
 import type { UserPractice } from '@/api';
 import ActiveRitualSession, {

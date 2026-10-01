@@ -77,15 +77,29 @@ const targetPhrase = (goal: Goal, target: number): string => {
   return `${target} ${unit}`;
 };
 
-/** Describe a tier goal as one plain-language target-and-cadence sentence. */
+/** `frequency_unit` values that name a period of days: `per_week` → "week". */
+const PERIOD_NAMES: Readonly<Record<string, string>> = { per_week: 'week', per_month: 'month' };
+
+/** "3 days" / "1 day" — the done days a period needs. */
+const daysPhrase = (days: number): string => `${days} ${days === 1 ? 'day' : 'days'}`;
+
+/**
+ * Describe a tier goal as one plain-language target-and-cadence sentence.
+ *
+ * The target is always the per-day amount; for a weekly or monthly goal the
+ * frequency is how many days of the period must reach it, so "3 sessions a
+ * day, 4 days a week" — never "3 sessions, 4 times per week".
+ */
 export const describeCadence = (goal: Goal, target = goal.target): string => {
   const targetText = targetPhrase(goal, target);
   if (goal.frequency_unit === 'per_session') return `${targetText} per session`;
+  const period = PERIOD_NAMES[goal.frequency_unit];
+  if (period !== undefined) return `${targetText} a day, ${daysPhrase(goal.frequency)} a ${period}`;
   if (goal.frequency_unit === 'per_day' && goal.frequency === 1) return `${targetText} a day`;
 
-  const period = goal.frequency_unit.replace(/^per_/, '').replace(/_/g, ' ');
+  const unit = goal.frequency_unit.replace(/^per_/, '').replace(/_/g, ' ');
   const repetition = goal.frequency === 1 ? 'once' : `${goal.frequency} times`;
-  return `${targetText}, ${repetition} per ${period}`;
+  return `${targetText}, ${repetition} per ${unit}`;
 };
 
 const cadenceAfterTarget = (goal: Goal): string =>

@@ -20,6 +20,14 @@ jest.mock('@/api', () => ({
   },
 }));
 
+// A recorded session is handed to the linked-habit check-off; the hook that
+// owns that seam is stood in for here, so this test sees only the hand-off.
+const mockCheckOff = jest.fn<(_payload: PracticeSessionCreate) => void>();
+
+jest.mock('@/features/Practice/hooks/usePracticeHabitCheckOff', () => ({
+  usePracticeHabitCheckOff: () => mockCheckOff,
+}));
+
 /** Mirrors ``useRitualEngine``'s private TICK_INTERVAL_MS. */
 const TICK_MS = 100;
 const T0 = 1_700_000_000_000;
@@ -84,7 +92,14 @@ beforeEach(() => {
   jest.setSystemTime(T0);
   mockCreate.mockReset();
   mockCreate.mockResolvedValue({ id: 1 });
+  mockCheckOff.mockReset();
 });
+
+const flushRecord = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve();
+  });
+};
 
 afterEach(() => {
   jest.useRealTimers();
@@ -188,11 +203,29 @@ describe('useQuickLaunchedSession — a page opened to run a saved practice', ()
     const { getByTestId } = render(<LaunchedPage launch={launch} />);
 
     tickTo(T0 + LAUNCH_MINUTES * MS_PER_MINUTE);
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushRecord();
 
     expect(getByTestId('writing-session-banner')).toBeTruthy();
+  });
+
+  it('hands the recorded session to the linked-habit check-off once the record lands', async () => {
+    render(<LaunchedPage launch={launch} />);
+
+    tickTo(T0 + LAUNCH_MINUTES * MS_PER_MINUTE);
+    await flushRecord();
+
+    expect(mockCheckOff).toHaveBeenCalledTimes(1);
+    expect(mockCheckOff).toHaveBeenCalledWith(mockCreate.mock.calls[0]?.[0]);
+  });
+
+  it('hands nothing to the check-off when the record cannot be written', async () => {
+    mockCreate.mockRejectedValue(new Error('offline'));
+    render(<LaunchedPage launch={launch} />);
+
+    tickTo(T0 + LAUNCH_MINUTES * MS_PER_MINUTE);
+    await flushRecord();
+
+    expect(mockCheckOff).not.toHaveBeenCalled();
   });
 });
 
@@ -211,5 +244,6 @@ describe('useQuickLaunchedSession — a practice whose stage is still ahead', ()
     tickTo(T0 + LAUNCH_MINUTES * MS_PER_MINUTE);
 
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockCheckOff).not.toHaveBeenCalled();
   });
 });

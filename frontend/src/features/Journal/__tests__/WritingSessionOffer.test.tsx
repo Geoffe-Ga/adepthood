@@ -98,6 +98,7 @@ beforeEach(() => {
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
       writing_session_habit_id: partial.writing_session_habit_id ?? null,
+      practice_session_habit_id: null,
     }),
   );
 });
@@ -499,6 +500,7 @@ describe('WritingSessionOffer — keeping it as a habit the writer already has (
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
       writing_session_habit_id: 21,
+      practice_session_habit_id: null,
     });
     await waitFor(() => expect(view.queryByTestId('save-as-habit-linked')).not.toBeNull());
   });

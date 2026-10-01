@@ -43,14 +43,16 @@ const flags = (habitId: number | null): UiFlags => ({
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
   writing_session_habit_id: habitId,
+  practice_session_habit_id: null,
 });
 
-const RESULT: WritingSessionResult = {
+/** A fresh result object each time: the hook credits each finished session once. */
+const finished = (): WritingSessionResult => ({
   plannedMinutes: 20,
   elapsedMs: 20 * MS_PER_MINUTE,
   elapsedMinutes: 20,
   reachedFullDuration: true,
-};
+});
 
 const flush = async (): Promise<void> => {
   await act(async () => {
@@ -78,34 +80,62 @@ describe('useLinkedHabitCheckOff', () => {
     const inner = jest.fn();
     const { result } = renderHook(() => useLinkedHabitCheckOff(inner));
     await flush();
+    const session = finished();
 
-    act(() => result.current(RESULT));
+    act(() => result.current(session));
 
-    expect(inner).toHaveBeenCalledWith(RESULT);
+    expect(inner).toHaveBeenCalledWith(session);
   });
 
   it('with no link, checks nothing off', async () => {
     const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
     await flush();
 
-    act(() => result.current(RESULT));
+    act(() => result.current(finished()));
 
     expect(mockCheckOff).not.toHaveBeenCalled();
   });
 
-  it('with a link, checks that habit off in the account zone', async () => {
+  it('with a link, checks that habit off in the account zone, with the session’s minutes', async () => {
     mockFlagsGet.mockResolvedValue(flags(LINKED_HABIT_ID));
     const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
     await flush();
+    const session = finished();
 
-    act(() => result.current(RESULT));
+    act(() => result.current(session));
 
     expect(mockCheckOff).toHaveBeenCalledTimes(1);
     expect(mockCheckOff.mock.calls[0]?.[0]).toMatchObject({
       habitId: LINKED_HABIT_ID,
-      elapsedMs: RESULT.elapsedMs,
+      elapsedMs: session.elapsedMs,
+      elapsedMinutes: session.elapsedMinutes,
       tz: 'America/Chicago',
     });
+  });
+
+  it('the same finished session reported twice is credited once', async () => {
+    mockFlagsGet.mockResolvedValue(flags(LINKED_HABIT_ID));
+    const inner = jest.fn();
+    const { result } = renderHook(() => useLinkedHabitCheckOff(inner));
+    await flush();
+    const session = finished();
+
+    act(() => result.current(session));
+    act(() => result.current(session));
+
+    expect(inner).toHaveBeenCalledTimes(2);
+    expect(mockCheckOff).toHaveBeenCalledTimes(1);
+  });
+
+  it('two different sessions are each credited', async () => {
+    mockFlagsGet.mockResolvedValue(flags(LINKED_HABIT_ID));
+    const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+    await flush();
+
+    act(() => result.current(finished()));
+    act(() => result.current(finished()));
+
+    expect(mockCheckOff).toHaveBeenCalledTimes(2);
   });
 });
 

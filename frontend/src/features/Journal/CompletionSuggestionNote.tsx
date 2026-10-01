@@ -42,10 +42,16 @@ const CHECKING_LABEL = 'Checking…';
 const CHECKED_LABEL = '✓ Checked off';
 const LOGGED_LABEL = '✓ Logged';
 
-/** "N-day streak" from a check-in, or null when there is no streak to show. */
+/** What a check-in's streak counts when the server does not say (older servers). */
+const DEFAULT_STREAK_UNIT = 'day';
+
+/**
+ * "N-day streak" (or "N-week" / "N-month" for a period cadence) from a
+ * check-in, or null when there is no streak to show.
+ */
 function streakLabel(checkIn: CheckInResult | null): string | null {
   if (!checkIn || checkIn.streak <= 0) return null;
-  return `${checkIn.streak}-day streak`;
+  return `${checkIn.streak}-${checkIn.streak_unit ?? DEFAULT_STREAK_UNIT} streak`;
 }
 
 export interface CompletionSuggestionNoteProps {

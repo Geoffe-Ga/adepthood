@@ -435,3 +435,164 @@ export const msUntilNextDayInTZ = (tz: string, now: Date = new Date()): number =
   }
   return base + low * MS_PER_MINUTE - now.getTime();
 };
+
+// ---------------------------------------------------------------------------
+// Period streaks (weekly / monthly cadences)
+// ---------------------------------------------------------------------------
+
+/** A habit cadence longer than a day: weeks run Monday–Sunday, months are calendar months. */
+export type PeriodUnit = 'week' | 'month';
+
+/**
+ * How a weekly or monthly habit is judged. `dayTarget` is the per-day amount
+ * (`goal.target`, never normalised) that makes a day "done", and
+ * `daysNeeded` is how many done days a period needs to count
+ * (`goal.frequency`). Both come from the habit's low tier — the floor.
+ */
+export interface PeriodCadence {
+  unit: PeriodUnit;
+  daysNeeded: number;
+  dayTarget: number;
+}
+
+/** One logged row: when it fell and how much it logged. */
+export interface PeriodCompletion {
+  timestamp: string | Date;
+  completed_units: number;
+}
+
+/** Days in a week — the stride between consecutive week starts. */
+const DAYS_PER_WEEK = 7;
+/** Days from Sunday (`getUTCDay() === 0`) back to the Monday that started its week. */
+const SUNDAY_TO_MONDAY_OFFSET = DAYS_PER_WEEK - 1;
+/** Length of the `YYYY-MM` prefix of a day key. */
+const MONTH_PREFIX_LENGTH = 7;
+
+/**
+ * The `YYYY-MM-DD` key of the first day of the period containing `dayKey`:
+ * the Monday of its week, or the first of its month. Period identity is this
+ * start key, so two days compare periods by comparing their start keys.
+ */
+export const periodStartKey = (dayKey: string, unit: PeriodUnit): string => {
+  if (unit === 'month') return `${dayKey.slice(0, MONTH_PREFIX_LENGTH)}-01`;
+  // A `YYYY-MM-DD` key parsed at UTC midnight yields its own weekday in UTC.
+  const weekday = new Date(`${dayKey}T00:00:00Z`).getUTCDay();
+  const daysSinceMonday = (weekday + SUNDAY_TO_MONDAY_OFFSET) % DAYS_PER_WEEK;
+  return addDaysInTZ(dayKey, -daysSinceMonday, DEFAULT_TIMEZONE);
+};
+
+/** The start key of the period immediately before the one starting at `startKey`. */
+const previousPeriodStart = (startKey: string, unit: PeriodUnit): string => {
+  if (unit === 'week') return addDaysInTZ(startKey, -DAYS_PER_WEEK, DEFAULT_TIMEZONE);
+  const [year, month] = startKey.split('-').map((part) => Number.parseInt(part, 10));
+  // Month index is zero-based, so `month - 2` is the previous month; Date.UTC
+  // rolls January back into the previous December on its own.
+  return new Date(Date.UTC(year!, month! - 2, 1)).toISOString().slice(0, 10);
+};
+
+/**
+ * Count the done days in each period. A day is done when its summed units
+ * reach `dayTarget` and are positive — a zero-target cadence still needs a
+ * real log — and a period appears in the map only once it has a done day.
+ */
+const doneDaysByPeriod = (
+  completions: ReadonlyArray<PeriodCompletion>,
+  cadence: PeriodCadence,
+  tz: string,
+): Map<string, number> => {
+  const dayTotals = new Map<string, number>();
+  for (const c of completions) {
+    const key = dayKeyInTZ(c.timestamp, tz);
+    dayTotals.set(key, (dayTotals.get(key) ?? 0) + c.completed_units);
+  }
+  const done = new Map<string, number>();
+  for (const [day, total] of dayTotals) {
+    if (total <= 0 || total < cadence.dayTarget) continue;
+    const period = periodStartKey(day, cadence.unit);
+    done.set(period, (done.get(period) ?? 0) + 1);
+  }
+  return done;
+};
+
+/**
+ * Whether the period starting at `startKey` has enough done days. A period
+ * with no done day at all is never complete, which also keeps the backwards
+ * walk finite for a malformed cadence that needs zero days.
+ */
+const isPeriodComplete = (
+  done: ReadonlyMap<string, number>,
+  startKey: string,
+  cadence: PeriodCadence,
+): boolean => {
+  const count = done.get(startKey);
+  return count !== undefined && count >= cadence.daysNeeded;
+};
+
+/**
+ * Current streak, in periods, for a weekly or monthly habit — the period
+ * sibling of {@link streakFromCompletions}.
+ *
+ * Walks back from the period containing `now` in the user's zone. The
+ * current period counts when it is already complete; when it is not, it is
+ * merely in progress and is skipped without breaking the chain (the user
+ * still has the rest of the period to finish it). Every earlier period must
+ * be complete and calendar-adjacent to the one after it, else the walk stops.
+ *
+ * @param completions - Logged rows; pass `local_day` as the timestamp when a
+ *   row carries one so the day identity matches the server's.
+ * @param cadence - The habit's period cadence (see {@link PeriodCadence}).
+ * @param tz - The user's IANA timezone.
+ * @param now - Override for "today", primarily for tests.
+ */
+export const periodStreakFromCompletions = (
+  completions: ReadonlyArray<PeriodCompletion>,
+  cadence: PeriodCadence,
+  tz: string,
+  now: Date = new Date(),
+): number => {
+  const done = doneDaysByPeriod(completions, cadence, tz);
+  let cursor = periodStartKey(dayKeyInTZ(now, tz), cadence.unit);
+  let streak = isPeriodComplete(done, cursor, cadence) ? 1 : 0;
+  cursor = previousPeriodStart(cursor, cadence.unit);
+  while (isPeriodComplete(done, cursor, cadence)) {
+    streak += 1;
+    cursor = previousPeriodStart(cursor, cadence.unit);
+  }
+  return streak;
+};
+
+/** Done days so far in the current period, against the days the cadence needs. */
+export const periodProgress = (
+  completions: ReadonlyArray<PeriodCompletion>,
+  cadence: PeriodCadence,
+  tz: string,
+  now: Date = new Date(),
+): { doneDays: number; daysNeeded: number } => {
+  const done = doneDaysByPeriod(completions, cadence, tz);
+  const current = periodStartKey(dayKeyInTZ(now, tz), cadence.unit);
+  return { doneDays: done.get(current) ?? 0, daysNeeded: cadence.daysNeeded };
+};
+
+/**
+ * Longest run of calendar-adjacent complete periods across the habit's life,
+ * for the stats overlay's "longest streak" field.
+ */
+export const longestPeriodStreak = (
+  completions: ReadonlyArray<PeriodCompletion>,
+  cadence: PeriodCadence,
+  tz: string,
+): number => {
+  const done = doneDaysByPeriod(completions, cadence, tz);
+  const complete = Array.from(done.keys())
+    .filter((key) => isPeriodComplete(done, key, cadence))
+    .sort();
+  let longest = 0;
+  let run = 0;
+  let previous: string | null = null;
+  for (const key of complete) {
+    run = previous !== null && previousPeriodStart(key, cadence.unit) === previous ? run + 1 : 1;
+    if (run > longest) longest = run;
+    previous = key;
+  }
+  return longest;
+};

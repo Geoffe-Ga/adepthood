@@ -15,6 +15,14 @@ jest.mock('@/api', () => ({
   },
 }));
 
+// The saved session is handed to the linked-habit check-off; the hook that
+// owns that seam is stood in for here, so this test sees only the hand-off.
+const mockCheckOff = jest.fn<(_payload: PracticeSessionCreate) => void>();
+
+jest.mock('../usePracticeHabitCheckOff', () => ({
+  usePracticeHabitCheckOff: () => mockCheckOff,
+}));
+
 const { useSaveSessionMutation } = require('../useSaveSessionMutation');
 
 const PAYLOAD: PracticeSessionCreate = {
@@ -137,6 +145,53 @@ describe('useSaveSessionMutation', () => {
     });
 
     expect(s.setSaveError).toHaveBeenLastCalledWith('GENERIC');
+  });
+
+  it('hands the saved payload to the linked-habit check-off once the row is committed', async () => {
+    mockCreate.mockResolvedValueOnce(SAVED);
+    const s = spies();
+    s.commit.mockImplementation(() => {
+      expect(mockCheckOff).not.toHaveBeenCalled();
+    });
+    const { result } = renderHook(() => useSaveSessionMutation({ ...s, errorOptions: {} }));
+
+    await act(async () => {
+      await result.current.mutate(PAYLOAD);
+    });
+
+    expect(mockCheckOff).toHaveBeenCalledTimes(1);
+    expect(mockCheckOff).toHaveBeenCalledWith(PAYLOAD);
+  });
+
+  it('hands nothing to the check-off when the save fails', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('boom'));
+    const s = spies();
+    const { result } = renderHook(() => useSaveSessionMutation({ ...s, errorOptions: {} }));
+
+    await act(async () => {
+      await expect(result.current.mutate(PAYLOAD)).rejects.toThrow();
+    });
+
+    expect(mockCheckOff).not.toHaveBeenCalled();
+  });
+
+  it('a check-off that throws never fails the save', async () => {
+    mockCreate.mockResolvedValueOnce(SAVED);
+    mockCheckOff.mockImplementationOnce(() => {
+      throw new Error('check-off exploded');
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const s = spies();
+    const { result } = renderHook(() => useSaveSessionMutation({ ...s, errorOptions: {} }));
+
+    let saved: PracticeSessionResponse | undefined;
+    await act(async () => {
+      saved = await result.current.mutate(PAYLOAD);
+    });
+
+    expect(saved).toEqual(SAVED);
+    expect(s.rollback).not.toHaveBeenCalled();
+    expect(s.setSaveError).not.toHaveBeenCalledWith(expect.any(String));
   });
 
   it('reports pending while the request is in flight', async () => {

@@ -9,7 +9,9 @@ import {
   loadPushToken,
 } from '../../../storage/notificationStorage';
 import { DAYS_OF_WEEK } from '../constants';
+import { habitCadence } from '../habitCadence';
 import type { Habit } from '../Habits.types';
+import { isSubtractiveHabit } from '../HabitUtils';
 
 const MAX_REGISTRATION_RETRIES = 3;
 const REGISTRATION_RETRY_DELAY_MS = 30_000;
@@ -96,6 +98,14 @@ const buildWeeklyTrigger = (
   minute: minutes,
 });
 
+/**
+ * What the habit's streak counts, as the reminder words it: days, or whole
+ * weeks / months for an additive habit kept per week / per month (the same
+ * reading the tile's streak line uses).
+ */
+export const streakUnitForHabit = (habit: Habit): 'day' | 'week' | 'month' =>
+  isSubtractiveHabit(habit) ? 'day' : habitCadence(habit.goals).unit;
+
 const scheduleOne = async (
   habit: Habit,
   trigger: Notifications.NotificationTriggerInput,
@@ -103,7 +113,7 @@ const scheduleOne = async (
   Notifications.scheduleNotificationAsync({
     content: {
       title: `Time for: ${habit.name}`,
-      body: `Continue your ${habit.streak}-day streak! 💪`,
+      body: `Continue your ${habit.streak}-${streakUnitForHabit(habit)} streak! 💪`,
       data: { habitId: habit.id },
     },
     trigger,

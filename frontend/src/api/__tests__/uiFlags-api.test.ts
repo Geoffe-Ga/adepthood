@@ -20,6 +20,7 @@ const ALL_SEEN: UiFlags = {
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
   writing_session_habit_id: null,
+  practice_session_habit_id: null,
 };
 
 const LINKED_HABIT_ID = 42;
@@ -87,6 +88,7 @@ describe('uiFlags writing_session_habit_id', () => {
         has_seen_welcome: true,
         energy_scaffolding_archived: false,
         writing_session_habit_id: LINKED_HABIT_ID,
+        practice_session_habit_id: null,
       }),
     );
     const result = await uiFlags.get('tok');
@@ -101,6 +103,7 @@ describe('uiFlags writing_session_habit_id', () => {
           has_seen_welcome: true,
           energy_scaffolding_archived: false,
           writing_session_habit_id: bad,
+          practice_session_habit_id: null,
         }),
       );
       await expect(uiFlags.get('tok')).rejects.toBeInstanceOf(ApiValidationError);
@@ -115,12 +118,33 @@ describe('uiFlags writing_session_habit_id', () => {
   });
 });
 
+describe('uiFlags practice_session_habit_id', () => {
+  test('a payload without the practice link types as unlinked, with the field absent', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(ALL_SEEN));
+    const result = await uiFlags.get('tok');
+    expect(result.practice_session_habit_id ?? null).toBeNull();
+  });
+
+  test('update sends the practice link verbatim, and an explicit null to clear it', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(ALL_SEEN));
+    await uiFlags.update({ practice_session_habit_id: LINKED_HABIT_ID }, 'tok');
+    mockFetch.mockReturnValueOnce(jsonResponse(ALL_SEEN));
+    await uiFlags.update({ practice_session_habit_id: null }, 'tok');
+
+    const [, first] = mockFetch.mock.calls[0];
+    const [, second] = mockFetch.mock.calls[1];
+    expect(JSON.parse(first.body)).toEqual({ practice_session_habit_id: LINKED_HABIT_ID });
+    expect(JSON.parse(second.body)).toEqual({ practice_session_habit_id: null });
+  });
+});
+
 describe('uiFlags.update', () => {
   test('PATCHes /ui-flags with the partial body verbatim and returns the full echo', async () => {
     const fullResponse: UiFlags = {
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
       writing_session_habit_id: null,
+      practice_session_habit_id: null,
     };
     mockFetch.mockReturnValueOnce(jsonResponse(fullResponse));
 
@@ -140,5 +164,33 @@ describe('uiFlags.update', () => {
       name: 'ApiError',
       status: 422,
     });
+  });
+});
+
+describe('uiFlags practice_session_habit_id parses like the writing link', () => {
+  test('a linked practice habit id parses through as a number', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        has_seen_welcome: true,
+        energy_scaffolding_archived: false,
+        writing_session_habit_id: null,
+        practice_session_habit_id: LINKED_HABIT_ID,
+      }),
+    );
+    const result = await uiFlags.get('tok');
+    expect(result.practice_session_habit_id).toBe(LINKED_HABIT_ID);
+  });
+
+  test('a payload from before the practice link existed parses, with the link null', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        has_seen_welcome: true,
+        energy_scaffolding_archived: false,
+        writing_session_habit_id: LINKED_HABIT_ID,
+        practice_session_habit_id: null,
+      }),
+    );
+    const result = await uiFlags.get('tok');
+    expect(result.practice_session_habit_id).toBeNull();
   });
 });

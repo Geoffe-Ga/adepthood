@@ -26,6 +26,15 @@
  * would turn a deliberate state into an error, and the writing is unaffected
  * either way — the page is the floor and is never gated.
  *
+ * ## The linked habit
+ *
+ * A session recorded here is a practice session like any the Practice tab
+ * saves, so once the record lands it is handed to the same linked-habit
+ * check-off (``usePracticeHabitCheckOff``) — fire-and-forget, after the write,
+ * and only when the write succeeded: a session the server does not hold
+ * checks nothing off. The writing timer's own link is a separate seam
+ * (``useLinkedHabitCheckOff``), composed around this one by the screen.
+ *
  * ## Once per session, without a latch
  *
  * ``WritingSessionSurface`` reports each finished session exactly once, on the
@@ -39,8 +48,11 @@ import { useCallback } from 'react';
 
 import type { WritingSessionResult } from './writingSession';
 
+import type { PracticeSessionCreate } from '@/api';
 import { practiceSessions } from '@/api';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
+import type { PracticeSessionSavedHandler } from '@/features/Practice/hooks/usePracticeHabitCheckOff';
+import { usePracticeHabitCheckOff } from '@/features/Practice/hooks/usePracticeHabitCheckOff';
 import { manualSessionPayload } from '@/features/Practice/utils/sessionWindow';
 
 /** The launch a route carries into the journal page. */
@@ -76,19 +88,25 @@ export interface LaunchedWritingSession {
  *
  * @param userPracticeId - The selection to record against.
  * @param result - The finished session, as the surface reported it.
+ * @param onRecorded - Told the payload once the server holds the row.
  */
-async function recordSession(userPracticeId: number, result: WritingSessionResult): Promise<void> {
+async function recordSession(
+  userPracticeId: number,
+  result: WritingSessionResult,
+  onRecorded: PracticeSessionSavedHandler,
+): Promise<void> {
+  const payload: PracticeSessionCreate = manualSessionPayload({
+    userPracticeId,
+    endedAt: new Date(),
+    durationMinutes: result.elapsedMs / MS_PER_MINUTE,
+  });
   try {
-    await practiceSessions.create(
-      manualSessionPayload({
-        userPracticeId,
-        endedAt: new Date(),
-        durationMinutes: result.elapsedMs / MS_PER_MINUTE,
-      }),
-    );
+    await practiceSessions.create(payload);
   } catch (err) {
     console.warn('[quickLaunch] the finished writing session was not recorded', err);
+    return;
   }
+  onRecorded(payload);
 }
 
 /**
@@ -102,12 +120,13 @@ export function useQuickLaunchedSession(
   launch: WritingSessionLaunch | undefined,
 ): LaunchedWritingSession {
   const userPracticeId = launch?.userPracticeId ?? null;
+  const checkOffLinkedHabit = usePracticeHabitCheckOff();
   const onSession = useCallback(
     (result: WritingSessionResult) => {
       if (userPracticeId === null) return;
-      void recordSession(userPracticeId, result);
+      void recordSession(userPracticeId, result, checkOffLinkedHabit);
     },
-    [userPracticeId],
+    [checkOffLinkedHabit, userPracticeId],
   );
   // One fact, two consumers: a launched page starts its own session AND
   // withholds the offer to make one. Derived once so the two can never end up

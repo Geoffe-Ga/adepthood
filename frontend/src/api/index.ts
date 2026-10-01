@@ -1411,6 +1411,8 @@ export interface CheckInResult {
   reason_code: string;
   /** Authoritative sum across every tier row for the affected habit/day. */
   day_units: number;
+  /** What `streak` counts; absent from older servers and then read as 'day'. */
+  streak_unit?: 'day' | 'week' | 'month';
 }
 
 export const goalCompletions = {
@@ -3707,7 +3709,11 @@ export const depthPreferences = {
 
 // Per-account UI flags (server-owned one-time UI state, e.g. hasSeenWelcome)
 
-/** Full UI-flags state (mirrors the backend response). */
+/**
+ * Full UI-flags state (mirrors the backend response): the two one-time flags
+ * and the habits a finished writing session and a finished practice session
+ * check off, each ``null`` when unlinked.
+ */
 export type UiFlags = UiFlagsT;
 
 /** Partial update body — only the flipped flags are sent. */

@@ -73,6 +73,7 @@ const flags = (habitId: number | null): UiFlags => ({
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
   writing_session_habit_id: habitId,
+  practice_session_habit_id: null,
 });
 
 const rowLabel = (view: ReturnType<typeof render>): string =>

@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, jest */
+/* global describe, test, expect, jest, beforeEach, afterEach */
 import { dayKeyInTZ } from '../../../utils/dateUtils';
 import type { Habit, Goal } from '../Habits.types';
 import { generateStatsForHabit, toLocalHabitStats, calculateMissedDays } from '../HabitUtils';
@@ -489,5 +489,96 @@ describe('calculateMissedDays', () => {
       ],
     };
     expect(calculateMissedDays(backfilled, tz)).toEqual([]);
+  });
+});
+
+describe('generateStatsForHabit with a weekly cadence', () => {
+  /** Wednesday 2026-06-17, 18:00 UTC. */
+  const NOW = new Date('2026-06-17T18:00:00Z');
+  const weekly = (tier: Goal['tier'], id: number, target: number): Goal => ({
+    id,
+    tier,
+    title: tier,
+    target,
+    target_unit: 'cups',
+    frequency: 4,
+    frequency_unit: 'per_week',
+    is_additive: true,
+  });
+  const habit: Habit = {
+    id: 1,
+    stage: 'Beige',
+    name: 'Water',
+    icon: '💧',
+    streak: 0,
+    energy_cost: 1,
+    energy_return: 2,
+    start_date: new Date('2026-01-01'),
+    goals: [weekly('low', 1, 2), weekly('clear', 2, 4), weekly('stretch', 3, 6)],
+    completions: [],
+  };
+  const row = (day: string, units: number) => ({
+    id: day,
+    timestamp: new Date(`${day}T12:00:00Z`),
+    local_day: day,
+    completed_units: units,
+  });
+  const fullWeek = (days: string[]) => days.map((day) => row(day, 2));
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('counts complete Monday–Sunday weeks, skipping the in-progress one', () => {
+    const stats = generateStatsForHabit(
+      {
+        ...habit,
+        completions: [
+          ...fullWeek(['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04']),
+          ...fullWeek(['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11']),
+          row('2026-06-15', 2),
+          row('2026-06-16', 2),
+        ],
+      },
+      'UTC',
+    );
+    expect(stats.currentStreak).toBe(2);
+    expect(stats.longestStreak).toBe(2);
+  });
+
+  test('a day under the per-day target does not count toward the week', () => {
+    const stats = generateStatsForHabit(
+      {
+        ...habit,
+        completions: [
+          ...fullWeek(['2026-06-08', '2026-06-09', '2026-06-10']),
+          row('2026-06-11', 1),
+        ],
+      },
+      'UTC',
+    );
+    expect(stats.currentStreak).toBe(0);
+    expect(stats.longestStreak).toBe(0);
+  });
+
+  test('longest streak spans older weeks the current streak no longer reaches', () => {
+    const stats = generateStatsForHabit(
+      {
+        ...habit,
+        completions: [
+          ...fullWeek(['2026-04-06', '2026-04-07', '2026-04-08', '2026-04-09']),
+          ...fullWeek(['2026-04-13', '2026-04-14', '2026-04-15', '2026-04-16']),
+          ...fullWeek(['2026-04-20', '2026-04-21', '2026-04-22', '2026-04-23']),
+        ],
+      },
+      'UTC',
+    );
+    expect(stats.currentStreak).toBe(0);
+    expect(stats.longestStreak).toBe(3);
   });
 });

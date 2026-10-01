@@ -670,6 +670,10 @@ export const checkInResultSchema = z.object({
   milestones: z.array(z.object({ threshold: z.number().int() })),
   reason_code: z.string(),
   day_units: z.number().nonnegative(),
+  // What `streak` counts: days for a daily habit, complete weeks or months
+  // for a per_week / per_month one. Optional because older servers omit it;
+  // readers default to 'day'.
+  streak_unit: z.enum(['day', 'week', 'month']).optional(),
 });
 
 export const completionSuggestionSchema = z.object({
@@ -1139,6 +1143,8 @@ export const uiFlagsSchema = z.object({
    * from a server that predates the link still parses, as unlinked.
    */
   writing_session_habit_id: z.number().int().positive().nullable().default(null),
+  /** The habit a finished practice session checks off; the same defaulting, for the same reason. */
+  practice_session_habit_id: z.number().int().positive().nullable().default(null),
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;

@@ -14,6 +14,10 @@
  * (``onClear``); then "Cancel", always — a way back that answers nothing.
  * Every row is a button with a label saying what the tap does, at the design
  * system's touch-target floor (via ``OfferAction``); nothing is drag-only.
+ *
+ * The words default to the writing timer's. A host linking some other kind of
+ * session — ``PracticeHabitPicker`` — passes its own ``copy`` and a
+ * ``testIDPrefix`` of its own, so two pickers on one screen stay distinct.
  */
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -35,6 +39,26 @@ import { isLinkableHabit } from './writingHabitCheckOff';
 import { SPACING, colors, editorialType } from '@/design/tokens';
 import type { Habit } from '@/features/Habits/Habits.types';
 
+/** The words a host may replace: what the picker asks, and what each row does. */
+export interface HabitPickerCopy {
+  title: string;
+  help: string;
+  /** A habit row's screen-reader label: what choosing it will do. */
+  chooseA11y: (_habitName: string) => string;
+  clearA11y: string;
+}
+
+/** The writing timer's words, which the picker uses unless told otherwise. */
+export const WRITING_HABIT_PICKER_COPY: HabitPickerCopy = {
+  title: WRITING_HABIT_PICKER_TITLE,
+  help: WRITING_HABIT_PICKER_HELP,
+  chooseA11y: writingHabitChooseA11y,
+  clearA11y: WRITING_HABIT_CLEAR_A11Y,
+};
+
+/** The prefix every testID carries unless the host gives its own. */
+export const WRITING_HABIT_TEST_ID_PREFIX = 'writing-habit';
+
 export interface WritingHabitPickerProps {
   /** The writer's habits; the ones that cannot be linked are left out here. */
   habits: readonly Habit[];
@@ -48,6 +72,10 @@ export interface WritingHabitPickerProps {
   onClear?: () => void;
   /** A save is in flight: every choice is held so a tap cannot be spent twice. */
   busy?: boolean;
+  /** The host's own words, where they differ from the writing timer's. */
+  copy?: Partial<HabitPickerCopy>;
+  /** The host's own testID prefix, so two pickers on one screen stay distinct. */
+  testIDPrefix?: string;
 }
 
 /** The optional rows below the habits: a new habit, then clearing the link. */
@@ -55,7 +83,13 @@ function ExtraRows({
   onNew,
   onClear,
   busy,
-}: Pick<WritingHabitPickerProps, 'onNew' | 'onClear'> & { busy: boolean }): React.JSX.Element {
+  clearA11y,
+  prefix,
+}: Pick<WritingHabitPickerProps, 'onNew' | 'onClear'> & {
+  busy: boolean;
+  clearA11y: string;
+  prefix: string;
+}): React.JSX.Element {
   return (
     <>
       {onNew ? (
@@ -64,16 +98,16 @@ function ExtraRows({
           a11yLabel={WRITING_HABIT_NEW_A11Y}
           onPress={onNew}
           disabled={busy}
-          testID="writing-habit-new"
+          testID={`${prefix}-new`}
         />
       ) : null}
       {onClear ? (
         <OfferAction
           label={WRITING_HABIT_CLEAR}
-          a11yLabel={WRITING_HABIT_CLEAR_A11Y}
+          a11yLabel={clearA11y}
           onPress={onClear}
           disabled={busy}
-          testID="writing-habit-clear"
+          testID={`${prefix}-clear`}
         />
       ) : null}
     </>
@@ -87,29 +121,38 @@ function WritingHabitPicker({
   onNew,
   onClear,
   busy = false,
+  copy,
+  testIDPrefix = WRITING_HABIT_TEST_ID_PREFIX,
 }: WritingHabitPickerProps): React.JSX.Element {
+  const words: HabitPickerCopy = { ...WRITING_HABIT_PICKER_COPY, ...copy };
   const linkable = habits.filter(isLinkableHabit);
   return (
-    <View style={styles.picker} testID="writing-habit-picker">
-      <Text style={styles.title}>{WRITING_HABIT_PICKER_TITLE}</Text>
-      <Text style={styles.help}>{WRITING_HABIT_PICKER_HELP}</Text>
+    <View style={styles.picker} testID={`${testIDPrefix}-picker`}>
+      <Text style={styles.title}>{words.title}</Text>
+      <Text style={styles.help}>{words.help}</Text>
       <View style={styles.rows}>
         {linkable.map((habit) => (
           <OfferAction
             key={habit.id}
             label={habit.name}
-            a11yLabel={writingHabitChooseA11y(habit.name)}
+            a11yLabel={words.chooseA11y(habit.name)}
             onPress={() => onChoose(habit)}
             disabled={busy}
-            testID={`writing-habit-choose-${habit.id}`}
+            testID={`${testIDPrefix}-choose-${habit.id}`}
           />
         ))}
-        <ExtraRows onNew={onNew} onClear={onClear} busy={busy} />
+        <ExtraRows
+          onNew={onNew}
+          onClear={onClear}
+          busy={busy}
+          clearA11y={words.clearA11y}
+          prefix={testIDPrefix}
+        />
         <OfferAction
           label={WRITING_HABIT_CANCEL}
           a11yLabel={WRITING_HABIT_CANCEL_A11Y}
           onPress={onCancel}
-          testID="writing-habit-cancel"
+          testID={`${testIDPrefix}-cancel`}
         />
       </View>
     </View>

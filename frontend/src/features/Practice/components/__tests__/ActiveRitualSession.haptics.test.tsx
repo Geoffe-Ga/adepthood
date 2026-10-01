@@ -3,6 +3,12 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import * as Haptics from 'expo-haptics';
 import React from 'react';
 
+// ``useSaveSessionMutation`` reads the account zone for the linked-habit
+// check-off; nothing here is under an ``AuthProvider``.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'session-tok', userTimezone: 'UTC' }),
+}));
+
 import type { UserPractice } from '@/api';
 import ActiveRitualSession from '@/features/Practice/components/ActiveRitualSession';
 import type { MeditationTimerConfig } from '@/features/Practice/engine/types';

@@ -83,16 +83,16 @@ describe('computeStarFillPlan — additive habits', () => {
     expect(computeStarFillPlan(withTodayUnits(2), 'clear', TZ)).toBeNull();
   });
 
-  it('normalizes per-week targets to their daily equivalent', () => {
+  it('treats a per-week target as the per-day amount, never dividing by seven', () => {
     const habit = makeHabit({
       goals: [
-        makeGoal('low', { target: 7, frequency_unit: 'per_week' }),
-        makeGoal('clear', { target: 14, frequency_unit: 'per_week' }),
-        makeGoal('stretch', { target: 21, frequency_unit: 'per_week' }),
+        makeGoal('low', { target: 7, frequency: 4, frequency_unit: 'per_week' }),
+        makeGoal('clear', { target: 14, frequency: 4, frequency_unit: 'per_week' }),
+        makeGoal('stretch', { target: 21, frequency: 4, frequency_unit: 'per_week' }),
       ],
     });
     const plan = computeStarFillPlan(habit, 'low', TZ);
-    expect(plan?.deltaUnits).toBeCloseTo(1, 5);
+    expect(plan?.deltaUnits).toBe(7);
   });
 });
 

@@ -67,10 +67,10 @@ describe('HabitTile tooltips', () => {
   });
 });
 
-// Regression: the tile tooltip once rendered today-only progress over the raw
-// weekly/monthly target, so a `per_week` goal whose "met" star was already
-// filled still showed a sub-100% fraction. The tooltip must divide by the same
-// daily-normalized target the star uses.
+// The tile tooltip divides today's progress by the same target the "met" star
+// uses. `goal.target` is the per-day amount in every cadence (a `per_week`
+// goal's `frequency` is days per week, never a divisor), so a `per_week` goal
+// reads today's units over its raw target and lights its star at exactly that.
 describe('HabitTile tooltip fraction matches the met star', () => {
   const readTooltipFraction = (
     component: ReturnType<typeof renderer.create>,
@@ -85,31 +85,59 @@ describe('HabitTile tooltip fraction matches the met star', () => {
     return { numerator: Number(match[1]), denominator: Number(match[2]) };
   };
 
-  it('renders numerator >= denominator for a met per_week goal', () => {
-    // Shipped default "High Flow Activity" low tier: 3 hours per_week (frequency 1).
-    // The daily-normalized target is 3/7 hours, so a single 1-hour log today
-    // already fills the "met" star; the tooltip fraction must read >= 100%.
-    const perWeek: Habit = {
-      ...habit,
-      goals: [
-        { ...habit.goals[0]!, target: 3, target_unit: 'hours', frequency_unit: 'per_week' },
-        { ...habit.goals[1]!, target: 5, target_unit: 'hours', frequency_unit: 'per_week' },
-        { ...habit.goals[2]!, target: 7, target_unit: 'hours', frequency_unit: 'per_week' },
-      ],
-      completions: [{ id: 'w-1', timestamp: new Date(), completed_units: 1 }],
-    };
-    const component = renderer.create(
-      <HabitTile habit={perWeek} onOpenGoals={() => {}} tz="UTC" />,
-    );
+  /** 3 / 5 / 7 hours a day, four days a week, with `units` logged today. */
+  const perWeek = (units: number): Habit => ({
+    ...habit,
+    goals: [
+      {
+        ...habit.goals[0]!,
+        target: 3,
+        target_unit: 'hours',
+        frequency: 4,
+        frequency_unit: 'per_week',
+      },
+      {
+        ...habit.goals[1]!,
+        target: 5,
+        target_unit: 'hours',
+        frequency: 4,
+        frequency_unit: 'per_week',
+      },
+      {
+        ...habit.goals[2]!,
+        target: 7,
+        target_unit: 'hours',
+        frequency: 4,
+        frequency_unit: 'per_week',
+      },
+    ],
+    completions: [{ id: 'w-1', timestamp: new Date(), completed_units: units }],
+  });
+
+  const hoverLow = (component: ReturnType<typeof renderer.create>) => {
     const marker = component.root.findByProps({ testID: 'marker-low' });
-    // The star is rendered "met" (throws if no met star exists under the marker),
-    // so we assert the tooltip fraction agrees with it rather than merely implying it.
-    expect(marker.findByProps({ met: true })).toBeTruthy();
     renderer.act(() => {
       marker.props.onMouseEnter();
     });
-    const { numerator, denominator } = readTooltipFraction(component, 'low');
-    expect(numerator).toBeGreaterThanOrEqual(denominator);
+    return marker;
+  };
+
+  it('renders today over the raw per-day target and lights the star once it is reached', () => {
+    const component = renderer.create(
+      <HabitTile habit={perWeek(3)} onOpenGoals={() => {}} tz="UTC" />,
+    );
+    const marker = hoverLow(component);
+    expect(marker.findByProps({ met: true })).toBeTruthy();
+    expect(readTooltipFraction(component, 'low')).toEqual({ numerator: 3, denominator: 3 });
+  });
+
+  it('keeps the star unlit and the fraction under one before the per-day target', () => {
+    const component = renderer.create(
+      <HabitTile habit={perWeek(1)} onOpenGoals={() => {}} tz="UTC" />,
+    );
+    const marker = hoverLow(component);
+    expect(() => marker.findByProps({ met: true })).toThrow();
+    expect(readTooltipFraction(component, 'low')).toEqual({ numerator: 1, denominator: 3 });
   });
 });
 

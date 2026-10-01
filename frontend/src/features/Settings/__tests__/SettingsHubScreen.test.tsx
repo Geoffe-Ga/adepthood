@@ -42,12 +42,14 @@ const mockCapabilities = jest.fn<Promise<{ feedback_triage: boolean }>, []>(() =
   Promise.reject(new Error('no capability answer configured')),
 );
 
-// The Journal group reads the writing-timer link; it answers "no link" here.
+// The Journal and Practice groups read their session links; both answer
+// "no link" here.
 const mockUiFlagsGet = jest.fn(() =>
   Promise.resolve({
     has_seen_welcome: true,
     energy_scaffolding_archived: false,
     writing_session_habit_id: null,
+    practice_session_habit_id: null,
   }),
 );
 
@@ -375,6 +377,36 @@ describe('SettingsHubScreen — Journal section', () => {
     expect(tree.indexOf('settings-group-depths')).toBeGreaterThan(-1);
     expect(tree.indexOf('settings-group-journal')).toBeGreaterThan(
       tree.indexOf('settings-group-depths'),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Practice section — the habit a finished practice session checks off
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — Practice section', () => {
+  test('renders the Practice group with the practice-sessions row', async () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    expect(getByTestId('settings-group-practice')).toBeTruthy();
+    await waitFor(() =>
+      expect(getByTestId('settings-row-practice-habit').props.accessibilityLabel).toBe(
+        'Practice sessions → not linked',
+      ),
+    );
+  });
+
+  test('sits right after the Journal group', () => {
+    const { toJSON } = render(<SettingsHubScreen />);
+    const tree = JSON.stringify(toJSON());
+
+    expect(tree.indexOf('settings-group-journal')).toBeGreaterThan(-1);
+    expect(tree.indexOf('settings-group-practice')).toBeGreaterThan(
+      tree.indexOf('settings-group-journal'),
+    );
+    expect(tree.indexOf('settings-group-practice')).toBeLessThan(
+      tree.indexOf('settings-group-your-data'),
     );
   });
 });

@@ -9,6 +9,7 @@ import {
   updateHabitNotifications,
   reconcileNotifications,
   cancelForHabit,
+  streakUnitForHabit,
 } from '../hooks/useHabitNotifications';
 
 jest.mock('expo-notifications', () => ({
@@ -489,5 +490,32 @@ describe('cancelForHabit', () => {
   it('handles errors gracefully', async () => {
     mockStorage.loadNotificationIds.mockRejectedValue(new Error('storage error'));
     await expect(cancelForHabit(42)).resolves.toBeUndefined();
+  });
+});
+
+describe('streakUnitForHabit', () => {
+  const goal = (tier: 'low' | 'clear' | 'stretch', frequency_unit: string, is_additive = true) => ({
+    title: tier,
+    tier,
+    target: 1,
+    target_unit: 'units',
+    frequency: 4,
+    frequency_unit,
+    is_additive,
+  });
+
+  it('words a daily habit in days', () => {
+    expect(streakUnitForHabit({ ...baseHabit, goals: [goal('low', 'per_day')] })).toBe('day');
+    expect(streakUnitForHabit(baseHabit)).toBe('day');
+  });
+
+  it('words a weekly or monthly habit in its period', () => {
+    expect(streakUnitForHabit({ ...baseHabit, goals: [goal('low', 'per_week')] })).toBe('week');
+    expect(streakUnitForHabit({ ...baseHabit, goals: [goal('low', 'per_month')] })).toBe('month');
+  });
+
+  it('keeps a subtractive habit in days whatever its cadence says', () => {
+    const habit = { ...baseHabit, goals: [goal('low', 'per_week', false)] };
+    expect(streakUnitForHabit(habit)).toBe('day');
   });
 });

@@ -340,6 +340,26 @@ describe('HabitUtils', () => {
     expect(habit.streak).toBe(2);
   });
 
+  test('logHabitUnits leaves a weekly-cadence streak for the server to reconcile', () => {
+    const weekly = (tier: Goal['tier'], id: number, target: number): Goal => ({
+      id,
+      tier,
+      title: tier,
+      target,
+      target_unit: 'u',
+      frequency: 4,
+      frequency_unit: 'per_week',
+      is_additive: true,
+    });
+    const goals = [weekly('low', 1, 1), weekly('clear', 2, 2), weekly('stretch', 3, 3)];
+    let habit: Habit = { ...baseHabit, goals, completions: [], streak: 2 };
+    habit = logHabitUnits(habit, 1, new Date('2023-01-02T18:00:00Z'), 'UTC');
+    expect(habit.streak).toBe(2);
+    expect(habit.completions).toHaveLength(1);
+    habit = logHabitUnits(habit, 1, new Date('2023-01-03T18:00:00Z'), 'UTC');
+    expect(habit.streak).toBe(2);
+  });
+
   test('logHabitUnits leaves a subtractive streak untouched while appending logs', () => {
     const goals: Goal[] = [
       {
@@ -706,7 +726,7 @@ describe('getTierColor', () => {
   });
 });
 
-describe('getGoalTarget frequency-unit normalization', () => {
+describe('getGoalTarget is the per-day amount in every cadence', () => {
   test('per_day returns the raw target unchanged', () => {
     const goal: Goal = {
       id: 1,
@@ -721,32 +741,33 @@ describe('getGoalTarget frequency-unit normalization', () => {
     expect(getGoalTarget(goal)).toBe(4);
   });
 
-  test('per_week normalizes to a daily-equivalent target', () => {
+  test('per_week keeps the per-day target; frequency is days per week, not a divisor', () => {
+    // "3 a day, 4 days a week" asks for 3 today — never 3 * 4 / 7 = 1.71.
     const goal: Goal = {
       id: 1,
       tier: 'low',
       title: 'low',
-      target: 14,
+      target: 3,
       target_unit: 'u',
-      frequency: 1,
+      frequency: 4,
       frequency_unit: 'per_week',
       is_additive: true,
     };
-    expect(getGoalTarget(goal)).toBe(2);
+    expect(getGoalTarget(goal)).toBe(3);
   });
 
-  test('per_month normalizes to a daily-equivalent target', () => {
+  test('per_month keeps the per-day target too', () => {
     const goal: Goal = {
       id: 1,
       tier: 'low',
       title: 'low',
-      target: 30.437,
+      target: 5,
       target_unit: 'u',
-      frequency: 1,
+      frequency: 10,
       frequency_unit: 'per_month',
       is_additive: true,
     };
-    expect(getGoalTarget(goal)).toBeCloseTo(1, 5);
+    expect(getGoalTarget(goal)).toBe(5);
   });
 
   test('an unrecognized frequency_unit falls back to the raw target', () => {
@@ -1575,9 +1596,9 @@ describe('targetForMarkerPercent', () => {
     expect(targetForMarkerPercent(60, 'clear', low, clear, stretch)).toBe(5);
   });
 
-  test('round-trips a per_week habit in its own raw units, not daily-equivalents', () => {
-    // getGoalTarget normalizes per_week to a daily-equivalent, but goal.target
-    // is raw; dropping on the stretch star must save the stretch star's RAW 4.
+  test('round-trips a per_week habit in its own per-day units', () => {
+    // goal.target is the per-day amount in every cadence, so a per_week bar
+    // inverts exactly like a per_day one: the stretch star saves its own 4.
     const low = weekly(1, 'low');
     const clear = weekly(2, 'clear');
     const stretch = weekly(4, 'stretch');
@@ -1613,13 +1634,15 @@ describe('targetForMarkerPercent', () => {
         goalAt('stretch', { target: 0 }),
       ),
     ).toBeNull();
-    // A cadence with no frequency cannot be scaled back to raw units.
+  });
+
+  test('ignores frequency: it counts days per period and never scales the target', () => {
     expect(
       targetForMarkerPercent(50, 'low', weekly(1, 'low'), weekly(2, 'clear'), {
         ...weekly(4, 'stretch'),
         frequency: 0,
       }),
-    ).toBeNull();
+    ).toBe(2);
   });
 
   test('floors at one unit rather than proposing an empty goal', () => {

@@ -14,6 +14,12 @@ jest.mock('@/api', () => ({
   },
 }));
 
+// ``useSaveSessionMutation`` reads the account zone for the linked-habit
+// check-off; nothing here is under an ``AuthProvider``.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'session-tok', userTimezone: 'UTC' }),
+}));
+
 // eslint-disable-next-line import/order
 const { act, fireEvent, render, waitFor } = require('@testing-library/react-native');
 const LogPracticeSessionSheet = require('../LogPracticeSessionSheet').default;
