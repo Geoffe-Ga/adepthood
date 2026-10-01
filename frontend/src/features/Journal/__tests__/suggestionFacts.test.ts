@@ -23,6 +23,7 @@ const s = (o: Partial<CompletionSuggestion> = {}): CompletionSuggestion => ({
   anchor_text: 'drank 64 oz of water',
   completed_units: null,
   completed_on: null,
+  logged_on: null,
   status: 'pending',
   accepted_at: null,
   created_at: '',

@@ -143,6 +143,7 @@ function suggestionRow(overrides: Partial<CompletionSuggestion> = {}): Completio
     anchor_text: 'a daily',
     completed_units: null,
     completed_on: null,
+    logged_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '',
