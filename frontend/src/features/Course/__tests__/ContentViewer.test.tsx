@@ -574,7 +574,28 @@ describe('ContentViewer', () => {
       expect(footer.props.accessibilityElementsHidden).toBe(false);
       expect(footer.props.importantForAccessibility).toBe('auto');
       expect(footer.props.pointerEvents).not.toBe('none');
-      expect(getByTestId('chapter-nav-next').props.focusable).toBe(true);
+      for (const control of ['chapter-nav-back', 'mark-read-button', 'chapter-nav-next']) {
+        expect(getByTestId(control).props.focusable).toBe(true);
+      }
+    });
+
+    it('lets the keyboard reach Reflect while the row is shown, and not while it leaves', async () => {
+      const { findByTestId, getByTestId } = render(
+        <ContentViewer
+          item={makeItem({ is_read: true })}
+          onBack={onBack}
+          onMarkRead={onMarkRead}
+          onReflect={jest.fn()}
+          nav={makeNav()}
+        />,
+      );
+      const scrollView = await readToTheEnd(findByTestId);
+      expect(getByTestId('reflect-button').props.focusable).toBe(true);
+
+      fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 0 } } });
+      expect(getByTestId('reflect-button', { includeHiddenElements: true }).props.focusable).toBe(
+        false,
+      );
     });
 
     it('gives a chapter too short to scroll its controls straight away', async () => {
