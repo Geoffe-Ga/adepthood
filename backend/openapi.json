@@ -18541,7 +18541,7 @@
     },
     "/journal/{entry_id}/suggestions/detect": {
       "post": {
-        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".",
+        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".\n\nThe INTIMATE check here is only the cheap fast path: the authoritative\nfloor is re-read under the account hold, just before the dial (#3008).",
         "operationId": "detect_entry_suggestions_journal__entry_id__suggestions_detect_post",
         "parameters": [
           {

@@ -2347,6 +2347,10 @@ async def detect_entry_suggestions(
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    # Validation only: a legacy row whose body sanitizes to nothing answers 422
+    # before any candidate or provider work. The body actually dialled is
+    # re-derived from the row re-read under the hold.
+    _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
