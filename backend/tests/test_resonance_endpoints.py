@@ -36,6 +36,7 @@ from services.botmason import STUB_MODEL_NAME, LLMProviderError, LLMResponse
 from services.corpus_store import FragmentDraft, record_fragment
 from services.frequency_classification import ClassificationSource, FrequencyClassification
 from services.higher_self_grounding import GroundingSource
+from services.usage import DEFAULT_MONTHLY_CAP
 
 _BODY = "I walked by the river and the willow bent without breaking."
 
@@ -163,7 +164,7 @@ async def test_resonance_persists_notes_and_charges_one(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert len(body["marginalia"]) == 2
-    assert body["remaining_messages"] == 49  # DEFAULT_MONTHLY_CAP (50) - 1
+    assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1
     persisted = (
         await db_session.execute(select(func.count()).select_from(Marginalia))
     ).scalar_one()
@@ -475,7 +476,7 @@ async def test_normal_entry_returns_no_care(
     body = resp.json()
     assert body["care"] is None
     assert len(body["marginalia"]) == 1
-    assert body["remaining_messages"] == 49
+    assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1
 
 
 @pytest.mark.asyncio
@@ -893,7 +894,7 @@ class TestZeroNotePassIsNeverSilent:
 
         resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-        assert resp.json()["remaining_messages"] == 50  # DEFAULT_MONTHLY_CAP, untouched
+        assert resp.json()["remaining_messages"] == DEFAULT_MONTHLY_CAP  # untouched
         user = await _user(db_session, "refunded")
         assert user.monthly_messages_used == 0
 
@@ -958,7 +959,7 @@ class TestZeroNotePassIsNeverSilent:
         body = resp.json()
         assert len(body["marginalia"]) == 1
         assert body["no_notes_message"] is None
-        assert body["remaining_messages"] == 49
+        assert body["remaining_messages"] == DEFAULT_MONTHLY_CAP - 1
         user = await _user(db_session, "kept")
         assert user.monthly_messages_used == 1
 

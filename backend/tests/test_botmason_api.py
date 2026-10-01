@@ -587,21 +587,50 @@ async def test_generate_response_byok_key_overrides_stub_provider(
 # automatically on the first of every month (UTC).
 
 
+# An operator's ``BOTMASON_MONTHLY_CAP`` override, deliberately different from
+# the code default so a test can tell the two apart.
+_OVERRIDE_CAP = 50
+# The ratified "monthly included balance" of the launch economy (#623,
+# prompts/claude-comms/2026-09-05-resonance-economy-decision.md).
+_RATIFIED_MONTHLY_INCLUDED_BALANCE = 20
+
+
+def test_default_monthly_cap_is_twenty() -> None:
+    """The code default is the owner's ratified 20, lowered from 50."""
+    assert DEFAULT_MONTHLY_CAP == _RATIFIED_MONTHLY_INCLUDED_BALANCE
+    assert _OVERRIDE_CAP != DEFAULT_MONTHLY_CAP
+
+
+@pytest.mark.asyncio
+async def test_usage_endpoint_reports_the_default_cap_when_unset(
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no override, a fresh account (and BotMason chat) gets the ratified 20."""
+    monkeypatch.delenv("BOTMASON_MONTHLY_CAP", raising=False)
+    headers = await _signup(async_client)
+
+    data = (await async_client.get("/user/usage", headers=headers)).json()
+
+    assert data["monthly_cap"] == _RATIFIED_MONTHLY_INCLUDED_BALANCE
+    assert data["monthly_messages_remaining"] == _RATIFIED_MONTHLY_INCLUDED_BALANCE
+
+
 @pytest.mark.asyncio
 async def test_usage_endpoint_reports_defaults_for_new_user(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A fresh account reports zero usage and the full cap remaining."""
-    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "50")
+    """A fresh account reports zero usage and the full (overridden) cap remaining."""
+    monkeypatch.setenv("BOTMASON_MONTHLY_CAP", str(_OVERRIDE_CAP))
     headers = await _signup(async_client)
 
     resp = await async_client.get("/user/usage", headers=headers)
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data["monthly_messages_used"] == 0
-    assert data["monthly_messages_remaining"] == 50
-    assert data["monthly_cap"] == 50
+    assert data["monthly_messages_remaining"] == _OVERRIDE_CAP
+    assert data["monthly_cap"] == _OVERRIDE_CAP
     assert data["offering_balance"] == 0
     # Reset date is first-of-next-month UTC — sanity check format only so
     # the test does not drift with the wall clock.

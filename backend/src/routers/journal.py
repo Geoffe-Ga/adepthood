@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
-from fastapi import Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import Body, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, Select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +75,11 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
-from models.wallet_audit import REASON_REFUND_FAILED_RESONANCE
+from models.wallet_audit import (
+    REASON_REFUND_FAILED_ESSAY,
+    REASON_REFUND_FAILED_RESONANCE,
+    REASON_REFUND_NO_ESSAY,
+)
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.completion_suggestion import (
@@ -95,6 +99,8 @@ from schemas.marginalia import (
     CareResourceResponse,
     CareResponse,
     ContractionReflectionResponse,
+    EssayRequest,
+    EssayResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
     RelatedEddyResponse,
@@ -160,6 +166,7 @@ from services.wallet import (
     preflight_deduction,
     refund_one_message,
     require_user_fresh,
+    reset_monthly_usage_if_due,
 )
 
 
@@ -1320,20 +1327,26 @@ class _ResonancePassContext:
 
 
 async def _refund_failed_pass(
-    session: AsyncSession, user_id: int, spent: SpendResult | None
+    session: AsyncSession,
+    user_id: int,
+    spent: SpendResult | None,
+    *,
+    reason: str = REASON_REFUND_FAILED_RESONANCE,
 ) -> None:
-    """Roll back pass writes and compensate any BotMason deduction.
+    """Roll back a failed generation's writes and compensate any deduction.
 
     A server-paid deduction is already durable before the first dial, so a
-    rollback cannot un-charge it; that pass is settled with a compensating
-    credit. BYOK carries ``spent=None`` and needs only the rollback. In both
-    cases ``rollback()`` first clears whatever failed transaction and staged
-    rows the failure left behind.
+    rollback cannot un-charge it; that generation is settled with a
+    compensating credit. BYOK carries ``spent=None`` and needs only the
+    rollback. In both cases ``rollback()`` first clears whatever failed
+    transaction and staged rows the failure left behind. ``reason`` names the
+    generation in the audit trail: a resonance pass by default, an essay's own
+    token when the essay seam settles through here.
     """
     await session.rollback()
     if spent is None:
         return
-    await refund_one_message(session, user_id, spent, reason=REASON_REFUND_FAILED_RESONANCE)
+    await refund_one_message(session, user_id, spent, reason=reason)
     await session.commit()
 
 
@@ -2483,18 +2496,36 @@ async def dismiss_suggestion(
     return _suggestion_response(suggestion)
 
 
-# Economy seam: essay expansion is free by default. A future pricing pass would
-# charge here (and gate generation on capacity) — kept as a single named knob so
-# the policy lives in one place rather than scattered through the handler.
-ESSAY_PRICE_UNITS = 0
+# Economy seam (#623): a note's first essay costs one wallet unit, reopening a
+# cached one is free, and a failed or empty letter is refunded. Ratified by the
+# owner on 2026-09-05; the verbatim decision and its line-by-line code map live
+# in ``prompts/claude-comms/2026-09-05-resonance-economy-decision.md``. The
+# charge itself is taken in :func:`_cache_essay`, the only place it can be.
+ESSAY_PRICE_UNITS = 1
+# The wallet spends exactly one unit per call (``spend_one_message``). A price
+# of 0 disables the charge; anything above one would need a multi-unit wallet
+# primitive that does not exist, so it is refused at import rather than
+# silently charged as one.
+_WALLET_UNIT = 1
+if ESSAY_PRICE_UNITS not in {0, _WALLET_UNIT}:  # pragma: no cover — config guard
+    _essay_price_msg = f"ESSAY_PRICE_UNITS must be 0 or {_WALLET_UNIT}, got {ESSAY_PRICE_UNITS}"
+    raise RuntimeError(_essay_price_msg)
+# The 409 detail a server-paid first letter gets when the request does not say
+# the writer saw its price -- see :class:`schemas.marginalia.EssayRequest`.
+ESSAY_PRICE_UNACKNOWLEDGED = "essay_price_unacknowledged"
 
 
 @dataclass(frozen=True)
 class _EssayClients:
-    """The cloud credential and optional vault used by essay expansion."""
+    """What the caller brings to essay expansion besides the note id.
+
+    The cloud credential and optional vault, plus ``price_acknowledged``: the
+    caller's word that the writer saw the letter's price before asking (#623).
+    """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultPipelineClient
+    price_acknowledged: bool = False
 
 
 def _essay_clients(
@@ -2502,9 +2533,14 @@ def _essay_clients(
     x_llm_api_key: Annotated[
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
+    payload: Annotated[EssayRequest | None, Body()] = None,
 ) -> _EssayClients:
-    """Bundle both optional essay backends without widening the route signature."""
-    return _EssayClients(api_key=x_llm_api_key, vault_client=vault_client)
+    """Bundle the essay backends and the optional body without widening the route."""
+    return _EssayClients(
+        api_key=x_llm_api_key,
+        vault_client=vault_client,
+        price_acknowledged=payload is not None and payload.price_acknowledged,
+    )
 
 
 async def _load_user_marginalia(
@@ -2520,7 +2556,7 @@ async def _load_user_marginalia(
     return result.scalars().first()
 
 
-@router.post("/marginalia/{marginalia_id}/essay", response_model=MarginaliaResponse)
+@router.post("/marginalia/{marginalia_id}/essay", response_model=EssayResponse)
 @limiter.limit("10/minute")
 async def expand_marginalia_essay(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
@@ -2528,24 +2564,67 @@ async def expand_marginalia_essay(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     clients: Annotated[_EssayClients, Depends(_essay_clients)],
-) -> Marginalia:
+) -> EssayResponse:
     """Lazily generate (and cache) a longer essay expanding one margin note.
 
     Idempotent: once ``essay`` is set the cached value is returned without another
-    LLM call. Ownership is enforced via the marginalia's own ``user_id`` (404
-    otherwise). Essay generation is free by default (see ``ESSAY_PRICE_UNITS``).
+    LLM call or charge. Ownership is enforced via the marginalia's own
+    ``user_id`` (404 otherwise). A server-paid first letter costs
+    ``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``
+    (409 otherwise, before any charge); a failed or empty letter is refunded.
 
     A note with no ``essay`` on the response is the no-letter state, not an
     error: the entry is intimate, or the provider's completion was not a letter
     (:func:`domain.resonance.generate_essay`). Either way nothing is cached and
-    the writer can ask again.
+    the writer can ask again. Every answer carries the wallet balances.
     """
-    note = await _load_user_marginalia(session, marginalia_id, current_user)
+    note = await _expand_essay(session, marginalia_id, current_user, clients)
+    return await _essay_response(session, note)
+
+
+async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayResponse:
+    """Wrap ``note`` with the owner's balances, computed as ``/user/usage`` does.
+
+    A read only: the monthly rollover is applied inside the session so a stale
+    counter is never reported, but it is not committed here -- the same
+    discipline as ``GET /user/usage`` (BUG-BM-015).
+    """
+    await reset_monthly_usage_if_due(session, note.user_id, datetime.now(UTC))
+    user = await require_user_fresh(session, note.user_id)
+    return EssayResponse(
+        **MarginaliaResponse.model_validate(note, from_attributes=True).model_dump(),
+        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
+        remaining_balance=user.offering_balance,
+        monthly_reset_date=user.monthly_reset_date,
+    )
+
+
+def _require_price_acknowledged(clients: _EssayClients) -> None:
+    """Refuse a server-paid first letter the writer was not shown the price of.
+
+    Runs before the barrier and before any charge, so a stale client that
+    still asks on open is answered 409 with nothing spent and nothing dialled.
+    A valid BYOK key pays its own provider and is never charged here.
+    """
+    if not ESSAY_PRICE_UNITS or clients.price_acknowledged:
+        return
+    if resolve_chat_api_key(clients.api_key) is None:
+        raise conflict(ESSAY_PRICE_UNACKNOWLEDGED)
+
+
+async def _expand_essay(
+    session: AsyncSession,
+    marginalia_id: int,
+    user_id: int,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Authorize, apply the privacy floor and the price gate, then generate."""
+    note = await _load_user_marginalia(session, marginalia_id, user_id)
     if note is None:
         raise not_found("marginalia")
     if note.essay is not None:
         return note
-    entry = await _load_user_entry(session, note.journal_entry_id, current_user)
+    entry = await _load_user_entry(session, note.journal_entry_id, user_id)
     if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
         raise not_found("journal_entry")
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM,
@@ -2555,6 +2634,7 @@ async def expand_marginalia_essay(
     # while the request waits for it — see ``_cache_and_mirror_essay``.
     if entry.classification == JournalClassification.INTIMATE:
         return note
+    _require_price_acknowledged(clients)
     return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
 
 
@@ -2589,6 +2669,13 @@ async def _cache_and_mirror_essay(
     is the whole claim. It is the same per-dial reasoning the detached
     ontologization ladder uses for the same reason.
 
+    **The note is read again inside the first hold too.** The caller's cached
+    letter check runs before the barrier, so a second first-ask for the same
+    note passes it while the first is still composing and then queues here. A
+    note whose letter landed while this request waited is a cached reopen: it
+    returns without a charge or a dial, rather than buying and overwriting a
+    second letter (#623).
+
     **Both the tier and the body are read again inside the first hold**, and
     liveness is not enough on its own. An exclusive barrier held across a dial
     does not merely delay a competing mutation, it reorders it to *before* the
@@ -2612,7 +2699,13 @@ async def _cache_and_mirror_essay(
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
+        await session.refresh(note)
         await session.commit()
+        if note.essay is not None:
+            # A concurrent first ask for this note won the barrier and cached
+            # its letter while this one waited: a cached reopen, not a second
+            # purchase -- no charge, no dial, no overwrite (#623).
+            return note
         if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
             return note
         cached = await _cache_essay(
@@ -2668,10 +2761,24 @@ async def _mirror_cached_essay(
     return cached
 
 
+async def _essay_charge(
+    session: AsyncSession, user_id: int, byok_key: str | None
+) -> SpendResult | None:
+    """Take the first letter's one unit, or ``None`` when nobody is charged.
+
+    A BYOK key pays its own provider, and a zero price charges nobody. Raises
+    ``402 insufficient_offerings`` when both wallet buckets are empty -- before
+    the dial, so an empty wallet never reaches the provider.
+    """
+    if byok_key is not None or not ESSAY_PRICE_UNITS:
+        return None
+    return await preflight_deduction(session, user_id)
+
+
 async def _cache_essay(
     session: AsyncSession, note: Marginalia, body: str, api_key: str | None
 ) -> Marginalia:
-    """Generate the essay via the cloud LLM, cache it on the note, and persist.
+    """Charge, generate the essay via the cloud LLM, cache it on the note, and persist.
 
     Returns the note unchanged when the domain refuses the completion as not a
     letter: the row keeps ``essay IS NULL``, which is what lets the writer ask
@@ -2679,18 +2786,22 @@ async def _cache_essay(
     voice-draft mirror. Caching the refusal instead is the #2435 / #1504 shape
     this must not regress.
 
+    **The charge lives here and nowhere else (#623).** This seam runs inside
+    the account barrier, after :func:`_cache_and_mirror_essay` re-read the
+    entry's tier and liveness, so a cached, intimate, deleted or foreign note
+    can never reach it. The unit is deducted *before* the commit that releases
+    the pooled connection, so the charge is durable before the dial and no
+    connection is held across it. From there every exit settles it exactly
+    once: a letter keeps it; a refused or blank letter is refunded in the same
+    transaction as its usage row (no rollback, so the metering survives); and
+    anything else -- a provider error, a spent provider balance, a failed
+    write -- is refunded by the ``finally`` guard, which mirrors the pass's own.
+
     The caller has already loaded and authorized both the note and its parent
     entry, then applied the persisted INTIMATE privacy floor. Neither object has
-    been mutated, so committing that read-only transaction here makes nothing
-    partially durable and releases its pooled connection before the potentially
-    long provider call. Essay text and usage are staged together only after a
-    successful response and remain committed atomically below the call.
-
-    A transient provider error maps to 502 with no write; a spent balance maps to
-    its own permanent status, checked first because it subclasses the generic
-    type. Called only for non-intimate entries — the intimate guard in
-    :func:`expand_marginalia_essay` returns before this seam, so the cloud is
-    never reached for an intimate entry's essay.
+    been mutated, so committing that transaction here makes nothing partially
+    durable. A transient provider error maps to 502; a spent balance maps to its
+    own permanent status, checked first because it subclasses the generic type.
 
     The prior letters are fetched *above* that commit, while the pooled
     connection is still held: they are a read the dial depends on, and the
@@ -2701,11 +2812,54 @@ async def _cache_essay(
     prior_letters = await _prior_letter_essays(
         session, user_id=note.user_id, exclude_entry_id=note.journal_entry_id
     )
-    await session.commit()
     byok_key = resolve_chat_api_key(api_key)
-    llm = BotmasonResonanceLLM(byok_key)
+    spent = await _essay_charge(session, note.user_id, byok_key)
+    await session.commit()
+    settled = False
     try:
-        essay = await generate_essay(
+        llm = BotmasonResonanceLLM(byok_key)
+        essay = await _dial_essay(llm, note, body, prior_letters, byok=byok_key is not None)
+        await _settle_essay(session, note, essay, llm, spent)
+        settled = True
+    finally:
+        if not settled:
+            await _refund_failed_pass(
+                session, note.user_id, spent, reason=REASON_REFUND_FAILED_ESSAY
+            )
+    if essay is not None:
+        # Outside the guard on purpose: the letter is committed, so it is
+        # bought, and a failure re-reading it must not refund a stored letter.
+        await session.refresh(note)
+        logger.info(
+            "marginalia_essay_generated",
+            # A count, never the letters themselves: the same rule
+            # ``_grounding_for`` writes, since a log line carrying essay text
+            # would put the writing the ``essay`` column is encrypted to protect
+            # straight back into plaintext.
+            extra={
+                "user_id": note.user_id,
+                "id": note.id,
+                "prior_draft_count": len(prior_letters),
+            },
+        )
+    return note
+
+
+async def _dial_essay(
+    llm: BotmasonResonanceLLM,
+    note: Marginalia,
+    body: str,
+    prior_letters: list[str],
+    *,
+    byok: bool,
+) -> str | None:
+    """Ask the provider for the letter, mapping its failures to HTTP errors.
+
+    Raises before anything is staged, so the caller's ``finally`` refunds the
+    charge; ``None`` is the domain's "not a letter" verdict.
+    """
+    try:
+        return await generate_essay(
             llm=llm,
             body=body,
             note=MarginaliaAnchored(
@@ -2718,12 +2872,26 @@ async def _cache_essay(
             prior_drafts=prior_letters,
         )
     except LLMCreditExhaustedError as exc:
-        raise credit_exhausted_error(exc, byok=byok_key is not None) from exc
+        raise credit_exhausted_error(exc, byok=byok) from exc
     except LLMProviderError as exc:
         raise bad_gateway("llm_provider_error") from exc
-    # Metered either way: the call happened and its tokens were spent, so a
-    # refused completion still owes the ledger a row. Stub responses are skipped
-    # inside ``record_llm_usage`` (zero real tokens), as they always were.
+
+
+async def _settle_essay(
+    session: AsyncSession,
+    note: Marginalia,
+    essay: str | None,
+    llm: BotmasonResonanceLLM,
+    spent: SpendResult | None,
+) -> None:
+    """Meter the call, then cache the letter or refund the non-letter; commit.
+
+    Metered either way: the call happened and its tokens were spent, so a
+    refused completion still owes the ledger a row. Stub responses are skipped
+    inside ``record_llm_usage`` (zero real tokens), as they always were. The
+    refund for a non-letter is staged beside that row and committed with it --
+    a rollback here would erase our only record of what the provider charged.
+    """
     await record_llm_usage(
         session,
         user_id=note.user_id,
@@ -2731,6 +2899,8 @@ async def _cache_essay(
         responses=llm.usage,
     )
     if essay is None:
+        if spent is not None:
+            await refund_one_message(session, note.user_id, spent, reason=REASON_REFUND_NO_ESSAY)
         await session.commit()
         # Counted, never quoted: the refused text is the prompt (or something
         # else unpublishable), and logging it would leak exactly what the
@@ -2739,23 +2909,10 @@ async def _cache_essay(
             "marginalia_essay_refused",
             extra={"user_id": note.user_id, "id": note.id},
         )
-        return note
+        return
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
     await session.commit()
-    await session.refresh(note)
-    logger.info(
-        "marginalia_essay_generated",
-        # A count, never the letters themselves: the same rule ``_grounding_for``
-        # writes, since a log line carrying essay text would put the writing the
-        # ``essay`` column is encrypted to protect straight back into plaintext.
-        extra={
-            "user_id": note.user_id,
-            "id": note.id,
-            "prior_draft_count": len(prior_letters),
-        },
-    )
-    return note
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

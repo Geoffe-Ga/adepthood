@@ -32,6 +32,7 @@ import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createK
 import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
+import type { FundingOutcome } from './fundingOutcome';
 import GetResonanceButton, {
   shouldShowResonance,
   type ResonanceButtonLayout,
@@ -111,6 +112,7 @@ import {
   useScreenDrawer,
   type ScreenDrawerState,
 } from '@/components/drawer';
+import { useApiKey } from '@/context/ApiKeyContext';
 import { useAuth } from '@/context/AuthContext';
 import {
   accent,
@@ -4332,6 +4334,24 @@ function ResonanceOverlays({
   );
 }
 
+/**
+ * Route an essay 402 to the pass's own refill remedy (#623): the letter and the
+ * pass spend from one wallet, so an empty wallet reads the same on both. The
+ * note closes first so the remedy is not stacked behind the essay card.
+ */
+function useEssayFundingRequired(
+  onCloseNote: () => void,
+  showRefillFor: Controller['explainer']['showRefillFor'],
+): (_outcome: FundingOutcome) => void {
+  return useCallback(
+    (outcome: FundingOutcome) => {
+      onCloseNote();
+      void showRefillFor(outcome === 'key_required' ? 'key_required' : 'wallet_exhausted');
+    },
+    [onCloseNote, showRefillFor],
+  );
+}
+
 /** The screen's floating layers: the essay modal, the edit-confirm dialog, and
  *  the header drawer — grouped so the screen component stays under the line cap. */
 function EntryOverlays({
@@ -4349,6 +4369,11 @@ function EntryOverlays({
   currentEntryId: number | null;
   onOpenApiKey: () => void;
 }): React.JSX.Element {
+  const { apiKey } = useApiKey();
+  const onEssayFundingRequired = useEssayFundingRequired(
+    modal.onCloseNote,
+    explainer.showRefillFor,
+  );
   return (
     <>
       <ResonanceOverlays explainer={explainer} onOpenApiKey={onOpenApiKey} />
@@ -4356,6 +4381,8 @@ function EntryOverlays({
         note={modal.openNote}
         onClose={modal.onCloseNote}
         onEssayLoaded={modal.onEssayLoaded}
+        hasOwnKey={apiKey !== null}
+        onFundingRequired={onEssayFundingRequired}
       />
       <EditConfirmDialog
         visible={editGate.confirmOpen}

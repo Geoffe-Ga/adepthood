@@ -35,6 +35,34 @@ class MarginaliaResponse(BaseModel):
     updated_at: datetime
 
 
+class EssayRequest(BaseModel):
+    """Optional body for ``POST /journal/marginalia/{id}/essay`` (#623).
+
+    ``price_acknowledged`` is the client saying "the writer saw the price and
+    asked". A server-paid first letter costs one wallet unit, and the in-repo
+    rule is that a charged depth is offered with its price on it -- so the
+    server refuses to charge without it rather than trusting every installed
+    client to have stopped asking on open. Cached, BYOK and intimate requests
+    are never charged and need no body at all.
+    """
+
+    price_acknowledged: bool = False
+
+
+class EssayResponse(MarginaliaResponse):
+    """A margin note after an essay request, plus the wallet it left behind.
+
+    The balances mirror :class:`ResonanceResponse` so a client reads one shape
+    for "what this cost me" on both charged journal depths. They sit on a
+    subclass rather than on :class:`MarginaliaResponse` itself so note listings
+    do not grow a wallet read per row.
+    """
+
+    remaining_messages: int
+    remaining_balance: int
+    monthly_reset_date: datetime
+
+
 class VoiceDraftResponse(BaseModel):
     """One expanded essay on the Voice Drafts shelf.
 

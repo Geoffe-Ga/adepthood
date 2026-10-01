@@ -50,6 +50,7 @@ async function keptNotes(page: Page, token: string, entryId: number): Promise<un
 interface Usage {
   monthly_messages_used: number;
   offering_balance: number;
+  monthly_cap: number;
 }
 
 /** The two wallet buckets a pass could draw from. */
@@ -92,11 +93,14 @@ test('the payer is disclosed before a resonance pass is ever sent', async ({ pag
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
 
   // 1. The first press buys nothing. It says what a pass does, where the entry
-  //    goes, and what it costs — and sends no request at all.
+  //    goes, and what it costs — and sends no request at all. The allowance is
+  //    the one this deployment serves, read from the server rather than written
+  //    here, so the copy check follows the cap wherever the operator sets it.
+  const { monthly_cap: monthlyCap } = await usage(page, token);
   await page.getByRole('button', { name: 'Get resonance' }).click();
   await expect(page.getByTestId('resonance-explainer-what')).toContainText('AI model');
   await expect(page.getByTestId('resonance-explainer-cost')).toContainText(
-    'one of your 50 BotMason messages',
+    `one of your ${String(monthlyCap)} BotMason messages`,
   );
   await expect(page.getByTestId('resonance-explainer-cost')).not.toContainText('free');
   expect(passes.length).toBe(0);

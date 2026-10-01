@@ -842,6 +842,17 @@ export const marginaliaSchema = z.object({
 });
 
 /**
+ * A margin note after an essay request (mirrors the backend ``EssayResponse``):
+ * the note plus the wallet balances it left behind, the same three fields a
+ * resonance pass reports, because both spend from the same wallet (#623).
+ */
+export const essayResponseSchema = marginaliaSchema.extend({
+  remaining_messages: z.number().int(),
+  remaining_balance: z.number().int(),
+  monthly_reset_date: z.string(),
+});
+
+/**
  * One expanded letter on the Voice Drafts shelf (mirrors the backend
  * ``VoiceDraftResponse``).
  *

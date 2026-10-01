@@ -157,20 +157,49 @@ describe('resonance.list', () => {
   });
 });
 
+/** The balances every essay answer carries (#623), beside the note itself. */
+const ESSAY_BALANCES = {
+  remaining_messages: 19,
+  remaining_balance: 2,
+  monthly_reset_date: '2026-10-01T00:00:00Z',
+};
+
 describe('resonance.essay', () => {
-  test('POSTs the essay endpoint and parses the cached note', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse(marginalia({ essay: 'A warm letter.' })));
-    const result = await resonance.essay(1, 'tok');
+  test('POSTs the essay endpoint and parses the note with its balances', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...marginalia({ essay: 'A warm letter.' }), ...ESSAY_BALANCES }),
+    );
+    const result = await resonance.essay(1, { token: 'tok' });
 
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/journal/marginalia/1/essay');
     expect(init.method).toBe('POST');
     expect(result.essay).toBe('A warm letter.');
+    expect(result.remaining_messages).toBe(19);
+    expect(result.remaining_balance).toBe(2);
+    expect(result.monthly_reset_date).toBe('2026-10-01T00:00:00Z');
+  });
+
+  test('sends the price acknowledgement only when the caller gives it', async () => {
+    mockFetch
+      .mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }))
+      .mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }));
+
+    await resonance.essay(1, { priceAcknowledged: true });
+    await resonance.essay(1);
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ price_acknowledged: true });
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ price_acknowledged: false });
+  });
+
+  test('rejects an answer without balances instead of pretending it is free', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(marginalia({ essay: 'A warm letter.' })));
+    await expect(resonance.essay(1, { priceAcknowledged: true })).rejects.toThrow();
   });
 
   test('surfaces a 404 (marginalia not found) as an ApiError', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'marginalia_not_found' }, 404));
-    await expect(resonance.essay(999, 'tok')).rejects.toMatchObject({
+    await expect(resonance.essay(999, { token: 'tok' })).rejects.toMatchObject({
       status: 404,
       detail: 'marginalia_not_found',
     });

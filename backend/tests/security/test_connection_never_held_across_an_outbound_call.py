@@ -77,6 +77,10 @@ from tests.transcription_helpers import (
 )
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
+# A server-paid first letter must say the writer saw its price (#623); without
+# it the route answers 409 before it charges or dials anything.
+_ESSAY_ASK = {"price_acknowledged": True}
+
 _TOTAL_STAGES = 10
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
 _NEW_PASSWORD = "fresh-horse-battery-staple"  # pragma: allowlist secret
@@ -579,7 +583,9 @@ async def test_the_essay_llm_is_dialled_off_the_pool(
     monkeypatch.setattr(marginalia_service, "generate_response", _essay)
     outbound_boundary.reset()
 
-    resp = await async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+    resp = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _LLM), what="the essay dial")

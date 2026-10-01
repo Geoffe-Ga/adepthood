@@ -61,6 +61,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       // wallet
       'payment_required',
       'insufficient_offerings',
+      'essay_price_unacknowledged',
       'llm_key_required',
       'invalid_llm_api_key_format',
       // permanently exhausted provider balance -- caller's key, then ours

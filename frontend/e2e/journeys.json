@@ -652,6 +652,24 @@
     "coveredBy": "frontend/e2e/journal-resonance-refill.browser.e2e.test.ts"
   },
   {
+    "id": "journal.told-what-an-essay-costs-before-it-charges",
+    "description": "A note's first letter is a charged depth under the owner-ratified launch economy (#623): one wallet unit to write it, nothing to reopen it. Opening a note with no letter shows an offer, not a request: what a letter is, that the entry goes to an AI model, the price for the payer in force (the writer's own key, the monthly allowance by its served cap, or an offering), and equal-weight Ask for the letter / Not now arms. Only Ask sends POST /journal/marginalia/{marginalia_id}/essay, with price_acknowledged: true. Across the real wire, a server-paid ask without the acknowledgement is refused 409 essay_price_unacknowledged and moves neither the wallet nor its audit trail; the acknowledged ask spends exactly one monthly unit (one spend_monthly row, no refund) and its answer carries the same remaining_messages, remaining_balance and monthly_reset_date that GET /user/usage then reports; reopening the cached letter, acknowledged or not, is free. Pinned by Jest rather than this lane: the offer's copy and a11y, no ask on open, a cached letter opening straight to the letter, and an essay 402 routing to the pass's refill dialog. Pinned by the backend suite rather than this lane: the exhausted-wallet 402 before any provider call, and refunds for failed and empty letters.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance", "botmasonUsage"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /user/usage"
+      ],
+      "tables": ["journalentry", "marginalia", "user", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-essay-economy.e2e.test.ts"
+  },
+  {
     "id": "journal.short-entry-still-offers-habit-checkoff",
     "description": "A writer asks for resonance on a short saved entry that explicitly says they completed a tracked habit. The literary pass is refused at the browser boundary, but the production client still runs its independent completion check against the live server, renders both an honest reflection error and the habit offer, and accepting the offer persists the check-in. Detection also records the amount and the user-local day when the entry states them, so the accept logs that amount on that day rather than the goal's target on today; an entry stating neither behaves exactly as before. The literary refusal is deterministic route interception; detection, suggestion persistence, acceptance, and completion are real-wire behavior. The card states those facts before the writer consents rather than only after: the spec asserts the pending offer reads the amount and the day it will log, that the accept button a screen reader announces names them too, and that the persisted goalcompletion row carries that amount on that day rather than the goal's target on today.",
     "crosses": {

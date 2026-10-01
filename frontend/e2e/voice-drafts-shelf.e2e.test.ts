@@ -94,7 +94,8 @@ describe('the Voice Drafts shelf against a live server', () => {
     const pass = await resonance.generate(entryId);
     const note = required(pass.marginalia[0], 'margin note');
     marginaliaId = note.id;
-    const expanded = await resonance.essay(marginaliaId);
+    // The explicit, priced ask the essay modal sends (#623).
+    const expanded = await resonance.essay(marginaliaId, { priceAcknowledged: true });
     letter = (expanded.essay ?? '').trim();
     expect(letter).not.toBe('');
 
