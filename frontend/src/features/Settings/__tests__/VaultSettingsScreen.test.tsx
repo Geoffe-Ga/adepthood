@@ -63,6 +63,7 @@ import {
 import { decorativeHidden } from '@/components/a11yHidden';
 import habitStyles from '@/features/Habits/Habits.styles';
 import { settle } from '@/testing/asyncSettle';
+import { expectNavigationOwnsTitle } from '@/testing/navigationOwnsTitle';
 
 /**
  * The private-vault screen, now that there is something behind it.
@@ -364,10 +365,10 @@ describe('VaultSettingsScreen — rendering', () => {
     expect(getByText(new RegExp(`^${VAULT_EYEBROW}$`, 'iu'))).toBeTruthy();
   });
 
-  test('renders the title with accessibilityRole="header"', async () => {
-    const { getByText } = await renderVault();
+  test('leaves the title to navigation: no painted title and no header named by it', async () => {
+    const view = await renderVault();
 
-    expect(getByText(VAULT_TITLE).props.accessibilityRole).toBe('header');
+    expectNavigationOwnsTitle(view, VAULT_TITLE);
   });
 
   test('renders the promise inside the header block', async () => {

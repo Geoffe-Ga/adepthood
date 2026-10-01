@@ -263,6 +263,7 @@ const VaultPromiseDeck = (): React.JSX.Element => {
       <ScreenHeader
         eyebrow={VAULT_EYEBROW}
         title={VAULT_TITLE}
+        titleHidden
         lead={VAULT_PROMISE}
         testID="vault-header"
       />

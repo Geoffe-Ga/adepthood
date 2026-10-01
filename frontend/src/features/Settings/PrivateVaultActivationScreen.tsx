@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
+import { HIGHER_SELF_GAIN, VAULT_SORTING_CHOICE, VAULT_TITLE } from './vaultCopy';
+
 import { vaultActivation, type VaultActivation } from '@/api';
 import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
@@ -63,6 +65,14 @@ const CustodyNotice = (): React.JSX.Element => (
 
 const Intro = ({ onContinue, onCancel }: { onContinue: () => void; onCancel: () => void }) => (
   <View testID="activation-intro">
+    {/* What saying yes to sorting gives, and that creating a vault is not that
+        yes, before any custody mechanics (#3003). */}
+    <Text style={styles.body} testID="activation-higher-self-gain">
+      {HIGHER_SELF_GAIN}
+    </Text>
+    <Text style={styles.body} testID="activation-sorting-choice">
+      {VAULT_SORTING_CHOICE}
+    </Text>
     <CustodyNotice />
     <Text style={styles.floor}>Adepthood is complete without a managed vault.</Text>
     <View style={styles.actions}>
@@ -77,7 +87,7 @@ const Intro = ({ onContinue, onCancel }: { onContinue: () => void; onCancel: () 
         onPress={onCancel}
         variant="tertiary"
         testID="cancel-vault-activation"
-        accessibilityLabel="Not now, return to Creek vault settings"
+        accessibilityLabel={`Not now, return to ${VAULT_TITLE}`}
       />
     </View>
   </View>
@@ -204,7 +214,7 @@ const ManagedVaultUnavailable = ({ onBack }: { onBack: () => void }): React.JSX.
     </Text>
     <Text style={styles.body}>
       We are opening managed vaults gradually. Your journal is complete without it, and you can
-      still connect a vault you run from Managed vault settings.
+      still connect a vault you run yourself under Advanced in Where your corpus lives.
     </Text>
     <Button label="Back to settings" onPress={onBack} testID="unavailable-vault-back" />
   </View>

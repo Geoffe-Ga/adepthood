@@ -2,6 +2,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { VAULT_TITLE } from '../vaultCopy';
+
 const FRONTEND_SOURCE = join(process.cwd(), 'src');
 
 function sourceFilesUnder(directory: string): string[] {
@@ -38,9 +40,12 @@ describe('private-vault activation privacy boundary', () => {
       join(FRONTEND_SOURCE, 'features/Settings/PrivateVaultActivationScreen.tsx'),
     ]);
 
-    expect(navigation).toContain("options={{ title: 'Managed vault' }}");
+    // The settings screen's stack title is a literal like every sibling, pinned
+    // here to the copy module's plain name so the two cannot drift (#3007).
+    expect(navigation).toContain(`options={{ title: '${VAULT_TITLE}' }}`);
     expect(navigation).toContain("options={{ title: 'Create managed vault' }}");
-    expect(navigation).toContain('from Managed vault settings');
+    expect(navigation).toContain(`under Advanced in ${VAULT_TITLE}`);
+    expect(navigation).not.toMatch(/Managed vault settings|Creek vault settings/u);
     expect(navigation).not.toMatch(
       /title: 'Private vault'|title: 'Create private vault'|from Private Vault settings/u,
     );
