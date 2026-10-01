@@ -91,6 +91,32 @@ class UsageStatsResponse(BaseModel):
         return _format_cost(value) or "0.000000"
 
 
+class ChargedGenerationCostResponse(BaseModel):
+    """p95 provider cost per charged generation over a window (#623 PR3).
+
+    Record §2: "alert/revisit pricing if p95 provider cost approaches 3.5¢ per
+    charged generation"; §4: "structured warning plus an admin metric". Costs
+    are fixed-point strings like every other admin cost. ``p95_cost_usd`` is
+    ``None`` when the window holds no priced charged generation -- never a
+    misleading zero.
+    """
+
+    window_days: int
+    sample_count: int
+    unpriced_generation_count: int
+    p95_cost_usd: Decimal | None
+    threshold_usd: Decimal
+    over_threshold: bool
+
+    @field_serializer("p95_cost_usd")
+    def _serialize_p95(self, value: Decimal | None) -> str | None:
+        return _format_cost(value)
+
+    @field_serializer("threshold_usd")
+    def _serialize_threshold(self, value: Decimal) -> str:
+        return _format_cost(value) or "0.000000"
+
+
 class StageProgressGap(BaseModel):
     """A ``stageprogress`` row whose completed set is non-contiguous from 1.
 
