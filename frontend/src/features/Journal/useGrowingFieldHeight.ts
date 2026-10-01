@@ -26,10 +26,11 @@ export interface GrowingFieldTracking {
 /** Make a multiline field part of the page flow instead of an inner scroll pane. */
 export function useGrowingFieldHeight(minHeight = 0, tracked?: GrowingFieldTracking) {
   const [contentHeight, setContentHeight] = useState(0);
-  const applyMeasuredHeight = useCallback((measured: number) => {
-    const nextHeight = Math.ceil(measured);
-    setContentHeight((current) => (current === nextHeight ? current : nextHeight));
-  }, []);
+  // A repeated height is the same number, so React's Object.is bailout commits nothing.
+  const applyMeasuredHeight = useCallback(
+    (measured: number) => setContentHeight(Math.ceil(measured)),
+    [],
+  );
   const onContentSizeChange = useCallback(
     (event: ContentSizeEvent) => applyMeasuredHeight(event.nativeEvent.contentSize.height),
     [applyMeasuredHeight],

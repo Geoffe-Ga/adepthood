@@ -359,6 +359,11 @@ describe('JournalEntryScreen — the transcript comes back into the open page', 
 /** How much taller the measured content is after a programmatic write. */
 const WRITTEN_GROWTH = 400;
 
+/** Measure ``height`` off any mounted host, and nothing off a field with no ref to read. */
+function measureMountedAs(height: number): void {
+  mockReadWebContentHeight.mockImplementation((node) => (node == null ? undefined : height));
+}
+
 /** A field's flattened laid-out height. */
 function fieldHeight(node: ReturnType<ReturnType<typeof render>['getByTestId']>): number {
   return StyleSheet.flatten(node.props.style).height as number;
@@ -369,7 +374,7 @@ describe('JournalEntryScreen — fields re-measure after a write that is not typ
     const { getByTestId, navigation } = renderScreen({ prefillTitle: REFLECTION_TITLE });
     fireEvent.press(getByTestId('journal-photograph-page'));
     const grown = Math.ceil(fieldHeight(getByTestId('journal-body-input')) + WRITTEN_GROWTH);
-    mockReadWebContentHeight.mockReturnValue(grown);
+    measureMountedAs(grown);
 
     act(() => {
       useCapturedTranscriptStore
@@ -389,7 +394,7 @@ describe('JournalEntryScreen — fields re-measure after a write that is not typ
     );
     const { getByTestId } = renderScreen({ entryId: 7 });
     const loadedHeight = Math.ceil(fieldHeight(getByTestId('journal-body-input')) + WRITTEN_GROWTH);
-    mockReadWebContentHeight.mockReturnValue(loadedHeight);
+    measureMountedAs(loadedHeight);
 
     await act(async () => {
       resolveLoad(entry());

@@ -18,9 +18,9 @@ interface MeasurableHostNode {
   scrollHeight: number;
 }
 
-/** A ``scrollHeight`` that is a real, positive content height. */
+/** A ``scrollHeight`` that is a real, positive content height (NaN fails ``> 0``). */
 function isMeasurableHeight(height: unknown): height is number {
-  return typeof height === 'number' && Number.isFinite(height) && height > 0;
+  return typeof height === 'number' && height > 0 && height < Number.POSITIVE_INFINITY;
 }
 
 /** The web field's content height, or ``undefined`` off web or when it cannot be measured. */
