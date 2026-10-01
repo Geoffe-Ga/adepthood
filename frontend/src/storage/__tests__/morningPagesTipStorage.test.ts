@@ -138,4 +138,39 @@ describe('morningPagesTipStorage', () => {
       neverOffer: false,
     });
   });
+
+  test('restore before the first shelf read is not undone by the legacy migration', async () => {
+    // A writer who declined under the old single flag opens Settings from
+    // another tab and restores before the Journal shelf has ever loaded.
+    mockStore.set(LEGACY_KEY, 'true');
+
+    await expect(restoreMorningPagesTip()).resolves.toBe(true);
+
+    expect(mockStore.has(LEGACY_KEY)).toBe(false);
+    await expect(loadMorningPagesTipState()).resolves.toEqual(MORNING_PAGES_TIP_OPEN);
+  });
+
+  test.each([
+    ['set aside', () => saveMorningPagesTipSetAside('2026-09-10')],
+    ['never offer', () => saveMorningPagesTipNeverOffer(true)],
+  ])('a failed %s write resolves and says so rather than rejecting', async (_label, write) => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = new Error('quota exceeded');
+    mockAsyncStorage.setItem.mockRejectedValueOnce(error);
+
+    await expect(write()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      '[morningPagesTipStorage] failed to save dismissal state',
+      error,
+    );
+  });
+
+  test('a failed restore resolves false and says so, so Settings does not claim it worked', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = new Error('storage blocked');
+    mockAsyncStorage.setItem.mockRejectedValueOnce(error);
+
+    await expect(restoreMorningPagesTip()).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledWith('[morningPagesTipStorage] failed to restore the tip', error);
+  });
 });

@@ -59,21 +59,47 @@ export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> 
   }
 }
 
+/**
+ * Write one declining answer. Never rejects: callers fire it and forget (the
+ * answer is already held in memory), so a failed write (quota exceeded,
+ * storage blocked) is reported here rather than escaping as an unhandled
+ * rejection. The tip is simply offered again on the next read.
+ */
+async function saveDecline(key: string, value: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(key, value);
+  } catch (err) {
+    console.warn('[morningPagesTipStorage] failed to save dismissal state', err);
+  }
+}
+
 /** The corner X: set the tip aside for ``day`` (the writer's today) only. */
 export async function saveMorningPagesTipSetAside(day: string): Promise<void> {
-  await AsyncStorage.setItem(SET_ASIDE_ON_KEY, day);
+  await saveDecline(SET_ASIDE_ON_KEY, day);
 }
 
 /** "Don't show this again" (true), or its undoing (false). */
 export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(NEVER_OFFER_KEY, value ? FLAG_TRUE : FLAG_FALSE);
+  await saveDecline(NEVER_OFFER_KEY, value ? FLAG_TRUE : FLAG_FALSE);
 }
 
 /**
  * Settings → "Offer morning pages again": clears the permanent decline AND
  * today's set-aside, so the tip is on the shelf now rather than tomorrow.
+ *
+ * It also drops any legacy flag the shelf has not migrated yet; otherwise the
+ * first shelf read after this would carry that old decline over and undo the
+ * restore. Resolves whether it was saved (never rejects), so Settings only
+ * says the tip is back when it is.
  */
-export async function restoreMorningPagesTip(): Promise<void> {
-  await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
-  await AsyncStorage.removeItem(SET_ASIDE_ON_KEY);
+export async function restoreMorningPagesTip(): Promise<boolean> {
+  try {
+    await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
+    await AsyncStorage.removeItem(LEGACY_DISMISSED_KEY);
+    await AsyncStorage.removeItem(SET_ASIDE_ON_KEY);
+    return true;
+  } catch (err) {
+    console.warn('[morningPagesTipStorage] failed to restore the tip', err);
+    return false;
+  }
 }

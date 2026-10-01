@@ -27,7 +27,7 @@ const mockFlagsGet = jest.fn<(_token?: string) => Promise<UiFlags>>();
 const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Promise<UiFlags>>();
 const mockLoadHabits = jest.fn<(_tz?: string) => Promise<void>>();
 const mockSaveAnswered = jest.fn<(_value: boolean) => Promise<void>>();
-const mockRestoreTip = jest.fn<() => Promise<void>>();
+const mockRestoreTip = jest.fn<() => Promise<boolean>>();
 
 jest.mock('@/api', () => ({
   uiFlags: {
@@ -99,7 +99,7 @@ beforeEach(() => {
   );
   mockLoadHabits.mockResolvedValue(undefined);
   mockSaveAnswered.mockResolvedValue(undefined);
-  mockRestoreTip.mockResolvedValue(undefined);
+  mockRestoreTip.mockResolvedValue(true);
 });
 
 describe('JournalSection — the writing timer row', () => {
@@ -290,6 +290,20 @@ describe('JournalSection — offering morning pages again (#3005)', () => {
     expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityHint).toBe(
       OFFER_AGAIN_DESCRIPTION,
     );
+  });
+
+  it('keeps the offer when the restore could not be saved, rather than claiming it worked', async () => {
+    mockRestoreTip.mockResolvedValueOnce(false);
+    const view = render(<JournalSection />);
+
+    fireEvent.press(row(view));
+
+    await waitFor(() => expect(mockRestoreTip).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION);
+    expect(view.queryByText(MORNING_PAGES_OFFER_AGAIN_DONE)).toBeNull();
   });
 
   it('renders every Settings string its copy sweep lists, before and after the press', async () => {

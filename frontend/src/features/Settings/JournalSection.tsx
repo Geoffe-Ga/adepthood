@@ -121,7 +121,7 @@ const JournalSection = (): React.JSX.Element => {
   }, []);
   const [tipReopened, setTipReopened] = useState(false);
   const offerTipAgain = useCallback(() => {
-    void restoreMorningPagesTip().then(() => setTipReopened(true));
+    void restoreMorningPagesTip().then((restored) => setTipReopened(restored));
   }, []);
   const { save } = row;
   const choose = useCallback((habit: Habit) => save(habit.id), [save]);
