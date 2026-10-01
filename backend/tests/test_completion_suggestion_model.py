@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from models.completion_suggestion import (
     CompletionSuggestion,
@@ -360,6 +361,57 @@ async def test_practice_target_cannot_carry_facts(
             anchor_text="meditation",
             completed_units=completed_units,
             completed_on=completed_on,
+        ),
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_logged_on_round_trips_on_a_habit_row_and_defaults_to_null(
+    db_session: AsyncSession,
+) -> None:
+    """#2905: ``logged_on`` is NULL until an accept records it, then reads back as a date."""
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    goal_id = await _goal(db_session, user_id)
+    db_session.add(_habit_suggestion(entry_id, user_id, goal_id))
+    db_session.add(_habit_suggestion(entry_id, user_id, goal_id, logged_on=date(2026, 9, 12)))
+    await db_session.commit()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(CompletionSuggestion).order_by(col(CompletionSuggestion.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [r.logged_on for r in rows] == [None, date(2026, 9, 12)]
+
+
+@pytest.mark.asyncio
+async def test_practice_target_cannot_carry_logged_on(db_session: AsyncSession) -> None:
+    """#2905: the habit-only facts CHECK covers ``logged_on`` too.
+
+    A practice accept logs no day, so a ``logged_on`` on a practice row could
+    only be a journal-derived date captured and ignored.
+    """
+    user_id = await _user(db_session)
+    entry_id = await _entry(db_session, user_id)
+    up_id = await _user_practice(db_session, user_id)
+    db_session.add(
+        CompletionSuggestion(
+            journal_entry_id=entry_id,
+            user_id=user_id,
+            target_type=CompletionTargetType.PRACTICE,
+            user_practice_id=up_id,
+            label="Meditation",
+            anchor_start=0,
+            anchor_end=10,
+            anchor_text="meditation",
+            logged_on=date(2026, 9, 12),
         ),
     )
     with pytest.raises(IntegrityError):

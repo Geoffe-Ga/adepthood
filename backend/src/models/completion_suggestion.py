@@ -109,11 +109,16 @@ def _facts_habit_only_check() -> CheckConstraint:
     practice hit a ``completed_on``, and the router drops it explicitly. This
     CHECK is what keeps that drop from being optional.
 
+    ``logged_on`` rides the same CHECK (#2905): it is the day a habit accept
+    logged against, and ``_accept_pending_practice`` logs no day, so a value on
+    a practice row could only be one copied from journal-derived detection.
+
     Reversal path, when practice sessions become backdatable: relax this one
     CHECK in one migration.
     """
     return CheckConstraint(
-        "target_type = 'habit' OR (completed_units IS NULL AND completed_on IS NULL)",
+        "target_type = 'habit'"
+        " OR (completed_units IS NULL AND completed_on IS NULL AND logged_on IS NULL)",
         name="ck_completion_suggestion_facts_habit_only",
     )
 
@@ -135,6 +140,14 @@ class CompletionSuggestion(SQLModel, table=True):
     see :func:`_facts_habit_only_check`. Neither is encrypted: they are
     arithmetic operands the accept path reads and the DB constrains, not
     journal text.
+
+    ``logged_on`` is the day the accept actually logged against -- the one
+    ``goalcompletion.local_day`` holds -- which is ``completed_on`` only when
+    that day was still inside the backfill window at accept time, and the
+    user's today otherwise (#2905). Recorded once, at accept, so a settled
+    card names that day rather than re-deriving it against a moving clock.
+    NULL while pending, for a practice target, and for a habit row accepted
+    before the column existed (no backfill: the day is not recoverable).
     """
 
     # The hot read is "all suggestions for an entry", so index that FK; the
@@ -189,6 +202,8 @@ class CompletionSuggestion(SQLModel, table=True):
     # which survives ciphertext. Habit-only per the facts CHECK.
     completed_units: float | None = Field(default=None)
     completed_on: date | None = Field(default=None)
+    # Set once, by the habit accept: the day ``goalcompletion.local_day`` holds.
+    logged_on: date | None = Field(default=None)
     status: str = Field(default=SuggestionStatus.PENDING, max_length=_ENUM_MAX)
     accepted_at: datetime | None = Field(
         default=None,

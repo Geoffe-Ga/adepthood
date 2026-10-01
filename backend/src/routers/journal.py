@@ -2287,6 +2287,19 @@ def _in_window_day(
     return None
 
 
+def _resolve_accept_day(suggestion: CompletionSuggestion, user_tz: str) -> date:
+    """The one day a habit accept logs against: in-window detected day, else today.
+
+    Resolved once, here, and handed to both writes -- the completion's
+    ``local_day`` (as an explicit ``completed_on``) and the suggestion's
+    ``logged_on`` -- so the two cannot disagree (#2905). Passing ``None`` and
+    letting ``_resolve_target_day`` read the clock again would let an accept
+    that straddles local midnight record one day on the suggestion and log
+    the next.
+    """
+    return _in_window_day(suggestion, user_tz) or today_in_tz(user_tz)
+
+
 # Operation-key namespace for a habit accept. One suggestion is one logical
 # accept, so the row id is the whole identity. Parallel to the practice
 # branch's ``accept-suggestion:practice:{id}``; the two never collide.
@@ -2317,6 +2330,7 @@ async def _accept_pending_habit(
     """
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
+    logged_on = _resolve_accept_day(suggestion, user_tz)
     # Nothing of this request is staged yet, and nothing may be: a replayed
     # claim rolls the session back before returning, which would discard it.
     # Keep every write on this path after this call.
@@ -2324,13 +2338,14 @@ async def _accept_pending_habit(
         session,
         ctx,
         CheckInCommand(
-            completed_on=_in_window_day(suggestion, user_tz),
+            completed_on=logged_on,
             completed_units=suggestion.completed_units,
             idempotency_key=f"{_ACCEPT_HABIT_OPERATION_PREFIX}{suggestion.id}",
         ),
     )
     suggestion.status = SuggestionStatus.ACCEPTED
     suggestion.accepted_at = datetime.now(UTC)
+    suggestion.logged_on = logged_on
     session.add(suggestion)
     await session.commit()
     await session.refresh(suggestion)
@@ -2406,6 +2421,11 @@ async def _accept_pending_practice(
 def _logged_day(suggestion: CompletionSuggestion, user_tz: str) -> date | None:
     """The day the accept actually logged against, re-derived for a replay.
 
+    The legacy-row path only: a habit accepted since #2905 records the day in
+    ``logged_on``, which :func:`_replay_day` prefers. This re-derivation
+    buckets ``accepted_at`` with the user's *current* timezone, so it can
+    drift after a timezone change -- the reason the day is now recorded.
+
     Reproduces the accept's own window decision by asking it again as of the
     day the accept happened (``accepted_at``), which is exactly what "today"
     meant in that request. Falls back to the live reading for a suggestion
@@ -2416,6 +2436,16 @@ def _logged_day(suggestion: CompletionSuggestion, user_tz: str) -> date | None:
     if accepted_at is None:
         return _in_window_day(suggestion, user_tz)
     return _in_window_day(suggestion, user_tz, to_user_date_bucket(accepted_at, user_tz))
+
+
+def _replay_day(suggestion: CompletionSuggestion, user_tz: str) -> date | None:
+    """The day a replay reports: the recorded ``logged_on``, else re-derived.
+
+    The recorded day is a fact and survives a later timezone change or a
+    slid window; the re-derivation is kept only for rows accepted before the
+    day was recorded (no backfill, #2905).
+    """
+    return suggestion.logged_on or _logged_day(suggestion, user_tz)
 
 
 async def _already_accepted_response(
@@ -2429,10 +2459,10 @@ async def _already_accepted_response(
         return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=None)
     goal, habit = await _resolve_suggestion_goal(session, suggestion, current_user)
     ctx = CheckInContext(goal=goal, habit=habit, user_id=current_user, user_timezone=user_tz)
-    # The same day resolution the accept used, asked as of the day the accept
-    # happened, so the replay reports the day that was actually logged rather
-    # than today's (empty) total.
-    check_in = await current_check_in(session, ctx, _logged_day(suggestion, user_tz))
+    # The day the accept recorded (or, for a legacy row, the same resolution
+    # asked as of the day the accept happened), so the replay reports the day
+    # that was actually logged rather than today's (empty) total.
+    check_in = await current_check_in(session, ctx, _replay_day(suggestion, user_tz))
     return AcceptSuggestionResponse(suggestion=_suggestion_response(suggestion), check_in=check_in)
 
 

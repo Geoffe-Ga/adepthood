@@ -26,6 +26,8 @@ from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
+from routers import journal as journal_router
+from services import checkin as checkin_service
 
 _BODY = "I went for a run today and it felt good."
 
@@ -318,6 +320,8 @@ async def test_accept_logs_the_suggested_amount_on_the_suggested_day(
     row = await _completion_row(db_session, goal_id)
     assert row.completed_units == 32.0  # NOT the goal target of 64.0
     assert row.local_day == yesterday  # NOT today
+    # In window, so the day logged IS the day detected (#2905).
+    assert resp.json()["suggestion"]["logged_on"] == yesterday.isoformat()
 
 
 @pytest.mark.asyncio
@@ -351,8 +355,10 @@ async def test_accept_with_a_day_past_the_backfill_window_logs_today_and_still_r
     row = await _completion_row(db_session, goal_id)
     assert row.local_day == today_in_tz("UTC")
     assert [r.message for r in caplog.records].count("suggestion_day_out_of_window") == 1
-    # The suggestion still reports what was detected; only the log day moved.
+    # The suggestion still reports what was detected; only the log day moved,
+    # and ``logged_on`` records where it moved to (#2905).
     assert resp.json()["suggestion"]["completed_on"] == too_old.isoformat()
+    assert resp.json()["suggestion"]["logged_on"] == row.local_day.isoformat()
 
 
 @pytest.mark.asyncio
@@ -512,6 +518,7 @@ async def test_accept_practice_logs_journal_attested_session(
     body = resp.json()
     assert body["suggestion"]["status"] == "accepted"
     assert body["check_in"] is None  # practices carry no streak
+    assert body["suggestion"]["logged_on"] is None  # a practice logs no day (#2905)
     assert "user_id" not in body["suggestion"]
     ps = (
         await db_session.execute(
@@ -793,3 +800,225 @@ async def test_replaying_an_accept_reports_the_day_it_logged_even_once_the_windo
 
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["check_in"]["day_units"] == 7.0  # that day's, not today's 0.0
+
+
+# #2905: a detected day one past today -- what a westward timezone move turns
+# "today" into -- so the accept must fall back and log today instead.
+_ONE_DAY = 1
+# How far the clock is advanced before a replay / reopen: past the backfill
+# window, so any re-derivation of the logged day against today would drop it.
+_REOPEN_AFTER_DAYS = MAX_BACKFILL_DAYS + 10
+# A timezone 14 hours ahead of UTC: noon UTC on day D is already D+1 there.
+_FAR_EAST_TZ = "Pacific/Kiritimati"
+_NOON = time(12, 0)
+# Slack for "the stored timestamp is now": the request round-trip, not a day.
+_NOW_TOLERANCE = timedelta(minutes=5)
+
+
+@pytest.mark.asyncio
+async def test_accept_persists_logged_on_as_the_day_actually_logged_not_the_detected_day(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2905: the suggestion records the day the accept LOGGED, not the day detected.
+
+    The settled card names this day. Re-deriving it from ``completed_on`` and
+    the live clock can name a day the completion was never on -- here the
+    detected day is tomorrow, the accept logs today, and the card would read
+    "today" only once tomorrow arrives.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    today = today_in_tz("UTC")
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=2.0,
+        completed_on=today + timedelta(days=_ONE_DAY),
+    )
+
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["suggestion"]["logged_on"] == today.isoformat()
+    row = await _completion_row(db_session, goal_id)
+    assert row.local_day == today
+    listed = await async_client.get(f"/journal/{entry_id}/suggestions", headers=headers)
+    assert listed.status_code == HTTPStatus.OK
+    (item,) = listed.json()["items"]
+    assert item["logged_on"] == today.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_accept_without_a_detected_day_records_today_as_logged_on(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2905: no detected day means the accept logged today, and says so."""
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    sug_id = await _seed_suggestion(db_session, entry_id=entry_id, user_id=user_id, goal_id=goal_id)
+
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    today = today_in_tz("UTC")
+    assert resp.json()["suggestion"]["logged_on"] == today.isoformat()
+    assert (await _completion_row(db_session, goal_id)).local_day == today
+
+
+@pytest.mark.asyncio
+async def test_a_today_fallback_accept_stamps_the_completion_now_not_at_local_midday(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The accept names its day explicitly now; today must still read as "now".
+
+    ``_completion_timestamp`` anchors an explicit day at local midday. Applied
+    to today that would put a morning log in the future for every
+    ``timestamp >= since`` reader.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    sug_id = await _seed_suggestion(db_session, entry_id=entry_id, user_id=user_id, goal_id=goal_id)
+
+    before = datetime.now(UTC)
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    stamped = (await _completion_row(db_session, goal_id)).timestamp
+    stamped = stamped if stamped.tzinfo else stamped.replace(tzinfo=UTC)
+    assert abs(stamped - before) < _NOW_TOLERANCE
+
+
+@pytest.mark.asyncio
+async def test_an_accept_straddling_local_midnight_records_the_day_it_logged(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One resolved day feeds both writes: ``logged_on`` IS ``local_day``.
+
+    The service's clock is moved a day past the router's -- the accept
+    request crossing local midnight between the two reads. If the router let
+    the service re-read the clock for a fallback day, the suggestion would
+    record one day and the completion would land on the next.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    today = today_in_tz("UTC")
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=2.0,
+        completed_on=today + timedelta(days=_ONE_DAY),
+    )
+    monkeypatch.setattr(
+        checkin_service, "today_in_tz", lambda _tz: today + timedelta(days=_ONE_DAY)
+    )
+
+    resp = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    row = await _completion_row(db_session, goal_id)
+    assert resp.json()["suggestion"]["logged_on"] == row.local_day.isoformat()
+    assert row.local_day == today
+
+
+async def _accept_yesterdays_suggestion(
+    client: AsyncClient, session: AsyncSession
+) -> tuple[dict[str, str], int, int, date]:
+    """Accept a backdated (yesterday) habit suggestion; return headers, entry, suggestion, day."""
+    headers = await _signup(client)
+    user_id = await _user_id(session)
+    goal_id = await _seed_goal(session, user_id)
+    entry_id = await _create_entry(client, headers)
+    yesterday = today_in_tz("UTC") - timedelta(days=_ONE_DAY)
+    sug_id = await _seed_suggestion(
+        session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=3.0,
+        completed_on=yesterday,
+    )
+    first = await client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    assert first.json()["suggestion"]["logged_on"] == yesterday.isoformat()
+    return headers, entry_id, sug_id, yesterday
+
+
+@pytest.mark.asyncio
+async def test_replay_and_list_keep_logged_on_once_the_clock_has_moved_on(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2905: the recorded day is a fact; advancing the clock past the window cannot move it."""
+    headers, entry_id, sug_id, yesterday = await _accept_yesterdays_suggestion(
+        async_client, db_session
+    )
+    later = today_in_tz("UTC") + timedelta(days=_REOPEN_AFTER_DAYS)
+    monkeypatch.setattr(journal_router, "today_in_tz", lambda _tz: later)
+    monkeypatch.setattr(checkin_service, "today_in_tz", lambda _tz: later)
+
+    replay = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    listed = await async_client.get(f"/journal/{entry_id}/suggestions", headers=headers)
+
+    assert replay.status_code == HTTPStatus.OK
+    assert replay.json()["suggestion"]["logged_on"] == yesterday.isoformat()
+    assert replay.json()["check_in"]["day_units"] == 3.0
+    (item,) = listed.json()["items"]
+    assert item["logged_on"] == yesterday.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_replay_reports_the_recorded_day_after_the_user_moves_far_east(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2905: a replay reads ``logged_on`` rather than re-bucketing ``accepted_at``.
+
+    A future-dated suggestion accepted at noon UTC logs today (the fallback).
+    Re-derived in a timezone fourteen hours east, ``accepted_at`` falls on
+    tomorrow -- the day the suggestion names -- so the re-derivation would
+    report tomorrow's empty total for a completion that lives on today.
+    """
+    headers = await _signup(async_client)
+    user_id = await _user_id(db_session)
+    goal_id = await _seed_goal(db_session, user_id)
+    entry_id = await _create_entry(async_client, headers)
+    today = today_in_tz("UTC")
+    sug_id = await _seed_suggestion(
+        db_session,
+        entry_id=entry_id,
+        user_id=user_id,
+        goal_id=goal_id,
+        completed_units=2.0,
+        completed_on=today + timedelta(days=_ONE_DAY),
+    )
+    first = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    assert first.json()["suggestion"]["logged_on"] == today.isoformat()
+    # Pin the accept instant to noon UTC so the far-east bucket is tomorrow
+    # whatever time of day the suite runs, then move the user.
+    db_session.expire_all()
+    suggestion = await db_session.get(CompletionSuggestion, sug_id)
+    user = await db_session.get(User, user_id)
+    assert suggestion is not None
+    assert user is not None
+    suggestion.accepted_at = datetime.combine(today, _NOON, tzinfo=UTC)
+    user.timezone = _FAR_EAST_TZ
+    db_session.add_all([suggestion, user])
+    await db_session.commit()
+
+    replay = await async_client.post(f"/journal/suggestions/{sug_id}/accept", headers=headers)
+    listed = await async_client.get(f"/journal/{entry_id}/suggestions", headers=headers)
+
+    assert replay.status_code == HTTPStatus.OK
+    assert replay.json()["suggestion"]["logged_on"] == today.isoformat()
+    assert replay.json()["check_in"]["day_units"] == 2.0  # today's, not tomorrow's 0.0
+    (item,) = listed.json()["items"]
+    assert item["logged_on"] == today.isoformat()

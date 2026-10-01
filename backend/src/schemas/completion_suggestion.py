@@ -32,6 +32,12 @@ class CompletionSuggestionResponse(BaseModel):
     # always ``None`` for a practice target (habit-only by DB CHECK).
     completed_units: float | None
     completed_on: date | None
+    # The day a habit accept actually LOGGED against (#2905) -- distinct from
+    # ``completed_on``, the day detection read in the span: an accept whose
+    # detected day had left the backfill window logs today instead. ``None``
+    # while pending, for a practice target, and for a habit accepted before
+    # this was recorded. A settled card names this day and only this day.
+    logged_on: date | None
     status: SuggestionStatus
     accepted_at: datetime | None
     created_at: datetime

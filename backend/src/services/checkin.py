@@ -285,12 +285,18 @@ def _resolve_target_day(completed_on: date | None, user_timezone: str) -> date:
 def _completion_timestamp(completed_on: date | None, user_timezone: str) -> datetime | None:
     """Stored timestamp for the completion row.
 
-    ``None`` lets the model default (now) stand for a same-day log. For a
-    backfilled day, anchors mid-day in the user's TZ so the value lands
-    unambiguously inside that local calendar day regardless of DST shoulder
-    days. Per-day uniqueness is keyed off ``local_day``, not this timestamp.
+    ``None`` lets the model default (now) stand for a same-day log -- an
+    omitted day, or one that names today explicitly (the journal accept always
+    names its day, #2905). For a backfilled day, anchors mid-day in the user's
+    TZ so the value lands unambiguously inside that local calendar day
+    regardless of DST shoulder days. Per-day uniqueness is keyed off
+    ``local_day``, not this timestamp.
+
+    "Now" rather than midday for today matters to the readers that window on
+    ``timestamp >= since`` (``services.invitations``, ``services.contraction``,
+    ``load_options``): a morning log stamped at noon would sit in the future.
     """
-    if completed_on is None:
+    if completed_on is None or completed_on == today_in_tz(user_timezone):
         return None
     start, end = day_bounds_in_tz(user_timezone, completed_on)
     return start + (end - start) / 2
