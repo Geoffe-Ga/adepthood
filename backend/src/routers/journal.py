@@ -2669,6 +2669,13 @@ async def _cache_and_mirror_essay(
     is the whole claim. It is the same per-dial reasoning the detached
     ontologization ladder uses for the same reason.
 
+    **The note is read again inside the first hold too.** The caller's cached
+    letter check runs before the barrier, so a second first-ask for the same
+    note passes it while the first is still composing and then queues here. A
+    note whose letter landed while this request waited is a cached reopen: it
+    returns without a charge or a dial, rather than buying and overwriting a
+    second letter (#623).
+
     **Both the tier and the body are read again inside the first hold**, and
     liveness is not enough on its own. An exclusive barrier held across a dial
     does not merely delay a competing mutation, it reorders it to *before* the
@@ -2692,7 +2699,13 @@ async def _cache_and_mirror_essay(
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
+        await session.refresh(note)
         await session.commit()
+        if note.essay is not None:
+            # A concurrent first ask for this note won the barrier and cached
+            # its letter while this one waited: a cached reopen, not a second
+            # purchase -- no charge, no dial, no overwrite (#623).
+            return note
         if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
             return note
         cached = await _cache_essay(
