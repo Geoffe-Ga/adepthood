@@ -186,6 +186,7 @@ def _detection_completion(candidates_block: str, body: str) -> str:
         hits.append(
             {
                 "index": int(candidate.group("index")),
+                "name": name,
                 "quote": match.group(0),
                 **_stated_facts(_attesting_sentence(body, match.start())),
             }

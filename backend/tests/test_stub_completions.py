@@ -103,7 +103,9 @@ def test_the_stub_still_finds_a_candidate_whose_prompt_line_carries_its_unit() -
     completion = canned_completion(prompt)
 
     assert completion is not None
-    assert json.loads(completion)["hits"] == [{"index": 0, "quote": "completed Morning walk"}]
+    assert json.loads(completion)["hits"] == [
+        {"index": 0, "name": "Morning walk", "quote": "completed Morning walk"}
+    ]
 
 
 def test_the_renderer_and_the_stubs_parser_agree_on_both_line_shapes() -> None:
@@ -156,6 +158,7 @@ def test_the_stub_reports_a_stated_quantity_and_day() -> None:
     assert json.loads(completion)["hits"] == [
         {
             "index": 0,
+            "name": "Drink water",
             "quote": "completed Drink water",
             "amount": 64.0,
             "unit": "oz",
@@ -188,7 +191,9 @@ def test_the_stub_reads_facts_from_the_attesting_sentence_only() -> None:
     completion = canned_completion(prompt)
 
     assert completion is not None
-    assert json.loads(completion)["hits"] == [{"index": 0, "quote": "completed Morning walk"}]
+    assert json.loads(completion)["hits"] == [
+        {"index": 0, "name": "Morning walk", "quote": "completed Morning walk"}
+    ]
 
 
 def test_canned_completion_detects_an_explicitly_completed_candidate() -> None:
@@ -201,7 +206,9 @@ def test_canned_completion_detects_an_explicitly_completed_candidate() -> None:
     completion = canned_completion(prompt)
 
     assert completion is not None
-    assert json.loads(completion) == {"hits": [{"index": 0, "quote": "completed Morning walk"}]}
+    assert json.loads(completion) == {
+        "hits": [{"index": 0, "name": "Morning walk", "quote": "completed Morning walk"}]
+    }
 
 
 @pytest.mark.asyncio

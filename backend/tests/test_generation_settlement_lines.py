@@ -157,7 +157,7 @@ class _ScriptedLLM:
         del history, api_key
         task = f"{system_prompt or ''}\n{prompt}"
         if '"hits"' in task or "COMPLETED" in task:
-            hits = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
+            hits = json.dumps({"hits": [{"index": 1, "quote": "I meditated"}]})
             return LLMResponse(
                 text=hits,
                 provider="openai",

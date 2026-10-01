@@ -541,7 +541,7 @@ async def test_the_completion_detection_is_dialled_off_the_pool(
     ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
         return LLMResponse(
-            text=json.dumps({"hits": [{"index": 0, "quote": _QUOTE}]}),
+            text=json.dumps({"hits": [{"index": 1, "quote": _QUOTE}]}),
             provider="stub",
             model=STUB_MODEL_NAME,
             prompt_tokens=0,

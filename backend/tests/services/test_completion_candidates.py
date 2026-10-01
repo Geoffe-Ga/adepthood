@@ -19,6 +19,7 @@ from models.practice import Practice
 from models.user import User
 from models.user_practice import UserPractice
 from services.completion_candidates import (
+    FIRST_INDEX,
     MAX_CANDIDATES,
     gather_candidates,
 )
@@ -114,7 +115,7 @@ async def test_clear_tier_goal_is_the_target(db_session: AsyncSession) -> None:
     assert candidates[0].target_id == clear_id
     assert candidates[0].target_type == "habit"
     assert candidates[0].name == "Meditate"
-    assert candidates[0].index == 0
+    assert candidates[0].index == FIRST_INDEX
 
 
 @pytest.mark.asyncio
@@ -150,7 +151,7 @@ async def test_dense_indices_and_deterministic_order(db_session: AsyncSession) -
 
     candidates = await gather_candidates(db_session, user_id)
 
-    assert [c.index for c in candidates] == [0, 1, 2]
+    assert [c.index for c in candidates] == [1, 2, 3]  # numbered from one
     assert [c.name for c in candidates] == ["A", "B", "C"]  # habit-id order
 
 
@@ -172,7 +173,7 @@ async def test_caps_at_max_candidates_and_warns(
         candidates = await gather_candidates(db_session, user_id)
 
     assert len(candidates) == MAX_CANDIDATES
-    assert [c.index for c in candidates] == list(range(MAX_CANDIDATES))
+    assert [c.index for c in candidates] == list(range(FIRST_INDEX, FIRST_INDEX + MAX_CANDIDATES))
     assert any("truncated" in r.message for r in caplog.records)
 
 
@@ -213,7 +214,7 @@ async def test_include_practices_adds_active_practices(db_session: AsyncSession)
     assert [c.name for c in on] == ["Only habit", "Morning sit"]  # appended, shared budget
     practice = next(c for c in on if c.target_type == "practice")
     assert practice.target_id == up_id
-    assert practice.index == 1  # dense index continues after the habit
+    assert practice.index == 2  # dense index continues after the habit (numbered from one)
 
 
 @pytest.mark.asyncio

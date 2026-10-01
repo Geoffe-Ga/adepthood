@@ -381,3 +381,64 @@ def test_completion_detected_is_frozen() -> None:
     )
     with pytest.raises(AttributeError):
         hit.target_id = 99  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# The echoed name (the "20 oz of water logged against the wrong habit" bug).
+# The model proposes an index AND the candidate's name; when the two disagree
+# the name decides, and only when it names exactly one candidate.
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_asks_for_the_candidates_name_beside_its_index() -> None:
+    """The wire shape carries ``name`` so an off-by-one index is detectable."""
+    prompt = build_detection_prompt(_BODY, _CANDIDATES)
+    assert '"name"' in detection.DETECTION_JSON_SHAPE
+    assert "name" in prompt
+
+
+@pytest.mark.asyncio
+async def test_matching_name_and_index_resolve_as_before() -> None:
+    """A name that agrees with its index changes nothing."""
+    llm = FakeLLM(_hits_json({"index": 0, "name": "Meditation", "quote": "I meditated"}))
+    hits = await detect_completions(_BODY, candidates=_CANDIDATES, llm=llm, clock=_CLOCK)
+    assert [h.target_id for h in hits] == [10]
+
+
+@pytest.mark.asyncio
+async def test_name_wins_over_a_disagreeing_index_when_it_is_unique() -> None:
+    """An off-by-one index is corrected by the unique candidate the name picks out.
+
+    The model said index 1 (the practice "Run") but named "Meditation": the
+    writer meditated, and the suggestion must not land on the run.
+    """
+    llm = FakeLLM(_hits_json({"index": 1, "name": "meditation ", "quote": "I meditated"}))
+    hits = await detect_completions(_BODY, candidates=_CANDIDATES, llm=llm, clock=_CLOCK)
+    assert [(h.target_type, h.target_id) for h in hits] == [("habit", 10)]
+
+
+@pytest.mark.asyncio
+async def test_a_name_matching_no_candidate_drops_the_hit() -> None:
+    """Index and name disagree and the name is nobody's: nothing is logged."""
+    llm = FakeLLM(_hits_json({"index": 1, "name": "Yoga", "quote": "I meditated"}))
+    assert await detect_completions(_BODY, candidates=_CANDIDATES, llm=llm, clock=_CLOCK) == []
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_name_drops_the_hit() -> None:
+    """A name shared by a habit and a practice cannot correct a wrong index."""
+    cands = (
+        DetectionCandidate(index=0, target_type="habit", target_id=10, name="Run"),
+        DetectionCandidate(index=1, target_type="practice", target_id=20, name="Run"),
+        DetectionCandidate(index=2, target_type="habit", target_id=30, name="Meditation"),
+    )
+    llm = FakeLLM(_hits_json({"index": 2, "name": "Run", "quote": "I went for a run"}))
+    assert await detect_completions(_BODY, candidates=cands, llm=llm, clock=_CLOCK) == []
+
+
+@pytest.mark.asyncio
+async def test_a_name_that_is_not_a_string_is_ignored() -> None:
+    """A malformed name field never costs the hit; the index stands alone."""
+    llm = FakeLLM(_hits_json({"index": 0, "name": 7, "quote": "I meditated"}))
+    hits = await detect_completions(_BODY, candidates=_CANDIDATES, llm=llm, clock=_CLOCK)
+    assert [h.target_id for h in hits] == [10]

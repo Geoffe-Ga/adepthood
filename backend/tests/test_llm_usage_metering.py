@@ -188,7 +188,7 @@ async def test_two_llm_calls_accumulate_two_usage_rows(
     notes_payload = json.dumps(
         {"notes": [{"kind": "theme", "quote": "I meditated", "note": "You return."}]}
     )
-    hits_payload = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
+    hits_payload = json.dumps({"hits": [{"index": 1, "quote": "I meditated"}]})
 
     async def _complete(
         prompt: str, history: object, *, system_prompt: str | None, api_key: object
@@ -232,7 +232,7 @@ async def test_stub_provider_is_skipped_alongside_a_priced_sibling_call(
     notes_payload = json.dumps(
         {"notes": [{"kind": "theme", "quote": "I meditated", "note": "You return."}]}
     )
-    hits_payload = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
+    hits_payload = json.dumps({"hits": [{"index": 1, "quote": "I meditated"}]})
 
     async def _complete(
         prompt: str, history: object, *, system_prompt: str | None, api_key: object

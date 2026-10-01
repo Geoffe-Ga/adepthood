@@ -140,7 +140,7 @@ def _fake(
 async def test_one_press_returns_marginalia_and_suggestions_on_one_charge(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}])
     headers = await _signup(async_client)
     await _seed_habit(db_session, await _user_id(db_session))
     entry_id = await _create_entry(async_client, headers)
@@ -168,7 +168,7 @@ async def test_short_entry_can_check_completions_without_a_resonance_pass(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Habit offers are not gated by whether literary resonance accepts the body."""
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}])
     headers = await _signup(async_client, "short-detect")
     await _seed_habit(db_session, await _user_id(db_session, "short-detect"))
     entry_id = await _create_entry(async_client, headers, body="I meditated")
@@ -191,7 +191,7 @@ async def test_independent_completion_check_does_not_duplicate_an_existing_offer
     calls: list[str] = []
     _fake(
         monkeypatch,
-        hits=[{"index": 0, "quote": "I meditated"}],
+        hits=[{"index": 1, "quote": "I meditated"}],
         detection_calls=calls,
         provider="openai",
     )
@@ -221,7 +221,7 @@ async def test_resonance_does_not_duplicate_an_independently_detected_offer(
     calls: list[str] = []
     _fake(
         monkeypatch,
-        hits=[{"index": 0, "quote": "I meditated"}],
+        hits=[{"index": 1, "quote": "I meditated"}],
         detection_calls=calls,
         provider="openai",
     )
@@ -268,7 +268,7 @@ async def test_independent_completion_check_keeps_intimate_entries_off_the_provi
     calls: list[str] = []
     _fake(
         monkeypatch,
-        hits=[{"index": 0, "quote": "I meditated"}],
+        hits=[{"index": 1, "quote": "I meditated"}],
         detection_calls=calls,
     )
     headers = await _signup(async_client, "independent-private")
@@ -299,7 +299,7 @@ async def test_an_intimate_entry_is_answered_before_any_key_is_asked_for(
     a keyed provider is not told to pay for a check that will never be made.
     """
     calls: list[str] = []
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}], detection_calls=calls)
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}], detection_calls=calls)
     monkeypatch.setenv("BOTMASON_PROVIDER", ANTHROPIC_PROVIDER_NAME)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     headers = await _signup(async_client, "intimate-keyless")
@@ -353,7 +353,7 @@ async def test_no_candidates_skips_detection_llm(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}], detection_calls=calls)
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}], detection_calls=calls)
     headers = await _signup(async_client, "nohab")  # no habit seeded → no candidates
     entry_id = await _create_entry(async_client, headers)
 
@@ -440,8 +440,8 @@ async def test_list_suggestions_scoped_ordered_no_user_id(
     _fake(
         monkeypatch,
         hits=[
-            {"index": 0, "quote": "willow bent"},  # later in the body
-            {"index": 1, "quote": "I meditated"},  # earlier in the body
+            {"index": 1, "quote": "willow bent"},  # later in the body
+            {"index": 2, "quote": "I meditated"},  # earlier in the body
         ],
     )
     headers = await _signup(async_client)
@@ -464,7 +464,7 @@ async def test_list_suggestions_scoped_ordered_no_user_id(
 async def test_list_suggestions_foreign_entry_is_404(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}])
     alice = await _signup(async_client, "alice")
     await _seed_habit(db_session, await _user_id(db_session, "alice"))
     entry_id = await _create_entry(async_client, alice)
@@ -582,7 +582,7 @@ async def test_list_suggestions_status_filter_foreign_entry_is_404(
 async def test_edit_reanchors_pending_and_auto_dismisses_deleted_mention(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}])
     headers = await _signup(async_client, "editor")
     await _seed_habit(db_session, await _user_id(db_session, "editor"))
     entry_id = await _create_entry(async_client, headers)
@@ -604,7 +604,7 @@ async def test_edit_reanchors_pending_and_auto_dismisses_deleted_mention(
 async def test_edit_keeping_mention_reanchors_without_dismiss(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 1, "quote": "I meditated"}])
     headers = await _signup(async_client, "keeper")
     await _seed_habit(db_session, await _user_id(db_session, "keeper"))
     entry_id = await _create_entry(async_client, headers)
@@ -692,7 +692,7 @@ async def test_detected_facts_reach_the_row_and_the_response(
         monkeypatch,
         hits=[
             {
-                "index": 0,
+                "index": 1,
                 "quote": "I meditated",
                 "amount": 3,
                 "unit": written_unit,
@@ -728,7 +728,7 @@ async def test_both_detection_paths_yield_the_same_facts(
     writer pressed.
     """
     hit = {
-        "index": 0,
+        "index": 1,
         "quote": "I meditated",
         "amount": 3,
         "unit": "times",
@@ -827,7 +827,7 @@ async def test_a_backdated_entrys_yesterday_is_the_day_before_that_entry(
         monkeypatch,
         hits=[
             {
-                "index": 0,
+                "index": 1,
                 "quote": "I meditated",
                 "amount": 3,
                 "unit": "times",
@@ -876,7 +876,7 @@ async def test_a_practice_hit_never_carries_a_day_and_never_500s(
         monkeypatch,
         hits=[
             {
-                "index": 0,
+                "index": 1,
                 "quote": "I meditated",
                 "amount": 20,
                 "unit": "minutes",

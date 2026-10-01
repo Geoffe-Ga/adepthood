@@ -102,7 +102,7 @@ def _stub(text: str) -> LLMResponse:
     )
 
 
-_HITS = json.dumps({"hits": [{"index": 0, "quote": "I meditated"}]})
+_HITS = json.dumps({"hits": [{"index": 1, "quote": "I meditated"}]})
 _NOTES = json.dumps(
     {"notes": [{"kind": "theme", "quote": "I meditated", "note": "You showed up."}]}
 )

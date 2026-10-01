@@ -37,7 +37,8 @@ MAX_HITS = 5
 # are separated across provider roles.  One canonical literal prevents prompt
 # wording and local-development recognition from drifting apart.
 DETECTION_JSON_SHAPE = (
-    '{"hits": [{"index": 0, "quote": "...", "amount": 0, "unit": "...", "when": "..."}]}'
+    '{"hits": [{"index": 1, "name": "...", "quote": "...", "amount": 0, "unit": "...", '
+    '"when": "..."}]}'
 )
 
 
@@ -75,9 +76,57 @@ class _HitDraft:
 
     index: int
     quote: str
+    # The candidate's name as the model copied it. Checked against the
+    # candidate the index addresses: when the two disagree the name decides,
+    # and only when it names exactly one candidate (see ``_CandidateBook``).
+    name: object = None
     amount: object = None
     unit: object = None
     when: object = None
+
+
+def _name_key(name: str) -> str:
+    """The comparison form of a candidate name: trimmed, case-folded."""
+    return name.strip().casefold()
+
+
+@dataclass(frozen=True)
+class _CandidateBook:
+    """The supplied candidates, addressable by index and by name.
+
+    A model that numbers from one when the list numbered from zero (or simply
+    slips a line) proposes a wrong index with the RIGHT name. Logging the hit
+    against the indexed candidate then checks off a habit the writer never
+    mentioned -- "20 oz of water" landing on a practice-count habit. So the
+    echoed name is checked against the indexed candidate, and when the two
+    disagree the name wins, provided it picks out exactly one candidate. A
+    name nobody carries, or one two candidates share (a habit and a practice
+    may be called the same thing), cannot settle it and the hit is dropped: a
+    missed suggestion is the smaller harm. A missing or non-string name leaves
+    the index standing alone, which is how the stub and older fixtures speak.
+    """
+
+    by_index: dict[int, DetectionCandidate]
+    by_name: dict[str, list[DetectionCandidate]]
+
+    @classmethod
+    def of(cls, candidates: Sequence[DetectionCandidate]) -> _CandidateBook:
+        """Index ``candidates`` both ways."""
+        by_name: dict[str, list[DetectionCandidate]] = {}
+        for candidate in candidates:
+            by_name.setdefault(_name_key(candidate.name), []).append(candidate)
+        return cls(by_index={c.index: c for c in candidates}, by_name=by_name)
+
+    def resolve(self, draft: _HitDraft) -> DetectionCandidate | None:
+        """The one candidate ``draft`` means, or ``None`` when that is unclear."""
+        indexed = self.by_index.get(draft.index)
+        if not isinstance(draft.name, str):
+            return indexed
+        key = _name_key(draft.name)
+        if indexed is not None and _name_key(indexed.name) == key:
+            return indexed
+        named = self.by_name.get(key, [])
+        return named[0] if len(named) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -135,7 +184,8 @@ def build_detection_prompt(body: str, candidates: Sequence[DetectionCandidate]) 
         "- Only count things the writer actually did/completed — NOT things they "
         "planned, intended, wanted, hoped, or AVOIDED (skipping a bad habit is "
         "not a completion).\n"
-        '- "index" is the number of the candidate from the list below.\n'
+        '- "index" is the number of the candidate from the list below, and '
+        '"name" is that candidate\'s name copied exactly as listed.\n'
         '- "quote" is a VERBATIM substring copied exactly from the entry that '
         "shows they did it.\n"
         '- "amount" is a number the writer states — NEVER converted, NEVER '
@@ -164,6 +214,7 @@ def _hit_from_item(item: object) -> _HitDraft | None:
         return _HitDraft(
             index=index,
             quote=quote,
+            name=item.get("name"),
             amount=item.get("amount"),
             unit=item.get("unit"),
             when=item.get("when"),
@@ -192,15 +243,16 @@ def _sanitize_label(quote: str) -> str | None:
 def _anchor_hit(
     body: str,
     draft: _HitDraft,
-    by_index: dict[int, DetectionCandidate],
+    book: _CandidateBook,
     clock: DetectionClock,
 ) -> CompletionDetected | None:
     """Resolve a draft against the candidates + body, or None if it can't.
 
-    The index must address a supplied candidate and the quote must occur verbatim
-    in the body — neither the model's id nor any offset it might claim is trusted.
+    The index (checked against the echoed name, see :class:`_CandidateBook`)
+    must settle on one supplied candidate and the quote must occur verbatim in
+    the body — neither the model's id nor any offset it might claim is trusted.
     """
-    candidate = by_index.get(draft.index)
+    candidate = book.resolve(draft)
     span = _quote_span(body, draft.quote)
     label = _sanitize_label(draft.quote)
     if candidate is None or span is None or label is None:
@@ -233,7 +285,7 @@ def _is_duplicate(
 def _collect_hits(
     body: str,
     drafts: list[_HitDraft],
-    by_index: dict[int, DetectionCandidate],
+    book: _CandidateBook,
     clock: DetectionClock,
     max_hits: int,
 ) -> list[CompletionDetected]:
@@ -241,7 +293,7 @@ def _collect_hits(
     kept: list[CompletionDetected] = []
     seen_targets: set[tuple[str, int]] = set()
     for draft in drafts:
-        hit = _anchor_hit(body, draft, by_index, clock)
+        hit = _anchor_hit(body, draft, book, clock)
         if hit is None or _is_duplicate(hit, kept, seen_targets):
             continue
         kept.append(hit)
@@ -269,5 +321,6 @@ async def detect_completions(
     if not candidates:
         return []
     raw = await llm.complete(build_detection_prompt(body, candidates))
-    by_index = {c.index: c for c in candidates}
-    return _collect_hits(body, _parse_hit_drafts(raw), by_index, clock, max_hits)
+    return _collect_hits(
+        body, _parse_hit_drafts(raw), _CandidateBook.of(candidates), clock, max_hits
+    )

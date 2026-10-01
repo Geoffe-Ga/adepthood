@@ -30,6 +30,13 @@ MAX_CANDIDATES = 25
 _HABIT_TARGET = "habit"
 _PRACTICE_TARGET = "practice"
 
+# Candidates are numbered from one in the prompt, not zero. A model reading
+# "0. Drinking Water / 1. Frequency Practice" and answering "the first one" as
+# index 1 checks off the wrong habit; a list that starts at 1 has no such
+# ambiguity, and the echoed name (``domain.detection._CandidateBook``) catches
+# whatever slips remain.
+FIRST_INDEX = 1
+
 
 def _pick_representative(goals: list[Goal]) -> Goal | None:
     """Return the goal that stands for a habit: clear-tier, else first, else None.
@@ -47,8 +54,9 @@ def _pick_representative(goals: list[Goal]) -> Goal | None:
 def _habit_candidates(habits: list[Habit]) -> list[DetectionCandidate]:
     """Dense, ordered habit candidates keyed by the representative goal.
 
-    Goal-less habits are skipped; surviving habits get dense 0-based indices in
-    the order given (the caller sorts deterministically by habit id).
+    Goal-less habits are skipped; surviving habits get dense indices in the
+    order given (the caller sorts deterministically by habit id), numbered
+    from :data:`FIRST_INDEX`.
     """
     candidates: list[DetectionCandidate] = []
     for habit in habits:
@@ -57,7 +65,7 @@ def _habit_candidates(habits: list[Habit]) -> list[DetectionCandidate]:
             continue  # goal-less habits have nothing to check off
         candidates.append(
             DetectionCandidate(
-                index=len(candidates),
+                index=FIRST_INDEX + len(candidates),
                 target_type=_HABIT_TARGET,
                 target_id=goal.id,
                 name=habit.name,
@@ -73,6 +81,9 @@ async def _practice_candidates(
     session: AsyncSession, user_id: int, *, start_index: int
 ) -> list[DetectionCandidate]:
     """The user's active practices as candidates, dense-indexed after the habits.
+
+    ``start_index`` is the index the first practice takes: one past the last
+    habit's, so the numbering the model sees runs unbroken across both kinds.
 
     A practice is active while ``end_date IS NULL``; its display name is the
     user's custom name or the catalog name (:func:`effective_name`). The target
@@ -121,7 +132,8 @@ async def gather_candidates(
 
     Loads habits with their goals eager (no N+1), picks the representative goal
     per habit (clear-tier, else first), skips goal-less habits, stamps dense
-    0-based indices in habit-id order, and truncates to :data:`MAX_CANDIDATES`.
+    indices from :data:`FIRST_INDEX` in habit-id order, and truncates to
+    :data:`MAX_CANDIDATES`.
 
     With ``include_practices`` (default off), the user's active practices are
     appended after the habits, sharing the same :data:`MAX_CANDIDATES` budget and
@@ -137,5 +149,7 @@ async def gather_candidates(
     habits = list(result.scalars().all())
     candidates = _habit_candidates(habits)
     if include_practices:
-        candidates += await _practice_candidates(session, user_id, start_index=len(candidates))
+        candidates += await _practice_candidates(
+            session, user_id, start_index=FIRST_INDEX + len(candidates)
+        )
     return _capped(candidates, user_id)
