@@ -261,6 +261,31 @@ async def _refusal(session: AsyncSession, user_id: int) -> object:
         return exc.detail
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expires_in", "admitted"),
+    [
+        # A few seconds past expiry: a crashed worker's lease, reclaimed.
+        (timedelta(seconds=-3), True),
+        # The last instant before ``now``: already expired.
+        (timedelta(microseconds=-1), True),
+        # Exactly ``now``: a lease is live through the instant it expires at.
+        (timedelta(0), False),
+        # A few seconds from expiry: still live, still holding its slot.
+        (timedelta(seconds=3), False),
+    ],
+)
+async def test_the_expiry_boundary_is_exact(
+    db_session: AsyncSession, clock: _Clock, expires_in: timedelta, *, admitted: bool
+) -> None:
+    """Only a lease whose ``expires_at`` is strictly before now is reclaimed."""
+    user_id = await _make_user(db_session, "boundary@example.com")
+    await _fill_every_slot(db_session, user_id, clock.now + expires_in)
+
+    expected = None if admitted else GENERATION_IN_PROGRESS
+    assert await _refusal(db_session, user_id) == expected
+
+
 async def _leases_of(session: AsyncSession, user_id: int) -> list[GenerationSlot]:
     query = select(GenerationSlot).where(col(GenerationSlot.user_id) == user_id)
     return list((await session.execute(query)).scalars().all())
