@@ -132,6 +132,48 @@ class SpendResult:
     bucket: str
 
 
+@dataclass(frozen=True, slots=True)
+class StagedRefund:
+    """A refund :func:`refund_one_message` staged in the caller's transaction.
+
+    ``balances`` are the post-refund balances to report, or the caller's own
+    ``spent`` unchanged when nothing could be reversed (``landed`` is then
+    false). A staged refund is not yet a refund: the caller's commit makes it
+    durable, and a rollback erases it with its audit row. So its log line is
+    written by :func:`log_committed_refund`, which the caller invokes only
+    once that commit has succeeded.
+    """
+
+    user_id: int
+    bucket: str
+    reason: str
+    balances: SpendResult
+    landed: bool
+
+
+def log_committed_refund(refund: StagedRefund | None) -> None:
+    """Write ``wallet_refund_applied`` for a refund whose commit has succeeded.
+
+    Call it after the commit, never before: a refund staged and then rolled
+    back must leave no line, so the stream carries exactly one line per refund
+    row ``walletaudit`` holds. ``None`` (no refund was staged) and a refund that
+    did not land write nothing; the latter already logged its noop warning.
+
+    Reason and bucket ride in the message because the production formatter
+    drops ``extra``; ``refund_reason`` avoids the reserved LogRecord attribute
+    names. Record §1 of the economy decision asks for refunds to be
+    instrumented (#623 PR3).
+    """
+    if refund is None or not refund.landed:
+        return
+    logger.info(
+        "wallet_refund_applied reason=%s bucket=%s",
+        refund.reason,
+        refund.bucket,
+        extra={"user_id": refund.user_id, "bucket": refund.bucket, "refund_reason": refund.reason},
+    )
+
+
 async def get_user_fresh(session: AsyncSession, user_id: int) -> User | None:
     """Return the user row, always reading fresh from the database.
 
@@ -371,7 +413,7 @@ async def refund_one_message(
     spent: SpendResult,
     *,
     reason: str = REASON_REFUND_NO_NOTES,
-) -> SpendResult:
+) -> StagedRefund:
     """Reverse ``spent`` into the bucket it actually came from.
 
     Used when a metered pass completes but delivers the writer nothing they
@@ -389,27 +431,24 @@ async def refund_one_message(
     ``REASON_REFUND_FAILED_RESONANCE`` so the compensating credit is
     distinguishable from a quality reversal.
 
-    Returns the post-refund balances, or ``spent`` unchanged when there was
-    nothing to reverse (the row vanished, or the counter is already at zero) —
-    a refund that cannot happen must never invent capacity, and the caller's
-    response then simply reports the balances it already had.
+    Returns the staged refund: its post-refund balances, or ``spent``
+    unchanged when there was nothing to reverse (the row vanished, or the
+    counter is already at zero) — a refund that cannot happen must never invent
+    capacity, and the caller's response then simply reports the balances it
+    already had. The caller passes it to :func:`log_committed_refund` once its
+    commit succeeds; nothing here claims the refund happened.
     """
     reverse = _reverse_monthly_spend if spent.bucket == BUCKET_MONTHLY else _reverse_offering_spend
     refunded = await reverse(session, user_id, reason)
     if refunded is None:
         logger.warning("wallet_refund_noop", extra={"user_id": user_id, "bucket": spent.bucket})
-        return spent
-    # The landed refund's own line (#623 PR3): record §1 asks for refunds to be
-    # instrumented. Reason and bucket ride in the message because the
-    # production formatter drops ``extra``; ``refund_reason`` avoids the
-    # reserved LogRecord attribute names.
-    logger.info(
-        "wallet_refund_applied reason=%s bucket=%s",
-        reason,
-        spent.bucket,
-        extra={"user_id": user_id, "bucket": spent.bucket, "refund_reason": reason},
+    return StagedRefund(
+        user_id=user_id,
+        bucket=spent.bucket,
+        reason=reason,
+        balances=spent if refunded is None else refunded,
+        landed=refunded is not None,
     )
-    return refunded
 
 
 async def require_user_fresh(session: AsyncSession, user_id: int) -> User:

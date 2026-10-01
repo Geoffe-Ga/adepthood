@@ -178,6 +178,8 @@ from services.users import get_user_timezone
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
 from services.wallet import (
     SpendResult,
+    StagedRefund,
+    log_committed_refund,
     preflight_deduction,
     refund_one_message,
     require_user_fresh,
@@ -1397,8 +1399,9 @@ async def _refund_failed_pass(
     """
     await session.rollback()
     if spent is not None:
-        await refund_one_message(session, user_id, spent, reason=reason)
+        refund = await refund_one_message(session, user_id, spent, reason=reason)
         await session.commit()
+        log_committed_refund(refund)
     if trace is not None:
         log_generation_settled(
             GenerationSettlement(
@@ -1798,7 +1801,7 @@ async def _persist_settle_commit(
             session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
         )
         suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
-        spent, no_notes_message = await _settle_empty_pass(
+        spent, no_notes_message, refund = await _settle_empty_pass(
             session, prepared.user_id, spent, prepared.anchored
         )
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
@@ -1815,6 +1818,7 @@ async def _persist_settle_commit(
         )
         await session.commit()
         committed = True
+        log_committed_refund(refund)
     finally:
         if not committed:
             await _refund_failed_pass(
@@ -1930,7 +1934,7 @@ def _resonance_response(
 
 async def _settle_empty_pass(
     session: AsyncSession, user_id: int, spent: SpendResult | None, outcome: MarginaliaOutcome
-) -> tuple[SpendResult | None, str | None]:
+) -> tuple[SpendResult | None, str | None, StagedRefund | None]:
     """Explain a pass that kept no notes, and hand any BotMason charge back.
 
     The two halves are deliberately one call. A writer told "this pass wasn't
@@ -1938,15 +1942,17 @@ async def _settle_empty_pass(
     the sentence and the reversal are decided from the same value rather than
     from two independent reads of the outcome that could drift apart.
 
-    Returns the balances to report and the sentence to show, or the untouched
-    balances and ``None`` when the pass produced notes.
+    Returns the balances to report, the sentence to show and the staged refund,
+    or the untouched balances and two ``None`` when the pass produced notes.
+    The refund is only staged: the caller logs it once its commit lands.
     """
     message = explain_no_notes(outcome)
     if message is None:
-        return spent, None
+        return spent, None, None
     if spent is None:
-        return None, message
-    return await refund_one_message(session, user_id, spent), message
+        return None, message, None
+    refund = await refund_one_message(session, user_id, spent)
+    return refund.balances, message, refund
 
 
 @dataclass(frozen=True)
@@ -3219,11 +3225,13 @@ async def _settle_essay(
         generation=charge.key,
     )
     if essay is None:
+        refund = None
         if charge.spent is not None:
-            await refund_one_message(
+            refund = await refund_one_message(
                 session, note.user_id, charge.spent, reason=REASON_REFUND_NO_ESSAY
             )
         await session.commit()
+        log_committed_refund(refund)
         _log_settled_essay(note, charge, usage, GenerationOutcome.REFUSED)
         # Counted, never quoted: the refused text is the prompt (or something
         # else unpublishable), and logging it would leak exactly what the

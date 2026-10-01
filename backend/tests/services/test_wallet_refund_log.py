@@ -5,6 +5,10 @@ estimate, refunds, and cache hits". A refund already writes its ``walletaudit``
 row; this pins the log line beside it, ``wallet_refund_applied``, so refunds
 are visible in the same stream as the settlement lines. The noop warning that
 already existed is unchanged.
+
+A refund is only staged in the caller's transaction, and a rollback erases it,
+so the line is written by ``log_committed_refund`` once the caller's commit has
+landed, never by staging itself.
 """
 
 from __future__ import annotations
@@ -22,7 +26,12 @@ from models.wallet_audit import (
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_NO_NOTES,
 )
-from services.wallet import SpendResult, refund_one_message, spend_one_message
+from services.wallet import (
+    SpendResult,
+    log_committed_refund,
+    refund_one_message,
+    spend_one_message,
+)
 from tests.helpers.log_lines import production_line, records_for
 
 _MONTHLY_CAP = 5
@@ -60,7 +69,10 @@ async def test_a_refund_that_lands_logs_one_applied_line(
     bucket: str,
     reason: str,
 ) -> None:
-    """One ``wallet_refund_applied`` per landed refund, naming its bucket and reason."""
+    """One ``wallet_refund_applied`` per committed refund, naming its bucket and reason.
+
+    Staging alone writes nothing; the line follows the commit.
+    """
     user_id = await _make_user(db_session, monthly_used=monthly_used, offering_balance=3)
     spent = await spend_one_message(db_session, user_id, _MONTHLY_CAP)
     assert spent is not None
@@ -68,7 +80,10 @@ async def test_a_refund_that_lands_logs_one_applied_line(
     caplog.set_level(logging.INFO, logger="services.wallet")
     caplog.clear()
 
-    await refund_one_message(db_session, user_id, spent, reason=reason)
+    refund = await refund_one_message(db_session, user_id, spent, reason=reason)
+    assert records_for(caplog.records, _APPLIED) == []
+    await db_session.commit()
+    log_committed_refund(refund)
 
     applied = records_for(caplog.records, _APPLIED)
     assert len(applied) == 1
@@ -94,9 +109,22 @@ async def test_a_refund_with_nothing_to_reverse_logs_only_the_noop(
     caplog.clear()
 
     returned = await refund_one_message(db_session, user_id, phantom)
+    await db_session.commit()
+    log_committed_refund(returned)
 
-    assert returned == phantom
+    assert returned.balances == phantom
+    assert returned.landed is False
     assert records_for(caplog.records, _APPLIED) == []
     noops = records_for(caplog.records, _NOOP)
     assert len(noops) == 1
     assert noops[0].levelno == logging.WARNING
+
+
+def test_no_staged_refund_logs_nothing(caplog: pytest.LogCaptureFixture) -> None:
+    """A caller with nothing staged (BYOK, or a pass that kept notes) passes ``None``."""
+    caplog.set_level(logging.INFO, logger="services.wallet")
+    caplog.clear()
+
+    log_committed_refund(None)
+
+    assert caplog.records == []

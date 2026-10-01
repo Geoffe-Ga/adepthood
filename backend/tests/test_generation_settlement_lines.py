@@ -46,6 +46,7 @@ from services import marginalia as marginalia_service
 from services.botmason import LLMProviderError, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 from services.llm_usage import OUTCOME_FOR_REFUND_REASON
+from services.wallet import SpendResult, StagedRefund
 from tests.helpers.log_lines import assert_no_text, production_line, records_for
 from tests.test_journal_vault_read import ReflectingVaultClient
 from tests.transcription_helpers import (
@@ -202,6 +203,34 @@ def _capture(caplog: pytest.LogCaptureFixture) -> None:
     for name in _LOGGERS:
         caplog.set_level(logging.INFO, logger=name)
     caplog.clear()
+
+
+def _fail_the_commit_after_the_next_refund(monkeypatch: pytest.MonkeyPatch) -> list[Exception]:
+    """Make the first commit after the next staged refund raise, once.
+
+    The refund is really staged (audit row and all); the commit that would make
+    it durable is the thing that fails. Returns the pending failure, emptied
+    once it has fired, so a test can prove the seam was reached.
+    """
+    real_refund = journal_router.refund_one_message
+    failures: list[Exception] = [RuntimeError("commit unavailable")]
+
+    async def _refund_then_break_commit(
+        session: AsyncSession, user_id: int, spent: SpendResult, *, reason: str
+    ) -> StagedRefund:
+        refunded = await real_refund(session, user_id, spent, reason=reason)
+        if failures:
+            failure = failures.pop()
+
+            async def _failing_commit() -> None:
+                del session.commit
+                raise failure
+
+            monkeypatch.setattr(session, "commit", _failing_commit, raising=False)
+        return refunded
+
+    monkeypatch.setattr(journal_router, "refund_one_message", _refund_then_break_commit)
+    return failures
 
 
 def _one_settled(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
@@ -404,6 +433,31 @@ async def test_a_failed_server_paid_pass_settles_refunded_failed_with_its_refund
 
 
 @pytest.mark.asyncio
+async def test_a_compensating_refund_whose_commit_fails_is_never_logged(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed pass whose compensating refund cannot commit leaves no refund line.
+
+    No refund row is durable, so the stream must not claim one either.
+    """
+    monkeypatch.setattr(marginalia_service, "generate_response", _raise_provider_error)
+    failures = _fail_the_commit_after_the_next_refund(monkeypatch)
+    headers, user_id = await _signup(async_client, "settle_compensation_lost")
+    entry_id = await _create_entry(async_client, headers)
+    _capture(caplog)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert failures == []
+    assert await _audit_reasons(db_session, user_id) == [REASON_SPEND_MONTHLY]
+    assert records_for(caplog.records, _REFUND_APPLIED) == []
+
+
+@pytest.mark.asyncio
 async def test_a_failed_byok_pass_settles_uncharged_without_a_refund(
     async_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -548,6 +602,38 @@ async def test_a_vault_care_escalation_settles_once_as_refunded_failed(
     assert await _usage_rows(db_session, user_id) == []
 
 
+@pytest.mark.asyncio
+async def test_an_empty_pass_whose_write_fails_logs_only_the_refund_that_committed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The staged no-notes refund is rolled back with the failed write, so it is never logged.
+
+    Only the compensating refund that commits leaves a line: one refund line,
+    matching the one refund row the audit trail holds.
+    """
+    monkeypatch.setattr(marginalia_service, "generate_response", _ScriptedLLM(_notes()))
+
+    async def _broken_ledger(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("ledger unavailable")
+
+    monkeypatch.setattr(journal_router, "record_llm_usage", _broken_ledger)
+    headers, user_id = await _signup(async_client, "settle_empty_write_failed")
+    entry_id = await _create_entry(async_client, headers)
+    _capture(caplog)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert _one_settled(caplog).__dict__["outcome"] == "refunded_failed"
+    reasons = await _audit_reasons(db_session, user_id)
+    assert reasons == [REASON_SPEND_MONTHLY, REASON_REFUND_FAILED_RESONANCE]
+    refunds = records_for(caplog.records, _REFUND_APPLIED)
+    assert [r.__dict__["refund_reason"] for r in refunds] == reasons[1:]
+
+
 # --- Essay -----------------------------------------------------------------
 
 
@@ -617,6 +703,8 @@ async def test_an_essay_settles_with_the_outcome_its_audit_reason_names(
     assert reasons[-1] == case.last_reason
     if case.last_reason != REASON_SPEND_MONTHLY:
         assert extra["outcome"] == OUTCOME_FOR_REFUND_REASON[case.last_reason]
+    refunds = [r.__dict__["refund_reason"] for r in records_for(caplog.records, _REFUND_APPLIED)]
+    assert refunds == [r for r in reasons if r != REASON_SPEND_MONTHLY]
     rows = await _usage_rows(db_session, user_id)
     assert len(rows) == 1
     _assert_matches_rows(record, rows)
@@ -651,6 +739,37 @@ async def test_a_failed_essay_settles_refunded_failed(
     assert record.__dict__["outcome"] == OUTCOME_FOR_REFUND_REASON[reasons[-1]]
     refunds = records_for(caplog.records, _REFUND_APPLIED)
     assert [r.__dict__["refund_reason"] for r in refunds] == [REASON_REFUND_FAILED_ESSAY]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_essay_whose_commit_fails_logs_only_the_refund_that_committed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A no-essay refund staged and then lost to a failed commit is never logged.
+
+    The commit that would make the staged refund durable fails; the guard rolls
+    it back and compensates instead.
+    """
+    monkeypatch.setattr(marginalia_service, "generate_response", _EssayLLM("   "))
+    failures = _fail_the_commit_after_the_next_refund(monkeypatch)
+    headers, user_id = await _signup(async_client, "essay_refused_commit_failed")
+    marg_id = await _seed_marginalia(db_session, user_id)
+    _capture(caplog)
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{marg_id}/essay", headers=headers, json=_PRICED
+    )
+
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert failures == []
+    assert _one_settled(caplog).__dict__["outcome"] == "refunded_failed"
+    reasons = await _audit_reasons(db_session, user_id)
+    assert reasons == [REASON_SPEND_MONTHLY, REASON_REFUND_FAILED_ESSAY]
+    refunds = records_for(caplog.records, _REFUND_APPLIED)
+    assert [r.__dict__["refund_reason"] for r in refunds] == reasons[1:]
 
 
 @pytest.mark.asyncio
