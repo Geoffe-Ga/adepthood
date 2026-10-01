@@ -25,6 +25,7 @@ from models.user import User
 from models.user_practice import UserPractice
 from services import marginalia as marginalia_service
 from services.botmason import (
+    ANTHROPIC_PROVIDER_NAME,
     STUB_MODEL_NAME,
     LLMCreditExhaustedError,
     LLMProviderError,
@@ -283,6 +284,37 @@ async def test_independent_completion_check_keeps_intimate_entries_off_the_provi
     )
 
     assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == {"items": [], "checked": False}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_entry_is_answered_before_any_key_is_asked_for(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-hold INTIMATE check is a real fast path, not only a duplicate floor.
+
+    The authoritative floor is re-read under the account hold (#3008), but an
+    entry already intimate never reaches key resolution: a writer with no key on
+    a keyed provider is not told to pay for a check that will never be made.
+    """
+    calls: list[str] = []
+    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}], detection_calls=calls)
+    monkeypatch.setenv("BOTMASON_PROVIDER", ANTHROPIC_PROVIDER_NAME)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    headers = await _signup(async_client, "intimate-keyless")
+    await _seed_habit(db_session, await _user_id(db_session, "intimate-keyless"))
+    created = await async_client.post(
+        "/journal/",
+        json={"message": "I meditated", "classification": "intimate"},
+        headers=headers,
+    )
+
+    resp = await async_client.post(
+        f"/journal/{created.json()['id']}/suggestions/detect", headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
     assert resp.json() == {"items": [], "checked": False}
     assert calls == []
 

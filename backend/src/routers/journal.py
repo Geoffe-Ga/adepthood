@@ -1553,7 +1553,7 @@ async def _withdrawn_under_hold(
     entry: JournalEntry,
     *,
     spent: SpendResult | None,
-    trace: _FailedGeneration,
+    trace: _FailedGeneration | None,
 ) -> bool:
     """Re-read the entry under the pass's hold; settle and report whether it is withdrawn.
 
@@ -1579,6 +1579,12 @@ async def _withdrawn_under_hold(
     ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
     Tiers here only ever tighten what is sent.
 
+    Completion detection (``POST /journal/{entry_id}/suggestions/detect``) is
+    the second caller (#3008). It waits for the same hold behind the same
+    PATCH and DELETE, but it is uncharged, so it passes ``spent=None`` and the
+    "refund" is a bare rollback. On ``True`` it answers
+    ``{items: [], checked: false}`` rather than :func:`_private_response`.
+
     Every path out of here has released the pooled connection -- the commit
     after the refresh, or the refund's own rollback and commit -- so nothing
     is held across the dials that follow.
@@ -1592,6 +1598,40 @@ async def _withdrawn_under_hold(
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
     return False
+
+
+async def _body_under_hold(
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    spent: SpendResult | None,
+    trace: _FailedGeneration,
+) -> tuple[str, CareResponse | None]:
+    """The body every dial of a resonance pass carries, and its care verdict, from the fresh row.
+
+    Called once :func:`_withdrawn_under_hold` has refreshed ``entry`` under the
+    pass's hold and found it still readable. ``PATCH /journal/{entry_id}``
+    carrying only ``message`` takes the same exclusive hold, so an edit that
+    queued first has already answered 200; a body sanitized before the wait
+    would hand the vault, the reflection and completion detection the words the
+    writer had just removed (#3008). All three dials use what this returns.
+
+    The local care screen re-runs on that body rather than reusing the pre-wait
+    verdict. It is pure and local, so re-running it costs nothing and sends
+    nothing, and the verdict decides more than the surface: a flagged entry
+    never reaches the vault. A verdict kept from a calm pre-wait body would
+    answer an edit into crisis with no care and route it to the vault.
+
+    A row that now sanitizes to nothing answers the route's own 422. The
+    server-paid unit committed before the wait, so it is refunded first --
+    the rollback inside the refund also leaves no connection held.
+    """
+    try:
+        message = _sanitize_message(entry.message)
+    except HTTPException:
+        await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
+        raise
+    return message, _care_response(_care_for(message))
 
 
 async def _pass_context_under_hold(
@@ -2058,34 +2098,34 @@ async def run_resonance(
     # or usage-log write — and checked again under the account hold below, where
     # a PATCH that won the barrier may have made the entry intimate (#2998). The LOCAL care
     # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
-    # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
-    # the intimate and non-intimate paths.
-    care = _care_response(_care_for(message))
+    # suppresses crisis support (NORTH-STAR §10). An admitted pass re-derives
+    # both the body and this screen from the row it re-reads under the hold
+    # (#3008); this reading serves only the 422 and intimate fast paths.
     if entry.classification == JournalClassification.INTIMATE:
-        return await _private_response(session, current_user, care)
+        return await _private_response(session, current_user, _care_response(_care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
-        return await _run_admitted_resonance(session, current_user, entry, care, clients)
+        return await _run_admitted_resonance(session, current_user, entry, clients)
 
 
 async def _run_admitted_resonance(
     session: AsyncSession,
     current_user: int,
     entry: JournalEntry,
-    care: CareResponse | None,
     clients: _ReflectionClients,
 ) -> ResonanceResponse:
     """Charge, dial and settle one resonance pass the guardrails admitted.
 
     The second half of :func:`run_resonance`, split out so the guardrail slot
     wraps exactly the work that can generate. ``entry`` is the caller's own,
-    non-intimate entry, already authorized.
+    non-intimate entry, already authorized. Its body and care verdict are not
+    taken from the caller's pre-wait reading: both are re-derived from the row
+    re-read under the account hold (#3008).
     """
     entry_id = cast("int", entry.id)
-    message = _sanitize_message(entry.message)
     # Resolve who pays before touching either BotMason bucket. A valid caller
     # key pays the provider directly; only the server-key/vault path draws from
     # the deployment-configured allowance or purchased offerings.
@@ -2109,7 +2149,13 @@ async def _run_admitted_resonance(
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
         if await _withdrawn_under_hold(session, entry, spent=spent, trace=trace):
-            return await _private_response(session, current_user, care)
+            # Nothing leaves the process on this path, so the raw refreshed body
+            # is screened as-is: the screen normalizes its own input, and a body
+            # an edit made both intimate and distressed still gets care.
+            return await _private_response(
+                session, current_user, _care_response(_care_for(entry.message))
+            )
+        message, care = await _body_under_hold(session, entry, spent=spent, trace=trace)
         grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
@@ -2351,13 +2397,12 @@ async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
-    message: str,
     inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset.
 
-    The dial carries ``message`` -- this account's *stored* entry body -- to a
+    The dial carries this account's *stored* entry body to a
     cloud provider, which is the same egress the vault sites take the account
     barrier for, by a different transport. Ordering it against erasure is
     therefore the same rule, not a new one; the only reason this site went
@@ -2369,14 +2414,29 @@ async def _detect_fresh_suggestions(
     the outbound half. The persistence stays inside it for the same reason the
     liveness read exists at all: a suggestion row written for an account that
     has already been erased is a ghost row nobody owns.
+
+    The tier and the body are re-read *under* the hold, after the liveness read
+    (so an erased account still answers 401). ``PATCH /journal/{entry_id}`` --
+    reclassifying or editing the body -- and ``DELETE`` take the same exclusive
+    hold and can answer 200 while this pass waits. A row now intimate sends
+    nothing, neither its body nor the names of the writer's habits and
+    practices, and answers ``checked: false``; a deleted row answers the uniform
+    404; otherwise the body dialled is the refreshed one. The re-read commits,
+    so no connection is held across the dial (#3008).
     """
     api_key = resolve_chat_api_key(api_key_header)
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
+        if await _withdrawn_under_hold(session, entry, spent=None, trace=None):
+            return CompletionDetectionResponse(items=[], checked=False)
         return await _detect_and_persist(
-            session, entry=entry, message=message, inputs=inputs, llm=llm
+            session,
+            entry=entry,
+            message=_sanitize_message(entry.message),
+            inputs=inputs,
+            llm=llm,
         )
 
 
@@ -2425,11 +2485,17 @@ async def detect_entry_suggestions(
     habit/practice offer. Intimate entries keep their privacy floor and never
     leave the process. Provider failures remain best-effort, with ``checked``
     telling the client whether an empty result really means "no match".
+
+    The INTIMATE check here is only the cheap fast path: the authoritative
+    floor is re-read under the account hold, just before the dial (#3008).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
-    message = _sanitize_message(entry.message)
+    # Validation only: a legacy row whose body sanitizes to nothing answers 422
+    # before any candidate or provider work. The body actually dialled is
+    # re-derived from the row re-read under the hold.
+    _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
@@ -2443,7 +2509,6 @@ async def detect_entry_suggestions(
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
-        message=message,
         inputs=inputs,
         api_key_header=x_llm_api_key,
     )
