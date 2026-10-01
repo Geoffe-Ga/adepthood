@@ -464,6 +464,27 @@ async def _refuse_past_daily_ceiling(session: AsyncSession, user_id: int, now: d
         raise _DailyCeilingReachedError
 
 
+async def _spend_within_daily_ceiling(
+    session: AsyncSession, user_id: int, now: datetime
+) -> SpendResult | None:
+    """Stage one spend and keep it only while today's count is within the ceiling.
+
+    The spend and the count share one savepoint, so a refusal discards the
+    staged ``UPDATE`` and its audit row before raising ``429
+    daily_generation_limit_reached``. ``None`` means both wallets were empty.
+    """
+    try:
+        async with session.begin_nested():
+            spent = await spend_one_message(session, user_id, get_monthly_cap())
+            if spent is not None:
+                await _refuse_past_daily_ceiling(session, user_id, now)
+    except _DailyCeilingReachedError:
+        raise too_many_requests(
+            DAILY_GENERATION_LIMIT_REACHED, seconds_until_next_utc_midnight(now)
+        ) from None
+    return spent
+
+
 async def preflight_deduction(
     session: AsyncSession, user_id: int, *, now: datetime | None = None
 ) -> SpendResult:
@@ -489,15 +510,7 @@ async def preflight_deduction(
     moment = now or datetime.now(UTC)
     await reset_monthly_usage_if_due(session, user_id, moment)
 
-    try:
-        async with session.begin_nested():
-            spent = await spend_one_message(session, user_id, get_monthly_cap())
-            if spent is not None:
-                await _refuse_past_daily_ceiling(session, user_id, moment)
-    except _DailyCeilingReachedError:
-        raise too_many_requests(
-            DAILY_GENERATION_LIMIT_REACHED, seconds_until_next_utc_midnight(moment)
-        ) from None
+    spent = await _spend_within_daily_ceiling(session, user_id, moment)
     if spent is not None:
         return spent
 
