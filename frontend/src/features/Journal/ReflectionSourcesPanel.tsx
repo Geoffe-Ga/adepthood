@@ -23,6 +23,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -699,13 +700,35 @@ function useBatchFold(
   return { onFoldSelected, folding };
 }
 
+/** The close control's host ref, which takes focus as the panel opens. */
+type CloseControlRef = React.RefObject<React.ComponentRef<typeof TouchableOpacity> | null>;
+
+/**
+ * Move focus to the close control as the panel opens (#3002).
+ *
+ * The Sources toggle sits in the exit row, above the editor, so a Tab walk from
+ * it would cross the whole page before reaching the dock. The panel mounts only
+ * while open, so mounting IS opening. One frame late, so a web ``Modal`` has
+ * attached its portal; cancelled if the panel closes first. Closing hands focus
+ * back to the toggle (``useRestoreFocusOnClose``).
+ */
+function useFocusOnOpen(enabled: boolean): CloseControlRef {
+  const ref = useRef<React.ComponentRef<typeof TouchableOpacity>>(null);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const frame = requestAnimationFrame(() => ref.current?.focus?.());
+    return () => cancelAnimationFrame(frame);
+  }, [enabled]);
+  return ref;
+}
+
 /**
  * The panel's heading row: "Sources" (with, when the server declared one, the
  * period the review covers beneath it — rendered from ``window`` alone, see
  * {@link formatReviewPeriod}) on the left, and in the trailing slot an
  * icon-only X that closes the sheet. The X is the word "Done" as a glyph, so it
- * keeps that word as its accessible name; a pane caller that passes no
- * ``onClose`` gets the heading without it.
+ * keeps that word as its accessible name, and takes focus as the panel opens; a
+ * pane caller that passes no ``onClose`` gets the heading without it.
  */
 function SourcesHeading({
   window: reviewWindow,
@@ -718,6 +741,7 @@ function SourcesHeading({
 }): React.JSX.Element {
   const period =
     reviewWindow == null ? '' : formatReviewPeriod(reviewWindow.start, reviewWindow.end, timeZone);
+  const closeRef = useFocusOnOpen(onClose != null);
   return (
     <View style={styles.heading} testID="reflection-sources-heading">
       <View style={styles.headingText}>
@@ -732,6 +756,7 @@ function SourcesHeading({
       </View>
       {onClose == null ? null : (
         <TouchableOpacity
+          ref={closeRef}
           style={styles.closeControl}
           onPress={onClose}
           accessibilityRole="button"

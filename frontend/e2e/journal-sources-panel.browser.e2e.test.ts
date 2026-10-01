@@ -10,7 +10,8 @@ import {
 /**
  * The review composer's Sources panel as navigation (#2883): its heading and X
  * stay put while the feed scrolls, it closes by X, Escape, a backdrop tap (the
- * narrow sheet) and nothing else, focus returns to the Sources toggle, and the
+ * narrow sheet) and nothing else, focus lands on its X as it opens and returns
+ * to the Sources toggle as it closes (#3002), and the
  * writer keeps writing into the same saved entry afterwards. On a wide screen
  * the pane sits BESIDE the writing sheet, never stacked full-width beneath it.
  *
@@ -39,8 +40,6 @@ const PHONE = { width: 390, height: 844 } as const;
 const LAPTOP = { width: 1280, height: 720 } as const;
 /** Sub-pixel rounding allowance on any box comparison. */
 const EPSILON_PX = 1;
-/** The most Tab presses from the toggle to the panel's close control. */
-const MAX_TABS_TO_CLOSE = 12;
 /** Consecutive animation frames the layout must hold still before it is measured. */
 const SETTLED_FRAMES = 3;
 /** The most frames to wait for the layout to come to rest before measuring anyway. */
@@ -205,6 +204,22 @@ async function expectCloseHeldThroughScroll(page: Page): Promise<void> {
   expect(end['reflection-sources-close']!.height).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET_PX);
 }
 
+/**
+ * The toggle sits in the exit row, above the editor (#3002), so a Tab walk to
+ * the dock would cross the whole page; the panel takes focus on its close as
+ * it opens instead, and closing hands focus back to the toggle.
+ */
+async function expectKeyboardRoundTrip(page: Page, frame: string): Promise<void> {
+  const toggle = visible(page, 'reflection-sources-toggle');
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(visible(page, frame)).toBeVisible();
+  await expect(visible(page, 'reflection-sources-close')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(visible(page, frame)).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+}
+
 test.describe('phone, 390x844', () => {
   test.use({ viewport: PHONE });
 
@@ -316,23 +331,18 @@ test.describe('laptop, 1280x720', () => {
     await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
   });
 
-  test('the keyboard reaches the close control from the Sources toggle', async ({ page }) => {
+  test('opening Sources from the keyboard lands focus on the pane close', async ({ page }) => {
     await seedReview(page, 'sources-panel-keyboard');
-    const toggle = visible(page, 'reflection-sources-toggle');
-    await toggle.focus();
-    await page.keyboard.press('Enter');
-    await expect(visible(page, 'reflection-sources-pane')).toBeVisible();
-    let reached = false;
-    for (let press = 0; press < MAX_TABS_TO_CLOSE && !reached; press += 1) {
-      await page.keyboard.press('Tab');
-      reached = await page.evaluate(
-        () => document.activeElement?.getAttribute('data-testid') === 'reflection-sources-close',
-      );
-    }
-    expect(reached).toBe(true);
-    await page.keyboard.press('Enter');
-    await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
-    await expect(toggle).toBeFocused();
+    await expectKeyboardRoundTrip(page, 'reflection-sources-pane');
+  });
+});
+
+test.describe('phone keyboard, 390x844', () => {
+  test.use({ viewport: PHONE });
+
+  test('opening Sources from the keyboard lands focus on the sheet close', async ({ page }) => {
+    await seedReview(page, 'sources-panel-keyboard-phone');
+    await expectKeyboardRoundTrip(page, 'reflection-sources-sheet-body');
   });
 });
 
