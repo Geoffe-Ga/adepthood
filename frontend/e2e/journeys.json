@@ -247,7 +247,7 @@
   },
   {
     "id": "journal.morning-pages-tip-declines-with-corner-x",
-    "description": "A writer on a day with no review due sees the morning-pages tip with one text action, Begin a page, and an icon-only X in the card's top-right corner named Set the morning-pages tip aside (#2860). At 390x844 and 1280x720 the real browser measures the X flush with the band's top-right corner and inside it, at least 44px square, clear of the Begin a page button's box and of every line of card text, and the card's label, title, body and CTA on one left edge, with no visible Not now. Declining by keyboard removes the card, lands focus on the Start a review early link rather than the page body, persists the decline, and the tip stays gone after a reload. Component tests pin the close variant's accent-while-pressed tint, the begin area's corner reserve, and the focus handoff's target.",
+    "description": "A writer on a day with no review due sees the morning-pages tip with its Begin a page CTA, a quiet Don't show this again link beneath it, and an icon-only X in the card's top-right corner named Set the morning-pages tip aside (#2860). At 390x844 and 1280x720 the real browser measures the X flush with the band's top-right corner and inside it, at least 44px square, clear of the Begin a page button's box, of the never-again link's 44px-tall box and of every line of card text, and the card's label, title, body, CTA and link on one left edge, with no visible Not now. The X sets the tip aside for TODAY only, in the account's own time zone (#3005): pressing it by keyboard removes the card, lands focus on the Start a review early link rather than the page body, persists that day under the per-day set-aside key (never the retired permanent key), keeps the tip gone after a same-day reload, and brings it back after a reload with the browser clock on the next day in the account's zone. Component tests pin the close variant's accent-while-pressed tint, the begin area's corner reserve, the focus handoff's target, the Los Angeles 23:59/00:00 boundary under frozen clocks, the return on a later focus of a still-mounted shelf, and the legacy permanent flag's one-time migration.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["auth"],
@@ -256,6 +256,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-morning-pages-dismiss.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.morning-pages-never-offer-and-restore",
+    "description": "A writer who wants no morning-pages invitation at all activates the tip's quiet Don't show this again link by keyboard, by its spoken name (Don't show this again: stop offering morning pages on the shelf), and the card goes, focus lands on Start a review early, and the device stores the permanent never-offer flag (#3005). The tip stays gone after a same-day reload and after a reload with the browser clock on the next day in the account's zone, where the X's set-aside would have lapsed. In Settings, the Journal group's Offer morning pages again row clears that flag and today's set-aside and says so in its description; back on the Journal shelf the tip is offered again. Component tests pin the link's action face at body weight in soft ink, its 44dp hit area and corner reserve, the save-then-focus order, the stale-read guard, and the Settings row's copy sweep.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/signup"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-morning-pages-never-offer.browser.e2e.test.ts"
   },
   {
     "id": "journal.write-markdown-read-reload",

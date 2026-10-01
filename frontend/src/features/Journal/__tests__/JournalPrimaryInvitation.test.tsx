@@ -9,7 +9,7 @@
  * behaviour it used to own (level copy, resume, per-scope dismissal, quiet
  * failure) is asserted here through the component that decides.
  */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -30,8 +30,16 @@ const mockLoadDismissed = jest.fn() as jest.MockedFunction<(_k: string) => Promi
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<
   (_k: string, _v: boolean) => Promise<void>
 >;
-const mockLoadTipDismissed = jest.fn() as jest.MockedFunction<() => Promise<boolean>>;
-const mockSaveTipDismissed = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
+/** The persisted shape `morningPagesTipStorage` hands back. */
+interface TipState {
+  setAsideOn: string | null;
+  neverOffer: boolean;
+}
+const TIP_OPEN: TipState = { setAsideOn: null, neverOffer: false };
+const TIP_NEVER: TipState = { setAsideOn: null, neverOffer: true };
+const mockLoadTipState = jest.fn() as jest.MockedFunction<() => Promise<TipState>>;
+const mockSaveTipSetAside = jest.fn() as jest.MockedFunction<(_day: string) => Promise<void>>;
+const mockSaveTipNever = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockNavigate = jest.fn();
 const mockOnBeginPage = jest.fn();
 const USER_TIMEZONE = 'America/New_York';
@@ -55,29 +63,44 @@ jest.mock('@/storage/reflectionDismissalStorage', () => ({
 }));
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
-  loadMorningPagesTipDismissed: (...a: unknown[]) =>
-    (mockLoadTipDismissed as unknown as (...x: unknown[]) => unknown)(...a),
-  saveMorningPagesTipDismissed: (...a: unknown[]) =>
-    (mockSaveTipDismissed as unknown as (...x: unknown[]) => unknown)(...a),
+  MORNING_PAGES_TIP_OPEN: { setAsideOn: null, neverOffer: false },
+  loadMorningPagesTipState: (...a: unknown[]) =>
+    (mockLoadTipState as unknown as (...x: unknown[]) => unknown)(...a),
+  saveMorningPagesTipSetAside: (...a: unknown[]) =>
+    (mockSaveTipSetAside as unknown as (...x: unknown[]) => unknown)(...a),
+  saveMorningPagesTipNeverOffer: (...a: unknown[]) =>
+    (mockSaveTipNever as unknown as (...x: unknown[]) => unknown)(...a),
 }));
 
 jest.mock('@/context/AuthContext', () => ({
   useAuth: () => ({ userTimezone: 'America/New_York' }),
 }));
 
-// Mount-only focus: this suite is about what one visit shows. Re-reading on a
-// return to the shelf is JournalShelfScreenRefocus.test.tsx's business.
+// Focus fires once on mount, as a first visit does. `fireFocus` replays it for
+// the latest registered callback, standing in for a return to the shelf while
+// it stayed mounted (the tab navigator keeps it so).
+type FocusCallback = () => undefined | (() => void);
+const mockFocusCallbacks: { current: FocusCallback | null } = { current: null };
 jest.mock('@react-navigation/native', () => {
   const react = jest.requireActual('react') as {
     useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
   };
   return {
     useNavigation: () => ({ navigate: mockNavigate }),
-    useFocusEffect: (cb: () => undefined | (() => void)) => {
+    useFocusEffect: (cb: FocusCallback) => {
+      mockFocusCallbacks.current = cb;
       react.useEffect(() => cb(), [cb]);
     },
   };
 });
+
+/** Return to the still-mounted shelf. */
+async function fireFocus(): Promise<void> {
+  await act(async () => {
+    mockFocusCallbacks.current?.();
+    await Promise.resolve();
+  });
+}
 
 jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
 const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
@@ -131,8 +154,9 @@ beforeEach(() => {
     mockStagesListAll,
     mockLoadDismissed,
     mockSaveDismissed,
-    mockLoadTipDismissed,
-    mockSaveTipDismissed,
+    mockLoadTipState,
+    mockSaveTipSetAside,
+    mockSaveTipNever,
     mockNavigate,
     mockOnBeginPage,
   ]) {
@@ -143,8 +167,14 @@ beforeEach(() => {
   mockStagesListAll.mockResolvedValue([SURVIVAL]);
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
-  mockLoadTipDismissed.mockResolvedValue(false);
-  mockSaveTipDismissed.mockResolvedValue(undefined);
+  mockLoadTipState.mockResolvedValue(TIP_OPEN);
+  mockSaveTipSetAside.mockResolvedValue(undefined);
+  mockSaveTipNever.mockResolvedValue(undefined);
+  mockFocusCallbacks.current = null;
+});
+
+afterEach(() => {
+  jest.useRealTimers();
 });
 
 describe('JournalPrimaryInvitation on a review day', () => {
@@ -191,11 +221,18 @@ describe('JournalPrimaryInvitation on a review day', () => {
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 99 });
   });
 
-  it('shows the review even when the morning-pages tip was set aside', async () => {
-    mockLoadTipDismissed.mockResolvedValue(true);
-    const { findByText } = renderInvitation();
-    expect(await findByText('Write your Weekly Review')).toBeTruthy();
-  });
+  it.each([
+    ['declined for good', TIP_NEVER],
+    ['set aside today', { setAsideOn: todayInUserTZ(USER_TIMEZONE), neverOffer: false }],
+  ])(
+    'shows the review even when the morning-pages tip was %s',
+    async (_case, tipState: TipState) => {
+      mockLoadTipState.mockResolvedValue(tipState);
+      const { findByText, queryByTestId } = renderInvitation();
+      expect(await findByText('Write your Weekly Review')).toBeTruthy();
+      expect(queryByTestId('journal-morning-pages-band')).toBeNull();
+    },
+  );
 
   it('falls back to the daily page, dated in the writer’s zone, when the review was set aside', async () => {
     mockLoadDismissed.mockImplementation((key: string) => Promise.resolve(key === 'c1:w1'));
@@ -220,7 +257,8 @@ describe('JournalPrimaryInvitation on a review day', () => {
     });
 
     expect(mockSaveDismissed).toHaveBeenCalledWith('c1:w1', true);
-    expect(mockSaveTipDismissed).not.toHaveBeenCalled();
+    expect(mockSaveTipSetAside).not.toHaveBeenCalled();
+    expect(mockSaveTipNever).not.toHaveBeenCalled();
     // Setting the review aside hands the primary slot back to the daily page.
     expect(await findByTestId('journal-morning-pages-tip')).toBeTruthy();
   });
@@ -288,7 +326,7 @@ describe('the early-review link', () => {
 
   it('is present when both the review and the tip have been set aside', async () => {
     mockLoadDismissed.mockResolvedValue(true);
-    mockLoadTipDismissed.mockResolvedValue(true);
+    mockLoadTipState.mockResolvedValue(TIP_NEVER);
     const { getByTestId, queryByTestId } = renderInvitation();
     await settle();
     expect(queryByTestId('journal-reflection-band')).toBeNull();
@@ -351,7 +389,7 @@ describe('setting the morning-pages tip aside (#2860)', () => {
       fireEvent.press(getByTestId('journal-morning-pages-dismiss'));
     });
 
-    expect(mockSaveTipDismissed).toHaveBeenCalledWith(true);
+    expect(mockSaveTipSetAside).toHaveBeenCalledWith(todayInUserTZ(USER_TIMEZONE));
     expect(mockMoveFocus).toHaveBeenCalledTimes(1);
     const [target] = mockMoveFocus.mock.calls[0] ?? [];
     expect(target).not.toBeNull();
@@ -362,12 +400,80 @@ describe('setting the morning-pages tip aside (#2860)', () => {
     expect(getByTestId('journal-review-early')).toBeTruthy();
   });
 
+  it('hands focus to the early-review link when the writer asks never to see it again', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-morning-pages-never'));
+    });
+
+    expect(mockSaveTipNever).toHaveBeenCalledWith(true);
+    expect(mockSaveTipSetAside).not.toHaveBeenCalled();
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const [target] = mockMoveFocus.mock.calls[0] ?? [];
+    expect((target as unknown as { props: { testID?: string } }).props.testID).toBe(
+      'journal-review-early',
+    );
+    expect(queryByTestId('journal-morning-pages-band')).toBeNull();
+  });
+
   it('moves no focus when the tip was already set aside on an earlier visit', async () => {
-    mockLoadTipDismissed.mockResolvedValue(true);
+    mockLoadTipState.mockResolvedValue(TIP_NEVER);
     const { getByTestId } = renderInvitation();
     await settle();
     expect(getByTestId('journal-review-early')).toBeTruthy();
     expect(mockMoveFocus).not.toHaveBeenCalled();
+  });
+});
+
+describe('the set-aside tip comes back on a later day (#3005)', () => {
+  beforeEach(() => {
+    mockDue.mockResolvedValue({ due: null });
+  });
+
+  it('returns on the next focus once midnight has passed in the writer’s zone, without a remount', async () => {
+    // 2026-09-10 23:30 in New York; already the 11th in UTC.
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    jest.setSystemTime(new Date('2026-09-11T03:30:00.000Z'));
+    let stored: TipState = { ...TIP_OPEN };
+    mockLoadTipState.mockImplementation(() => Promise.resolve({ ...stored }));
+    mockSaveTipSetAside.mockImplementation((day: string) => {
+      stored = { ...stored, setAsideOn: day };
+      return Promise.resolve();
+    });
+    const { findByTestId, getByTestId, queryByTestId } = renderInvitation();
+    await findByTestId('journal-morning-pages-tip');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-morning-pages-dismiss'));
+    });
+    expect(mockSaveTipSetAside).toHaveBeenCalledWith('2026-09-10');
+    expect(queryByTestId('journal-morning-pages-band')).toBeNull();
+
+    // A return the same evening keeps it set aside.
+    await fireFocus();
+    expect(queryByTestId('journal-morning-pages-band')).toBeNull();
+
+    // 00:30 on the 11th in New York: the shelf never unmounted.
+    jest.setSystemTime(new Date('2026-09-11T04:30:00.000Z'));
+    await fireFocus();
+    expect(await findByTestId('journal-morning-pages-tip')).toBeTruthy();
+  });
+
+  it('returns on the next focus once Settings offered it again, without a remount', async () => {
+    mockLoadTipState.mockResolvedValue(TIP_NEVER);
+    const { findByTestId, queryByTestId } = renderInvitation();
+    await settle();
+    expect(queryByTestId('journal-morning-pages-band')).toBeNull();
+    const readsBefore = mockLoadTipState.mock.calls.length;
+
+    // Settings → "Offer morning pages again" cleared the stored decline.
+    mockLoadTipState.mockResolvedValue(TIP_OPEN);
+    await fireFocus();
+
+    expect(mockLoadTipState.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await findByTestId('journal-morning-pages-tip')).toBeTruthy();
   });
 });
 
