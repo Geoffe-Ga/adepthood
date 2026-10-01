@@ -15,6 +15,8 @@ import { Camera } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { exitRowOrder } from './entryLayoutTestKit';
+
 import type { JournalMessage } from '@/api';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
 import { accent, touchTarget } from '@/design/tokens';
@@ -107,13 +109,6 @@ const RETURN_TO: ReturnToCourse = {
   screen: 'Course',
   params: { stageNumber: 3, contentId: 11, scrollOffset: 120 },
 };
-
-/** The exit row's buttons, in the order a screen reader and the tab key meet them. */
-function exitRowOrder(exitRow: Parameters<typeof within>[0]): string[] {
-  return within(exitRow)
-    .getAllByRole('button')
-    .map((b) => String(b.props.testID));
-}
 
 /** Render at a fixed window width, restoring the real hook afterwards. */
 function withWidth<T>(width: number, run: () => T): T {

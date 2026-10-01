@@ -138,13 +138,6 @@ const AUTOSAVE_DELAY_MS = 1500;
 /** Below this width the margin column stacks under the writing column. */
 const NARROW_BREAKPOINT = 600;
 
-/**
- * The fixed margin first appears at 600px, but it initially leaves the writing
- * rail too narrow for the Sources label. Keep Sources icon-only through that
- * transition; its accessible name remains complete.
- */
-const COMPACT_WRITING_CONTROLS_BREAKPOINT = NARROW_BREAKPOINT + 120;
-
 /** The photograph affordance's name, offered while writing — including to a Course
  *  reflection, which is an ordinary journal page opened with a title. */
 const PHOTOGRAPH_PAGE_HINT = 'Photograph a page or screenshot and add its text to this entry';
@@ -2312,13 +2305,6 @@ interface WritingColumnProps {
   controlsDisabled: boolean;
   /** Reflection mode: track the body caret so a folded quote lands at the cursor. */
   onBodySelectionChange?: LiveMarkdownBodyProps['onBodySelectionChange'];
-  /**
-   * Opens the rereadable source feed while composing a reflection; focus comes
-   * back to this toggle once the panel closes (#2883).
-   */
-  sources?: SourcesToggle;
-  /** Phone layout: secondary actions keep their names for a11y but show icon-only. */
-  compactControls: boolean;
 }
 
 /** Quiet primary control to mark a draft finished. */
@@ -2498,58 +2484,50 @@ function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.E
   );
 }
 
-function ReflectionSourcesButton({
-  toggle,
-  compact,
-}: {
-  toggle?: SourcesToggle;
-  compact: boolean;
-}): React.JSX.Element | null {
-  return toggle ? (
+/**
+ * The door to a reflection's rereadable sources, in the exit row while one is
+ * being written (#3002). Glyph over word (DESIGN.md), on the exit row's shared
+ * icon footprint; the phrase is its accessible name. Focus comes back to it when
+ * the sources panel closes (#2883), through ``toggle.ref``.
+ */
+function ReflectionSourcesButton({ toggle }: { toggle: SourcesToggle }): React.JSX.Element {
+  return (
     <TouchableOpacity
       ref={toggle.ref}
-      style={styles.writingSecondaryControl}
+      style={styles.entryIconButton}
       onPress={toggle.onOpen}
       accessibilityRole="button"
       accessibilityLabel="Open the sources to reread earlier writing and gather quotes"
       testID="reflection-sources-toggle"
     >
       <View accessible={false} testID="reflection-sources-icon">
-        <BookOpen color={accent.primary} size={18} {...decorativeHidden()} />
+        <BookOpen
+          color={accent.primary}
+          size={NAV_ICON_SIZE}
+          strokeWidth={NAV_ICON_STROKE}
+          {...decorativeHidden()}
+        />
       </View>
-      {compact ? null : <Text style={styles.writingControlLabel}>Sources</Text>}
     </TouchableOpacity>
-  ) : null;
+  );
 }
 
 /**
- * The page's one unbroken action rail, with any Finish error centred beneath it.
+ * The page's one action rail, with any Finish error centred beneath it.
  *
- * Balanced: two equal flanks hold Finish on the rail's centre, under the text
- * box. Sources lives in the trailing flank, so neither control shifts sideways
- * when the first keystroke makes Finish appear.
+ * Finish is its only control, centred under the text box by the row itself, so
+ * nothing on the rail shifts sideways when the first keystroke makes Finish
+ * appear. Page-level doors (Sources, the camera) live in the exit row (#3002).
  */
 function WritingControls({
   onFinish,
   finishing,
   finishError,
-  sources,
-  compactControls,
-}: Pick<
-  WritingColumnProps,
-  'onFinish' | 'finishing' | 'finishError' | 'sources' | 'compactControls'
->): React.JSX.Element {
+}: Pick<WritingColumnProps, 'onFinish' | 'finishing' | 'finishError'>): React.JSX.Element {
   return (
     <>
       <View style={styles.writingControlsRow} testID="journal-writing-controls">
-        <View style={styles.writingControlsSide} testID="journal-writing-controls-leading" />
         {onFinish ? <FinishControl onFinish={onFinish} finishing={finishing} /> : null}
-        <View
-          style={[styles.writingControlsSide, styles.writingControlsTrailing]}
-          testID="journal-writing-controls-trailing"
-        >
-          <ReflectionSourcesButton toggle={sources} compact={compactControls} />
-        </View>
       </View>
       {finishError == null ? null : (
         <Text style={[styles.marginError, styles.finishError]} testID="journal-finish-error">
@@ -2589,8 +2567,6 @@ function WritingColumnContent({
   bodyPlaceholder,
   controlsDisabled,
   onBodySelectionChange,
-  sources,
-  compactControls,
 }: WritingColumnProps) {
   return (
     <>
@@ -2610,13 +2586,7 @@ function WritingColumnContent({
         bodyPlaceholder={bodyPlaceholder}
       />
       <WritingFooter body={body} saveState={saveState} actions={onRetrySave} />
-      <WritingControls
-        onFinish={onFinish}
-        finishing={finishing}
-        finishError={finishError}
-        sources={sources}
-        compactControls={compactControls}
-      />
+      <WritingControls onFinish={onFinish} finishing={finishing} finishError={finishError} />
     </>
   );
 }
@@ -3590,15 +3560,7 @@ function saveFooterFor(ctl: Controller): SaveFooterActions {
   return { retry: () => ctl.saveRetry.retryFailedSave('tap'), held };
 }
 
-function PageBodyColumn({
-  ctl,
-  bodyPlaceholder,
-  compactControls,
-}: {
-  ctl: Controller;
-  bodyPlaceholder: string;
-  compactControls: boolean;
-}) {
+function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
   const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
   const controlsDisabled = ctl.autosave.controlsLocked;
@@ -3623,8 +3585,6 @@ function PageBodyColumn({
       onBodySelectionChange={
         ctl.reflection.active ? ctl.reflection.onBodySelectionChange : undefined
       }
-      sources={ctl.reflection.active ? ctl.reflection.sourcesToggle : undefined}
-      compactControls={compactControls}
     />
   ) : (
     <ReadColumn
@@ -3714,13 +3674,11 @@ function JournalPageSurface({
   ctl,
   bodyPlaceholder,
   narrow,
-  compactControls,
   focus,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   narrow: boolean;
-  compactControls: boolean;
   focus: FocusScrollHost;
 }): React.JSX.Element {
   const [layoutTick, bumpLayoutTick] = useReducer((tick: number) => tick + 1, 0);
@@ -3744,11 +3702,7 @@ function JournalPageSurface({
       testID="journal-page"
     >
       <FocusScrollProvider value={focus.value}>
-        <PageBodyColumn
-          ctl={ctl}
-          bodyPlaceholder={bodyPlaceholder}
-          compactControls={compactControls}
-        />
+        <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
       </FocusScrollProvider>
       <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
     </View>
@@ -3765,9 +3719,7 @@ function JournalPage({
   /** A quote the reader arrived to see; read mode scrolls it into view. */
   focusSpan?: FocusSpan;
 }) {
-  const viewportWidth = useWindowDimensions().width;
-  const narrow = viewportWidth < NARROW_BREAKPOINT;
-  const compactControls = viewportWidth < COMPACT_WRITING_CONTROLS_BREAKPOINT;
+  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useEntrance();
   const focus = useFocusScrollHost(focusSpan);
   return (
@@ -3790,7 +3742,6 @@ function JournalPage({
             ctl={ctl}
             bodyPlaceholder={bodyPlaceholder}
             narrow={narrow}
-            compactControls={compactControls}
             focus={focus}
           />
         </ScrollView>
@@ -4020,7 +3971,7 @@ function CloseEntryLink({
       accessibilityState={{ busy: closing, disabled: closing }}
       testID="journal-close-entry"
     >
-      <X color={accent.primary} size={24} {...decorativeHidden()} />
+      <X color={accent.primary} size={NAV_ICON_SIZE} {...decorativeHidden()} />
     </TouchableOpacity>
   );
 }
@@ -4130,12 +4081,14 @@ function EntryExits({
 }
 
 /**
- * The page's top-right row: the course return when there is one, the API-key
- * door, the camera while writing, and the close always — [Return?][Key][Camera][X].
+ * The page's top-right row of page-level doors: the course return when there is
+ * one, the API-key door, a reflection's Sources while it is being written, the
+ * camera while writing, and the close always — [Return?][Key][Sources?][Camera][X].
  * The return and the close are separate affordances — the return carries the
  * reader back to the exact passage they left, which the close cannot know about.
- * The camera shares the writing column's gate (``editMode``): a finished page is
- * read, not added to.
+ * Sources and the camera share the writing column's gate (``editMode``): a
+ * finished page is read, not added to, even while its reflection stays active
+ * (#3002).
  */
 function EntryExitControls({
   ctl,
@@ -4160,6 +4113,9 @@ function EntryExitControls({
         guard={guard}
       />
       <ApiKeySettingsLink onPress={onOpenApiKey} />
+      {ctl.editGate.editMode && ctl.reflection.active ? (
+        <ReflectionSourcesButton toggle={ctl.reflection.sourcesToggle} />
+      ) : null}
       {ctl.editGate.editMode ? <PhotographPageButton onPress={ctl.photograph.openCapture} /> : null}
       <CloseEntryLink navigation={navigation} flush={flushForExit} guard={guard} />
     </View>

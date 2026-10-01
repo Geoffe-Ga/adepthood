@@ -13,7 +13,9 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import { BookOpen } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
+import { ENTRY_WIDTHS, exitRowOrder, spyWidth } from './entryLayoutTestKit';
 import { KEYED } from './idempotencyTestKit';
 
 import type {
@@ -26,6 +28,8 @@ import type {
   ReflectionSourcesResponse,
 } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
+import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
+import { accent, touchTarget } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -284,6 +288,18 @@ beforeEach(() => {
   mockPromotionsCreate.mockReset();
 });
 
+/** The narrowest phone the exit row must still fit on one line. */
+const NARROWEST_PHONE_WIDTH = 375;
+
+/** A wide desktop window, past the margin's side-by-side breakpoint. */
+const WIDE_DESKTOP_WIDTH = 1280;
+
+/** A course hand-off, so the exit row also carries "Back to reading". */
+const RETURN_TO = {
+  screen: 'Course',
+  params: { stageNumber: 3, contentId: 11, scrollOffset: 120 },
+};
+
 const REFLECTION_PARAMS = {
   reflectionLevel: 'stage',
   reflectionScopeKey: 'c1:s1',
@@ -291,43 +307,101 @@ const REFLECTION_PARAMS = {
 };
 
 describe('JournalEntryScreen -- reflection mode', () => {
-  it.each([
-    { width: 375, compact: true },
-    { width: 600, compact: true },
-    { width: 1200, compact: false },
-  ])(
-    'keeps Sources on the writing rail and the camera in the exit row at $width px',
-    async ({ width, compact }) => {
-      const rn = require('react-native');
-      const spy = jest
-        .spyOn(rn, 'useWindowDimensions')
-        .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
+  /** A reflection draft opened at ``width``, with its first effects settled. */
+  async function renderReflectionAt(width: number, params: Record<string, unknown> = {}) {
+    const restore = spyWidth(width);
+    const screen = renderScreen({ ...REFLECTION_PARAMS, ...params });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return { screen, restore };
+  }
+
+  // #3002: Sources is a page-level door while writing a reflection, so it sits
+  // in the exit row beside the key and the camera, icon-only like them.
+  it.each([...ENTRY_WIDTHS, { width: NARROWEST_PHONE_WIDTH }, { width: WIDE_DESKTOP_WIDTH }])(
+    'puts the icon-only Sources toggle in the exit row beside the key and camera at $width px',
+    async ({ width }) => {
+      const { screen, restore } = await renderReflectionAt(width);
       try {
-        const screen = renderScreen(REFLECTION_PARAMS);
-        await act(async () => {
-          await Promise.resolve();
-        });
-        const rail = within(screen.getByTestId('journal-writing-controls'));
-        expect(rail.queryByTestId('journal-photograph-page')).toBeNull();
-        const trailing = within(rail.getByTestId('journal-writing-controls-trailing'));
-        const sources = trailing.getByTestId('reflection-sources-toggle');
-        const photograph = within(screen.getByTestId('journal-entry-exit-row')).getByTestId(
+        const exitRow = screen.getByTestId('journal-entry-exit-row');
+        expect(exitRowOrder(exitRow)).toEqual([
+          'journal-api-key-settings',
+          'reflection-sources-toggle',
           'journal-photograph-page',
-        );
-        expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
+          'journal-close-entry',
+        ]);
+        const rail = within(screen.getByTestId('journal-writing-controls'));
+        expect(rail.queryByTestId('reflection-sources-toggle')).toBeNull();
+        expect(rail.queryByTestId('journal-photograph-page')).toBeNull();
+
+        const sources = within(exitRow).getByTestId('reflection-sources-toggle');
         expect(within(sources).getByTestId('reflection-sources-icon')).toBeTruthy();
+        // Glyph over word at every width: the phrase is the accessible name alone.
+        expect(within(sources).queryByText('Sources')).toBeNull();
+        expect(screen.queryByText('Sources')).toBeNull();
+        expect(sources.props.accessibilityRole).toBe('button');
+        expect(sources.props.accessibilityLabel).toBe(
+          'Open the sources to reread earlier writing and gather quotes',
+        );
+        // The same footprint as the X it sits beside.
+        const sourcesStyle = StyleSheet.flatten(sources.props.style);
+        expect(sourcesStyle).toEqual(
+          StyleSheet.flatten(screen.getByTestId('journal-close-entry').props.style),
+        );
+        expect(sourcesStyle.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+        expect(sourcesStyle.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
         // The book glyph is decoration; the toggle's own label names it (#2829).
-        expect(within(sources).UNSAFE_getByType(BookOpen).props).toMatchObject(decorativeHidden());
-        expect(within(photograph).queryByText('Photograph a page')).toBeNull();
-        expect(within(sources).queryByText('Sources')).toEqual(compact ? null : expect.anything());
-        expect(photograph.props.accessibilityLabel).toMatch(/Photograph a page or screenshot/);
-        expect(sources.props.accessibilityLabel).toMatch(/Open the sources/);
+        const glyphs = screen.UNSAFE_getAllByType(BookOpen);
+        expect(glyphs).toHaveLength(1);
+        expect(glyphs[0]?.props).toMatchObject({
+          size: NAV_ICON_SIZE,
+          strokeWidth: NAV_ICON_STROKE,
+          color: accent.primary,
+          ...decorativeHidden(),
+        });
         screen.unmount();
       } finally {
-        spy.mockRestore();
+        restore();
       }
     },
   );
+
+  it.each(ENTRY_WIDTHS)(
+    'keeps the course return first, ahead of the key, Sources, camera and X at $width px',
+    async ({ width }) => {
+      const { screen, restore } = await renderReflectionAt(width, { returnTo: RETURN_TO });
+      try {
+        expect(exitRowOrder(screen.getByTestId('journal-entry-exit-row'))).toEqual([
+          'journal-return-to-reading',
+          'journal-api-key-settings',
+          'reflection-sources-toggle',
+          'journal-photograph-page',
+          'journal-close-entry',
+        ]);
+        screen.unmount();
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  // #3002: a finished review opens in read mode with its reflection still
+  // active; the sources dock acts on a page being written, so the door is shut.
+  it('hides Sources in read mode while the reflection stays active', async () => {
+    mockGet.mockResolvedValue(
+      entry({ status: 'finished', reflection_level: 'stage', reflection_scope_key: 'c1:s1' }),
+    );
+    const screen = renderScreen({ entryId: 42 });
+    expect(await screen.findByTestId('journal-edit-button')).toBeTruthy();
+    // Prove the reflection really is active here: its sources feed was fetched.
+    expect(mockReflectionsSources.mock.calls[0]?.slice(0, 2)).toEqual(['stage', 'c1:s1']);
+
+    expect(screen.queryByTestId('reflection-sources-toggle')).toBeNull();
+    expect(exitRowOrder(screen.getByTestId('journal-entry-exit-row'))).not.toContain(
+      'reflection-sources-toggle',
+    );
+  });
 
   it('pre-fills the title, sends reflection fields on create, offers Finish, and never calls prompts.respond', async () => {
     jest.useFakeTimers();
