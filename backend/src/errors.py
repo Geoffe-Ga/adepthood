@@ -118,6 +118,22 @@ def payload_too_large(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=reason)
 
 
+def too_many_requests(reason: str, retry_after: int) -> HTTPException:
+    """Return a 429 HTTPException carrying a distinct detail and a ``Retry-After``.
+
+    For the generation guardrails (#623), whose refusals each need their own
+    detail token so the client can tell the writer *why* and *when*: the
+    shared per-minute envelope in :mod:`rate_limit` answers
+    ``rate_limit_exceeded`` for every throttle, which would be dishonest copy
+    for a limit that resets at midnight UTC.
+    """
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=reason,
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def bad_gateway(reason: str) -> HTTPException:
     """Return a 502 HTTPException for an upstream-dependency failure.
 
