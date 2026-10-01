@@ -7,6 +7,7 @@ import { PanelLeftOpen } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, TouchableOpacity } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { accent, SPACING, touchTarget } from '@/design/tokens';
 
 /** Lucide glyph size in dp for the toggle's menu icon. */
@@ -39,7 +40,7 @@ export default function DrawerToggle({
       accessibilityState={{ expanded }}
       testID={testID ?? 'drawer-toggle'}
     >
-      <PanelLeftOpen color={accent.primary} size={MENU_ICON_SIZE} accessible={false} />
+      <PanelLeftOpen color={accent.primary} size={MENU_ICON_SIZE} {...decorativeHidden()} />
     </TouchableOpacity>
   );
 }

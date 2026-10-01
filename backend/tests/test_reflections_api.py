@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS
+from domain.cycle_calendar import CycleAnchorStatus, CycleWindow
 from domain.reflection_hierarchy import due_reflection, scope_weeks
 from models.journal_entry import EntryStatus, JournalEntry, JournalTag
 from models.promoted_quote import PromotedQuote
@@ -626,6 +627,118 @@ async def test_sources_locked_future_cycle_scope_returns_403(
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.json()["detail"] == "scope_locked"
+
+
+def _recorded_window_stub(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Replace the router's data layer with one that serves ANY cycle, and record calls.
+
+    The stub answers every cycle with a RECORDED, open-ended window, so a
+    scope the guard lets through would be served material. A 403 under this
+    stub can therefore only come from the unlock guard itself, never from
+    ``resolve_cycle_window``'s ``UNSTARTED`` / ``NO_PROGRAM`` fallbacks
+    (issue #2907). Returns the list of cycles the data layer was asked for.
+    """
+    calls: list[int] = []
+
+    def _stub(
+        progress: StageProgress | None, cycle: int
+    ) -> tuple[CycleWindow | None, CycleAnchorStatus]:
+        del progress
+        calls.append(cycle)
+        window = CycleWindow(cycle_number=cycle, started_at=datetime.now(UTC), ended_at=None)
+        return window, CycleAnchorStatus.RECORDED
+
+    monkeypatch.setattr("routers.reflections.resolve_cycle_window", _stub)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_sources_future_cycle_low_week_scope_is_refused_by_the_guard(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``c2:w1`` for a cycle-1 user in week 1 is refused before the data layer runs.
+
+    Its first week (1) is one the caller's calendar HAS reached, so only a
+    cycle check can refuse it. The data layer is stubbed to serve any cycle,
+    proving the refusal does not lean on it (issue #2907).
+    """
+    now = datetime.now(UTC)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=now, cycle_number=1)
+    calls = _recorded_window_stub(monkeypatch)
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c2:w1"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "scope_locked"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sources_future_cycle_scope_without_progress_is_refused_by_the_guard(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user with no StageProgress row has entered only cycle 1, so ``c2:w1`` is locked.
+
+    Without a row the week gate sits at week 1, which ``c2:w1`` satisfies; the
+    cycle check must refuse it rather than the ``NO_PROGRAM`` fallback.
+    """
+    headers, _ = await _signup(async_client, db_session)
+    calls = _recorded_window_stub(monkeypatch)
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c2:w1"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert resp.json()["detail"] == "scope_locked"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_sources_first_cycle_scope_without_progress_serves_no_program(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The cycle check must not over-refuse: ``c1:w1`` with no progress row is still served.
+
+    Cycle 1 is the one cycle an unstarted user has entered, so the scope passes
+    the guard and the data layer explains the empty feed as ``no_program``.
+    """
+    headers, _ = await _signup(async_client, db_session)
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c1:w1"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["anchor_status"] == "no_program"
+
+
+@pytest.mark.asyncio
+async def test_sources_current_cycle_scope_still_reaches_the_data_layer(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller's own cycle passes the guard and reaches the (stubbed) data layer.
+
+    This is both the over-refusal control for the cycle check and the proof
+    that :func:`_recorded_window_stub` patches the binding the router really
+    calls -- without it, the ``calls == []`` assertions above could pass
+    vacuously against a dead patch target.
+    """
+    now = datetime.now(UTC)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=now, cycle_number=1)
+    calls = _recorded_window_stub(monkeypatch)
+    resp = await async_client.get(
+        "/reflections/sources",
+        params={"level": "week", "scope_key": "c1:w1"},
+        headers=headers,
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["anchor_status"] == "recorded"
+    assert calls == [1]
 
 
 @pytest.mark.asyncio

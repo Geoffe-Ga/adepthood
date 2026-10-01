@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 import type { StyleProp, TextStyle, View } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, accent, editorialType, ink, touchTarget } from '@/design/tokens';
 
 /**
@@ -87,7 +88,7 @@ function CloseControl({
       <X
         color={pressed ? CLOSE_PRESSED_COLOR : CLOSE_REST_COLOR}
         size={CLOSE_ICON_SIZE}
-        accessible={false}
+        {...decorativeHidden()}
       />
     </TouchableOpacity>
   );

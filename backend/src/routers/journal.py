@@ -118,6 +118,7 @@ from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
     LLMCreditExhaustedError,
     LLMProviderError,
+    LLMResponse,
     credit_exhausted_error,
     resolve_chat_api_key,
 )
@@ -155,7 +156,16 @@ from services.generation_guardrails import (
     require_generation_minute_available,
 )
 from services.higher_self_grounding import Grounding, gather_grounding
-from services.llm_usage import record_llm_usage
+from services.llm_usage import (
+    GenerationFeature,
+    GenerationKey,
+    GenerationOutcome,
+    GenerationSettlement,
+    GenerationUsage,
+    log_generation_settled,
+    record_llm_usage,
+    summarize_usage,
+)
 from services.marginalia import (
     BotmasonResonanceLLM,
     reanchor_entry_marginalia,
@@ -168,6 +178,8 @@ from services.users import get_user_timezone
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
 from services.wallet import (
     SpendResult,
+    StagedRefund,
+    log_committed_refund,
     preflight_deduction,
     refund_one_message,
     require_user_fresh,
@@ -1332,7 +1344,8 @@ class _ResonancePassContext:
     ``spent`` is the optional deduction a failure path must compensate. It is
     ``None`` when the caller's own key pays, otherwise it committed before the
     dial so a rollback can no longer un-charge it. ``user_id`` is whose wallet
-    the compensating credit lands in when there was a deduction.
+    the compensating credit lands in when there was a deduction. ``trace`` is
+    the pass's generation, so a failure settles with its one settlement line.
     """
 
     session: AsyncSession
@@ -1340,6 +1353,24 @@ class _ResonancePassContext:
     byok: bool
     user_id: int
     spent: SpendResult | None
+    trace: _FailedGeneration
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedGeneration:
+    """What a failed generation's settlement line reports (#623 PR3).
+
+    ``usage`` is the adapter's live ``usage`` list, read when the failure
+    settles, so it holds every call that returned before the failure.
+    ``attempts`` is the pass's reported attempt count, or 0 when the pass
+    settled before reporting one (a provider error, a withdrawn entry, a care
+    escalation); an essay always makes exactly one attempt.
+    """
+
+    feature: GenerationFeature
+    key: GenerationKey
+    usage: Sequence[LLMResponse]
+    attempts: int = 0
 
 
 async def _refund_failed_pass(
@@ -1348,6 +1379,7 @@ async def _refund_failed_pass(
     spent: SpendResult | None,
     *,
     reason: str = REASON_REFUND_FAILED_RESONANCE,
+    trace: _FailedGeneration | None = None,
 ) -> None:
     """Roll back a failed generation's writes and compensate any deduction.
 
@@ -1358,12 +1390,30 @@ async def _refund_failed_pass(
     transaction and staged rows the failure left behind. ``reason`` names the
     generation in the audit trail: a resonance pass by default, an essay's own
     token when the essay seam settles through here.
+
+    This is the one place every resonance and essay failure settles, so it is
+    where a failed generation's ``llm_generation_settled`` line is written
+    (#623 PR3): ``refunded_failed``, charged only when a server-paid deduction
+    committed, and only once the compensating credit (if any) is durable. A
+    caller with no generation to report passes no ``trace``.
     """
     await session.rollback()
-    if spent is None:
-        return
-    await refund_one_message(session, user_id, spent, reason=reason)
-    await session.commit()
+    if spent is not None:
+        refund = await refund_one_message(session, user_id, spent, reason=reason)
+        await session.commit()
+        log_committed_refund(refund)
+    if trace is not None:
+        log_generation_settled(
+            GenerationSettlement(
+                feature=trace.feature,
+                user_id=user_id,
+                key=trace.key,
+                bucket=None if spent is None else spent.bucket,
+                outcome=GenerationOutcome.REFUNDED_FAILED,
+                attempts=trace.attempts,
+                usage=summarize_usage(trace.usage),
+            )
+        )
 
 
 async def _generate_marginalia_or_error(
@@ -1389,10 +1439,14 @@ async def _generate_marginalia_or_error(
             message, llm=llm, prior_entries=prior, prior_drafts=prior_drafts
         )
     except LLMCreditExhaustedError as exc:
-        await _refund_failed_pass(context.session, context.user_id, context.spent)
+        await _refund_failed_pass(
+            context.session, context.user_id, context.spent, trace=context.trace
+        )
         raise credit_exhausted_error(exc, byok=context.byok) from exc
     except LLMProviderError as exc:
-        await _refund_failed_pass(context.session, context.user_id, context.spent)
+        await _refund_failed_pass(
+            context.session, context.user_id, context.spent, trace=context.trace
+        )
         raise bad_gateway("llm_provider_error") from exc
 
 
@@ -1495,7 +1549,11 @@ async def _private_response(
 
 
 async def _withdrawn_under_hold(
-    session: AsyncSession, entry: JournalEntry, *, spent: SpendResult | None
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    spent: SpendResult | None,
+    trace: _FailedGeneration | None,
 ) -> bool:
     """Re-read the entry under the pass's hold; settle and report whether it is withdrawn.
 
@@ -1521,6 +1579,12 @@ async def _withdrawn_under_hold(
     ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
     Tiers here only ever tighten what is sent.
 
+    Completion detection (``POST /journal/{entry_id}/suggestions/detect``) is
+    the second caller (#3008). It waits for the same hold behind the same
+    PATCH and DELETE, but it is uncharged, so it passes ``spent=None`` and the
+    "refund" is a bare rollback. On ``True`` it answers
+    ``{items: [], checked: false}`` rather than :func:`_private_response`.
+
     Every path out of here has released the pooled connection -- the commit
     after the refresh, or the refund's own rollback and commit -- so nothing
     is held across the dials that follow.
@@ -1528,12 +1592,46 @@ async def _withdrawn_under_hold(
     await session.refresh(entry)
     await session.commit()
     if entry.deleted_at is not None:
-        await _refund_failed_pass(session, entry.user_id, spent)
+        await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise not_found("journal_entry")
     if entry.classification == JournalClassification.INTIMATE:
-        await _refund_failed_pass(session, entry.user_id, spent)
+        await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
     return False
+
+
+async def _body_under_hold(
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    spent: SpendResult | None,
+    trace: _FailedGeneration,
+) -> tuple[str, CareResponse | None]:
+    """The body every dial of a resonance pass carries, and its care verdict, from the fresh row.
+
+    Called once :func:`_withdrawn_under_hold` has refreshed ``entry`` under the
+    pass's hold and found it still readable. ``PATCH /journal/{entry_id}``
+    carrying only ``message`` takes the same exclusive hold, so an edit that
+    queued first has already answered 200; a body sanitized before the wait
+    would hand the vault, the reflection and completion detection the words the
+    writer had just removed (#3008). All three dials use what this returns.
+
+    The local care screen re-runs on that body rather than reusing the pre-wait
+    verdict. It is pure and local, so re-running it costs nothing and sends
+    nothing, and the verdict decides more than the surface: a flagged entry
+    never reaches the vault. A verdict kept from a calm pre-wait body would
+    answer an edit into crisis with no care and route it to the vault.
+
+    A row that now sanitizes to nothing answers the route's own 422. The
+    server-paid unit committed before the wait, so it is refunded first --
+    the rollback inside the refund also leaves no connection held.
+    """
+    try:
+        message = _sanitize_message(entry.message)
+    except HTTPException:
+        await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
+        raise
+    return message, _care_response(_care_for(message))
 
 
 async def _pass_context_under_hold(
@@ -1594,7 +1692,7 @@ async def _refresh_persisted(
 
 
 async def _escalated_care_response(
-    session: AsyncSession, user_id: int, spent: SpendResult | None
+    session: AsyncSession, user_id: int, spent: SpendResult | None, trace: _FailedGeneration
 ) -> ResonanceResponse:
     """Answer a vault care escalation with adepthood's own care surface, uncharged.
 
@@ -1615,7 +1713,7 @@ async def _escalated_care_response(
     surface — Creek's reason, message, and resource list are Creek's writing and
     are dropped at the adapter.
     """
-    await _refund_failed_pass(session, user_id, spent)
+    await _refund_failed_pass(session, user_id, spent, trace=trace)
     return await _care_only_response(session, user_id, _care_surface(build_care_payload()))
 
 
@@ -1651,6 +1749,7 @@ class _PassSettlementInput:
     reflection dial and ``hits`` by the detection dial. ``spent`` is the
     server-paid deduction that committed before either, or ``None`` for BYOK.
     ``llm`` carries the usage the settlement records beside the rows it stages.
+    ``key`` is the pass's generation, stamped on every usage row it meters.
     """
 
     entry_id: int
@@ -1659,6 +1758,7 @@ class _PassSettlementInput:
     anchored: MarginaliaOutcome
     hits: list[CompletionDetected]
     llm: BotmasonResonanceLLM
+    key: GenerationKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -1678,6 +1778,29 @@ class _SettledPass:
     wallet: _WalletSnapshot
     no_notes_message: str | None
     reset_date: datetime
+
+
+def _log_settled_pass(
+    prepared: _PassSettlementInput, usage: GenerationUsage, *, refunded_empty: bool
+) -> None:
+    """Write a committed pass's one settlement line (#623 PR3).
+
+    ``prepared.spent`` -- the deduction as it was taken -- names the bucket,
+    never the post-refund balances an empty pass rebinds ``spent`` to.
+    """
+    log_generation_settled(
+        GenerationSettlement(
+            feature=GenerationFeature.RESONANCE,
+            user_id=prepared.user_id,
+            key=prepared.key,
+            bucket=None if prepared.spent is None else prepared.spent.bucket,
+            outcome=(
+                GenerationOutcome.REFUNDED_EMPTY if refunded_empty else GenerationOutcome.KEPT
+            ),
+            attempts=prepared.anchored.attempts,
+            usage=usage,
+        )
+    )
 
 
 async def _persist_settle_commit(
@@ -1718,7 +1841,7 @@ async def _persist_settle_commit(
             session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
         )
         suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
-        spent, no_notes_message = await _settle_empty_pass(
+        spent, no_notes_message, refund = await _settle_empty_pass(
             session, prepared.user_id, spent, prepared.anchored
         )
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
@@ -1726,17 +1849,30 @@ async def _persist_settle_commit(
         # the count lands with this commit and is rolled back with a failure.
         await record_completed_pass(session, user_id=prepared.user_id)
         spent_user = await require_user_fresh(session, prepared.user_id)
-        await record_llm_usage(
+        usage = await record_llm_usage(
             session,
             user_id=prepared.user_id,
             journal_entry_id=prepared.entry_id,
             responses=prepared.llm.usage,
+            generation=prepared.key,
         )
         await session.commit()
         committed = True
+        log_committed_refund(refund)
     finally:
         if not committed:
-            await _refund_failed_pass(session, prepared.user_id, spent)
+            await _refund_failed_pass(
+                session,
+                prepared.user_id,
+                spent,
+                trace=_FailedGeneration(
+                    feature=GenerationFeature.RESONANCE,
+                    key=prepared.key,
+                    usage=prepared.llm.usage,
+                    attempts=prepared.anchored.attempts,
+                ),
+            )
+    _log_settled_pass(prepared, usage, refunded_empty=no_notes_message is not None)
     return _SettledPass(
         rows=rows,
         suggestions=suggestions,
@@ -1838,7 +1974,7 @@ def _resonance_response(
 
 async def _settle_empty_pass(
     session: AsyncSession, user_id: int, spent: SpendResult | None, outcome: MarginaliaOutcome
-) -> tuple[SpendResult | None, str | None]:
+) -> tuple[SpendResult | None, str | None, StagedRefund | None]:
     """Explain a pass that kept no notes, and hand any BotMason charge back.
 
     The two halves are deliberately one call. A writer told "this pass wasn't
@@ -1846,15 +1982,17 @@ async def _settle_empty_pass(
     the sentence and the reversal are decided from the same value rather than
     from two independent reads of the outcome that could drift apart.
 
-    Returns the balances to report and the sentence to show, or the untouched
-    balances and ``None`` when the pass produced notes.
+    Returns the balances to report, the sentence to show and the staged refund,
+    or the untouched balances and two ``None`` when the pass produced notes.
+    The refund is only staged: the caller logs it once its commit lands.
     """
     message = explain_no_notes(outcome)
     if message is None:
-        return spent, None
+        return spent, None, None
     if spent is None:
-        return None, message
-    return await refund_one_message(session, user_id, spent), message
+        return None, message, None
+    refund = await refund_one_message(session, user_id, spent)
+    return refund.balances, message, refund
 
 
 @dataclass(frozen=True)
@@ -1960,44 +2098,46 @@ async def run_resonance(
     # or usage-log write — and checked again under the account hold below, where
     # a PATCH that won the barrier may have made the entry intimate (#2998). The LOCAL care
     # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
-    # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
-    # the intimate and non-intimate paths.
-    care = _care_response(_care_for(message))
+    # suppresses crisis support (NORTH-STAR §10). An admitted pass re-derives
+    # both the body and this screen from the row it re-reads under the hold
+    # (#3008); this reading serves only the 422 and intimate fast paths.
     if entry.classification == JournalClassification.INTIMATE:
-        return await _private_response(session, current_user, care)
+        return await _private_response(session, current_user, _care_response(_care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
-        return await _run_admitted_resonance(session, current_user, entry, care, clients)
+        return await _run_admitted_resonance(session, current_user, entry, clients)
 
 
 async def _run_admitted_resonance(
     session: AsyncSession,
     current_user: int,
     entry: JournalEntry,
-    care: CareResponse | None,
     clients: _ReflectionClients,
 ) -> ResonanceResponse:
     """Charge, dial and settle one resonance pass the guardrails admitted.
 
     The second half of :func:`run_resonance`, split out so the guardrail slot
     wraps exactly the work that can generate. ``entry`` is the caller's own,
-    non-intimate entry, already authorized.
+    non-intimate entry, already authorized. Its body and care verdict are not
+    taken from the caller's pre-wait reading: both are re-derived from the row
+    re-read under the account hold (#3008).
     """
     entry_id = cast("int", entry.id)
-    message = _sanitize_message(entry.message)
     # Resolve who pays before touching either BotMason bucket. A valid caller
     # key pays the provider directly; only the server-key/vault path draws from
     # the deployment-configured allowance or purchased offerings.
     byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
+    key = GenerationKey.for_spend(spent)
     # The atomic minute hit, after payment is staged so a 402 or a daily 429
     # never spends it, and before the commit so its refusal leaves the staged
     # spend for the slot's rollback to discard.
     consume_generation_minute(current_user)
     detection = await _detection_inputs(session, entry=entry)
     llm = BotmasonResonanceLLM(byok_key)
+    trace = _FailedGeneration(feature=GenerationFeature.RESONANCE, key=key, usage=llm.usage)
     # Any deduction is durable: release the pooled connection before waiting.
     await session.commit()
     # The account barrier opens here rather than at the top of the handler: the
@@ -2008,8 +2148,14 @@ async def _run_admitted_resonance(
     # is grounded in, the earlier letters -- is read under the hold (#2998).
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
-        if await _withdrawn_under_hold(session, entry, spent=spent):
-            return await _private_response(session, current_user, care)
+        if await _withdrawn_under_hold(session, entry, spent=spent, trace=trace):
+            # Nothing leaves the process on this path, so the raw refreshed body
+            # is screened as-is: the screen normalizes its own input, and a body
+            # an edit made both intimate and distressed still gets care.
+            return await _private_response(
+                session, current_user, _care_response(_care_for(entry.message))
+            )
+        message, care = await _body_under_hold(session, entry, spent=spent, trace=trace)
         grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
@@ -2029,13 +2175,14 @@ async def _run_admitted_resonance(
                     byok=byok_key is not None,
                     user_id=current_user,
                     spent=spent,
+                    trace=trace,
                 ),
                 prior_letters,
             )
         except CreekVaultCareEscalationError:
             # The vault's care guard fired: answer with adepthood's own care
             # surface instead of a reflection, and settle any committed charge.
-            return await _escalated_care_response(session, current_user, spent)
+            return await _escalated_care_response(session, current_user, spent, trace)
         if anchored is None:
             # The reflection failed but the entry is flagged: surface care anyway.
             return await _care_only_response(session, current_user, cast("CareResponse", care))
@@ -2051,6 +2198,7 @@ async def _run_admitted_resonance(
                 anchored=anchored,
                 hits=attempt.hits,
                 llm=llm,
+                key=key,
             ),
         )
         await _refresh_persisted(session, settled.rows, settled.suggestions)
@@ -2188,11 +2336,14 @@ async def _persist_detected_suggestions(
         session, entry_id=entry_id, user_id=user_id, hits=hits
     )
     rows = _stage_suggestions(session, entry_id, user_id, fresh_hits)
+    # Standalone detection charges nobody: its rows are keyed as an uncharged
+    # generation, so the p95 charged-generation metric never samples them.
     await record_llm_usage(
         session,
         user_id=user_id,
         journal_entry_id=entry_id,
         responses=llm.usage,
+        generation=GenerationKey.uncharged(),
     )
     await session.commit()
     await _refresh_persisted(session, [], rows)
@@ -2246,13 +2397,12 @@ async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
-    message: str,
     inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset.
 
-    The dial carries ``message`` -- this account's *stored* entry body -- to a
+    The dial carries this account's *stored* entry body to a
     cloud provider, which is the same egress the vault sites take the account
     barrier for, by a different transport. Ordering it against erasure is
     therefore the same rule, not a new one; the only reason this site went
@@ -2264,14 +2414,29 @@ async def _detect_fresh_suggestions(
     the outbound half. The persistence stays inside it for the same reason the
     liveness read exists at all: a suggestion row written for an account that
     has already been erased is a ghost row nobody owns.
+
+    The tier and the body are re-read *under* the hold, after the liveness read
+    (so an erased account still answers 401). ``PATCH /journal/{entry_id}`` --
+    reclassifying or editing the body -- and ``DELETE`` take the same exclusive
+    hold and can answer 200 while this pass waits. A row now intimate sends
+    nothing, neither its body nor the names of the writer's habits and
+    practices, and answers ``checked: false``; a deleted row answers the uniform
+    404; otherwise the body dialled is the refreshed one. The re-read commits,
+    so no connection is held across the dial (#3008).
     """
     api_key = resolve_chat_api_key(api_key_header)
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
+        if await _withdrawn_under_hold(session, entry, spent=None, trace=None):
+            return CompletionDetectionResponse(items=[], checked=False)
         return await _detect_and_persist(
-            session, entry=entry, message=message, inputs=inputs, llm=llm
+            session,
+            entry=entry,
+            message=_sanitize_message(entry.message),
+            inputs=inputs,
+            llm=llm,
         )
 
 
@@ -2320,11 +2485,17 @@ async def detect_entry_suggestions(
     habit/practice offer. Intimate entries keep their privacy floor and never
     leave the process. Provider failures remain best-effort, with ``checked``
     telling the client whether an empty result really means "no match".
+
+    The INTIMATE check here is only the cheap fast path: the authoritative
+    floor is re-read under the account hold, just before the dial (#3008).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
-    message = _sanitize_message(entry.message)
+    # Validation only: a legacy row whose body sanitizes to nothing answers 422
+    # before any candidate or provider work. The body actually dialled is
+    # re-derived from the row re-read under the hold.
+    _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
@@ -2338,7 +2509,6 @@ async def detect_entry_suggestions(
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
-        message=message,
         inputs=inputs,
         api_key_header=x_llm_api_key,
     )
@@ -2746,6 +2916,29 @@ async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayRespo
     )
 
 
+# Where a cached letter was found (#623 PR3). ``pre_barrier`` is the ordinary
+# reopen; ``in_barrier`` is a concurrent first ask whose letter landed while
+# this request waited for the account hold.
+_CACHE_HIT_PRE_BARRIER = "pre_barrier"
+_CACHE_HIT_IN_BARRIER = "in_barrier"
+
+
+def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
+    """Record a free reopen of a letter already bought: ids and the stage only.
+
+    The ratified record asks for cache hits to be instrumented (§1:
+    "instrument actual input/output tokens, model, cost estimate, refunds, and
+    cache hits"). The stage rides in the message as well as in ``extra``
+    because the production formatter drops extras. Never the letter's text,
+    for the reason ``marginalia_essay_generated`` gives.
+    """
+    logger.info(
+        "marginalia_essay_cache_hit stage=%s",
+        stage,
+        extra={"user_id": note.user_id, "id": note.id, "stage": stage},
+    )
+
+
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -2770,6 +2963,7 @@ async def _expand_essay(
     if note is None:
         raise not_found("marginalia")
     if note.essay is not None:
+        _log_essay_cache_hit(note, _CACHE_HIT_PRE_BARRIER)
         return note
     entry = await _load_user_entry(session, note.journal_entry_id, user_id)
     if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
@@ -2856,6 +3050,7 @@ async def _cache_and_mirror_essay(
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
             # purchase -- no charge, no dial, no overwrite (#623).
+            _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
         if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
             return note
@@ -2969,16 +3164,28 @@ async def _cache_essay(
     # refusal leaves the staged charge for the guardrail slot's rollback.
     consume_generation_minute(note.user_id)
     await session.commit()
+    # Pure constructors, hoisted so the failure guard can report the calls
+    # that returned and the generation they belong to (#623 PR3).
+    llm = BotmasonResonanceLLM(byok_key)
+    charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
     settled = False
     try:
-        llm = BotmasonResonanceLLM(byok_key)
         essay = await _dial_essay(llm, note, body, prior_letters, byok=byok_key is not None)
-        await _settle_essay(session, note, essay, llm, spent)
+        await _settle_essay(session, note, essay, llm, charge)
         settled = True
     finally:
         if not settled:
             await _refund_failed_pass(
-                session, note.user_id, spent, reason=REASON_REFUND_FAILED_ESSAY
+                session,
+                note.user_id,
+                spent,
+                reason=REASON_REFUND_FAILED_ESSAY,
+                trace=_FailedGeneration(
+                    feature=GenerationFeature.ESSAY,
+                    key=charge.key,
+                    usage=llm.usage,
+                    attempts=_ESSAY_ATTEMPTS,
+                ),
             )
     if essay is not None:
         # Outside the guard on purpose: the letter is committed, so it is
@@ -3031,12 +3238,41 @@ async def _dial_essay(
         raise bad_gateway("llm_provider_error") from exc
 
 
+# An essay is one dial: ``generate_essay`` has no corrective retry.
+_ESSAY_ATTEMPTS = 1
+
+
+@dataclass(frozen=True, slots=True)
+class _EssayCharge:
+    """A first letter's deduction (``None`` when nobody paid) and its generation."""
+
+    spent: SpendResult | None
+    key: GenerationKey
+
+
+def _log_settled_essay(
+    note: Marginalia, charge: _EssayCharge, usage: GenerationUsage, outcome: GenerationOutcome
+) -> None:
+    """Write a committed essay's one settlement line (#623 PR3)."""
+    log_generation_settled(
+        GenerationSettlement(
+            feature=GenerationFeature.ESSAY,
+            user_id=note.user_id,
+            key=charge.key,
+            bucket=None if charge.spent is None else charge.spent.bucket,
+            outcome=outcome,
+            attempts=_ESSAY_ATTEMPTS,
+            usage=usage,
+        )
+    )
+
+
 async def _settle_essay(
     session: AsyncSession,
     note: Marginalia,
     essay: str | None,
     llm: BotmasonResonanceLLM,
-    spent: SpendResult | None,
+    charge: _EssayCharge,
 ) -> None:
     """Meter the call, then cache the letter or refund the non-letter; commit.
 
@@ -3046,16 +3282,22 @@ async def _settle_essay(
     refund for a non-letter is staged beside that row and committed with it --
     a rollback here would erase our only record of what the provider charged.
     """
-    await record_llm_usage(
+    usage = await record_llm_usage(
         session,
         user_id=note.user_id,
         journal_entry_id=note.journal_entry_id,
         responses=llm.usage,
+        generation=charge.key,
     )
     if essay is None:
-        if spent is not None:
-            await refund_one_message(session, note.user_id, spent, reason=REASON_REFUND_NO_ESSAY)
+        refund = None
+        if charge.spent is not None:
+            refund = await refund_one_message(
+                session, note.user_id, charge.spent, reason=REASON_REFUND_NO_ESSAY
+            )
         await session.commit()
+        log_committed_refund(refund)
+        _log_settled_essay(note, charge, usage, GenerationOutcome.REFUSED)
         # Counted, never quoted: the refused text is the prompt (or something
         # else unpublishable), and logging it would leak exactly what the
         # refusal exists to withhold.
@@ -3067,6 +3309,7 @@ async def _settle_essay(
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
     await session.commit()
+    _log_settled_essay(note, charge, usage, GenerationOutcome.KEPT)
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

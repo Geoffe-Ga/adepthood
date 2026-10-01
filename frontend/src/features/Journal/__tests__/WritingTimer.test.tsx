@@ -9,6 +9,7 @@ import { DEFAULT_WRITING_MINUTES, WRITING_DURATION_PRESET_MINUTES } from '../wri
 import type { WritingSessionResult } from '../writingSession';
 import WritingTimer from '../WritingTimer';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, editorialType, journalLayout, touchTarget } from '@/design/tokens';
 import type {
   CueKind,
@@ -418,6 +419,7 @@ describe('WritingTimer — the preset row fits four lengths on a phone', () => {
     // Read-only metadata beside the radios, so it takes the caption face and
     // stays out of the radiogroup's name.
     expect(unit?.props.accessible).toBe(false);
+    expect(unit?.props['aria-hidden']).toBe(true);
     expect(unit?.props.accessibilityElementsHidden).toBe(true);
     expect(unit?.props.importantForAccessibility).toBe('no-hide-descendants');
     expect(StyleSheet.flatten(unit?.props.style).fontSize).toBe(editorialType.caption.fontSize);
@@ -443,6 +445,31 @@ describe('WritingTimer — reachable by a screen reader', () => {
     expect(getByTestId('writing-timer-stop').props.accessibilityLabel).toBe(
       'Stop the writing timer and keep the time so far',
     );
+  });
+
+  // Each control's glyph is decoration: hidden by the one helper, never by an
+  // `accessible` prop the web would forward to the <svg> (#2829), while every
+  // control keeps its name.
+  it('hides each control glyph and keeps each control named, through a full session', () => {
+    const { getByRole, getByTestId } = renderTimer(jest.fn());
+    const expectHiddenGlyph = (testID: string, Glyph: typeof Play): void => {
+      expect(within(getByTestId(testID)).UNSAFE_getByType(Glyph).props).toMatchObject(
+        decorativeHidden(),
+      );
+    };
+    expect(getByRole('button', { name: 'Start the writing timer' })).toBeTruthy();
+    expectHiddenGlyph('writing-timer-start', Play);
+    expectHiddenGlyph('writing-timer-minimize', Minus);
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    expectHiddenGlyph('writing-timer-pause', Pause);
+    expectHiddenGlyph('writing-timer-stop', Square);
+    expect(
+      getByRole('button', { name: 'Stop the writing timer and keep the time so far' }),
+    ).toBeTruthy();
+
+    fireEvent.press(getByTestId('writing-timer-pause'));
+    expectHiddenGlyph('writing-timer-resume', Play);
   });
 
   it('opens at a length the caller names, for a page that arrives with one in mind', () => {

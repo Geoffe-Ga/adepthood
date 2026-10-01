@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect, jest, afterEach */
 import { fireEvent, render, screen, within } from '@testing-library/react-native';
+import { MessageSquare } from 'lucide-react-native';
 import { Dimensions, Platform, TouchableOpacity, View } from 'react-native';
 
 import { RadioGroup, RadioOption } from '@/components/RadioOption';
@@ -12,7 +13,10 @@ import {
 } from '@/features/Feedback/feedbackCategories';
 import { FeedbackField } from '@/features/Feedback/FeedbackField';
 import { FEEDBACK_TEST_IDS as IDS } from '@/features/Feedback/feedbackTestIds';
-import { SendFeedbackButton } from '@/features/Feedback/SendFeedbackButton';
+import {
+  SEND_FEEDBACK_ICON_TEST_ID,
+  SendFeedbackButton,
+} from '@/features/Feedback/SendFeedbackButton';
 
 const PHONE = { width: 390, height: 844, scale: 1, fontScale: 1 };
 const DESKTOP = { width: 1280, height: 720, scale: 1, fontScale: 1 };
@@ -40,6 +44,17 @@ describe('SendFeedbackButton', () => {
     render(<SendFeedbackButton onPress={onPress} />);
     fireEvent.press(screen.getByTestId(IDS.headerButton));
     expect(onPress).toHaveBeenCalledWith(expect.objectContaining({ current: expect.anything() }));
+  });
+
+  it('hides its icon from every screen reader, the web included, and keeps its name (#3009)', () => {
+    render(<SendFeedbackButton onPress={jest.fn()} />);
+    const icon = screen.getByTestId(SEND_FEEDBACK_ICON_TEST_ID, { includeHiddenElements: true });
+    expect(icon.props['aria-hidden']).toBe(true);
+    expect(icon.props.accessibilityElementsHidden).toBe(true);
+    expect(icon.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(screen.getByRole('button', { name: 'Send feedback' })).toBeTruthy();
+    // The wrapper hides the glyph; the glyph carries no prop the web svg would leak (#2829).
+    expect(screen.UNSAFE_getByType(MessageSquare).props).not.toHaveProperty('accessible');
   });
 });
 

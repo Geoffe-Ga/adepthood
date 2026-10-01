@@ -10,6 +10,7 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { BORDER_RADIUS, SPACING, colors, shadows, touchTarget, uiType } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
@@ -57,7 +58,6 @@ function getButtonState(visible: boolean, loading: boolean, checking: boolean, d
     // its own touches; the band claims none. Hidden stays ``none`` so an
     // invisible affordance is inert rather than merely transparent.
     pointerEvents: (visible ? 'box-none' : 'none') as 'box-none' | 'none',
-    importantForA11y: (visible ? 'auto' : 'no-hide-descendants') as 'auto' | 'no-hide-descendants',
     label: loading ? 'Listening…' : checking ? 'Checking availability…' : 'Get Resonance',
     a11yLabel: loading
       ? 'Listening to your writing'
@@ -138,8 +138,9 @@ function GetResonanceButton({
         { opacity: anim, transform: [{ translateY }] },
       ]}
       pointerEvents={view.pointerEvents}
-      accessibilityElementsHidden={!visible}
-      importantForAccessibility={view.importantForA11y}
+      // Every reader skips a hidden band, the web's included. Hidden forces the
+      // button below disabled, so no focusable control sits inside aria-hidden.
+      {...decorativeHidden(!visible)}
     >
       {/* The one thing in the band that is meant to be pressed: a touchable is
           its own touch target, so ``box-none`` above reaches it and nothing

@@ -22,6 +22,7 @@ import { Pressable, StyleSheet, View, type PressableProps } from 'react-native';
 
 import type { MarkdownCommand, MarkdownCommandState } from './markdownCommands';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
 import { webPressedState } from '@/components/webAria';
 import { BORDER_RADIUS, SPACING, colors, touchTarget } from '@/design/tokens';
@@ -95,7 +96,7 @@ function ToolbarButton({
         size={NAV_ICON_SIZE}
         strokeWidth={NAV_ICON_STROKE}
         color={selected ? colors.paper.ink : colors.paper.inkSoft}
-        accessible={false}
+        {...decorativeHidden()}
       />
     </Pressable>
   );

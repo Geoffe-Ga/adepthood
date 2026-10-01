@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { welcomeStyles as s } from './Welcome.styles';
 import { WELCOME_PANELS, type WelcomePanel } from './welcomeContent';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { CalloutBand } from '@/components/layout/CalloutBand';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 import useResponsive from '@/design/useResponsive';
@@ -52,9 +53,15 @@ interface DotsProps {
   active: number;
 }
 
-/** Page-position indicator; non-interactive so paging stays the single seam. */
+/** Test hook for the pager dots, which assistive tech skips. */
+export const WELCOME_PAGER_DOTS_TEST_ID = 'welcome-pager-dots';
+
+/**
+ * Page-position indicator; non-interactive so paging stays the single seam.
+ * Decorative, so hidden from every screen reader -- the web's included.
+ */
 const PagerDots = ({ count, active }: DotsProps): React.JSX.Element => (
-  <View style={s.dots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+  <View style={s.dots} {...decorativeHidden()} testID={WELCOME_PAGER_DOTS_TEST_ID}>
     {Array.from({ length: count }, (_, i) => (
       <View key={i} style={[s.dot, i === active ? s.dotActive : undefined]} />
     ))}

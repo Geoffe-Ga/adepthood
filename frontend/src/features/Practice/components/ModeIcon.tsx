@@ -4,14 +4,15 @@
  * The catalog's practice and recently-used rows and the Create Practice
  * wizard's mode picker all lead with the mode's lucide icon. It is decoration:
  * each row already names its mode in its own ``accessibilityLabel``, so the
- * slot is hidden from VoiceOver (``accessibilityElementsHidden``) and TalkBack
- * (``importantForAccessibility``) here, once, rather than at each call site.
+ * slot is hidden from every screen reader -- VoiceOver, TalkBack and the web's,
+ * through ``decorativeHidden`` -- here, once, rather than at each call site.
  */
 
 import type { LucideIcon } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
 import { SPACING, ink } from '@/design/tokens';
 
@@ -28,12 +29,7 @@ export interface ModeIconProps {
 
 /** Draw a mode's icon in a fixed-width slot that assistive tech skips. */
 const ModeIcon = ({ icon: Icon, testID }: ModeIconProps): React.JSX.Element => (
-  <View
-    style={styles.slot}
-    accessibilityElementsHidden
-    importantForAccessibility="no-hide-descendants"
-    testID={testID}
-  >
+  <View style={styles.slot} {...decorativeHidden()} testID={testID}>
     <Icon color={ink.soft} size={MODE_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />
   </View>
 );

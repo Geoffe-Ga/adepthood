@@ -62,6 +62,7 @@ import type {
   ReflectionAnchorStatus,
   ReflectionSourceItem,
 } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -737,7 +738,7 @@ function SourcesHeading({
           accessibilityLabel="Done"
           testID="reflection-sources-close"
         >
-          <X color={ink.soft} size={CLOSE_ICON_SIZE} accessible={false} />
+          <X color={ink.soft} size={CLOSE_ICON_SIZE} {...decorativeHidden()} />
         </TouchableOpacity>
       )}
     </View>

@@ -570,9 +570,32 @@ describe('ContentViewer', () => {
       const footer = getByTestId('viewer-footer');
       // The reveal animation is still running here; a screen reader must not
       // have to wait it out.
+      expect(footer.props['aria-hidden']).toBe(false);
       expect(footer.props.accessibilityElementsHidden).toBe(false);
       expect(footer.props.importantForAccessibility).toBe('auto');
       expect(footer.props.pointerEvents).not.toBe('none');
+      for (const control of ['chapter-nav-back', 'mark-read-button', 'chapter-nav-next']) {
+        expect(getByTestId(control).props.focusable).toBe(true);
+      }
+    });
+
+    it('lets the keyboard reach Reflect while the row is shown, and not while it leaves', async () => {
+      const { findByTestId, getByTestId } = render(
+        <ContentViewer
+          item={makeItem({ is_read: true })}
+          onBack={onBack}
+          onMarkRead={onMarkRead}
+          onReflect={jest.fn()}
+          nav={makeNav()}
+        />,
+      );
+      const scrollView = await readToTheEnd(findByTestId);
+      expect(getByTestId('reflect-button').props.focusable).toBe(true);
+
+      fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 0 } } });
+      expect(getByTestId('reflect-button', { includeHiddenElements: true }).props.focusable).toBe(
+        false,
+      );
     });
 
     it('gives a chapter too short to scroll its controls straight away', async () => {
@@ -590,6 +613,16 @@ describe('ContentViewer', () => {
       expect(getByTestId('mark-read-button')).toBeTruthy();
 
       fireEvent.scroll(scrollView, { nativeEvent: { contentOffset: { y: 0 } } });
+      // Mid-exit the row is still mounted for the slide: every reader skips it,
+      // the web's included (#3009), and no control in it takes keyboard focus,
+      // so the web never holds a focusable control inside aria-hidden.
+      const leaving = getByTestId('viewer-footer', { includeHiddenElements: true });
+      expect(leaving.props['aria-hidden']).toBe(true);
+      expect(leaving.props.accessibilityElementsHidden).toBe(true);
+      expect(leaving.props.importantForAccessibility).toBe('no-hide-descendants');
+      for (const control of ['chapter-nav-back', 'mark-read-button', 'chapter-nav-next']) {
+        expect(getByTestId(control, { includeHiddenElements: true }).props.focusable).toBe(false);
+      }
       await waitFor(() => {
         expect(queryByTestId('viewer-footer')).toBeNull();
       });

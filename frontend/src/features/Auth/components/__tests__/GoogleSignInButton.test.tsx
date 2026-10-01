@@ -87,8 +87,14 @@ describe('GoogleSignInButton — the mandated mark', () => {
 
     const logo = getByTestId(GOOGLE_LOGO_TEST_ID, HIDDEN);
 
+    expect(logo.props['aria-hidden']).toBe(true);
     expect(logo.props.accessibilityElementsHidden).toBe(true);
     expect(logo.props.importantForAccessibility).toBe('no-hide-descendants');
+  });
+
+  it('keeps the button named "Continue with Google" with the mark hidden (#3009)', () => {
+    const { getByRole } = renderButton();
+    expect(getByRole('button', { name: 'Continue with Google' })).toBeTruthy();
   });
 });
 

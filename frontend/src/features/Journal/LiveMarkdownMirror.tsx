@@ -18,6 +18,8 @@ import { parseJournalMarkdown, type SourceSelection } from './journalMarkdown';
 import liveStyles from './LiveMarkdownStyles';
 import { buildMirrorModel, type MirrorLine, type MirrorRun } from './markdownMirror';
 
+import { decorativeHidden } from '@/components/a11yHidden';
+
 /** Content run: nested styled Text, one per style, each tagged by its source start. */
 function ContentRun({ run }: { run: MirrorRun }): React.ReactNode {
   let node: React.ReactNode = run.text;
@@ -80,9 +82,7 @@ export default function LiveMarkdownMirror({
   return (
     <View
       testID="journal-body-mirror"
-      aria-hidden
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      {...decorativeHidden()}
       pointerEvents="none"
       style={liveStyles.mirror}
     >

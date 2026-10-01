@@ -66,7 +66,8 @@ describe('GetResonanceButton', () => {
     const onPress = jest.fn();
     const { queryByTestId } = render(<GetResonanceButton visible={false} onPress={onPress} />);
     // Hidden from the accessibility tree, so default queries don't surface it
-    // (accessibilityElementsHidden + no-hide-descendants) — i.e. not focusable.
+    // (decorativeHidden: aria-hidden + the two native props) — and disabled, so
+    // react-native-web also drops it from the tab order.
     expect(queryByTestId('get-resonance-button')).toBeNull();
     // And with includeHiddenElements, the press handler is detached.
     const button = queryByTestId('get-resonance-button', { includeHiddenElements: true });
@@ -176,5 +177,27 @@ describe('GetResonanceButton', () => {
   it('keeps the whole band inert while hidden, so nothing is pressable through it', () => {
     const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
     expect(view.root.props.pointerEvents).toBe('none');
+  });
+
+  // react-native-web reads only aria-hidden: without it a hidden band was still
+  // read on the web (#3009). Hidden must also mean disabled, or the web would
+  // hold a focusable control inside an aria-hidden subtree.
+  it('hides the band from every screen reader, the web included, and disables it', () => {
+    const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
+    expect(view.root.props['aria-hidden']).toBe(true);
+    expect(view.root.props.accessibilityElementsHidden).toBe(true);
+    expect(view.root.props.importantForAccessibility).toBe('no-hide-descendants');
+    const button = view.getByTestId('get-resonance-button', { includeHiddenElements: true });
+    expect(button.props.accessibilityState.disabled).toBe(true);
+    expect(button.props.focusable).toBe(false);
+  });
+
+  it('exposes the band again, named and pressable, the moment it is shown', () => {
+    const view = render(<GetResonanceButton visible onPress={jest.fn()} />);
+    expect(view.root.props['aria-hidden']).toBe(false);
+    expect(view.root.props.accessibilityElementsHidden).toBe(false);
+    expect(view.root.props.importantForAccessibility).toBe('auto');
+    expect(view.root.props.accessible).toBeUndefined();
+    expect(view.getByRole('button', { name: 'Get resonance' })).toBeTruthy();
   });
 });

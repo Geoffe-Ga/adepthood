@@ -578,6 +578,52 @@
         "title": "CareResponse",
         "type": "object"
       },
+      "ChargedGenerationCostResponse": {
+        "description": "p95 provider cost per charged generation over a window (#623 PR3).\n\nRecord §2: \"alert/revisit pricing if p95 provider cost approaches 3.5¢ per\ncharged generation\"; §4: \"structured warning plus an admin metric\". Costs\nare fixed-point strings like every other admin cost. ``p95_cost_usd`` is\n``None`` when the window holds no priced charged generation -- never a\nmisleading zero.",
+        "properties": {
+          "over_threshold": {
+            "title": "Over Threshold",
+            "type": "boolean"
+          },
+          "p95_cost_usd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Cost Usd"
+          },
+          "sample_count": {
+            "title": "Sample Count",
+            "type": "integer"
+          },
+          "threshold_usd": {
+            "title": "Threshold Usd",
+            "type": "string"
+          },
+          "unpriced_generation_count": {
+            "title": "Unpriced Generation Count",
+            "type": "integer"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_days",
+          "sample_count",
+          "unpriced_generation_count",
+          "p95_cost_usd",
+          "threshold_usd",
+          "over_threshold"
+        ],
+        "title": "ChargedGenerationCostResponse",
+        "type": "object"
+      },
       "CheckInResult": {
         "properties": {
           "day_units": {
@@ -9498,6 +9544,106 @@
           }
         },
         "summary": "Draft Feedback Issue",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/generation-cost": {
+      "get": {
+        "description": "Return the p95 provider cost per charged generation, and whether it alerts.\n\nThe admin-visible half of record §4's \"structured warning plus an admin\nmetric\" (#623 PR3). A sibling of ``/usage-stats`` rather than a field on\nit, so the warning fires only when this metric is read and the usage\ndashboard's shape is unchanged. Reading it logs one\n``llm_generation_cost_p95_over_threshold`` WARNING when the p95 is at or\nabove :data:`domain.generation_cost.P95_CHARGED_GENERATION_COST_ALERT_USD`.",
+        "operationId": "get_generation_cost_admin_generation_cost_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChargedGenerationCostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Generation Cost",
         "tags": [
           "admin"
         ]
@@ -18541,7 +18687,7 @@
     },
     "/journal/{entry_id}/suggestions/detect": {
       "post": {
-        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".",
+        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".\n\nThe INTIMATE check here is only the cheap fast path: the authoritative\nfloor is re-read under the account hold, just before the dial (#3008).",
         "operationId": "detect_entry_suggestions_journal__entry_id__suggestions_detect_post",
         "parameters": [
           {

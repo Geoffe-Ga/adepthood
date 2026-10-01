@@ -80,6 +80,9 @@ logger = logging.getLogger(__name__)
 # A user with no StageProgress row has not started the program, so the calendar
 # unlock check treats them as sitting in week 1.
 _UNSTARTED_USER_WEEK = 1
+# A user with no StageProgress row has entered only the first cycle; every later
+# cycle is unreached for them.
+_FIRST_CYCLE = 1
 
 router = build_router(prefix="/reflections", tags=["reflections"])
 
@@ -217,19 +220,29 @@ def _validated_scope_weeks(level: ReflectionLevel, scope_key: str) -> range:
         raise unprocessable("invalid_scope") from exc
 
 
+def _reached_cycle(progress: StageProgress | None) -> int:
+    """The highest cycle the caller has entered; any later cycle is unreached by definition."""
+    return _FIRST_CYCLE if progress is None else progress.cycle_number
+
+
 def _gate_week_for(progress: StageProgress | None, cycle: int, tz: str) -> int | None:
     """The week a scope must open at or before, or None when no gate applies.
 
-    An unstarted user sits in week 1, so only scopes opening at week 1 are
-    readable for them; everyone else is gated by their date-derived week, counted
-    in their OWN zone so the gate lifts at their midnight rather than UTC's.
+    Precondition: ``cycle`` is one the caller has reached (at most
+    :func:`_reached_cycle`); :func:`_guard_scope_unlocked`, the only caller,
+    refuses every later cycle before asking this question.
+
+    An unstarted user sits in week 1 of cycle 1, so only scopes opening at week 1
+    are readable for them; everyone else is gated in their current cycle by their
+    date-derived week, counted in their OWN zone so the gate lifts at their
+    midnight rather than UTC's.
 
     A COMPLETED cycle is the one exception: the user demonstrably lived through
     every week of it, so no week of it can be "not yet reached" (issue #2894).
     The relaxation is deliberately narrow — it fires only for
-    ``cycle < progress.cycle_number``. The current cycle and any future one fall
-    through to exactly the comparison this guard always made, so a cycle-1 user
-    asking for ``c2:s2`` is still refused.
+    ``cycle < progress.cycle_number``. A future cycle never reaches this function:
+    ``c2:s2`` for a cycle-1 user is refused by the cycle check before any week
+    comparison (issue #2907).
     """
     if progress is None:
         return _UNSTARTED_USER_WEEK
@@ -241,7 +254,16 @@ def _gate_week_for(progress: StageProgress | None, cycle: int, tz: str) -> int |
 def _guard_scope_unlocked(
     weeks: range, progress: StageProgress | None, cycle: int, tz: str
 ) -> None:
-    """Reject a scope whose first week the caller's calendar has not yet reached."""
+    """Reject a scope the caller has not reached, with 403 ``scope_locked``.
+
+    Two refusals, in order: (a) a scope in a cycle the caller has not entered,
+    and (b) a scope whose first week the caller's calendar has not reached. The
+    refusal belongs to this guard alone and never relies on
+    ``resolve_cycle_window``'s ``UNSTARTED`` or ``NO_PROGRAM`` fallbacks to keep
+    an unreached cycle's feed empty (issue #2907).
+    """
+    if cycle > _reached_cycle(progress):
+        raise forbidden("scope_locked")
     gate_week = _gate_week_for(progress, cycle, tz)
     if gate_week is not None and weeks.start > gate_week:
         raise forbidden("scope_locked")
@@ -362,7 +384,8 @@ async def _scope_for_request(
     """Validate the requested scope, resolve the caller's calendar, and bound the window.
 
     Raises 422 ``invalid_scope`` for a key the grammar rejects and 403
-    ``scope_locked`` for a scope the caller's calendar has not reached. The
+    ``scope_locked`` for a scope in a cycle the caller has not entered or whose
+    first week the caller's calendar has not reached. The
     window is drawn against the SCOPE's own cycle, so a past cycle is measured
     from the anchor it was actually lived under and clamped at the loop point
     (issue #2894); a cycle with no anchor on record is left unset and says why.

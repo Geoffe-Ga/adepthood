@@ -13,6 +13,7 @@ import {
   type SiteResource,
   type Stage,
 } from '../../api';
+import { decorativeHidden } from '../../components/a11yHidden';
 import {
   DrawerNavSection,
   ScreenDrawer,
@@ -270,17 +271,11 @@ interface StateIconProps {
 }
 
 /**
- * Decorative: the state's title beside it already says what happened. ``aria-hidden``
- * hides it on web, where react-native-web drops the two native-only props.
+ * Decorative: the state's title beside it already says what happened, so
+ * ``decorativeHidden`` hides it from every screen reader, the web's included.
  */
 const StateIcon = ({ icon: Icon, testID }: StateIconProps): React.JSX.Element => (
-  <View
-    style={styles.emptyIcon}
-    testID={testID}
-    aria-hidden
-    accessibilityElementsHidden
-    importantForAccessibility="no-hide-descendants"
-  >
+  <View style={styles.emptyIcon} testID={testID} {...decorativeHidden()}>
     <Icon size={STATE_ICON_SIZE} color={ink.muted} />
   </View>
 );

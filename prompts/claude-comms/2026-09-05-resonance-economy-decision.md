@@ -109,9 +109,9 @@ column is added.
 | 2 concurrent generations/user | `generation_slot` over the `generationslot` lease table (`UNIQUE(user_id, slot)`): cross-worker, covers resonance, essay and transcription (BYOK included), taken before any charge, released on every exit, fails closed (503). A heartbeat refreshes a held lease every 30s (`GENERATION_SLOT_HEARTBEAT_SECONDS`) to a 90s TTL (`GENERATION_SLOT_TTL_SECONDS`), so a live generation's lease never expires, however long it waits on the account barrier or dials; only a crashed worker's lease is reclaimed, within 90s. Refusal: `429 generation_in_progress`, `Retry-After` one provider timeout | PR2 |
 | 100 charged generations/day/user, configurable | `services/wallet.py::preflight_deduction` (the single chokepoint for resonance, essay and transcription): net generation spends since 00:00 UTC counted from `walletaudit` after the row-locking spend, inside a savepoint. `BOTMASON_DAILY_GENERATION_CEILING` (default `DEFAULT_DAILY_GENERATION_CEILING = 100`; `0` refuses every charged generation). Refusal: `429 daily_generation_limit_reached`, `Retry-After` to the next UTC midnight. BYOK never counted | PR2 |
 | Paid server usage on a cost-bounded model; Opus/Turbo BYOK/admin-only | `services/botmason.py::SERVER_PAID_REFUSED_MODELS` = {`claude-opus-5`, `claude-opus-4-7`, `gpt-4-turbo`}, refused in `generate_response` before any dial when the server key pays; the existing refund arms settle the unit. No multiplier; allowlists and pricing unchanged. "Admin-only" is not honoured: `generate_response` has no user identity, so these models are BYOK-only. **Open question:** `claude-sonnet-4-6` ($3/$15) and `gpt-4o` ($2.50/$10) were not named as Opus/Turbo and stay allowed server-paid; whether they are "cost-bounded" is for the owner | PR2 |
-| Meter tokens, model, cost, refunds, cache hits, corrective attempts | `services/llm_usage.py::record_llm_usage` (tokens/model/cost, shipped); cache-hit and attempt logs | PR3 |
-| p95 cost ≥ 3.5¢ alert | structured warning plus an admin metric | PR3 |
-| Aggregate cost > 50% of net receipts alert | **known gap**: `GumroadSale` stores no price column, only `raw_payload` | PR3, or record the gap |
+| Meter tokens, model, cost, refunds, cache hits, corrective attempts | `services/llm_usage.py::record_llm_usage` (tokens/model/cost, shipped; PR3 stamps every row with `generation_id` and `charged`). Logs, ids and counts only: `llm_generation_settled` (feature, outcome, charged, attempts, calls, tokens, cost, one per settled resonance pass, essay or transcription), `wallet_refund_applied` (reason, bucket; written only after the refund commits), `marginalia_essay_cache_hit` (stage `pre_barrier` / `in_barrier`) | PR3 |
+| p95 cost ≥ 3.5¢ alert | `GET /admin/generation-cost` (admin only): nearest-rank p95 of summed cost per charged generation over 30 days, against `domain/generation_cost.py::P95_CHARGED_GENERATION_COST_ALERT_USD`; reading it logs one `llm_generation_cost_p95_over_threshold` WARNING at or above the threshold. No external channel (§7) | PR3 |
+| Aggregate cost > 50% of net receipts alert | **recorded as a known gap, not built** (see §8) | PR3 records the gap |
 
 ## 5. A charged depth is offered with its price on it
 
@@ -162,3 +162,28 @@ belong to the owner:
 price. `models/gumroad_sale.py::GumroadSale` has no price column, only
 `raw_payload`. PR3 will either read the price from `raw_payload` or record this
 alert as a gap with a linked product issue.
+
+**PR3 outcome: recorded as a gap, not built.** Three facts rule out building it
+from what the repository holds today:
+
+- `GumroadSale` has no price or fee column (`models/gumroad_sale.py`).
+- `raw_payload`'s price cannot be trusted: `routers/gumroad.py` deliberately
+  refuses "price, quantity, or any other payload field, all of which a forged
+  ping would control".
+- "Net" needs Gumroad's fees, and no fee field is read or stored.
+
+Closing it needs a verified Gumroad Sales API read and a price/fee column
+migration, which is product work tracked under the Gumroad epic #1938 (a
+dedicated product issue is to be filed by the operator and linked here).
+Until then the p95 alert above is the only provider-cost alert.
+
+**Two further PR3 findings.**
+
+- The production log formatter (`observability._APP_LOG_FORMAT`) prints only
+  the message, so `extra=` fields never reach stdout. PR3's lines therefore
+  carry their numbers in the message itself. Rendering extras globally would
+  change every log line and needs its own privacy review.
+- Calls on a rolled-back failure path are not metered: a resonance pass whose
+  corrective retry raises after its first call returned, and a refused or
+  empty transcription. The p95 metric is therefore biased low until those
+  calls are persisted beside their refund. That is a follow-up.

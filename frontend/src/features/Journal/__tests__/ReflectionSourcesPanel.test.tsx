@@ -21,10 +21,12 @@
 // renders an inline side pane (testID `reflection-sources-pane`).
 import { jest, describe, it, expect, afterEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { editorialType, ink, touchTarget } from '@/design/tokens';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
@@ -643,6 +645,8 @@ describe('ReflectionSourcesPanel -- source bodies are rendered, never raw Markdo
     const close = getByTestId('reflection-sources-close');
     expect(close.props.accessibilityRole).toBe('button');
     expect(close.props.accessibilityLabel).toBe('Done');
+    // The X is hidden by the one helper, never by a DOM-invalid `accessible` (#2829).
+    expect(within(close).UNSAFE_getByType(X).props).toMatchObject(decorativeHidden());
     expect(queryByText('Done')).toBeNull();
     const style = StyleSheet.flatten(close.props.style);
     expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);

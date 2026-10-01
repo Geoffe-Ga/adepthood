@@ -30,9 +30,11 @@ describe('ModeIcon', () => {
     expect(slot.width).toBe(MODE_ICON_SLOT);
   });
 
-  it('is hidden from assistive tech on both platforms', () => {
+  it('is hidden from assistive tech on both platforms, the web included (#3009)', () => {
     const view = render(<ModeIcon icon={Hourglass} testID="slot" />);
     const slot = view.getByTestId('slot', { includeHiddenElements: true });
+    // react-native-web reads only aria-hidden; the two native props never reach the DOM.
+    expect(slot.props['aria-hidden']).toBe(true);
     expect(slot.props.accessibilityElementsHidden).toBe(true);
     expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
   });
