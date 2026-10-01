@@ -48,10 +48,13 @@ They ride on the adapter instead and are read back through
 vault, so the consumer asks one question rather than branching on a type.
 
 Intimate content is out of scope here by construction: the router's privacy floor
-returns for an intimate entry before this module is ever reached, so
+returns for an intimate entry before this module is ever reached -- once before
+the pass charges, and again under the account hold, where a PATCH that won the
+barrier may have made the entry intimate (#2998) -- so
 :func:`select_reflection_llm` is only ever called for non-intimate entries and
 never binds an intimate-tier vault reflection (that attested read path is future
-work).
+work). This function has no intimate gate of its own; both router checks are
+load-bearing.
 """
 
 from __future__ import annotations

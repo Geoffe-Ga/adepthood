@@ -461,3 +461,75 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
     },
   );
 });
+
+/**
+ * The generation guardrails (#623) answer a letter with a 429 the writer can
+ * act on: wait for the letter already being written, or come back after
+ * midnight UTC. Neither is a refill, and the daily one cannot succeed before
+ * midnight, so it offers no "try again". The copy is hand-written here for the
+ * same reason as above.
+ */
+describe('ResonanceEssayModal under a generation guardrail', () => {
+  const BUSY_COPY =
+    'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.';
+  const DAILY_COPY =
+    "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.";
+
+  it('announces the in-progress refusal and still lets the writer ask again', async () => {
+    mockEssay.mockRejectedValue(new ApiError(429, 'generation_in_progress'));
+    const onFundingRequired = jest.fn();
+    const { findByTestId, getByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onFundingRequired={onFundingRequired}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    const message = await findByTestId('essay-error');
+    expect(message.props.children).toBe(BUSY_COPY);
+    expect(message.props.accessibilityLiveRegion).toBe('polite');
+    expect(message.props.accessibilityRole).toBe('alert');
+    expect(getByTestId('essay-retry')).toBeTruthy();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+  });
+
+  it('announces the daily refusal and offers no retry that cannot succeed', async () => {
+    mockEssay.mockRejectedValue(new ApiError(429, 'daily_generation_limit_reached'));
+    const onFundingRequired = jest.fn();
+    const { findByTestId, queryByTestId, queryByText } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onFundingRequired={onFundingRequired}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    const message = await findByTestId('essay-error');
+    expect(message.props.children).toBe(DAILY_COPY);
+    expect(message.props.accessibilityLiveRegion).toBe('polite');
+    expect(message.props.accessibilityRole).toBe('alert');
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(queryByText(/try again/i)).toBeNull();
+    expect(queryByTestId('essay-offer')).toBeNull();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+  });
+
+  it('keeps the daily refusal without a retry when the note is reopened', async () => {
+    mockEssay.mockRejectedValue(new ApiError(429, 'daily_generation_limit_reached'));
+    const { findByTestId, getByTestId, queryByTestId, rerender } = render(
+      <ResonanceEssayModal note={note()} onClose={jest.fn()} />,
+    );
+    await askForTheLetter(findByTestId);
+    await findByTestId('essay-error');
+
+    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} />);
+    rerender(<ResonanceEssayModal note={note({ id: 4 })} onClose={jest.fn()} />);
+
+    expect(getByTestId('essay-error').props.children).toBe(DAILY_COPY);
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+});

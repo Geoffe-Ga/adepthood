@@ -105,6 +105,9 @@ _MANAGED_VAULT_PILOT = _REPO_ROOT / "docs" / "managed-vault-pilot.md"
 _MANAGED_VAULT_ADR = _REPO_ROOT / "docs" / "adr" / "0007-demand-provisioned-confidential-vaults.md"
 _FULL_STACK_QA = _REPO_ROOT / "docs" / "qa" / "full-stack-qa-runbook.md"
 _LEGAL_LINKS = _REPO_ROOT / "frontend" / "src" / "features" / "Settings" / "legalLinks.ts"
+_RESONANCE_EXPLAINER_COPY = (
+    _REPO_ROOT / "frontend" / "src" / "features" / "Journal" / "resonanceExplainerCopy.ts"
+)
 
 # The in-app rows address the documents through the repository's public web
 # view, which is reachable with the application backend down -- the hosting
@@ -369,6 +372,33 @@ def test_the_policy_states_the_context_window_the_code_actually_sends() -> None:
     wrong = {word for count, word in _NUMBER_WORDS.items() if count != GROUNDING_LIMIT}
     stale = sorted(word for word in wrong if f"up to {word}" in policy)
     assert not stale, f"the policy also claims 'up to {stale}', contradicting itself"
+
+
+def test_the_resonance_disclosure_states_the_context_window_the_code_actually_sends() -> None:
+    """The in-app explainer counts what a pass sends by the code's own bound (#2998).
+
+    The explainer a writer reads before a resonance pass is the place they
+    decide whether to send this entry at all, so its count of the *other*
+    writing that rides along is held to ``GROUNDING_LIMIT`` exactly as the
+    policy's is: raising the limit fails here, beside the policy pin, instead
+    of quietly widening what the explainer promised.
+    """
+    copy = _RESONANCE_EXPLAINER_COPY.read_text(encoding="utf-8")
+    expected = _NUMBER_WORDS[GROUNDING_LIMIT]
+
+    assert f"up to {expected} other pieces of your own writing" in copy, (
+        f"the resonance explainer must say 'up to {expected} other pieces of your own "
+        f"writing' to match GROUNDING_LIMIT = {GROUNDING_LIMIT}"
+    )
+    wrong = {word for count, word in _NUMBER_WORDS.items() if count != GROUNDING_LIMIT}
+    stale = sorted(word for word in wrong if f"up to {word} other pieces" in copy)
+    assert not stale, f"the explainer also claims 'up to {stale}', contradicting itself"
+    # Completion detection rides on the same pass and sends the habit and
+    # practice names with their units (``build_detection_prompt``).
+    assert "names and units of your habits and practices" in copy, (
+        "the resonance explainer stopped disclosing the habit and practice names "
+        "that completion detection sends"
+    )
 
 
 def test_the_policy_says_the_corpus_is_off_until_the_reader_turns_it_on() -> None:

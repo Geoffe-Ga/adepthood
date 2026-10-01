@@ -13,6 +13,7 @@ from .energy_plan import EnergyPlan
 from .entitlement import Entitlement
 from .feedback import FeedbackReport
 from .feedback_triage import FeedbackNote, FeedbackTriageEvent
+from .generation_slot import GenerationSlot
 from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_completion_idempotency import GoalCompletionSpend
@@ -71,6 +72,7 @@ __all__ = [
     "FeedbackNote",
     "FeedbackReport",
     "FeedbackTriageEvent",
+    "GenerationSlot",
     "Goal",
     "GoalCompletion",
     "GoalCompletionSpend",

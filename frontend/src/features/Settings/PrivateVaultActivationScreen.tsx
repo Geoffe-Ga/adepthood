@@ -351,7 +351,8 @@ const PrivateVaultActivationScreen = ({ navigation }: Props): React.JSX.Element 
     <ScreenScaffold scroll testID="private-vault-activation-screen">
       <ScreenHeader
         eyebrow="Optional storage"
-        title="Create your managed vault"
+        title="Create managed vault"
+        titleHidden
         lead="An account-scoped managed cloud vault, activated only when you choose."
       />
       <View style={styles.content}>

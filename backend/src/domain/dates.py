@@ -17,6 +17,7 @@ never produce a naive datetime.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -110,6 +111,28 @@ def compute_next_reset(now: datetime) -> datetime:
     if month == 12:  # noqa: PLR2004 - December rolls to January of next year
         return datetime(year + 1, 1, 1, tzinfo=UTC)
     return datetime(year, month + 1, 1, tzinfo=UTC)
+
+
+def utc_day_start(now: datetime) -> datetime:
+    """Return 00:00:00 UTC of the UTC calendar day containing ``now``.
+
+    A naive ``now`` is taken to be UTC (see :func:`ensure_aware`).
+    """
+    utc = ensure_aware(now).astimezone(UTC)
+    return datetime(utc.year, utc.month, utc.day, tzinfo=UTC)
+
+
+def seconds_until_next_utc_midnight(now: datetime) -> int:
+    """Return the whole seconds from ``now`` until the next 00:00:00 UTC, at least 1.
+
+    Rounded up, so a client that waits exactly this long is past midnight
+    rather than a fraction of a second short of it; this is the honest
+    ``Retry-After`` for a limit that resets at midnight UTC. The next midnight
+    is strictly after ``now``, so the rounded-up wait is never below one second
+    and ``Retry-After: 0`` cannot be produced.
+    """
+    remaining = utc_day_start(now) + timedelta(days=1) - ensure_aware(now).astimezone(UTC)
+    return math.ceil(remaining.total_seconds())
 
 
 def now_in_tz(user_or_tz: _HasTimezone | str | None) -> datetime:

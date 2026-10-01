@@ -149,6 +149,11 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.generation_guardrails import (
+    consume_generation_minute,
+    generation_slot,
+    require_generation_minute_available,
+)
 from services.higher_self_grounding import Grounding, gather_grounding
 from services.llm_usage import record_llm_usage
 from services.marginalia import (
@@ -215,9 +220,12 @@ router = build_router(
     tags=["journal"],
     # 402 is the wallet's, on the metered reflection paths: ``preflight_deduction``
     # refuses a spend with no capacity, ``resolve_chat_api_key`` a call with no key.
+    # 429 is the generation guardrails' (#623): the per-user minute bucket, the
+    # concurrent slot, and the wallet's daily ceiling.
     extra_statuses=(
         status.HTTP_402_PAYMENT_REQUIRED,
         status.HTTP_409_CONFLICT,
+        status.HTTP_429_TOO_MANY_REQUESTS,
         status.HTTP_502_BAD_GATEWAY,
         status.HTTP_503_SERVICE_UNAVAILABLE,
     ),
@@ -1105,6 +1113,14 @@ async def _load_user_entry(
     return result.scalars().first()
 
 
+async def _require_user_entry(session: AsyncSession, entry_id: int, user_id: int) -> JournalEntry:
+    """Load the caller's own non-deleted entry, or raise the uniform 404."""
+    entry = await _load_user_entry(session, entry_id, user_id)
+    if entry is None:
+        raise not_found("journal_entry")
+    return entry
+
+
 async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> Grounding:
     """Gather the reflection's context and record which source answered.
 
@@ -1457,12 +1473,16 @@ def _unspent_resonance(
 async def _private_response(
     session: AsyncSession, user_id: int, care: CareResponse | None
 ) -> ResonanceResponse:
-    """Resonance response for an intimate entry: no cloud call, no charge.
+    """Resonance response for an intimate entry: no model call, no net charge.
 
-    An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
-    returned *before* any wallet deduction or LLM construction: no marginalia,
-    no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
-    with no ``preflight_deduction``), and the non-shaming private message.
+    An ``intimate`` entry is never sent to a language model (issue #895), so this
+    is returned *before* any LLM construction: no marginalia, no suggestions,
+    unspent balances (read fresh, like :func:`_care_only_response`), and the
+    non-shaming private message. On the usual path it is returned before any
+    wallet deduction too. When the entry only became intimate while the pass
+    waited for the account barrier, :func:`_withdrawn_under_hold` has already
+    refunded the committed deduction before calling this, so the balances it
+    reads are unspent on that path as well (#2998).
 
     ``care`` is the locally-screened surface (never None-forced): a distressed
     intimate entry still points to human/professional support, with no cloud
@@ -1472,6 +1492,81 @@ async def _private_response(
     return _unspent_resonance(
         user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
     )
+
+
+async def _withdrawn_under_hold(
+    session: AsyncSession, entry: JournalEntry, *, spent: SpendResult | None
+) -> bool:
+    """Re-read the entry under the pass's hold; settle and report whether it is withdrawn.
+
+    The pass reads the intimate floor before it charges and before it waits
+    for :func:`hold_account`. ``PATCH /journal/{entry_id}`` carrying
+    ``classification`` takes that same exclusive hold, so a PATCH that queues
+    first completes in full and answers 200 before the pass gets in. A dial
+    made from the pre-hold reading would then hand a now-intimate body to a
+    language model (#2998). The essay route re-reads under its hold for the
+    same reason (#623).
+
+    * A row deleted while the pass waited is gone, not private: any committed
+      BotMason unit is refunded and the caller gets the uniform 404.
+    * A row now ``intimate`` stops the whole pass: no vault, no cloud
+      reflection, no completion detection. Any committed unit is refunded and
+      this returns ``True``, so the caller answers with
+      :func:`_private_response` -- still carrying ``care``, because the privacy
+      floor never suppresses crisis support.
+
+    Otherwise this returns ``False`` and the refreshed ``entry.classification``
+    is what the caller binds. The fresh value is used as-is, never the wider
+    of the two readings: a lower classification maps to a narrower vault
+    ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
+    Tiers here only ever tighten what is sent.
+
+    Every path out of here has released the pooled connection -- the commit
+    after the refresh, or the refund's own rollback and commit -- so nothing
+    is held across the dials that follow.
+    """
+    await session.refresh(entry)
+    await session.commit()
+    if entry.deleted_at is not None:
+        await _refund_failed_pass(session, entry.user_id, spent)
+        raise not_found("journal_entry")
+    if entry.classification == JournalClassification.INTIMATE:
+        await _refund_failed_pass(session, entry.user_id, spent)
+        return True
+    return False
+
+
+async def _pass_context_under_hold(
+    session: AsyncSession, user_id: int, entry_id: int
+) -> tuple[Grounding, list[str]]:
+    """Gather the other writing a pass carries, under its hold, then release the connection.
+
+    The pass hands a model more than its own entry: up to
+    ``GROUNDING_LIMIT`` pieces of the writer's other writing as ``<prior>``
+    context, and excerpts of earlier letters as ``<prior_letters>`` (#2574).
+    Both are gathered *here*, under :func:`hold_account`, and never before the
+    wait for it. ``PATCH /journal/{entry_id}`` making *another* entry intimate,
+    and ``DELETE /journal/{entry_id}``, take the same exclusive hold and, inside
+    it, withdraw that entry's local corpus copy and stamp its row. A read taken
+    before the wait would still hold that entry's body, or a letter about it,
+    after a request withdrawing it had answered 200 -- an intimate entry handed
+    to a language model, which #895 forbids whoever pays.
+
+    Re-gathering rather than re-checking what was gathered earlier is the sound
+    choice, for two reasons. The eligibility rule keeps exactly one derivation
+    each -- the corpus store's tier barriers plus ``exclude_entry_id`` on one
+    side, :func:`_prior_letters_query` on the other -- instead of a second,
+    by-id reading that could drift from them. And a corpus fragment from an
+    upload or an import has no entry to re-check at all; the corpus copy the
+    mutation withdrew is simply no longer there to retrieve.
+
+    The commit releases the pooled connection these reads opened, so none is
+    held across the dials that follow.
+    """
+    grounding = await _grounding_for(session, user_id, entry_id)
+    prior_letters = await _prior_letter_essays(session, user_id=user_id, exclude_entry_id=entry_id)
+    await session.commit()
+    return grounding, prior_letters
 
 
 async def _care_only_response(
@@ -1857,43 +1952,65 @@ async def run_resonance(
     would hand the writer exactly the model prose the guard refused. The
     any committed BotMason deduction is refunded, so the pass costs them nothing.
     """
-    entry = await _load_user_entry(session, entry_id, current_user)
-    if entry is None:
-        raise not_found("journal_entry")
+    entry = await _require_user_entry(session, entry_id, current_user)
     message = _sanitize_message(entry.message)
-    # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
-    # Decided from the *persisted* classification (never client-supplied) and
-    # returned here — before wallet charge, LLM construction, or usage-log write —
-    # so the cloud is provably unreachable for intimate entries. The LOCAL care
+    # Privacy floor (issue #895): an intimate entry is NEVER sent to a language
+    # model, whoever pays. Decided from the *persisted* classification (never
+    # client-supplied) and returned here — before wallet charge, LLM construction,
+    # or usage-log write — and checked again under the account hold below, where
+    # a PATCH that won the barrier may have made the entry intimate (#2998). The LOCAL care
     # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
     # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
     # the intimate and non-intimate paths.
     care = _care_response(_care_for(message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
+    # A generation is about to happen: the per-user guardrails (#623) admit it
+    # here, after every free exit above. The minute peek is a cheap 429 before
+    # any slot or charge; the slot is held until the pass settles.
+    require_generation_minute_available(current_user)
+    async with generation_slot(session, current_user):
+        return await _run_admitted_resonance(session, current_user, entry, care, clients)
+
+
+async def _run_admitted_resonance(
+    session: AsyncSession,
+    current_user: int,
+    entry: JournalEntry,
+    care: CareResponse | None,
+    clients: _ReflectionClients,
+) -> ResonanceResponse:
+    """Charge, dial and settle one resonance pass the guardrails admitted.
+
+    The second half of :func:`run_resonance`, split out so the guardrail slot
+    wraps exactly the work that can generate. ``entry`` is the caller's own,
+    non-intimate entry, already authorized.
+    """
+    entry_id = cast("int", entry.id)
+    message = _sanitize_message(entry.message)
     # Resolve who pays before touching either BotMason bucket. A valid caller
     # key pays the provider directly; only the server-key/vault path draws from
     # the deployment-configured allowance or purchased offerings.
     byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
-    grounding = await _grounding_for(session, current_user, entry_id)
-    # Content-only anti-repetition context (issue #2574). Read here, with the
-    # pooled connection still held, for the same reason the grounding above is:
-    # every read the dials depend on must be in hand before the commit below
-    # releases the connection ahead of the first provider round trip.
-    prior_letters = await _prior_letter_essays(
-        session, user_id=current_user, exclude_entry_id=entry_id
-    )
+    # The atomic minute hit, after payment is staged so a 402 or a daily 429
+    # never spends it, and before the commit so its refusal leaves the staged
+    # spend for the slot's rollback to discard.
+    consume_generation_minute(current_user)
     detection = await _detection_inputs(session, entry=entry)
     llm = BotmasonResonanceLLM(byok_key)
-    # Any deduction is durable and every read the dials depend on is in hand:
-    # release the pooled connection before the first provider round trip.
+    # Any deduction is durable: release the pooled connection before waiting.
     await session.commit()
     # The account barrier opens here rather than at the top of the handler: the
-    # deduction and every read the dials depend on are already committed, so the
-    # wait for it holds no pooled connection, and an erasure racing this pass
-    # waits only for the outbound half rather than for the wallet arithmetic.
+    # deduction is already committed, so the wait for it holds no pooled
+    # connection, and an erasure racing this pass waits only for the outbound
+    # half rather than for the wallet arithmetic. Everything a dial carries that
+    # a privacy mutation can withdraw -- the entry itself, the other writing it
+    # is grounded in, the earlier letters -- is read under the hold (#2998).
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
+        if await _withdrawn_under_hold(session, entry, spent=spent):
+            return await _private_response(session, current_user, care)
+        grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
             body=message,
@@ -2665,7 +2782,11 @@ async def _expand_essay(
     if entry.classification == JournalClassification.INTIMATE:
         return note
     _require_price_acknowledged(clients)
-    return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
+    # A first letter is about to be asked for: the per-user guardrails (#623)
+    # admit it only now, after the cached, intimate, 404 and 409 exits above.
+    require_generation_minute_available(user_id)
+    async with generation_slot(session, user_id):
+        return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
 
 
 async def _cache_and_mirror_essay(
@@ -2844,6 +2965,9 @@ async def _cache_essay(
     )
     byok_key = resolve_chat_api_key(api_key)
     spent = await _essay_charge(session, note.user_id, byok_key)
+    # The minute hit, after the charge is staged and before it commits: a
+    # refusal leaves the staged charge for the guardrail slot's rollback.
+    consume_generation_minute(note.user_id)
     await session.commit()
     settled = False
     try:

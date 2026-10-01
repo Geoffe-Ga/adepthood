@@ -258,6 +258,10 @@ MANIFEST: Mapping[str, ExportRule] = {
         "links, notes added -- recorded about the report by an administrator. "
         "Content-free operational history, not writing the account did.",
     ),
+    "generationslot": Omitted(
+        "A transient operational lease on an in-flight generation, deleted when "
+        "the generation ends. It holds no content the account wrote.",
+    ),
     "goal": Included(
         key="goals",
         owned_by=OwnedBy("habit_id", through="habit"),

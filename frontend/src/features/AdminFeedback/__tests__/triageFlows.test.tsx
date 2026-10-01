@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import AdminFeedbackScreen from '../AdminFeedbackScreen';
+import * as copy from '../copy';
 
 import { detail, summary } from './fixtures';
 
@@ -51,6 +52,17 @@ jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: 'operator-t
 const HTTP_SERVER_ERROR = 500;
 const HTTP_CONFLICT = 409;
 const ROW = 'inbox-row-FB-23456789';
+const NEXT_ROW = 'inbox-row-FB-34567892';
+
+/** The inbox rows' testIDs in render order, so an append is told from a prepend. */
+function inboxOrder(screen: ReturnType<typeof render>): string[] {
+  return screen.getAllByTestId(/^inbox-row-/).map((row) => String(row.props.testID));
+}
+
+/** The offset of every list request so far, in the order they were asked. */
+function requestedOffsets(): number[] {
+  return mockList.mock.calls.map(([, window]) => window.offset);
+}
 
 function page(items: FeedbackTriageSummaryT[], hasMore = false): Page<FeedbackTriageSummaryT> {
   return { items, total: items.length, limit: 25, offset: 0, has_more: hasMore };
@@ -160,6 +172,34 @@ describe('triage flows', () => {
     expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 0 });
   });
 
+  it('refreshes the inbox from the top even after paging forward', async () => {
+    // Guard (passes before #2996): the post-change refresh is ``reload``, never
+    // ``retry`` -- once the list has paged past the first page, only a re-read
+    // from offset 0 that replaces the list tells the two apart.
+    mockTransition.mockResolvedValue(
+      detail({ operator_added: { ...detail().operator_added, status: 'planned' } }),
+    );
+    mockList
+      .mockResolvedValueOnce(page([summary()], true))
+      .mockResolvedValueOnce(page([summary({ public_id: 'FB-34567892' })]))
+      .mockResolvedValueOnce(page([summary({ status: 'planned' })]));
+    const screen = render(<AdminFeedbackScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-load-more'));
+    await settle();
+    expect(inboxOrder(screen)).toEqual([ROW, NEXT_ROW]);
+    fireEvent.press(screen.getByTestId(ROW));
+    await settle();
+
+    fireEvent.press(screen.getByTestId('triage-transition-planned'));
+
+    await settle();
+    expect(requestedOffsets()).toEqual([0, 25, 0]);
+    expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 0 });
+    fireEvent.press(screen.getByTestId('detail-back'));
+    expect(inboxOrder(screen)).toEqual([ROW]);
+  });
+
   it('says a refused change was not saved', async () => {
     mockNote.mockRejectedValue(new ApiError(HTTP_CONFLICT, 'feedback_transition_not_allowed'));
     const screen = await openReport();
@@ -234,6 +274,78 @@ describe('the inbox list', () => {
 
     await settle();
     expect(screen.getByTestId(ROW)).toBeTruthy();
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(requestedOffsets()).toEqual([0, 0]);
+  });
+
+  it('retries a failed Load more at the same offset and keeps the rows shown', async () => {
+    mockList
+      .mockResolvedValueOnce(page([summary()], true))
+      .mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'))
+      .mockResolvedValueOnce(page([summary({ public_id: 'FB-34567892' })]));
+    const screen = render(<AdminFeedbackScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-load-more'));
+    await settle();
+    expect(screen.getByText(copy.LOAD_FAILED)).toBeTruthy();
+    expect(screen.getByTestId('inbox-retry')).toBeTruthy();
+    expect(inboxOrder(screen)).toEqual([ROW]);
+
+    fireEvent.press(screen.getByTestId('inbox-retry'));
+
+    await settle();
+    expect(mockList).toHaveBeenCalledTimes(3);
+    expect(requestedOffsets()).toEqual([0, 25, 25]);
+    expect(mockList).toHaveBeenLastCalledWith({}, { limit: 25, offset: 25 });
+    expect(inboxOrder(screen)).toEqual([ROW, NEXT_ROW]);
+    expect(screen.queryByTestId('inbox-retry')).toBeNull();
+  });
+
+  it('never skips a page when Load more is pressed after a failure', async () => {
+    mockList
+      .mockResolvedValueOnce(page([summary()], true))
+      .mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'))
+      .mockResolvedValueOnce(page([summary({ public_id: 'FB-34567892' })]));
+    const screen = render(<AdminFeedbackScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-load-more'));
+    await settle();
+    expect(screen.getByTestId('inbox-retry')).toBeTruthy();
+    expect(screen.getByTestId('inbox-load-more')).toBeTruthy();
+    expect(inboxOrder(screen)).toEqual([ROW]);
+
+    fireEvent.press(screen.getByTestId('inbox-load-more'));
+
+    await settle();
+    expect(mockList).toHaveBeenCalledTimes(3);
+    expect(requestedOffsets()).toEqual([0, 25, 25]);
+    expect(inboxOrder(screen)).toEqual([ROW, NEXT_ROW]);
+  });
+
+  it('keeps the active filter when retrying', async () => {
+    mockList
+      .mockResolvedValueOnce(page([summary()]))
+      .mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'))
+      .mockResolvedValueOnce(page([summary({ status: 'planned' })], true))
+      .mockRejectedValueOnce(new ApiError(HTTP_SERVER_ERROR, 'server_error'))
+      .mockResolvedValueOnce(page([summary({ public_id: 'FB-34567892', status: 'planned' })]));
+    const screen = render(<AdminFeedbackScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-filter-planned'));
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-retry'));
+    await settle();
+    expect(mockList).toHaveBeenNthCalledWith(3, { status: 'planned' }, { limit: 25, offset: 0 });
+
+    fireEvent.press(screen.getByTestId('inbox-load-more'));
+    await settle();
+    fireEvent.press(screen.getByTestId('inbox-retry'));
+
+    await settle();
+    expect(mockList).toHaveBeenCalledTimes(5);
+    expect(requestedOffsets()).toEqual([0, 0, 0, 25, 25]);
+    expect(mockList).toHaveBeenLastCalledWith({ status: 'planned' }, { limit: 25, offset: 25 });
+    expect(inboxOrder(screen)).toEqual([ROW, NEXT_ROW]);
   });
 });
 

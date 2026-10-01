@@ -623,7 +623,7 @@
   },
   {
     "id": "journal.told-what-resonance-costs-before-it-charges",
-    "description": "A writer opens a finished page and presses Get Resonance for the first time. The press opens a disclosure before any request leaves the browser: what a pass does, that the entry's text is sent to an AI model, and who pays. With no key, the rendered copy uses the deployment-served monthly cap and never promises that the allowance is free. The writer backs out, saves their own key through Settings, reopens the same page, and now sees that the key pays and neither BotMason bucket will move. Continue sends exactly one real request through the screen and production API to the lane's provider; its deterministic credit refusal proves the BYOK header arrived, while GET /user/usage proves both BotMason buckets stayed unchanged. The dismissal is then taken and the next press goes straight through without silently switching payer. Counted requests and server state keep the journey non-vacuous: a dialog-only assertion could pass while charging too early or charging both payers. This has to be the browser lane because the claim spans rendered presses and device key storage. Per-account namespacing of the dismissal flag remains pinned in the Jest specs beside the screen.",
+    "description": "A writer opens a finished page and presses Get Resonance for the first time. The press opens a disclosure before any request leaves the browser: what a pass does, that the entry's text, up to three other pieces of the writer's own writing, short excerpts of earlier letters, and the names and units of their habits and practices are sent to an AI model, and who pays. With no key, the rendered copy uses the deployment-served monthly cap and never promises that the allowance is free. The writer backs out, saves their own key through Settings, reopens the same page, and now sees that the key pays and neither BotMason bucket will move. Continue sends exactly one real request through the screen and production API to the lane's provider; its deterministic credit refusal proves the BYOK header arrived, while GET /user/usage proves both BotMason buckets stayed unchanged. The dismissal is then taken and the next press goes straight through without silently switching payer. Counted requests and server state keep the journey non-vacuous: a dialog-only assertion could pass while charging too early or charging both payers. This has to be the browser lane because the claim spans rendered presses and device key storage. Per-account namespacing of the dismissal flag remains pinned in the Jest specs beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -668,6 +668,21 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-essay-economy.e2e.test.ts"
+  },
+  {
+    "id": "journal.generation-guardrail-refusal",
+    "description": "Resonance or essay refused by a generation guardrail shows honest copy and costs nothing (#623). Under the owner-ratified limits (decision record §1: maximum 5 LLM generations/minute/user, maximum 2 concurrent generations/user, a configurable launch ceiling of 100 charged generations/day/user), a pass or a first letter asked for while two of the writer's generations are in flight is refused 429 generation_in_progress, and one past today's ceiling 429 daily_generation_limit_reached with Retry-After to the next UTC midnight; neither charges the wallet, writes an audit row or dials a provider. The margin line and the essay modal announce the refusal's own copy (wait for the one in flight; resets at midnight UTC), never the 402 refill invitation, and the essay modal offers no retry for the daily one. Uncovered because no e2e seam can put the account into either state: the daily ceiling counts walletaudit rows and the e2e lane has no database-seeding seam (the frontend has no pg client), lowering BOTMASON_DAILY_GENERATION_CEILING on the shared e2e server would refuse every other resonance spec, and holding two generations open needs a provider double the server lane does not expose. Pinned meanwhile by backend tests/routers/test_generation_guardrails_api.py (every refusal's 429, no charge, no dial, slot release on every exit) and by Jest: ResonanceEssayModal.test.tsx, JournalEntryScreenResonanceExplainer.test.tsx, generationRefusal.test.ts and errorMessages.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["generationslot", "walletaudit", "user"]
+    },
+    "status": "uncovered",
+    "issue": 623
   },
   {
     "id": "journal.short-entry-still-offers-habit-checkoff",
@@ -1213,7 +1228,7 @@
   },
   {
     "id": "journal.corpus-survives-in-the-drawer-after-the-band-is-set-aside",
-    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering-to-import arm are pinned in the adjacent component suites because the browser starts from only one readiness state.",
+    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering-to-import arm are pinned in the adjacent component suites because the browser starts from only one readiness state. Retrying a failed 'Load older entries' in the same drawer asks again for the missing page and keeps the entries already shown (#2997); pinned in JournalDrawer.test.tsx because the e2e lane cannot force a mid-list failure.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalDrawer.tsx",
       "client": ["corpus"],
@@ -1585,7 +1600,7 @@
   },
   {
     "id": "design.navigation-owns-screen-title",
-    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data or Delete account -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the eight screens at 390x844 and 1280x720 -- six the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
+    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data, Delete account or managed-vault activation -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the nine screens at 390x844 and 1280x720 -- seven the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. Managed-vault activation used to paint a paraphrase of its title (#2995), so there the spec also counts the headings inside the screen body, which must be none. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
     "crosses": {
       "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
       "client": ["auth"],

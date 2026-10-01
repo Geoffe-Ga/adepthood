@@ -25,6 +25,12 @@ jest.mock('@/api', () => ({
 }));
 
 const { default: JournalDrawer, useJournalDrawerEntries } = require('../JournalDrawer');
+const { PAGE_SIZE } = require('../usePagedJournal') as { PAGE_SIZE: number };
+
+/** The drawer's own failure copy, shown full-panel or inline under the rows. */
+const ERROR_COPY = 'We could not load your entries.';
+/** Entry rows plus the error, retry and load-more controls, in render order. */
+const DRAWER_ORDER = /^journal-drawer-(entry-\d+|error|retry|load-more)$/;
 
 const DAY_MS = 86_400_000;
 const ago = (days: number): string => new Date(Date.now() - days * DAY_MS).toISOString();
@@ -47,6 +53,28 @@ function entry(id: number, overrides: Partial<JournalMessage> = {}): JournalMess
 
 function page(items: JournalMessage[], hasMore = false): JournalListResponse {
   return { items, total: items.length, has_more: hasMore };
+}
+
+/** Entries numbered ``first`` through ``last`` inclusive, in that order. */
+function entries(first: number, last: number): JournalMessage[] {
+  return Array.from({ length: last - first + 1 }, (_, i) => entry(first + i));
+}
+
+/** The testIDs ``entries(first, last)`` render as, in the same order. */
+function entryIds(first: number, last: number): string[] {
+  return entries(first, last).map((e) => `journal-drawer-entry-${e.id}`);
+}
+
+/** The rows and controls the drawer renders, depth-first, so order is asserted. */
+function drawerOrder(screen: {
+  queryAllByTestId: (_id: RegExp) => { props: { testID?: unknown } }[];
+}): string[] {
+  return screen.queryAllByTestId(DRAWER_ORDER).map((node) => String(node.props.testID));
+}
+
+/** The ``offset`` of every journal.list call so far, in call order. */
+function requestedOffsets(): number[] {
+  return mockList.mock.calls.map((call) => (call[0] as { offset: number }).offset);
 }
 
 // Mirrors JournalShelfScreen's formatDate exactly, so the assertions below pin
@@ -258,6 +286,40 @@ describe('JournalDrawer (presentational)', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the rows and shows the error and retry inline beneath them when a later page fails', () => {
+    const screen = renderDrawer({ items: entries(1, PAGE_SIZE), error: true, hasMore: true });
+    expect(screen.getByText(ERROR_COPY)).toBeTruthy();
+    // The error takes the load-more row's place, after every entry (#2997).
+    expect(screen.queryByTestId('journal-drawer-load-more')).toBeNull();
+    expect(drawerOrder(screen)).toEqual([
+      ...entryIds(1, PAGE_SIZE),
+      'journal-drawer-error',
+      'journal-drawer-retry',
+    ]);
+  });
+
+  it('fires onRetry, not onLoadMore, from the inline retry row', () => {
+    const { getByTestId, onRetry, onLoadMore } = renderDrawer({
+      items: entries(1, PAGE_SIZE),
+      error: true,
+      hasMore: true,
+    });
+    fireEvent.press(getByTestId('journal-drawer-retry'));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['full-panel, before any entry loads', 0],
+    ['inline, beneath the entries held', PAGE_SIZE],
+  ])('announces the failure copy %s, and the retry is a button', (_where, held) => {
+    const screen = renderDrawer({ items: entries(1, held), error: true, hasMore: true });
+    const copy = screen.getByText(ERROR_COPY);
+    expect(copy.props.accessibilityRole).toBe('alert');
+    expect(copy.props.accessibilityLiveRegion).toBe('polite');
+    expect(screen.getByTestId('journal-drawer-retry').props.accessibilityRole).toBe('button');
+  });
+
   it('does not render the Photograph row when onPhotograph is absent', () => {
     const { queryByTestId } = renderDrawer({ items: [] });
     expect(queryByTestId('journal-photograph-entry')).toBeNull();
@@ -451,6 +513,109 @@ describe('useJournalDrawerEntries (wiring)', () => {
     expect(mockList).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 20 }));
     // The first page's entries are still present -- Load older appends.
     expect(getByTestId('journal-drawer-entry-1')).toBeTruthy();
+  });
+
+  it('retries exactly the failed load-more offset and keeps the loaded rows', async () => {
+    mockList
+      .mockResolvedValueOnce(page(entries(1, PAGE_SIZE), true))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(page([entry(PAGE_SIZE + 1)], false));
+    const screen = render(<Harness />);
+    fireEvent.press(screen.getByTestId('harness-open'));
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-load-more')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-load-more'));
+    });
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-error')).toBeTruthy());
+    expect(drawerOrder(screen)).toEqual([
+      ...entryIds(1, PAGE_SIZE),
+      'journal-drawer-error',
+      'journal-drawer-retry',
+    ]);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-retry'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId(`journal-drawer-entry-${PAGE_SIZE + 1}`)).toBeTruthy(),
+    );
+    expect(mockList).toHaveBeenCalledTimes(3);
+    expect(requestedOffsets()).toEqual([0, PAGE_SIZE, PAGE_SIZE]);
+    expect(drawerOrder(screen)).toEqual(entryIds(1, PAGE_SIZE + 1));
+  });
+
+  it('retries the third page, never page 0, after two pages loaded', async () => {
+    const twoPages = 2 * PAGE_SIZE;
+    mockList
+      .mockResolvedValueOnce(page(entries(1, PAGE_SIZE), true))
+      .mockResolvedValueOnce(page(entries(PAGE_SIZE + 1, twoPages), true))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(page([entry(twoPages + 1)], false));
+    const screen = render(<Harness />);
+    fireEvent.press(screen.getByTestId('harness-open'));
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-load-more')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-load-more'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId(`journal-drawer-entry-${twoPages}`)).toBeTruthy(),
+    );
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-load-more'));
+    });
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-error')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-retry'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId(`journal-drawer-entry-${twoPages + 1}`)).toBeTruthy(),
+    );
+    expect(requestedOffsets()).toEqual([0, PAGE_SIZE, twoPages, twoPages]);
+    expect(drawerOrder(screen)).toEqual(entryIds(1, twoPages + 1));
+  });
+
+  it('retries offset 0 once, full-panel, when the first load failed', async () => {
+    mockList
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(page([entry(1)], false));
+    const screen = render(<Harness />);
+    fireEvent.press(screen.getByTestId('harness-open'));
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-error')).toBeTruthy());
+    expect(drawerOrder(screen)).toEqual(['journal-drawer-error', 'journal-drawer-retry']);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-retry'));
+    });
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-entry-1')).toBeTruthy());
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(requestedOffsets()).toEqual([0, 0]);
+  });
+
+  it('offers Load older again after a retry that reports has_more', async () => {
+    mockList
+      .mockResolvedValueOnce(page(entries(1, PAGE_SIZE), true))
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(page([entry(PAGE_SIZE + 1)], true));
+    const screen = render(<Harness />);
+    fireEvent.press(screen.getByTestId('harness-open'));
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-load-more')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-load-more'));
+    });
+    await waitFor(() => expect(screen.getByTestId('journal-drawer-error')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('journal-drawer-retry'));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId(`journal-drawer-entry-${PAGE_SIZE + 1}`)).toBeTruthy(),
+    );
+    expect(drawerOrder(screen)).toEqual([
+      ...entryIds(1, PAGE_SIZE + 1),
+      'journal-drawer-load-more',
+    ]);
   });
 
   it('hides Load older once the last page reports has_more: false', async () => {

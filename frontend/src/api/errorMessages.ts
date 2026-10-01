@@ -48,6 +48,21 @@ export const SERVICE_CREDIT_EXHAUSTED_COPY =
   "BotMason's shared AI access has run out of credit. Restoring it is ours to do and we have been alerted. Add your own API key in Settings if you would rather not wait.";
 
 /**
+ * The generation guardrails' refusals (#623). Decision record §1 ratifies
+ * "maximum 2 concurrent generations/user" and a "configurable launch ceiling of
+ * 100 charged generations/day/user"; the server answers each with its own 429
+ * detail, because the honest remedy differs: wait for the one already being
+ * written, or come back after midnight UTC. Neither quotes a number (the
+ * ceiling is operator-configurable), and both say the refusal cost nothing,
+ * which the server guarantees. Exported so the essay surface can tell the
+ * daily one apart and withhold a retry that cannot succeed before midnight.
+ */
+export const GENERATION_IN_PROGRESS_COPY =
+  'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.';
+export const DAILY_GENERATION_LIMIT_COPY =
+  "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.";
+
+/**
  * Map of backend ``detail`` strings (see ``backend/src/errors.py`` and each
  * router) to the copy we show the user. Keep keys in sync with the backend
  * and grouped by domain for easy scanning.
@@ -163,6 +178,11 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // writer was never shown. Nothing was spent.
   essay_price_unacknowledged:
     "Letters now show their price before they're written, and nothing was spent. Close this note and open it again to see the price and ask.",
+  generation_in_progress: GENERATION_IN_PROGRESS_COPY,
+  daily_generation_limit_reached: DAILY_GENERATION_LIMIT_COPY,
+  // The concurrency guard fails closed when its lease table is unreachable.
+  generation_guard_unavailable:
+    "BotMason couldn't start this just now, and nothing was charged. Give it a moment and try again.",
   llm_key_required:
     'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
   invalid_llm_api_key_format:
