@@ -21,6 +21,7 @@ import {
 
 import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
 import { fundingOutcome } from './fundingOutcome';
+import { generationRefusal } from './generationRefusal';
 import { optimisticRemove } from './optimisticRemove';
 
 import { completionSuggestions, resonance } from '@/api';
@@ -62,8 +63,10 @@ export type PassFlushResult = number | null | typeof PAGE_NOT_SAVED;
 export const UNSAVED_PAGE_MESSAGE =
   "Your latest words haven't saved yet, so resonance would read an older copy. Once they save, ask again — nothing was spent.";
 
-const completionsCheckedAfterResonanceError = (reason: string): string =>
-  `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits; you can try resonance again whenever you like.`;
+const completionsCheckedAfterResonanceError = (reason: string, retryInvited: boolean): string =>
+  retryInvited
+    ? `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits; you can try resonance again whenever you like.`
+    : `We couldn't create a reflection for this entry. ${reason} We still checked it for completed habits.`;
 const completionsUncheckedAfterResonanceError = (reason: string): string =>
   `We couldn't create a reflection or check this entry for completed habits. ${reason}`;
 
@@ -437,6 +440,12 @@ interface PassFailureContext {
 
 interface PassFailureDeps extends PassFailureContext {
   surfaceError: boolean;
+  /**
+   * Whether the line may invite another pass "whenever you like". False for a
+   * generation-guardrail refusal (#623), whose own copy says when asking again
+   * can work: once the one in flight finishes, or after midnight UTC.
+   */
+  retryInvited: boolean;
 }
 
 function reportIfCurrent(message: string, deps: PassFailureDeps): void {
@@ -465,7 +474,7 @@ async function reportPassFailure(
     deps.mergeFromGenerate(detection.items);
     reportIfCurrent(
       detection.checked
-        ? completionsCheckedAfterResonanceError(reason)
+        ? completionsCheckedAfterResonanceError(reason, deps.retryInvited)
         : completionsUncheckedAfterResonanceError(reason),
       deps,
     );
@@ -487,6 +496,7 @@ async function settlePassFailure(
     // Funding has its own immediate, actionable surface. Detection still runs
     // and merges offers, but must not announce a contradictory retry error.
     surfaceError: funding === null,
+    retryInvited: generationRefusal(error) === null,
   });
   if (funding !== null) {
     // Payment recovery is local and actionable. Do not hold it behind the

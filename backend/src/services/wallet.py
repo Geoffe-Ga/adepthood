@@ -30,15 +30,18 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, update
+from sqlalchemy import CursorResult, case, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from errors import bad_request, payment_required
+from domain.dates import seconds_until_next_utc_midnight, utc_day_start
+from errors import bad_request, payment_required, too_many_requests
 from models.user import User
 from models.wallet_audit import (
     BUCKET_MONTHLY,
     BUCKET_OFFERING,
+    GENERATION_REFUND_REASONS,
+    GENERATION_SPEND_REASONS,
     REASON_ADMIN_GRANT,
     REASON_GUMROAD_PURCHASE,
     REASON_GUMROAD_REFUND,
@@ -49,7 +52,7 @@ from models.wallet_audit import (
     REASON_SPEND_OFFERING,
     WalletAudit,
 )
-from services.usage import compute_next_reset, get_monthly_cap
+from services.usage import compute_next_reset, get_daily_generation_ceiling, get_monthly_cap
 
 logger = logging.getLogger(__name__)
 
@@ -413,20 +416,101 @@ async def require_user_fresh(session: AsyncSession, user_id: int) -> User:
     return user
 
 
-async def preflight_deduction(session: AsyncSession, user_id: int) -> SpendResult:
-    """Roll over the monthly counter and deduct one BotMason message.
+# The 429 detail a charged generation past the daily ceiling is refused with
+# (#623). Distinct from the per-minute ``rate_limit_exceeded`` because its
+# honest remedy is different: it resets at midnight UTC, not in a moment.
+DAILY_GENERATION_LIMIT_REACHED = "daily_generation_limit_reached"
 
-    Pre-flight for the metered LLM write paths — the BotMason reflection
-    ``/resonance`` endpoint in :mod:`routers.journal` and the stateless
-    single-page transcription endpoint in :mod:`routers.transcription`.
-    Raises ``400 user_not_found`` if the authenticated user disappeared
-    between auth and spend and ``402 insufficient_offerings`` when neither
-    wallet has capacity.  Returns the post-deduction :class:`SpendResult`
-    otherwise.
+
+class _DailyCeilingReachedError(Exception):
+    """Raised inside the spend savepoint so leaving it discards the staged spend."""
+
+
+async def net_charged_generations_since(
+    session: AsyncSession, user_id: int, since: datetime
+) -> int:
+    """Count ``user_id``'s generation spends since ``since``, net of generation refunds.
+
+    One aggregate over ``walletaudit``: each reason in
+    :data:`GENERATION_SPEND_REASONS` adds one, each in
+    :data:`GENERATION_REFUND_REASONS` subtracts one, and every other reason
+    (pack purchases and refunds, grants, resets) is ignored. A rolled-back
+    transcription leaves no row, so it is never counted.
     """
-    await reset_monthly_usage_if_due(session, user_id, datetime.now(UTC))
+    signed = case(
+        (col(WalletAudit.reason).in_(GENERATION_SPEND_REASONS), 1),
+        (col(WalletAudit.reason).in_(GENERATION_REFUND_REASONS), -1),
+        else_=0,
+    )
+    result = await session.execute(
+        select(func.coalesce(func.sum(signed), 0)).where(
+            col(WalletAudit.user_id) == user_id,
+            col(WalletAudit.created_at) >= since,
+        )
+    )
+    return int(result.scalar_one())
 
-    spent = await spend_one_message(session, user_id, get_monthly_cap())
+
+async def _refuse_past_daily_ceiling(session: AsyncSession, user_id: int, now: datetime) -> None:
+    """Raise when the spend just staged takes today's net count past the ceiling.
+
+    Runs *after* the spend's row-locking ``UPDATE``, so a concurrent request
+    for the same user waits on that lock and counts this one once it commits:
+    two requests at N-1 admit exactly one. The query autoflushes the staged
+    spend row, so the count includes the generation being decided.
+    """
+    count = await net_charged_generations_since(session, user_id, utc_day_start(now))
+    if count > get_daily_generation_ceiling():
+        raise _DailyCeilingReachedError
+
+
+async def _spend_within_daily_ceiling(
+    session: AsyncSession, user_id: int, now: datetime
+) -> SpendResult | None:
+    """Stage one spend and keep it only while today's count is within the ceiling.
+
+    The spend and the count share one savepoint, so a refusal discards the
+    staged ``UPDATE`` and its audit row before raising ``429
+    daily_generation_limit_reached``. ``None`` means both wallets were empty.
+    """
+    try:
+        async with session.begin_nested():
+            spent = await spend_one_message(session, user_id, get_monthly_cap())
+            if spent is not None:
+                await _refuse_past_daily_ceiling(session, user_id, now)
+    except _DailyCeilingReachedError:
+        raise too_many_requests(
+            DAILY_GENERATION_LIMIT_REACHED, seconds_until_next_utc_midnight(now)
+        ) from None
+    return spent
+
+
+async def preflight_deduction(
+    session: AsyncSession, user_id: int, *, now: datetime | None = None
+) -> SpendResult:
+    """Roll over the monthly counter and deduct one wallet unit for a charged generation.
+
+    The single chokepoint for every charged generation: the resonance pass and
+    the first essay letter in :mod:`routers.journal`, and the single-page
+    transcription in :mod:`routers.transcription`. Raises ``400
+    user_not_found`` if the authenticated user disappeared between auth and
+    spend, ``402 insufficient_offerings`` when neither wallet has capacity,
+    and ``429 daily_generation_limit_reached`` (``Retry-After`` = seconds to
+    the next 00:00 UTC) when the deduction would take the user's net charged
+    generations today past :func:`~services.usage.get_daily_generation_ceiling`
+    (decision record §1: "configurable launch ceiling of 100 charged
+    generations/day/user"). Returns the post-deduction :class:`SpendResult`
+    otherwise.
+
+    The spend and the count run inside one savepoint, so a refusal discards
+    the staged ``UPDATE`` and its audit row here, whatever the caller's own
+    transaction policy is: no refusal ever charges. ``now`` is a test seam
+    for the UTC-day window; production passes nothing.
+    """
+    moment = now or datetime.now(UTC)
+    await reset_monthly_usage_if_due(session, user_id, moment)
+
+    spent = await _spend_within_daily_ceiling(session, user_id, moment)
     if spent is not None:
         return spent
 

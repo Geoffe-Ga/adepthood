@@ -97,6 +97,24 @@ REASON_REFUND_FAILED_ESSAY = "refund_failed_essay"
 # metered; only the charge comes back.
 REASON_REFUND_NO_ESSAY = "refund_no_essay"
 
+# The reasons the daily generation ceiling (#623) counts. The owner ratified a
+# "configurable launch ceiling of 100 charged generations/day/user"
+# (prompts/claude-comms/2026-09-05-resonance-economy-decision.md §1), so the
+# count is every generation spend net of the refunds that hand a generation's
+# unit back. Pack purchases and their Gumroad refunds, grants and monthly
+# resets move the wallet without being a generation, so they are in neither
+# set: a clawed-back pack must not hand the writer extra generations, and a
+# grant must not consume any.
+GENERATION_SPEND_REASONS: frozenset[str] = frozenset({REASON_SPEND_MONTHLY, REASON_SPEND_OFFERING})
+GENERATION_REFUND_REASONS: frozenset[str] = frozenset(
+    {
+        REASON_REFUND_NO_NOTES,
+        REASON_REFUND_FAILED_RESONANCE,
+        REASON_REFUND_FAILED_ESSAY,
+        REASON_REFUND_NO_ESSAY,
+    }
+)
+
 # Bucket tokens — which side of the wallet was changed.  ``monthly`` is
 # the free per-calendar-month allocation; ``offering`` is the durable
 # paid / gifted credit balance.  ``balance_usd`` is reserved for a

@@ -174,6 +174,11 @@ POLICY: Mapping[str, TablePolicy] = {
         owned_by=OwnedBy("report_id", through="feedbackreport"),
         clear_columns=("actor_admin_id",),
     ),
+    "generationslot": _erase(
+        "user_id",
+        "Transient leases on the account's in-flight generations (#623). They "
+        "name the account and nothing else, and are meaningless once it is gone.",
+    ),
     "goal": TablePolicy(
         disposition=Disposition.ERASE,
         rationale="Goals belong to a habit, and every habit belongs to one account.",

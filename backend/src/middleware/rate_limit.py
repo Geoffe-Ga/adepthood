@@ -63,7 +63,11 @@ Residuals, recorded here rather than left to be rediscovered:
 * Open. All limiter state -- this floor's ``MemoryStorage``, the ceiling and
   slowapi's declared route limits alike -- is per worker process, so the
   effective per-deployment budget is ``WEB_CONCURRENCY`` x each limit
-  (``DEPLOYMENT.md``). The fix is a shared store, and it is not built here:
+  (``DEPLOYMENT.md``). The per-user generation bucket of #623 (5/minute on
+  resonance and essay, ``services/generation_guardrails.py``) shares this
+  storage and is per worker too; its two siblings, the 2-concurrent slot and
+  the daily ceiling, are database-backed and cross-worker, which bounds what a
+  multi-worker deployment can spend. The fix is a shared store, and it is not built here:
   whoever adds one must make an asserted decision for an unreachable store --
   fail closed, or fall back to this in-memory state -- and must never fail
   open, which would loosen every limit exactly when the store is down.

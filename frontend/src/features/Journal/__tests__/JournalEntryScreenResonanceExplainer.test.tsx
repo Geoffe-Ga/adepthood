@@ -816,3 +816,37 @@ describe('JournalEntryScreen — the letter offer names who pays', () => {
     expect(mockEssay).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The generation guardrails (#623) refuse a pass with a 429 before anything is
+ * charged. The margin says why, in the line a screen reader already announces,
+ * and never opens the 402 refill invitation: no refill would help. Copy is
+ * hand-written so a renamed constant cannot make the test agree with itself.
+ */
+describe('JournalEntryScreen — a guardrail refusal is honest and costs nothing', () => {
+  it.each([
+    [
+      'generation_in_progress',
+      'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.',
+    ],
+    [
+      'daily_generation_limit_reached',
+      "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.",
+    ],
+  ])('renders a 429 %s in the announced margin line, not the refill', async (detail, copy) => {
+    mockGenerate.mockRejectedValueOnce(apiError(429, detail));
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+
+    const line = await view.findByTestId('journal-resonance-error');
+    // The refusal's own copy says when asking again can work, so the margin
+    // does not also invite another pass "whenever you like".
+    expect(line).toHaveTextContent(
+      `We couldn't create a reflection for this entry. ${copy} We still checked it for completed habits.`,
+    );
+    expect(line).not.toHaveTextContent(/whenever you like/u);
+    expect(line.props.accessibilityLiveRegion).toBe('polite');
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+  });
+});
