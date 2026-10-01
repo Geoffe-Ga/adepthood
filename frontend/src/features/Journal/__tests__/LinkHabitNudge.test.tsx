@@ -11,6 +11,8 @@ import {
   LINK_HABIT_NUDGE_SETTINGS,
   LINK_HABIT_NUDGE_SETTINGS_A11Y,
 } from '../saveAsHabitCopy';
+import { toWritingSessionResult } from '../writingSession';
+import WritingSessionBanner from '../WritingSessionBanner';
 
 import { touchTarget } from '@/design/tokens';
 import {
@@ -19,6 +21,7 @@ import {
 } from '@/storage/linkHabitNudgeStorage';
 import { loadWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 
 const mockNavigate = jest.fn();
 const mockUseRootNavigation = jest.fn(() => ({ navigate: mockNavigate }));
@@ -42,6 +45,9 @@ jest.mock('@/storage/linkHabitNudgeStorage', () => ({
 jest.mock('@/storage/writingOfferStorage', () => ({
   loadWritingOfferAnswered: jest.fn(() => Promise.resolve(true)),
 }));
+
+jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
+const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
 const loadDeclined = loadLinkHabitNudgeDeclined as jest.Mock;
 const saveDeclined = saveLinkHabitNudgeDeclined as jest.Mock;
@@ -200,5 +206,52 @@ describe('LinkHabitNudge — its two actions', () => {
 
     await waitFor(() => expect(loadDeclined).toHaveBeenCalledTimes(2));
     expect(second.queryByTestId('link-habit-nudge')).toBeNull();
+  });
+});
+
+describe("LinkHabitNudge — where focus goes after Don't show again", () => {
+  const FINISHED = toWritingSessionResult({ plannedMinutes: 20, elapsedMs: 20 * 60 * 1000 });
+
+  it("hands focus to the note's Close rather than dropping it with the note", async () => {
+    const { findByTestId, getByText, getByTestId } = render(
+      <WritingSessionBanner result={FINISHED} onDismiss={jest.fn()}>
+        <LinkHabitNudge />
+      </WritingSessionBanner>,
+    );
+    await findByTestId('link-habit-nudge');
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+
+    fireEvent.press(getByText(LINK_HABIT_NUDGE_DECLINE));
+
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    const [target] = mockMoveFocus.mock.calls[0] ?? [];
+    expect(target).not.toBeNull();
+    expect((target as unknown as { props: { testID?: string } }).props.testID).toBe(
+      'writing-session-banner-dismiss',
+    );
+    expect(getByTestId('writing-session-banner-dismiss')).toBeTruthy();
+  });
+
+  it('moves no focus when Go to Settings is pressed, which leaves the page', async () => {
+    const { findByTestId, getByText } = render(
+      <WritingSessionBanner result={FINISHED} onDismiss={jest.fn()}>
+        <LinkHabitNudge />
+      </WritingSessionBanner>,
+    );
+    await findByTestId('link-habit-nudge');
+
+    fireEvent.press(getByText(LINK_HABIT_NUDGE_SETTINGS));
+
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+  });
+
+  it('still hides outside a banner, where there is nothing to hand focus to', async () => {
+    const { findByTestId, getByText, queryByTestId } = render(<LinkHabitNudge />);
+    await findByTestId('link-habit-nudge');
+
+    fireEvent.press(getByText(LINK_HABIT_NUDGE_DECLINE));
+
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+    expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });

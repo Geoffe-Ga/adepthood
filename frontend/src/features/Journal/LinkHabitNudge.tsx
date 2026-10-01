@@ -39,6 +39,7 @@ import {
   LINK_HABIT_NUDGE_SETTINGS,
   LINK_HABIT_NUDGE_SETTINGS_A11Y,
 } from './saveAsHabitCopy';
+import { useFocusBannerClose } from './WritingSessionBanner';
 
 import { SPACING, colors, editorialType } from '@/design/tokens';
 import { useRootNavigation } from '@/navigation/hooks';
@@ -87,10 +88,14 @@ function LinkHabitNudge({
   const unlinked = useWritingHabitLinkStore(selectKnownUnlinked);
   const open = useNudgeGate(waitForAnsweredOffer);
   const [dismissed, setDismissed] = useState(false);
+  // The decline unmounts the button the writer is on, so focus is handed to
+  // the note's Close (still mounted) rather than dropped with it.
+  const focusClose = useFocusBannerClose();
   const dismiss = useCallback(() => {
     setDismissed(true);
     void saveLinkHabitNudgeDeclined();
-  }, []);
+    focusClose();
+  }, [focusClose]);
 
   if (open !== true || !unlinked || dismissed) return null;
   return <LinkHabitNudgeNote onDismiss={dismiss} />;
