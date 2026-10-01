@@ -33,6 +33,12 @@ import VoiceDraftsShelfScreen from '../VoiceDraftsShelfScreen';
 
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
+/** Letters on the shelf, top to bottom, so an append can be told from a prepend. */
+const SHELF_ROW = /^voice-draft-\d+$/;
+function shelfOrder(screen: ReturnType<typeof render>): string[] {
+  return screen.getAllByTestId(SHELF_ROW).map((row) => String(row.props.testID));
+}
+
 interface Draft {
   marginalia_id: number;
   journal_entry_id: number;
@@ -137,9 +143,86 @@ describe('the Voice Drafts shelf', () => {
     await waitFor(() => expect(screen.getByTestId('voice-draft-9')).toBeTruthy());
     expect(mockList).toHaveBeenLastCalledWith({ offset: 1 });
     // The first page stays on the shelf; a page load is an append, not a swap.
-    expect(screen.getByTestId('voice-draft-4')).toBeTruthy();
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9']);
     // Nothing left to load, so the row retires rather than asking forever.
     await waitFor(() => expect(screen.queryByTestId('voice-drafts-load-more')).toBeNull());
+  });
+
+  it('keeps the letters already on the shelf when an older page fails and is retried', async () => {
+    mockList
+      .mockResolvedValueOnce(page([draft()], true))
+      .mockResolvedValueOnce(page([draft({ marginalia_id: 9, anchor_text: 'later still' })], true))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(page([draft({ marginalia_id: 11, anchor_text: 'oldest' })]));
+
+    const screen = render(<VoiceDraftsShelfScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-load-more')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('voice-drafts-load-more'));
+    await waitFor(() => expect(screen.getByTestId('voice-draft-9')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-load-more')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('voice-drafts-load-more'));
+
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-error')).toBeTruthy());
+    // The failure sits under the rows as an inline note, not a full-panel error.
+    expect(screen.getByTestId('voice-draft-4')).toBeTruthy();
+    expect(screen.getByTestId('voice-draft-9')).toBeTruthy();
+    expect(screen.queryByTestId('voice-drafts-load-more')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('voice-drafts-retry'));
+
+    await waitFor(() => expect(screen.getByTestId('voice-draft-11')).toBeTruthy());
+    // The retry asks again for the page that failed, not the first page.
+    expect(mockList).toHaveBeenLastCalledWith({ offset: 2 });
+    expect(mockList).toHaveBeenCalledTimes(4);
+    // The retried page lands under the letters already shown, not above them.
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9', 'voice-draft-11']);
+    expect(screen.queryByTestId('voice-drafts-error')).toBeNull();
+  });
+
+  it('asks for the next unread page each time a later failure is retried', async () => {
+    mockList
+      .mockResolvedValueOnce(page([draft()], true))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(page([draft({ marginalia_id: 9, anchor_text: 'later still' })], true))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(page([draft({ marginalia_id: 11, anchor_text: 'oldest' })]));
+
+    const screen = render(<VoiceDraftsShelfScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-load-more')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('voice-drafts-load-more'));
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-error')).toBeTruthy());
+    // One letter on the shelf: the retry resumes even from a single row.
+    fireEvent.press(screen.getByTestId('voice-drafts-retry'));
+    expect(mockList).toHaveBeenLastCalledWith({ offset: 1 });
+    await waitFor(() => expect(screen.getByTestId('voice-draft-9')).toBeTruthy());
+
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-load-more')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('voice-drafts-load-more'));
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-error')).toBeTruthy());
+    // The earlier success moved the shelf on; the next retry does not reuse its offset.
+    fireEvent.press(screen.getByTestId('voice-drafts-retry'));
+    expect(mockList).toHaveBeenLastCalledWith({ offset: 2 });
+    await waitFor(() => expect(screen.getByTestId('voice-draft-11')).toBeTruthy());
+
+    expect(shelfOrder(screen)).toEqual(['voice-draft-4', 'voice-draft-9', 'voice-draft-11']);
+    expect(screen.queryByTestId('voice-drafts-error')).toBeNull();
+    expect(mockList).toHaveBeenCalledTimes(5);
+  });
+
+  it('asks for the first page again when the first read failed', async () => {
+    mockList.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(page([draft()]));
+
+    const screen = render(<VoiceDraftsShelfScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('voice-drafts-error')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('voice-drafts-retry'));
+
+    await waitFor(() => expect(screen.getByTestId('voice-draft-4')).toBeTruthy());
+    expect(mockList).toHaveBeenNthCalledWith(2, { offset: 0 });
+    expect(mockList).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('voice-drafts-error')).toBeNull();
   });
 
   it('opens the letter itself, already in hand, without asking the server again', async () => {
