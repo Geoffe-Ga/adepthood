@@ -176,15 +176,17 @@ def period_current_streak(day_totals: dict[date, float], today: date, cadence: C
     return streak
 
 
+def _complete_period_starts(done: set[date], cadence: Cadence) -> list[date]:
+    """The starts of every complete period, ascending."""
+    starts = {period_start(d, cadence.unit) for d in done}
+    return sorted(start for start in starts if _is_complete(done, start, cadence))
+
+
 def period_longest_streak(day_totals: dict[date, float], cadence: Cadence) -> int:
     """The longest run of calendar-adjacent complete periods, ever."""
-    done = _done_days(day_totals, cadence)
     longest = run = 0
     previous: date | None = None
-    for start in sorted({period_start(d, cadence.unit) for d in done}):
-        if not _is_complete(done, start, cadence):
-            run, previous = 0, None
-            continue
+    for start in _complete_period_starts(_done_days(day_totals, cadence), cadence):
         adjacent = previous is not None and _previous_period_start(start, cadence.unit) == previous
         run = run + 1 if adjacent else 1
         longest = max(longest, run)

@@ -76,12 +76,16 @@ def _url(cfg: Config) -> str:
 def test_the_generation_key_migration_chains_from_the_lease_head(
     migration_config: Config,
 ) -> None:
-    """One linear chain: this revision sits directly on the head it was written against."""
+    """One linear chain: this revision sits directly on the head it was written against.
+
+    Later migrations chain on top of this one, so the chain is asserted to be
+    single-headed rather than to end here.
+    """
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_REVISION]
+    assert len(script.get_heads()) == 1
 
 
 def test_upgrade_adds_two_nullable_columns_and_keeps_legacy_rows_null(

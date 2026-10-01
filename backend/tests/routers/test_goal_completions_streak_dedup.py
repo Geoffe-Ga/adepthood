@@ -21,7 +21,7 @@ from domain.dates import today_in_tz
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
-from services.streaks import PendingCompletion, StreakScope, SubtractiveContext
+from services.streaks import PendingCompletion, StreakScope
 
 
 def _noon(day: date) -> datetime:
@@ -88,23 +88,17 @@ def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[
 
     Returns ``(consecutive_calls, before_after_calls)``. The persist path uses
     ``compute_streak_before_and_after``; the held/idempotent paths use
-    ``compute_consecutive_streak``. Spying only one would let a double-call on
-    the other slip through.
+    ``compute_goal_streak`` (the scoped form of ``compute_consecutive_streak``).
+    Spying only one would let a double-call on the other slip through.
     """
     consecutive = [0]
     before_after = [0]
-    real_consecutive = checkin_module.compute_consecutive_streak
+    real_consecutive = checkin_module.compute_goal_streak
     real_before_after = checkin_module.compute_streak_before_and_after
 
-    async def _count_consecutive(
-        session: AsyncSession,
-        goal_id: int,
-        user_id: int,
-        user_timezone: str = "UTC",
-        subtractive: SubtractiveContext | None = None,
-    ) -> int:
+    async def _count_consecutive(session: AsyncSession, scope: StreakScope) -> int:
         consecutive[0] += 1
-        return await real_consecutive(session, goal_id, user_id, user_timezone, subtractive)
+        return await real_consecutive(session, scope)
 
     async def _count_before_after(
         session: AsyncSession, scope: StreakScope, pending: PendingCompletion
@@ -112,7 +106,7 @@ def _spy_streak_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[
         before_after[0] += 1
         return await real_before_after(session, scope, pending)
 
-    monkeypatch.setattr(checkin_module, "compute_consecutive_streak", _count_consecutive)
+    monkeypatch.setattr(checkin_module, "compute_goal_streak", _count_consecutive)
     monkeypatch.setattr(checkin_module, "compute_streak_before_and_after", _count_before_after)
     return consecutive, before_after
 
