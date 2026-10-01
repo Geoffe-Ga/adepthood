@@ -81,6 +81,46 @@ describe('useScrollIntoViewOnce', () => {
     expect(scrollTo).toHaveBeenCalledWith({ y: TARGET_Y, animated: false });
   });
 
+  it.each([
+    [true, false],
+    [false, true],
+  ])(
+    'waits for the reduce-motion setting (%p) when the layout lands first, then scrolls once',
+    async (reduce, animated) => {
+      let answer: (_reduce: boolean) => void = () => undefined;
+      jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const view = render(<Harness active />);
+
+      fireEvent(view.getByTestId('target'), 'layout', layoutAt(TARGET_Y));
+      expect(scrollTo).not.toHaveBeenCalled();
+
+      await act(async () => {
+        answer(reduce);
+      });
+
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(scrollTo).toHaveBeenCalledWith({ y: TARGET_Y, animated });
+    },
+  );
+
+  it('still scrolls, without animation, when the setting cannot be read', async () => {
+    jest
+      .spyOn(AccessibilityInfo, 'isReduceMotionEnabled')
+      .mockRejectedValue(new Error('unavailable'));
+    const view = render(<Harness active />);
+
+    fireEvent(view.getByTestId('target'), 'layout', layoutAt(TARGET_Y));
+    await flush();
+
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledWith({ y: TARGET_Y, animated: false });
+  });
+
   it('scrolls to an already laid-out target when it turns active later, and again after re-arming', async () => {
     const view = render(<Harness active={false} />);
     await flush();

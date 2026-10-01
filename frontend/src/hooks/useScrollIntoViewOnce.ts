@@ -9,12 +9,13 @@
  * off re-arms it. A target laid out before ``active`` turned on is scrolled to
  * the moment it does, so an already-mounted screen opened on it still moves.
  *
- * The scroll glides unless the OS asks for reduced motion, when it jumps.
+ * The scroll glides unless the OS asks for reduced motion, when it jumps; it
+ * waits for that setting to be known, so a layout that lands first never glides.
  */
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import type { LayoutChangeEvent, ScrollView } from 'react-native';
 
-import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useReducedMotionSetting } from '@/hooks/useReducedMotion';
 
 export interface ScrollIntoViewOnce {
   scrollRef: RefObject<ScrollView | null>;
@@ -23,12 +24,14 @@ export interface ScrollIntoViewOnce {
 
 export function useScrollIntoViewOnce(active: boolean): ScrollIntoViewOnce {
   const scrollRef = useRef<ScrollView | null>(null);
-  const reducedMotion = useReducedMotion();
+  // ``null`` until the OS answers: the scroll waits for it rather than gliding
+  // for a writer who asked for none because the layout happened to land first.
+  const reducedMotion = useReducedMotionSetting();
   const targetY = useRef<number | null>(null);
   const scrolled = useRef(false);
 
   const scrollIfReady = useCallback(() => {
-    if (!active || scrolled.current || targetY.current === null) return;
+    if (!active || scrolled.current || targetY.current === null || reducedMotion === null) return;
     scrolled.current = true;
     scrollRef.current?.scrollTo({ y: targetY.current, animated: !reducedMotion });
   }, [active, reducedMotion]);

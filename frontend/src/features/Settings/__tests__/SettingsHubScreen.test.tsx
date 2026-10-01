@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, afterEach, beforeEach, jest */
-import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { AccessibilityInfo, ScrollView } from 'react-native';
 
@@ -654,7 +654,7 @@ describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => 
     scrollTo.mockRestore();
   });
 
-  test('opens the writing-habit picker in place and brings the Journal group into view', () => {
+  test('opens the writing-habit picker in place and brings the Journal group into view', async () => {
     const { getByTestId } = render(<SettingsHubScreen route={FOCUSED_ROUTE} />);
 
     const journal = getByTestId('settings-group-journal');
@@ -663,15 +663,20 @@ describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => 
 
     fireEvent(getByTestId('settings-journal-anchor'), 'layout', layoutAt(JOURNAL_Y));
 
+    // Once the reduce-motion setting has been read, the scroll happens, once.
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled());
     expect(scrollTo).toHaveBeenCalledTimes(1);
     expect(scrollTo.mock.calls[0]?.[0]).toMatchObject({ y: JOURNAL_Y });
   });
 
-  test('without the focus, the picker starts closed and nothing scrolls', () => {
+  test('without the focus, the picker starts closed and nothing scrolls', async () => {
     const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
 
     fireEvent(getByTestId('settings-journal-anchor'), 'layout', layoutAt(JOURNAL_Y));
 
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(queryByTestId('writing-habit-picker')).toBeNull();
     expect(scrollTo).not.toHaveBeenCalled();
   });
