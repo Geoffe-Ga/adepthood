@@ -5,10 +5,14 @@ import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SEND_FEEDBACK_COMPACT_LABEL, SEND_FEEDBACK_LABEL } from './feedbackCopy';
 import { FEEDBACK_TEST_IDS } from './feedbackTestIds';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
 import { accent, breakpoints, SPACING, touchTarget } from '@/design/tokens';
 
 const ICON_SIZE = 18;
+
+/** Test hook for the header button's icon wrapper, which assistive tech skips. */
+export const SEND_FEEDBACK_ICON_TEST_ID = 'send-feedback-icon';
 
 interface SendFeedbackButtonProps {
   /** Called with the button's own ref, so the composer can hand focus back to it. */
@@ -39,12 +43,8 @@ export function SendFeedbackButton({ onPress }: SendFeedbackButtonProps): React.
       testID={FEEDBACK_TEST_IDS.headerButton}
       style={styles.button}
       icon={
-        <View
-          style={styles.icon}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <MessageSquare color={accent.primary} size={ICON_SIZE} accessible={false} />
+        <View style={styles.icon} {...decorativeHidden()} testID={SEND_FEEDBACK_ICON_TEST_ID}>
+          <MessageSquare color={accent.primary} size={ICON_SIZE} />
         </View>
       }
     />

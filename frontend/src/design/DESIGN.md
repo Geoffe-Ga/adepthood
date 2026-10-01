@@ -109,6 +109,15 @@ Eight rules, each one a reviewer can answer yes or no:
   with the word kept as its `accessibilityLabel` and a hit area of at least
   `touchTarget.minimum`, never a text link; words are for actions that need
   them (Finish, Get Resonance, Begin a page).
+- **Decorative glyphs are hidden by one spelling.** A glyph the control around
+  it already names -- an icon, an emoji, a check box, pager dots -- spreads
+  `decorativeHidden()` from `components/a11yHidden.ts`, on the glyph or on its
+  wrapper, and so does UI on its way out of view (`decorativeHidden(!visible)`).
+  It is `aria-hidden` on the web and the iOS and Android props on native; never
+  hand-write `accessibilityElementsHidden`, `importantForAccessibility` (bar
+  the un-grouping `"no"`) or `aria-hidden`, and never pass `accessible` to a
+  lucide or react-native-svg element, whose web build forwards it to the DOM
+  (#3009, #2829). `__tests__/wiring/decorativeHiddenGuard.test.ts` holds this.
 - **Eyebrows are eyebrows.** A screen spends its one small-caps (upper-cased
   caption) role on its screen or section heading — `ScreenHeader`'s `eyebrow`
   (`type(width).caption` in `accent.primary`) or one list spine such as the

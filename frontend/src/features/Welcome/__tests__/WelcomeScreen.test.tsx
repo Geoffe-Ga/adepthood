@@ -15,7 +15,7 @@ jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
 }));
 
 import { WELCOME_PANELS, WELCOME_PILLARS } from '../welcomeContent';
-import { WelcomeScreen } from '../WelcomeScreen';
+import { WELCOME_PAGER_DOTS_TEST_ID, WelcomeScreen } from '../WelcomeScreen';
 
 beforeEach(() => {
   mockReduced = false;
@@ -28,6 +28,15 @@ const setup = () => {
 };
 
 describe('WelcomeScreen', () => {
+  it('hides the decorative pager dots from every screen reader, the web included (#3009)', () => {
+    const { getByTestId, queryByTestId } = setup();
+    const dots = getByTestId(WELCOME_PAGER_DOTS_TEST_ID, { includeHiddenElements: true });
+    expect(dots.props['aria-hidden']).toBe(true);
+    expect(dots.props.accessibilityElementsHidden).toBe(true);
+    expect(dots.props.importantForAccessibility).toBe('no-hide-descendants');
+    expect(queryByTestId(WELCOME_PAGER_DOTS_TEST_ID)).toBeNull();
+  });
+
   it('renders every editorial panel with the five pillars', () => {
     const { getByTestId, getByText } = setup();
     expect(getByTestId('welcome-screen')).toBeTruthy();

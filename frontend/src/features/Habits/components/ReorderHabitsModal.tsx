@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
+import { decorativeHidden } from '../../../components/a11yHidden';
 import { Button } from '../../../components/Button';
 import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { useTheme } from '../../../design/ThemeContext';
@@ -91,7 +92,7 @@ const ReorderHabitItem = ({
   const content = (
     <View style={styles.reorderItemContent}>
       <View style={styles.reorderItemIdentity}>
-        <Text style={styles.reorderDragHandle} accessibilityElementsHidden>
+        <Text style={styles.reorderDragHandle} {...decorativeHidden()}>
           ⠿
         </Text>
         <Text style={styles.reorderPosition}>{displayedPosition}</Text>

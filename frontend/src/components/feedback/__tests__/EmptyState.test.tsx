@@ -15,6 +15,8 @@ describe('EmptyState', () => {
     );
     // The glyph is decorative and hidden from accessibility.
     expect(getByText('🧘', { includeHiddenElements: true })).toBeTruthy();
+    // On the web too, where only aria-hidden reaches the DOM (#3009).
+    expect(getByText('🧘', { includeHiddenElements: true }).props['aria-hidden']).toBe(true);
     expect(getByText('Add your first one.')).toBeTruthy();
     expect(getByRole('header').props.children).toBe('Nothing yet');
   });

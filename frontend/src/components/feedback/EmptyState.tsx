@@ -20,6 +20,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { ink, rhythm, SPACING, surface, type } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 
@@ -65,7 +66,7 @@ export function EmptyState({
       style={[styles.container, inline && styles.inline, style, entranceStyle]}
       testID={testID}
     >
-      <Text style={styles.glyph} accessibilityElementsHidden importantForAccessibility="no">
+      <Text style={styles.glyph} {...decorativeHidden()}>
         {glyph}
       </Text>
       <Text style={[t.title, styles.title]} accessibilityRole="header">

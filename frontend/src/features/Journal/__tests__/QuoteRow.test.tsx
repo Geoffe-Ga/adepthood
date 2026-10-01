@@ -77,9 +77,15 @@ describe('QuoteRow', () => {
     // label and state carry the meaning, the glyph only draws it.
     expect(getByTestId('row-check', { includeHiddenElements: true })).toBeTruthy();
     expect(queryByTestId('row-check')).toBeNull();
+    // react-native-web reads only aria-hidden, so the web reader skips it too (#3009).
+    expect(getByTestId('row-check', { includeHiddenElements: true }).props['aria-hidden']).toBe(
+      true,
+    );
     const glyph = UNSAFE_getByType(Check);
     expect(glyph.props.color).toBe(accent.primary);
-    expect(glyph.props.accessible).toBe(false);
+    // The wrapper hides it; the glyph itself carries no native-only prop, which
+    // react-native-svg's web build would forward to the DOM (#2829).
+    expect(glyph.props).not.toHaveProperty('accessible');
   });
 
   it('draws no check glyph on a quote that has not been folded in', () => {
@@ -132,7 +138,11 @@ describe('QuoteRow as a checkbox (#2885)', () => {
     expect(ticked.getByTestId('row-box', hidden).props.importantForAccessibility).toBe(
       'no-hide-descendants',
     );
+    expect(ticked.getByTestId('row-box', hidden).props['aria-hidden']).toBe(true);
+    // Hiding the box loses nothing: the row keeps its checkbox name and state (#3009).
+    expect(ticked.getByRole('checkbox', { name: 'The quote', checked: true })).toBeTruthy();
     expect(ticked.UNSAFE_getAllByType(Check)).toHaveLength(1);
+    expect(ticked.UNSAFE_getByType(Check).props).not.toHaveProperty('accessible');
     ticked.unmount();
     const empty = renderRow(false);
     expect(empty.getByTestId('row-box', hidden)).toBeTruthy();

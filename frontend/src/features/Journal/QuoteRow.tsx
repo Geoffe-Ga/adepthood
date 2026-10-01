@@ -29,6 +29,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { webCheckedState, webDisabledState } from '@/components/webAria';
 import {
   BORDER_RADIUS,
@@ -92,13 +93,8 @@ export interface QuoteRowProps {
 /** The check glyph a folded-in quote wears; decorative, so hidden from assistive technology. */
 function FoldedMark({ testID }: { testID: string }): React.JSX.Element {
   return (
-    <View
-      accessible={false}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      testID={testID}
-    >
-      <Check size={CHECK_GLYPH_SIZE} color={accent.primary} accessible={false} />
+    <View {...decorativeHidden()} testID={testID}>
+      <Check size={CHECK_GLYPH_SIZE} color={accent.primary} />
     </View>
   );
 }
@@ -108,12 +104,10 @@ function SelectBox({ checked, testID }: { checked: boolean; testID: string }): R
   return (
     <View
       style={[styles.box, checked && styles.boxChecked]}
-      accessible={false}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      {...decorativeHidden()}
       testID={testID}
     >
-      {checked ? <Check size={BOX_GLYPH_SIZE} color={accent.onPrimary} accessible={false} /> : null}
+      {checked ? <Check size={BOX_GLYPH_SIZE} color={accent.onPrimary} /> : null}
     </View>
   );
 }

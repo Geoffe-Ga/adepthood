@@ -66,6 +66,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WeeklyProgress from './WeeklyProgress';
 
 import type { PracticeSessionResponse } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import {
   DrawerNavSection,
   ScreenDrawer,
@@ -659,11 +660,7 @@ const EmptyStateView = ({ onBrowseCatalog }: EmptyStateViewProps): React.JSX.Ele
           style={[styles.emptyState, { paddingBottom: insets.bottom }]}
           testID="practice-empty-state"
         >
-          <Text
-            style={styles.emptyGlyph}
-            accessibilityElementsHidden
-            importantForAccessibility="no"
-          >
+          <Text style={styles.emptyGlyph} {...decorativeHidden()}>
             {EMPTY_GLYPH}
           </Text>
           <Text style={styles.emptyTitle} accessibilityRole="header">
