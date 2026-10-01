@@ -110,9 +110,13 @@ export const RESONANCE_EXPLAINER_SCRIM_A11Y = 'Dismiss the resonance note';
  * written, it is kept, and opening it again costs nothing.
  */
 
-/** What asking does, and the fact that the entry leaves the device to do it. */
+/**
+ * What asking does, and everything that leaves the device to do it: the
+ * entry, the note, and the short excerpts of earlier letters the backend sends
+ * as anti-repetition context (`_prior_letter_essays`).
+ */
 export const ESSAY_ASK_WHAT =
-  'A letter expands this margin note into a longer reflection. To write it, the text of this entry is sent to an AI model.';
+  'A letter expands this margin note into a longer reflection. To write it, the text of this entry, this margin note, and short excerpts of your earlier letters are sent to an AI model.';
 
 /** That either answer is fine, and that a written letter is never charged again. */
 export const ESSAY_ASK_CHOICE =

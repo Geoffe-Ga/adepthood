@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { essayExplainerCost, resonanceExplainerCost } from '../resonanceExplainerCopy';
+import {
+  ESSAY_ASK_WHAT,
+  essayExplainerCost,
+  resonanceExplainerCost,
+} from '../resonanceExplainerCopy';
 
 /**
  * The price line for both charged journal depths (#623).
@@ -78,5 +82,16 @@ describe('essayExplainerCost prices a letter from the same wallet', () => {
     ],
   ])('for %s', (_case, args, expected) => {
     expect(essayExplainerCost(...args)).toBe(expected);
+  });
+});
+
+describe('ESSAY_ASK_WHAT names everything a letter sends to the model', () => {
+  // The letter's prompt carries the entry body, the margin note itself, and
+  // truncated excerpts of the writer's earlier letters as anti-repetition
+  // context (`_prior_letter_essays`). The offer must not undersell that.
+  it('discloses the entry, the margin note, and excerpts of earlier letters', () => {
+    expect(ESSAY_ASK_WHAT).toBe(
+      'A letter expands this margin note into a longer reflection. To write it, the text of this entry, this margin note, and short excerpts of your earlier letters are sent to an AI model.',
+    );
   });
 });
