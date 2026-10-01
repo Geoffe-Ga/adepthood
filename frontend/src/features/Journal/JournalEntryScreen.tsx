@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { BookOpen, Camera, KeyRound, RefreshCw, X } from 'lucide-react-native';
+import { BookOpen, Camera, KeyRound, Pencil, RefreshCw, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Animated,
@@ -33,10 +33,7 @@ import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
 import type { FundingOutcome } from './fundingOutcome';
-import GetResonanceButton, {
-  shouldShowResonance,
-  type ResonanceButtonLayout,
-} from './GetResonanceButton';
+import GetResonanceButton, { shouldShowResonance } from './GetResonanceButton';
 import HeldWordsLeaveDialog from './HeldWordsLeaveDialog';
 import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
@@ -2490,6 +2487,42 @@ function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.E
  * icon footprint; the phrase is its accessible name. Focus comes back to it when
  * the sources panel closes (#2883), through ``toggle.ref``.
  */
+/**
+ * The door back into writing a finished page, in the exit row while reading
+ * (#3004): the same slot the camera holds while writing, directly left of the
+ * X. Glyph over word (DESIGN.md); the phrase is its accessible name. It asks
+ * through the edit gate's confirm, never straight into edit mode. Disabled, not
+ * removed, while a quote is being selected, so the row keeps its width.
+ */
+function EditEntryButton({
+  onPress,
+  disabled,
+}: {
+  onPress: () => void;
+  disabled: boolean;
+}): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.entryIconButton}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Edit this entry"
+      accessibilityState={{ disabled }}
+      testID="journal-edit-button"
+    >
+      <View accessible={false} testID="journal-edit-icon">
+        <Pencil
+          color={accent.primary}
+          size={NAV_ICON_SIZE}
+          strokeWidth={NAV_ICON_STROKE}
+          {...decorativeHidden()}
+        />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 function ReflectionSourcesButton({ toggle }: { toggle: SourcesToggle }): React.JSX.Element {
   return (
     <TouchableOpacity
@@ -2734,10 +2767,10 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
 }
 
 /**
- * The reading view's resonance affordance, threaded as one value so the row and
- * the column that hosts it stay short-signatured.
+ * The resonance affordance the margin hosts, threaded as one value so the
+ * margin and the controls it holds stay short-signatured.
  */
-interface ReadResonanceAction {
+interface ResonanceAction {
   visible: boolean;
   disabled: boolean;
   loading: boolean;
@@ -2747,28 +2780,14 @@ interface ReadResonanceAction {
   onPress: () => Promise<void>;
 }
 
-interface ReadControlsProps {
-  quote: QuotePromotion;
-  resonance: ReadResonanceAction;
-  onEdit: () => void;
-}
-
 /**
- * The reading view's action row, closing the reading column. One layout system
- * for all three controls: resonance as the primary, Promote and Edit beside it
- * as quiet tertiaries.
+ * The reading view's action row, closing the reading column under the save
+ * hint: Promote, the one action about the body itself (#3004). Resonance lives
+ * in the margin and Edit in the exit row, as they do while writing.
  */
-function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX.Element {
+function ReadActions({ quote }: { quote: QuotePromotion }): React.JSX.Element {
   return (
     <View style={styles.readActionsRow} testID="journal-read-actions">
-      <GetResonanceButton
-        layout="inline"
-        visible={resonance.visible}
-        loading={resonance.loading}
-        checking={resonance.checking}
-        disabled={resonance.disabled}
-        onPress={resonance.onPress}
-      />
       <Button
         variant="tertiary"
         onPress={quote.explainer.onPress}
@@ -2777,35 +2796,21 @@ function ReadActions({ quote, resonance, onEdit }: ReadControlsProps): React.JSX
         label="Promote a quote"
         busy={quote.promoting}
       />
-      <Button
-        variant="tertiary"
-        onPress={onEdit}
-        accessibilityLabel="Edit this entry"
-        testID="journal-edit-button"
-        label="Edit"
-      />
     </View>
   );
 }
 
 /**
- * Read-mode affordances: the privacy reason (when resonance is withheld) above
- * the single action row, and the note the first "Promote a quote" opens — kept
- * beside the button that opens it (its state lives in ``useQuotePromotion``,
- * so the row unmounting while the reader selects loses nothing). Unlike the
- * writing surface's floating button, nothing here fades on idleness — a reader
- * is not typing, so nothing needs to get out of the way.
+ * Read-mode affordances: the action row, and the note the first "Promote a
+ * quote" opens — kept beside the button that opens it (its state lives in
+ * ``useQuotePromotion``, so the row unmounting while the reader selects loses
+ * nothing).
  */
-function ReadModeControls(props: ReadControlsProps): React.JSX.Element {
-  const { resonance, quote } = props;
+function ReadModeControls({ quote }: { quote: QuotePromotion }): React.JSX.Element {
   const { explainer } = quote;
   return (
     <>
-      <PrivacyResonanceReason
-        visible={resonance.visible && resonance.disabled}
-        reason={resonance.reason}
-      />
-      <ReadActions {...props} />
+      <ReadActions quote={quote} />
       <PromoteExplainerDialog
         visible={explainer.visible}
         dontShowAgain={explainer.dontShowAgain}
@@ -2914,20 +2919,16 @@ function ReadColumn({
   body,
   notes,
   quote,
-  resonance,
   justSaved,
   onOpen,
-  onEdit,
 }: {
   title: string;
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
-  resonance: ReadResonanceAction;
   /** True when this entry was just saved from photograph capture; shows "Saved". */
   justSaved: boolean;
   onOpen: (_note: Marginalia) => void;
-  onEdit: () => void;
 }) {
   return (
     <View style={[styles.writingColumn, readingScrollStyle]}>
@@ -2947,9 +2948,7 @@ function ReadColumn({
         <Text style={styles.savedHint} testID="journal-save-hint">
           {justSaved ? SAVED_HINT : BLANK_HINT}
         </Text>
-        {quote.selecting ? null : (
-          <ReadModeControls quote={quote} resonance={resonance} onEdit={onEdit} />
-        )}
+        {quote.selecting ? null : <ReadModeControls quote={quote} />}
       </View>
     </View>
   );
@@ -3531,14 +3530,21 @@ function useJournalEntryController(
 type Controller = ReturnType<typeof useJournalEntryController>;
 
 /**
- * The reading view's resonance action. Steady where the writing surface's is
- * idle-gated: reading involves no keystrokes, so there is no pause to detect and
- * nothing to tuck away. Only an empty page (nothing to read back) or the privacy
- * gate takes it out of reach.
+ * Whether the margin offers resonance. Writing, it is idle-gated: it fades in
+ * when the writer pauses and tucks away while they type. Reading, it is steady:
+ * reading involves no keystrokes, so there is no pause to detect. Only an empty
+ * page (nothing to read back), a prompt page, or a quote being selected takes
+ * it out of reach -- selection puts every other page action aside (#3004).
  */
-function buildReadResonanceAction(ctl: Controller): ReadResonanceAction {
+function resonanceVisible(ctl: Controller): boolean {
+  if (ctl.editGate.editMode) return ctl.visible;
+  return !ctl.isPromptCompose && !ctl.quote.selecting && ctl.autosave.body.trim().length > 0;
+}
+
+/** The margin's resonance action, in either mode; the privacy gate disables it. */
+function resonanceActionFor(ctl: Controller): ResonanceAction {
   return {
-    visible: !ctl.isPromptCompose && ctl.autosave.body.trim().length > 0,
+    visible: resonanceVisible(ctl),
     disabled: ctl.resonanceDisabled,
     loading: ctl.resonance.loading,
     checking: ctl.explainer.pending,
@@ -3562,7 +3568,7 @@ function saveFooterFor(ctl: Controller): SaveFooterActions {
 
 function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceholder: string }) {
   const { title, body, saveState, classification, chord } = ctl.autosave;
-  const { editMode, canFinish, markFinished, requestEdit } = ctl.editGate;
+  const { editMode, canFinish, markFinished } = ctl.editGate;
   const controlsDisabled = ctl.autosave.controlsLocked;
   const canOfferFinish = canFinish && !ctl.isPromptCompose;
   return editMode ? (
@@ -3592,10 +3598,8 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       body={body}
       notes={ctl.resonance.marginalia}
       quote={ctl.quote}
-      resonance={buildReadResonanceAction(ctl)}
       justSaved={ctl.justSaved && !ctl.autosave.carryHeld}
       onOpen={ctl.modal.onOpenNote}
-      onEdit={requestEdit}
     />
   );
 }
@@ -3654,17 +3658,7 @@ function JournalMargin({
           onDismiss={ctl.resonance.dismissSuggestion}
         />
       ) : null}
-      {ctl.editGate.editMode && !narrow ? (
-        <ResonanceControls
-          layout="margin"
-          visible={ctl.visible}
-          disabled={ctl.resonanceDisabled}
-          loading={ctl.resonance.loading}
-          checking={ctl.explainer.pending}
-          reason={ctl.resonanceReason}
-          onPress={ctl.explainer.onPress}
-        />
-      ) : null}
+      <ResonanceControls action={resonanceActionFor(ctl)} />
     </View>
   );
 }
@@ -3788,9 +3782,9 @@ function readEntrypoint(params: RootStackParamList['JournalEntry']): EntryEntryp
 
 /**
  * The one-line reason shown when resonance is gated off for an intimate entry.
- * Always a sibling directly above the affordance it explains — the floating
- * button while writing, the action row while reading — so it reads as that
- * control's own caption rather than as a stray notice.
+ * Always a sibling directly above the affordance it explains, in the margin's
+ * resonance host in both modes, so it reads as that control's own caption
+ * rather than as a stray notice.
  */
 function PrivacyResonanceReason({
   visible,
@@ -4083,7 +4077,10 @@ function EntryExits({
 /**
  * The page's top-right row of page-level doors: the course return when there is
  * one, the API-key door, a reflection's Sources while it is being written, the
- * camera while writing, and the close always — [Return?][Key][Sources?][Camera][X].
+ * camera while writing or Edit while reading, and the close always —
+ * [Return?][Key][Sources?][Camera | Edit][X]. Camera and Edit share the slot left
+ * of the X, so with no reflection the row keeps its width and order in both
+ * modes; Sources, writing-only, is the one control that adds width (#3004).
  * The return and the close are separate affordances — the return carries the
  * reader back to the exact passage they left, which the close cannot know about.
  * Sources and the camera share the writing column's gate (``editMode``): a
@@ -4116,7 +4113,11 @@ function EntryExitControls({
       {ctl.editGate.editMode && ctl.reflection.active ? (
         <ReflectionSourcesButton toggle={ctl.reflection.sourcesToggle} />
       ) : null}
-      {ctl.editGate.editMode ? <PhotographPageButton onPress={ctl.photograph.openCapture} /> : null}
+      {ctl.editGate.editMode ? (
+        <PhotographPageButton onPress={ctl.photograph.openCapture} />
+      ) : (
+        <EditEntryButton onPress={ctl.editGate.requestEdit} disabled={ctl.quote.selecting} />
+      )}
       <CloseEntryLink navigation={navigation} flush={flushForExit} guard={guard} />
     </View>
   );
@@ -4370,62 +4371,39 @@ function EntryOverlays({
 }
 
 /**
- * The writing surface's floating resonance affordance and its privacy-tier reason
- * line. Screen-level (not inside the page) so it can lift clear of the writing
- * area, and rendered in edit mode only — the reading view carries its own inline
- * action row instead.
+ * The resonance request and its privacy-tier reason line, at the foot of the
+ * margin in both modes and at every width (#3004): beside the page where the
+ * margin sits beside it, under the page where it stacks. Never floating over
+ * the writing, and never in a row of its own. Collapsed to nothing while out of
+ * reach, so the margin keeps no phantom gap.
  */
-function ResonanceControls({
-  visible,
-  disabled,
-  loading,
-  checking,
-  reason,
-  onPress,
-  layout = 'floating',
-}: {
-  visible: boolean;
-  disabled: boolean;
-  loading: boolean;
-  checking: boolean;
-  reason: string;
-  onPress: () => Promise<void>;
-  layout?: Exclude<ResonanceButtonLayout, 'inline'>;
-}): React.JSX.Element {
-  const content = (
-    <>
-      <PrivacyResonanceReason visible={visible && disabled} reason={reason} />
-      <GetResonanceButton
-        layout={layout}
-        visible={visible}
-        loading={loading}
-        checking={checking}
-        disabled={disabled}
-        onPress={onPress}
-      />
-    </>
-  );
-  if (layout !== 'margin') return content;
+function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.Element {
+  const { visible, disabled } = action;
   return (
     <View
       style={visible ? styles.marginResonanceControls : styles.marginResonanceControlsHidden}
       testID="journal-margin-resonance-controls"
     >
-      {content}
+      <PrivacyResonanceReason visible={visible && disabled} reason={action.reason} />
+      <GetResonanceButton
+        visible={visible}
+        loading={action.loading}
+        checking={action.checking}
+        disabled={disabled}
+        onPress={action.onPress}
+      />
     </View>
   );
 }
 
 /**
- * The writing surface's own screen-level siblings, in edit mode only.
+ * The writing surface's own screen-level sibling, in edit mode only.
  *
- * The timer lifts clear of the writing area, while resonance only floats here
- * on a narrow screen (wide screens host it in the margin). The timer's engine
- * ticks ten times a second, so whatever subtree hosts it repaints ten times a
- * second — and the subtree
- * that must not is the page holding the writer's text fields and live word
- * count. The reading view carries its own inline resonance action instead, and
- * has nothing to time.
+ * The timer lifts clear of the writing area (resonance lives in the margin at
+ * every width, #3004). The timer's engine ticks ten times a second, so whatever
+ * subtree hosts it repaints ten times a second — and the subtree that must not
+ * is the page holding the writer's text fields and live word count. The reading
+ * view has nothing to time.
  */
 /**
  * What a finished writing session is offered as. A module-level constant, not a
@@ -4460,27 +4438,14 @@ function EntryWritingSurfaces({
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
   const onSession = useLinkedHabitCheckOff(session.onSession);
-  const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   if (!ctl.editGate.editMode) return null;
   return (
-    <>
-      <WritingSessionSurface
-        initialMinutes={session.initialMinutes}
-        autoStart={session.autoStart}
-        onSession={onSession}
-        renderOffer={session.launched ? undefined : renderSessionOffer}
-      />
-      {narrow ? (
-        <ResonanceControls
-          visible={ctl.visible}
-          disabled={ctl.resonanceDisabled}
-          loading={ctl.resonance.loading}
-          checking={ctl.explainer.pending}
-          reason={ctl.resonanceReason}
-          onPress={ctl.explainer.onPress}
-        />
-      ) : null}
-    </>
+    <WritingSessionSurface
+      initialMinutes={session.initialMinutes}
+      autoStart={session.autoStart}
+      onSession={onSession}
+      renderOffer={session.launched ? undefined : renderSessionOffer}
+    />
   );
 }
 

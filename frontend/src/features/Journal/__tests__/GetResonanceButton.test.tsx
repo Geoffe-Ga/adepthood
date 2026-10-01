@@ -7,7 +7,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 
 import GetResonanceButton, { shouldShowResonance } from '../GetResonanceButton';
 
-/** Flatten the button's outermost wrapper style (the layout variant lives there). */
+/** Flatten the button's outermost wrapper style (where its layout lives). */
 function wrapperStyle(style: StyleProp<ViewStyle>): ViewStyle {
   return StyleSheet.flatten(style);
 }
@@ -48,7 +48,7 @@ describe('GetResonanceButton', () => {
       <GetResonanceButton visible checking onPress={jest.fn()} />,
     );
     const button = getByTestId('get-resonance-button');
-    expect(getByText('Checking availability…')).toBeTruthy();
+    expect(getByText('Checking…')).toBeTruthy();
     expect(queryByText('Listening…')).toBeNull();
     expect(button.props.accessibilityLabel).toBe('Checking resonance availability');
     expect(button.props.accessibilityState.busy).toBe(true);
@@ -89,27 +89,22 @@ describe('GetResonanceButton', () => {
     expect(queryByTestId('resonance-loading')).toBeNull();
   });
 
-  it('floats above the page by default', () => {
+  // #3004: one presentation -- the margin's. Nothing floats over the page and
+  // nothing sits in a reading row, so the button is always in the flow.
+  it('sits in the page flow, centred in its column, never floating over the page', () => {
     const view = render(<GetResonanceButton visible onPress={jest.fn()} />);
-    expect(wrapperStyle(view.root.props.style).position).toBe('absolute');
-  });
-
-  it('sits in the page flow when laid out inline', () => {
-    const view = render(<GetResonanceButton visible layout="inline" onPress={jest.fn()} />);
-    expect(wrapperStyle(view.root.props.style).position).not.toBe('absolute');
-  });
-
-  it('centres the margin variant in its column without floating over the page', () => {
-    const view = render(<GetResonanceButton visible layout="margin" onPress={jest.fn()} />);
     const style = wrapperStyle(view.root.props.style);
     expect(style.position).not.toBe('absolute');
     expect(style.alignItems).toBe('center');
   });
 
+  it('stays in the flow when hidden too', () => {
+    const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
+    expect(wrapperStyle(view.root.props.style).position).not.toBe('absolute');
+  });
+
   it('uses compact visible copy while checking inside the fixed-width margin', () => {
-    const view = render(
-      <GetResonanceButton visible checking layout="margin" onPress={jest.fn()} />,
-    );
+    const view = render(<GetResonanceButton visible checking onPress={jest.fn()} />);
     expect(view.getByText('Checking…')).toBeTruthy();
     expect(view.queryByText('Checking availability…')).toBeNull();
     expect(view.getByTestId('get-resonance-button').props.accessibilityLabel).toBe(
@@ -118,9 +113,7 @@ describe('GetResonanceButton', () => {
   });
 
   it('keeps the listening state when checking and a model pass overlap', () => {
-    const view = render(
-      <GetResonanceButton visible loading checking layout="margin" onPress={jest.fn()} />,
-    );
+    const view = render(<GetResonanceButton visible loading checking onPress={jest.fn()} />);
     expect(view.getByText('Listening…')).toBeTruthy();
     expect(view.queryByText('Checking…')).toBeNull();
     expect(view.getByTestId('get-resonance-button').props.accessibilityLabel).toBe(
@@ -128,45 +121,35 @@ describe('GetResonanceButton', () => {
     );
   });
 
-  it('keeps the inline variant inert and busy while a pass runs', () => {
+  it('stays inert and busy while a pass runs', () => {
     const onPress = jest.fn();
-    const { getByTestId } = render(
-      <GetResonanceButton visible loading layout="inline" onPress={onPress} />,
-    );
+    const { getByTestId } = render(<GetResonanceButton visible loading onPress={onPress} />);
     fireEvent.press(getByTestId('get-resonance-button'));
     expect(onPress).not.toHaveBeenCalled();
     expect(getByTestId('get-resonance-button').props.accessibilityState.busy).toBe(true);
   });
 
-  it('costs no layout space when hidden inline', () => {
-    const view = render(<GetResonanceButton visible={false} layout="inline" onPress={jest.fn()} />);
+  it('costs no layout space when hidden', () => {
+    const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
     const style = wrapperStyle(view.root.props.style);
     expect(style.height).toBe(0);
     expect(style.overflow).toBe('hidden');
   });
 
-  it('keeps its own height when shown inline', () => {
-    const view = render(<GetResonanceButton visible layout="inline" onPress={jest.fn()} />);
+  it('keeps its own height when shown', () => {
+    const view = render(<GetResonanceButton visible onPress={jest.fn()} />);
     const style = wrapperStyle(view.root.props.style);
     expect(style.height).not.toBe(0);
     expect(style.overflow).not.toBe('hidden');
   });
 
-  it('leaves the floating variant uncollapsed when hidden, since it takes no flow space', () => {
-    const view = render(<GetResonanceButton visible={false} onPress={jest.fn()} />);
-    const style = wrapperStyle(view.root.props.style);
-    expect(style.position).toBe('absolute');
-    expect(style.height).not.toBe(0);
-    expect(style.overflow).not.toBe('hidden');
-  });
   /**
-   * The floating wrapper spans the page edge to edge (``left: 0; right: 0``), so
-   * whatever it declares for pointer events it declares for the whole band, not
-   * just for the button centred in it. ``box-none`` lets the wrapper stay
-   * untouchable while its button stays pressable, which is what keeps the band
-   * from swallowing taps meant for anything else sitting in it.
+   * The wrapper spans its column, so whatever it declares for pointer events it
+   * declares for that whole band, not just for the button centred in it.
+   * ``box-none`` lets the wrapper stay untouchable while its button stays
+   * pressable, so the band never swallows taps meant for a note beside it.
    */
-  it('lets touches pass through the floating band it spans while staying pressable itself', () => {
+  it('lets touches pass through the band it spans while staying pressable itself', () => {
     const onPress = jest.fn();
     const view = render(<GetResonanceButton visible onPress={onPress} />);
     expect(view.root.props.pointerEvents).toBe('box-none');

@@ -8,11 +8,19 @@ import type { StyleProp, ViewStyle } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 
+import { ENTRY_WIDTHS, spyWidth } from './entryLayoutTestKit';
 import { KEYED } from './idempotencyTestKit';
 
 import type { JournalMessage } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
-import { colors, editorialType, spacing, writingField, writingFieldFocus } from '@/design/tokens';
+import {
+  colors,
+  editorialType,
+  spacing,
+  touchTarget,
+  writingField,
+  writingFieldFocus,
+} from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -139,6 +147,15 @@ function hostWrapperStyle(element: { parent: unknown }): ViewStyle {
   while (node && typeof node.type !== 'string') node = node.parent;
   return StyleSheet.flatten(node?.props.style) ?? {};
 }
+
+/** The width at which the margin first sits beside the page. */
+const NARROW_BREAKPOINT_WIDTH = 600;
+
+/** A wide desktop window. */
+const WIDE_WIDTH = 1200;
+
+/** Every control the reading row has ever hosted, by testID. */
+const READ_ROW_CONTROLS = ['get-resonance-button', 'promote-quote-button', 'journal-edit-button'];
 
 /** The edit-mode page's vertical stack, top to bottom, by host testID. */
 const WRITING_PAGE_STACK = [
@@ -530,47 +547,43 @@ describe('JournalEntryScreen', () => {
     },
   );
 
-  it.each([
-    { width: 375, inMargin: false },
-    { width: 600, inMargin: true },
-    { width: 1200, inMargin: true },
-  ])('hosts writing resonance responsively at $width px', async ({ width, inMargin }) => {
-    const rn = require('react-native');
-    const spy = jest
-      .spyOn(rn, 'useWindowDimensions')
-      .mockReturnValue({ width, height: 800, scale: 1, fontScale: 1 });
-    mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
-    let view: ReturnType<typeof renderScreen> | null = null;
-    try {
-      const rendered = renderScreen({ entryId: 7 });
-      view = rendered;
-      await waitFor(() =>
-        expect(rendered.getByTestId('journal-body-input').props.value).toContain('rivers'),
-      );
-      const margin = within(rendered.getByTestId('journal-margin-column'));
-      if (inMargin) {
+  // #3004: one home for resonance at every width -- the margin, which stacks
+  // under the page on a phone -- never a copy floating over the writing.
+  it.each([...ENTRY_WIDTHS, { width: NARROW_BREAKPOINT_WIDTH }, { width: WIDE_WIDTH }])(
+    'hosts writing resonance in the margin, in flow, at $width px',
+    async ({ width }) => {
+      const restore = spyWidth(width);
+      mockGet.mockResolvedValueOnce(entry({ id: 7, status: 'draft' }));
+      let view: ReturnType<typeof renderScreen> | null = null;
+      try {
+        const rendered = renderScreen({ entryId: 7 });
+        view = rendered;
+        await waitFor(() =>
+          expect(rendered.getByTestId('journal-body-input').props.value).toContain('rivers'),
+        );
         // Loaded text and the effect that settles an existing entry as idle are
         // separate React commits. Wait for the user-visible state, not merely
         // the earlier body hydration commit.
-        await waitFor(() => expect(margin.getByTestId('get-resonance-button')).toBeTruthy());
-        expect(hostWrapperStyle(rendered.getByTestId('get-resonance-button')).alignItems).toBe(
-          'center',
+        const controls = within(rendered.getByTestId('journal-margin-column')).getByTestId(
+          'journal-margin-resonance-controls',
         );
-      } else {
-        expect(margin.queryByTestId('get-resonance-button')).toBeNull();
         await waitFor(() =>
-          expect(hostWrapperStyle(rendered.getByTestId('get-resonance-button')).position).toBe(
-            'absolute',
-          ),
+          expect(within(controls).getByTestId('get-resonance-button')).toBeTruthy(),
         );
+        const button = rendered.getByTestId('get-resonance-button');
+        expect(hostWrapperStyle(button).alignItems).toBe('center');
+        expect(hostWrapperStyle(button).position).not.toBe('absolute');
+        expect(
+          rendered.getAllByTestId('get-resonance-button', { includeHiddenElements: true }),
+        ).toHaveLength(1);
+      } finally {
+        // Never restore the hook-bearing real implementation while this render
+        // is still mounted, even when an assertion fails.
+        view?.unmount();
+        restore();
       }
-    } finally {
-      // Never restore the hook-bearing real implementation while this render
-      // is still mounted, even when an assertion fails.
-      view?.unmount();
-      spy.mockRestore();
-    }
-  });
+    },
+  );
 
   it('keeps an intimate-entry reason and its disabled margin action together', async () => {
     const rn = require('react-native');
@@ -619,12 +632,68 @@ describe('JournalEntryScreen', () => {
     expect(page.paddingBottom).toBeUndefined();
   });
 
-  it('gathers the read-mode actions into one row', async () => {
-    const { getByTestId } = await renderFinished();
-    const row = within(getByTestId('journal-read-actions'));
-    expect(row.getByTestId('get-resonance-button')).toBeTruthy();
-    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
-    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
+  /** The margin's resonance host, as the reader meets it. */
+  function marginResonanceControls(view: ReturnType<typeof renderScreen>) {
+    return within(view.getByTestId('journal-margin-column')).getByTestId(
+      'journal-margin-resonance-controls',
+    );
+  }
+
+  // #3004: the reading view keeps resonance where the writing view does, in the
+  // margin under the marginalia, rather than in a row of its own.
+  it.each(ENTRY_WIDTHS)(
+    'hosts read-mode resonance under the marginalia at $width px',
+    async ({ width }) => {
+      const restore = spyWidth(width);
+      let view: ReturnType<typeof renderScreen> | null = null;
+      try {
+        view = await renderFinished();
+        expect(
+          within(marginResonanceControls(view)).getByTestId('get-resonance-button'),
+        ).toBeTruthy();
+        expect(
+          within(view.getByTestId('journal-read-actions')).queryByTestId('get-resonance-button'),
+        ).toBeNull();
+        expect(
+          view.getAllByTestId('get-resonance-button', { includeHiddenElements: true }),
+        ).toHaveLength(1);
+        expect(hostWrapperStyle(view.getByTestId('get-resonance-button')).position).not.toBe(
+          'absolute',
+        );
+      } finally {
+        view?.unmount();
+        restore();
+      }
+    },
+  );
+
+  // #3004: Promote is the reading column's one action, closing the page under
+  // the save hint; Edit is a page-level door in the exit row.
+  it.each(ENTRY_WIDTHS)('leaves Promote alone in the read row at $width px', async ({ width }) => {
+    const restore = spyWidth(width);
+    let view: ReturnType<typeof renderScreen> | null = null;
+    try {
+      view = await renderFinished();
+      const row = view.getByTestId('journal-read-actions');
+      expect(hostTestIDOrder(row, READ_ROW_CONTROLS)).toEqual(['promote-quote-button']);
+      expect(
+        hostTestIDOrder(view.UNSAFE_root, ['journal-save-hint', 'journal-read-actions']),
+      ).toEqual(['journal-save-hint', 'journal-read-actions']);
+      for (const elsewhere of ['journal-entry-exit-row', 'journal-margin-column']) {
+        expect(
+          within(view.getByTestId(elsewhere)).queryByTestId('promote-quote-button'),
+        ).toBeNull();
+      }
+      const promote = within(row).getByTestId('promote-quote-button');
+      expect(promote.props.accessibilityLabel).toBe('Promote a quote');
+      expect(within(row).getByText('Promote a quote')).toBeTruthy();
+      expect(StyleSheet.flatten(promote.props.style).minHeight).toBeGreaterThanOrEqual(
+        touchTarget.minimum,
+      );
+    } finally {
+      view?.unmount();
+      restore();
+    }
   });
 
   it('does not float the resonance affordance over the entry in read mode', async () => {
@@ -632,27 +701,49 @@ describe('JournalEntryScreen', () => {
     expect(hostWrapperStyle(getByTestId('get-resonance-button')).position).not.toBe('absolute');
   });
 
-  it('leaves no phantom gap in the read row when an empty entry hides resonance', async () => {
-    const { getByTestId, queryByTestId } = await renderFinished('');
-    const row = within(getByTestId('journal-read-actions'));
-    expect(row.getByTestId('promote-quote-button')).toBeTruthy();
-    expect(row.getByTestId('journal-edit-button')).toBeTruthy();
-    expect(queryByTestId('get-resonance-button')).toBeNull();
-    const hidden = getByTestId('get-resonance-button', { includeHiddenElements: true });
+  it('collapses the margin host when an empty entry hides resonance', async () => {
+    const view = await renderFinished('');
+    const style = StyleSheet.flatten(marginResonanceControls(view).props.style);
+    expect(style.height).toBe(0);
+    expect(style.paddingTop ?? 0).toBe(0);
+    expect(view.queryByTestId('get-resonance-button')).toBeNull();
+    const hidden = view.getByTestId('get-resonance-button', { includeHiddenElements: true });
     expect(hostWrapperStyle(hidden).height).toBe(0);
   });
 
-  it('runs a resonance pass exactly once from the inline read-mode action', async () => {
-    const { getByTestId } = await renderFinished();
-    const row = within(getByTestId('journal-read-actions'));
-    fireEvent.press(row.getByTestId('get-resonance-button'));
+  it('keeps the margin host open for a finished entry with words', async () => {
+    const view = await renderFinished();
+    const style = StyleSheet.flatten(marginResonanceControls(view).props.style);
+    expect(style.height).not.toBe(0);
+    expect(style.paddingTop).toBeGreaterThan(0);
+  });
+
+  it("keeps an intimate finished entry's reason beside its disabled margin action", async () => {
+    mockGet.mockResolvedValue(
+      entry({ id: 7, message: 'I walked.', status: 'finished', classification: 'intimate' }),
+    );
+    const view = renderScreen({ entryId: 7 });
+    await waitFor(() => expect(view.getByTestId('privacy-resonance-reason')).toBeTruthy());
+    const controls = within(marginResonanceControls(view));
+    expect(controls.getByTestId('privacy-resonance-reason')).toBeTruthy();
+    expect(controls.getByTestId('get-resonance-button').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+    view.unmount();
+  });
+
+  it('runs a resonance pass exactly once from the margin read-mode action', async () => {
+    const view = await renderFinished();
+    fireEvent.press(within(marginResonanceControls(view)).getByTestId('get-resonance-button'));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
     expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null);
   });
 
-  it('still enters edit mode from the Edit action in the read-mode row', async () => {
+  it('still enters edit mode from the Edit door in the exit row', async () => {
     const { getByTestId, findByTestId } = await renderFinished();
-    fireEvent.press(within(getByTestId('journal-read-actions')).getByTestId('journal-edit-button'));
+    fireEvent.press(
+      within(getByTestId('journal-entry-exit-row')).getByTestId('journal-edit-button'),
+    );
     fireEvent.press(getByTestId('edit-confirm-edit'));
     expect(await findByTestId('journal-body-input')).toBeTruthy();
   });

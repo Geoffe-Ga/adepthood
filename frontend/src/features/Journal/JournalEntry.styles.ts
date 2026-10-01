@@ -26,13 +26,14 @@ import {
 const PREVIEW_STRIPE_WIDTH = 3;
 
 /**
- * Lower band reserved for the floating "Get Resonance" button on narrow screens
- * and used as the writing timer's baseline at every width. It mirrors the
- * button's own offset (``bottom: SPACING.xl``), height, and breathing gap.
+ * The floating writing timer's baseline above the page edge, at every width:
+ * one resonance-button band (offset, height and breathing gap). Resonance used
+ * to float in that band on a phone; it now sits in the margin's flow (#3004),
+ * and the name keeps the measure it was sized from.
  *
  * Applies to the writing surface ONLY, via ``pageWithFloatingAction``: the
- * reading view carries its resonance action in the page flow, so reserving the
- * band there would leave a dead strip under the last line of the entry.
+ * reading view has nothing floating, so reserving the band there would leave a
+ * dead strip under the last line of the entry.
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
@@ -337,15 +338,13 @@ const styles = StyleSheet.create({
     paddingTop: spacing(2),
   },
   /**
-   * The reading view's one action row, closing the reading column: the resonance
-   * request as the primary, with Promote and Edit beside it. Wraps rather than
-   * crowds so a narrow page keeps every control at its full touch target.
+   * The reading view's action row, closing the reading column under the save
+   * hint: Promote alone (#3004). Resonance lives in the margin and Edit in the
+   * exit row, as they do while writing.
    */
   readActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: SPACING.md,
     paddingTop: spacing(2),
   },
   /**
@@ -515,7 +514,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.sm,
   },
-  /** Keep the wide privacy caption and its action together at the foot of marginalia. */
+  /**
+   * Keep the privacy caption and the resonance action together at the foot of
+   * the marginalia, in both modes and at every width (#3004).
+   */
   marginResonanceControls: {
     marginTop: 'auto',
     alignItems: 'center',

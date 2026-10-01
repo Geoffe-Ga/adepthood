@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -742,5 +742,38 @@ describe('JournalEntryScreen -- promote posts source offsets, never display offs
       anchor_start: source.start,
       anchor_end: source.end,
     });
+  });
+});
+
+// #3004: resonance and Edit no longer unmount with the read row, so selecting a
+// quote must put them out of reach itself -- the margin host collapses and the
+// exit-row Edit stays in place (the row keeps its width) but disabled.
+describe('JournalEntryScreen -- page-level controls while selecting a quote (#3004)', () => {
+  const marginControls = (view: ReturnType<typeof renderScreen>) =>
+    within(view.getByTestId('journal-margin-column')).getByTestId(
+      'journal-margin-resonance-controls',
+    );
+  const exitRowEdit = (view: ReturnType<typeof renderScreen>) =>
+    within(view.getByTestId('journal-entry-exit-row')).getByTestId('journal-edit-button');
+
+  it('withholds resonance and disables Edit while selecting, restoring both on cancel', async () => {
+    const view = renderScreen({ entryId: 7 });
+    fireEvent.press(await view.findByTestId('promote-quote-button'));
+    expect(view.getByTestId('quote-select-input')).toBeTruthy();
+
+    expect(StyleSheet.flatten(marginControls(view).props.style).height).toBe(0);
+    expect(view.queryByTestId('get-resonance-button')).toBeNull();
+    expect(exitRowEdit(view).props.accessibilityState).toMatchObject({ disabled: true });
+    fireEvent.press(exitRowEdit(view));
+    expect(view.queryByTestId('edit-confirm-edit')).toBeNull();
+    expect(view.getByTestId('quote-select-input')).toBeTruthy();
+
+    fireEvent.press(view.getByTestId('quote-select-cancel'));
+
+    expect(StyleSheet.flatten(marginControls(view).props.style).height).not.toBe(0);
+    expect(view.getByTestId('get-resonance-button')).toBeTruthy();
+    expect(exitRowEdit(view).props.accessibilityState).toMatchObject({ disabled: false });
+    fireEvent.press(exitRowEdit(view));
+    expect(view.getByTestId('edit-confirm-edit')).toBeTruthy();
   });
 });

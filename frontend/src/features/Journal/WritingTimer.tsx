@@ -5,8 +5,7 @@
  * times a second, so whatever holds it re-renders ten times a second; putting
  * it inside the writing column would mean re-rendering both text fields and the
  * live word count under the writer's hands. Mounted instead as a screen-level
- * sibling — the same placement, and the same reason, as the floating resonance
- * button beside it — nothing but this pill repaints while a session runs.
+ * sibling, nothing but this pill repaints while a session runs.
  *
  * The session is bell-free on purpose: ``cuesForMeditation`` defaults
  * ``start_bell`` and ``end_bell`` to true, so a bare meditation config would
@@ -558,10 +557,10 @@ function WritingTimer({
 
 const styles = StyleSheet.create({
   /**
-   * Stacked above the resonance button's band rather than sharing it: the
-   * resonance wrapper spans the page edge to edge, so "the other side of the
-   * same row" is the same row. ``box-none`` keeps this band from becoming the
-   * next thing that swallows a tap meant for something below it.
+   * Lifted a resonance band's height above the page edge, the offset the page's
+   * bottom inset is sized around (resonance itself now sits in the margin's flow,
+   * #3004). ``box-none`` keeps this band from becoming the thing that swallows
+   * a tap meant for something below it.
    */
   floatingWrapper: {
     position: 'absolute',

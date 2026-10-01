@@ -145,16 +145,16 @@ describe('JournalEntryScreen — where the writing timer appears', () => {
   });
 });
 
-describe('JournalEntryScreen — the timer and the resonance button share a corner', () => {
+describe('JournalEntryScreen — the timer and the resonance button are both in reach', () => {
   /**
-   * The resonance button's floating wrapper spans the page edge to edge, and it
-   * is up precisely when the writer has paused with something written — which is
-   * exactly the moment they reach for the timer. This drives that moment.
+   * The resonance button is up precisely when the writer has paused with
+   * something written — which is exactly the moment they reach for the timer.
+   * This drives that moment.
    *
    * It proves the two affordances are simultaneously mounted and independently
-   * operable. It does NOT prove the geometry: RNTL performs no layout, so an
-   * overlapping absolutely-positioned sibling is invisible to `fireEvent`. The
-   * geometric half is pinned structurally in `writingTimerLayout.test.tsx` and
+   * operable. It does NOT prove the geometry: RNTL performs no layout. The
+   * geometric half — the timer floats alone, resonance stays in the margin's
+   * flow (#3004) — is pinned structurally in `writingTimerLayout.test.tsx` and
    * `GetResonanceButton.test.tsx`.
    */
   it('starts a session from the pill while the resonance button is up', async () => {
