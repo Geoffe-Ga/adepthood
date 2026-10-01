@@ -50,10 +50,20 @@ from services.botmason import (
     vision_provider_available,
 )
 from services.generation_guardrails import generation_slot
-from services.llm_usage import record_llm_usage
+from services.llm_usage import (
+    GenerationFeature,
+    GenerationKey,
+    GenerationOutcome,
+    GenerationSettlement,
+    log_generation_settled,
+    record_llm_usage,
+)
 from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
+
+# A page is one dial: there is no corrective retry on the transcription path.
+_TRANSCRIPTION_ATTEMPTS = 1
 
 router = build_router(
     prefix="/journal",
@@ -273,14 +283,32 @@ async def transcribe_page(
     # before the charge until the page settles; transcription keeps its own
     # 20/minute budget rather than the resonance/essay minute bucket.
     async with generation_slot(session, current_user):
-        if byok_key is None:
-            await preflight_deduction(session, current_user)
+        spent = None if byok_key is not None else await preflight_deduction(session, current_user)
+        key = GenerationKey.for_spend(spent)
         response = await _run_transcription(session, image, byok_key)
         await _reject_unusable_reply(session, response, current_user)
-        await record_llm_usage(
-            session, user_id=current_user, journal_entry_id=None, responses=[response]
+        usage = await record_llm_usage(
+            session,
+            user_id=current_user,
+            journal_entry_id=None,
+            responses=[response],
+            generation=key,
         )
         await session.commit()
+    # The kept page's settlement line (#623 PR3): counts only, never the page.
+    # A refused or failed page rolls its charge back and is not a settled
+    # generation, so it has no line here.
+    log_generation_settled(
+        GenerationSettlement(
+            feature=GenerationFeature.TRANSCRIPTION,
+            user_id=current_user,
+            key=key,
+            bucket=None if spent is None else spent.bucket,
+            outcome=GenerationOutcome.KEPT,
+            attempts=_TRANSCRIPTION_ATTEMPTS,
+            usage=usage,
+        )
+    )
     logger.info(
         "journal_page_transcribed",
         extra={"user_id": current_user, "total_tokens": response.total_tokens},

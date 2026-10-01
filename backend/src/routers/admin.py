@@ -7,6 +7,7 @@ identity is a first-class per-user flag rather than a shared header secret.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated
@@ -37,6 +38,7 @@ from rate_limit import limiter
 from schemas import PaginationParams
 from schemas.admin import (
     AdminUserSummary,
+    ChargedGenerationCostResponse,
     EnergyPlanCleanupResult,
     EntitlementGrantRequest,
     EntitlementRevokeRequest,
@@ -57,6 +59,7 @@ from schemas.pagination import count_query_total, page_has_more, paginate_query
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
+from services.llm_cost_alerts import charged_generation_cost_report
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -248,6 +251,31 @@ async def get_usage_stats(
             )
             for provider, model, calls, tokens, cost in per_model_rows
         ],
+    )
+
+
+@router.get("/generation-cost", response_model=ChargedGenerationCostResponse)
+async def get_generation_cost(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> ChargedGenerationCostResponse:
+    """Return the p95 provider cost per charged generation, and whether it alerts.
+
+    The admin-visible half of record §4's "structured warning plus an admin
+    metric" (#623 PR3). A sibling of ``/usage-stats`` rather than a field on
+    it, so the warning fires only when this metric is read and the usage
+    dashboard's shape is unchanged. Reading it logs one
+    ``llm_generation_cost_p95_over_threshold`` WARNING when the p95 is at or
+    above :data:`domain.generation_cost.P95_CHARGED_GENERATION_COST_ALERT_USD`.
+    """
+    report = await charged_generation_cost_report(session, now=datetime.now(UTC))
+    return ChargedGenerationCostResponse(
+        window_days=report.window_days,
+        sample_count=report.sample_count,
+        unpriced_generation_count=report.unpriced_generation_count,
+        p95_cost_usd=report.p95_cost_usd,
+        threshold_usd=report.threshold_usd,
+        over_threshold=report.over_threshold,
     )
 
 

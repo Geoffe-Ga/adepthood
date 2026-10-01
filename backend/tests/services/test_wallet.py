@@ -599,7 +599,10 @@ class TestRefundOneMessage:
         refunded = await refund_one_message(db_session, user.id, spent)
         await db_session.commit()
 
-        assert refunded == SpendResult(monthly_used=0, offering_balance=4, bucket=BUCKET_MONTHLY)
+        assert refunded.landed is True
+        assert refunded.balances == SpendResult(
+            monthly_used=0, offering_balance=4, bucket=BUCKET_MONTHLY
+        )
         fresh = await get_user_fresh(db_session, user.id)
         assert fresh is not None
         assert fresh.monthly_messages_used == 0
@@ -619,7 +622,7 @@ class TestRefundOneMessage:
         refunded = await refund_one_message(db_session, user.id, spent)
         await db_session.commit()
 
-        assert refunded.offering_balance == 3
+        assert refunded.balances.offering_balance == 3
         fresh = await get_user_fresh(db_session, user.id)
         assert fresh is not None
         # The monthly counter is untouched: a paid credit must never be
@@ -703,7 +706,8 @@ class TestRefundOneMessage:
         refunded = await refund_one_message(db_session, user.id, stale)
         await db_session.commit()
 
-        assert refunded == stale
+        assert refunded.balances == stale
+        assert refunded.landed is False
         fresh = await get_user_fresh(db_session, user.id)
         assert fresh is not None
         assert fresh.monthly_messages_used == 0
@@ -719,5 +723,6 @@ class TestRefundOneMessage:
         refunded = await refund_one_message(db_session, _MISSING_USER_ID, stale)
         await db_session.commit()
 
-        assert refunded == stale
+        assert refunded.balances == stale
+        assert refunded.landed is False
         assert await _audit_rows(db_session, _MISSING_USER_ID) == []
