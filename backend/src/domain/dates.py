@@ -127,10 +127,12 @@ def seconds_until_next_utc_midnight(now: datetime) -> int:
 
     Rounded up, so a client that waits exactly this long is past midnight
     rather than a fraction of a second short of it; this is the honest
-    ``Retry-After`` for a limit that resets at midnight UTC.
+    ``Retry-After`` for a limit that resets at midnight UTC. The next midnight
+    is strictly after ``now``, so the rounded-up wait is never below one second
+    and ``Retry-After: 0`` cannot be produced.
     """
     remaining = utc_day_start(now) + timedelta(days=1) - ensure_aware(now).astimezone(UTC)
-    return max(math.ceil(remaining.total_seconds()), 1)
+    return math.ceil(remaining.total_seconds())
 
 
 def now_in_tz(user_or_tz: _HasTimezone | str | None) -> datetime:
