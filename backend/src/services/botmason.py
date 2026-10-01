@@ -212,6 +212,22 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
     ),
 }
 
+# Models the server will not pay for (#623). The owner's 2026-09-06 economics
+# validation found "Opus/Turbo models are not safely covered by a flat
+# one-offering charge at their worst case" and ruled "treat Opus/Turbo as
+# BYOK/admin-only or charge a model-specific multiplier"; the decision record
+# (prompts/claude-comms/2026-09-05-resonance-economy-decision.md §4) picks
+# "refuse non-cost-bounded models on the server-paid path (no multiplier)".
+# They stay on the allowlists above, so a user's own key (BYOK) still reaches
+# them. ``claude-sonnet-4-6`` and ``gpt-4o`` were not named as Opus/Turbo and
+# stay allowed; whether they are "cost-bounded" is recorded as an open question
+# in the decision record, not decided here.
+SERVER_PAID_REFUSED_MODELS: frozenset[str] = frozenset(
+    {"claude-opus-5", "claude-opus-4-7", "gpt-4-turbo"}
+)
+# The LLMProviderError message a refused server-paid model raises with.
+SERVER_PAID_MODEL_NOT_ALLOWED = "server_paid_model_not_allowed"
+
 # Timeout in seconds for LLM provider HTTP calls (BUG-JOURNAL-005).
 _LLM_TIMEOUT_SECONDS = 30.0
 
@@ -1080,6 +1096,21 @@ async def _retry_on_transient(  # noqa: UP047
     raise last_exc  # type: ignore[misc]  # pragma: no cover
 
 
+def _refuse_uncapped_server_paid_model(provider: str, model: str, api_key: str | None) -> None:
+    """Raise when the server would pay for a model in :data:`SERVER_PAID_REFUSED_MODELS`.
+
+    ``api_key is None`` means the server's own ``LLM_API_KEY`` pays (see
+    :func:`resolve_chat_api_key`); a user-supplied key pays for itself and is
+    let through. This lives here, not in :func:`_get_model`, because
+    :func:`vision_provider_available` and the BYOK callers share that resolver
+    and cannot tell who pays. Logs the provider and model, never a key.
+    """
+    if api_key is not None or model not in SERVER_PAID_REFUSED_MODELS:
+        return
+    logger.warning("server_paid_model_refused", extra={"provider": provider, "model": model})
+    raise LLMProviderError(SERVER_PAID_MODEL_NOT_ALLOWED)
+
+
 async def generate_response(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -1129,9 +1160,12 @@ async def generate_response(
             if images:
                 return _stub_vision_response(user_message, len(images))
             return _stub_response(user_message, resolved_prompt)
-        # Capability check before dispatch: LLMVisionUnsupportedError is not in
-        # _PROVIDER_ERROR_TYPES, so it escapes this try unwrapped.
-        _ensure_vision_capable(provider, _get_model(provider), images)
+        model = _get_model(provider)
+        # Both checks run before dispatch and raise LLMProviderError subclasses,
+        # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
+        # unwrapped and the caller's refund arm settles the unit.
+        _refuse_uncapped_server_paid_model(provider, model, api_key)
+        _ensure_vision_capable(provider, model, images)
         # Resolve by name at call time so test monkeypatches on the module
         # attribute (e.g. ``patch.object(botmason, "_call_openai", ...)``)
         # keep working — the registry never freezes the function objects.
