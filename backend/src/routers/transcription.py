@@ -49,6 +49,7 @@ from services.botmason import (
     resolve_chat_api_key,
     vision_provider_available,
 )
+from services.generation_guardrails import generation_slot
 from services.llm_usage import record_llm_usage
 from services.wallet import preflight_deduction
 
@@ -60,7 +61,14 @@ router = build_router(
     # 402 is a payer refusal: ``preflight_deduction`` refuses a server-paid page
     # when neither wallet has capacity, and ``resolve_chat_api_key`` refuses a
     # provider configuration that requires a missing caller/server key.
-    extra_statuses=(status.HTTP_402_PAYMENT_REQUIRED, status.HTTP_502_BAD_GATEWAY),
+    # 429 is the generation guardrails' (#623): the concurrent slot and the
+    # wallet's daily ceiling; 503 is the slot failing closed.
+    extra_statuses=(
+        status.HTTP_402_PAYMENT_REQUIRED,
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        status.HTTP_502_BAD_GATEWAY,
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+    ),
 )
 
 # Anthropic caps a single image at 5 MB of *decoded* bytes; larger attachments
@@ -261,14 +269,18 @@ async def transcribe_page(
     byok_key = resolve_chat_api_key(x_llm_api_key)
     if not vision_provider_available(byok_key):
         raise unprocessable("model_lacks_vision")
-    if byok_key is None:
-        await preflight_deduction(session, current_user)
-    response = await _run_transcription(session, image, byok_key)
-    await _reject_unusable_reply(session, response, current_user)
-    await record_llm_usage(
-        session, user_id=current_user, journal_entry_id=None, responses=[response]
-    )
-    await session.commit()
+    # One of the user's two concurrent generation slots (#623), held from
+    # before the charge until the page settles; transcription keeps its own
+    # 20/minute budget rather than the resonance/essay minute bucket.
+    async with generation_slot(session, current_user):
+        if byok_key is None:
+            await preflight_deduction(session, current_user)
+        response = await _run_transcription(session, image, byok_key)
+        await _reject_unusable_reply(session, response, current_user)
+        await record_llm_usage(
+            session, user_id=current_user, journal_entry_id=None, responses=[response]
+        )
+        await session.commit()
     logger.info(
         "journal_page_transcribed",
         extra={"user_id": current_user, "total_tokens": response.total_tokens},

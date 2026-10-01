@@ -149,6 +149,11 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.generation_guardrails import (
+    consume_generation_minute,
+    generation_slot,
+    require_generation_minute_available,
+)
 from services.higher_self_grounding import Grounding, gather_grounding
 from services.llm_usage import record_llm_usage
 from services.marginalia import (
@@ -215,9 +220,12 @@ router = build_router(
     tags=["journal"],
     # 402 is the wallet's, on the metered reflection paths: ``preflight_deduction``
     # refuses a spend with no capacity, ``resolve_chat_api_key`` a call with no key.
+    # 429 is the generation guardrails' (#623): the per-user minute bucket, the
+    # concurrent slot, and the wallet's daily ceiling.
     extra_statuses=(
         status.HTTP_402_PAYMENT_REQUIRED,
         status.HTTP_409_CONFLICT,
+        status.HTTP_429_TOO_MANY_REQUESTS,
         status.HTTP_502_BAD_GATEWAY,
         status.HTTP_503_SERVICE_UNAVAILABLE,
     ),
@@ -1871,10 +1879,37 @@ async def run_resonance(
     care = _care_response(_care_for(message))
     if entry.classification == JournalClassification.INTIMATE:
         return await _private_response(session, current_user, care)
+    # A generation is about to happen: the per-user guardrails (#623) admit it
+    # here, after every free exit above. The minute peek is a cheap 429 before
+    # any slot or charge; the slot is held until the pass settles.
+    require_generation_minute_available(current_user)
+    async with generation_slot(session, current_user):
+        return await _run_admitted_resonance(session, current_user, entry, care, clients)
+
+
+async def _run_admitted_resonance(
+    session: AsyncSession,
+    current_user: int,
+    entry: JournalEntry,
+    care: CareResponse | None,
+    clients: _ReflectionClients,
+) -> ResonanceResponse:
+    """Charge, dial and settle one resonance pass the guardrails admitted.
+
+    The second half of :func:`run_resonance`, split out so the guardrail slot
+    wraps exactly the work that can generate. ``entry`` is the caller's own,
+    non-intimate entry, already authorized.
+    """
+    entry_id = cast("int", entry.id)
+    message = _sanitize_message(entry.message)
     # Resolve who pays before touching either BotMason bucket. A valid caller
     # key pays the provider directly; only the server-key/vault path draws from
     # the deployment-configured allowance or purchased offerings.
     byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
+    # The atomic minute hit, after payment is staged so a 402 or a daily 429
+    # never spends it, and before the commit so its refusal leaves the staged
+    # spend for the slot's rollback to discard.
+    consume_generation_minute(current_user)
     grounding = await _grounding_for(session, current_user, entry_id)
     # Content-only anti-repetition context (issue #2574). Read here, with the
     # pooled connection still held, for the same reason the grounding above is:
@@ -2665,7 +2700,11 @@ async def _expand_essay(
     if entry.classification == JournalClassification.INTIMATE:
         return note
     _require_price_acknowledged(clients)
-    return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
+    # A first letter is about to be asked for: the per-user guardrails (#623)
+    # admit it only now, after the cached, intimate, 404 and 409 exits above.
+    require_generation_minute_available(user_id)
+    async with generation_slot(session, user_id):
+        return await _cache_and_mirror_essay(session, note=note, entry=entry, clients=clients)
 
 
 async def _cache_and_mirror_essay(
@@ -2844,6 +2883,9 @@ async def _cache_essay(
     )
     byok_key = resolve_chat_api_key(api_key)
     spent = await _essay_charge(session, note.user_id, byok_key)
+    # The minute hit, after the charge is staged and before it commits: a
+    # refusal leaves the staged charge for the guardrail slot's rollback.
+    consume_generation_minute(note.user_id)
     await session.commit()
     settled = False
     try:

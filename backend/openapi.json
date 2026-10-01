@@ -17058,6 +17058,16 @@
               }
             },
             "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Transcribe Page",
