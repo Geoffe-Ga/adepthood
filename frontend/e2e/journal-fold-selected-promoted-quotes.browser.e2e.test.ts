@@ -164,6 +164,8 @@ test('a writer checks several promoted quotes and folds them into the review at 
 const PHONE = { width: 390, height: 844 } as const;
 /** Lines in the typed opening -- enough to grow the body past its blank-page minimum. */
 const OPENING_LINES = 30;
+/** A last word typed after the fold, then bolded from the trailing toolbar. */
+const CLOSING_WORD = 'Onward';
 /** Layout boxes are fractional; this much is rounding, not overlap. */
 const SUBPIXEL_TOLERANCE_PX = 1;
 
@@ -208,15 +210,34 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
   const lastQuoteLine = await boxOf(
     page.locator('[data-testid^="journal-live-quote-"]:visible').last(),
   );
+  const toolbar = await boxOf(page.locator('[data-testid="journal-format-toolbar"]:visible'));
   const footer = await boxOf(page.locator('[data-testid="journal-word-count"]:visible'));
   const finish = await boxOf(page.locator('[data-testid="journal-finish-button"]:visible'));
-  const sources = await boxOf(page.locator('[data-testid="reflection-sources-toggle"]:visible'));
 
   // The field reaches the last folded line the mirror draws ...
   expect(field.bottom + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
-  // ... and the save footer and the Finish/Sources rail start below it, not under its text.
-  for (const below of [footer, finish, sources]) {
+  // ... and the formatting toolbar, the save footer and the Finish rail start
+  // below it, not under its text (#3002 moved the toolbar under the body).
+  for (const below of [toolbar, footer, finish]) {
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(field.bottom);
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
   }
+  // Sources is a door in the exit row now, above the page, not on the rail.
+  await expect(
+    page.getByTestId('journal-entry-exit-row').getByTestId('reflection-sources-toggle'),
+  ).toBeVisible();
+
+  // The toolbar trails a body taller than the phone: scrolling brings it into
+  // reach, and it still formats what the writer selected at the end of the text.
+  await bodyField.click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(CLOSING_WORD);
+  await page.keyboard.press('Shift+Home');
+  const toolbarLocator = page.locator('[data-testid="journal-format-toolbar"]:visible');
+  await toolbarLocator.scrollIntoViewIfNeeded();
+  await expect(toolbarLocator).toBeInViewport();
+  await page.locator('[data-testid="journal-format-bold"]:visible').click();
+  await expect(bodyField).toHaveValue(
+    `${opening}\n\n${block(PASSAGES[0])}\n\n${block(PASSAGES[1])}\n\n**${CLOSING_WORD}**`,
+  );
 });

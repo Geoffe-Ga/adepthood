@@ -15,6 +15,8 @@ import React, { useState } from 'react';
 import { BackHandler, Text, TouchableOpacity, View } from 'react-native';
 import type { NativeEventSubscription } from 'react-native';
 
+import { spyOnFocus } from './focusSpyTestKit';
+
 import type { ReflectionSourceItem } from '@/api';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
@@ -167,5 +169,75 @@ describe('ReflectionSourcesPanel -- dismiss keys follow screen focus (#2883)', (
       Platform.OS = original;
       delete globalRef.document;
     }
+  });
+});
+
+/** The phone width, where the panel is a bottom sheet over the page. */
+const SHEET_WIDTH = 390;
+/** A laptop width, where the panel is a pane beside the page. */
+const PANE_WIDTH = 1280;
+/** The id the stubbed ``requestAnimationFrame`` hands back for the first frame. */
+const FIRST_FRAME_ID = 1;
+
+/*
+ * #3002 moved the Sources toggle into the exit row, ABOVE the editor: a Tab
+ * walk from it to the panel now crosses the whole page (camera, close, tags,
+ * title, body, every formatting action, Finish) before the dock. So the panel
+ * takes focus on its close control when it opens, one frame late so a web
+ * Modal's portal is attached; closing still hands focus back to the toggle.
+ */
+describe('ReflectionSourcesPanel -- focus lands on the close when it opens (#3002)', () => {
+  let frames: FrameRequestCallback[];
+
+  beforeEach(() => {
+    frames = [];
+    jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function renderAt(width: number, close?: () => void) {
+    const rn = require('react-native');
+    jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+    return render(
+      <ReflectionSourcesPanel items={[SOURCE]} onInsertQuote={jest.fn()} onClose={close} />,
+    );
+  }
+
+  it.each([
+    { width: PANE_WIDTH, frame: 'reflection-sources-pane' },
+    { width: SHEET_WIDTH, frame: 'reflection-sources-sheet-body' },
+  ])('focuses the close one frame after opening, in $frame', ({ width, frame }) => {
+    const screen = renderAt(width, jest.fn());
+    expect(screen.getByTestId(frame)).toBeTruthy();
+    const focus = spyOnFocus(screen.getByTestId('reflection-sources-close'));
+    expect(focus).not.toHaveBeenCalled();
+
+    act(() => frames.forEach((run) => run(0)));
+
+    expect(focus).toHaveBeenCalledTimes(1);
+    screen.unmount();
+  });
+
+  it('takes no focus when the caller offers no close control', () => {
+    const screen = renderAt(PANE_WIDTH);
+    expect(screen.queryByTestId('reflection-sources-close')).toBeNull();
+    expect(frames).toHaveLength(0);
+    screen.unmount();
+  });
+
+  it('cancels the pending focus when the panel closes before the frame', () => {
+    const screen = renderAt(PANE_WIDTH, jest.fn());
+    expect(frames).toHaveLength(1);
+    screen.unmount();
+    expect(globalThis.cancelAnimationFrame).toHaveBeenCalledWith(FIRST_FRAME_ID);
   });
 });

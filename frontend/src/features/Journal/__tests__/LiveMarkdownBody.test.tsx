@@ -651,6 +651,22 @@ describe('LiveMarkdownBody keyboard commands', () => {
 });
 
 describe('LiveMarkdownBody formatting toolbar', () => {
+  // #3002: the toolbar trails the text it formats, so it reads as part of the
+  // page's end rather than a header over a blank sheet.
+  it.each(['web', 'ios'])('mounts the toolbar under the body field on %s', (os) => {
+    const originalOS = Platform.OS;
+    Platform.OS = os;
+    try {
+      const { UNSAFE_root } = render(<Harness initial="" />);
+      const order = testIDsUnder(UNSAFE_root).filter(
+        (id) => id === 'journal-body-input' || id === 'journal-format-toolbar',
+      );
+      expect([...new Set(order)]).toEqual(['journal-body-input', 'journal-format-toolbar']);
+    } finally {
+      Platform.OS = originalOS;
+    }
+  });
+
   it('applies a toolbar action at the field selection and returns focus to the field', () => {
     const onChangeBody = jest.fn();
     const focus = jest.fn();

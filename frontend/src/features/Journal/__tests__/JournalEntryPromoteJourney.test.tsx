@@ -7,6 +7,8 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
+import { spyOnFocus } from './focusSpyTestKit';
+
 import type { JournalMessage, PromotedQuote, ReflectionDue, ReflectionSourceItem } from '@/api';
 
 /** A never-settling promise plus its resolve, for pinning a slow ``promotions.list`` hydrate. */
@@ -377,22 +379,6 @@ describe('JournalEntryPromoteJourney -- sources panel navigation (#2883)', () =>
   const foldSource = item({ id: 1, body: BODY, promoted_quotes: [FOLD_QUOTE] });
   const DRAFT = 'What the week left behind.';
   let toggleFocus: jest.Mock;
-
-  /**
-   * Spy on the focus() of the component instance the toggle's ref resolves to:
-   * the nearest ancestor of its host node that carries native methods.
-   */
-  function spyOnFocus(host: ReturnType<Screen['getByTestId']>): jest.Mock {
-    let node: typeof host | null = host;
-    while (
-      node != null &&
-      typeof (node.instance as { focus?: unknown } | null)?.focus !== 'function'
-    ) {
-      node = node.parent;
-    }
-    if (node == null) throw new Error('no focusable instance above the toggle');
-    return jest.spyOn(node.instance as { focus: () => void }, 'focus') as unknown as jest.Mock;
-  }
 
   function atWidth(width: number): void {
     const rn = require('react-native');

@@ -3,7 +3,7 @@
  *
  * Call {@link UseIdleResult.bump} on each keystroke: it resets ``isIdle`` to
  * false and restarts the idle timer. After ``delayMs`` with no bump, ``isIdle``
- * flips true. The journal uses this to float the "Get Resonance" affordance in
+ * flips true. The journal uses this to fade the "Get Resonance" affordance in
  * once writing settles and tuck it away while the user types.
  *
  * {@link UseIdleResult.settle} is the escape hatch for a surface that opens onto

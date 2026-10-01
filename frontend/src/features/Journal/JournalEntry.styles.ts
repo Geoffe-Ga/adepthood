@@ -26,13 +26,14 @@ import {
 const PREVIEW_STRIPE_WIDTH = 3;
 
 /**
- * Lower band reserved for the floating "Get Resonance" button on narrow screens
- * and used as the writing timer's baseline at every width. It mirrors the
- * button's own offset (``bottom: SPACING.xl``), height, and breathing gap.
+ * The floating writing timer's baseline above the page edge, at every width:
+ * one resonance-button band (offset, height and breathing gap). Resonance used
+ * to float in that band on a phone; it now sits in the margin's flow (#3004),
+ * and the name keeps the measure it was sized from.
  *
  * Applies to the writing surface ONLY, via ``pageWithFloatingAction``: the
- * reading view carries its resonance action in the page flow, so reserving the
- * band there would leave a dead strip under the last line of the entry.
+ * reading view has nothing floating, so reserving the band there would leave a
+ * dead strip under the last line of the entry.
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
@@ -229,10 +230,9 @@ const styles = StyleSheet.create({
     gap: spacing(2),
   },
   /**
-   * One unbroken action rail below the save state, at phone and desktop widths:
-   * [leading slot][Finish][trailing slot]. The two side slots share the leftover
-   * width equally, so Finish sits on the rail's centre — under the text box —
-   * whether or not a reflection's Sources toggle occupies the trailing slot.
+   * The action rail below the save state, at phone and desktop widths: Finish
+   * alone, centred by the row — under the text box. Page-level doors (Sources,
+   * the camera) live in the exit row instead (#3002), so nothing flanks it.
    */
   writingControlsRow: {
     flexDirection: 'row',
@@ -242,39 +242,12 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
     paddingTop: spacing(2),
   },
-  /** An equal-width flank of the rail; its twin keeps Finish centred. */
-  writingControlsSide: {
-    flex: 1,
-    flexBasis: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  /** The trailing flank starts beside Finish, so Sources never drifts to the page edge. */
-  writingControlsTrailing: {
-    justifyContent: 'flex-start',
-  },
   /** A Finish failure reads beneath the centred button it belongs to. */
   finishError: {
     textAlign: 'center',
   },
-  /** Finish keeps its label while yielding first if the secondary controls need room. */
+  /** Finish keeps its label but may shrink rather than overflow the narrowest rail. */
   writingPrimaryControl: {
-    flexShrink: 1,
-  },
-  /** Sources' icon and optional label share one touch target; compact mode omits the label. */
-  writingSecondaryControl: {
-    minWidth: touchTarget.minimum,
-    minHeight: touchTarget.minimum,
-    flexDirection: 'row',
-    flexShrink: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-  },
-  writingControlLabel: {
-    ...editorialType.action,
-    color: accent.primary,
     flexShrink: 1,
   },
   saveStatusRow: {
@@ -365,22 +338,20 @@ const styles = StyleSheet.create({
     paddingTop: spacing(2),
   },
   /**
-   * The reading view's one action row, closing the reading column: the resonance
-   * request as the primary, with Promote and Edit beside it. Wraps rather than
-   * crowds so a narrow page keeps every control at its full touch target.
+   * The reading view's action row, closing the reading column under the save
+   * hint: Promote alone (#3004). Resonance lives in the margin and Edit in the
+   * exit row, as they do while writing.
    */
   readActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: SPACING.md,
     paddingTop: spacing(2),
   },
   /**
    * The page's exit row, above the sheet: the optional "Back to reading" return,
-   * the API-key door, the camera while writing, and the always-present close,
-   * clustered at the trailing edge so the writer finds one way out wherever they
-   * arrived from.
+   * the API-key door, a reflection's Sources while writing (#3002), the camera
+   * while writing, and the always-present close, clustered at the trailing edge
+   * so the writer finds one way out wherever they arrived from.
    */
   entryExitRow: {
     flexDirection: 'row',
@@ -543,7 +514,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl,
     paddingBottom: SPACING.sm,
   },
-  /** Keep the wide privacy caption and its action together at the foot of marginalia. */
+  /**
+   * Keep the privacy caption and the resonance action together at the foot of
+   * the marginalia, in both modes and at every width (#3004).
+   */
   marginResonanceControls: {
     marginTop: 'auto',
     alignItems: 'center',

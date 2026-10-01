@@ -36,24 +36,22 @@ function dp(value: unknown): number {
 }
 
 /**
- * The two floating affordances stack; they do not share a row.
+ * The timer floats alone; resonance lives in the page flow (#3004).
  *
- * Both wrappers are ``position: absolute`` with ``left: 0; right: 0``, so
- * "opposite sides of the same band" is still the same band — whichever one
- * paints on top owns every touch across the full width. Giving them different
- * offsets is what makes them independently reachable, and this pins that
- * offset rather than trusting it to a stylesheet nobody rereads.
+ * The timer's wrapper is ``position: absolute`` with ``left: 0; right: 0``, so
+ * it owns every touch across its band. Resonance used to float in a band of
+ * its own beneath it on a phone; it now sits in the margin, in flow, so the
+ * timer keeps its offset above the page's lower edge and nothing floats beside
+ * it to share or fight over that band.
  */
-describe('the writing timer clears the resonance button', () => {
-  it('floats a full touch target above the band the resonance button occupies', () => {
+describe('the writing timer floats alone above the page edge', () => {
+  it('floats at its band offset while the resonance button stays in the flow', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
     const resonance = render(<GetResonanceButton visible onPress={jest.fn()} />);
 
-    const timerBottom = flat(timer.root.props.style).bottom as number;
-    const resonanceBottom = flat(resonance.root.props.style).bottom as number;
-
     expect(flat(timer.root.props.style).position).toBe('absolute');
-    expect(timerBottom).toBeGreaterThanOrEqual(resonanceBottom + touchTarget.minimum);
+    expect(flat(timer.root.props.style).bottom).toBe(RESONANCE_BUTTON_CLEARANCE);
+    expect(flat(resonance.root.props.style).position).not.toBe('absolute');
   });
 
   it('lets a touch fall through its own band as well, rather than trading one trap for another', () => {
@@ -63,8 +61,8 @@ describe('the writing timer clears the resonance button', () => {
   });
 });
 
-describe('the page reserves the band both affordances float in', () => {
-  it('holds room for the timer above the resonance button, as one inset rather than two', () => {
+describe('the page reserves the band the timer floats in', () => {
+  it('holds room for the timer at its offset above the page edge, as one inset', () => {
     expect(WRITING_TIMER_CLEARANCE).toBeGreaterThanOrEqual(
       RESONANCE_BUTTON_CLEARANCE + touchTarget.minimum,
     );
@@ -133,7 +131,7 @@ describe('the page reserves the space the pill actually occupies', () => {
 });
 
 describe('the finished-session note clears what floats over it', () => {
-  it('sits above the whole floating stack rather than under the resonance button', () => {
+  it('sits above the floating timer at its offset rather than under its pill', () => {
     const result: WritingSessionResult = {
       plannedMinutes: 20,
       elapsedMs: 20 * 60_000,
@@ -142,10 +140,10 @@ describe('the finished-session note clears what floats over it', () => {
     };
     const view = render(<WritingSessionBanner result={result} onDismiss={jest.fn()} />);
 
-    // The note is an in-flow box at the bottom of the same column the two
-    // affordances float over; without this it is the Close target that ends up
-    // underneath an opaque button, and the offers a later lane hangs in its
-    // children slot with it.
+    // The note is an in-flow box at the bottom of the same column the timer
+    // floats over; without this it is the Close target that ends up underneath
+    // the opaque pill, and the offers a later lane hangs in its children slot
+    // with it.
     expect(flat(view.root.props.style).marginBottom).toBeGreaterThanOrEqual(
       RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
     );

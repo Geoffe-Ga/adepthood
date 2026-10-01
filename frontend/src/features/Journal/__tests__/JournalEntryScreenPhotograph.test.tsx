@@ -11,11 +11,14 @@
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
-import { Camera } from 'lucide-react-native';
+import { Camera, Pencil } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { ENTRY_WIDTHS, exitRowOrder, spyWidth } from './entryLayoutTestKit';
+
 import type { JournalMessage } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
 import { accent, touchTarget } from '@/design/tokens';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
@@ -108,13 +111,6 @@ const RETURN_TO: ReturnToCourse = {
   params: { stageNumber: 3, contentId: 11, scrollOffset: 120 },
 };
 
-/** The exit row's buttons, in the order a screen reader and the tab key meet them. */
-function exitRowOrder(exitRow: Parameters<typeof within>[0]): string[] {
-  return within(exitRow)
-    .getAllByRole('button')
-    .map((b) => String(b.props.testID));
-}
-
 /** Render at a fixed window width, restoring the real hook afterwards. */
 function withWidth<T>(width: number, run: () => T): T {
   const rn = require('react-native');
@@ -183,11 +179,73 @@ describe('JournalEntryScreen — photograph a page', () => {
     await findByTestId('journal-read-actions');
 
     expect(queryByTestId('journal-photograph-page')).toBeNull();
-    // The exit row still renders in read mode — just without the camera.
+    // The exit row still renders in read mode — Edit takes the camera's slot (#3004).
     expect(exitRowOrder(getByTestId('journal-entry-exit-row'))).toEqual([
       'journal-api-key-settings',
+      'journal-edit-button',
       'journal-close-entry',
     ]);
+  });
+
+  // #3004: Edit is a page-level door, so in read mode it sits where the camera
+  // sits while writing -- directly left of the X -- as a glyph, not a word.
+  it.each(ENTRY_WIDTHS)(
+    "offers Edit icon-only in the exit row, in the camera's slot, at $width px",
+    async ({ width }) => {
+      const restore = spyWidth(width);
+      mockGet.mockResolvedValue(entry({ id: 7, status: 'finished' }));
+      let view: ReturnType<typeof renderScreen> | null = null;
+      try {
+        view = renderScreen({ entryId: 7 });
+        await view.findByTestId('journal-read-actions');
+        const exitRow = view.getByTestId('journal-entry-exit-row');
+        expect(exitRowOrder(exitRow)).toEqual([
+          'journal-api-key-settings',
+          'journal-edit-button',
+          'journal-close-entry',
+        ]);
+        expect(
+          within(view.getByTestId('journal-read-actions')).queryByTestId('journal-edit-button'),
+        ).toBeNull();
+        expect(view.queryByTestId('journal-photograph-page')).toBeNull();
+
+        const edit = within(exitRow).getByTestId('journal-edit-button');
+        expect(edit.props.accessibilityRole).toBe('button');
+        expect(edit.props.accessibilityLabel).toBe('Edit this entry');
+        expect(view.queryByText('Edit')).toBeNull();
+        const editStyle = StyleSheet.flatten(edit.props.style);
+        expect(editStyle).toEqual(
+          StyleSheet.flatten(view.getByTestId('journal-close-entry').props.style),
+        );
+        expect(editStyle.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+        expect(editStyle.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+        expect(within(edit).getByTestId('journal-edit-icon')).toBeTruthy();
+        const glyphs = view.UNSAFE_getAllByType(Pencil);
+        expect(glyphs).toHaveLength(1);
+        expect(glyphs[0]?.props).toMatchObject({
+          size: NAV_ICON_SIZE,
+          strokeWidth: NAV_ICON_STROKE,
+          color: accent.primary,
+          ...decorativeHidden(),
+        });
+      } finally {
+        view?.unmount();
+        restore();
+      }
+    },
+  );
+
+  it('keeps the course return first in read mode, ahead of the key, Edit and X', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, status: 'finished' }));
+    const view = renderScreen({ entryId: 7, returnTo: RETURN_TO });
+    await view.findByTestId('journal-read-actions');
+    expect(exitRowOrder(view.getByTestId('journal-entry-exit-row'))).toEqual([
+      'journal-return-to-reading',
+      'journal-api-key-settings',
+      'journal-edit-button',
+      'journal-close-entry',
+    ]);
+    view.unmount();
   });
 
   it.each([{ width: 390 }, { width: 1280 }])(
@@ -201,11 +259,13 @@ describe('JournalEntryScreen — photograph a page', () => {
         'journal-photograph-page',
         'journal-close-entry',
       ]);
-      expect(
-        within(view.getByTestId('journal-writing-controls')).queryByTestId(
-          'journal-photograph-page',
-        ),
-      ).toBeNull();
+      for (const elsewhere of ['journal-writing-controls', 'journal-margin-column']) {
+        expect(
+          within(view.getByTestId(elsewhere)).queryByTestId('journal-photograph-page'),
+        ).toBeNull();
+      }
+      // Edit and the camera share one slot and never coexist (#3004).
+      expect(view.queryByTestId('journal-edit-button')).toBeNull();
 
       const camera = within(exitRow).getByTestId('journal-photograph-page');
       expect(view.queryByText('Photograph a page')).toBeNull();
