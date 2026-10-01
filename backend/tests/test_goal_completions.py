@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from http import HTTPStatus
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,11 @@ from services.streaks import compute_consecutive_streak
 # The shipped backfill window, spelled as a literal on purpose: see
 # ``test_backfill_window_is_exactly_thirty_days_wide``.
 _SHIPPED_BACKFILL_WINDOW_DAYS = 30
+
+# Slack for "the stored timestamp is now": the request round-trip, not a day.
+_NOW_TOLERANCE = timedelta(minutes=5)
+# Where ``_completion_timestamp`` anchors a backfilled day in UTC.
+_LOCAL_MIDDAY = time(12, 0)
 
 
 async def _signup(client: AsyncClient, username: str = "goaluser") -> tuple[dict[str, str], int]:
@@ -1097,6 +1102,64 @@ async def test_backfill_past_date_records_completion(
     completions = list(result.scalars().all())
     assert len(completions) == 1
     assert completions[0].timestamp.date() == target_day
+
+
+async def _stored_timestamp(db_session: AsyncSession, goal_id: int | None) -> datetime:
+    """The single completion row's timestamp for ``goal_id``, as an aware UTC instant."""
+    result = await db_session.execute(
+        select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+    )
+    stamped = result.scalars().one().timestamp
+    return stamped if stamped.tzinfo else stamped.replace(tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_today_is_stamped_now_not_at_local_midday(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """#2905: naming today explicitly is a same-day log, stamped now.
+
+    The journal accept now always names its day. Anchoring today at local
+    midday would put a morning log in the future for the ``timestamp >= since``
+    readers (invitations, contraction, load options).
+    """
+    headers, user_id = await _signup(async_client, "explicit_today")
+    goal = await _seed_goal(db_session, user_id)
+
+    before = datetime.now(UTC)
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": today_in_tz("UTC").isoformat()},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    stamped = await _stored_timestamp(db_session, goal.id)
+    assert abs(stamped - before) < _NOW_TOLERANCE
+    # Near noon UTC the midday anchor also falls inside the tolerance, so pin
+    # that it was not used: only a real clock read lands off the exact anchor.
+    assert stamped != datetime.combine(today_in_tz("UTC"), _LOCAL_MIDDAY, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_past_day_is_still_anchored_at_local_midday(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The same-day carve-out leaves a backfilled day's midday anchor alone."""
+    headers, user_id = await _signup(async_client, "explicit_yesterday")
+    goal = await _seed_goal(db_session, user_id)
+    yesterday = today_in_tz("UTC") - timedelta(days=1)
+
+    resp = await async_client.post(
+        "/goal_completions/",
+        json={"goal_id": goal.id, "completed_on": yesterday.isoformat()},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert await _stored_timestamp(db_session, goal.id) == datetime.combine(
+        yesterday, _LOCAL_MIDDAY, tzinfo=UTC
+    )
 
 
 @pytest.mark.asyncio

@@ -143,6 +143,7 @@ function suggestionRow(overrides: Partial<CompletionSuggestion> = {}): Completio
     anchor_text: 'a daily',
     completed_units: null,
     completed_on: null,
+    logged_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '',
@@ -445,5 +446,113 @@ describe('JournalEntryScreen — completion-suggestion margin cards', () => {
         'We still checked it for completed habits',
       );
     });
+  });
+});
+
+/** Every string leaf under `node`, concatenated — the card's copy as read. */
+function flattenText(node: { children: Array<unknown> }): string {
+  return node.children
+    .map((child) =>
+      typeof child === 'string' ? child : flattenText(child as { children: Array<unknown> }),
+    )
+    .join('');
+}
+
+// #2905. The accept ran on day N = 2026-09-12 (Chicago). The detected day was
+// N+1 -- what a westward timezone move turns "today" into -- so the server fell
+// back and logged N. Every clock below is Chicago midday on the named day.
+const LOGGED_DAY = '2026-09-12';
+const DETECTED_DAY = '2026-09-13';
+const midday = (dayKey: string): Date => new Date(`${dayKey}T17:00:00Z`);
+const DAY_AFTER_LOGGED = '2026-09-13';
+// Past the 30-day backfill window, so a window-gated settled card drops the day.
+const FORTY_DAYS_AFTER_LOGGED = '2026-10-22';
+const LOGGED_DAY_AS_A_DATE = 'Sat, Sep 12';
+
+function acceptedRow(overrides: Partial<CompletionSuggestion> = {}): CompletionSuggestion {
+  return suggestionRow({
+    status: 'accepted',
+    accepted_at: '2026-09-12T18:00:00Z',
+    completed_units: 64,
+    completed_on: DETECTED_DAY,
+    logged_on: LOGGED_DAY,
+    ...overrides,
+  });
+}
+
+/** Render the entry with `items` hydrated from the list endpoint, as a reopen does. */
+async function settledTextOnReopen(
+  items: CompletionSuggestion[],
+  todayKey: string,
+): Promise<string> {
+  jest.useFakeTimers();
+  jest.setSystemTime(midday(todayKey));
+  try {
+    useHabitStore.getState().setHabits([waterHabit()]);
+    mockGet.mockResolvedValue(entry({ id: 7 }));
+    mockCompletionList.mockResolvedValue({ items });
+    const view = renderScreen({ entryId: 7 });
+    return flattenText(await view.findByTestId('suggestion-90-checked'));
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
+describe('JournalEntryScreen — a settled offer names the day the accept logged (#2905)', () => {
+  it('names the day the accept logged on a settled card reopened the next day', async () => {
+    const text = await settledTextOnReopen([acceptedRow()], DAY_AFTER_LOGGED);
+
+    expect(text).toBe('✓ Checked off · 64 oz · yesterday');
+    expect(text).not.toMatch(/today/u);
+  });
+
+  it('names the logged day on the day itself', async () => {
+    expect(await settledTextOnReopen([acceptedRow()], LOGGED_DAY)).toBe(
+      '✓ Checked off · 64 oz · today',
+    );
+  });
+
+  it('still names the logged day forty days on, past the backfill window', async () => {
+    expect(await settledTextOnReopen([acceptedRow()], FORTY_DAYS_AFTER_LOGGED)).toBe(
+      `✓ Checked off · 64 oz · ${LOGGED_DAY_AS_A_DATE}`,
+    );
+  });
+
+  it('omits the day for a legacy accepted row rather than re-deriving it', async () => {
+    // Accepted before the day was recorded. `completed_on` is today, so a card
+    // that fell back to it would print "today" -- a guess, not a record.
+    const legacy = acceptedRow({ logged_on: null, completed_on: DAY_AFTER_LOGGED });
+
+    expect(await settledTextOnReopen([legacy], DAY_AFTER_LOGGED)).toBe('✓ Checked off · 64 oz');
+  });
+
+  it('names the logged day straight after OK, from the accept response', async () => {
+    // The in-session path: the card is replaced wholesale by the accept
+    // response's row, so the day must ride on THAT, not only on the list.
+    jest.useFakeTimers();
+    jest.setSystemTime(midday(DAY_AFTER_LOGGED));
+    try {
+      useHabitStore.getState().setHabits([waterHabit()]);
+      mockGet.mockResolvedValue(entry({ id: 7 }));
+      mockCompletionList.mockResolvedValue({
+        items: [suggestionRow({ completed_units: 64, completed_on: DAY_AFTER_LOGGED })],
+      });
+      mockAccept.mockResolvedValue(
+        acceptResult({
+          completed_units: 64,
+          completed_on: DAY_AFTER_LOGGED,
+          logged_on: LOGGED_DAY,
+        }),
+      );
+
+      const view = renderScreen({ entryId: 7 });
+      fireEvent.press(await view.findByTestId('suggestion-90-accept'));
+      const text = flattenText(await view.findByTestId('suggestion-90-checked'));
+
+      expect(text).toMatch(/^✓ Checked off · 64 oz · yesterday/u);
+      expect(text).not.toMatch(/today/u);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

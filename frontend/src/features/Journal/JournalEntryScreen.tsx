@@ -67,7 +67,7 @@ import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconci
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
-import { describeSuggestionFacts } from './suggestionFacts';
+import { describeCardFacts } from './suggestionFacts';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
@@ -3007,6 +3007,8 @@ interface MarginStreamProps {
  * `goal_id`, refusing any row this device minted, and "today" comes from the
  * signed-in person's own zone rather than the device's, so a card pinned over
  * midnight re-renders from "yesterday" to a date instead of quietly lying.
+ * A settled card names the day the server recorded as logged, never one
+ * re-derived from the detected day and that clock (#2905).
  */
 function ConnectedSuggestionNote({
   suggestion,
@@ -3027,7 +3029,7 @@ function ConnectedSuggestionNote({
     <CompletionSuggestionNote
       suggestion={suggestion}
       checkIn={checkIn}
-      facts={describeSuggestionFacts(suggestion, unit, todayIso)}
+      facts={describeCardFacts(suggestion, unit, todayIso)}
       onAccept={onAccept}
       onDismiss={onDismiss}
     />

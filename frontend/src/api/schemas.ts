@@ -700,6 +700,16 @@ export const completionSuggestionSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable(),
+  // The day a habit accept actually LOGGED against (#2905) -- distinct from
+  // `completed_on`, the day detection read: an accept whose detected day had
+  // left the backfill window logs today instead. Recorded once, server-side,
+  // so a settled card names it rather than re-deriving it from the live
+  // clock. Null while pending, for a practice target, and for a habit row
+  // accepted before the day was recorded. A `date` column, like `completed_on`.
+  logged_on: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable(),
   status: suggestionStatusSchema,
   accepted_at: z.string().nullable(),
   created_at: z.string(),

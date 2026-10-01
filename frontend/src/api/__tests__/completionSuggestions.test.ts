@@ -34,6 +34,7 @@ function suggestion(overrides: Partial<CompletionSuggestion> = {}): CompletionSu
     anchor_text: 'I went for a run',
     completed_units: null,
     completed_on: null,
+    logged_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '2026-06-01T00:00:00Z',

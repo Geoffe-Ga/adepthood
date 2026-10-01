@@ -53,7 +53,9 @@ export interface CompletionSuggestionNoteProps {
   /** The check-in returned when this suggestion was accepted (for the streak). */
   checkIn: CheckInResult | null;
   /**
-   * What the accept will log, already formatted — e.g. `"64 oz · yesterday"`.
+   * What the accept will log -- or, once accepted, the day the server
+   * recorded it as logging (#2905) -- already formatted, e.g.
+   * `"64 oz · yesterday"`.
    * Pre-formatted rather than derived here on purpose: building it needs the
    * goal's unit from the habit store and the user's own today, and this card
    * stays presentational (no `useAuth`, no store subscription, no clock), which
@@ -93,7 +95,7 @@ function AcceptedCard({
   const streak = targetType === 'practice' ? null : streakLabel(checkIn);
   const label = targetType === 'practice' ? LOGGED_LABEL : CHECKED_LABEL;
   // A practice carries no facts by construction (the backend CHECK
-  // `ck_completion_suggestion_facts_habit_only` keeps both fields null), so the
+  // `ck_completion_suggestion_facts_habit_only` keeps every fact null), so the
   // settled practice copy needs no branch of its own here.
   return (
     <View style={styles.card} testID={`suggestion-${id}`}>

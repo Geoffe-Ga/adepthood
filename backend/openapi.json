@@ -733,6 +733,18 @@
             "title": "Label",
             "type": "string"
           },
+          "logged_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logged On"
+          },
           "status": {
             "$ref": "#/components/schemas/SuggestionStatus"
           },
@@ -768,6 +780,7 @@
           "anchor_text",
           "completed_units",
           "completed_on",
+          "logged_on",
           "status",
           "accepted_at",
           "created_at",
