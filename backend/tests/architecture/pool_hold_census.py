@@ -187,6 +187,17 @@ CLEAR: tuple[ClearRoute, ...] = (
         ),
     ),
     ClearRoute(
+        route="POST /journal/{entry_id}/suggestions/detect",
+        handler="routers.journal.detect_entry_suggestions",
+        reason=(
+            "The ownership, candidate and timezone reads commit before the account "
+            "hold; under it, ensure_account_live commits and the entry re-read "
+            "(_withdrawn_under_hold) refreshes then commits (#3008), so "
+            "detect_completions runs with no connection checked out. Suggestion "
+            "and usage rows are staged only after the dial."
+        ),
+    ),
+    ClearRoute(
         route="POST /journal/marginalia/{marginalia_id}/essay",
         handler="routers.journal.expand_marginalia_essay",
         reason=(
