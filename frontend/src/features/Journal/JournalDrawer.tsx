@@ -1,8 +1,10 @@
 /**
  * The Journal header-drawer body: a New-entry row pinned on top, then the user's
  * past entries grouped by recency (This week / This month / Earlier, newest
- * first, empty bands dropped), a tappable "Load older entries" row, and a
- * spinner / error+retry while the first page loads.
+ * first, empty bands dropped), a tappable "Load older entries" row, a spinner
+ * while the first page loads, and an error+retry: full-panel before any entry
+ * loads, inline beneath the entries (in Load older's place) when a later page
+ * fails.
  *
  * Entries are fetched lazily on the drawer's first open via the co-located
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
@@ -84,7 +86,8 @@ const SEARCH_ERROR_LABEL = 'We could not finish searching your entries.';
  * Fetch the drawer's entries lazily on its first open and cache them across
  * close/reopen. The first fetch pulls page 0; ``loadMore`` appends the next page
  * (offset = current count) and is guarded so a concurrent or duplicate press is
- * a no-op; ``retry`` refetches page 0 after a failure.
+ * a no-op; ``retry`` asks again for the page that failed (offset = rows held,
+ * so page 0 when none are).
  *
  * The hook must be mounted above the ``ScreenDrawer`` panel (which unmounts when
  * closed) so its cache outlives a close/reopen — the first open latches the fetch
@@ -114,8 +117,10 @@ export function useJournalDrawerEntries(isOpen: boolean): {
   }, [hasMore, loading, load, items.length]);
 
   const retry = useCallback(() => {
-    void load(undefined, 0);
-  }, [load]);
+    // After a failed load-more or a partial sweep the rows held equal the failed
+    // offset; with none held this is page 0 (#2997, the #2902 precedent).
+    void load(undefined, items.length);
+  }, [load, items.length]);
 
   const confirmBodySearch = useCallback(() => {
     // Pull in every remaining older page so body matching sees the full corpus;
@@ -150,7 +155,13 @@ function DrawerError({ onRetry }: { onRetry: () => void }): React.JSX.Element {
   const { width } = useWindowDimensions();
   return (
     <View testID="journal-drawer-error" style={styles.errorBlock}>
-      <Text style={[type(width).body, styles.errorText]}>{ERROR_LABEL}</Text>
+      <Text
+        style={[type(width).body, styles.errorText]}
+        accessibilityRole="alert"
+        accessibilityLiveRegion="polite"
+      >
+        {ERROR_LABEL}
+      </Text>
       <DrawerItem testID="journal-drawer-retry" label={RETRY_LABEL} onPress={onRetry} />
     </View>
   );
@@ -228,7 +239,13 @@ interface DrawerBodyProps {
   onRetry: () => void;
 }
 
-/** The rows below the pinned New-entry row: spinner, error, or the grouped list. */
+/**
+ * The rows below the pinned New-entry row: a spinner, or the grouped list ending
+ * in either the error+retry or Load older. A failure never hides the entries
+ * already held: it takes Load older's place beneath them, and with none held it
+ * is all the panel shows (#2997). ``loading`` and ``error`` never coexist --
+ * every load clears the error as it starts.
+ */
 function DrawerBody({
   sections,
   loading,
@@ -239,7 +256,6 @@ function DrawerBody({
   onLoadMore,
   onRetry,
 }: DrawerBodyProps): React.JSX.Element {
-  if (error) return <DrawerError onRetry={onRetry} />;
   // Only the first load blanks the list; a "load more" keeps the entries visible.
   if (loading && sections.length === 0) return <DrawerLoading />;
   return (
@@ -252,7 +268,9 @@ function DrawerBody({
           onRowPress={onRowPress}
         />
       ))}
-      {hasMore ? (
+      {error ? (
+        <DrawerError onRetry={onRetry} />
+      ) : hasMore ? (
         <DrawerItem
           testID="journal-drawer-load-more"
           label={LOAD_MORE_LABEL}
@@ -435,7 +453,7 @@ export interface JournalDrawerProps {
   corpusOpenState: CorpusOpenState;
   /** Fetch and append the next older page. */
   onLoadMore: () => void;
-  /** Refetch the first page after a failure. */
+  /** Ask again for the page that failed: the next page when rows are held, page 0 when none. */
   onRetry: () => void;
   /**
    * Confirm the deep body search: the host pulls in every remaining older page

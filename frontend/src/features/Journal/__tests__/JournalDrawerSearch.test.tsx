@@ -361,6 +361,40 @@ describe('useJournalDrawerEntries confirm-gated body search (wiring)', () => {
     expect(getByTestId('journal-drawer-error')).toBeTruthy();
   });
 
+  it('keeps the swept rows when the query is cleared after a failed sweep, and its retry asks for the next page', async () => {
+    // The sweep and the list share one error flag: once the query is cleared,
+    // the failure shows inline under the rows held, and Tap to retry asks for
+    // the page that failed rather than page 0 (#2997).
+    const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
+    mockList.mockResolvedValueOnce(page(firstPage, true));
+    mockList.mockRejectedValueOnce(new Error('network down'));
+    mockList.mockResolvedValueOnce(page([entry(PAGE_SIZE + 1)], false));
+
+    const { getByTestId, queryByTestId } = render(<Harness />);
+    await openHarness(getByTestId);
+    await typeQuery(getByTestId, 'lighthouse');
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-search-deep-search'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+    await typeQuery(getByTestId, '');
+
+    expect(getByTestId('journal-drawer-error')).toBeTruthy();
+    expect(getByTestId('journal-drawer-entry-1')).toBeTruthy();
+    expect(getByTestId(`journal-drawer-entry-${PAGE_SIZE}`)).toBeTruthy();
+    expect(queryByTestId('journal-drawer-load-more')).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-retry'));
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    const offsets = mockList.mock.calls.map((call) => (call[0] as { offset: number }).offset);
+    expect(offsets).toEqual([0, PAGE_SIZE, PAGE_SIZE]);
+    expect(getByTestId('journal-drawer-entry-1')).toBeTruthy();
+    expect(getByTestId(`journal-drawer-entry-${PAGE_SIZE + 1}`)).toBeTruthy();
+  });
+
   it('shows the inline searching indicator while a confirmed sweep is still in flight', async () => {
     const firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => entry(i + 1));
     let resolveSecond: (_value: JournalListResponse) => void = () => undefined;
