@@ -290,7 +290,11 @@ describe('SettingsHubScreen — vault row', () => {
     const rowIds = within(corpus)
       .getAllByTestId(/^settings-row-/u)
       .map((node) => node.props.testID as string);
-    expect(rowIds.slice(-2)).toEqual(['settings-row-corpus-consent', 'settings-row-vault']);
+    expect(rowIds).toEqual([
+      'settings-row-seed-corpus',
+      'settings-row-corpus-consent',
+      'settings-row-vault',
+    ]);
   });
 
   test('the row names no product, only the place', () => {
