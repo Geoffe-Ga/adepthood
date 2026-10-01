@@ -1,0 +1,188 @@
+{
+  "schema_version": 2,
+  "status": "pending",
+  "executed_at": null,
+  "revisions": {
+    "adepthood_sha": null,
+    "creek_sha": null,
+    "vault_image_digest": null,
+    "control_plane_image_digest": null,
+    "adepthood_deployment": null,
+    "creek_control_deployment": null,
+    "creek_worker_deployment": null,
+    "creek_routing_deployment": null,
+    "creek_fleet_schedule_revision": null,
+    "provisioning_contract": null,
+    "vault_contract": null
+  },
+  "claims": {
+    "custody_mode": "provider_managed",
+    "attested_confidential": false
+  },
+  "creek_pilot_prerequisite": null,
+  "checks": {
+    "railway_secret_file_mounts": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "control_bearer_transport": null,
+        "handoff_bearer_transport": null,
+        "bearer_values_in_environment": null,
+        "bearer_values_in_evidence": null,
+        "runtime_uid": null,
+        "runtime_gid": null,
+        "mount_directory_mode": null,
+        "mounted_file_mode": null,
+        "regular_files_without_symlinks": null,
+        "mounted_files_have_single_links": null,
+        "control_and_handoff_bearers_distinct": null,
+        "runtime_volume_bootstrap": null,
+        "eligible_accounts": null,
+        "ineligible_allocations": null
+      }
+    },
+    "ui_activation_and_authenticated_handoff": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "activation_explicit": null,
+        "journal_available_while_provisioning": null,
+        "ready_after_authenticated_handoff": null,
+        "ceremony_prompts": null,
+        "connection_rows": null
+      }
+    },
+    "create_restart_singleton": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "allocation_scoped_apps": null,
+        "allocation_scoped_machines": null,
+        "allocation_scoped_volumes": null,
+        "allocation_scoped_credentials": null,
+        "durable_activation_jobs": null,
+        "connection_rows": null,
+        "unexpected_billable_resources": null
+      }
+    },
+    "public_route_capabilities_and_ssrf": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "externally_reachable": null,
+        "capability_check_passed": null,
+        "version_check_passed": null,
+        "authentication_check_passed": null,
+        "private_ssrf_refusal_preserved": null,
+        "private_target_disclosures": null
+      }
+    },
+    "public_personal_scale_to_zero_continuity": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "public_replicas": null,
+        "personal_replicas": null,
+        "same_volume_after_restart": null,
+        "content_equal_after_restart": null
+      }
+    },
+    "no_user_held_recovery_material": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "passphrase_occurrences": null,
+        "recovery_code_occurrences": null,
+        "wrapped_artifact_occurrences": null,
+        "unlock_material_occurrences": null
+      }
+    },
+    "intimate_zero_remote_contact": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "provisioning_call_delta": null,
+        "data_plane_call_delta": null,
+        "model_call_delta": null,
+        "local_entry_available": null
+      }
+    },
+    "provider_outage_retry_without_duplicate_billing": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "journal_preserved": null,
+        "retryable_state": null,
+        "converged_after_restore": null,
+        "unexpected_billable_resources": null
+      }
+    },
+    "callback_outage_retry_without_duplicate_billing": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "journal_preserved": null,
+        "false_ready_states": null,
+        "connection_rows_after_replay": null,
+        "unexpected_billable_resources": null
+      }
+    },
+    "readiness_timeout_retry_without_duplicate_billing": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "journal_preserved": null,
+        "retryable_state": null,
+        "same_machine_after_restore": null,
+        "unexpected_billable_resources": null
+      }
+    },
+    "routing_failure_retry_without_duplicate_billing": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "journal_preserved": null,
+        "honest_unavailable_state": null,
+        "same_endpoint_after_restore": null,
+        "unexpected_billable_resources": null
+      }
+    },
+    "confirmed_idempotent_teardown": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "allocation_scoped_apps": null,
+        "allocation_scoped_machines": null,
+        "allocation_scoped_volumes": null,
+        "allocation_scoped_credentials": null,
+        "matching_content_free_receipts": null,
+        "repeat_delete_idempotent": null
+      }
+    },
+    "fleet_disable_and_cost_reconciliation": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "final_report_exit_code": null,
+        "final_alert_count": null,
+        "final_divergence_count": null,
+        "provider_authoritative_inventory": null,
+        "new_activations_disabled": null,
+        "existing_lifecycle_available": null,
+        "emergency_route_recovered": null,
+        "provider_usage_reconciled": null,
+        "unknown_cost_inputs_treated_as_zero": null
+      }
+    },
+    "exact_main_gates": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "adepthood_product_gates_green": null,
+        "creek_product_gates_green": null,
+        "deployment_verification_green": null,
+        "unexplained_product_skips": null
+      }
+    }
+  }
+}

@@ -828,7 +828,7 @@ _PATH_PARAM = re.compile(r"\{[^}]+\}")
 # 151 mounted ``APIRoute``s share 125 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 125
+_DISTINCT_MOUNTED_PATHS = 126
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
