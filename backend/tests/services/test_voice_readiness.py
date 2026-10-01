@@ -209,6 +209,49 @@ def test_the_not_consented_band_says_what_saying_yes_gives_and_bounds_it() -> No
     assert "Perfectly fine to leave as it is." in message
 
 
+@pytest.mark.asyncio
+async def test_the_not_consented_band_claims_no_source_an_upload_grant_can_contradict(
+    db_session: AsyncSession,
+) -> None:
+    """``NOT_CONSENTED`` is read from the journal decision alone; grounding is not.
+
+    An account that agreed only to sorting the documents it brings in, and has
+    one sorted, is still not consented on the journal -- yet ``gather_grounding``
+    answers its reflections from the corpus. So the band may not say where
+    reflections come from right now; it names the decision and its gain only.
+    """
+    session = db_session
+    session.add(
+        CorpusConsentEvent(
+            user_id=_OWNER,
+            source=CorpusSource.UPLOAD.value,
+            decision=ConsentDecision.GRANTED.value,
+            fragments_removed=0,
+        )
+    )
+    await record_fragment(
+        session,
+        user_id=_OWNER,
+        draft=FragmentDraft(
+            content="an imported page",
+            tier=JournalClassification.PERSONAL,
+            source=CorpusSource.UPLOAD,
+            classification=_classified(F5=1.0),
+        ),
+    )
+    await session.commit()
+
+    readiness = await load_voice_readiness(session, user_id=_OWNER)
+
+    assert readiness.state is VoiceReadinessState.NOT_CONSENTED
+    assert readiness.classified_fragment_count > 0
+    assert readiness.grounding_source is GroundingSource.CORPUS
+    message = VOICE_READINESS_MESSAGES[readiness.state]
+    assert message is not None
+    for source_claim in ("right now", "are drawn from", "currently"):
+        assert source_claim not in message.lower()
+
+
 @pytest.mark.parametrize(
     "state", [VoiceReadinessState.NOT_CONSENTED, VoiceReadinessState.GATHERING]
 )

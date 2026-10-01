@@ -59,14 +59,16 @@ class VoiceReadinessState(StrEnum):
 #: a span of time. ``NOT_CONSENTED`` embeds the client's ``HIGHER_SELF_GAIN``
 #: (``frontend/src/features/Settings/higherSelfCopy.ts``) word for word, so the
 #: band and Settings say the same thing about the decision; a frontend test
-#: reads this literal and fails if the two drift. ``GATHERING`` says how little
-#: is sorted rather than "recent entries for now", because the corpus answers a
-#: reflection as soon as it holds a single passage.
+#: reads this literal and fails if the two drift. It says nothing about where
+#: reflections come from right now: this state is read from the journal
+#: decision alone, while grounding reads every sorted source, so an account that
+#: agreed only to documents it brings in may already be drawn from its corpus.
+#: ``GATHERING`` says how little is sorted rather than "recent entries for now",
+#: because the corpus answers a reflection as soon as it holds a single passage.
 VOICE_READINESS_MESSAGES: Mapping[VoiceReadinessState, str | None] = MappingProxyType(
     {
         VoiceReadinessState.NOT_CONSENTED: (
-            "Right now your reflections are drawn from your last few entries. "
-            "Sorting is a separate decision, yours to make whenever you like. "
+            "Sorting your journal is a separate decision, yours to make whenever you like. "
             "Say yes to sorting, and everything you write here, apart from Intimate entries and "
             "including what you have already written, is sorted by Aspect. Each reflection from "
             "your Higher Self can then draw on a few of those passages, leaning toward where you "

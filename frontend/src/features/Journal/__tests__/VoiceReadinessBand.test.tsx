@@ -53,8 +53,8 @@ const CARD = 'journal-voice-readiness-card';
 const DISMISS = 'journal-voice-readiness-dismiss';
 
 const NOT_CONSENTED_COPY =
-  'Right now your reflections are drawn from your last few entries. Sorting is a separate ' +
-  'decision, yours to make whenever you like. Say yes to sorting, and everything you write ' +
+  'Sorting your journal is a separate decision, yours to make whenever you like. Say yes ' +
+  'to sorting, and everything you write ' +
   'here, apart from Intimate entries and including what you have already written, is sorted ' +
   'by Aspect. Each reflection from your Higher Self can then draw on a few of those passages, ' +
   'leaning toward where you stand in the course, rather than only on your last few entries. ' +
