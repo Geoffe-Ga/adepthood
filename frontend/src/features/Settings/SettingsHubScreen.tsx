@@ -1,5 +1,8 @@
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import {
   BookOpen,
   Download,
@@ -39,6 +42,7 @@ import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import JournalSection from '@/features/Settings/JournalSection';
 import SanghaSection from '@/features/Settings/SanghaSection';
 import { VAULT_ROW_DESCRIPTION, VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
+import { useScrollIntoViewOnce } from '@/hooks/useScrollIntoViewOnce';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
@@ -267,9 +271,18 @@ const FeedbackSection = (): React.JSX.Element => {
   );
 };
 
-const SettingsHubScreen = (): React.JSX.Element => {
+/**
+ * The navigator hands the hub its ``route``; a ``focus`` param opens it on one
+ * part (#3006). Read from the prop rather than ``useRoute`` so a hub rendered
+ * without a navigator (as its own tests do) still has nothing to look up.
+ */
+type SettingsHubScreenProps = Partial<NativeStackScreenProps<RootStackParamList, 'Settings'>>;
+
+const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout } = useAuth();
+  const focus = route?.params?.focus;
+  const journalInView = useScrollIntoViewOnce(focus === 'writing-habit');
 
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
@@ -282,7 +295,7 @@ const SettingsHubScreen = (): React.JSX.Element => {
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
-    <ScreenScaffold scroll testID="settings-hub-screen">
+    <ScreenScaffold scroll scrollRef={journalInView.scrollRef} testID="settings-hub-screen">
       <ScreenHeader
         eyebrow="Your account"
         title="Settings"
@@ -297,7 +310,9 @@ const SettingsHubScreen = (): React.JSX.Element => {
       />
       <PrivacySection />
       <ChooseDepthsSection />
-      <JournalSection />
+      <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>
+        <JournalSection focus={focus} />
+      </View>
       <SanghaSection />
       <YourDataSection onExportData={openExportData} />
       <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />

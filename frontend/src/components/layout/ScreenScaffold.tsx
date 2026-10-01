@@ -22,6 +22,11 @@ interface ScreenScaffoldProps {
    * screen is laid out exactly as it always was.
    */
   footer?: React.ReactNode;
+  /**
+   * A handle on a scroll screen's ScrollView, for a screen that scrolls itself
+   * to a target (#3006). Ignored without ``scroll``: there is nothing to move.
+   */
+  scrollRef?: React.Ref<ScrollView>;
 }
 
 /**
@@ -35,11 +40,13 @@ export const ScreenScaffold = ({
   style,
   testID,
   footer,
+  scrollRef,
 }: ScreenScaffoldProps): React.JSX.Element => {
   if (scroll) {
     const scroller = (
       <>
         <ScrollView
+          ref={scrollRef}
           style={styles.fill}
           // Invariant: only the ScrollView content container grows. The inner
           // wrapper stays content-sized so the native contentSize tracks the real

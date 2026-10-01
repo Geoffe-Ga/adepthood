@@ -2,7 +2,7 @@
 /* global describe, test, expect, afterEach, beforeEach, jest */
 import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
-import { AccessibilityInfo } from 'react-native';
+import { AccessibilityInfo, ScrollView } from 'react-native';
 
 const mockNavigate = jest.fn();
 const mockLogout = jest.fn(() => Promise.resolve());
@@ -630,5 +630,49 @@ describe('SettingsHubScreen — navigation owns the title (#2962)', () => {
     expect(screen.getByText('Manage how Adepthood works for you.')).toBeTruthy();
     expect(screen.getByTestId('settings-row-support')).toBeTruthy();
     focus.expectNone();
+  });
+});
+
+describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => {
+  const FOCUSED_ROUTE = {
+    key: 'settings',
+    name: 'Settings' as const,
+    params: { focus: 'writing-habit' as const },
+  };
+  const JOURNAL_Y = 1200;
+  const layoutAt = (y: number) => ({
+    nativeEvent: { layout: { x: 0, y, width: 320, height: 400 } },
+  });
+
+  let scrollTo: jest.SpyInstance;
+
+  beforeEach(() => {
+    scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    scrollTo.mockRestore();
+  });
+
+  test('opens the writing-habit picker in place and brings the Journal group into view', () => {
+    const { getByTestId } = render(<SettingsHubScreen route={FOCUSED_ROUTE} />);
+
+    const journal = getByTestId('settings-group-journal');
+    expect(within(journal).getByTestId('settings-row-writing-habit')).toBeTruthy();
+    expect(within(journal).getByTestId('writing-habit-picker')).toBeTruthy();
+
+    fireEvent(getByTestId('settings-journal-anchor'), 'layout', layoutAt(JOURNAL_Y));
+
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo.mock.calls[0]?.[0]).toMatchObject({ y: JOURNAL_Y });
+  });
+
+  test('without the focus, the picker starts closed and nothing scrolls', () => {
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent(getByTestId('settings-journal-anchor'), 'layout', layoutAt(JOURNAL_Y));
+
+    expect(queryByTestId('writing-habit-picker')).toBeNull();
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 });
