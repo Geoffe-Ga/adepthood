@@ -36,7 +36,7 @@ from models.completion_suggestion import CompletionSuggestion
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.goal import Goal
 from models.habit import Habit
-from models.journal_entry import JournalClassification
+from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.user import User
@@ -1294,3 +1294,196 @@ async def test_completion_detection_after_a_mid_wait_edit_dials_the_body_the_pat
     assert len(provider.bodies) == 1, f"expected exactly one dial: {provider.bodies}"
     assert _FRESH_MARKER in provider.bodies[0]
     assert _BODY not in provider.bodies[0], "the pre-wait body was dialled, not the edit"
+
+
+#: How each dial's prompt opens: the reflection wraps the body in ``<entry>``;
+#: completion detection lists its candidates first. Telling them apart lets the
+#: test require that *both* dials happened, not merely that something was sent.
+_REFLECTION_PROMPT = "<entry>"
+_DETECTION_PROMPT = "Candidates:"
+
+
+def _edit_body(
+    client: AsyncClient, headers: dict[str, str], entry_id: int, body: str
+) -> Callable[[], Awaitable[Response]]:
+    """The body-only PATCH a writer sends to replace what the entry says."""
+    return lambda: client.patch(f"/journal/{entry_id}", json={"message": body}, headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_a_mid_wait_body_edit_is_the_body_every_resonance_dial_carries(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reflection and the detection both carry the body the PATCH left (#3008).
+
+    A writer who redacts a sentence while the pass waits for the barrier gets a
+    200 for the edit first. Re-reading only the tier under the hold would still
+    dial the copy taken before the wait -- the unredacted sentence -- so the
+    body itself is re-derived from the refreshed row, for every dial.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_fresh_body")
+    user_id = await _user_id(concurrent_session_factory, email)
+    await _seed_detection_candidate(concurrent_session_factory, user_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _edit_body(concurrent_async_client, headers, entry_id, _FRESH_MARKER),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    reflections = [body for body in provider.bodies if body.startswith(_REFLECTION_PROMPT)]
+    detections = [body for body in provider.bodies if body.startswith(_DETECTION_PROMPT)]
+    assert reflections, f"the reflection was never dialled: {provider.bodies}"
+    assert detections, f"completion detection was never dialled: {provider.bodies}"
+    assert all(_FRESH_MARKER in body for body in provider.bodies), provider.bodies
+    assert not _sent(provider, _BODY), "the pre-wait body was dialled, not the edit"
+
+
+@pytest.mark.asyncio
+async def test_a_connected_vault_reflects_the_body_a_mid_wait_edit_left(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The vault is a dial too: it is asked to read the refreshed body, never the stale one."""
+    _released_provider(monkeypatch)
+    vault = _connect_vault(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, "pass_fresh_vault")
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _edit_body(concurrent_async_client, headers, entry_id, _FRESH_MARKER),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert vault.reflect_calls, "the vault was never asked to reflect"
+    assert {body for body, _tier in vault.reflect_calls} == {_FRESH_MARKER}
+
+
+@pytest.mark.asyncio
+async def test_a_mid_wait_edit_into_distress_surfaces_care_and_skips_the_vault(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Care is screened on the body actually reflected, so an edit into distress is cared for.
+
+    The local screen ran on the pre-wait body, which was calm. A care verdict
+    kept from that reading would answer a writer in crisis with no care surface
+    and would route their distressed writing to the vault, which a flagged entry
+    never reaches. The screen is pure and local, so it re-runs under the hold.
+    """
+    _released_provider(monkeypatch)
+    vault = _connect_vault(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, "pass_fresh_care")
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _edit_body(concurrent_async_client, headers, entry_id, _DISTRESS_BODY),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert answered.json()["care"] is not None, "the edit into distress got no care surface"
+    assert vault.reflect_calls == [], f"a flagged body reached the vault: {vault.reflect_calls}"
+
+
+#: A body that sanitizes to nothing: zero-width spaces only.
+_BLANK_BODY = "\u200b\u200b\u200b"
+
+
+def _blank_the_row(
+    factory: async_sessionmaker[AsyncSession], entry_id: int
+) -> Callable[[], Awaitable[Response]]:
+    """Blank the row's body behind the API's back, the way a legacy writer could.
+
+    ``PATCH`` refuses a body that sanitizes to nothing, so only a non-API writer
+    can leave one; the pass must still answer it with the route's own 422.
+    """
+
+    async def _blank() -> Response:
+        async with factory() as session:
+            entry = await session.get(JournalEntry, entry_id)
+            assert entry is not None
+            entry.message = _BLANK_BODY
+            session.add(entry)
+            await session.commit()
+        return Response(HTTPStatus.OK)
+
+    return _blank
+
+
+@pytest.mark.asyncio
+async def test_a_body_blanked_while_the_pass_waited_answers_422_and_refunds(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refreshed body with nothing left is the route's 422, unspent and undialled -- never 500."""
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_blanked")
+    user_id = await _user_id(concurrent_session_factory, email)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    before = await _wallet(concurrent_session_factory, user_id)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _blank_the_row(concurrent_session_factory, entry_id),
+    )
+
+    assert answered.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, answered.text
+    assert answered.json() == {"detail": "journal_message_empty"}
+    assert provider.bodies == _NOTHING_SENT
+    assert await _wallet(concurrent_session_factory, user_id) == before
+    assert await _audit_reasons(concurrent_session_factory, user_id) == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
+    assert await _marginalia_count(concurrent_session_factory, entry_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_edit_into_distress_that_also_makes_the_entry_intimate_still_gets_care(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-hold private answer screens the body the PATCH left, not the calm pre-wait one."""
+    provider = _released_provider(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, "pass_fresh_intimate_care")
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        lambda: concurrent_async_client.patch(
+            f"/journal/{entry_id}",
+            json={"classification": "intimate", "message": _DISTRESS_BODY},
+            headers=headers,
+        ),
+    )
+
+    assert provider.bodies == _NOTHING_SENT
+    _assert_private_and_unspent(answered)
+    assert answered.json()["care"] is not None, "the private answer dropped the edit's care"
