@@ -29,7 +29,7 @@
  * of the truth — and the habits are read so the name can resolve.
  */
 import { NotebookPen, RotateCcw } from 'lucide-react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SettingsRow } from './shared/SettingsRow';
 
@@ -108,11 +108,16 @@ function useWritingHabitRow({ initiallyOpen }: { initiallyOpen: boolean }): {
   useEffect(() => {
     if (pending) loadHabitsQuietly(userTimezone);
   }, [pending, userTimezone]);
+  // Read through a ref so a zone change (TimezoneSettings pushed over the hub,
+  // or the server's zone adopted after a cold load) never re-runs the opening
+  // below: only the focus turning on opens the picker, never a later render.
+  const timezoneRef = useRef(userTimezone);
+  timezoneRef.current = userTimezone;
   useEffect(() => {
     if (!initiallyOpen) return;
     setOpen(true);
-    loadHabitsQuietly(userTimezone);
-  }, [initiallyOpen, userTimezone]);
+    loadHabitsQuietly(timezoneRef.current);
+  }, [initiallyOpen]);
 
   const toggle = useCallback(() => {
     if (!open) loadHabitsQuietly(userTimezone);

@@ -32,6 +32,8 @@ const mockLoadHabits = jest.fn<(_tz?: string) => Promise<void>>();
 const mockSaveAnswered = jest.fn<(_value: boolean) => Promise<void>>();
 const mockRestoreTip = jest.fn<() => Promise<boolean>>();
 const mockRestoreNudge = jest.fn<() => Promise<boolean>>();
+/** The account's zone, which AuthContext can adopt from the server mid-mount. */
+const mockUserTimezone = { current: 'Europe/Lisbon' };
 
 jest.mock('@/api', () => ({
   uiFlags: {
@@ -41,7 +43,7 @@ jest.mock('@/api', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'settings-tok', userTimezone: 'Europe/Lisbon' }),
+  useAuth: () => ({ token: 'settings-tok', userTimezone: mockUserTimezone.current }),
 }));
 
 jest.mock('@/features/Habits/services/habitManager', () => ({
@@ -109,6 +111,7 @@ beforeEach(() => {
   mockSaveAnswered.mockResolvedValue(undefined);
   mockRestoreTip.mockResolvedValue(true);
   mockRestoreNudge.mockResolvedValue(true);
+  mockUserTimezone.current = 'Europe/Lisbon';
 });
 
 describe('JournalSection — the writing timer row', () => {
@@ -359,6 +362,34 @@ describe('JournalSection — opened on the writing-habit row (#3006)', () => {
     view.rerender(<JournalSection focus="writing-habit" />);
 
     expect(view.getByTestId('writing-habit-picker')).toBeTruthy();
+  });
+
+  it('never reopens a picker the writer closed when the time zone changes under it', async () => {
+    const view = render(<JournalSection focus="writing-habit" />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+    fireEvent.press(view.getByTestId('writing-habit-cancel'));
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+    mockLoadHabits.mockClear();
+
+    // e.g. TimezoneSettings pushed over the hub, or the server's zone adopted.
+    mockUserTimezone.current = 'Asia/Tokyo';
+    view.rerender(<JournalSection focus="writing-habit" />);
+
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+    expect(mockLoadHabits).not.toHaveBeenCalled();
+  });
+
+  it('never reopens it on a later render with the same focus, or after a save', async () => {
+    const view = render(<JournalSection focus="writing-habit" />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+    fireEvent.press(view.getByTestId('writing-habit-choose-31'));
+    await waitFor(() =>
+      expect(view.queryByTestId('writing-habit-picker')?.props.testID).toBeUndefined(),
+    );
+
+    view.rerender(<JournalSection focus="writing-habit" />);
+
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
   });
 });
 
