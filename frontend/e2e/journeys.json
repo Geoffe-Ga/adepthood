@@ -1302,6 +1302,25 @@
     "coveredBy": "frontend/e2e/writing-timer-habit-link.browser.e2e.test.ts"
   },
   {
+    "id": "journal.unlinked-timer-points-to-settings",
+    "description": "A writer whose writing timer has no habit linked finishes a full-length session and the note it leaves points to Settings, where one can be chosen (#3006). On an ordinary page the keep-this offer has the first note to itself -- one invitation per note -- so declining it adds nothing to that note; the next finished session, with the offer answered and GET /ui-flags still unlinked, carries the link-a-habit note with two actions, Go to Settings and Don't show again. Go to Settings opens Settings with focus writing-habit: the Journal group's writing-habit row is scrolled into view with the WritingHabitPicker already open under it, and choosing the writer's habit there PATCHes /ui-flags (read back out of band). Back on the page, the next finished session checks that habit off and carries no note. The covering Playwright spec drives all of that with the browser clock. Jest pins the rest: LinkHabitNudge.test.tsx (nothing while the link is unknown or the flag read is pending, the server link winning over an unset flag, Don't show again hiding at once and persisting), JournalEntryScreenTimer.test.tsx (the note on a quick-launched page, which never makes the offer; the arbitration on an ordinary page; a later page after Don't show again), linkHabitNudgeStorage.test.ts (fail-open read, a save that never rejects, a restore that resolves whether it saved), and JournalSection.test.tsx plus SettingsHubScreen.test.tsx (the focus opening the picker and scrolling, and the Show the habit note again row saying it is back only when the restore saved).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "uiFlags", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "GET /ui-flags",
+        "PATCH /ui-flags",
+        "POST /goal_completions/"
+      ],
+      "tables": ["useruiflags", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-unlinked-timer-nudge.browser.e2e.test.ts"
+  },
+  {
     "id": "habits.re-scaffold-keeps-what-you-already-built",
     "description": "A user who already has habits reopens the scaffolding modal from the drawer or the energy footer and re-runs it. A habit they enter again keeps its own row: the new energy rating, icon, stage and staggered start date are PUT onto the id the server issued, while the streak, the check-ins, the goal ids and the unlock flag survive untouched. Before this, that pick was POSTed, the server rejected the duplicate name with a 409, the client swallowed it into a console line, and the rating the user had just confirmed was silently discarded while the stale row kept its old one -- only a habit under a genuinely new name ever appeared. A habit carried along from before the program is matched too, and stays on the negative lap with its own beginning rather than being scaffolded onto a program date. A habit the picks do not mention is retained, never released: the delete cascades that habit's goals and completions server-side and cannot be undone, so it follows only an explicit choice. That explicit release is implemented and unit-tested here -- deletes are awaited before any create, so a released name can be re-entered without the create hitting the same unique index -- and the review step now gives the user a way to state one, behind a confirmation that names the habit and says its check-ins and goals go with it. Uncovered because the seam runs through the habit service rather than the API client the lane drives directly: reaching it needs a lane that can open the modal, which is what the linked issue tracks. Pinned meanwhile by the \"onboardingSave merge\" block in src/features/Habits/services/__tests__/habitManager.test.ts, which drives the merge through the same bare picks the screen passes and asserts the exact create/update/delete call counts, the phase ordering, and that no fabricated id reaches the wire.",
     "crosses": {

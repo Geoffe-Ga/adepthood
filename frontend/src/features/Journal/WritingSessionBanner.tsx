@@ -28,8 +28,13 @@
  * be shown beside a newer session's sentence. And treat the offer as one the
  * writer may never be given again — it is the invitation, not the record, so
  * commit on the tap rather than staging input inside the slot.
+ *
+ * An occupant that removes itself under the writer's finger (the link-a-habit
+ * note's "Don't show again", #3006) would drop keyboard and screen-reader focus
+ * with it. ``useFocusBannerClose`` hands that focus to the note's own Close,
+ * which is always mounted while the note is.
  */
-import React from 'react';
+import React, { createContext, useCallback, useContext, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_PILL_MAX_HEIGHT } from './JournalEntry.styles';
@@ -49,6 +54,15 @@ import {
   spacing,
   touchTarget,
 } from '@/design/tokens';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
+
+/** Moves focus to the enclosing note's Close; a no-op outside a note. */
+const FocusCloseContext = createContext<() => void>(() => undefined);
+
+/** For a slot occupant that removes itself: hand focus to the note's Close. */
+export function useFocusBannerClose(): () => void {
+  return useContext(FocusCloseContext);
+}
 
 export interface WritingSessionBannerProps {
   result: WritingSessionResult;
@@ -61,11 +75,14 @@ function WritingSessionBanner({
   onDismiss,
   children,
 }: WritingSessionBannerProps): React.JSX.Element {
+  const closeRef = useRef<View>(null);
+  const focusClose = useCallback(() => moveAccessibilityFocus(closeRef.current), []);
   return (
     <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
-      {children}
+      <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
       <TouchableOpacity
+        ref={closeRef}
         style={styles.dismiss}
         onPress={onDismiss}
         accessibilityRole="button"

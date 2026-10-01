@@ -42,6 +42,14 @@ export interface WritingHabitLinkState {
   reset: () => void;
 }
 
+/**
+ * The server has answered, and its answer is "no habit is linked" (#3006).
+ * An unhydrated store is NOT this: ``habitId`` is ``null`` there by default,
+ * and a failed read is not an answer.
+ */
+export const selectKnownUnlinked = (state: WritingHabitLinkState): boolean =>
+  state.hydrated && state.habitId === null;
+
 const INITIAL_STATE = { habitId: null as number | null, hydrated: false };
 
 /** The hydrate already on the wire, so concurrent mounts share one request. */

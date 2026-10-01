@@ -1,7 +1,7 @@
 /**
  * Settings → Journal (#2861): which habit the writing timer checks off, a way
- * to bring back the end-of-session offer, and a way to bring back the
- * morning-pages invitation (#3005).
+ * to bring back the end-of-session offer, a way to bring back the
+ * morning-pages invitation (#3005), and one for the link-a-habit note (#3006).
  *
  * The first row names the current link — "Writing timer → <Name>", or "not
  * linked" — and opens the same ``WritingHabitPicker`` the offer uses, here with
@@ -18,12 +18,18 @@
  * clears today's set-aside too, so the tip is on the shelf when the writer
  * goes back to it, not only tomorrow.
  *
+ * The fourth brings back the finished-session note that points an unlinked
+ * writer here (#3006), after its "Don't show again" — kept on this device too
+ * (``linkHabitNudgeStorage``). That note opens Settings with
+ * ``focus: 'writing-habit'``, which opens the picker in place, whether this
+ * section is mounting for it or was already on screen.
+ *
  * While a link is known but its habit has not been read yet, the row says
  * "a habit" — never "not linked", which would tell a linked writer the opposite
  * of the truth — and the habits are read so the name can resolve.
  */
 import { NotebookPen, RotateCcw } from 'lucide-react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SettingsRow } from './shared/SettingsRow';
 
@@ -39,6 +45,9 @@ import {
 } from '@/features/Journal/morningPagesCopy';
 import {
   JOURNAL_SETTINGS_TITLE,
+  LINK_HABIT_NUDGE_AGAIN_DESCRIPTION,
+  LINK_HABIT_NUDGE_AGAIN_DONE,
+  LINK_HABIT_NUDGE_AGAIN_LABEL,
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,
   OFFER_AGAIN_LABEL,
@@ -47,6 +56,8 @@ import {
   writingTimerRowLabel,
 } from '@/features/Journal/saveAsHabitCopy';
 import WritingHabitPicker from '@/features/Journal/WritingHabitPicker';
+import type { SettingsFocus } from '@/navigation/RootStack';
+import { restoreLinkHabitNudge } from '@/storage/linkHabitNudgeStorage';
 import { restoreMorningPagesTip } from '@/storage/morningPagesTipStorage';
 import { saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -67,8 +78,11 @@ function loadHabitsQuietly(tz: string): void {
   });
 }
 
-/** The link, the picker's open state, and the moves that change them. */
-function useWritingHabitRow(): {
+/**
+ * The link, the picker's open state, and the moves that change them.
+ * ``initiallyOpen`` opens the picker on mount, or whenever it turns true later.
+ */
+function useWritingHabitRow({ initiallyOpen }: { initiallyOpen: boolean }): {
   label: string;
   habits: readonly Habit[];
   linked: boolean;
@@ -83,7 +97,7 @@ function useWritingHabitRow(): {
   const habitId = useWritingHabitLinkStore((state) => state.habitId);
   const hydrate = useWritingHabitLinkStore((state) => state.hydrate);
   const setLink = useWritingHabitLinkStore((state) => state.setLink);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [busy, setBusy] = useState(false);
   const label = rowLabelFor(habitId, habits);
   const pending = label === WRITING_TIMER_ROW_LINKED_PENDING;
@@ -94,6 +108,16 @@ function useWritingHabitRow(): {
   useEffect(() => {
     if (pending) loadHabitsQuietly(userTimezone);
   }, [pending, userTimezone]);
+  // Read through a ref so a zone change (TimezoneSettings pushed over the hub,
+  // or the server's zone adopted after a cold load) never re-runs the opening
+  // below: only the focus turning on opens the picker, never a later render.
+  const timezoneRef = useRef(userTimezone);
+  timezoneRef.current = userTimezone;
+  useEffect(() => {
+    if (!initiallyOpen) return;
+    setOpen(true);
+    loadHabitsQuietly(timezoneRef.current);
+  }, [initiallyOpen]);
 
   const toggle = useCallback(() => {
     if (!open) loadHabitsQuietly(userTimezone);
@@ -113,8 +137,11 @@ function useWritingHabitRow(): {
   return { label, habits, linked: habitId !== null, open, busy, toggle, close, save };
 }
 
-const JournalSection = (): React.JSX.Element => {
-  const row = useWritingHabitRow();
+/**
+ * The three "bring it back" rows. Each says it is done only once its write has
+ * landed — the morning-pages tip and the habit note resolve whether they saved.
+ */
+function ShowAgainRows(): React.JSX.Element {
   const [reopened, setReopened] = useState(false);
   const offerAgain = useCallback(() => {
     void saveWritingOfferAnswered(false).then(() => setReopened(true));
@@ -123,6 +150,48 @@ const JournalSection = (): React.JSX.Element => {
   const offerTipAgain = useCallback(() => {
     void restoreMorningPagesTip().then((restored) => setTipReopened(restored));
   }, []);
+  const [nudgeReopened, setNudgeReopened] = useState(false);
+  const showNudgeAgain = useCallback(() => {
+    void restoreLinkHabitNudge().then(setNudgeReopened);
+  }, []);
+  return (
+    <>
+      <SettingsRow
+        icon={RotateCcw}
+        label={OFFER_AGAIN_LABEL}
+        description={reopened ? OFFER_AGAIN_DONE : OFFER_AGAIN_DESCRIPTION}
+        onPress={offerAgain}
+        testID="settings-row-writing-offer-again"
+      />
+      <SettingsRow
+        icon={RotateCcw}
+        label={MORNING_PAGES_OFFER_AGAIN_LABEL}
+        description={
+          tipReopened ? MORNING_PAGES_OFFER_AGAIN_DONE : MORNING_PAGES_OFFER_AGAIN_DESCRIPTION
+        }
+        onPress={offerTipAgain}
+        testID="settings-row-morning-pages-offer-again"
+      />
+      <SettingsRow
+        icon={RotateCcw}
+        label={LINK_HABIT_NUDGE_AGAIN_LABEL}
+        description={
+          nudgeReopened ? LINK_HABIT_NUDGE_AGAIN_DONE : LINK_HABIT_NUDGE_AGAIN_DESCRIPTION
+        }
+        onPress={showNudgeAgain}
+        testID="settings-row-link-habit-nudge-again"
+      />
+    </>
+  );
+}
+
+export interface JournalSectionProps {
+  /** The part of Settings it was opened on; ``'writing-habit'`` opens the picker. */
+  focus?: SettingsFocus;
+}
+
+const JournalSection = ({ focus }: JournalSectionProps = {}): React.JSX.Element => {
+  const row = useWritingHabitRow({ initiallyOpen: focus === 'writing-habit' });
   const { save } = row;
   const choose = useCallback((habit: Habit) => save(habit.id), [save]);
   const clear = useCallback(() => save(null), [save]);
@@ -145,22 +214,7 @@ const JournalSection = (): React.JSX.Element => {
           onCancel={row.close}
         />
       ) : null}
-      <SettingsRow
-        icon={RotateCcw}
-        label={OFFER_AGAIN_LABEL}
-        description={reopened ? OFFER_AGAIN_DONE : OFFER_AGAIN_DESCRIPTION}
-        onPress={offerAgain}
-        testID="settings-row-writing-offer-again"
-      />
-      <SettingsRow
-        icon={RotateCcw}
-        label={MORNING_PAGES_OFFER_AGAIN_LABEL}
-        description={
-          tipReopened ? MORNING_PAGES_OFFER_AGAIN_DONE : MORNING_PAGES_OFFER_AGAIN_DESCRIPTION
-        }
-        onPress={offerTipAgain}
-        testID="settings-row-morning-pages-offer-again"
-      />
+      <ShowAgainRows />
     </EditorialSection>
   );
 };
