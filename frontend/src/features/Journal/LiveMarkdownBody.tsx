@@ -287,7 +287,7 @@ export default function LiveMarkdownBody({
 }: LiveMarkdownBodyProps) {
   const viewportHeight = useWindowDimensions().height;
   const minimumBodyHeight = Math.max(BODY_MIN_HEIGHT, viewportHeight * BODY_VIEWPORT_FRACTION);
-  const growth = useGrowingFieldHeight(minimumBodyHeight);
+  const growth = useGrowingFieldHeight(minimumBodyHeight, { value: body, inputRef });
   const markdown = useMarkdownBodyBindings(body, onChangeBody, onBodySelectionChange, inputRef);
   const onKeyPress = useMarkdownKeyCommands(body, markdown);
   const { toolbarState, runCommand } = useToolbarCommands(body, markdown, inputRef);
