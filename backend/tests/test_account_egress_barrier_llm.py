@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from models.wallet_audit import (
 from routers import journal
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
+from tests.helpers.log_lines import records_for
 from tests.test_account_egress_barrier import (
     DELETION_BEGIN,
     DELETION_RESPONSE,
@@ -71,6 +73,11 @@ _NO_HITS = json.dumps({"hits": []})
 #: assertions cannot drift apart on a typo.
 DIAL_START = "provider-dial-start"
 DIAL_SENT = "provider-dial-sent"
+
+#: The settlement and refund log events, and the loggers that write them (#623 PR3).
+_SETTLED = "llm_generation_settled"
+_REFUND_APPLIED = "wallet_refund_applied"
+_SETTLEMENT_LOGGERS = ("routers.journal", "services.llm_usage", "services.wallet")
 
 _SETTLE_TIMEOUT_SECONDS = 20.0
 _OVERTAKE_PROBE_SECONDS = 1.0
@@ -1459,6 +1466,42 @@ async def test_a_body_blanked_while_the_pass_waited_answers_422_and_refunds(
         REASON_REFUND_FAILED_RESONANCE,
     ]
     assert await _marginalia_count(concurrent_session_factory, entry_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_body_blanked_while_the_pass_waited_settles_once_with_its_refund_line(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The in-hold 422 refund carries the pass's trace: one settled line, one refund line."""
+    _released_provider(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, "pass_blanked_settled")
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+    for name in _SETTLEMENT_LOGGERS:
+        caplog.set_level(logging.INFO, logger=name)
+    caplog.clear()
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _blank_the_row(concurrent_session_factory, entry_id),
+    )
+
+    assert answered.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, answered.text
+    settled = records_for(caplog.records, _SETTLED)
+    assert len(settled) == 1, [r.getMessage() for r in settled]
+    extra = settled[0].__dict__
+    assert extra["feature"] == "resonance"
+    assert extra["outcome"] == "refunded_failed"
+    assert extra["charged"] is True
+    assert extra["calls"] == 0
+    refunds = records_for(caplog.records, _REFUND_APPLIED)
+    assert [r.__dict__["refund_reason"] for r in refunds] == [REASON_REFUND_FAILED_RESONANCE]
 
 
 @pytest.mark.asyncio

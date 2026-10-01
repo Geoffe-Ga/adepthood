@@ -2149,9 +2149,11 @@ async def _run_admitted_resonance(
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
         if await _withdrawn_under_hold(session, entry, spent=spent, trace=trace):
-            # Nothing leaves the process on this path, so the raw refreshed body
-            # is screened as-is: the screen normalizes its own input, and a body
-            # an edit made both intimate and distressed still gets care.
+            # A deliberate departure from _body_under_hold, which sanitizes first:
+            # the raw refreshed body is screened as-is. Nothing leaves the process
+            # on this path, assess_distress normalizes its own input, and this
+            # private answer must never 422: a blank body still answers private,
+            # and a body an edit made both intimate and distressed still gets care.
             return await _private_response(
                 session, current_user, _care_response(_care_for(entry.message))
             )
