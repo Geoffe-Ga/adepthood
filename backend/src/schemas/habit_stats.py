@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from domain.streaks import StreakUnit
+
 
 class HabitStats(BaseModel):
     """Aggregated statistics for a single habit.
@@ -21,3 +23,6 @@ class HabitStats(BaseModel):
     total_completions: int
     completion_rate: float
     completion_dates: list[str]
+    # What the two streak fields count: days, or whole weeks / months for a
+    # habit kept ``per_week`` / ``per_month``.
+    streak_unit: StreakUnit = "day"

@@ -35,7 +35,7 @@ from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from security import TextTooLongError, sanitize_user_text
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
-from services.streaks import compute_habit_streak, subtractive_context_for_goals
+from services.streaks import cadence_for_goals, compute_habit_streak, subtractive_context_for_goals
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,8 @@ def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timez
     so the response payload stays bounded.
     """
     subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
-    habit.streak = compute_habit_streak(completions, user_timezone, subtractive)
+    cadence = cadence_for_goals(habit.goals)
+    habit.streak = compute_habit_streak(completions, user_timezone, subtractive, cadence=cadence)
 
 
 async def _populate_streaks_for(
@@ -531,4 +532,5 @@ async def get_habit_stats(
     habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
     subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
-    return compute_habit_stats(completions, user_tz, subtractive)
+    cadence = cadence_for_goals(habit.goals)
+    return compute_habit_stats(completions, user_tz, subtractive, cadence=cadence)

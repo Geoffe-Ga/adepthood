@@ -652,6 +652,16 @@
           "streak": {
             "title": "Streak",
             "type": "integer"
+          },
+          "streak_unit": {
+            "default": "day",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Streak Unit",
+            "type": "string"
           }
         },
         "required": [
@@ -3378,6 +3388,16 @@
           "longest_streak": {
             "title": "Longest Streak",
             "type": "integer"
+          },
+          "streak_unit": {
+            "default": "day",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Streak Unit",
+            "type": "string"
           },
           "total_completions": {
             "title": "Total Completions",
@@ -7700,7 +7720,7 @@
         "type": "object"
       },
       "UiFlagsResponse": {
-        "description": "The caller's UI flags, plus the habit their writing timer checks off.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
+        "description": "The caller's UI flags, plus the habits their sessions check off.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit; the same holds for\n``practice_session_habit_id``, the habit a finished practice session\nchecks off.",
         "properties": {
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
@@ -7709,6 +7729,17 @@
           "has_seen_welcome": {
             "title": "Has Seen Welcome",
             "type": "boolean"
+          },
+          "practice_session_habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practice Session Habit Id"
           },
           "writing_session_habit_id": {
             "anyOf": [
@@ -7725,13 +7756,14 @@
         "required": [
           "has_seen_welcome",
           "energy_scaffolding_archived",
-          "writing_session_habit_id"
+          "writing_session_habit_id",
+          "practice_session_habit_id"
         ],
         "title": "UiFlagsResponse",
         "type": "object"
       },
       "UiFlagsUpdate": {
-        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` is the one deliberate exception to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.",
+        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\nThe two habit links are the deliberate exceptions to that base's non-null\ndoctrine. Their columns *are* nullable -- \"no habit linked\" is a real\nstate -- so an explicit ``null`` is a legitimate value meaning \"clear the\nlink\", not a defect to refuse. The three states still stay apart through\n``model_fields_set``: omitted leaves a link alone, ``null`` clears it, and\nan id sets it once the caller is shown to own that habit. Each id is\nbounded like every other row id, so ``0``, a negative or a value past\nint32 is a 422 rather than a database lookup.",
         "properties": {
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
@@ -7740,6 +7772,19 @@
           "has_seen_welcome": {
             "title": "Has Seen Welcome",
             "type": "boolean"
+          },
+          "practice_session_habit_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practice Session Habit Id"
           },
           "writing_session_habit_id": {
             "anyOf": [
@@ -25206,7 +25251,7 @@
         ]
       },
       "patch": {
-        "description": "Partially update the caller's UI flags and return the full new state.\n\nOnly the fields present in the request are applied; unspecified flags keep\ntheir stored value. An empty body is rejected upstream (422) by\n:class:`~schemas.ui_flags.UiFlagsUpdate`. A ``writing_session_habit_id``\nnaming a missing habit is 404 and another user's habit is 403, and either\nrefusal writes nothing at all; an explicit ``null`` clears the link.",
+        "description": "Partially update the caller's UI flags and return the full new state.\n\nOnly the fields present in the request are applied; unspecified flags keep\ntheir stored value. An empty body is rejected upstream (422) by\n:class:`~schemas.ui_flags.UiFlagsUpdate`. A habit link\n(``writing_session_habit_id`` / ``practice_session_habit_id``) naming a\nmissing habit is 404 and another user's habit is 403, and either refusal\nwrites nothing at all; an explicit ``null`` clears that link.",
         "operationId": "update_ui_flags_ui_flags_patch",
         "parameters": [
           {

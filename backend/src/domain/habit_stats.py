@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING
 
 from domain.dates import today_in_tz
 from domain.streaks import (
+    Cadence,
     SubtractiveContext,
     current_consecutive_streak,
+    period_current_streak,
+    period_longest_streak,
+    streak_unit_for,
     subtractive_current_streak,
     subtractive_longest_streak,
     sum_units_by_user_day,
@@ -107,7 +111,28 @@ def _subtractive_stats(
     )
 
 
-def _additive_stats(completions: list[GoalCompletion], user_timezone: str) -> HabitStats:
+def _additive_streaks(
+    completed: list[GoalCompletion],
+    sorted_dates: list[date],
+    user_timezone: str,
+    cadence: Cadence | None,
+) -> tuple[int, int]:
+    """``(longest, current)`` for an additive habit: days, or periods under ``cadence``."""
+    if cadence is None:
+        current = current_consecutive_streak(
+            sorted(sorted_dates, reverse=True), today_in_tz(user_timezone)
+        )
+        return _longest_streak(sorted_dates), current
+    day_totals = sum_units_by_user_day(completed)
+    return (
+        period_longest_streak(day_totals, cadence),
+        period_current_streak(day_totals, today_in_tz(user_timezone), cadence),
+    )
+
+
+def _additive_stats(
+    completions: list[GoalCompletion], user_timezone: str, cadence: Cadence | None
+) -> HabitStats:
     """Additive variant of :func:`compute_habit_stats`.
 
     Additive parity (#781): a "did not complete" check-in persists a real
@@ -115,24 +140,25 @@ def _additive_stats(completions: list[GoalCompletion], user_timezone: str) -> Ha
     those via ``completed_units > 0``; the stats path must use the same rule or
     the two endpoints report different streaks. Filter once at the entry so the
     day buckets, streaks, rate, and total all describe actual completions.
+    With ``cadence`` the two streak fields count complete weeks or months.
     """
     completed = [c for c in completions if c.completed_units > 0]
     if not completed:
-        return _empty_stats()
+        return _empty_stats().model_copy(update={"streak_unit": streak_unit_for(cadence)})
 
     units, counts, dates = _aggregate_by_day(completed)
     sorted_dates = sorted(dates)
+    longest, current = _additive_streaks(completed, sorted_dates, user_timezone, cadence)
     return HabitStats(
         day_labels=list(_DAY_LABELS),
         values=units,
         completions_by_day=counts,
-        longest_streak=_longest_streak(sorted_dates),
-        current_streak=current_consecutive_streak(
-            sorted(dates, reverse=True), today_in_tz(user_timezone)
-        ),
+        longest_streak=longest,
+        current_streak=current,
         total_completions=len(completed),
         completion_rate=_completion_rate(sorted_dates, user_timezone),
         completion_dates=[d.isoformat() for d in sorted_dates],
+        streak_unit=streak_unit_for(cadence),
     )
 
 
@@ -140,6 +166,8 @@ def compute_habit_stats(
     completions: list[GoalCompletion],
     user_timezone: str = "UTC",
     subtractive: SubtractiveContext | None = None,
+    *,
+    cadence: Cadence | None = None,
 ) -> HabitStats:
     """Aggregate completions into stats using the user's local calendar.
 
@@ -148,8 +176,10 @@ def compute_habit_stats(
     backwards/forwards across ``[start_date, today]`` counting absent
     days as abstention wins rather than data gaps.  Without it the
     additive path runs, preserving the legacy behavior for every
-    existing caller.
+    existing caller. ``cadence`` (a habit kept per week or per month)
+    makes the additive streaks count complete periods, as the habit list
+    and the check-in response do.
     """
     if subtractive is not None:
         return _subtractive_stats(completions, user_timezone, subtractive)
-    return _additive_stats(completions, user_timezone)
+    return _additive_stats(completions, user_timezone, cadence)

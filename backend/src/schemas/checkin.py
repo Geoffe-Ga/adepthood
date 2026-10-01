@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from domain.streaks import StreakUnit
+
 from .milestone import Milestone
 
 # BUG-SCHEMA-003: the server emits a fixed set of reason codes from
@@ -29,3 +31,7 @@ class CheckInResult(BaseModel):
     # A tier change can create one row per tier, so a single goal row is not
     # sufficient for client reconciliation (#2852).
     day_units: float
+    # What ``streak`` counts: days for a daily goal, whole weeks or months for
+    # a goal kept ``per_week`` / ``per_month``. Defaults to days so every
+    # existing constructor and client keeps its meaning.
+    streak_unit: StreakUnit = "day"

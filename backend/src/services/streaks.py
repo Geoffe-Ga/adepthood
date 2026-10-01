@@ -25,8 +25,12 @@ from sqlmodel import col, select
 
 from domain.dates import today_in_tz
 from domain.streaks import (
+    Cadence,
     SubtractiveContext,
+    cadence_for_goals,
     current_consecutive_streak,
+    period_current_streak,
+    streak_unit_for,
     subtractive_current_streak,
     sum_units_by_user_day,
 )
@@ -35,13 +39,17 @@ from models.goal_completion import GoalCompletion
 from schemas.milestone import Milestone
 
 __all__ = [
+    "Cadence",
     "PendingCompletion",
     "StreakScope",
     "SubtractiveContext",
+    "cadence_for_goals",
     "check_milestones",
     "compute_consecutive_streak",
+    "compute_goal_streak",
     "compute_habit_streak",
     "compute_streak_before_and_after",
+    "streak_unit_for",
     "subtractive_context_for_goals",
 ]
 
@@ -98,9 +106,26 @@ async def compute_consecutive_streak(
     ``subtractive.clear_threshold``.  Omitting ``subtractive`` keeps
     legacy additive behavior, so callers that don't know the habit's
     polarity stay safe.
+
+    Daily cadence only; a goal kept per week or per month goes through
+    :func:`compute_goal_streak` with its :class:`Cadence` in the scope.
     """
-    day_totals = await _fetch_day_totals(session, goal_id, user_id)
-    return _streak_from_day_totals(day_totals, user_timezone, subtractive)
+    return await compute_goal_streak(
+        session, StreakScope(goal_id, user_id, user_timezone, subtractive)
+    )
+
+
+async def compute_goal_streak(session: AsyncSession, scope: StreakScope) -> int:
+    """The current streak of one goal under ``scope``'s polarity and cadence.
+
+    :func:`compute_consecutive_streak` with the calendar and cadence bundled:
+    a daily chain, or -- when ``scope.cadence`` is set -- a chain of complete
+    weeks or months (:func:`domain.streaks.period_current_streak`).
+    """
+    day_totals = await _fetch_day_totals(session, scope.goal_id, scope.user_id)
+    return _streak_from_day_totals(
+        day_totals, scope.user_timezone, scope.subtractive, scope.cadence
+    )
 
 
 async def _fetch_day_totals(session: AsyncSession, goal_id: int, user_id: int) -> dict[date, float]:
@@ -137,21 +162,34 @@ def _streak_from_day_totals(
     day_totals: dict[date, float],
     user_timezone: str,
     subtractive: SubtractiveContext | None,
+    cadence: Cadence | None = None,
 ) -> int:
-    """Count the consecutive-day streak from pre-bucketed day totals."""
+    """Count the current streak from pre-bucketed day totals.
+
+    Polarity first: a subtractive habit is an abstention chain whatever its
+    cadence. Then cadence: a period goal counts complete weeks or months, and
+    everything else is the consecutive-day chain.
+    """
     if subtractive is not None:
         return subtractive_current_streak(day_totals, user_timezone, subtractive)
+    if cadence is not None:
+        return period_current_streak(day_totals, today_in_tz(user_timezone), cadence)
     return _additive_streak_from_day_totals(day_totals, user_timezone)
 
 
 @dataclass(frozen=True)
 class StreakScope:
-    """The goal + calendar + polarity that fully specify a streak computation."""
+    """The goal + calendar + polarity + cadence that fully specify a streak.
+
+    ``cadence`` is ``None`` for a daily goal; for one kept per week or per
+    month it is the habit's :class:`Cadence`, and the streak counts periods.
+    """
 
     goal_id: int
     user_id: int
     user_timezone: str
     subtractive: SubtractiveContext | None
+    cadence: Cadence | None = None
 
 
 @dataclass(frozen=True)
@@ -175,10 +213,14 @@ async def compute_streak_before_and_after(
     ``streak_after`` matches recomputing after the insert.
     """
     day_totals = await _fetch_day_totals(session, scope.goal_id, scope.user_id)
-    before = _streak_from_day_totals(day_totals, scope.user_timezone, scope.subtractive)
+    before = _streak_from_day_totals(
+        day_totals, scope.user_timezone, scope.subtractive, scope.cadence
+    )
     after_totals = dict(day_totals)
     after_totals[pending.day] = after_totals.get(pending.day, 0.0) + pending.units
-    after = _streak_from_day_totals(after_totals, scope.user_timezone, scope.subtractive)
+    after = _streak_from_day_totals(
+        after_totals, scope.user_timezone, scope.subtractive, scope.cadence
+    )
     return before, after
 
 
@@ -197,8 +239,15 @@ def compute_habit_streak(
     completions: Sequence[GoalCompletion],
     user_timezone: str = "UTC",
     subtractive: SubtractiveContext | None = None,
+    *,
+    cadence: Cadence | None = None,
 ) -> int:
-    """Compute current consecutive-day streak from in-memory completions.
+    """Compute the current streak from in-memory completions.
+
+    Consecutive days by default; with ``cadence`` (a habit kept per week or
+    per month, see :func:`domain.streaks.cadence_for_goals`) consecutive
+    complete periods instead, so the list tile and the check-in response
+    count the same thing.
 
     Used by ``GET /habits`` to populate streak without a per-goal DB query.
     Each completion's persisted ``local_day`` supplies calendar membership;
@@ -218,9 +267,9 @@ def compute_habit_streak(
     bundling the sibling clear-tier goal's target and the habit's
     ``start_date`` to walk backwards counting abstention days instead.
     """
-    if subtractive is not None:
+    if subtractive is not None or cadence is not None:
         day_totals = sum_units_by_user_day(completions)
-        return subtractive_current_streak(day_totals, user_timezone, subtractive)
+        return _streak_from_day_totals(day_totals, user_timezone, subtractive, cadence)
     sorted_dates = sorted(_completed_user_dates(completions), reverse=True)
     return current_consecutive_streak(sorted_dates, today_in_tz(user_timezone))
 

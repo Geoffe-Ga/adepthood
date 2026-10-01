@@ -1,17 +1,37 @@
-"""Streak management domain functions."""
+"""Streak management domain functions.
+
+Two kinds of chain live here. The **daily** chain (the default) counts
+consecutive user-local days with any completed units. The **period** chain
+covers goals kept ``per_week`` or ``per_month``: "3 sessions a day, 4 days a
+week" is complete for a week when four of its Monday-to-Sunday days each
+reached three sessions, and the streak counts consecutive complete periods.
+:class:`Cadence` carries that reading of a goal; ``None`` means daily.
+"""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from domain.dates import today_in_tz
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
+    from models.goal import Goal
     from models.goal_completion import GoalCompletion
+
+PeriodUnit = Literal["week", "month"]
+# What one unit of a streak is, as the client should word it.
+StreakUnit = Literal["day", "week", "month"]
+
+_PERIOD_UNITS: dict[str, PeriodUnit] = {"per_week": "week", "per_month": "month"}
+_DAYS_PER_WEEK = 7
+# A period needs at least one done day to mean anything; a frequency the
+# editor let through at zero would otherwise mark every period complete.
+_MIN_DAYS_NEEDED = 1
 
 # Canonical weekday names accepted in ``Habit.notification_days``,
 # mirroring ``date.strftime("%a")``.
@@ -44,6 +64,132 @@ class SubtractiveContext:
 
     clear_threshold: float
     start_date: date
+
+
+@dataclass(frozen=True)
+class Cadence:
+    """How a ``per_week`` / ``per_month`` goal is counted.
+
+    ``goal.target`` is always the amount for one DAY; ``goal.frequency`` is
+    how many such days a period needs. So a day is *done* when its total
+    reaches ``day_target``, and a period is *complete* when at least
+    ``days_needed`` of its days are done. Weeks run Monday to Sunday and
+    months are calendar months, both in the user's own calendar (the day
+    totals arrive already bucketed into user-local days).
+    """
+
+    unit: PeriodUnit
+    days_needed: int
+    day_target: float
+
+
+def cadence_for_goal(goal: Goal) -> Cadence | None:
+    """The period cadence ``goal`` is kept at, or ``None`` for a daily goal."""
+    unit = _PERIOD_UNITS.get(goal.frequency_unit)
+    if unit is None:
+        return None
+    needed = math.ceil(goal.frequency) if math.isfinite(goal.frequency) else _MIN_DAYS_NEEDED
+    return Cadence(unit=unit, days_needed=max(_MIN_DAYS_NEEDED, needed), day_target=goal.target)
+
+
+def cadence_for_goals(goals: Sequence[Goal]) -> Cadence | None:
+    """The cadence a HABIT is counted at: its low tier's, else daily.
+
+    The low tier is the floor -- the least a day and a period must hold to
+    count -- which is the same spirit as the daily chain counting any logged
+    unit. The tiers share one ``frequency_unit`` (the editor writes it to all
+    three at once), so only the per-day target and days-per-period differ. A
+    ladder with no low tier is read as daily, as the client's ``habitCadence``
+    reads it, so the tile and the server never count different things.
+    """
+    low = next((goal for goal in goals if goal.tier == "low"), None)
+    return None if low is None else cadence_for_goal(low)
+
+
+def streak_unit_for(cadence: Cadence | None) -> StreakUnit:
+    """The word a streak of this cadence counts in."""
+    return "day" if cadence is None else cadence.unit
+
+
+def period_start(day: date, unit: PeriodUnit) -> date:
+    """The first day of the period ``day`` falls in: its Monday, or the 1st."""
+    if unit == "week":
+        return day - timedelta(days=day.weekday())
+    return day.replace(day=1)
+
+
+def _previous_period_start(start: date, unit: PeriodUnit) -> date:
+    """The start of the period before the one starting at ``start``."""
+    if unit == "week":
+        return start - timedelta(days=_DAYS_PER_WEEK)
+    return (start - timedelta(days=1)).replace(day=1)
+
+
+def _next_period_start(start: date, unit: PeriodUnit) -> date:
+    """The start of the period after the one starting at ``start``."""
+    if unit == "week":
+        return start + timedelta(days=_DAYS_PER_WEEK)
+    return (start + timedelta(days=_DAYS_PER_WEEK * 5)).replace(day=1)
+
+
+def _done_days(day_totals: dict[date, float], cadence: Cadence) -> set[date]:
+    """The days whose total reached the day target (and is positive)."""
+    return {d for d, total in day_totals.items() if total > 0 and total >= cadence.day_target}
+
+
+def _days_done_in(done: Iterable[date], start: date, cadence: Cadence) -> int:
+    """How many of ``done`` fall in the period starting at ``start``."""
+    end = _next_period_start(start, cadence.unit)
+    return sum(1 for d in done if start <= d < end)
+
+
+def _is_complete(done: set[date], start: date, cadence: Cadence) -> bool:
+    return _days_done_in(done, start, cadence) >= cadence.days_needed
+
+
+def period_progress(
+    day_totals: dict[date, float], today: date, cadence: Cadence
+) -> tuple[int, int]:
+    """``(days done, days needed)`` for the period ``today`` falls in."""
+    start = period_start(today, cadence.unit)
+    return _days_done_in(_done_days(day_totals, cadence), start, cadence), cadence.days_needed
+
+
+def period_current_streak(day_totals: dict[date, float], today: date, cadence: Cadence) -> int:
+    """Consecutive complete periods, counted back from the current one.
+
+    The current period counts when it is already complete; otherwise it is
+    still in progress and is passed over rather than breaking the chain --
+    the period analogue of the daily chain's one-day grace. From there each
+    earlier period must be complete, and the first that is not ends the walk.
+    """
+    done = _done_days(day_totals, cadence)
+    if not done:
+        return 0
+    cursor = period_start(today, cadence.unit)
+    if not _is_complete(done, cursor, cadence):
+        cursor = _previous_period_start(cursor, cadence.unit)
+    streak = 0
+    while _is_complete(done, cursor, cadence):
+        streak += 1
+        cursor = _previous_period_start(cursor, cadence.unit)
+    return streak
+
+
+def period_longest_streak(day_totals: dict[date, float], cadence: Cadence) -> int:
+    """The longest run of calendar-adjacent complete periods, ever."""
+    done = _done_days(day_totals, cadence)
+    longest = run = 0
+    previous: date | None = None
+    for start in sorted({period_start(d, cadence.unit) for d in done}):
+        if not _is_complete(done, start, cadence):
+            run, previous = 0, None
+            continue
+        adjacent = previous is not None and _previous_period_start(start, cadence.unit) == previous
+        run = run + 1 if adjacent else 1
+        longest = max(longest, run)
+        previous = start
+    return longest
 
 
 def sum_units_by_user_day(
