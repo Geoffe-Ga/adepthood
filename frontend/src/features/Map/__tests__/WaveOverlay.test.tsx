@@ -1,12 +1,14 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 import React from 'react';
-import { Path, Polygon } from 'react-native-svg';
+import Svg, { Path, Polygon } from 'react-native-svg';
 import { create } from 'react-test-renderer';
 
 import { STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 import WaveOverlay from '../WaveOverlay';
+
+import { decorativeHidden } from '@/components/a11yHidden';
 
 type Renderer = ReturnType<typeof create>;
 type WavePath = ReturnType<Renderer['root']['findAll']>[number];
@@ -34,6 +36,11 @@ const nearTestId = (stageNumber: number, half: string): string =>
   `${NEAR_PREFIX}${stageNumber}-${half}`;
 
 describe('WaveOverlay', () => {
+  it('hides the decorative wave from every reader through the one helper (#2829)', () => {
+    const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
+    expect(tree.root.findByType(Svg).props).toMatchObject(decorativeHidden());
+  });
+
   it('renders exactly two wave paths per pair (a lower and an upper half) and no far-side strand', () => {
     const tree = create(<WaveOverlay width={WIDTH} height={HEIGHT} />);
     expect(wavePathsWithPrefix(tree, NEAR_PREFIX)).toHaveLength(TOTAL_NEAR_PATH_COUNT);

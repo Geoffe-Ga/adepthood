@@ -105,6 +105,7 @@ import type {
   PromotedQuote,
   ReflectionLevel,
 } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
 import {
   NAV_ICON_SIZE,
@@ -2451,7 +2452,7 @@ function WritingFooter({
             accessibilityLabel="Retry saving this entry"
             testID="journal-save-retry"
           >
-            <RefreshCw color={accent.primary} size={18} accessible={false} />
+            <RefreshCw color={accent.primary} size={18} {...decorativeHidden()} />
             <Text style={styles.saveRetryLabel}>Retry</Text>
           </TouchableOpacity>
         ) : null}
@@ -2487,7 +2488,7 @@ function PhotographPageButton({ onPress }: { onPress: () => void }): React.JSX.E
           color={accent.primary}
           size={NAV_ICON_SIZE}
           strokeWidth={NAV_ICON_STROKE}
-          accessible={false}
+          {...decorativeHidden()}
         />
       </View>
     </TouchableOpacity>
@@ -2511,7 +2512,7 @@ function ReflectionSourcesButton({
       testID="reflection-sources-toggle"
     >
       <View accessible={false} testID="reflection-sources-icon">
-        <BookOpen color={accent.primary} size={18} accessible={false} />
+        <BookOpen color={accent.primary} size={18} {...decorativeHidden()} />
       </View>
       {compact ? null : <Text style={styles.writingControlLabel}>Sources</Text>}
     </TouchableOpacity>
@@ -3967,7 +3968,7 @@ function ApiKeySettingsLink({ onPress }: { onPress: () => void }): React.JSX.Ele
         color={accent.primary}
         size={NAV_ICON_SIZE}
         strokeWidth={NAV_ICON_STROKE}
-        accessible={false}
+        {...decorativeHidden()}
       />
     </TouchableOpacity>
   );
@@ -4013,7 +4014,7 @@ function CloseEntryLink({
       accessibilityState={{ busy: closing, disabled: closing }}
       testID="journal-close-entry"
     >
-      <X color={accent.primary} size={24} accessible={false} />
+      <X color={accent.primary} size={24} {...decorativeHidden()} />
     </TouchableOpacity>
   );
 }

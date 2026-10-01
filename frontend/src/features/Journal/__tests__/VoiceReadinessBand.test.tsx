@@ -16,6 +16,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { VoiceReadinessT } from '@/api/schemas';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, ink, touchTarget } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
@@ -244,7 +245,7 @@ describe('VoiceReadinessBand — declining it', () => {
     const icons = UNSAFE_getAllByType(X);
     expect(icons).toHaveLength(1);
     expect(icons[0]?.props.color).toBe(ink.soft);
-    expect(icons[0]?.props.accessible).toBe(false);
+    expect(icons[0]?.props).toMatchObject(decorativeHidden());
 
     const control = StyleSheet.flatten(dismiss.props.style);
     expect(control.position).toBe('absolute');

@@ -11,6 +11,7 @@
 // `ReflectionSourcesPanel.test.tsx`).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { BookOpen } from 'lucide-react-native';
 import React from 'react';
 
 import { KEYED } from './idempotencyTestKit';
@@ -24,6 +25,7 @@ import type {
   ReflectionSourceItem,
   ReflectionSourcesResponse,
 } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -314,6 +316,8 @@ describe('JournalEntryScreen -- reflection mode', () => {
         );
         expect(within(photograph).getByTestId('journal-photograph-page-icon')).toBeTruthy();
         expect(within(sources).getByTestId('reflection-sources-icon')).toBeTruthy();
+        // The book glyph is decoration; the toggle's own label names it (#2829).
+        expect(within(sources).UNSAFE_getByType(BookOpen).props).toMatchObject(decorativeHidden());
         expect(within(photograph).queryByText('Photograph a page')).toBeNull();
         expect(within(sources).queryByText('Sources')).toEqual(compact ? null : expect.anything());
         expect(photograph.props.accessibilityLabel).toMatch(/Photograph a page or screenshot/);

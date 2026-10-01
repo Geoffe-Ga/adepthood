@@ -1,11 +1,13 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { Camera, KeyRound, X } from 'lucide-react-native';
 import React from 'react';
 
 import { KEYED } from './idempotencyTestKit';
 
 import type { JournalMessage } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -136,6 +138,23 @@ describe('JournalEntryScreen — always-available close', () => {
       fireEvent.press(getByTestId('journal-close-entry'));
     });
     expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' });
+  });
+
+  // Each glyph is decoration under a named button: hidden by the one helper,
+  // never by an `accessible` prop the web would forward to the <svg> (#2829).
+  it.each([
+    ['journal-close-entry', 'Close — return to your journal', X],
+    ['journal-api-key-settings', 'Add or change your API key', KeyRound],
+    [
+      'journal-photograph-page',
+      'Photograph a page or screenshot and add its text to this entry',
+      Camera,
+    ],
+  ])('keeps %s named %j with its glyph hidden', (testID, name, Glyph) => {
+    const { getByRole, getByTestId } = renderScreen();
+    expect(getByRole('button', { name })).toBe(getByTestId(testID));
+    const glyph = within(getByTestId(testID)).UNSAFE_getByType(Glyph);
+    expect(glyph.props).toMatchObject(decorativeHidden());
   });
 
   it('still renders when the writer arrived from the course reader', () => {

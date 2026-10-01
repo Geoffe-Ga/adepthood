@@ -12,6 +12,7 @@ import type {
   StagePromptDetail,
   StagePromptsResponse,
 } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { editorialType, ink, touchTarget, uiType } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 
@@ -395,7 +396,7 @@ describe('a writer can set a stage prompt aside, and bring it back', () => {
     expect(footer.props.accessibilityLabel).toBe('Show the prompts you have set aside');
     const chevrons = within(footer).UNSAFE_getAllByType(ChevronRight);
     expect(chevrons).toHaveLength(1);
-    expect(chevrons[0]?.props.accessible).toBe(false);
+    expect(chevrons[0]?.props).toMatchObject(decorativeHidden());
 
     // One link face for the band: the button face, never the caption.
     const label = StyleSheet.flatten(within(footer).getByText('1 set aside').props.style);

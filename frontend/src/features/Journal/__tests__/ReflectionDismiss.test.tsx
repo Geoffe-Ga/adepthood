@@ -20,6 +20,7 @@ import ReflectionDismiss, {
   closeCornerReserve,
 } from '../ReflectionDismiss';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, accent, editorialType, ink, touchTarget } from '@/design/tokens';
 
 const noop = (): void => undefined;
@@ -110,7 +111,8 @@ describe('ReflectionDismiss — close variant (icon-only X, #2862)', () => {
     expect(CLOSE_ICON_SIZE).toBe(20);
     expect(icon?.props.size).toBe(CLOSE_ICON_SIZE);
     expect(icon?.props.color).toBe(ink.soft);
-    expect(icon?.props.accessible).toBe(false);
+    // The one spelling that hides it on native and on the web alike (#2829).
+    expect(icon?.props).toMatchObject(decorativeHidden());
   });
 
   it('sits absolutely in the top-right corner', () => {

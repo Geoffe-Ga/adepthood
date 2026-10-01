@@ -3,14 +3,23 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
+import { Bold, Italic, Underline, type LucideIcon } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import type { MarkdownCommand } from '../markdownCommands';
 import MarkdownFormatToolbar from '../MarkdownFormatToolbar';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { colors, touchTarget } from '@/design/tokens';
+
+/** The glyph each labelled style action draws. */
+const GLYPHS: Partial<Record<MarkdownCommand, LucideIcon>> = {
+  bold: Bold,
+  italic: Italic,
+  underline: Underline,
+};
 
 /** WCAG 1.4.11: a state indicator is a non-text UI component. */
 const NON_TEXT_CONTRAST = 3;
@@ -40,6 +49,12 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
     const onCommand = jest.fn();
     const { getByRole } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={onCommand} />);
     const button = getByRole('button', { name: label });
+    // The glyph is decoration under the named button, hidden by the helper (#2829).
+    const Glyph = GLYPHS[command];
+    if (Glyph === undefined) throw new Error(`no glyph for ${command}`);
+    const glyphs = within(button).UNSAFE_queryAllByType(Glyph);
+    expect(glyphs).toHaveLength(1);
+    expect(glyphs[0]?.props).toMatchObject(decorativeHidden());
     fireEvent.press(button);
     expect(onCommand).toHaveBeenCalledWith(command);
   });

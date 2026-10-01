@@ -38,6 +38,7 @@ import { countWords } from './wordCount';
 
 import { prompts } from '@/api';
 import type { JournalMessage, PromptDetail, StagePromptDetail, StagePromptsResponse } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
@@ -642,7 +643,11 @@ function StagePromptEyebrow({
           testID="journal-stage-prompts-set-aside-footer"
         >
           <Text style={styles.promptSetAsideLabel}>{setAsideCountLabel(setAsideCount)}</Text>
-          <ChevronRight color={accent.primary} size={SET_ASIDE_CHEVRON_SIZE} accessible={false} />
+          <ChevronRight
+            color={accent.primary}
+            size={SET_ASIDE_CHEVRON_SIZE}
+            {...decorativeHidden()}
+          />
         </TouchableOpacity>
       )}
     </View>

@@ -5,6 +5,8 @@ import Svg, { Path, Polygon } from 'react-native-svg';
 import { waveArrowheads, waveSegments } from './waveGeometry';
 import type { StageAnchors } from './waveGeometry';
 
+import { decorativeHidden } from '@/components/a11yHidden';
+
 /**
  * Continuous sine-wave artwork for the Map's center column, rendered behind the
  * per-stage tap cells. The wave rises upward like a struck tuning fork, wobbling
@@ -62,7 +64,7 @@ export const WaveOverlay = ({
       height={height}
       style={StyleSheet.absoluteFill}
       pointerEvents="none"
-      accessible={false}
+      {...decorativeHidden()}
     >
       {segments.map((segment) => (
         <Path

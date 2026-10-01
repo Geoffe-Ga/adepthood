@@ -1,6 +1,7 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { RefreshCw } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
@@ -10,6 +11,7 @@ import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalE
 import { KEYED } from './idempotencyTestKit';
 
 import type { JournalMessage } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { colors, editorialType, spacing, writingField, writingFieldFocus } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
@@ -820,6 +822,10 @@ describe('JournalEntryScreen', () => {
       });
       expect(getByTestId('journal-save-hint').props.children).toMatch(/save/i);
       expect(getByTestId('journal-save-retry')).toBeTruthy();
+      // The retry glyph is hidden by the helper; the button keeps its name (#2829).
+      const retry = getByTestId('journal-save-retry');
+      expect(within(retry).UNSAFE_getByType(RefreshCw).props).toMatchObject(decorativeHidden());
+      expect(retry.props.accessibilityLabel).toBe('Retry saving this entry');
     } finally {
       jest.useRealTimers();
     }
