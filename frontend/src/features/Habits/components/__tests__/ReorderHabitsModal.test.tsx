@@ -125,6 +125,23 @@ beforeEach(() => {
   act(() => useProgramStore.getState().hydrateProgramStartDate(null));
 });
 
+describe('ReorderHabitsModal — the drag handle glyph (#3009)', () => {
+  it('hides every handle from every screen reader, Android and the web included', () => {
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+    const handles = result.getAllByText('⠿', { includeHiddenElements: true });
+    expect(handles).toHaveLength(HABITS.length);
+    for (const handle of handles) {
+      expect(handle.props['aria-hidden']).toBe(true);
+      expect(handle.props.accessibilityElementsHidden).toBe(true);
+      // Android TalkBack used to read the braille glyph: this prop was missing.
+      expect(handle.props.importantForAccessibility).toBe('no-hide-descendants');
+    }
+    expect(result.queryAllByText('⠿')).toHaveLength(0);
+  });
+});
+
 describe('ReorderHabitsModal — drag persistence (BUG: re-sort freezes)', () => {
   it('preserves the dragged order across multiple consecutive drags', () => {
     const result = render(

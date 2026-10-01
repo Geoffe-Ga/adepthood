@@ -179,6 +179,9 @@ const { render, waitFor, fireEvent, act, within } = require('@testing-library/re
 const { LOG_WINDOW_REFUSED_COPY } = require('../components/LogPracticeSessionSheet');
 const PracticeScreen = require('../PracticeScreen').default;
 
+/** The glyph fronting the dark empty state (PracticeScreen's ``EMPTY_GLYPH``). */
+const EMPTY_GLYPH_TEXT = '🧘';
+
 const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
   headerLeftStore.listeners.add(onChange);
   return () => headerLeftStore.listeners.delete(onChange);
@@ -355,6 +358,11 @@ describe('PracticeScreen', () => {
     const emptyFlat = StyleSheet.flatten(getByTestId('practice-empty-state').props.style);
     expect(emptyFlat.paddingBottom).toBe(34);
     expect(emptyFlat.paddingTop).not.toBe(47);
+    // The glyph is decoration: hidden on every platform, the web's aria-hidden included (#3009).
+    const glyph = getByText(EMPTY_GLYPH_TEXT, { includeHiddenElements: true });
+    expect(glyph.props['aria-hidden']).toBe(true);
+    expect(glyph.props.accessibilityElementsHidden).toBe(true);
+    expect(glyph.props.importantForAccessibility).toBe('no-hide-descendants');
   });
 
   it('empty-state "Browse practices" flips to the Catalog tab in place, without a push', async () => {

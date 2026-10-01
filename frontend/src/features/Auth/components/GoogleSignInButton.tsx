@@ -12,6 +12,7 @@ import {
   googleButtonPaddingFor,
 } from './googleBranding';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
 import { useTheme } from '@/design/ThemeContext';
 import { BORDER_RADIUS } from '@/design/tokens';
@@ -58,12 +59,7 @@ const PADDING = googleButtonPaddingFor(Platform.OS);
  */
 function GoogleMark(): React.JSX.Element {
   return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      style={styles.mark}
-      testID={GOOGLE_LOGO_TEST_ID}
-    >
+    <View {...decorativeHidden()} style={styles.mark} testID={GOOGLE_LOGO_TEST_ID}>
       <Svg
         width={GOOGLE_LOGO_SIZE}
         height={GOOGLE_LOGO_SIZE}

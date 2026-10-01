@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type ContentItem } from '../../api';
+import { decorativeHidden } from '../../components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '../../components/drawer/navIcon';
 import { accent, colors, ink } from '../../design/tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
@@ -120,11 +121,18 @@ const MarkReadToast = ({ opacity, translateY }: MarkReadToastProps): React.JSX.E
   </Animated.View>
 );
 
-const ChapterPrevButton = ({ nav }: { nav: ChapterNav }): React.JSX.Element => (
+/** A footer control: its chapter nav, and whether it may take keyboard focus. */
+interface FooterControlProps {
+  nav: ChapterNav;
+  focusable: boolean;
+}
+
+const ChapterPrevButton = ({ nav, focusable }: FooterControlProps): React.JSX.Element => (
   <TouchableOpacity
     testID="chapter-nav-back"
     onPress={nav.onPrev}
     disabled={!nav.canPrev}
+    focusable={focusable}
     accessibilityRole="button"
     accessibilityLabel="Previous chapter"
     accessibilityState={{ disabled: !nav.canPrev }}
@@ -134,12 +142,13 @@ const ChapterPrevButton = ({ nav }: { nav: ChapterNav }): React.JSX.Element => (
   </TouchableOpacity>
 );
 
-const ChapterNextButton = ({ nav }: { nav: ChapterNav }): React.JSX.Element => {
+const ChapterNextButton = ({ nav, focusable }: FooterControlProps): React.JSX.Element => {
   const NextGlyph = nav.nextIsDone ? DoorOpen : ChevronRight;
   return (
     <TouchableOpacity
       testID="chapter-nav-next"
       onPress={nav.onNext}
+      focusable={focusable}
       accessibilityRole="button"
       accessibilityLabel={nav.nextIsDone ? 'Done' : 'Next chapter'}
       style={styles.footerIconButton}
@@ -154,6 +163,7 @@ interface FooterCenterProps {
   marking: boolean;
   onMarkRead: () => void;
   onReflect?: () => void;
+  focusable: boolean;
 }
 
 // Center slot: mark-read while unread, reflect once read (when offered),
@@ -163,12 +173,14 @@ const FooterCenter = ({
   marking,
   onMarkRead,
   onReflect,
+  focusable,
 }: FooterCenterProps): React.JSX.Element => {
   if (isRead && onReflect) {
     return (
       <TouchableOpacity
         testID="reflect-button"
         onPress={onReflect}
+        focusable={focusable}
         style={styles.reflectButton}
         accessibilityRole="button"
         accessibilityLabel="Reflect in Journal"
@@ -181,6 +193,7 @@ const FooterCenter = ({
     <TouchableOpacity
       testID="mark-read-button"
       onPress={onMarkRead}
+      focusable={focusable}
       disabled={isRead || marking}
       style={[styles.markReadButton, isRead && styles.markReadButtonDone]}
       accessibilityRole="button"
@@ -287,23 +300,25 @@ const ViewerFooter = ({
     <Animated.View
       testID="viewer-footer"
       // On the way out the row is still on screen for the length of the slide.
-      // Neither a finger nor a screen reader should reach a control that is
-      // leaving, and both must reach it the moment it is asked for.
+      // Neither a finger, a screen reader (the web's included) nor the keyboard
+      // should reach a control that is leaving, and all must reach it the moment
+      // it is asked for. The controls drop out of the tab order too, so the web
+      // never holds a focusable control inside aria-hidden.
       pointerEvents={revealed ? 'box-none' : 'none'}
-      accessibilityElementsHidden={!revealed}
-      importantForAccessibility={revealed ? 'auto' : 'no-hide-descendants'}
+      {...decorativeHidden(!revealed)}
       style={[styles.viewerFooter, { opacity, transform: [{ translateY }] }]}
     >
       {toast.visible && <MarkReadToast opacity={toast.opacity} translateY={toast.translateY} />}
       <View style={styles.viewerFooterRow}>
-        <ChapterPrevButton nav={nav} />
+        <ChapterPrevButton nav={nav} focusable={revealed} />
         <FooterCenter
           isRead={isRead}
           marking={marking}
           onMarkRead={onMarkRead}
           onReflect={onReflect}
+          focusable={revealed}
         />
-        <ChapterNextButton nav={nav} />
+        <ChapterNextButton nav={nav} focusable={revealed} />
       </View>
     </Animated.View>
   );

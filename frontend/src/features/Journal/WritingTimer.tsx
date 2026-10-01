@@ -54,6 +54,7 @@ import {
 import type { TimerView } from './writingTimerView';
 import { describeTimer, nextDurationMinutes } from './writingTimerView';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -125,13 +126,7 @@ function PresetRow({
           <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
         </TouchableOpacity>
       ))}
-      <Text
-        style={styles.presetUnit}
-        accessible={false}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        testID="writing-timer-preset-unit"
-      >
+      <Text style={styles.presetUnit} {...decorativeHidden()} testID="writing-timer-preset-unit">
         {WRITING_TIMER_PRESET_UNIT}
       </Text>
     </View>
@@ -197,7 +192,7 @@ function LiveTimerControls({
           a11yLabel={WRITING_TIMER_PAUSE_A11Y}
           onPress={controls.pause}
           testID="writing-timer-pause"
-          icon={<Pause color={colors.paper.inkSoft} size={20} accessible={false} />}
+          icon={<Pause color={colors.paper.inkSoft} size={20} {...decorativeHidden()} />}
           iconOnly={compact}
           docked={docked}
         />
@@ -208,7 +203,7 @@ function LiveTimerControls({
           a11yLabel={WRITING_TIMER_RESUME_A11Y}
           onPress={controls.resume}
           testID="writing-timer-resume"
-          icon={<Play color={colors.paper.inkSoft} size={20} accessible={false} />}
+          icon={<Play color={colors.paper.inkSoft} size={20} {...decorativeHidden()} />}
           iconOnly={compact}
           docked={docked}
         />
@@ -219,7 +214,7 @@ function LiveTimerControls({
           a11yLabel={WRITING_TIMER_STOP_A11Y}
           onPress={controls.complete}
           testID="writing-timer-stop"
-          icon={<Square color={colors.paper.inkSoft} size={18} accessible={false} />}
+          icon={<Square color={colors.paper.inkSoft} size={18} {...decorativeHidden()} />}
           iconOnly={compact}
           docked={docked}
         />
@@ -252,7 +247,7 @@ function TimerControls({
           a11yLabel={WRITING_TIMER_START_A11Y}
           onPress={onStart}
           testID="writing-timer-start"
-          icon={<Play color={colors.paper.inkSoft} size={20} accessible={false} />}
+          icon={<Play color={colors.paper.inkSoft} size={20} {...decorativeHidden()} />}
           iconOnly
           docked={docked}
         />
@@ -261,7 +256,7 @@ function TimerControls({
           a11yLabel={WRITING_TIMER_MINIMIZE_A11Y}
           onPress={onMinimize}
           testID="writing-timer-minimize"
-          icon={<Minus color={colors.paper.inkSoft} size={20} accessible={false} />}
+          icon={<Minus color={colors.paper.inkSoft} size={20} {...decorativeHidden()} />}
           iconOnly
           docked={docked}
         />
