@@ -20,6 +20,7 @@ import {
 } from 'react';
 
 import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
+import { fundingOutcome } from './fundingOutcome';
 import { optimisticRemove } from './optimisticRemove';
 
 import { completionSuggestions, resonance } from '@/api';
@@ -359,15 +360,6 @@ interface GeneratePass {
 /** The gate only needs to distinguish a pass that now needs another payer. */
 export type ResonanceRequestOutcome =
   'completed' | 'funding_required' | 'key_required' | 'failed' | 'ignored';
-
-function fundingOutcome(error: unknown): 'funding_required' | 'key_required' | null {
-  if (typeof error !== 'object' || error === null) return null;
-  const response = error as { status?: unknown; detail?: unknown };
-  if (response.status !== 402) return null;
-  if (response.detail === 'insufficient_offerings') return 'funding_required';
-  if (response.detail === 'llm_key_required') return 'key_required';
-  return null;
-}
 
 interface LatestPassState {
   care: CareResponse | null;

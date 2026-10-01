@@ -33,6 +33,7 @@ from models.goal import Goal
 from models.habit import Habit
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.user import User
+from models.wallet_audit import REASON_SPEND_MONTHLY, WalletAudit
 from routers import journal
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
@@ -42,6 +43,10 @@ from tests.test_account_egress_barrier import (
     delete_account_recording_order,
     signup,
 )
+
+# A server-paid first letter must say the writer saw its price (#623); without
+# it the route answers 409 before it charges or dials anything.
+_ESSAY_ASK = {"price_acknowledged": True}
 
 #: The journal body both routes transmit. Distinctive so an assertion about
 #: "what went out" names the thing that went out.
@@ -250,7 +255,9 @@ async def test_marginalia_essay_never_dials_after_the_deletion_response(
     note_id = await _seed_marginalia(concurrent_session_factory, user_id, entry_id)
 
     expanding = asyncio.create_task(
-        concurrent_async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+        )
     )
     await _race_against_deletion(concurrent_async_client, headers, email, provider, expanding)
 
@@ -394,7 +401,9 @@ async def test_the_essay_never_dials_a_body_the_patch_already_made_intimate(
     )
 
     expanding = asyncio.create_task(
-        concurrent_async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+        concurrent_async_client.post(
+            f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+        )
     )
     await asyncio.wait_for(door.reached.wait(), timeout=_SETTLE_TIMEOUT_SECONDS)
     patched = await concurrent_async_client.patch(
@@ -410,3 +419,88 @@ async def test_the_essay_never_dials_a_body_the_patch_already_made_intimate(
     )
     assert answered.status_code == HTTPStatus.OK
     assert answered.json()["essay"] is None, "an intimate entry came back with a cloud letter"
+
+
+#: How long the slow provider composes each letter: long enough that a second
+#: ask for the same note arrives while the first one is still being written.
+_SLOW_DIAL_SECONDS = 0.3
+
+
+class SlowNumberedProvider:
+    """A ``generate_response`` stand-in that is slow and numbers its letters.
+
+    Each dial answers a distinct letter, so a second dial that overwrote the
+    first is visible in the stored row as well as in the call count.
+    """
+
+    def __init__(self) -> None:
+        """Start with no dials recorded."""
+        self.calls = 0
+
+    async def __call__(
+        self,
+        user_message: str,
+        _history: object,
+        *,
+        system_prompt: str | None = None,
+        api_key: object = None,
+    ) -> LLMResponse:
+        """Take a while, then answer this dial's own numbered letter."""
+        del user_message, system_prompt, api_key
+        self.calls += 1
+        number = self.calls
+        await asyncio.sleep(_SLOW_DIAL_SECONDS)
+        return LLMResponse(
+            text=f"Dear friend, this is letter number {number}.",
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_first_asks_charge_and_dial_exactly_once(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A double-tapped first ask buys one letter, not two (#623).
+
+    The cached-letter check before the barrier is only the cheap half: the
+    second ask passes it while the first is still composing, then waits on the
+    barrier. Unless the note is read again inside the hold, that second ask
+    charges a unit, dials again, and overwrites the first letter.
+    """
+    provider = SlowNumberedProvider()
+    monkeypatch.setattr(marginalia_service, "generate_response", provider)
+    headers, email = await signup(concurrent_async_client, "essay_double_tap")
+    user_id = await _user_id(concurrent_session_factory, email)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    note_id = await _seed_marginalia(concurrent_session_factory, user_id, entry_id)
+    url = f"/journal/marginalia/{note_id}/essay"
+
+    first, second = await asyncio.gather(
+        concurrent_async_client.post(url, headers=headers, json=_ESSAY_ASK),
+        concurrent_async_client.post(url, headers=headers, json=_ESSAY_ASK),
+    )
+
+    assert first.status_code == HTTPStatus.OK, first.text
+    assert second.status_code == HTTPStatus.OK, second.text
+    letter = first.json()["essay"]
+    assert letter is not None
+    assert second.json()["essay"] == letter
+    assert provider.calls == 1
+    async with concurrent_session_factory() as session:
+        user = await session.get(User, user_id)
+        assert user is not None
+        assert user.monthly_messages_used == 1
+        reasons = (
+            await session.execute(
+                select(WalletAudit.reason).where(col(WalletAudit.user_id) == user_id)
+            )
+        ).scalars()
+        assert list(reasons) == [REASON_SPEND_MONTHLY]
+        stored = await session.get(Marginalia, note_id)
+        assert stored is not None
+        assert stored.essay == letter

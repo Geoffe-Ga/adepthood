@@ -32,6 +32,10 @@ from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
 from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
 
+# A server-paid first letter must say the writer saw its price (#623); without
+# it the route answers 409 before it charges or dials anything.
+_ESSAY_ASK = {"price_acknowledged": True}
+
 _BODY = "I walked by the river and the willow bent without breaking."
 _ESSAY = "A warm letter about beginnings."
 
@@ -229,8 +233,12 @@ async def test_new_essay_is_cached_then_mirrored_once(
     vault = _RecordingDraftVault(db_session)
     _wire_vault(vault)
 
-    first = await async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
-    second = await async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers)
+    first = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
+    second = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
 
     assert first.status_code == HTTPStatus.OK
     assert second.status_code == HTTPStatus.OK
@@ -271,6 +279,7 @@ async def test_mirror_degradation_never_costs_the_cached_essay(
     response = await async_client.post(
         f"/journal/marginalia/{note_id}/essay",
         headers=headers,
+        json=_ESSAY_ASK,
     )
 
     assert response.status_code == HTTPStatus.OK
@@ -302,6 +311,7 @@ async def test_intimate_essay_never_attempts_a_mirror(
     response = await async_client.post(
         f"/journal/marginalia/{note_id}/essay",
         headers=headers,
+        json=_ESSAY_ASK,
     )
 
     assert response.status_code == HTTPStatus.OK
@@ -347,6 +357,7 @@ async def test_a_refused_essay_never_reaches_the_vault(
     response = await async_client.post(
         f"/journal/marginalia/{note_id}/essay",
         headers=headers,
+        json=_ESSAY_ASK,
     )
 
     assert response.status_code == HTTPStatus.OK, response.text
@@ -540,6 +551,7 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
             headers=headers,
+            json=_ESSAY_ASK,
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
@@ -596,6 +608,7 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
             headers=headers,
+            json=_ESSAY_ASK,
         )
     )
     await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
@@ -666,6 +679,7 @@ async def test_delete_during_generation_prevents_the_later_mirror(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
             headers=headers,
+            json=_ESSAY_ASK,
         )
     )
     await asyncio.wait_for(generation_started.wait(), timeout=2)
@@ -715,6 +729,7 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
         concurrent_async_client.post(
             f"/journal/marginalia/{note_id}/essay",
             headers=headers,
+            json=_ESSAY_ASK,
         )
     )
     await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)

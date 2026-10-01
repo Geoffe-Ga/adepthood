@@ -154,8 +154,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required:
     "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.",
+  // One wallet pays for chat, resonance readings and a note's first letter
+  // (#623), so the copy names the shared allowance rather than any one of them.
   insufficient_offerings:
-    "You've used all your free BotMason messages for the month. Add your own API key in Settings, or wait until your next monthly reset.",
+    "You've used this month's free BotMason messages, which chat, readings and letters share, and have no offerings left. Add your own API key in Settings, or wait until your next monthly reset.",
+  // Only an older build that still asks for a letter the moment a note opens
+  // can meet this: the server will not charge for a letter whose price the
+  // writer was never shown. Nothing was spent.
+  essay_price_unacknowledged:
+    "Letters now show their price before they're written, and nothing was spent. Close this note and open it again to see the price and ask.",
   llm_key_required:
     'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
   invalid_llm_api_key_format:

@@ -18,10 +18,13 @@ from domain.dates import compute_next_reset
 
 __all__ = ["DEFAULT_MONTHLY_CAP", "compute_next_reset", "get_monthly_cap"]
 
-# Default monthly cap when ``BOTMASON_MONTHLY_CAP`` is not set.  Chosen as a
-# conservative free-tier that covers a handful of reflections per day without
-# opening the door to sustained abuse before a purchase is required.
-DEFAULT_MONTHLY_CAP = 50
+# Default monthly cap when ``BOTMASON_MONTHLY_CAP`` is not set: the "monthly
+# included balance" of the ratified launch economy (#623), lowered from 50 "until
+# real usage establishes the cost curve" -- see
+# ``prompts/claude-comms/2026-09-05-resonance-economy-decision.md``.  The wallet
+# is shared, so this one allowance covers BotMason chat, transcription,
+# resonance passes and essay letters alike.
+DEFAULT_MONTHLY_CAP = 20
 
 # Minimum allowed configured cap.  A cap of ``0`` is a legitimate
 # "pay-as-you-go only" configuration (no free tier, every request draws

@@ -53,6 +53,7 @@ export function suggestion(overrides: Partial<CompletionSuggestion> = {}): Compl
     anchor_text: 'I ran',
     completed_units: null,
     completed_on: null,
+    logged_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '2026-06-01T00:00:00Z',

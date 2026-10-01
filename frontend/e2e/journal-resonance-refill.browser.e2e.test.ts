@@ -7,6 +7,13 @@ const DRAFT_TITLE = 'The page beneath settings';
 const DRAFT_BODY =
   'The river is carrying a thought I want to keep while I step away to change how resonance is paid for.';
 
+/**
+ * The monthly cap the mocked wallet read serves. Arbitrary on purpose: this spec
+ * intercepts ``/user/usage``, so it asserts the refill surface against the cap it
+ * served itself, never against the backend default (20 since #623).
+ */
+const SERVED_MONTHLY_CAP = 50;
+
 interface UsageOverrides {
   monthly_messages_remaining: number;
   offering_balance: number;
@@ -19,9 +26,9 @@ async function serveUsage(page: Page, overrides: UsageOverrides): Promise<void> 
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        monthly_messages_used: 50 - overrides.monthly_messages_remaining,
+        monthly_messages_used: SERVED_MONTHLY_CAP - overrides.monthly_messages_remaining,
         monthly_messages_remaining: overrides.monthly_messages_remaining,
-        monthly_cap: 50,
+        monthly_cap: SERVED_MONTHLY_CAP,
         monthly_reset_date: '2026-10-01T00:00:00Z',
         offering_balance: overrides.offering_balance,
       }),

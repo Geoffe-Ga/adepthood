@@ -40,6 +40,7 @@ import {
   reflectionDueResponseSchema,
   reflectionSourcesResponseSchema,
   resonanceResponseSchema,
+  essayResponseSchema,
   botmasonUsageSchema,
   stageIntroSchema,
   userPracticeSchema,
@@ -1629,6 +1630,29 @@ export type RelatedPraxis = RelatedPraxisT;
 /** A recurring corpus pattern related to the current journal reflection. */
 export type RelatedEddy = RelatedEddyT;
 
+/**
+ * A margin note after an essay request, with the wallet it left behind
+ * (mirrors the backend ``EssayResponse``). The balances match
+ * {@link ResonanceResponse}'s: a letter and a reading spend from one wallet.
+ */
+export interface EssayResponse extends Marginalia {
+  remaining_messages: number;
+  remaining_balance: number;
+  monthly_reset_date: string;
+}
+
+/** How one essay request is sent. */
+export interface EssayRequestOptions {
+  /**
+   * The writer saw the letter's price and asked (#623). The server refuses a
+   * server-paid first letter without it (409 ``essay_price_unacknowledged``),
+   * so only the explicit Ask action sets it.
+   */
+  priceAcknowledged?: boolean;
+  token?: string;
+  apiKey?: string;
+}
+
 export interface ResonanceResponse {
   marginalia: Marginalia[];
   /** Completion suggestions detected on the same pass (#817); defaults to []. */
@@ -2155,12 +2179,21 @@ export const resonance = {
   list(entryId: number, token?: string): Promise<MarginaliaListResponse> {
     return request<MarginaliaListResponse>(`/journal/${entryId}/marginalia`, { token });
   },
-  /** Lazily generate (and cache) the long-form essay for one margin note. */
-  essay(marginaliaId: number, token?: string, apiKey?: string): Promise<Marginalia> {
-    return request<Marginalia>(`/journal/marginalia/${marginaliaId}/essay`, {
+  /**
+   * Generate (and cache) the long-form essay for one margin note, or reopen it.
+   *
+   * A server-paid first letter costs one wallet unit and must be sent with
+   * ``priceAcknowledged``; a cached letter is returned free. The answer carries
+   * the balances either way.
+   */
+  essay(marginaliaId: number, options: EssayRequestOptions = {}): Promise<EssayResponse> {
+    const { priceAcknowledged = false, token, apiKey } = options;
+    return request<EssayResponse>(`/journal/marginalia/${marginaliaId}/essay`, {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+      body: { price_acknowledged: priceAcknowledged },
+      schema: essayResponseSchema as unknown as z.ZodType<EssayResponse>,
     });
   },
 };

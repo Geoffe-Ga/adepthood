@@ -107,7 +107,8 @@ describe('journal withdrawal from a connected Creek vault', () => {
     await journal.update(entryId, { status: 'finished' });
     const pass = await resonance.generate(entryId);
     const note = required(pass.marginalia[0], 'marginalia');
-    const expanded = await resonance.essay(note.id);
+    // The explicit, priced ask the essay modal sends (#623).
+    const expanded = await resonance.essay(note.id, { priceAcknowledged: true });
 
     expect((expanded.essay ?? '').trim()).not.toBe('');
     const { fragments } = await vaultLedger();

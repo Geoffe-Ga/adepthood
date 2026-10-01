@@ -82,8 +82,34 @@ const mockClearAllNotificationData = clearAllNotificationData as jest.MockedFunc
   typeof clearAllNotificationData
 >;
 
+/**
+ * A valid essay answer: ``resonance.essay`` is the BYOK-bearing request these
+ * tests send, and its answer is schema-checked (note plus balances, #623).
+ */
+const ESSAY_ANSWER = {
+  id: 1,
+  journal_entry_id: 1,
+  kind: 'theme',
+  anchor_start: 0,
+  anchor_end: 1,
+  anchor_text: 'a',
+  note: 'n',
+  essay: null,
+  essay_generated_at: null,
+  status: 'active',
+  created_at: '2026-09-01T00:00:00Z',
+  updated_at: '2026-09-01T00:00:00Z',
+  remaining_messages: 1,
+  remaining_balance: 0,
+  monthly_reset_date: '2026-10-01T00:00:00Z',
+};
+
 function okResponse(): Response {
-  return { ok: true, status: 200, json: () => Promise.resolve({}) } as unknown as Response;
+  return {
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(ESSAY_ANSWER),
+  } as unknown as Response;
 }
 
 function wrapper({ children }: { children: React.ReactNode }) {

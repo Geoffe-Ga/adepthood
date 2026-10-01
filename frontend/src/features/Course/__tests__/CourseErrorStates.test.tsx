@@ -2,6 +2,8 @@
 // audit-ux-04: a failed stage-list / content fetch must show error+retry, not
 // masquerade as an empty course or a permanent "Loading..." progress bar.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { Hourglass, TriangleAlert } from 'lucide-react-native';
+import { Text } from 'react-native';
 
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 
@@ -97,8 +99,10 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 // eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act } = require('@testing-library/react-native');
-const CourseScreen = require('../CourseScreen').default;
+const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+const CourseScreenModule = require('../CourseScreen');
+const CourseScreen = CourseScreenModule.default;
+const STATE_ICON_SIZE: number = CourseScreenModule.STATE_ICON_SIZE;
 
 describe('CourseScreen error + retry states', () => {
   beforeEach(() => {
@@ -140,6 +144,25 @@ describe('CourseScreen error + retry states', () => {
     await waitFor(() => expect(view.getByTestId('content-list')).toBeTruthy());
     expect(view.queryByTestId('course-error')).toBeNull();
     expect(mockStageContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('heads the error state with a drawn, hidden warning icon rather than an emoji', async () => {
+    mockStagesList.mockRejectedValueOnce(new Error('network'));
+    const view = render(<CourseScreen />);
+    await waitFor(() => expect(view.getByTestId('course-error')).toBeTruthy());
+
+    const state = within(view.getByTestId('course-error'));
+    expect(state.UNSAFE_queryAllByType(Hourglass)).toHaveLength(0);
+    const slot = view.getByTestId('course-error-icon', { includeHiddenElements: true });
+    // The icon must sit INSIDE the hidden slot, or the slot hides nothing.
+    expect(within(slot).UNSAFE_getByType(TriangleAlert).props.size).toBe(STATE_ICON_SIZE);
+    // react-native-web maps only aria-hidden to the DOM; the native props are dropped on web.
+    expect(slot.props['aria-hidden']).toBe(true);
+    expect(slot.props.accessibilityElementsHidden).toBe(true);
+    expect(slot.props.importantForAccessibility).toBe('no-hide-descendants');
+    // An icon, not a glyph: nothing in the slot is text the census would measure.
+    expect(within(slot).UNSAFE_queryAllByType(Text)).toHaveLength(0);
+    expect(view.queryByText('⚠️', { includeHiddenElements: true })).toBeNull();
   });
 
   it('keeps the error state when retry also fails', async () => {

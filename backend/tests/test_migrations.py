@@ -5807,3 +5807,89 @@ def test_write_idempotency_migration_round_trip_on_sqlite(
     command.upgrade(cfg, _WRITE_IDEMPOTENCY_REVISION)
     for table in _WRITE_IDEMPOTENCY_TABLES:
         assert "idem_key" in _columns_of(db_url, table)
+
+
+# -- #2905 completionsuggestion.logged_on --------------------------------------
+
+_LOGGED_ON_BASE_REVISION = "6e6fe6af2c30"  # pragma: allowlist secret
+_LOGGED_ON_REVISION = "e7a3c5f1d902"  # pragma: allowlist secret
+
+
+@pytest.fixture
+def alembic_sqlite_config_logged_on(
+    alembic_sqlite_config_suggestion_facts: Config,
+) -> Config:
+    """SQLite holding ``completionsuggestion`` as it stands at the logged_on parent.
+
+    Builds the facts revision for real (it is the last one to touch this
+    table), then stamps forward past the revisions in between: they alter only
+    other tables, and the whole chain cannot run on SQLite.
+    """
+    cfg = alembic_sqlite_config_suggestion_facts
+    command.upgrade(cfg, _SUGGESTION_FACTS_REVISION)
+    command.stamp(cfg, _LOGGED_ON_BASE_REVISION, purge=True)
+    return cfg
+
+
+def _insert_practice_suggestion(db_url: str) -> None:
+    """A practice row (id 2): the target the widened CHECK constrains."""
+    _execute_on(
+        db_url,
+        "INSERT INTO completionsuggestion"
+        " (id, journal_entry_id, user_id, target_type, user_practice_id, label,"
+        "  anchor_start, anchor_end, anchor_text, status, created_at, updated_at)"
+        " VALUES (2, 1, 1, 'practice', 1, :label, 0, 4, :anchor, 'accepted',"
+        "         '2026-09-01 00:00:00', '2026-09-01 00:00:00')",
+        {"label": _SUGGESTION_LABEL_CIPHERTEXT, "anchor": _SUGGESTION_ANCHOR_CIPHERTEXT},
+    )
+
+
+def test_completion_suggestion_logged_on_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_logged_on: Config,
+) -> None:
+    """Upgrade adds a nullable ``logged_on`` the habit-only CHECK covers; downgrade undoes both.
+
+    The CHECK is asserted by behaviour on both sides, not by name: the name
+    survives the downgrade unchanged, so only what it refuses tells the widened
+    expression from the restored one.
+    """
+    cfg = alembic_sqlite_config_logged_on
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    command.upgrade(cfg, _LOGGED_ON_REVISION)
+    assert "logged_on" in _columns_of(db_url, _SUGGESTION_TABLE)
+    # No backfill: the pre-existing row keeps NULL, and its ciphertext survived
+    # the batch rebuild.
+    assert _scalar(db_url, "SELECT logged_on FROM completionsuggestion WHERE id = 1") is None
+    assert _suggestion_row_label(db_url, suggestion_id=1) == _SUGGESTION_LABEL_CIPHERTEXT
+    _execute_on(db_url, "UPDATE completionsuggestion SET logged_on = '2026-09-12' WHERE id = 1", {})
+    assert (
+        str(_scalar(db_url, "SELECT logged_on FROM completionsuggestion WHERE id = 1"))
+        == "2026-09-12"
+    )
+    _insert_practice_suggestion(db_url)
+    with pytest.raises(IntegrityError):
+        _execute_on(
+            db_url, "UPDATE completionsuggestion SET logged_on = '2026-09-12' WHERE id = 2", {}
+        )
+    # The two clauses it inherited still bite after the rebuild.
+    with pytest.raises(IntegrityError):
+        _execute_on(
+            db_url, "UPDATE completionsuggestion SET completed_on = '2026-09-12' WHERE id = 2", {}
+        )
+
+    command.downgrade(cfg, _LOGGED_ON_BASE_REVISION)
+    assert "logged_on" not in _columns_of(db_url, _SUGGESTION_TABLE)
+    assert "ck_completion_suggestion_facts_habit_only" in _check_constraints_of(
+        db_url, _SUGGESTION_TABLE
+    )
+    # The restored expression is the previous one exactly: still refuses a
+    # practice fact, and the column it no longer names is gone.
+    with pytest.raises(IntegrityError):
+        _execute_on(
+            db_url, "UPDATE completionsuggestion SET completed_on = '2026-09-12' WHERE id = 2", {}
+        )
+
+    command.upgrade(cfg, _LOGGED_ON_REVISION)
+    assert "logged_on" in _columns_of(db_url, _SUGGESTION_TABLE)

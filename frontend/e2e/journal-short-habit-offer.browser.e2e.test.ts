@@ -14,6 +14,7 @@ interface SuggestionRow {
   status: string;
   completed_units: number | null;
   completed_on: string | null;
+  logged_on: string | null;
 }
 
 /**
@@ -25,11 +26,30 @@ interface SuggestionRow {
  * server that did real calendar arithmetic.
  */
 function previousDay(dayKey: string): string {
+  return shiftDay(dayKey, -1);
+}
+
+/** `dayKey` moved `days` calendar days, as `YYYY-MM-DD` (see `previousDay`). */
+function shiftDay(dayKey: string, days: number): string {
   const [year, month, day] = dayKey.split('-').map(Number);
   if (year === undefined || month === undefined || day === undefined) {
     throw new Error(`not a YYYY-MM-DD day key: ${dayKey}`);
   }
-  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * How the settled card writes a day that is neither today nor yesterday:
+ * `"Mon, Sep 7"`. Spelled out rather than imported from the app, so a change
+ * to the card's format is a visible change to this expectation.
+ */
+function writtenDay(dayKey: string): string {
+  return new Date(`${dayKey}T12:00:00Z`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 /**
@@ -68,7 +88,8 @@ test('a failed short-entry reflection still offers and checks off a completed ha
   // a UTC day. Computing it here in UTC instead made these assertions fail for
   // part of every day on any host east or west of it, against a server that
   // had behaved correctly.
-  const yesterday = previousDay(dayKeyIn(entry.timestamp, timezone));
+  const entryDay = dayKeyIn(entry.timestamp, timezone);
+  const yesterday = previousDay(entryDay);
   const finished = await page.request.patch(`${backendUrl()}/journal/${entryId}`, {
     headers,
     data: { status: 'finished' },
@@ -119,7 +140,10 @@ test('a failed short-entry reflection still offers and checks off a completed ha
       exact: true,
     })
     .click();
-  await expect(page.getByText(/Checked off/u)).toBeVisible();
+  // Settled, the card names the day the server recorded as logged (#2905).
+  await expect(page.getByTestId(`suggestion-${pending.id}-checked`)).toContainText(
+    'Checked off · 3 units · yesterday',
+  );
 
   const suggestions = await page.request.get(`${backendUrl()}/journal/${entryId}/suggestions`, {
     headers,
@@ -131,6 +155,7 @@ test('a failed short-entry reflection still offers and checks off a completed ha
         status: 'accepted',
         completed_units: 3,
         completed_on: yesterday,
+        logged_on: yesterday,
       }),
     ],
   });
@@ -146,4 +171,20 @@ test('a failed short-entry reflection still offers and checks off a completed ha
   ).goals;
   const logged = goals.flatMap((goal) => goal.completions);
   expect(logged).toEqual([expect.objectContaining({ local_day: yesterday, completed_units: 3 })]);
+
+  // Reopened the next day, the card is hydrated from the suggestion list alone
+  // -- no check-in in hand -- and still names the day the completion was
+  // logged on: two days back now, so written as a date (#2905).
+  const nextDay = shiftDay(entryDay, 1);
+  const nextMidday = new Date(`${nextDay}T12:00:00Z`);
+  expect(dayKeyIn(nextMidday.toISOString(), timezone), 'midday UTC is not that day here').toBe(
+    nextDay,
+  );
+  await page.getByTestId('journal-close-entry').click();
+  await page.clock.setFixedTime(nextMidday);
+  await page.reload();
+  await page.getByTestId(`journal-shelf-open-${entryId}`).click();
+  await expect(page.getByTestId(`suggestion-${pending.id}-checked`)).toHaveText(
+    new RegExp(`^✓ Checked off · 3 units · ${writtenDay(yesterday)}`, 'u'),
+  );
 });

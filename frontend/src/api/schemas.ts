@@ -700,6 +700,16 @@ export const completionSuggestionSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable(),
+  // The day a habit accept actually LOGGED against (#2905) -- distinct from
+  // `completed_on`, the day detection read: an accept whose detected day had
+  // left the backfill window logs today instead. Recorded once, server-side,
+  // so a settled card names it rather than re-deriving it from the live
+  // clock. Null while pending, for a practice target, and for a habit row
+  // accepted before the day was recorded. A `date` column, like `completed_on`.
+  logged_on: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable(),
   status: suggestionStatusSchema,
   accepted_at: z.string().nullable(),
   created_at: z.string(),
@@ -839,6 +849,17 @@ export const marginaliaSchema = z.object({
   status: marginaliaStatusSchema,
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+/**
+ * A margin note after an essay request (mirrors the backend ``EssayResponse``):
+ * the note plus the wallet balances it left behind, the same three fields a
+ * resonance pass reports, because both spend from the same wallet (#623).
+ */
+export const essayResponseSchema = marginaliaSchema.extend({
+  remaining_messages: z.number().int(),
+  remaining_balance: z.number().int(),
+  monthly_reset_date: z.string(),
 });
 
 /**

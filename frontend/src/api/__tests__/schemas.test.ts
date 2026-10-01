@@ -683,6 +683,7 @@ describe('completionSuggestionSchema', () => {
     anchor_text: 'drank 64 oz of water',
     completed_units: null,
     completed_on: null,
+    logged_on: null,
     status: 'pending',
     accepted_at: null,
     created_at: '2026-09-12T00:00:00Z',
@@ -722,5 +723,27 @@ describe('completionSuggestionSchema', () => {
         completed_on: '2026-09-11T00:00:00Z',
       }),
     ).toThrow();
+  });
+  // #2905: the day an accept logged is a `date` column too.
+  it('accepts a recorded logged day, and its absence', () => {
+    expect(
+      completionSuggestionSchema.parse({ ...baseSuggestion, logged_on: '2026-09-12' }).logged_on,
+    ).toBe('2026-09-12');
+    expect(completionSuggestionSchema.parse(baseSuggestion).logged_on).toBeNull();
+  });
+
+  it('rejects a logged day that is not a calendar day', () => {
+    expect(() =>
+      completionSuggestionSchema.parse({ ...baseSuggestion, logged_on: 'not-a-date' }),
+    ).toThrow();
+    expect(() =>
+      completionSuggestionSchema.parse({ ...baseSuggestion, logged_on: '2026-09-12T00:00:00Z' }),
+    ).toThrow();
+  });
+
+  it('refuses a row missing the logged day rather than defaulting it', () => {
+    const withoutLoggedOn: Record<string, unknown> = { ...baseSuggestion };
+    delete withoutLoggedOn.logged_on;
+    expect(() => completionSuggestionSchema.parse(withoutLoggedOn)).toThrow();
   });
 });
