@@ -144,6 +144,27 @@ export function savedAndLinkedConfirmation(): string {
   return `${savedHabitConfirmation()} Once it is open, a finished writing timer checks it off.`;
 }
 
+/**
+ * The link-a-habit note (#3006): what a finished writing session says when no
+ * habit is linked to the timer. A pointer, not a question — it says where the
+ * choice lives and leaves it there. The decline is permanent on this device
+ * until Settings brings the note back, and nothing changes for declining.
+ */
+export const LINK_HABIT_NUDGE_PROMPT =
+  'No habit is linked to the writing timer. You can choose one in Settings, if you would like a finished timer to check it off.';
+export const LINK_HABIT_NUDGE_SETTINGS = 'Go to Settings';
+export const LINK_HABIT_NUDGE_SETTINGS_A11Y =
+  'Open Settings to choose a habit for the writing timer';
+export const LINK_HABIT_NUDGE_DECLINE = "Don't show again";
+export const LINK_HABIT_NUDGE_DECLINE_A11Y = "Don't show this note again";
+
+/** Settings: bring the note back. Kept on this device only, and the copy says so. */
+export const LINK_HABIT_NUDGE_AGAIN_LABEL = 'Show the habit note again';
+export const LINK_HABIT_NUDGE_AGAIN_DESCRIPTION =
+  'Shows the note about linking a habit after a finished session, on this device.';
+export const LINK_HABIT_NUDGE_AGAIN_DONE =
+  'The note will be there after your next finished session while no habit is linked, on this device.';
+
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   JOURNALING_HABIT_NAME,
@@ -186,4 +207,12 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   OFFER_AGAIN_LABEL,
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,
+  LINK_HABIT_NUDGE_PROMPT,
+  LINK_HABIT_NUDGE_SETTINGS,
+  LINK_HABIT_NUDGE_SETTINGS_A11Y,
+  LINK_HABIT_NUDGE_DECLINE,
+  LINK_HABIT_NUDGE_DECLINE_A11Y,
+  LINK_HABIT_NUDGE_AGAIN_LABEL,
+  LINK_HABIT_NUDGE_AGAIN_DESCRIPTION,
+  LINK_HABIT_NUDGE_AGAIN_DONE,
 ];
