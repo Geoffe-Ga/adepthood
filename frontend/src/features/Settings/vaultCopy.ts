@@ -1,5 +1,5 @@
 /**
- * Copy for the "Your Creek vault" Settings surface.
+ * Copy for the "Where your corpus lives" Settings surface.
  *
  * A private vault is an optional depth, not a missing piece. Adepthood commits
  * every entry to its own store before a vault is ever contacted, replication is
@@ -13,29 +13,49 @@
  * durability claim the write path does not make.
  *
  * The module is two decks under one set of guards. The promise deck distinguishes
- * a vault somebody runs from one Adepthood manages; the form deck asks a person
- * for one they already run, and is allowed to spell a transport for exactly as
- * long as a field nobody can fill in would be worse. This surface also owns its own
+ * a vault somebody runs from one Adepthood manages, and explains the folded
+ * Advanced section that asks for one; the form deck asks a person for one they
+ * already run, and three of its strings are allowed to spell a transport for
+ * exactly as long as a field nobody can fill in would be worse.
+ *
+ * Labels, titles and descriptions use the plain name and never "Creek" (#3007);
+ * "Creek" stays only in the custody statements that name who can read a managed
+ * vault, because dropping it there would loosen a disclosure.
+ *
+ * A vault is not the yes to sorting (#3003). The re-exported
+ * ``HIGHER_SELF_GAIN`` says what that yes gives, and every line here that speaks
+ * of reflections points at that separate decision rather than at a vault.
+ * This surface also owns its own
  * refusal sentences rather than routing them through
  * ``src/api/errorMessages.ts``: all seven are swept by the copy guards here,
  * and a second home for them is a second place for them to drift.
  */
 
-/** Hub row label. Names the destination without implying an action is pending. */
-export const VAULT_ROW_LABEL = 'Creek vault';
+export { HIGHER_SELF_GAIN } from './higherSelfCopy';
 
 /**
- * Hub row description. States the offer and the floor together, so a user who
- * never opens the screen still learns that declining costs them nothing.
+ * Hub row label, and the screen's name everywhere it is shown. Plain words for
+ * the place, without the product name of the software a vault runs (#3007).
+ */
+export const VAULT_ROW_LABEL = 'Where your corpus lives';
+
+/**
+ * Hub row description. States the offer, both ways to take it, and the floor
+ * together, so a user who never opens the screen still learns that declining
+ * costs them nothing. The gain is named only as the separate yes to sorting,
+ * because a vault turns no sorting on.
  */
 export const VAULT_ROW_DESCRIPTION =
-  'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.';
+  'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
 
 /** Header eyebrow. Sets the register before the title: this is a choice. */
 export const VAULT_EYEBROW = 'Optional';
 
-/** Screen and navigation title. Descriptive, not an instruction to connect. */
-export const VAULT_TITLE = 'Your Creek vault';
+/**
+ * Screen and navigation title. Descriptive, not an instruction to connect. The
+ * stack header paints it, so the screen body does not (#2962).
+ */
+export const VAULT_TITLE = 'Where your corpus lives';
 
 /**
  * The one promise. It says ownership and makes the choice specifically about
@@ -57,10 +77,20 @@ export const VAULT_WHAT_IT_IS =
 
 /**
  * The floor. Declining is a complete way to use Adepthood, so this says so
- * plainly and bounds what a vault changes: it adds a copy, and nothing else.
+ * plainly and bounds what a vault changes: it adds a copy and turns no sorting
+ * on. It no longer says "nothing else changes", which was not true: a vault you
+ * run that can answer reflections may answer them, and documents you bring in
+ * go to a connected vault rather than being sorted here.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; nothing else changes.';
+  'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; it does not turn sorting on, which stays a separate choice.';
+
+/**
+ * Said where somebody is about to create a managed vault, so that the press
+ * is not mistaken for the yes to sorting. It names where that yes lives.
+ */
+export const VAULT_SORTING_CHOICE =
+  'Creating a vault does not turn sorting on; that stays a separate choice, under What reflections draw on in Settings.';
 
 /**
  * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is
@@ -71,13 +101,50 @@ export const VAULT_INTIMATE =
   'An Intimate entry is never sent to your vault. If it was copied there before, Adepthood removes that copy. If your vault is offline, keep Intimate selected and choose it again when the vault is online.';
 
 /**
- * The hinge between the two decks. It opens with the condition rather than the
- * invitation — somebody without a space of their own is told in the first
- * clause that the rest is not addressed to them — and it names leaving before
- * anything is typed, so connecting reads as a reversible thing to try.
+ * The hinge between the explanation and the form, inside the Advanced fold. The
+ * explanation above it has already said who this is for and what it sends, so
+ * this names leaving before anything is typed, and connecting reads as a
+ * reversible thing to try.
  */
 export const VAULT_CONNECT_INTRO =
-  'If you keep a space of your own, you can connect it here and Adepthood will send a copy of each entry to it. You can disconnect whenever you like, and nothing you have written changes either way.';
+  'Connecting one is reversible: you can disconnect whenever you like, and nothing you have written changes either way.';
+
+/**
+ * The header of the fold the form lives behind. Says the section is advanced and
+ * who it is for before anybody opens it, so somebody without a vault of their
+ * own can pass it by.
+ */
+export const VAULT_ADVANCED_TITLE = 'Advanced: connect a vault you run yourself';
+
+/**
+ * What the fold is, who it is for, and what Adepthood does once it is filled
+ * in. "Each new entry" because nothing already written is sent backwards, and
+ * "apart from Intimate ones" because none is ever sent. It ends on the floor.
+ */
+export const VAULT_ADVANCED_EXPLAINER =
+  'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued, and Adepthood then sends a copy of each new entry there, apart from Intimate ones. Nobody needs this to use Adepthood.';
+
+/**
+ * What it is not. The two things people most often take a vault to be, and the
+ * address the server refuses, so nobody goes looking for a setting that cannot
+ * work.
+ */
+export const VAULT_ADVANCED_NOT =
+  'It is not a folder on your phone or laptop, and it is not a cloud drive. An address only your own network can reach is refused.';
+
+/** The link to the plain-language guide in ``docs/your-data.md``. */
+export const VAULT_ADVANCED_LEARN_MORE = 'Learn how to run one';
+
+/**
+ * Managed availability could not be checked. Points at the folded form by the
+ * name its header shows, because "below" alone would name a form nobody sees.
+ */
+export const VAULT_MANAGED_UNKNOWN_BODY =
+  'You can try again later, or connect a vault you run yourself under Advanced, below.';
+
+/** Managed vaults are not open to this account yet. Keeps the floor, names the fold. */
+export const VAULT_MANAGED_UNAVAILABLE_BODY =
+  'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run yourself under Advanced, below.';
 
 /** Form heading with nothing connected. A thing to do, not a step outstanding. */
 export const VAULT_ADD_HEADING = 'Connect your vault';
@@ -93,7 +160,7 @@ export const VAULT_REPLACE_HEADING = 'Replace this vault';
 export const VAULT_ADDRESS_LABEL = 'Your vault address';
 
 /**
- * Address placeholder. One of only two strings allowed to spell a transport:
+ * Address placeholder. One of only three strings allowed to spell a transport:
  * the address has a shape, and a field that will not show it is a field people
  * fill in wrongly and are then refused for.
  */
@@ -135,7 +202,7 @@ export const VAULT_CONNECTED_LABEL = 'Connected to';
 
 /**
  * The empty state. "Yet" without regret: it reports the state and leaves the
- * offer to the form below rather than reading as something left undone.
+ * offers below it rather than reading as something left undone.
  */
 export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
 
@@ -144,10 +211,11 @@ export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
  * "No vault connected yet" would be an answer nobody gave, and for somebody who
  * does have one it would be a false report of losing it, so this states the gap
  * instead. The second clause is not reassurance but a promise the confirmation
- * gate keeps: a connect made from this state asks before it sends.
+ * gate keeps: a connect made from this state asks before it sends. It names the
+ * Advanced section, because in this state the form is folded away.
  */
 export const VAULT_CONNECTION_UNKNOWN =
-  'Adepthood could not tell whether a vault is already connected. You can still connect one, and Adepthood will ask first.';
+  'Adepthood could not tell whether a vault is already connected. You can still connect one you run yourself under Advanced, below, and Adepthood will ask first.';
 
 /**
  * Said after a successful connect. Describes what changed from here on — new

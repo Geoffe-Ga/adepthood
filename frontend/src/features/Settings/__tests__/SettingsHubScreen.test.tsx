@@ -269,21 +269,36 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Private vault row inside the Privacy group
+// Vault row, last in the Your corpus group (#3007)
 // ---------------------------------------------------------------------------
 
-describe('SettingsHubScreen — private vault row', () => {
+describe('SettingsHubScreen — vault row', () => {
   // Literals mirror the deck pinned verbatim in vaultCopy.test.ts. Kept literal
   // so a break in the copy module cannot take this file's other suites with it.
-  const VAULT_ROW_LABEL = 'Creek vault';
+  const VAULT_ROW_LABEL = 'Where your corpus lives';
   const VAULT_ROW_DESCRIPTION =
-    'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.';
+    'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
 
-  test('renders the vault row inside the Privacy group', () => {
+  test('renders the vault row inside the Your corpus group, after the corpus-consent row', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
-    const group = getByTestId('settings-group-privacy');
+    const corpus = getByTestId('settings-group-corpus');
+    const privacy = getByTestId('settings-group-privacy');
 
-    expect(within(group).getByTestId('settings-row-vault')).toBeTruthy();
+    expect(within(corpus).getByTestId('settings-row-vault')).toBeTruthy();
+    expect(within(privacy).queryByTestId('settings-row-vault')).toBeNull();
+
+    const rowIds = within(corpus)
+      .getAllByTestId(/^settings-row-/u)
+      .map((node) => node.props.testID as string);
+    expect(rowIds.slice(-2)).toEqual(['settings-row-corpus-consent', 'settings-row-vault']);
+  });
+
+  test('the row names no product, only the place', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const row = getByTestId('settings-row-vault');
+
+    expect(row.props.accessibilityLabel).not.toMatch(/creek/iu);
+    expect(row.props.accessibilityHint).not.toMatch(/creek/iu);
   });
 
   test('labels the row with the vault copy', () => {

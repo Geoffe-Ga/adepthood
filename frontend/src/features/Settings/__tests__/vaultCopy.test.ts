@@ -1,6 +1,8 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
+import { CORPUS_CONSENT_ROW_LABEL } from '../corpusConsentCopy';
+import * as higherSelfCopy from '../higherSelfCopy';
 import * as vaultCopy from '../vaultCopy';
 
 /**
@@ -19,13 +21,20 @@ import * as vaultCopy from '../vaultCopy';
  */
 
 const {
+  HIGHER_SELF_GAIN,
   VAULT_ADDRESS_INSECURE,
   VAULT_ADDRESS_PLACEHOLDER,
+  VAULT_ADVANCED_EXPLAINER,
+  VAULT_ADVANCED_NOT,
   VAULT_FLOOR,
   VAULT_PROMISE,
   VAULT_ROW_DESCRIPTION,
   VAULT_ROW_LABEL,
+  VAULT_SORTING_CHOICE,
 } = vaultCopy;
+
+/** The plain name the hub row, the screen and the stack header all share (#3007). */
+const PLAIN_NAME = 'Where your corpus lives';
 
 /** The deck that describes a vault. Swept by the full technical ban. */
 const PROMISE_KEYS = [
@@ -38,6 +47,14 @@ const PROMISE_KEYS = [
   'VAULT_FLOOR',
   'VAULT_INTIMATE',
   'VAULT_CONNECT_INTRO',
+  'HIGHER_SELF_GAIN',
+  'VAULT_SORTING_CHOICE',
+  'VAULT_ADVANCED_TITLE',
+  'VAULT_ADVANCED_EXPLAINER',
+  'VAULT_ADVANCED_NOT',
+  'VAULT_ADVANCED_LEARN_MORE',
+  'VAULT_MANAGED_UNKNOWN_BODY',
+  'VAULT_MANAGED_UNAVAILABLE_BODY',
 ] as const;
 
 /** The deck that asks for a vault. Swept by the same ban minus the transport. */
@@ -159,13 +176,13 @@ describe('vaultCopy — export surface', () => {
 // ---------------------------------------------------------------------------
 
 describe('vaultCopy — the promise deck, verbatim', () => {
-  it('VAULT_ROW_LABEL reads "Creek vault"', () => {
-    expect(VAULT_ROW_LABEL).toBe('Creek vault');
+  it('VAULT_ROW_LABEL reads the plain name', () => {
+    expect(VAULT_ROW_LABEL).toBe(PLAIN_NAME);
   });
 
-  it('VAULT_ROW_DESCRIPTION calls the vault optional and the app complete', () => {
+  it('VAULT_ROW_DESCRIPTION names both choices, the separate yes, and the floor', () => {
     expect(VAULT_ROW_DESCRIPTION).toBe(
-      'An optional, account-scoped copy of what you write. Connect your own or ask Adepthood to manage one; the app is complete without either.',
+      'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.',
     );
   });
 
@@ -173,8 +190,8 @@ describe('vaultCopy — the promise deck, verbatim', () => {
     expect(vaultCopy.VAULT_EYEBROW).toBe('Optional');
   });
 
-  it('VAULT_TITLE reads "Your Creek vault"', () => {
-    expect(vaultCopy.VAULT_TITLE).toBe('Your Creek vault');
+  it('VAULT_TITLE reads the plain name', () => {
+    expect(vaultCopy.VAULT_TITLE).toBe(PLAIN_NAME);
   });
 
   it('VAULT_PROMISE is the one promise the surface makes', () => {
@@ -196,7 +213,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; nothing else changes.',
+      'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; it does not turn sorting on, which stays a separate choice.',
     );
   });
 
@@ -206,9 +223,52 @@ describe('vaultCopy — the promise deck, verbatim', () => {
     );
   });
 
-  it('VAULT_CONNECT_INTRO offers the form and says leaving is free', () => {
+  it('VAULT_CONNECT_INTRO says connecting is reversible and leaving is free', () => {
     expect(vaultCopy.VAULT_CONNECT_INTRO).toBe(
-      'If you keep a space of your own, you can connect it here and Adepthood will send a copy of each entry to it. You can disconnect whenever you like, and nothing you have written changes either way.',
+      'Connecting one is reversible: you can disconnect whenever you like, and nothing you have written changes either way.',
+    );
+  });
+
+  it('HIGHER_SELF_GAIN is the shared sentence, re-exported word for word', () => {
+    expect(HIGHER_SELF_GAIN).toBe(higherSelfCopy.HIGHER_SELF_GAIN);
+  });
+
+  it('VAULT_SORTING_CHOICE says a vault is not the yes, and where the yes lives', () => {
+    expect(VAULT_SORTING_CHOICE).toBe(
+      'Creating a vault does not turn sorting on; that stays a separate choice, under What reflections draw on in Settings.',
+    );
+    expect(VAULT_SORTING_CHOICE).toContain(CORPUS_CONSENT_ROW_LABEL);
+  });
+
+  it('VAULT_ADVANCED_TITLE names the fold as advanced and for a vault you run', () => {
+    expect(vaultCopy.VAULT_ADVANCED_TITLE).toBe('Advanced: connect a vault you run yourself');
+  });
+
+  it('VAULT_ADVANCED_EXPLAINER says what it is, who it is for, and that nobody needs it', () => {
+    expect(VAULT_ADVANCED_EXPLAINER).toBe(
+      'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued, and Adepthood then sends a copy of each new entry there, apart from Intimate ones. Nobody needs this to use Adepthood.',
+    );
+  });
+
+  it('VAULT_ADVANCED_NOT rules out a device folder, a cloud drive and a local address', () => {
+    expect(VAULT_ADVANCED_NOT).toBe(
+      'It is not a folder on your phone or laptop, and it is not a cloud drive. An address only your own network can reach is refused.',
+    );
+  });
+
+  it('VAULT_ADVANCED_LEARN_MORE reads "Learn how to run one"', () => {
+    expect(vaultCopy.VAULT_ADVANCED_LEARN_MORE).toBe('Learn how to run one');
+  });
+
+  it('VAULT_MANAGED_UNKNOWN_BODY points at the Advanced section by name', () => {
+    expect(vaultCopy.VAULT_MANAGED_UNKNOWN_BODY).toBe(
+      'You can try again later, or connect a vault you run yourself under Advanced, below.',
+    );
+  });
+
+  it('VAULT_MANAGED_UNAVAILABLE_BODY keeps the floor and points at the Advanced section', () => {
+    expect(vaultCopy.VAULT_MANAGED_UNAVAILABLE_BODY).toBe(
+      'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run yourself under Advanced, below.',
     );
   });
 });
@@ -364,9 +424,9 @@ describe('vaultCopy — the form deck, verbatim', () => {
     );
   });
 
-  it('VAULT_CONNECTION_UNKNOWN reports the unread state and still offers the form', () => {
+  it('VAULT_CONNECTION_UNKNOWN reports the unread state and points at the folded form', () => {
     expect(vaultCopy.VAULT_CONNECTION_UNKNOWN).toBe(
-      'Adepthood could not tell whether a vault is already connected. You can still connect one, and Adepthood will ask first.',
+      'Adepthood could not tell whether a vault is already connected. You can still connect one you run yourself under Advanced, below, and Adepthood will ask first.',
     );
   });
 
@@ -459,6 +519,90 @@ describe('vaultCopy — straight apostrophes only', () => {
 describe('vaultCopy — the floor is stated outright', () => {
   it('VAULT_FLOOR asserts completeness without a vault', () => {
     expect(VAULT_FLOOR).toMatch(/complete without/iu);
+  });
+
+  it('VAULT_FLOOR bounds what a vault changes without claiming nothing else does', () => {
+    // "Nothing else changes" was false: a vault you run that can answer
+    // reflections may answer them, and documents you bring in go to it.
+    expect(VAULT_FLOOR).toMatch(/does not turn sorting on/u);
+    expect(VAULT_FLOOR).not.toMatch(/nothing else changes/iu);
+  });
+});
+
+describe('vaultCopy — a plain name, with Creek left to the custody statements (#3007)', () => {
+  const NAMED = [
+    'VAULT_ROW_LABEL',
+    'VAULT_TITLE',
+    'VAULT_ROW_DESCRIPTION',
+    'VAULT_ADVANCED_TITLE',
+    'VAULT_ADVANCED_EXPLAINER',
+    'VAULT_ADVANCED_NOT',
+    'VAULT_ADVANCED_LEARN_MORE',
+  ] as const;
+
+  for (const key of NAMED) {
+    it(`${key} does not say Creek`, () => {
+      expect(vaultCopy[key]).not.toMatch(/creek/iu);
+    });
+  }
+
+  it('the row description names both choices, the optionality and the floor', () => {
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/^An optional copy/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/Adepthood manages/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/one you run/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/complete without either/u);
+  });
+});
+
+describe('vaultCopy — the Advanced fold explains itself (#3007)', () => {
+  it('says who it is for and what it takes', () => {
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/already run their own vault/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/public web address/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/the key your vault issued/u);
+  });
+
+  it('says what Adepthood then does, and that nobody needs it', () => {
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/sends a copy of each new entry there/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/apart from Intimate ones/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/Nobody needs this/u);
+  });
+
+  it('says what it is not', () => {
+    expect(VAULT_ADVANCED_NOT).toMatch(/phone or laptop/u);
+    expect(VAULT_ADVANCED_NOT).toMatch(/cloud drive/u);
+    expect(VAULT_ADVANCED_NOT).toMatch(/only your own network can reach is refused/u);
+  });
+
+  it('every line pointing at the folded form names the Advanced section', () => {
+    for (const key of [
+      'VAULT_MANAGED_UNKNOWN_BODY',
+      'VAULT_MANAGED_UNAVAILABLE_BODY',
+      'VAULT_CONNECTION_UNKNOWN',
+    ] as const) {
+      expect(vaultCopy[key]).toMatch(/under Advanced, below/u);
+    }
+  });
+});
+
+describe('vaultCopy — a vault is not the yes to sorting (#3003)', () => {
+  it('every line that speaks of reflections points at the sorting decision', () => {
+    // Connecting or creating a vault turns no sorting on, so no line here may
+    // let a vault stand in for that decision. A line that mentions reflections
+    // must either be the yes itself or say a vault is not it.
+    const speaking = ALL_KEYS.filter((key) => /reflection/iu.test(vaultCopy[key]));
+
+    expect(speaking.length).toBeGreaterThan(0);
+    for (const key of speaking) {
+      expect(vaultCopy[key]).toMatch(/say yes to sorting|does not turn sorting on/iu);
+    }
+  });
+
+  it('the row description gives the gain only as the separate yes', () => {
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/Saying yes to sorting .* is a separate choice/u);
+  });
+
+  it('names none of the plumbing the reader never needs to learn', () => {
+    expect(ALL_COPY).not.toMatch(/system prompt|retrieval|fragment|ontolog|corpus store/iu);
   });
 });
 
