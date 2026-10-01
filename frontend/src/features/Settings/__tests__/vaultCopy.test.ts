@@ -213,7 +213,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; it does not turn sorting on, which stays a separate choice.',
+      'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.',
     );
   });
 
@@ -246,7 +246,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_ADVANCED_EXPLAINER says what it is, who it is for, and that nobody needs it', () => {
     expect(VAULT_ADVANCED_EXPLAINER).toBe(
-      'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued, and Adepthood then sends a copy of each new entry there, apart from Intimate ones. Nobody needs this to use Adepthood.',
+      'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if your vault accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.',
     );
   });
 
@@ -527,6 +527,14 @@ describe('vaultCopy — the floor is stated outright', () => {
     expect(VAULT_FLOOR).toMatch(/does not turn sorting on/u);
     expect(VAULT_FLOOR).not.toMatch(/nothing else changes/iu);
   });
+
+  it('VAULT_FLOOR promises only what stays here: entries, not documents a vault keeps', () => {
+    // With a vault connected, a document brought in is kept only in the vault,
+    // so "everything you have written is here either way" would be untrue.
+    expect(VAULT_FLOOR).toMatch(/every entry you have written are all here either way/u);
+    expect(VAULT_FLOOR).toMatch(/copy of your entries/u);
+    expect(VAULT_FLOOR).not.toMatch(/everything you have written/u);
+  });
 });
 
 describe('vaultCopy — a plain name, with Creek left to the custody statements (#3007)', () => {
@@ -561,9 +569,17 @@ describe('vaultCopy — the Advanced fold explains itself (#3007)', () => {
     expect(VAULT_ADVANCED_EXPLAINER).toMatch(/the key your vault issued/u);
   });
 
-  it('says what Adepthood then does, and that nobody needs it', () => {
-    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/sends a copy of each new entry there/u);
-    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/apart from Intimate ones/u);
+  it('says everything Adepthood then sends, and that nobody needs it', () => {
+    // Entries are re-sent on every edit, voice drafts are mirrored to a vault
+    // that accepts them, and a document brought in goes to the vault instead of
+    // the corpus -- so it is kept only there. All three withhold Intimate.
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/a copy of each entry when you save or edit it/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/each voice draft if your vault accepts them/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(
+      /documents you bring in go to it and are kept only there/u,
+    );
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/Nothing Intimate is sent\./u);
+    expect(VAULT_ADVANCED_EXPLAINER).not.toMatch(/each new entry/u);
     expect(VAULT_ADVANCED_EXPLAINER).toMatch(/Nobody needs this/u);
   });
 

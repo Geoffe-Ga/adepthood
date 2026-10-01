@@ -56,6 +56,19 @@ describe('vaultLinks — the run-your-own guide', () => {
     expect(anchors.filter((anchor) => anchor === VAULT_RUN_YOUR_OWN_DOC_ANCHOR)).toHaveLength(1);
   });
 
+  it('the guide names everything a vault receives, and what stays only there', () => {
+    const doc = fs.readFileSync(YOUR_DATA, 'utf-8');
+    const start = doc.indexOf('## Running your own vault');
+    const section = doc.slice(start, doc.indexOf('\n## ', start + 1));
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(section).toMatch(/each entry when you save or edit it/u);
+    expect(section).toMatch(/voice draft/u);
+    expect(section).toMatch(/documents you bring in go to it and are kept only there/u);
+    expect(section).toMatch(/Nothing Intimate is sent/u);
+    expect(section).not.toMatch(/each new entry/u);
+  });
+
   it('numbers a repeated heading, so a duplicate cannot pass for the original', () => {
     expect(headingAnchors('## Same\n\n### Same\n')).toEqual(['same', 'same-1']);
     expect(githubSlug('If you use a Creek Vault')).toBe('if-you-use-a-creek-vault');

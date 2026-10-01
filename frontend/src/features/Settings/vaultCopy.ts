@@ -80,10 +80,12 @@ export const VAULT_WHAT_IT_IS =
  * plainly and bounds what a vault changes: it adds a copy and turns no sorting
  * on. It no longer says "nothing else changes", which was not true: a vault you
  * run that can answer reflections may answer them, and documents you bring in
- * go to a connected vault rather than being sorted here.
+ * go to a connected vault rather than being sorted here. For the same reason it
+ * promises entries rather than "everything you have written": a document
+ * brought in while a vault is connected is kept only in the vault.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and everything you have written are all here either way. A vault adds an optional account-scoped copy; it does not turn sorting on, which stays a separate choice.';
+  'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.';
 
 /**
  * Said where somebody is about to create a managed vault, so that the press
@@ -117,12 +119,16 @@ export const VAULT_CONNECT_INTRO =
 export const VAULT_ADVANCED_TITLE = 'Advanced: connect a vault you run yourself';
 
 /**
- * What the fold is, who it is for, and what Adepthood does once it is filled
- * in. "Each new entry" because nothing already written is sent backwards, and
- * "apart from Intimate ones" because none is ever sent. It ends on the floor.
+ * What the fold is, who it is for, and everything Adepthood sends once it is
+ * filled in: an entry each time it is saved or edited, a voice draft when the
+ * vault advertises that it stores them, and any document brought in -- which
+ * then goes to the vault instead of the corpus and so is kept only there. The
+ * write, voice-draft and upload paths all withhold Intimate material before the
+ * vault is contacted, so "Nothing Intimate is sent" holds for all three. It ends
+ * on the floor.
  */
 export const VAULT_ADVANCED_EXPLAINER =
-  'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued, and Adepthood then sends a copy of each new entry there, apart from Intimate ones. Nobody needs this to use Adepthood.';
+  'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if your vault accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.';
 
 /**
  * What it is not. The two things people most often take a vault to be, and the

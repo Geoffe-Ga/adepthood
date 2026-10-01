@@ -84,9 +84,11 @@ offered separately. This is for people who already run their own.
 
 **Settings → Where your corpus lives → Advanced: connect a vault you run
 yourself.** It asks for two things: the public web address your vault answers
-on, starting `https://`, and the key your vault issued. Adepthood then sends a
-copy of each new entry there, apart from Intimate ones, and you can disconnect
-whenever you like.
+on, starting `https://`, and the key your vault issued. Adepthood then sends it
+a copy of each entry when you save or edit it, and of each voice draft if your
+vault accepts them, and documents you bring in go to it and are kept only there,
+not in Adepthood. Nothing Intimate is sent. You can disconnect whenever you
+like.
 
 A vault is a service running on a computer the open internet can reach. It is
 not a folder on your phone or laptop, and it is not a cloud drive. Adepthood's
