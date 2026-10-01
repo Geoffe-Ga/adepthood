@@ -734,35 +734,36 @@ describe('JournalEntryScreen — a press that lands before the flag is read', ()
   });
 });
 
+/** One essay-less margin note on the open entry, for the letter offer's specs. */
+const ESSAY_NOTE = {
+  id: 31,
+  journal_entry_id: 7,
+  kind: 'theme',
+  anchor_start: 2,
+  anchor_end: 6,
+  anchor_text: 'page',
+  note: 'A page, again.',
+  essay: null,
+  essay_generated_at: null,
+  status: 'active',
+  created_at: '2026-06-01T00:00:00Z',
+  updated_at: '2026-06-01T00:00:00Z',
+};
+
 /**
  * A note's first letter spends from the same wallet as the pass (#623), so an
  * empty wallet on the letter must reach the same refill remedy — not a generic
  * error inside the essay card.
  */
 describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () => {
-  const NOTE = {
-    id: 31,
-    journal_entry_id: 7,
-    kind: 'theme',
-    anchor_start: 2,
-    anchor_end: 6,
-    anchor_text: 'page',
-    note: 'A page, again.',
-    essay: null,
-    essay_generated_at: null,
-    status: 'active',
-    created_at: '2026-06-01T00:00:00Z',
-    updated_at: '2026-06-01T00:00:00Z',
-  };
-
   it.each([
     ['insufficient_offerings', /BotMason balance has run out/u],
     ['llm_key_required', /deployment needs an API key/u],
   ])('closes the note and opens the refill dialog on a 402 %s', async (detail, copy) => {
-    mockList.mockResolvedValue({ items: [NOTE] });
+    mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
     mockEssay.mockRejectedValueOnce(apiError(402, detail));
     const view = renderScreen();
-    fireEvent.press(await view.findByTestId(`margin-note-${NOTE.id}`));
+    fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
     expect(await view.findByTestId('essay-offer')).toBeTruthy();
     expect(mockEssay).not.toHaveBeenCalled();
 
@@ -770,9 +771,48 @@ describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () 
       fireEvent.press(view.getByTestId('essay-ask'));
     });
 
-    expect(mockEssay).toHaveBeenCalledWith(NOTE.id, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenCalledWith(ESSAY_NOTE.id, { priceAcknowledged: true });
     expect(await view.findByTestId('journal-resonance-refill')).toHaveTextContent(copy);
     await waitFor(() => expect(view.queryByTestId('essay-offer')).toBeNull());
     expect(mockGenerate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The letter's offer names its payer (#623). A writer whose own key pays is
+ * told so, and the BotMason wallet is never consulted for them; a server-paid
+ * writer is shown the wallet unit the letter will spend.
+ */
+describe('JournalEntryScreen — the letter offer names who pays', () => {
+  it('tells a writer with their own key that the key pays, without reading the wallet', async () => {
+    mockApiKeyState.apiKey = 'sk-letter-own-key'; // pragma: allowlist secret
+    mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
+    const view = renderScreen();
+    fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
+
+    const cost = await view.findByTestId('essay-ask-cost');
+    await waitFor(() =>
+      expect(cost).toHaveTextContent(
+        'Your own API key pays for this letter. Nothing is drawn from your BotMason messages.',
+      ),
+    );
+    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockEssay).not.toHaveBeenCalled();
+  });
+
+  it('tells a server-paid writer which wallet unit the letter spends', async () => {
+    mockUsage.mockResolvedValueOnce(
+      usageSnapshot({ monthly_messages_remaining: 0, offering_balance: 3 }),
+    );
+    mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
+    const view = renderScreen();
+    fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
+
+    const cost = await view.findByTestId('essay-ask-cost');
+    await waitFor(() =>
+      expect(cost).toHaveTextContent(/This letter spends one BotMason offering/u),
+    );
+    expect(mockUsage).toHaveBeenCalled();
+    expect(mockEssay).not.toHaveBeenCalled();
   });
 });
