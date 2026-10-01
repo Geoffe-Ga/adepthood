@@ -1023,6 +1023,8 @@ describe('VaultSettingsScreen — opening the Advanced fold', () => {
     expect(link.props.accessibilityRole).toBe('link');
     expect(link.props.accessibilityLabel).toBe(VAULT_ADVANCED_LEARN_MORE);
     expect(within(link).getByText(VAULT_ADVANCED_LEARN_MORE)).toBeTruthy();
+    // One link, the full-size target -- not a second, one-line one inside it.
+    expect(view.getAllByRole('link', HIDDEN_TOO)).toEqual([link]);
   });
 
   test('closes again on a second press', async () => {
