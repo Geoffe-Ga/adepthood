@@ -372,7 +372,15 @@ async def test_concurrent_requests_at_n_minus_one_admit_exactly_one(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     ceiling: int,
 ) -> None:
-    """The count follows the row-locking spend UPDATE, so racing requests serialize."""
+    """Two racing requests at ``ceiling - 1`` admit exactly one, on SQLite.
+
+    This is the outcome, not the ordering that guarantees it: SQLite's one
+    database-wide write lock serializes the two preflights from their first
+    write (the monthly-reset ``UPDATE``), so a count taken before the spend's
+    row lock passes here too. The ordering is proved on PostgreSQL row locks,
+    with the interleaving forced, in
+    ``tests/integration/test_generation_daily_ceiling_race.py``.
+    """
     async with concurrent_session_factory() as setup:
         user_id = await _make_user(setup)
         await _seed(setup, user_id, REASON_SPEND_MONTHLY, ceiling - 1, datetime.now(UTC))
