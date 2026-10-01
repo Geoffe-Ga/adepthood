@@ -139,16 +139,30 @@ def _priced(responses: Sequence[LLMResponse]) -> list[tuple[LLMResponse, Decimal
     ]
 
 
+def _total_cost(costs: Sequence[Decimal | None]) -> Decimal | None:
+    """Sum ``costs``, or ``None`` when any one is unknown (never summed as zero)."""
+    if None in costs:
+        return None
+    return sum((cost for cost in costs if cost is not None), Decimal(0))
+
+
 def _summarize(priced: Sequence[tuple[LLMResponse, Decimal | None]]) -> GenerationUsage:
     """Sum already-priced calls into one :class:`GenerationUsage`."""
-    costs = [cost for _response, cost in priced]
+    responses, costs = _split(priced)
     return GenerationUsage(
-        calls=len(priced),
-        prompt_tokens=sum(response.prompt_tokens for response, _cost in priced),
-        completion_tokens=sum(response.completion_tokens for response, _cost in priced),
-        cost_usd=None if None in costs else sum((c for c in costs if c is not None), Decimal(0)),
-        model=priced[-1][0].model if priced else None,
+        calls=len(responses),
+        prompt_tokens=sum(response.prompt_tokens for response in responses),
+        completion_tokens=sum(response.completion_tokens for response in responses),
+        cost_usd=_total_cost(costs),
+        model=responses[-1].model if responses else None,
     )
+
+
+def _split(
+    priced: Sequence[tuple[LLMResponse, Decimal | None]],
+) -> tuple[list[LLMResponse], list[Decimal | None]]:
+    """Unzip priced calls into their responses and their costs."""
+    return [response for response, _cost in priced], [cost for _response, cost in priced]
 
 
 def summarize_usage(responses: Sequence[LLMResponse]) -> GenerationUsage:
