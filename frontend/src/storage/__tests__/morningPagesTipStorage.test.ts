@@ -165,6 +165,38 @@ describe('morningPagesTipStorage', () => {
     );
   });
 
+  test('an interruption after any one of restore’s writes never re-locks the tip', async () => {
+    // A writer who still has the legacy decline presses restore, and the app is
+    // killed after the first write lands. Whatever got written, the next read
+    // must not carry the old decline over and silently undo the restore.
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockStore.set(LEGACY_KEY, 'true');
+    let restoring = true;
+    let writes = 0;
+    const interruptAfterFirstWrite = () => {
+      if (!restoring) return false;
+      writes += 1;
+      return writes > 1;
+    };
+    mockAsyncStorage.setItem.mockImplementation((key: string, value: string) => {
+      if (interruptAfterFirstWrite()) return Promise.reject(new Error('killed'));
+      mockStore.set(key, value);
+      return Promise.resolve();
+    });
+    mockAsyncStorage.removeItem.mockImplementation((key: string) => {
+      if (interruptAfterFirstWrite()) return Promise.reject(new Error('killed'));
+      mockStore.delete(key);
+      return Promise.resolve();
+    });
+
+    await expect(restoreMorningPagesTip()).resolves.toBe(false);
+    // The app comes back up: storage works again, and the shelf reads.
+    restoring = false;
+
+    await expect(loadMorningPagesTipState()).resolves.toEqual(MORNING_PAGES_TIP_OPEN);
+    expect(mockStore.get(NEVER_OFFER_KEY)).not.toBe('true');
+  });
+
   test('a failed restore resolves false and says so, so Settings does not claim it worked', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const error = new Error('storage blocked');

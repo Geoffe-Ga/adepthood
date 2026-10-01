@@ -87,15 +87,17 @@ export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<voi
  * Settings → "Offer morning pages again": clears the permanent decline AND
  * today's set-aside, so the tip is on the shelf now rather than tomorrow.
  *
- * It also drops any legacy flag the shelf has not migrated yet; otherwise the
- * first shelf read after this would carry that old decline over and undo the
- * restore. Resolves whether it was saved (never rejects), so Settings only
- * says the tip is back when it is.
+ * It also drops any legacy flag the shelf has not migrated yet, and drops it
+ * FIRST: if the flag outlived the new write, the next shelf read would carry
+ * that old decline over and silently undo the restore. Removing it first means
+ * an interruption at any point leaves either the old decline or the restore,
+ * never a restore that a later read reverses. Resolves whether it was saved
+ * (never rejects), so Settings only says the tip is back when it is.
  */
 export async function restoreMorningPagesTip(): Promise<boolean> {
   try {
-    await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
     await AsyncStorage.removeItem(LEGACY_DISMISSED_KEY);
+    await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
     await AsyncStorage.removeItem(SET_ASIDE_ON_KEY);
     return true;
   } catch (err) {
