@@ -711,6 +711,19 @@ describe('JournalEntryScreen', () => {
     expect(hostWrapperStyle(hidden).height).toBe(0);
   });
 
+  it('withholds read-mode resonance on a weekly-prompt page', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
+    const view = renderScreen({
+      entryId: 7,
+      weekNumber: 3,
+      promptQuestion: 'What did you notice?',
+    });
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+    expect(StyleSheet.flatten(marginResonanceControls(view).props.style).height).toBe(0);
+    expect(view.queryByTestId('get-resonance-button')).toBeNull();
+    view.unmount();
+  });
+
   it('keeps the margin host open for a finished entry with words', async () => {
     const view = await renderFinished();
     const style = StyleSheet.flatten(marginResonanceControls(view).props.style);
