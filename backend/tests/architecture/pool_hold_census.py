@@ -176,9 +176,11 @@ CLEAR: tuple[ClearRoute, ...] = (
         handler="routers.journal.run_resonance",
         reason=(
             "The wallet deduction commits in its own transaction together with "
-            "every pre-dial read -- entry, grounding, detection candidates -- so "
-            "the vault probe, the reflection pass and the completion-detection "
-            "call all run with no connection checked out. A failed pass is "
+            "the entry and detection-candidate reads; under the account hold the "
+            "entry re-read, then the grounding and prior-letter reads, each "
+            "commit before any dial (#2998), so the vault probe, the reflection "
+            "pass and the completion-detection call all run with no connection "
+            "checked out. A failed pass is "
             "settled by compensation instead of rollback: refund_one_message "
             "credits the bucket the spend came from and commits, so a failed "
             "pass still never charges."

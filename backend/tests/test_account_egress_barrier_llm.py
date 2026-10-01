@@ -32,8 +32,10 @@ from sqlmodel import col, select
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import CreekCapability, VaultReflection, VaultTierCeiling
 from main import app
+from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.goal import Goal
 from models.habit import Habit
+from models.journal_entry import JournalClassification
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.user import User
 from models.wallet_audit import (
@@ -863,3 +865,209 @@ async def test_a_mid_pass_reclassification_binds_the_tier_the_writer_now_allows(
     assert answered.json()["private"] is False
     assert vault.reflect_calls, "the reclassified entry was never reflected at all"
     assert {tier for _body, tier in vault.reflect_calls} == {bound}
+
+
+#: Markers for the *other* writing a pass may carry as context. Distinctive, so
+#: "did it go out" is a substring check on what the provider actually received.
+_OTHER_ENTRY_MARKER = "zebra-quartz: the secret about my brother nobody may read."
+_OTHER_LETTER_MARKER = "okapi-violet: a letter about the brother nobody may read."
+_UPLOAD_MARKER = "heron-slate: an uploaded essay with no journal entry behind it."
+
+
+def _make_deleted(
+    client: AsyncClient, headers: dict[str, str], entry_id: int
+) -> Callable[[], Awaitable[Response]]:
+    """The DELETE that soft-deletes the entry."""
+    return lambda: client.delete(f"/journal/{entry_id}", headers=headers)
+
+
+#: The two mutations that withdraw *another* entry from what a pass may send.
+_WITHDRAWALS = {"intimate": _make_intimate, "deleted": _make_deleted}
+
+
+def _sent(provider: PausedProvider, marker: str) -> bool:
+    """Whether ``marker`` reached the provider in any dial."""
+    return any(marker in body for body in provider.bodies)
+
+
+async def _seed_prior_letter(
+    factory: async_sessionmaker[AsyncSession], user_id: int, entry_id: int
+) -> None:
+    """Give ``entry_id`` one expanded letter, the kind a later pass reads as prior context."""
+    note_id = await _seed_marginalia(factory, user_id, entry_id)
+    async with factory() as session:
+        note = await session.get(Marginalia, note_id)
+        assert note is not None
+        note.essay = _OTHER_LETTER_MARKER
+        note.essay_generated_at = datetime.now(UTC)
+        session.add(note)
+        await session.commit()
+
+
+async def _seed_fragment(
+    factory: async_sessionmaker[AsyncSession],
+    user_id: int,
+    *,
+    content: str,
+    source: CorpusSource,
+    source_entry_id: int | None = None,
+) -> None:
+    """Put one personal-tier fragment into the account's corpus."""
+    async with factory() as session:
+        session.add(
+            CorpusFragment(
+                user_id=user_id,
+                source_entry_id=source_entry_id,
+                source=source,
+                tier=JournalClassification.PERSONAL,
+                content=content,
+                frequency_weights={},
+                overall_confidence=0.0,
+            )
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_without_a_race_the_other_entry_and_its_letter_ride_along(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control for the races below: unwithdrawn, both markers really are sent.
+
+    Without it, "the marker never went out" could pass because the seeding never
+    reached the prompt at all.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "ctx_control")
+    user_id = await _user_id(concurrent_session_factory, email)
+    other_id = await _create_entry(concurrent_async_client, headers, body=_OTHER_ENTRY_MARKER)
+    await _seed_prior_letter(concurrent_session_factory, user_id, other_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+
+    answered = await concurrent_async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert _sent(provider, _OTHER_ENTRY_MARKER)
+    assert _sent(provider, _OTHER_LETTER_MARKER)
+
+
+@pytest.mark.parametrize("withdrawal", sorted(_WITHDRAWALS))
+@pytest.mark.asyncio
+async def test_another_entry_withdrawn_while_the_pass_waited_is_not_sent_as_grounding(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    withdrawal: str,
+) -> None:
+    """Grounding is gathered under the hold, so a withdrawal that won it is honoured.
+
+    The pass's own entry is re-read under the hold (#2998), but the *other*
+    writing it carries as ``<prior>`` context is just as much a body handed to a
+    model. A PATCH to intimate, or a DELETE, of another entry that wins the
+    barrier completes and answers 200 first; a grounding read taken before the
+    wait would then still send that entry's body, breaking the #895 floor.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, f"ctx_grounding_{withdrawal}")
+    other_id = await _create_entry(concurrent_async_client, headers, body=_OTHER_ENTRY_MARKER)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _WITHDRAWALS[withdrawal](concurrent_async_client, headers, other_id),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert provider.bodies, "the pass never dialled, so the assertion below proves nothing"
+    assert not _sent(provider, _OTHER_ENTRY_MARKER), (
+        f"an entry {withdrawal} before this dial was sent as grounding: {provider.bodies}"
+    )
+
+
+@pytest.mark.parametrize("withdrawal", sorted(_WITHDRAWALS))
+@pytest.mark.asyncio
+async def test_a_corpus_copy_withdrawn_while_the_pass_waited_is_not_sent(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    withdrawal: str,
+) -> None:
+    """The corpus path too: the withdrawn entry's fragment goes, an upload stays.
+
+    PATCH-to-intimate and DELETE both withdraw the entry's local corpus copy under
+    the same hold. An upload has no entry behind it, so nothing withdrew it and it
+    is still legitimate context -- which pins that the fix re-gathers rather than
+    simply dropping the corpus.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, f"ctx_corpus_{withdrawal}")
+    user_id = await _user_id(concurrent_session_factory, email)
+    other_id = await _create_entry(concurrent_async_client, headers, body="An ordinary day.")
+    await _seed_fragment(
+        concurrent_session_factory,
+        user_id,
+        content=_OTHER_ENTRY_MARKER,
+        source=CorpusSource.JOURNAL,
+        source_entry_id=other_id,
+    )
+    await _seed_fragment(
+        concurrent_session_factory, user_id, content=_UPLOAD_MARKER, source=CorpusSource.UPLOAD
+    )
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _WITHDRAWALS[withdrawal](concurrent_async_client, headers, other_id),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert not _sent(provider, _OTHER_ENTRY_MARKER), (
+        f"a corpus copy withdrawn before this dial was sent: {provider.bodies}"
+    )
+    assert _sent(provider, _UPLOAD_MARKER), "an upload nothing withdrew was dropped"
+
+
+@pytest.mark.parametrize("withdrawal", sorted(_WITHDRAWALS))
+@pytest.mark.asyncio
+async def test_a_prior_letter_whose_entry_was_withdrawn_mid_wait_is_not_sent(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    withdrawal: str,
+) -> None:
+    """A letter about an entry made intimate, or deleted, while the pass waited stays home.
+
+    ``_prior_letters_query`` excludes intimate and deleted parents, but only for
+    the state it reads; read before the wait, it hands the model an excerpt of a
+    letter whose parent the writer withdrew in a request that already answered.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, f"ctx_letter_{withdrawal}")
+    user_id = await _user_id(concurrent_session_factory, email)
+    other_id = await _create_entry(concurrent_async_client, headers, body="An ordinary day.")
+    await _seed_prior_letter(concurrent_session_factory, user_id, other_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _WITHDRAWALS[withdrawal](concurrent_async_client, headers, other_id),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert provider.bodies, "the pass never dialled, so the assertion below proves nothing"
+    assert not _sent(provider, _OTHER_LETTER_MARKER), (
+        f"a letter whose entry was {withdrawal} before this dial was sent: {provider.bodies}"
+    )

@@ -1528,6 +1528,39 @@ async def _withdrawn_under_hold(
     return False
 
 
+async def _pass_context_under_hold(
+    session: AsyncSession, user_id: int, entry_id: int
+) -> tuple[Grounding, list[str]]:
+    """Gather the other writing a pass carries, under its hold, then release the connection.
+
+    The pass hands a model more than its own entry: up to
+    ``GROUNDING_LIMIT`` pieces of the writer's other writing as ``<prior>``
+    context, and excerpts of earlier letters as ``<prior_letters>`` (#2574).
+    Both are gathered *here*, under :func:`hold_account`, and never before the
+    wait for it. ``PATCH /journal/{entry_id}`` making *another* entry intimate,
+    and ``DELETE /journal/{entry_id}``, take the same exclusive hold and, inside
+    it, withdraw that entry's local corpus copy and stamp its row. A read taken
+    before the wait would still hold that entry's body, or a letter about it,
+    after a request withdrawing it had answered 200 -- an intimate entry handed
+    to a language model, which #895 forbids whoever pays.
+
+    Re-gathering rather than re-checking what was gathered earlier is the sound
+    choice, for two reasons. The eligibility rule keeps exactly one derivation
+    each -- the corpus store's tier barriers plus ``exclude_entry_id`` on one
+    side, :func:`_prior_letters_query` on the other -- instead of a second,
+    by-id reading that could drift from them. And a corpus fragment from an
+    upload or an import has no entry to re-check at all; the corpus copy the
+    mutation withdrew is simply no longer there to retrieve.
+
+    The commit releases the pooled connection these reads opened, so none is
+    held across the dials that follow.
+    """
+    grounding = await _grounding_for(session, user_id, entry_id)
+    prior_letters = await _prior_letter_essays(session, user_id=user_id, exclude_entry_id=entry_id)
+    await session.commit()
+    return grounding, prior_letters
+
+
 async def _care_only_response(
     session: AsyncSession, user_id: int, care: CareResponse
 ) -> ResonanceResponse:
@@ -1928,27 +1961,21 @@ async def run_resonance(
     # key pays the provider directly; only the server-key/vault path draws from
     # the deployment-configured allowance or purchased offerings.
     byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
-    grounding = await _grounding_for(session, current_user, entry_id)
-    # Content-only anti-repetition context (issue #2574). Read here, with the
-    # pooled connection still held, for the same reason the grounding above is:
-    # every read the dials depend on must be in hand before the commit below
-    # releases the connection ahead of the first provider round trip.
-    prior_letters = await _prior_letter_essays(
-        session, user_id=current_user, exclude_entry_id=entry_id
-    )
     detection = await _detection_inputs(session, entry=entry)
     llm = BotmasonResonanceLLM(byok_key)
-    # Any deduction is durable and every read the dials depend on is in hand:
-    # release the pooled connection before the first provider round trip.
+    # Any deduction is durable: release the pooled connection before waiting.
     await session.commit()
     # The account barrier opens here rather than at the top of the handler: the
-    # deduction and every read the dials depend on are already committed, so the
-    # wait for it holds no pooled connection, and an erasure racing this pass
-    # waits only for the outbound half rather than for the wallet arithmetic.
+    # deduction is already committed, so the wait for it holds no pooled
+    # connection, and an erasure racing this pass waits only for the outbound
+    # half rather than for the wallet arithmetic. Everything a dial carries that
+    # a privacy mutation can withdraw -- the entry itself, the other writing it
+    # is grounded in, the earlier letters -- is read under the hold (#2998).
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
         if await _withdrawn_under_hold(session, entry, spent=spent):
             return await _private_response(session, current_user, care)
+        grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
             body=message,
