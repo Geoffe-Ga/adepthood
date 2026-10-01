@@ -61,6 +61,14 @@ jest.mock('@/navigation/hooks', () => ({
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
+// The web field measurement, stubbed so a programmatic write's re-measure is
+// observable without switching the whole screen to web (#3001). It measures
+// nothing unless a test says otherwise, exactly as on native.
+const mockReadWebContentHeight = jest.fn<(_node: unknown) => number | undefined>();
+jest.mock('../webFieldMeasure', () => ({
+  readWebContentHeight: (node: unknown) => mockReadWebContentHeight(node),
+}));
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 /** The title the Course reader hands a reflection off under. */
@@ -147,6 +155,8 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockList.mockReset();
   mockList.mockResolvedValue({ items: [] });
+  mockReadWebContentHeight.mockReset();
+  mockReadWebContentHeight.mockReturnValue(undefined);
   act(() => {
     useCapturedTranscriptStore.getState().clear();
   });
@@ -339,5 +349,54 @@ describe('JournalEntryScreen — the transcript comes back into the open page', 
     });
 
     expect(getByTestId('journal-body-input').props.value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Growth after a write that is not typed (#3001)
+// ---------------------------------------------------------------------------
+
+/** How much taller the measured content is after a programmatic write. */
+const WRITTEN_GROWTH = 400;
+
+/** A field's flattened laid-out height. */
+function fieldHeight(node: ReturnType<ReturnType<typeof render>['getByTestId']>): number {
+  return StyleSheet.flatten(node.props.style).height as number;
+}
+
+describe('JournalEntryScreen — fields re-measure after a write that is not typed (#3001)', () => {
+  it('grows the body when a transcript is appended into it', () => {
+    const { getByTestId, navigation } = renderScreen({ prefillTitle: REFLECTION_TITLE });
+    fireEvent.press(getByTestId('journal-photograph-page'));
+    const grown = Math.ceil(fieldHeight(getByTestId('journal-body-input')) + WRITTEN_GROWTH);
+    mockReadWebContentHeight.mockReturnValue(grown);
+
+    act(() => {
+      useCapturedTranscriptStore
+        .getState()
+        .deliver(openedToken(navigation.navigate), 'A long handwritten page.');
+    });
+
+    expect(fieldHeight(getByTestId('journal-body-input'))).toBe(grown);
+  });
+
+  it('grows the title and the body when a saved entry loads into them', async () => {
+    let resolveLoad: (loaded: JournalMessage) => void = () => undefined;
+    mockGet.mockReturnValue(
+      new Promise<JournalMessage>((resolve) => {
+        resolveLoad = resolve;
+      }),
+    );
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    const loadedHeight = Math.ceil(fieldHeight(getByTestId('journal-body-input')) + WRITTEN_GROWTH);
+    mockReadWebContentHeight.mockReturnValue(loadedHeight);
+
+    await act(async () => {
+      resolveLoad(entry());
+    });
+
+    await waitFor(() => expect(getByTestId('journal-title-input').props.value).toBe('Rivers'));
+    expect(fieldHeight(getByTestId('journal-title-input'))).toBe(loadedHeight);
+    expect(fieldHeight(getByTestId('journal-body-input'))).toBe(loadedHeight);
   });
 });
