@@ -3781,6 +3781,9 @@ function JournalPage({
           style={styles.pageScroll}
           contentContainerStyle={styles.pageScrollContent}
           keyboardShouldPersistTaps="handled"
+          // The formatting toolbar trails a growing body (#3002): iOS must inset the
+          // page for the soft keyboard so scrolling can bring it out from under it.
+          automaticallyAdjustKeyboardInsets
           testID="journal-page-scroll"
         >
           <JournalPageSurface

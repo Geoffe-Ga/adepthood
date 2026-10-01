@@ -140,6 +140,31 @@ function hostWrapperStyle(element: { parent: unknown }): ViewStyle {
   return StyleSheet.flatten(node?.props.style) ?? {};
 }
 
+/** The edit-mode page's vertical stack, top to bottom, by host testID. */
+const WRITING_PAGE_STACK = [
+  'journal-body-input',
+  'journal-format-toolbar',
+  'journal-save-hint',
+  'journal-word-count',
+  'journal-writing-controls',
+];
+
+type TreeNode = { type: unknown; props: { testID?: unknown }; children: (TreeNode | string)[] };
+
+/** The first host occurrence of each wanted testID, in render (document) order. */
+function hostTestIDOrder(root: unknown, wanted: readonly string[]): string[] {
+  const seen: string[] = [];
+  const walk = (node: TreeNode | string): void => {
+    if (typeof node === 'string') return;
+    const id = node.props.testID;
+    const isWantedHost = typeof node.type === 'string' && typeof id === 'string';
+    if (isWantedHost && wanted.includes(id) && !seen.includes(id)) seen.push(id);
+    node.children.forEach(walk);
+  };
+  walk(root as TreeNode);
+  return seen;
+}
+
 describe('JournalEntryScreen', () => {
   /** A finished entry loaded into read mode, shared by the read-mode specs. */
   async function renderFinished(message = 'I walked.') {
@@ -400,6 +425,21 @@ describe('JournalEntryScreen', () => {
     expect(within(scroll).getByTestId('journal-title-input')).toBeTruthy();
     expect(within(scroll).getByTestId('journal-margin-column')).toBeTruthy();
     expect(getByTestId('journal-body-input').props.scrollEnabled).toBe(false);
+  });
+
+  // #3002: the page reads top to bottom as the text, then the tools that act on
+  // it — formatting, then the save footer, then the Finish rail.
+  it('stacks the page as body, formatting toolbar, save footer, then the Finish rail', () => {
+    const { getByTestId, UNSAFE_root } = renderScreen();
+    fireEvent.changeText(getByTestId('journal-body-input'), 'A first line.');
+    expect(hostTestIDOrder(UNSAFE_root, WRITING_PAGE_STACK)).toEqual(WRITING_PAGE_STACK);
+  });
+
+  // #3002: the toolbar now trails a growing body, so on iOS the page must scroll
+  // its content out from under the soft keyboard (Android resizes by default).
+  it('insets the page scroll for the soft keyboard so the trailing toolbar stays reachable', () => {
+    const { getByTestId } = renderScreen();
+    expect(getByTestId('journal-page-scroll').props.automaticallyAdjustKeyboardInsets).toBe(true);
   });
 
   it('starts tall and grows the page-level scroll surface with the writing', () => {
