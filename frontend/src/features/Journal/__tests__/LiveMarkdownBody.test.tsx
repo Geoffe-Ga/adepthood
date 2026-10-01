@@ -341,9 +341,11 @@ describe('LiveMarkdownBody on web', () => {
   it('hides the mirror from assistive technology and leaves the field as the one voice', () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<Harness initial="**a**" />);
     const mirror = getByTestId('journal-body-mirror');
+    // On the web aria-hidden is the whole hide (react-native-web drops the two
+    // native props), so decorativeHidden() sends nothing else to the DOM (#3009).
     expect(mirror.props['aria-hidden']).toBe(true);
-    expect(mirror.props.importantForAccessibility).toBe('no-hide-descendants');
-    expect(mirror.props.accessibilityElementsHidden).toBe(true);
+    expect(mirror.props).not.toHaveProperty('importantForAccessibility');
+    expect(mirror.props).not.toHaveProperty('accessibilityElementsHidden');
     expect(mirror.props.pointerEvents).toBe('none');
     expect(StyleSheet.flatten(mirror.props.style)).toMatchObject({ position: 'absolute' });
     expect(queryByTestId('journal-body-mirror', { includeHiddenElements: false })).toBeNull();
