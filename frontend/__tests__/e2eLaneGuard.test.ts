@@ -36,6 +36,8 @@ const FAKE_CREEK = join(E2E_DIR, 'fakeCreekServer.mjs');
 const FAKE_VAULT = join(E2E_DIR, 'fakeCreekVault.mjs');
 const SERVER_LAUNCHER = backendPath('tests', 'e2e', 'server.py');
 const LANE_PYTHON_DIR = backendPath('tests', 'e2e');
+const PROVISIONING_CLIENT = backendPath('src', 'services', 'creek_provisioning_client.py');
+const BACKEND_ENV_EXAMPLE = backendPath('.env.example');
 
 const E2E_SCRIPT = 'test:e2e';
 const BROWSER_E2E_SCRIPT = 'test:e2e:web';
@@ -494,12 +496,29 @@ describe('e2e specs drive the unmocked production client', () => {
 describe('the external Creek boundary stays protocol-shaped and secret hostile', () => {
   it('launches the fake as a separate process and wires only production provisioning settings', () => {
     const setup = read(GLOBAL_SETUP, 'The activation journey needs its external Creek boundary.');
+    const client = read(
+      PROVISIONING_CLIENT,
+      'The activation journey must retain the production mounted-secret reader.',
+    );
+    const envExample = read(
+      BACKEND_ENV_EXAMPLE,
+      'Production configuration must not advertise an E2E-only secret root.',
+    );
 
     expect(setup).toContain("spawn(process.execPath, [join(__dirname, 'fakeCreekServer.mjs')]");
     expect(setup).toContain('CREEK_PROVISIONING_URL:');
     expect(setup).toContain('CREEK_PROVISIONING_AUTH_FILE:');
     expect(setup).toContain('CREEK_PROVISIONING_HANDOFF_AUTH_FILE:');
+    expect(setup).toContain('CREEK_MANAGED_VAULT_ALERT_EMAIL: MANAGED_VAULT_ALERT_EMAIL');
+    expect(setup).toContain('ADEPTHOOD_E2E_MANAGED_VAULT_SECRET_ROOT: creek.credentialDir');
+    expect(setup).toContain("ENV: 'e2e'");
+    expect(setup).toContain("join(credentialDir, 'creek-control-bearer')");
+    expect(setup).toContain("join(credentialDir, 'creek-handoff-bearer')");
+    expect(setup.match(/mode: 0o400/gu)).toHaveLength(2);
     expect(setup).not.toContain('dependency_overrides');
+    expect(client).toContain('return read_secure_mounted_secret(configured_path)');
+    expect(client).toContain('if os.getenv("ENV", "") != "e2e":');
+    expect(envExample).not.toContain('ADEPTHOOD_E2E_MANAGED_VAULT_SECRET_ROOT');
   });
 
   it('requires contract 2.0 provider custody and exposes no ceremony route or secret fields', () => {

@@ -15733,6 +15733,119 @@
         "summary": "Readiness"
       }
     },
+    "/internal/vault-provisioning/alerts": {
+      "post": {
+        "description": "Deliver one authenticated, counts-only fleet alert to operations.",
+        "operationId": "receive_creek_fleet_alert_internal_vault_provisioning_alerts_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Receive Creek Fleet Alert",
+        "tags": [
+          "internal-vault-provisioning"
+        ]
+      }
+    },
     "/internal/vault-provisioning/completions": {
       "post": {
         "description": "Store Creek's one-time URL/credential delivery without ever echoing it.",
@@ -15828,6 +15941,16 @@
               }
             },
             "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
           }
         },
         "summary": "Receive Creek Connection Handoff",

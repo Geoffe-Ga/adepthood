@@ -162,6 +162,20 @@ def test_unknown_env_raises() -> None:
         get_cors_origins("testing")
 
 
+def test_e2e_environment_uses_only_development_origins() -> None:
+    assert get_cors_origins("e2e") == DEV_ORIGINS
+
+
+@patch.dict("os.environ", {"PROD_DOMAIN": "https://app.adepthood.com"})
+def test_e2e_environment_warning_names_the_actual_environment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert get_cors_origins("e2e") == DEV_ORIGINS
+
+    assert "PROD_DOMAIN is set but ENV=e2e" in caplog.text
+
+
 @patch.dict("os.environ", {"PROD_DOMAIN": " , , "})
 def test_production_with_blank_entries_raises() -> None:
     """PROD_DOMAIN with only whitespace/commas raises RuntimeError."""

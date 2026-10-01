@@ -5,22 +5,28 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from typing import Final
 
+from pydantic import EmailStr, TypeAdapter, ValidationError
+
+from services import managed_vault_activation_config
 from services.creek_provisioning_client import (
     HANDOFF_AUTH_FILE_ENV_VAR,
     PROVISIONING_AUTH_FILE_ENV_VAR,
     PROVISIONING_URL_ENV_VAR,
+    mounted_bearers_are_distinct,
+    mounted_token_is_readable,
 )
 from services.creek_vault_url import classify_vault_url
 
-MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ACTIVATION_ENABLED"
+MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = (
+    managed_vault_activation_config.MANAGED_VAULT_ENABLED_ENV_VAR
+)
 MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_PILOT_USER_IDS"
+MANAGED_VAULT_ALERT_EMAIL_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ALERT_EMAIL"
 MAX_PILOT_ACCOUNTS: Final[int] = 100
 
-_TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES: Final[frozenset[str]] = frozenset({"", "0", "false", "no", "off"})
+_EMAIL_ADAPTER: Final = TypeAdapter(EmailStr)
 
 
 class ManagedVaultRolloutState(StrEnum):
@@ -45,22 +51,22 @@ class ManagedVaultRollout:
 
 
 def _mounted_secret_is_readable(env_var: str) -> bool:
-    path = os.getenv(env_var, "").strip()
-    if not path:
-        return False
+    return mounted_token_is_readable(env_var)
+
+
+def managed_vault_alert_destination() -> str | None:
+    """Return one validated operator mailbox without retaining a stale value."""
+    raw = os.getenv(MANAGED_VAULT_ALERT_EMAIL_ENV_VAR, "")
+    if not raw or raw != raw.strip():
+        return None
     try:
-        return bool(Path(path).read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+        return str(_EMAIL_ADAPTER.validate_python(raw))
+    except ValidationError:
+        return None
 
 
 def _parse_enabled() -> bool | None:
-    raw = os.getenv(MANAGED_VAULT_ENABLED_ENV_VAR, "").strip().lower()
-    if raw in _TRUE_VALUES:
-        return True
-    if raw in _FALSE_VALUES:
-        return False
-    return None
+    return managed_vault_activation_config.parse_managed_vault_activation_enabled()
 
 
 def _parse_pilot_ids() -> frozenset[int] | None:
@@ -81,17 +87,34 @@ def _pilot_ids_are_bounded(values: frozenset[int]) -> bool:
     return not any(value <= 0 for value in values)
 
 
-def _provider_defects() -> list[str]:
-    defects: list[str] = []
+def _provisioning_url_defects() -> list[str]:
     base_url = os.getenv(PROVISIONING_URL_ENV_VAR, "").strip()
     if not base_url or classify_vault_url(base_url) is not None:
-        defects.append(PROVISIONING_URL_ENV_VAR)
-    defects.extend(
+        return [PROVISIONING_URL_ENV_VAR]
+    return []
+
+
+def _mounted_secret_defects() -> list[str]:
+    defects = [
         env_var
         for env_var in (PROVISIONING_AUTH_FILE_ENV_VAR, HANDOFF_AUTH_FILE_ENV_VAR)
         if not _mounted_secret_is_readable(env_var)
-    )
+    ]
+    if not defects and not mounted_bearers_are_distinct():
+        defects.append(HANDOFF_AUTH_FILE_ENV_VAR)
     return defects
+
+
+def _alert_destination_defects() -> list[str]:
+    return [MANAGED_VAULT_ALERT_EMAIL_ENV_VAR] if managed_vault_alert_destination() is None else []
+
+
+def _provider_defects() -> list[str]:
+    return [
+        *_provisioning_url_defects(),
+        *_mounted_secret_defects(),
+        *_alert_destination_defects(),
+    ]
 
 
 def _rollout_defects(

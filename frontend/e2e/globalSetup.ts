@@ -63,6 +63,7 @@ const MAIL_FILE_NAME = 'outbound.jsonl';
  * and the web build is the only client that ships.
  */
 const WEB_BASE_URL = 'https://reset.adepthood.invalid';
+const MANAGED_VAULT_ALERT_EMAIL = 'managed-vault-alerts@example.com';
 
 /**
  * The account the lane's deployment-wide Creek Vault belongs to.
@@ -306,11 +307,11 @@ function testCredential(): string {
 
 function createCredentialFiles(): Omit<CreekFixture, 'pid' | 'port'> {
   const credentialDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-creek-'));
-  const requesterFile = join(credentialDir, 'requester-token');
-  const handoffFile = join(credentialDir, 'handoff-token');
+  const requesterFile = join(credentialDir, 'creek-control-bearer');
+  const handoffFile = join(credentialDir, 'creek-handoff-bearer');
   const callbackFile = join(credentialDir, 'callback-url');
-  writeFileSync(requesterFile, testCredential(), { encoding: 'utf8', mode: 0o600 });
-  writeFileSync(handoffFile, testCredential(), { encoding: 'utf8', mode: 0o600 });
+  writeFileSync(requesterFile, testCredential(), { encoding: 'utf8', mode: 0o400 });
+  writeFileSync(handoffFile, testCredential(), { encoding: 'utf8', mode: 0o400 });
   writeFileSync(callbackFile, '', { encoding: 'utf8', mode: 0o600 });
   return { credentialDir, requesterFile, handoffFile, callbackFile };
 }
@@ -436,6 +437,7 @@ function serverEnvironment(
 ): typeof process.env {
   return {
     ...process.env,
+    ENV: 'e2e',
     PYTHONPATH: 'src',
     DATABASE_URL: databaseUrl,
     E2E_ADMIN_DATABASE_URL: adminUrl,
@@ -443,10 +445,12 @@ function serverEnvironment(
     CREEK_PROVISIONING_URL: `http://127.0.0.1:${creek.port}`,
     CREEK_PROVISIONING_AUTH_FILE: creek.requesterFile,
     CREEK_PROVISIONING_HANDOFF_AUTH_FILE: creek.handoffFile,
+    ADEPTHOOD_E2E_MANAGED_VAULT_SECRET_ROOT: creek.credentialDir,
     CREEK_MANAGED_VAULT_ACTIVATION_ENABLED: 'true',
     CREEK_MANAGED_VAULT_PILOT_USER_IDS: Array.from({ length: 100 }, (_, index) =>
       String(index + 1),
     ).join(','),
+    CREEK_MANAGED_VAULT_ALERT_EMAIL: MANAGED_VAULT_ALERT_EMAIL,
     EMAIL_BACKEND,
     EMAIL_CAPTURE_FILE: mail.captureFile,
     APP_BASE_URL: mail.webBaseUrl,
