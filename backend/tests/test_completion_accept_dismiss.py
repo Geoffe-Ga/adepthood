@@ -894,6 +894,9 @@ async def test_a_today_fallback_accept_stamps_the_completion_now_not_at_local_mi
     stamped = (await _completion_row(db_session, goal_id)).timestamp
     stamped = stamped if stamped.tzinfo else stamped.replace(tzinfo=UTC)
     assert abs(stamped - before) < _NOW_TOLERANCE
+    # Near noon UTC the midday anchor also falls inside the tolerance, so pin
+    # that it was not used: only a real clock read lands off the exact anchor.
+    assert stamped != datetime.combine(today_in_tz("UTC"), _NOON, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

@@ -1134,7 +1134,11 @@ async def test_an_explicit_today_is_stamped_now_not_at_local_midday(
     )
 
     assert resp.status_code == HTTPStatus.OK
-    assert abs(await _stored_timestamp(db_session, goal.id) - before) < _NOW_TOLERANCE
+    stamped = await _stored_timestamp(db_session, goal.id)
+    assert abs(stamped - before) < _NOW_TOLERANCE
+    # Near noon UTC the midday anchor also falls inside the tolerance, so pin
+    # that it was not used: only a real clock read lands off the exact anchor.
+    assert stamped != datetime.combine(today_in_tz("UTC"), _LOCAL_MIDDAY, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
