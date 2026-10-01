@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from client_ip import client_throttle_key
+from rate_limit import user_throttle_key
 from routers.auth import extract_user_id_from_authorization
 
 
@@ -33,7 +34,9 @@ def per_user_rate_limit_key(request: Request) -> str:
     rotation bypass on exactly the pre-auth traffic it exists to throttle.
     """
     try:
-        return f"user:{extract_user_id_from_authorization(request.headers.get('authorization'))}"
+        return user_throttle_key(
+            extract_user_id_from_authorization(request.headers.get("authorization"))
+        )
     except HTTPException:
         # Malformed / missing token (the only thing the decode raises) → fall
         # back to the IP key. A non-HTTP error is a programmer bug and must

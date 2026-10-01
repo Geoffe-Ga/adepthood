@@ -213,6 +213,9 @@ _VAULT_DEADLINE_PHASE_BUDGETS = 3
 # stays within all four budgets forever while holding a pooled connection and a
 # worker -- and the journal write path handshakes on every write.
 _VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TIMEOUT_SECONDS * _VAULT_DEADLINE_PHASE_BUDGETS
+# Published for callers that bound their own leases by it (the generation
+# slot's TTL, #623); tests patch the private name above, which stays canonical.
+VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TOTAL_DEADLINE_SECONDS
 
 # How a "MAJOR.MINOR.PATCH" version string decomposes, and how many of its
 # leading components must match for two contract versions to interoperate. ADR

@@ -1097,6 +1097,25 @@ def _one_whole_window(exc: Exception) -> int:
     return max(_MIN_RETRY_AFTER_SECONDS, int(item.get_expiry()))
 
 
+# The one 429 detail every throttle answers with -- see
+# :func:`rate_limit_exceeded_response`. Named so the per-user generation bucket
+# (#623) raises the identical token the frontend already maps to "give it a
+# moment" copy, which is honest for a limit measured in a minute.
+RATE_LIMIT_EXCEEDED_DETAIL = "rate_limit_exceeded"
+
+
+def user_throttle_key(user_id: int) -> str:
+    """Return the limiter key for an authenticated user: ``user:<id>``.
+
+    The single spelling of the per-user key, shared by
+    :func:`rate_limit_keys.per_user_rate_limit_key` (which derives ``user_id``
+    from the JWT ``sub``) and the in-handler generation bucket (which already
+    holds the authenticated id), so a budget follows the identity whichever
+    path charges it.
+    """
+    return f"user:{user_id}"
+
+
 def rate_limiting_enabled() -> bool:
     """Report whether rate limiting is switched on.
 
@@ -1123,6 +1142,6 @@ def rate_limit_exceeded_response(retry_after: int) -> JSONResponse:
     """
     return JSONResponse(
         status_code=HTTPStatus.TOO_MANY_REQUESTS,
-        content={"detail": "rate_limit_exceeded"},
+        content={"detail": RATE_LIMIT_EXCEEDED_DETAIL},
         headers={"Retry-After": str(retry_after)},
     )
