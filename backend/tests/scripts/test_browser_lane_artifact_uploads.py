@@ -54,9 +54,11 @@ _ALWAYS = "always()"
 _JOB_TIMEOUT = re.compile(r"^    timeout-minutes:\s*(?P<minutes>\d+)\s*(?:#.*)?$", re.MULTILINE)
 
 # The least the browser job may be given. 14m20s for the lane without the
-# sweep, plus the sweep's own 2.3 minutes (measured locally), is ~17 minutes; 25 leaves the
-# headroom a slower runner needs without letting a hung run idle for an hour.
-_BROWSER_TIMEOUT_FLOOR_MINUTES = 25
+# sweep, plus the sweep's own 2.3 minutes (measured locally), was ~17 minutes, so
+# 25 was the floor -- until E2E run 36912604466 was cancelled at 25 just after
+# its 87 specs passed: ~6 minutes of setup plus 19.0 minutes of Playwright. 35
+# leaves a slower runner that headroom again without letting a hung run idle.
+_BROWSER_TIMEOUT_FLOOR_MINUTES = 35
 
 # A step-level ``if:`` key, captured with its indentation so a key nested under
 # ``with:`` is not mistaken for the step's own condition.
@@ -178,7 +180,7 @@ on: pull_request
 jobs:
   browser-journey:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Run the real-browser journey
         run: npm run test:e2e:web
@@ -308,29 +310,37 @@ def test_a_condition_nested_under_with_is_not_the_steps_own() -> None:
 
 
 def test_the_timeout_check_can_be_satisfied() -> None:
-    """The compliant fixture's 25 minutes meets the floor exactly."""
+    """The compliant fixture's 35 minutes meets the floor exactly."""
     assert _timeout_shortfall(_COMPLIANT) is None
 
 
 def test_the_old_fifteen_minute_cap_is_caught() -> None:
     """The cap that cancelled run 36363745320 mid-census."""
-    shortfall = _timeout_shortfall(_COMPLIANT.replace("timeout-minutes: 25", "timeout-minutes: 15"))
+    shortfall = _timeout_shortfall(_COMPLIANT.replace("timeout-minutes: 35", "timeout-minutes: 15"))
 
     assert shortfall is not None
     assert "15 minutes" in shortfall
 
 
+def test_the_twenty_five_minute_cap_is_caught() -> None:
+    """The cap that cancelled run 36912604466 just after its specs passed."""
+    shortfall = _timeout_shortfall(_COMPLIANT.replace("timeout-minutes: 35", "timeout-minutes: 25"))
+
+    assert shortfall is not None
+    assert "25 minutes" in shortfall
+
+
 def test_a_cap_one_minute_under_the_floor_is_caught() -> None:
-    """The floor is a floor: 24 is under it."""
-    workflow = _COMPLIANT.replace("timeout-minutes: 25", "timeout-minutes: 24")
+    """The floor is a floor: 34 is under it."""
+    workflow = _COMPLIANT.replace("timeout-minutes: 35", "timeout-minutes: 34")
 
     assert _timeout_shortfall(workflow) is not None
 
 
 def test_a_missing_or_commented_out_cap_is_caught() -> None:
     """No cap is GitHub's 360-minute default, not a deliberate floor; a comment is not a cap."""
-    removed = _COMPLIANT.replace("    timeout-minutes: 25\n", "")
-    commented = _COMPLIANT.replace("    timeout-minutes: 25", "    # timeout-minutes: 25")
+    removed = _COMPLIANT.replace("    timeout-minutes: 35\n", "")
+    commented = _COMPLIANT.replace("    timeout-minutes: 35", "    # timeout-minutes: 35")
 
     assert _timeout_shortfall(removed) is not None
     assert _timeout_shortfall(commented) is not None
@@ -338,9 +348,9 @@ def test_a_missing_or_commented_out_cap_is_caught() -> None:
 
 def test_a_step_level_cap_is_not_the_jobs() -> None:
     """A step's ``timeout-minutes`` sits deeper and caps that step alone."""
-    workflow = _COMPLIANT.replace("    timeout-minutes: 25\n", "").replace(
+    workflow = _COMPLIANT.replace("    timeout-minutes: 35\n", "").replace(
         "        run: npm run test:e2e:web",
-        "        run: npm run test:e2e:web\n        timeout-minutes: 30",
+        "        run: npm run test:e2e:web\n        timeout-minutes: 40",
     )
 
     assert _timeout_shortfall(workflow) is not None

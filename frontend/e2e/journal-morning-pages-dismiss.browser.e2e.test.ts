@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { signUp } from './journalHabitsBrowserSupport';
+import { dayKeyIn, nextDayKey, sessionFor, signUp } from './journalHabitsBrowserSupport';
 
 /**
  * The morning-pages tip declines with an X in its top-right corner (#2860),
@@ -18,13 +18,16 @@ import { signUp } from './journalHabitsBrowserSupport';
  *     corner, with a hit area of at least the 44px touch-target floor.
  *  2. CLEAR -- the X intersects neither the "Begin a page" button's box nor
  *     any line of text in the card, so nothing is drawn or tapped under it.
- *  3. ONE EDGE -- the card's text, the "Begin a page" CTA included, shares one
- *     left edge: the only action in the card starts where its words do.
+ *  3. ONE EDGE -- the card's text, the "Begin a page" CTA and the quiet
+ *     "Don't show this again" link included (#3005), shares one left edge:
+ *     every text action in the card starts where its words do. The link keeps
+ *     a 44px hit area and stays clear of the X too.
  *
  * Holding the X shows the accent at full strength, not faded by the touchable.
- * It then declines by keyboard and asserts the two things a person feels: the
- * focus lands on the "Start a review early" link rather than on `<body>`, and
- * the tip is still gone after a reload.
+ * It then sets the tip aside by keyboard and asserts what a person feels: the
+ * focus lands on the "Start a review early" link rather than on `<body>`, the
+ * tip is still gone after a same-day reload, and it is back the next day in
+ * the account's own time zone (#3005).
  */
 
 /** Bounding boxes are sub-pixel; a fraction of a pixel is not a misalignment. */
@@ -36,9 +39,13 @@ const VIEWPORTS = [
 ] as const;
 /** `touchTarget.minimum` in `src/design/tokens.ts`: the smallest hit area a control may have. */
 const TOUCH_TARGET_MIN = 44;
-/** The key the tip's dismissal is persisted under (`src/storage/morningPagesTipStorage.ts`). */
-const TIP_DISMISSED_KEY = '@adepthood/morning_pages_tip_dismissed';
+/** The key the X's set-aside day is persisted under (`src/storage/morningPagesTipStorage.ts`). */
+const TIP_SET_ASIDE_KEY = '@adepthood/morning_pages_tip_set_aside_on';
+/** The single permanent flag the X wrote before #3005; nothing writes it any more. */
+const LEGACY_TIP_DISMISSED_KEY = '@adepthood/morning_pages_tip_dismissed';
 const DISMISS_NAME = 'Set the morning-pages tip aside';
+/** The quiet in-card link's visible words (`MORNING_PAGES_NEVER_LINK`). */
+const NEVER_LINK_TEXT = 'Don’t show this again';
 /** `accent.primary` and `ink.soft` in `src/design/tokens.ts`, as the browser computes them. */
 const ACCENT_PRIMARY_RGB = 'rgb(165, 87, 47)';
 const INK_SOFT_RGB = 'rgb(90, 80, 70)';
@@ -46,12 +53,13 @@ const INK_SOFT_RGB = 'rgb(90, 80, 70)';
 const CANCEL_OFFSET = 200;
 /** How long to wait for the pointer to rest on the X before pressing it. */
 const POINTER_ON_X_TIMEOUT_MS = 10_000;
-/** The card's text runs, top to bottom: label, title, body, CTA. */
+/** The card's text runs, top to bottom: label, title, body, CTA, never-again link. */
 const CARD_TEXT = [
   'A practice to try',
   'Morning pages',
   'Twenty minutes of unfiltered writing',
   'Begin a page',
+  NEVER_LINK_TEXT,
 ] as const;
 
 interface Box {
@@ -65,6 +73,7 @@ interface Box {
 interface CardSnapshot {
   band: Box;
   begin: Box;
+  never: Box;
   close: Box;
   /** Where the card's words are drawn -- the glyphs, not their padded boxes -- in `CARD_TEXT` order. */
   texts: Box[];
@@ -109,6 +118,10 @@ async function snapshotCard(band: Locator): Promise<CardSnapshot> {
       return {
         band: rect(root, 'the band'),
         begin: rect(root.querySelector('[data-testid="journal-morning-pages-tip"]'), 'Begin'),
+        never: rect(
+          root.querySelector('[data-testid="journal-morning-pages-never"]'),
+          'the never-again link',
+        ),
         close: rect(root.querySelector(`[aria-label="${dismissName}"]`), 'the corner X'),
         texts: texts.map((text) => rect(glyphs(text), `the card text "${text}"`)),
       };
@@ -133,9 +146,16 @@ function describeBox(viewport: string, what: string, box: Box): string {
 
 async function assertCardGeometry(page: Page, viewport: string): Promise<void> {
   const band = page.getByTestId('journal-morning-pages-band');
-  const { band: bandBox, begin: beginBox, close: xBox, texts } = await snapshotCard(band);
+  const {
+    band: bandBox,
+    begin: beginBox,
+    never: neverBox,
+    close: xBox,
+    texts,
+  } = await snapshotCard(band);
   console.log(describeBox(viewport, 'journal-morning-pages-band   ', bandBox));
   console.log(describeBox(viewport, 'journal-morning-pages-tip    ', beginBox));
+  console.log(describeBox(viewport, 'journal-morning-pages-never  ', neverBox));
   console.log(describeBox(viewport, 'journal-morning-pages-dismiss', xBox));
 
   // 1. CORNER: flush with the band's top-right, wholly inside it, 44px or more.
@@ -148,13 +168,20 @@ async function assertCardGeometry(page: Page, viewport: string): Promise<void> {
   expect(xBox.width).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN);
   expect(xBox.height).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN);
 
-  // 2. CLEAR: no tap on the begin area, and no word of the card, lies under the X.
+  // 2. CLEAR: no tap on the begin area or the never-again link, and no word of
+  // the card, lies under the X. The link is a full touch target of its own.
   expect(intersects(xBox, beginBox, SUBPIXEL_TOLERANCE)).toBe(false);
+  expect(intersects(xBox, neverBox, SUBPIXEL_TOLERANCE)).toBe(false);
+  expect(neverBox.height).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN - SUBPIXEL_TOLERANCE);
+  expect(neverBox.y + neverBox.height).toBeLessThanOrEqual(
+    bandBox.y + bandBox.height + SUBPIXEL_TOLERANCE,
+  );
   for (const box of texts) {
     expect(intersects(xBox, box, SUBPIXEL_TOLERANCE)).toBe(false);
   }
 
-  // 3. ONE EDGE: the CTA's words start where the label's, title's and body's do.
+  // 3. ONE EDGE: the CTA's and the link's words start where the label's,
+  // title's and body's do.
   const [labelBox] = texts;
   if (labelBox === undefined) throw new Error('the card has no text to align against');
   for (const box of texts) {
@@ -232,7 +259,8 @@ for (const viewport of VIEWPORTS) {
     page,
   }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await signUp(page, `morning-pages-x-${viewport.name}`);
+    const email = await signUp(page, `morning-pages-x-${viewport.name}`);
+    const { timezone } = await sessionFor(page.request, email);
 
     await assertCardGeometry(page, `${viewport.width}x${viewport.height}`);
     await assertHeldInk(page);
@@ -243,11 +271,30 @@ for (const viewport of VIEWPORTS) {
     await expect(page.getByTestId('journal-morning-pages-band')).toHaveCount(0);
     await expect(page.getByTestId('journal-review-early')).toBeFocused();
 
-    // Honoured for good: persisted, and still gone once the shelf is rebuilt.
-    expect(await page.evaluate((key) => localStorage.getItem(key), TIP_DISMISSED_KEY)).toBe('true');
+    // Set aside for TODAY, the account's own day: persisted as that day, and
+    // still gone once the shelf is rebuilt the same day.
+    const pressedAt = await page.evaluate(() => new Date().toISOString());
+    const today = dayKeyIn(pressedAt, timezone);
+    expect(await page.evaluate((key) => localStorage.getItem(key), TIP_SET_ASIDE_KEY)).toBe(today);
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), LEGACY_TIP_DISMISSED_KEY),
+    ).toBeNull();
     await page.reload();
     await expect(page.getByTestId('journal-review-early')).toBeVisible();
     await page.waitForLoadState('networkidle');
     await expect(page.getByTestId('journal-morning-pages-band')).toHaveCount(0);
+
+    // Back the next day: midday UTC tomorrow, checked to be tomorrow in the
+    // account's zone too, so the boundary crossed is the writer's, not UTC's.
+    const tomorrow = nextDayKey(today);
+    const tomorrowMidday = new Date(`${tomorrow}T12:00:00Z`);
+    expect(
+      dayKeyIn(tomorrowMidday.toISOString(), timezone),
+      'midday UTC is not that day here',
+    ).toBe(tomorrow);
+    await page.clock.setFixedTime(tomorrowMidday);
+    await page.reload();
+    await expect(page.getByTestId('journal-review-early')).toBeVisible();
+    await expect(page.getByTestId('journal-morning-pages-band')).toHaveCount(1);
   });
 }

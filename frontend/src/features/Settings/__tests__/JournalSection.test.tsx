@@ -7,6 +7,12 @@ import JournalSection from '../JournalSection';
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import {
+  MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
+  MORNING_PAGES_OFFER_AGAIN_DONE,
+  MORNING_PAGES_OFFER_AGAIN_LABEL,
+  MORNING_PAGES_SETTINGS_COPY_ENTRIES,
+} from '@/features/Journal/morningPagesCopy';
+import {
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,
   OFFER_AGAIN_LABEL,
@@ -21,6 +27,7 @@ const mockFlagsGet = jest.fn<(_token?: string) => Promise<UiFlags>>();
 const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Promise<UiFlags>>();
 const mockLoadHabits = jest.fn<(_tz?: string) => Promise<void>>();
 const mockSaveAnswered = jest.fn<(_value: boolean) => Promise<void>>();
+const mockRestoreTip = jest.fn<() => Promise<boolean>>();
 
 jest.mock('@/api', () => ({
   uiFlags: {
@@ -39,6 +46,10 @@ jest.mock('@/features/Habits/services/habitManager', () => ({
 
 jest.mock('@/storage/writingOfferStorage', () => ({
   saveWritingOfferAnswered: (value: boolean) => mockSaveAnswered(value),
+}));
+
+jest.mock('@/storage/morningPagesTipStorage', () => ({
+  restoreMorningPagesTip: () => mockRestoreTip(),
 }));
 
 const ladder = (): Goal[] =>
@@ -88,6 +99,7 @@ beforeEach(() => {
   );
   mockLoadHabits.mockResolvedValue(undefined);
   mockSaveAnswered.mockResolvedValue(undefined);
+  mockRestoreTip.mockResolvedValue(true);
 });
 
 describe('JournalSection — the writing timer row', () => {
@@ -242,12 +254,73 @@ describe('JournalSection — offering again', () => {
     );
   });
 
-  it('both rows are buttons', () => {
+  it('every row is a button', () => {
     const view = render(<JournalSection />);
 
     expect(view.getByTestId('settings-row-writing-habit').props.accessibilityRole).toBe('button');
     expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityRole).toBe(
       'button',
     );
+    expect(view.getByTestId('settings-row-morning-pages-offer-again').props.accessibilityRole).toBe(
+      'button',
+    );
+  });
+});
+
+describe('JournalSection — offering morning pages again (#3005)', () => {
+  const row = (view: ReturnType<typeof render>) =>
+    view.getByTestId('settings-row-morning-pages-offer-again');
+
+  it('clears this device’s "Don’t show this again", and says the tip is back', async () => {
+    const view = render(<JournalSection />);
+    expect(row(view).props.accessibilityLabel).toBe(MORNING_PAGES_OFFER_AGAIN_LABEL);
+    expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION);
+    expect(view.getByText(MORNING_PAGES_OFFER_AGAIN_LABEL)).toBeTruthy();
+
+    fireEvent.press(row(view));
+
+    expect(mockRestoreTip).toHaveBeenCalledTimes(1);
+    // Its own decline, not the end-of-session offer's.
+    expect(mockSaveAnswered).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DONE),
+    );
+    expect(view.getByText(MORNING_PAGES_OFFER_AGAIN_DONE)).toBeTruthy();
+    // The end-of-session row is untouched by it.
+    expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityHint).toBe(
+      OFFER_AGAIN_DESCRIPTION,
+    );
+  });
+
+  it('keeps the offer when the restore could not be saved, rather than claiming it worked', async () => {
+    mockRestoreTip.mockResolvedValueOnce(false);
+    const view = render(<JournalSection />);
+
+    fireEvent.press(row(view));
+
+    await waitFor(() => expect(mockRestoreTip).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION);
+    expect(view.queryByText(MORNING_PAGES_OFFER_AGAIN_DONE)).toBeNull();
+  });
+
+  it('renders every Settings string its copy sweep lists, before and after the press', async () => {
+    const view = render(<JournalSection />);
+    const seen = new Set<string>();
+    const collect = () => {
+      seen.add(row(view).props.accessibilityLabel as string);
+      seen.add(row(view).props.accessibilityHint as string);
+    };
+    collect();
+    fireEvent.press(row(view));
+    await waitFor(() =>
+      expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DONE),
+    );
+    collect();
+    for (const entry of MORNING_PAGES_SETTINGS_COPY_ENTRIES) {
+      expect(seen).toContain(entry);
+    }
   });
 });

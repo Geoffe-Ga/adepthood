@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
 import {
   backendUrl,
@@ -32,10 +32,12 @@ function recordInclusionMarks(page: Page): Array<{ id: number; target: unknown }
   return marks;
 }
 
-test('a writer checks several promoted quotes and folds them into the review at once', async ({
-  page,
-}) => {
-  const email = await signUp(page, 'fold-selected-quotes');
+/** A signed-up writer with one finished source whose three passages are promoted. */
+async function seedPromotedSource(
+  page: Page,
+  prefix: string,
+): Promise<{ headers: ReturnType<typeof bearer>; quoteIds: [number, number, number] }> {
+  const email = await signUp(page, prefix);
   const headers = bearer(await tokenFor(page.request, email));
   setProgramAnchorSixDaysAgo(email);
 
@@ -59,7 +61,14 @@ test('a writer checks several promoted quotes and folds them into the review at 
     expect(promoted.ok()).toBe(true);
     quoteIds.push(((await promoted.json()) as { id: number }).id);
   }
-  const [firstId, secondId, thirdId] = quoteIds as [number, number, number];
+  return { headers, quoteIds: quoteIds as [number, number, number] };
+}
+
+test('a writer checks several promoted quotes and folds them into the review at once', async ({
+  page,
+}) => {
+  const { headers, quoteIds } = await seedPromotedSource(page, 'fold-selected-quotes');
+  const [firstId, secondId, thirdId] = quoteIds;
 
   // Begin the due weekly review and let it save, so it has an id to fold into.
   await page.reload();
@@ -149,4 +158,65 @@ test('a writer checks several promoted quotes and folds them into the review at 
   await openPromotedQuotes();
   await expect(page.getByText('Not yet in a review (0)')).toBeVisible();
   await expect(page.getByText('Used in a review (3)')).toBeVisible();
+});
+
+/** A phone: the width #3001 was reported at. */
+const PHONE = { width: 390, height: 844 } as const;
+/** Lines in the typed opening -- enough to grow the body past its blank-page minimum. */
+const OPENING_LINES = 30;
+/** Layout boxes are fractional; this much is rounding, not overlap. */
+const SUBPIXEL_TOLERANCE_PX = 1;
+
+/** A box's top and bottom edges, failing loudly when the element is not laid out. */
+async function boxOf(locator: Locator): Promise<{ top: number; bottom: number }> {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  const { y, height } = box ?? { y: 0, height: 0 };
+  return { top: y, bottom: y + height };
+}
+
+test('folded quotes stay inside the body frame at phone width (#3001)', async ({ page }) => {
+  await page.setViewportSize(PHONE);
+  const { quoteIds } = await seedPromotedSource(page, 'fold-phone-growth');
+  const [firstId, secondId] = quoteIds;
+
+  // A long opening, typed, so the field has already grown once the way typing grows it.
+  await page.reload();
+  await page.getByTestId('journal-reflection-band').click();
+  const bodyField = page.locator('[data-testid="journal-body-input"]:visible');
+  const opening = Array.from(
+    { length: OPENING_LINES },
+    (_, line) => `Line ${line + 1} of looking back on the week.`,
+  ).join('\n');
+  await bodyField.fill(opening);
+  await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
+
+  // Fold two quotes in from the Sources sheet -- a write from the app, never typed.
+  await page.locator('[data-testid="reflection-sources-toggle"]:visible').click();
+  await page.locator('[data-testid="pending-quotes-select-toggle"]:visible').click();
+  await page.locator(`[data-testid="pending-quote-${firstId}"]:visible`).click();
+  await page.locator(`[data-testid="pending-quote-${secondId}"]:visible`).click();
+  await page.locator('[data-testid="quote-fold-action"]:visible').click();
+  await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
+  await expect(bodyField).toHaveValue(
+    `${opening}\n\n${block(PASSAGES[0])}\n\n${block(PASSAGES[1])}\n\n`,
+  );
+  await page.getByRole('button', { name: 'Done' }).click();
+
+  // One scroll position for every box, so they compare on the same page.
+  const field = await boxOf(bodyField);
+  const lastQuoteLine = await boxOf(
+    page.locator('[data-testid^="journal-live-quote-"]:visible').last(),
+  );
+  const footer = await boxOf(page.locator('[data-testid="journal-word-count"]:visible'));
+  const finish = await boxOf(page.locator('[data-testid="journal-finish-button"]:visible'));
+  const sources = await boxOf(page.locator('[data-testid="reflection-sources-toggle"]:visible'));
+
+  // The field reaches the last folded line the mirror draws ...
+  expect(field.bottom + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
+  // ... and the save footer and the Finish/Sources rail start below it, not under its text.
+  for (const below of [footer, finish, sources]) {
+    expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(field.bottom);
+    expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
+  }
 });

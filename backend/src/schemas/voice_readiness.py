@@ -54,18 +54,31 @@ class VoiceReadinessState(StrEnum):
 #: all — an absent signal is the norm, not a deficiency
 #: (:mod:`domain.invitations`), and a band that congratulated somebody for
 #: arriving would be the gamification NORTH-STAR §5 forbids.
+#:
+#: Entries, not days: the fallback is the last ``GROUNDING_LIMIT`` entries, not
+#: a span of time. ``NOT_CONSENTED`` embeds the client's ``HIGHER_SELF_GAIN``
+#: (``frontend/src/features/Settings/higherSelfCopy.ts``) word for word, so the
+#: band and Settings say the same thing about the decision; a frontend test
+#: reads this literal and fails if the two drift. It says nothing about where
+#: reflections come from right now: this state is read from the journal
+#: decision alone, while grounding reads every sorted source, so an account that
+#: agreed only to documents it brings in may already be drawn from its corpus.
+#: ``GATHERING`` says how little is sorted rather than "recent entries for now",
+#: because the corpus answers a reflection as soon as it holds a single passage.
 VOICE_READINESS_MESSAGES: Mapping[VoiceReadinessState, str | None] = MappingProxyType(
     {
         VoiceReadinessState.NOT_CONSENTED: (
-            "Right now your reflections are drawn from your last few days of writing. "
-            "Sorting your journal into your own corpus is a separate decision, and it is "
-            "yours to make whenever you like — say yes and everything you have already "
-            "put down gets sorted too. Perfectly fine to leave as it is."
+            "Sorting your journal is a separate decision, yours to make whenever you like. "
+            "Say yes to sorting, and everything you write here, apart from Intimate entries and "
+            "including what you have already written, is sorted by Aspect. Each reflection from "
+            "your Higher Self can then draw on a few of those passages, leaning toward where you "
+            "stand in the course, rather than only on your last few entries. "
+            "Perfectly fine to leave as it is."
         ),
         VoiceReadinessState.GATHERING: (
-            "Your corpus is still filling out, so your reflections are drawn from recent "
-            "days for now. Bringing in work you did elsewhere fills it faster. Nothing is "
-            "waiting on you."
+            "Your corpus is still filling out, so for now your reflections have little or no "
+            "sorted writing to draw on. Bringing in work you did elsewhere fills it faster. "
+            "Nothing is waiting on you."
         ),
         VoiceReadinessState.READY: None,
     }

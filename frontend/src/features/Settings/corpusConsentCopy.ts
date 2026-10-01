@@ -15,8 +15,12 @@
  *
  * **It does not sell.** Off is a complete answer. Reflections work without any
  * of this by reading recent entries, so no line here implies a diminished app,
- * a missed opportunity, or a decision still owed.
+ * a missed opportunity, or a decision still owed. Saying what a yes gives is not
+ * selling: ``CORPUS_CONSENT_GAIN`` states what turning it on changes, under the
+ * same says-what-the-code-does rule, and follows the lead rather than replacing it.
  */
+
+import { HIGHER_SELF_GAIN } from './higherSelfCopy';
 
 /** What an account has decided about one source, as the screen needs it. */
 export interface CorpusConsentDecision {
@@ -34,6 +38,12 @@ export const CORPUS_CONSENT_LEAD =
   'your writing has to be sorted first — and nothing is sorted unless you turn it on here. ' +
   'Leaving it off is a complete answer: reflections read your recent entries instead, and the ' +
   'rest of the app is unchanged.';
+
+/**
+ * What a yes gives, in the one sentence every surface shares (#3003). Bounded by
+ * what one reflection reads, so it names a few passages and never all of them.
+ */
+export const CORPUS_CONSENT_GAIN = HIGHER_SELF_GAIN;
 
 /** Heading over the two consequences, so neither is discovered afterwards. */
 export const CORPUS_CONSENT_CONSEQUENCE_HEADING = 'What turning one on does';
@@ -196,6 +206,7 @@ export function consentStatusLine(decision: CorpusConsentDecision): string {
 export const CORPUS_CONSENT_COPY_ENTRIES: readonly string[] = [
   CORPUS_CONSENT_TITLE,
   CORPUS_CONSENT_LEAD,
+  CORPUS_CONSENT_GAIN,
   CORPUS_CONSENT_CONSEQUENCE_HEADING,
   CORPUS_CONSENT_CONSEQUENCE_SENDING,
   CORPUS_CONSENT_CONSEQUENCE_REMOVAL,

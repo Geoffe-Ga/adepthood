@@ -1,6 +1,7 @@
 /**
- * Settings → Journal (#2861): which habit the writing timer checks off, and a
- * way to bring back the end-of-session offer.
+ * Settings → Journal (#2861): which habit the writing timer checks off, a way
+ * to bring back the end-of-session offer, and a way to bring back the
+ * morning-pages invitation (#3005).
  *
  * The first row names the current link — "Writing timer → <Name>", or "not
  * linked" — and opens the same ``WritingHabitPicker`` the offer uses, here with
@@ -11,6 +12,11 @@
  * kept on THIS device (``writingOfferStorage``), so the copy promises exactly
  * that and no more. Reopening is the writer's own choice, made here, which is
  * what keeps it an invitation rather than a nag.
+ *
+ * The third row does the same for the shelf's morning-pages tip after "Don't
+ * show this again" — also kept on this device (``morningPagesTipStorage``). It
+ * clears today's set-aside too, so the tip is on the shelf when the writer
+ * goes back to it, not only tomorrow.
  *
  * While a link is known but its habit has not been read yet, the row says
  * "a habit" — never "not linked", which would tell a linked writer the opposite
@@ -27,6 +33,11 @@ import type { Habit } from '@/features/Habits/Habits.types';
 import { isHabitUnlocked } from '@/features/Habits/HabitUtils';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import {
+  MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
+  MORNING_PAGES_OFFER_AGAIN_DONE,
+  MORNING_PAGES_OFFER_AGAIN_LABEL,
+} from '@/features/Journal/morningPagesCopy';
+import {
   JOURNAL_SETTINGS_TITLE,
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,
@@ -36,6 +47,7 @@ import {
   writingTimerRowLabel,
 } from '@/features/Journal/saveAsHabitCopy';
 import WritingHabitPicker from '@/features/Journal/WritingHabitPicker';
+import { restoreMorningPagesTip } from '@/storage/morningPagesTipStorage';
 import { saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
@@ -107,6 +119,10 @@ const JournalSection = (): React.JSX.Element => {
   const offerAgain = useCallback(() => {
     void saveWritingOfferAnswered(false).then(() => setReopened(true));
   }, []);
+  const [tipReopened, setTipReopened] = useState(false);
+  const offerTipAgain = useCallback(() => {
+    void restoreMorningPagesTip().then((restored) => setTipReopened(restored));
+  }, []);
   const { save } = row;
   const choose = useCallback((habit: Habit) => save(habit.id), [save]);
   const clear = useCallback(() => save(null), [save]);
@@ -135,6 +151,15 @@ const JournalSection = (): React.JSX.Element => {
         description={reopened ? OFFER_AGAIN_DONE : OFFER_AGAIN_DESCRIPTION}
         onPress={offerAgain}
         testID="settings-row-writing-offer-again"
+      />
+      <SettingsRow
+        icon={RotateCcw}
+        label={MORNING_PAGES_OFFER_AGAIN_LABEL}
+        description={
+          tipReopened ? MORNING_PAGES_OFFER_AGAIN_DONE : MORNING_PAGES_OFFER_AGAIN_DESCRIPTION
+        }
+        onPress={offerTipAgain}
+        testID="settings-row-morning-pages-offer-again"
       />
     </EditorialSection>
   );

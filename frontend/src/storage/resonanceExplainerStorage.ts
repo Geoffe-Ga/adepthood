@@ -9,7 +9,7 @@ import { scopedKey } from './userScope';
  * Namespaced per account, deliberately — this is the one dismissal flag in the
  * app that guards a charge.
  *
- * The sibling one-time flags (``morningPagesTipStorage``,
+ * The sibling dismissal flags (``morningPagesTipStorage``,
  * ``returnOfferStorage``) are unscoped, and for a writing tip that is fine: the
  * worst an inherited dismissal costs the next person on the device is a
  * suggestion they never saw. This flag suppresses the only screen that tells

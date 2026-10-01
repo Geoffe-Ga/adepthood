@@ -62,11 +62,40 @@ exports from its own side; nothing here reaches into it. An ordinary managed
 Fly vault is provider-managed and operator-readable, not confidential compute:
 Fly and privileged Adepthood or Creek operators can access its stored bytes.
 
+A vault and what your reflections draw on are two separate choices. Each
+reflection reads a few passages of your own writing: from your writing sorted
+by Aspect, once you have said yes under **Settings → What reflections draw on**
+and something has been sorted, and otherwise from your most recent entries. An Intimate entry is never sorted and
+never sent. Connecting or creating a vault does not turn sorting on. Two things
+do change while a vault is connected: a vault that can answer reflections
+itself may answer them from its own copy, and documents you bring in go to the
+vault rather than being sorted here.
+
 ### That an export happened is recorded
 
 The server notes the date, your account id, and how many records went — and
 nothing else. Not a line of what the archive said. The same rule as the
 deletion receipt, for the same reason.
+
+## Running your own vault
+
+Nobody needs this. Adepthood is complete without a vault, and a managed one is
+offered separately. This is for people who already run their own.
+
+**Settings → Where your corpus lives → Advanced: connect a vault you run
+yourself.** It asks for two things: the public web address your vault answers
+on, starting `https://`, and the key your vault issued. Adepthood then sends it
+a copy of each entry when you save or edit it, and of each voice draft if your
+vault accepts them, and documents you bring in go to it and are kept only there,
+not in Adepthood. Nothing Intimate is sent. You can disconnect whenever you
+like.
+
+A vault is a service running on a computer the open internet can reach. It is
+not a folder on your phone or laptop, and it is not a cloud drive. Adepthood's
+server is the one that connects to it, so an address only your own network can
+reach is refused: a private or local network address, a loopback address such
+as `localhost`, or a name that resolves to one of those. So is an address
+without `https://`, because the key travels with every request.
 
 ## Making one page Intimate
 

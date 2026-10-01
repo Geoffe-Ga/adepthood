@@ -4,7 +4,7 @@ The Higher Self already knows which of two sources answered a given pass —
 :class:`services.higher_self_grounding.GroundingSource` records it — and until
 now it told only the operator log. This module is the reader-facing half of the
 same fact: it says whether the voice speaking back is built from the account's
-ontologized corpus or from the last few days of writing, so that an early
+ontologized corpus or from the last few entries, so that an early
 reflection is understood as early rather than mistaken for a portrait.
 
 **Three states, because there are two different ways to not be ready.**

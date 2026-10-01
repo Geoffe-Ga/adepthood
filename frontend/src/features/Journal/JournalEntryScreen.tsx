@@ -2366,9 +2366,12 @@ function GrowingTitle({
   onChangeTitle,
   onSubmit,
 }: Pick<WritingColumnProps, 'title' | 'onChangeTitle'> & { onSubmit: () => void }) {
-  const growth = useGrowingFieldHeight(TITLE_MIN_HEIGHT);
+  // A title set from a load or a merge is re-measured on web too (#3001).
+  const titleRef = useRef<TextInput>(null);
+  const growth = useGrowingFieldHeight(TITLE_MIN_HEIGHT, { value: title, inputRef: titleRef });
   return (
     <TextInput
+      ref={titleRef}
       style={[styles.titleInput, writingFieldFocus, growth.style]}
       value={title}
       onChangeText={(next) => onChangeTitle(singleLineTitle(next))}

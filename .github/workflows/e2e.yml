@@ -133,10 +133,13 @@ jobs:
     # main -- run 36363745320 (56267069) was cancelled after 13m51s of
     # Playwright, mid-way through the text census, and the run before it took
     # 14m20s. The action-row sweep (#2860) adds 2.3 minutes of its own
-    # walk, so the lane now needs ~17; 25 gives a slower runner headroom
-    # without letting a hung run idle for GitHub's 6-hour default. Pinned by
+    # walk, so the lane then needed ~17, and 25 was its cap -- until run
+    # 36912604466 was cancelled at 25 just after all 87 specs passed: ~6
+    # minutes of setup plus 19.0 minutes of Playwright. 35 gives a slower
+    # runner headroom again without letting a hung run idle for GitHub's
+    # 6-hour default. Pinned by
     # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
-    timeout-minutes: 25
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
