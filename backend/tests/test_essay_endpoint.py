@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -950,6 +951,34 @@ async def test_essay_response_carries_balances(
     await _set_wallet(db_session, user_id, used=DEFAULT_MONTHLY_CAP + 1, balance=_OFFERINGS)
     reopened = await async_client.post(_essay_path(marg_id), headers=headers)
     assert reopened.json()["remaining_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_essay_response_rolls_a_lapsed_month_over_before_reporting_balances(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A spent month whose reset date has passed reports a full month, not zero."""
+    headers, user_id = await _signup(async_client, "lapsed_month")
+    marg_id = await _seed_marginalia(db_session, user_id)
+    note = await db_session.get(Marginalia, marg_id)
+    assert note is not None
+    note.essay = _LETTER
+    note.essay_generated_at = datetime.now(UTC)
+    lapsed = datetime.now(UTC) - timedelta(days=1)
+    user = await db_session.get(User, user_id)
+    assert user is not None
+    user.monthly_messages_used = DEFAULT_MONTHLY_CAP
+    user.monthly_reset_date = lapsed
+    db_session.add_all([note, user])
+    await db_session.commit()
+
+    reopened = await async_client.post(_essay_path(marg_id), headers=headers)
+
+    assert reopened.status_code == HTTPStatus.OK, reopened.text
+    assert reopened.json()["essay"] == _LETTER
+    assert reopened.json()["remaining_messages"] == DEFAULT_MONTHLY_CAP
+    reported_reset = datetime.fromisoformat(reopened.json()["monthly_reset_date"])
+    assert reported_reset.replace(tzinfo=UTC) > datetime.now(UTC)
 
 
 def test_essay_costs_one_wallet_unit() -> None:
