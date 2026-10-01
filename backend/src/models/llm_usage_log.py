@@ -32,6 +32,10 @@ _COST_SCALE = 6
 # before the column type changes.
 DEFAULT_COST: Decimal | None = None
 
+#: Length of ``generation_id``: a ``uuid4().hex`` minted by
+#: :meth:`services.llm_usage.GenerationKey.for_spend`.
+GENERATION_ID_LENGTH = 32
+
 
 class LLMUsageLog(SQLModel, table=True):
     """Token counts + estimated USD cost for a single LLM call.
@@ -53,6 +57,12 @@ class LLMUsageLog(SQLModel, table=True):
     audit trail stays intact. It is ``None`` for a stateless call that has no
     associated entry (for example, single-page journal transcription), which
     meters its cost without ever writing a journal row.
+
+    ``generation_id`` groups the calls one generation made (a resonance pass's
+    reflection, its corrective retry and its detection dial share one) and
+    ``charged`` is ``True`` when a server-paid deduction paid for it (#623 PR3).
+    Both are ``NULL`` on a row written before they existed; the admin
+    p95-cost metric excludes those rows rather than guessing their grouping.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -71,3 +81,5 @@ class LLMUsageLog(SQLModel, table=True):
         sa_column=Column(Numeric(precision=_COST_PRECISION, scale=_COST_SCALE), nullable=True),
     )
     journal_entry_id: int | None = Field(default=None, foreign_key="journalentry.id", index=True)
+    generation_id: str | None = Field(default=None, max_length=GENERATION_ID_LENGTH, index=True)
+    charged: bool | None = Field(default=None)
