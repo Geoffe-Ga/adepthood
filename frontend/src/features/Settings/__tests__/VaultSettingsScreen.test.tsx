@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import {
   HIGHER_SELF_GAIN,
@@ -61,6 +62,7 @@ import {
   type VaultConnection,
 } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
+import { touchTarget } from '@/design/tokens';
 import habitStyles from '@/features/Habits/Habits.styles';
 import { settle } from '@/testing/asyncSettle';
 import { expectNavigationOwnsTitle } from '@/testing/navigationOwnsTitle';
@@ -1007,6 +1009,20 @@ describe('VaultSettingsScreen — opening the Advanced fold', () => {
       (testID) => order.indexOf(testID),
     );
     expect(reading).toEqual([...reading].sort((a, b) => a - b));
+  });
+
+  test('gives the header and the guide link at least the minimum touch target', async () => {
+    const view = await renderVault(NOT_CONNECTED);
+    openAdvanced(view);
+
+    for (const testID of [TOGGLE, 'vault-advanced-learn-more']) {
+      const style = StyleSheet.flatten(view.getByTestId(testID).props.style) ?? {};
+      expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    }
+    const link = view.getByTestId('vault-advanced-learn-more');
+    expect(link.props.accessibilityRole).toBe('link');
+    expect(link.props.accessibilityLabel).toBe(VAULT_ADVANCED_LEARN_MORE);
+    expect(within(link).getByText(VAULT_ADVANCED_LEARN_MORE)).toBeTruthy();
   });
 
   test('closes again on a second press', async () => {

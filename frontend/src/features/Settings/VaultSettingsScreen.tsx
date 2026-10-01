@@ -302,14 +302,17 @@ const VaultAdvancedExplanation = (): React.JSX.Element => {
       <Text style={[t.caption, styles.caption]} testID="vault-advanced-not">
         {VAULT_ADVANCED_NOT}
       </Text>
-      <Text
-        style={styles.link}
+      {/* A pressable around the words, as the app's other links are, so the
+          target meets touchTarget.minimum rather than one line of text. */}
+      <TouchableOpacity
+        style={styles.linkTarget}
         accessibilityRole="link"
+        accessibilityLabel={VAULT_ADVANCED_LEARN_MORE}
         onPress={() => void openExternalUrl(VAULT_RUN_YOUR_OWN_DOC_URL)}
         testID="vault-advanced-learn-more"
       >
-        {VAULT_ADVANCED_LEARN_MORE}
-      </Text>
+        <Text style={styles.link}>{VAULT_ADVANCED_LEARN_MORE}</Text>
+      </TouchableOpacity>
       <Text style={[t.caption, styles.caption]} testID="vault-connect-intro">
         {VAULT_CONNECT_INTRO}
       </Text>
@@ -1076,12 +1079,16 @@ const styles = StyleSheet.create({
   foldBody: {
     paddingTop: SPACING.sm,
   },
+  linkTarget: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    marginBottom: rhythm.blockGap,
+  },
   link: {
     ...editorialType.action,
     color: accent.primary,
     textDecorationLine: 'underline',
-    alignSelf: 'flex-start',
-    marginBottom: rhythm.blockGap,
   },
   input: {
     borderWidth: 1,
