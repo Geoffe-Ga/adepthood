@@ -24,6 +24,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from dependencies.creek_vault import get_creek_vault_client
+from domain.creek_vault import CreekVaultCareEscalationError
+from main import app
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry
@@ -44,6 +47,7 @@ from services.botmason import LLMProviderError, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 from services.llm_usage import OUTCOME_FOR_REFUND_REASON
 from tests.helpers.log_lines import assert_no_text, production_line, records_for
+from tests.test_journal_vault_read import ReflectingVaultClient
 from tests.transcription_helpers import (
     JPEG_BYTES,
     SENTINEL_TEXT,
@@ -507,6 +511,41 @@ async def test_a_write_failure_after_a_retried_pass_keeps_its_attempts(
     assert record.__dict__["attempts"] == 2
     assert record.__dict__["calls"] == 2
     assert record.__dict__["charged"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_vault_care_escalation_settles_once_as_refunded_failed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The vault's care guard declined a server-paid pass: refunded, settled, never dialled."""
+    monkeypatch.setattr(marginalia_service, "generate_response", _ScriptedLLM(_notes(_QUOTE)))
+    vault = ReflectingVaultClient(reflect_error=CreekVaultCareEscalationError())
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "settle_vault_care")
+    entry_id = await _create_entry(async_client, headers)
+    _capture(caplog)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["care"] is not None
+    assert len(vault.reflect_calls) == 1
+    record = _one_settled(caplog)
+    extra = record.__dict__
+    assert extra["feature"] == "resonance"
+    assert extra["outcome"] == "refunded_failed"
+    assert extra["charged"] is True
+    assert extra["bucket"] == BUCKET_MONTHLY
+    assert extra["calls"] == 0
+    reasons = await _audit_reasons(db_session, user_id)
+    assert reasons == [REASON_SPEND_MONTHLY, REASON_REFUND_FAILED_RESONANCE]
+    assert extra["outcome"] == OUTCOME_FOR_REFUND_REASON[reasons[-1]]
+    refunds = records_for(caplog.records, _REFUND_APPLIED)
+    assert [r.__dict__["refund_reason"] for r in refunds] == [REASON_REFUND_FAILED_RESONANCE]
+    assert await _usage_rows(db_session, user_id) == []
 
 
 # --- Essay -----------------------------------------------------------------
