@@ -22,9 +22,27 @@
 /** The heading. Names the subject, not the decision — the reader decides. */
 export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 
-/** What a pass does, and the fact that the entry leaves the device to do it. */
+/**
+ * What a pass does, and everything that leaves the device to do it (#2998).
+ *
+ * The copy states the most a pass can send, because a connected vault that
+ * degrades hands the full prompt to the cloud and completion detection always
+ * goes to the cloud. That maximum is:
+ *
+ * - the entry itself (`build_prompt`'s `<entry>`);
+ * - up to three other pieces of the writer's own writing (`<prior>`), chosen
+ *   by `gather_grounding` (`GROUNDING_LIMIT`): corpus fragments, which may be
+ *   documents the writer uploaded or imported, or else their recent entries --
+ *   so "other entries" would undersell it;
+ * - short excerpts of earlier letters (`<prior_letters>`, `_prior_letter_essays`);
+ * - the names and units of the writer's habits and practices, which
+ *   `detect_completions` / `build_detection_prompt` send to notice completions.
+ *
+ * The count agrees with the privacy policy's "up to three", and
+ * `backend/tests/test_legal_documents.py` holds it to `GROUNDING_LIMIT`.
+ */
 export const RESONANCE_EXPLAINER_WHAT =
-  'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry is sent to an AI model.';
+  'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry, up to three other pieces of your own writing, short excerpts of your earlier letters, and the names and units of your habits and practices are sent to an AI model.';
 
 const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
 
