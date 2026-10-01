@@ -203,10 +203,14 @@ async def test_patch_empty_body_returns_422(async_client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# writing_session_habit_id — the habit a finished writing session checks off
+# writing_session_habit_id — the habit a finished writing session checks off;
+# practice_session_habit_id — the habit a finished practice session checks
+# off. The two links share every rule, so every test below runs over both.
 # ---------------------------------------------------------------------------
 
-_LINK_KEY = "writing_session_habit_id"
+_LINK_KEYS = ("writing_session_habit_id", "practice_session_habit_id")
+
+link_key = pytest.mark.parametrize("link", _LINK_KEYS)
 
 # An id no seeded row can carry, so the missing-row branch is exercised.
 _MISSING_HABIT_ID = 999_999
@@ -232,119 +236,166 @@ async def _create_habit(client: AsyncClient, headers: dict[str, str], name: str)
     return int(resp.json()["id"])
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_fresh_user_has_no_writing_habit_link(async_client: AsyncClient) -> None:
+async def test_fresh_user_has_no_writing_habit_link(async_client: AsyncClient, link: str) -> None:
     """A fresh account's flags carry the link key, and it is null."""
-    headers = await _signup(async_client, "fresh_link")
+    headers = await _signup(async_client, f"fresh_link_{link}")
 
     resp = await async_client.get(_FLAGS_URL, headers=headers)
 
     assert resp.status_code == HTTPStatus.OK
-    assert _LINK_KEY in resp.json()
-    assert resp.json()[_LINK_KEY] is None
+    assert link in resp.json()
+    assert resp.json()[link] is None
 
 
+@link_key
 @pytest.mark.asyncio
 async def test_patch_links_an_owned_habit_and_get_reads_it_back(
-    async_client: AsyncClient,
+    async_client: AsyncClient, link: str
 ) -> None:
     """PATCH stores the caller's own habit id; a later GET reads the same id back."""
-    headers = await _signup(async_client, "link_owned")
+    headers = await _signup(async_client, f"link_owned_{link}")
     habit_id = await _create_habit(async_client, headers, "Morning pages")
 
-    patch = await async_client.patch(_FLAGS_URL, json={_LINK_KEY: habit_id}, headers=headers)
+    patch = await async_client.patch(_FLAGS_URL, json={link: habit_id}, headers=headers)
 
     assert patch.status_code == HTTPStatus.OK
-    assert patch.json()[_LINK_KEY] == habit_id
+    assert patch.json()[link] == habit_id
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] == habit_id
+    assert get.json()[link] == habit_id
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_patch_explicit_null_clears_the_link(async_client: AsyncClient) -> None:
+async def test_patch_explicit_null_clears_the_link(async_client: AsyncClient, link: str) -> None:
     """An explicit ``null`` is the one way to clear the link."""
-    headers = await _signup(async_client, "link_clear")
+    headers = await _signup(async_client, f"link_clear_{link}")
     habit_id = await _create_habit(async_client, headers, "Morning pages")
-    await async_client.patch(_FLAGS_URL, json={_LINK_KEY: habit_id}, headers=headers)
+    await async_client.patch(_FLAGS_URL, json={link: habit_id}, headers=headers)
 
-    patch = await async_client.patch(_FLAGS_URL, json={_LINK_KEY: None}, headers=headers)
+    patch = await async_client.patch(_FLAGS_URL, json={link: None}, headers=headers)
 
     assert patch.status_code == HTTPStatus.OK
-    assert patch.json()[_LINK_KEY] is None
+    assert patch.json()[link] is None
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] is None
+    assert get.json()[link] is None
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_patch_that_omits_the_link_leaves_it_unchanged(async_client: AsyncClient) -> None:
+async def test_patch_that_omits_the_link_leaves_it_unchanged(
+    async_client: AsyncClient, link: str
+) -> None:
     """A boolean-only PATCH neither clears nor rewrites a stored link."""
-    headers = await _signup(async_client, "link_keep")
+    headers = await _signup(async_client, f"link_keep_{link}")
     habit_id = await _create_habit(async_client, headers, "Morning pages")
-    await async_client.patch(_FLAGS_URL, json={_LINK_KEY: habit_id}, headers=headers)
+    await async_client.patch(_FLAGS_URL, json={link: habit_id}, headers=headers)
 
     patch = await async_client.patch(
         _FLAGS_URL, json={"energy_scaffolding_archived": True}, headers=headers
     )
 
     assert patch.status_code == HTTPStatus.OK
-    assert patch.json()[_LINK_KEY] == habit_id
+    assert patch.json()[link] == habit_id
     assert patch.json()["energy_scaffolding_archived"] is True
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] == habit_id
+    assert get.json()[link] == habit_id
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_patch_a_missing_habit_404s_and_writes_nothing(async_client: AsyncClient) -> None:
+async def test_patch_a_missing_habit_404s_and_writes_nothing(
+    async_client: AsyncClient, link: str
+) -> None:
     """An id no habit carries is refused with 404 -- and the boolean beside it is not applied."""
-    headers = await _signup(async_client, "link_missing")
+    headers = await _signup(async_client, f"link_missing_{link}")
 
     patch = await async_client.patch(
         _FLAGS_URL,
-        json={_LINK_KEY: _MISSING_HABIT_ID, "has_seen_welcome": True},
+        json={link: _MISSING_HABIT_ID, "has_seen_welcome": True},
         headers=headers,
     )
 
     assert patch.status_code == HTTPStatus.NOT_FOUND
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] is None
+    assert get.json()[link] is None
     assert get.json()["has_seen_welcome"] is False
 
 
+@link_key
 @pytest.mark.parametrize("bad_id", [0, -1, _PAST_INT32_MAX])
 @pytest.mark.asyncio
-async def test_patch_an_out_of_range_id_is_a_422(async_client: AsyncClient, bad_id: int) -> None:
+async def test_patch_an_out_of_range_id_is_a_422(
+    async_client: AsyncClient, link: str, bad_id: int
+) -> None:
     """A value no row id can take is refused by the schema bound, never looked up."""
-    headers = await _signup(async_client, f"link_bound_{abs(bad_id) % 1000}")
+    headers = await _signup(async_client, f"link_bound_{abs(bad_id) % 1000}_{link}")
 
-    patch = await async_client.patch(_FLAGS_URL, json={_LINK_KEY: bad_id}, headers=headers)
+    patch = await async_client.patch(_FLAGS_URL, json={link: bad_id}, headers=headers)
 
     assert patch.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_deleting_the_linked_habit_clears_the_link(async_client: AsyncClient) -> None:
+async def test_deleting_the_linked_habit_clears_the_link(
+    async_client: AsyncClient, link: str
+) -> None:
     """DELETE /habits/{id} leaves the next GET /ui-flags with no link."""
-    headers = await _signup(async_client, "link_delete")
+    headers = await _signup(async_client, f"link_delete_{link}")
     habit_id = await _create_habit(async_client, headers, "Morning pages")
-    await async_client.patch(_FLAGS_URL, json={_LINK_KEY: habit_id}, headers=headers)
+    await async_client.patch(_FLAGS_URL, json={link: habit_id}, headers=headers)
 
     deleted = await async_client.delete(f"/habits/{habit_id}", headers=headers)
 
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] is None
+    assert get.json()[link] is None
 
 
+@link_key
 @pytest.mark.asyncio
-async def test_deleting_an_unlinked_habit_keeps_the_link(async_client: AsyncClient) -> None:
+async def test_deleting_an_unlinked_habit_keeps_the_link(
+    async_client: AsyncClient, link: str
+) -> None:
     """Deleting some other habit leaves the stored link exactly where it was."""
-    headers = await _signup(async_client, "link_delete_other")
+    headers = await _signup(async_client, f"link_delete_other_{link}")
     linked = await _create_habit(async_client, headers, "Morning pages")
     other = await _create_habit(async_client, headers, "Stretch")
-    await async_client.patch(_FLAGS_URL, json={_LINK_KEY: linked}, headers=headers)
+    await async_client.patch(_FLAGS_URL, json={link: linked}, headers=headers)
 
     deleted = await async_client.delete(f"/habits/{other}", headers=headers)
 
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     get = await async_client.get(_FLAGS_URL, headers=headers)
-    assert get.json()[_LINK_KEY] == linked
+    assert get.json()[link] == linked
+
+
+@pytest.mark.asyncio
+async def test_the_two_links_are_independent(async_client: AsyncClient) -> None:
+    """Setting, clearing, or deleting behind one link never touches the other."""
+    headers = await _signup(async_client, "two_links")
+    writing = await _create_habit(async_client, headers, "Morning pages")
+    practice = await _create_habit(async_client, headers, "Sitting")
+    await async_client.patch(
+        _FLAGS_URL,
+        json={"writing_session_habit_id": writing, "practice_session_habit_id": practice},
+        headers=headers,
+    )
+
+    cleared = await async_client.patch(
+        _FLAGS_URL, json={"practice_session_habit_id": None}, headers=headers
+    )
+    assert cleared.json()["writing_session_habit_id"] == writing
+    assert cleared.json()["practice_session_habit_id"] is None
+
+    relinked = await async_client.patch(
+        _FLAGS_URL, json={"practice_session_habit_id": practice}, headers=headers
+    )
+    assert relinked.status_code == HTTPStatus.OK
+    deleted = await async_client.delete(f"/habits/{writing}", headers=headers)
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    after = await async_client.get(_FLAGS_URL, headers=headers)
+    assert after.json()["writing_session_habit_id"] is None
+    assert after.json()["practice_session_habit_id"] == practice

@@ -457,8 +457,9 @@ MANIFEST: Mapping[str, ExportRule] = {
     "useruiflags": _include(
         "writing_timer",
         UserUiFlags,
-        "The habit the account linked its writing timer to (#2861) -- a choice "
-        "it made, exported as that habit's id in this archive's ``habits``. "
+        "The habits the account linked its writing timer (#2861) and its "
+        "practice sessions to -- choices it made, exported as those habits' "
+        "ids in this archive's ``habits``. "
         "The one-time interface flags on the same row (which tips have been "
         "seen) are the app's memory of a session, not the account, and stay "
         "behind.",

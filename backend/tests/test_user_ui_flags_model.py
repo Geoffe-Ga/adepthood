@@ -1,8 +1,8 @@
 """Model-level guarantees for :class:`models.user_ui_flags.UserUiFlags`.
 
-``delete_habit`` unlinks a writing timer explicitly, so the API test for that
-rule passes whether or not the database enforces the column's own
-``ON DELETE SET NULL``. This file proves the backstop on its own: with SQLite's
+``delete_habit`` unlinks a writing timer and a practice screen explicitly, so
+the API tests for that rule pass whether or not the database enforces the
+columns' own ``ON DELETE SET NULL``. This file proves the backstop on its own: with SQLite's
 foreign keys switched on, deleting the habit row directly -- no router, no ORM
 cascade -- leaves the flags row in place with the link nulled.
 """
@@ -38,7 +38,11 @@ async def _linked_flags(session: AsyncSession) -> tuple[int, int]:
     session.add(habit)
     await session.flush()
     assert habit.id is not None
-    session.add(UserUiFlags(user_id=user.id, writing_session_habit_id=habit.id))
+    session.add(
+        UserUiFlags(
+            user_id=user.id, writing_session_habit_id=habit.id, practice_session_habit_id=habit.id
+        )
+    )
     await session.commit()
     return user.id, habit.id
 
@@ -48,7 +52,7 @@ async def _linked_flags(session: AsyncSession) -> tuple[int, int]:
 @pytest.mark.usefixtures("db_session")
 @pytest.mark.asyncio
 async def test_deleting_the_habit_row_nulls_the_link_at_the_database() -> None:
-    """``ON DELETE SET NULL`` on ``writing_session_habit_id`` holds without the router.
+    """``ON DELETE SET NULL`` on both habit links holds without the router.
 
     A dedicated in-memory engine keeps ``PRAGMA foreign_keys = ON`` scoped to
     this test, never leaking to the shared test engine.
@@ -79,5 +83,6 @@ async def test_deleting_the_habit_row_nulls_the_link_at_the_database() -> None:
                 .one()
             )
             assert flags.writing_session_habit_id is None
+            assert flags.practice_session_habit_id is None
     finally:
         await engine.dispose()

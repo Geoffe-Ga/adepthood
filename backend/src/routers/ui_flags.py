@@ -2,9 +2,10 @@
 
 A user records lightweight interface flags — whether the welcome flow has been
 seen and whether the energy-scaffolding surface has been archived — and the
-habit a finished writing session checks off. The caller is resolved from their
-JWT, so only that user's own row is read or mutated: no ``user_id`` is ever
-accepted from the body or path, and a linked habit id must be the caller's own.
+habits a finished writing session and a finished practice session check off.
+The caller is resolved from their JWT, so only that user's own row is read or
+mutated: no ``user_id`` is ever accepted from the body or path, and a linked
+habit id must be the caller's own.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ def _to_response(flags: UserUiFlags) -> UiFlagsResponse:
         has_seen_welcome=flags.has_seen_welcome,
         energy_scaffolding_archived=flags.energy_scaffolding_archived,
         writing_session_habit_id=flags.writing_session_habit_id,
+        practice_session_habit_id=flags.practice_session_habit_id,
     )
 
 
@@ -57,9 +59,10 @@ async def update_ui_flags(
 
     Only the fields present in the request are applied; unspecified flags keep
     their stored value. An empty body is rejected upstream (422) by
-    :class:`~schemas.ui_flags.UiFlagsUpdate`. A ``writing_session_habit_id``
-    naming a missing habit is 404 and another user's habit is 403, and either
-    refusal writes nothing at all; an explicit ``null`` clears the link.
+    :class:`~schemas.ui_flags.UiFlagsUpdate`. A habit link
+    (``writing_session_habit_id`` / ``practice_session_habit_id``) naming a
+    missing habit is 404 and another user's habit is 403, and either refusal
+    writes nothing at all; an explicit ``null`` clears that link.
     """
     flags = await ensure_ui_flags(session, user_id)
     await apply_ui_flags_update(session, flags, payload, user_id)

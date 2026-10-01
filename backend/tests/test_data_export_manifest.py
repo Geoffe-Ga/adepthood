@@ -208,4 +208,5 @@ def test_the_writing_timer_link_is_exported_and_the_interface_flags_are_not() ->
     assert isinstance(rule, Included)
     assert rule.key == "writing_timer"
     assert "writing_session_habit_id" not in rule.dropped()
+    assert "practice_session_habit_id" not in rule.dropped()
     assert {"has_seen_welcome", "energy_scaffolding_archived"} <= rule.dropped()

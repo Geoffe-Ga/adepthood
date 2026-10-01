@@ -10,9 +10,11 @@ from dependencies.ownership import resolve_owned_habit
 from models.user_ui_flags import UserUiFlags
 from schemas.ui_flags import UiFlagsUpdate
 
-# The one field of :class:`UiFlagsUpdate` that names another row, and so the
-# one whose value must be authorised before anything is written.
-_WRITING_HABIT_FIELD = "writing_session_habit_id"
+# The fields of :class:`UiFlagsUpdate` that name another row -- the habit a
+# finished writing session checks off, and the one a finished practice
+# session does -- and so the ones whose values must be authorised before
+# anything is written. Both columns carry ``ON DELETE SET NULL``.
+HABIT_LINK_FIELDS: tuple[str, ...] = ("writing_session_habit_id", "practice_session_habit_id")
 
 
 async def _get_ui_flags(session: AsyncSession, user_id: int) -> UserUiFlags | None:
@@ -51,7 +53,7 @@ async def ensure_ui_flags(session: AsyncSession, user_id: int) -> UserUiFlags:
 async def apply_ui_flags_update(
     session: AsyncSession, flags: UserUiFlags, update_body: UiFlagsUpdate, user_id: int
 ) -> None:
-    """Apply the fields the caller set onto ``flags``, authorising a habit link first.
+    """Apply the fields the caller set onto ``flags``, authorising habit links first.
 
     Ownership is decided *before* any field is assigned, so a refused link
     (404 missing / 403 another user's habit) leaves the whole row untouched --
@@ -60,23 +62,25 @@ async def apply_ui_flags_update(
     The caller commits.
     """
     changes = update_body.model_dump(exclude_unset=True)
-    habit_id = changes.get(_WRITING_HABIT_FIELD)
-    if habit_id is not None:
-        await resolve_owned_habit(session, habit_id, user_id)
+    for field in HABIT_LINK_FIELDS:
+        habit_id = changes.get(field)
+        if habit_id is not None:
+            await resolve_owned_habit(session, habit_id, user_id)
     for field, value in changes.items():
         setattr(flags, field, value)
     session.add(flags)
 
 
-async def clear_writing_habit_links(session: AsyncSession, habit_id: int) -> None:
-    """Unlink every writing timer pointing at ``habit_id``, ahead of deleting it.
+async def clear_habit_links(session: AsyncSession, habit_id: int) -> None:
+    """Unlink every session link pointing at ``habit_id``, ahead of deleting it.
 
-    The column's ``ON DELETE SET NULL`` is the backstop; this makes the rule hold
-    wherever foreign keys are not enforced (SQLite without the pragma) and keeps
-    it visible at the one place a habit is deleted. The caller commits.
+    Covers both the writing timer and the practice screen. The columns'
+    ``ON DELETE SET NULL`` is the backstop; this makes the rule hold wherever
+    foreign keys are not enforced (SQLite without the pragma) and keeps it
+    visible at the one place a habit is deleted. The caller commits.
     """
-    await session.execute(
-        update(UserUiFlags)
-        .where(col(UserUiFlags.writing_session_habit_id) == habit_id)
-        .values(writing_session_habit_id=None)
-    )
+    for field in HABIT_LINK_FIELDS:
+        column = getattr(UserUiFlags, field)
+        await session.execute(
+            update(UserUiFlags).where(col(column) == habit_id).values({field: None})
+        )

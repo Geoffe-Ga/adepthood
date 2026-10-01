@@ -19,9 +19,10 @@ class UserUiFlags(SQLModel, table=True):
 
     One row per user tracks lightweight interface flags: whether the welcome
     flow has been seen, whether the energy-scaffolding surface has been
-    archived, and which habit (if any) the writing timer checks off. Both flags
-    default to ``False`` and the link to ``None`` so a new account starts with a
-    clean slate; rows are created on first access rather than backfilled.
+    archived, and which habit (if any) a finished writing session, and which
+    a finished practice session, checks off. Both flags default to ``False``
+    and both links to ``None`` so a new account starts with a clean slate;
+    rows are created on first access rather than backfilled.
     """
 
     id: int | None = Field(default=None, primary_key=True)
@@ -46,6 +47,18 @@ class UserUiFlags(SQLModel, table=True):
 
     ``ON DELETE SET NULL`` so deleting the habit unlinks the timer instead of
     deleting the user's flags; ``delete_habit`` also clears it explicitly.
+    """
+    practice_session_habit_id: int | None = Field(
+        default=None,
+        foreign_key="habit.id",
+        ondelete="SET NULL",
+        nullable=True,
+        index=True,
+    )
+    """The habit a finished practice session checks off, or ``None`` when unlinked.
+
+    The practice-screen twin of ``writing_session_habit_id``, with the same
+    ``ON DELETE SET NULL`` and the same explicit clear in ``delete_habit``.
     """
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="ui_flags")

@@ -2293,3 +2293,71 @@ async def test_idor_ui_flags_writing_habit_link_missing_habit_404s_and_persists_
     stored = await _ui_flags_row(db_session, user_id)
     assert stored.writing_session_habit_id is None
     assert stored.has_seen_welcome is False
+
+
+@pytest.mark.asyncio
+async def test_idor_ui_flags_practice_habit_link_foreign_habit_returns_403(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot point his practice sessions at Alice's habit.
+
+    The practice-screen twin of the writing-timer case above: the same body
+    field pattern (an id naming another row, seen by no path dependency), the
+    same 403, the same audit entry, and the same atomicity -- the boolean sent
+    beside it is not applied and the prior link survives.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_practice_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_practice_link")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    bob_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=bob_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+    bob_habit_id = int(bob_habit.json()["id"])
+    own = await async_client.patch(
+        "/ui-flags", json={"practice_session_habit_id": bob_habit_id}, headers=bob_headers
+    )
+    assert own.status_code == HTTPStatus.OK
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.patch(
+            "/ui-flags",
+            json={"practice_session_habit_id": alice_habit_id, "has_seen_welcome": True},
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+
+    stored = await _ui_flags_row(db_session, bob_id)
+    assert stored.practice_session_habit_id == bob_habit_id
+    assert stored.has_seen_welcome is False
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "habit"
+    assert getattr(denials[0], "resource_id", None) == alice_habit_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_idor_ui_flags_practice_habit_link_missing_habit_404s_and_persists_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A practice link to a habit nobody owns is 404, unaudited, and writes nothing."""
+    headers, user_id = await _signup(async_client, "carol_practice_link")
+
+    with caplog.at_level(logging.WARNING):
+        probe = await async_client.patch(
+            "/ui-flags",
+            json={"practice_session_habit_id": _DEFINITELY_MISSING_ID, "has_seen_welcome": True},
+            headers=headers,
+        )
+
+    assert probe.status_code == HTTPStatus.NOT_FOUND
+    assert _denial_records(caplog) == []
+    stored = await _ui_flags_row(db_session, user_id)
+    assert stored.practice_session_habit_id is None
+    assert stored.has_seen_welcome is False
