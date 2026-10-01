@@ -165,6 +165,13 @@ const FOLDED_TEST_IDS = [
 
 const TOGGLE = 'vault-advanced-toggle';
 
+/**
+ * Absence means absent, not merely hidden from assistive technology: a closed
+ * fold that still rendered its form behind ``aria-hidden`` would pass a plain
+ * query, so every "is not there" check here reads hidden elements too.
+ */
+const HIDDEN_TOO = { includeHiddenElements: true } as const;
+
 /** Every refusal code the connect route can answer with, and its sentence. */
 const REFUSALS: [string, string][] = [
   ['vault_url_unparseable', VAULT_ADDRESS_UNREADABLE],
@@ -193,7 +200,7 @@ async function renderVault(connection: VaultConnection = NOT_CONNECTED) {
   mockConnection.mockResolvedValue(connection);
   const view = render(<VaultSettingsScreen />);
   await settle();
-  expect(view.queryByTestId('vault-loading')).toBeNull();
+  expect(view.queryByTestId('vault-loading', HIDDEN_TOO)).toBeNull();
   return view;
 }
 
@@ -392,7 +399,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
     const navigate = jest.fn();
     const view = render(<VaultSettingsScreen navigation={{ navigate }} />);
     await settle();
-    expect(view.queryByTestId('vault-loading')).toBeNull();
+    expect(view.queryByTestId('vault-loading', HIDDEN_TOO)).toBeNull();
 
     fireEvent.press(view.getByTestId('open-vault-activation'));
 
@@ -402,7 +409,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
   test('does not offer a second allocation when a vault is already connected', async () => {
     const view = await renderVault(CONNECTED);
 
-    expect(view.queryByTestId('open-vault-activation')).toBeNull();
+    expect(view.queryByTestId('open-vault-activation', HIDDEN_TOO)).toBeNull();
   });
 
   test('shows the server-derived unavailable state without blocking bring-your-own-vault', async () => {
@@ -414,7 +421,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
     const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(view.getByTestId('managed-vault-unavailable')).toBeTruthy();
-    expect(view.queryByTestId('open-vault-activation')).toBeNull();
+    expect(view.queryByTestId('open-vault-activation', HIDDEN_TOO)).toBeNull();
     expect(view.getByTestId('vault-address-input')).toBeTruthy();
   });
 
@@ -470,7 +477,9 @@ describe('VaultSettingsScreen — no source picker', () => {
     // be an offer the app cannot honour.
     const { queryByText } = await renderVault();
 
-    expect(queryByText(/discord|google drive|claude conversations|recordings/iu)).toBeNull();
+    expect(
+      queryByText(/discord|google drive|claude conversations|recordings/iu, HIDDEN_TOO),
+    ).toBeNull();
   });
 });
 
@@ -491,7 +500,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
       await gate.promise;
     });
 
-    expect(queryByTestId('vault-loading')).toBeNull();
+    expect(queryByTestId('vault-loading', HIDDEN_TOO)).toBeNull();
   });
 
   test('offers the empty state and the form when nothing is connected', async () => {
@@ -502,7 +511,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
     expect(getByTestId('vault-address-input')).toBeTruthy();
     expect(getByTestId('vault-key-input')).toBeTruthy();
     expect(getByTestId('connect-vault-button')).toBeTruthy();
-    expect(queryByTestId('disconnect-vault-button')).toBeNull();
+    expect(queryByTestId('disconnect-vault-button', HIDDEN_TOO)).toBeNull();
   });
 
   test('names the connected vault and offers to replace or leave it', async () => {
@@ -530,11 +539,11 @@ describe('VaultSettingsScreen — reading the connection', () => {
     // and rendering the second for the first tells somebody their vault is gone.
     const view = await renderUnreachable();
 
-    expect(view.queryByTestId('vault-none-connected')).toBeNull();
+    expect(view.queryByTestId('vault-none-connected', HIDDEN_TOO)).toBeNull();
     expect(
       within(view.getByTestId('vault-connection-unknown')).getByText(VAULT_CONNECTION_UNKNOWN),
     ).toBeTruthy();
-    expect(view.queryByTestId('vault-connected-card')).toBeNull();
+    expect(view.queryByTestId('vault-connected-card', HIDDEN_TOO)).toBeNull();
     expect(within(view.getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
   });
 
@@ -545,7 +554,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
 
     fireEvent.changeText(view.getByTestId('vault-address-input'), VAULT_URL);
 
-    expect(view.queryByTestId('vault-error')).toBeNull();
+    expect(view.queryByTestId('vault-error', HIDDEN_TOO)).toBeNull();
     expect(view.getByTestId('vault-connection-unknown')).toBeTruthy();
   });
 
@@ -555,14 +564,14 @@ describe('VaultSettingsScreen — reading the connection', () => {
     expect(
       within(view.getByTestId('vault-connection-unknown')).getByText(VAULT_CONNECTION_UNKNOWN),
     ).toBeTruthy();
-    expect(view.queryByTestId('vault-none-connected')).toBeNull();
+    expect(view.queryByTestId('vault-none-connected', HIDDEN_TOO)).toBeNull();
   });
 
   test('offers the add heading when it could not check', async () => {
     const view = await renderUnreachableWithFormOpen();
 
     expect(view.getByText(VAULT_ADD_HEADING)).toBeTruthy();
-    expect(view.queryByText(VAULT_REPLACE_HEADING)).toBeNull();
+    expect(view.queryByText(VAULT_REPLACE_HEADING, HIDDEN_TOO)).toBeNull();
   });
 });
 
@@ -600,7 +609,7 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
     );
 
     expect(raised?.labels).toEqual([VAULT_CANCEL, VAULT_REPLACE_BUTTON]);
-    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog', HIDDEN_TOO)).toBeNull();
     expect(mockConnect).toHaveBeenCalledTimes(1);
     expect(mockConnect).toHaveBeenCalledWith({
       vault_url: REPLACEMENT_VAULT_URL,
@@ -621,7 +630,7 @@ describe('VaultSettingsScreen — asking before it replaces', () => {
     );
 
     expect(raised).not.toBeNull();
-    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog', HIDDEN_TOO)).toBeNull();
     expect(mockConnect).not.toHaveBeenCalled();
     expect(within(view.getByTestId('vault-connected-card')).getByText(VAULT_URL)).toBeTruthy();
     // Nothing was sent, so nothing was cleared and nothing was re-masked.
@@ -763,13 +772,13 @@ describe('VaultSettingsScreen — disconnecting', () => {
 
     await pressDisconnect(view, 'confirm');
 
-    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog', HIDDEN_TOO)).toBeNull();
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
     expect(
       within(view.getByTestId('vault-status')).getByText(VAULT_STATUS_DISCONNECTED),
     ).toBeTruthy();
     expect(view.getByText(VAULT_NONE_CONNECTED)).toBeTruthy();
-    expect(view.queryByTestId('disconnect-vault-button')).toBeNull();
+    expect(view.queryByTestId('disconnect-vault-button', HIDDEN_TOO)).toBeNull();
   });
 
   test('does nothing at all on cancel', async () => {
@@ -778,7 +787,7 @@ describe('VaultSettingsScreen — disconnecting', () => {
     const raised = await pressDisconnect(view, 'cancel');
 
     expect(raised).not.toBeNull();
-    expect(view.queryByTestId('vault-confirm-dialog')).toBeNull();
+    expect(view.queryByTestId('vault-confirm-dialog', HIDDEN_TOO)).toBeNull();
     expect(mockDisconnect).not.toHaveBeenCalled();
     expect(view.getByTestId('disconnect-vault-button')).toBeTruthy();
   });
@@ -928,7 +937,7 @@ describe('VaultSettingsScreen — the Advanced fold, closed by default', () => {
     expect(foldExpanded(view)).toBe(false);
     expect(within(toggle).getByText(VAULT_ADVANCED_TITLE)).toBeTruthy();
     for (const testID of FOLDED_TEST_IDS) {
-      expect(view.queryByTestId(testID)).toBeNull();
+      expect(view.queryByTestId(testID, HIDDEN_TOO)).toBeNull();
     }
   });
 
@@ -938,7 +947,7 @@ describe('VaultSettingsScreen — the Advanced fold, closed by default', () => {
     expect(foldExpanded(view)).toBe(false);
     expect(within(view.getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
     for (const testID of FOLDED_TEST_IDS) {
-      expect(view.queryByTestId(testID)).toBeNull();
+      expect(view.queryByTestId(testID, HIDDEN_TOO)).toBeNull();
     }
   });
 
@@ -1007,7 +1016,7 @@ describe('VaultSettingsScreen — opening the Advanced fold', () => {
     fireEvent.press(view.getByTestId(TOGGLE));
 
     expect(foldExpanded(view)).toBe(false);
-    expect(view.queryByTestId('vault-address-input')).toBeNull();
+    expect(view.queryByTestId('vault-address-input', HIDDEN_TOO)).toBeNull();
   });
 
   test('opens the guide through the https-only opener, at the named docs URL', async () => {

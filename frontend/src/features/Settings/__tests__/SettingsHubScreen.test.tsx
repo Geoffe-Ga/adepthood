@@ -285,7 +285,9 @@ describe('SettingsHubScreen — vault row', () => {
     const privacy = getByTestId('settings-group-privacy');
 
     expect(within(corpus).getByTestId('settings-row-vault')).toBeTruthy();
-    expect(within(privacy).queryByTestId('settings-row-vault')).toBeNull();
+    expect(
+      within(privacy).queryByTestId('settings-row-vault', { includeHiddenElements: true }),
+    ).toBeNull();
 
     const rowIds = within(corpus)
       .getAllByTestId(/^settings-row-/u)
