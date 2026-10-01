@@ -897,6 +897,37 @@ async def test_unexpected_failure_after_charge_is_refunded(
 
 
 @pytest.mark.asyncio
+async def test_a_stored_letter_keeps_its_charge_when_a_later_step_fails(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the letter is committed it is bought: a failure after that refunds nothing."""
+    monkeypatch.setattr(marginalia_service, "generate_response", _CountingLLM(_LETTER))
+    real_refresh = db_session.refresh
+
+    async def _refresh_failing_on_a_stored_letter(instance: object) -> None:
+        # The route shares ``db_session``; only the refresh of a note whose
+        # letter is already stored fails, i.e. strictly after the storing commit.
+        if isinstance(instance, Marginalia) and instance.essay is not None:
+            raise RuntimeError("refresh unavailable")
+        await real_refresh(instance)
+
+    headers, user_id = await _signup(async_client, "stored_then_failed")
+    marg_id = await _seed_marginalia(db_session, user_id)
+    before_used, before_balance = await _wallet(db_session, user_id)
+    monkeypatch.setattr(db_session, "refresh", _refresh_failing_on_a_stored_letter)
+
+    resp = await async_client.post(_essay_path(marg_id), headers=headers, json=_PRICED)
+
+    monkeypatch.undo()
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR, resp.text
+    assert await _audit_reasons(db_session, user_id) == [REASON_SPEND_MONTHLY]
+    assert await _wallet(db_session, user_id) == (before_used + 1, before_balance)
+    stored = await db_session.get(Marginalia, marg_id)
+    assert stored is not None
+    assert stored.essay == _LETTER
+
+
+@pytest.mark.asyncio
 async def test_essay_response_carries_balances(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

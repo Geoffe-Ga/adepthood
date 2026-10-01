@@ -2827,6 +2827,9 @@ async def _cache_essay(
                 session, note.user_id, spent, reason=REASON_REFUND_FAILED_ESSAY
             )
     if essay is not None:
+        # Outside the guard on purpose: the letter is committed, so it is
+        # bought, and a failure re-reading it must not refund a stored letter.
+        await session.refresh(note)
         logger.info(
             "marginalia_essay_generated",
             # A count, never the letters themselves: the same rule
@@ -2910,7 +2913,6 @@ async def _settle_essay(
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
     await session.commit()
-    await session.refresh(note)
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
