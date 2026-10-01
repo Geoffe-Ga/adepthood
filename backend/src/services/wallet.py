@@ -399,6 +399,16 @@ async def refund_one_message(
     if refunded is None:
         logger.warning("wallet_refund_noop", extra={"user_id": user_id, "bucket": spent.bucket})
         return spent
+    # The landed refund's own line (#623 PR3): record §1 asks for refunds to be
+    # instrumented. Reason and bucket ride in the message because the
+    # production formatter drops ``extra``; ``refund_reason`` avoids the
+    # reserved LogRecord attribute names.
+    logger.info(
+        "wallet_refund_applied reason=%s bucket=%s",
+        reason,
+        spent.bucket,
+        extra={"user_id": user_id, "bucket": spent.bucket, "refund_reason": reason},
+    )
     return refunded
 
 
