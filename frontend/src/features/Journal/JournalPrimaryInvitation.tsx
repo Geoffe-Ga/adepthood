@@ -5,15 +5,20 @@
  * Review" (or Stage, Section, Course), opening that review — or continuing it
  * if already begun. On every other day, or once that review is set aside, the
  * daily page is: the morning-pages tip's "Begin a page", subject to its own
- * dismissal. The review shows whatever the tip's dismissal says, because the
- * two are separate offers declined separately.
+ * declines — set aside for today, or not offered again (#3005). The review
+ * shows whatever the tip's state says, because the two are separate offers
+ * declined separately.
  *
  * Beneath either — and beneath neither, when both have been set aside — sits a
  * quiet "Start a review early" link that opens the ``ReviewScopePicker`` for
  * every layer still in progress. Nothing is gated: any review can be begun on
- * any day. Setting the tip aside with its corner X hands focus to that link, so
- * a keyboard or screen-reader user is not dropped to the top of the page when
- * the card goes (#2860).
+ * any day. Declining the tip — its corner X or its "Don't show this again"
+ * link — hands focus to that link, so a keyboard or screen-reader user is not
+ * dropped to the top of the page when the card goes (#2860).
+ *
+ * The shelf stays mounted across tab switches, so each focus bumps a count the
+ * tip re-reads its stored state on: a tip set aside yesterday, or offered again
+ * from Settings, is back on the next visit without a remount.
  *
  * No card renders until the due lookup first settles. Showing the daily page
  * meanwhile and swapping it for the review would put a mis-tap one network
@@ -53,16 +58,20 @@ function PrimaryCard({
   onBeginPage,
   onOpenReview,
   onTipDismissed,
+  focusCount,
   due,
 }: {
   onBeginPage: (_prefillTitle: string) => void;
   onOpenReview: () => void;
   onTipDismissed: () => void;
+  focusCount: number;
   due: ReturnType<typeof useDueReview>;
 }): React.JSX.Element | null {
   if (due.status === 'loading') return null;
   if (due.review == null) {
-    return <MorningPagesTip onBegin={onBeginPage} onDismissed={onTipDismissed} />;
+    return (
+      <MorningPagesTip onBegin={onBeginPage} onDismissed={onTipDismissed} refreshKey={focusCount} />
+    );
   }
   return (
     <ReflectionInvitationBand review={due.review} onOpen={onOpenReview} onDismiss={due.dismiss} />
@@ -79,8 +88,9 @@ function JournalPrimaryInvitation({
   // Always mounted, so the tip's X can hand focus here synchronously as it goes.
   const earlyLinkRef = useRef<View>(null);
   const focusEarlyLink = useCallback(() => moveAccessibilityFocus(earlyLinkRef.current), []);
-  // Bumped on every focus so an open picker re-reads /reflections/current: a
-  // scope claimed while the writer was away must be offered to continue.
+  // Bumped on every focus so an open picker re-reads /reflections/current (a
+  // scope claimed while the writer was away must be offered to continue) and
+  // the tip re-reads its stored decline (a new day, or a Settings restore).
   const [focusCount, setFocusCount] = useState(0);
   useFocusEffect(
     useCallback(() => {
@@ -109,6 +119,7 @@ function JournalPrimaryInvitation({
         onBeginPage={onBeginPage}
         onOpenReview={openReview}
         onTipDismissed={focusEarlyLink}
+        focusCount={focusCount}
         due={due}
       />
       <Button
