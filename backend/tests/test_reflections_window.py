@@ -394,6 +394,8 @@ async def test_a_past_cycle_scope_never_serves_the_current_cycles_entries(
     past-cycle scope is now windowed on THAT cycle's own retained anchor
     (issue #2894) and so serves that cycle's dailies and never this one's;
     the row seeded here retained none, so its cycle-1 feed is empty.  A
+    cycle not yet entered (``c9``) is refused outright by the unlock guard
+    rather than served an empty feed (issue #2907).  A
     surviving child review from that cycle still stands in either way,
     because reflections match by exact key rather than by window.
     """
@@ -416,7 +418,13 @@ async def test_a_past_cycle_scope_never_serves_the_current_cycles_entries(
     )
 
     assert "cycle2-week1" not in await _bodies(async_client, headers, ReflectionLevel.WEEK, "c1:w1")
-    assert "cycle2-week1" not in await _bodies(async_client, headers, ReflectionLevel.WEEK, "c9:w1")
+    unreached = await async_client.get(
+        "/reflections/sources",
+        params={"level": ReflectionLevel.WEEK.value, "scope_key": "c9:w1"},
+        headers=headers,
+    )
+    assert unreached.status_code == HTTPStatus.FORBIDDEN
+    assert unreached.json()["detail"] == "scope_locked"
     assert await _bodies(async_client, headers, ReflectionLevel.WEEK, "c2:w1") == ["cycle2-week1"]
     assert await _bodies(async_client, headers, ReflectionLevel.STAGE, "c1:s1") == [
         "cycle one, week one, in review"
