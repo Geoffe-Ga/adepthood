@@ -1224,7 +1224,7 @@
   },
   {
     "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
-    "description": "A person whose reflections are still drawn from the last few days of writing is told so, in the sentence that is true for their own account: the consent decision if they have not made it, the import surface if they have. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
+    "description": "A person whose reflections are still drawn from their last few entries is told so, in the sentence that is true for their own account: the consent decision if they have not made it -- with what saying yes gives, in the same words Settings uses (#3003) -- the import surface if they have. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
     "crosses": {
       "screen": "frontend/src/features/Journal/VoiceReadinessBand.tsx",
       "client": ["corpus", "corpusConsent", "auth", "setTokenGetter"],
@@ -1380,7 +1380,7 @@
   },
   {
     "id": "vault.connect-your-own",
-    "description": "Someone connects a private vault of their own from Settings: the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
+    "description": "Someone connects a private vault of their own from Settings (Your corpus, then Where your corpus lives, then the Advanced: connect a vault you run yourself section, which is closed until they open it): the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault"],
@@ -1392,11 +1392,23 @@
   },
   {
     "id": "vault.disconnect-or-replace-confirmed",
-    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
+    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). The card and the form live behind the Advanced section, which opens on first render when a vault of their own is connected, so Disconnect needs no press to find; after a read that failed it stays closed until opened. Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault"],
       "routes": ["PUT /vault/connection", "DELETE /vault/connection"],
+      "tables": ["uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 2934
+  },
+  {
+    "id": "vault.advanced-fold",
+    "description": "Someone opens Where your corpus lives from the Your corpus group in Settings and finds the bring-your-own form folded behind 'Advanced: connect a vault you run yourself' (#3007). The fold says what it is, who it is for and what it is not, links the plain-language guide in docs/your-data.md, and is closed by default -- open on first render only when GET /vault/connection names a vault of their own, so Disconnect is never hidden. It is remembered for the visit only. The managed offer and the read's notices sit outside it, and the feedback line sits after it, so a read that failed is still said while it is closed. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs the same VaultSettings web path and routable vault fake as vault.disconnect-or-replace-confirmed.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["GET /vault/connection"],
       "tables": ["uservaultconfig"]
     },
     "status": "uncovered",
@@ -1612,7 +1624,7 @@
   },
   {
     "id": "design.navigation-owns-screen-title",
-    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data, Delete account or managed-vault activation -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the nine screens at 390x844 and 1280x720 -- seven the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. Managed-vault activation used to paint a paraphrase of its title (#2995), so there the spec also counts the headings inside the screen body, which must be none. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
+    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data, Delete account, Where your corpus lives (the vault screen, #3007) or managed-vault activation -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the ten screens at 390x844 and 1280x720 -- eight the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. Managed-vault activation used to paint a paraphrase of its title (#2995), so there the spec also counts the headings inside the screen body, which must be none. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
     "crosses": {
       "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
       "client": ["auth"],

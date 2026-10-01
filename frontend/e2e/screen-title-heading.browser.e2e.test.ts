@@ -15,7 +15,7 @@ import { openRoute, ROUTES, VIEWPORTS, viewportLabel, type Route } from './route
  * as `h1`, so a body that repeats the title -- painted, or as an invisible
  * labelled header -- counts twice.
  *
- * Seven of the nine screens are reached the way the text census reaches them
+ * Eight of the ten screens are reached the way the text census reaches them
  * (`routeWalk.ts`). Managed-vault activation used to paint a paraphrase of its
  * stack title, which a count by the title's own name cannot see, so on that
  * screen the spec also counts the headings inside the body: there must be none. Promoted quotes opens from the Journal drawer. The beta
@@ -41,6 +41,7 @@ const WALKED_TITLES: Readonly<Record<string, string>> = {
   DeleteAccount: 'Delete account',
   SupportCare: 'Support & care',
   VaultActivation: 'Create managed vault',
+  VaultSettings: 'Where your corpus lives',
 };
 
 /**
@@ -50,7 +51,7 @@ const WALKED_TITLES: Readonly<Record<string, string>> = {
 const HEADINGLESS_BODIES: ReadonlySet<string> = new Set(['VaultActivation']);
 
 /**
- * The walk opens every screen at both viewports -- eighteen route opens, each
+ * The walk opens every screen at both viewports -- twenty route opens, each
  * through the UI -- which runs about 45s on a loaded lane. A failing soft
  * assert also waits out its retry before the walk moves on, so the default
  * 60s would turn a real regression into a bare timeout.

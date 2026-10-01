@@ -45,6 +45,7 @@ import {
 } from '@/design/tokens';
 import {
   CORPUS_CONSENT_CONSEQUENCE_SENDING,
+  CORPUS_CONSENT_GAIN,
   CORPUS_CONSENT_LEAD,
   CORPUS_CONSENT_ROW_LABEL,
   CORPUS_INVITATION_NEVER_A11Y,
@@ -149,6 +150,9 @@ function CorpusInvitationNote({
     <View style={styles.note} testID={TEST_ID}>
       <Text style={styles.label}>{CORPUS_CONSENT_ROW_LABEL}</Text>
       <Text style={styles.body}>{CORPUS_CONSENT_LEAD}</Text>
+      <Text style={styles.body} testID={`${TEST_ID}-gain`}>
+        {CORPUS_CONSENT_GAIN}
+      </Text>
       <Text style={styles.body}>{CORPUS_CONSENT_CONSEQUENCE_SENDING}</Text>
       <Text style={styles.body}>{CORPUS_INVITATION_REACH}</Text>
       <TouchableOpacity

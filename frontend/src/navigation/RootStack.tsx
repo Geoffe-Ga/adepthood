@@ -245,7 +245,7 @@ const RootStack = (): React.JSX.Element => (
     <Stack.Screen
       name="VaultSettings"
       component={VaultSettingsScreen}
-      options={{ title: 'Managed vault' }}
+      options={{ title: 'Where your corpus lives' }}
     />
     <Stack.Screen
       name="VaultActivation"

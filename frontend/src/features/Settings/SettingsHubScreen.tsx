@@ -87,12 +87,11 @@ const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JS
 /**
  * Privacy group: an informational statement surfacing the entry-visibility
  * tiers and the Intimate/AI guarantee as a first-class feature rather than a
- * buried setting. The statement block itself stays non-interactive — it makes a
- * promise, it is not a destination — while the group also hosts the private
- * vault destination, because where a copy of your journal may go is part of the
- * same privacy story.
+ * buried setting. The statement stays non-interactive — it makes a promise, it
+ * is not a destination. The vault row that used to sit here moved to Your
+ * corpus (#3007), beside the other decisions about where your writing goes.
  */
-const PrivacySection = ({ onVault }: { onVault: () => void }): React.JSX.Element => {
+const PrivacySection = (): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
   return (
@@ -109,13 +108,6 @@ const PrivacySection = ({ onVault }: { onVault: () => void }): React.JSX.Element
           <Text style={[t.caption, styles.privacyLineSoft]}>{PRIVACY_INTIMATE_LINE}</Text>
         </View>
       </View>
-      <SettingsRow
-        icon={Vault}
-        label={VAULT_ROW_LABEL}
-        description={VAULT_ROW_DESCRIPTION}
-        onPress={onVault}
-        testID="settings-row-vault"
-      />
     </EditorialSection>
   );
 };
@@ -123,19 +115,23 @@ const PrivacySection = ({ onVault }: { onVault: () => void }): React.JSX.Element
 interface CorpusSectionProps {
   onSeedCorpus: () => void;
   onCorpusConsent: () => void;
+  onVault: () => void;
 }
 
 /**
- * Corpus group: the way in for writing that already exists elsewhere, and the
- * decision about whether any of it is sorted for reflections to draw on.
- * Phrased as an offer, not a task — the journal works fine on its own, and both
- * rows only widen what reflections can reach for people who want that. The
+ * Corpus group: the way in for writing that already exists elsewhere, the
+ * decision about whether any of it is sorted for reflections to draw on, and,
+ * last, where an optional copy of it may live (#3007). Phrased as an offer, not
+ * a task — the journal works fine on its own, and every row only widens what
+ * reflections can reach or where a copy goes, for people who want that. The
  * consent row is off until somebody turns it on, so it is a question rather
- * than a setting to correct.
+ * than a setting to correct; the vault row comes after it because a vault is
+ * not that yes.
  */
 const CorpusSection = ({
   onSeedCorpus,
   onCorpusConsent,
+  onVault,
 }: CorpusSectionProps): React.JSX.Element => (
   <EditorialSection title="Your corpus" testID="settings-group-corpus">
     <SettingsRow
@@ -151,6 +147,13 @@ const CorpusSection = ({
       description={CORPUS_CONSENT_ROW_DESCRIPTION}
       onPress={onCorpusConsent}
       testID="settings-row-corpus-consent"
+    />
+    <SettingsRow
+      icon={Vault}
+      label={VAULT_ROW_LABEL}
+      description={VAULT_ROW_DESCRIPTION}
+      onPress={onVault}
+      testID="settings-row-vault"
     />
   </EditorialSection>
 );
@@ -287,8 +290,12 @@ const SettingsHubScreen = (): React.JSX.Element => {
         lead="Manage how Adepthood works for you."
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
-      <CorpusSection onSeedCorpus={openSeedCorpus} onCorpusConsent={openCorpusConsent} />
-      <PrivacySection onVault={openVault} />
+      <CorpusSection
+        onSeedCorpus={openSeedCorpus}
+        onCorpusConsent={openCorpusConsent}
+        onVault={openVault}
+      />
+      <PrivacySection />
       <ChooseDepthsSection />
       <JournalSection />
       <SanghaSection />

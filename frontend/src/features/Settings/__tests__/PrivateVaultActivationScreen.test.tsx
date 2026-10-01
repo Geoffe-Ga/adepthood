@@ -1,8 +1,9 @@
 /* global describe, it, expect, beforeEach, jest */
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import PrivateVaultActivationScreen from '../PrivateVaultActivationScreen';
+import { HIGHER_SELF_GAIN, VAULT_SORTING_CHOICE, VAULT_TITLE } from '../vaultCopy';
 
 import { vaultActivation, type VaultActivation } from '@/api';
 import { settle } from '@/testing/asyncSettle';
@@ -92,6 +93,32 @@ describe('provider-managed vault activation choice', () => {
     expect(view.queryByTestId('vault-passphrase-input')).toBeNull();
     expect(view.queryByTestId('vault-recovery-once')).toBeNull();
     expect(mockActivate).not.toHaveBeenCalled();
+  });
+
+  it('says what saying yes gives, and that a vault is not that yes, before the custody notice (#3003)', async () => {
+    const view = await renderActivation();
+    const intro = within(view.getByTestId('activation-intro'));
+    const order = intro
+      .getAllByTestId(/^activation-/u)
+      .map((node) => node.props.testID as string)
+      .filter((testID) => testID !== 'activation-intro');
+
+    expect(view.getByTestId('activation-higher-self-gain')).toHaveTextContent(HIGHER_SELF_GAIN);
+    expect(view.getByTestId('activation-sorting-choice')).toHaveTextContent(VAULT_SORTING_CHOICE);
+    expect(order.slice(0, 3)).toEqual([
+      'activation-higher-self-gain',
+      'activation-sorting-choice',
+      'activation-custody-notice',
+    ]);
+    expect(view.getByText('Adepthood is complete without a managed vault.')).toBeTruthy();
+  });
+
+  it('names the settings screen it returns to by the name it now has (#3007)', async () => {
+    const view = await renderActivation();
+
+    expect(view.getByTestId('cancel-vault-activation').props.accessibilityLabel).toBe(
+      `Not now, return to ${VAULT_TITLE}`,
+    );
   });
 
   it('returns to settings without allocating when declined', async () => {

@@ -137,10 +137,12 @@ const SPEAKING_READINESS = {
   ready: false,
   state: 'not_consented',
   message:
-    'Right now your reflections are drawn from your last few days of writing. Sorting ' +
-    'your journal into your own corpus is a separate decision, and it is yours to make ' +
-    'whenever you like — say yes and everything you have already put down gets sorted ' +
-    'too. Perfectly fine to leave as it is.',
+    'Sorting your journal is a separate decision, yours to make whenever you like. ' +
+    'Say yes to sorting, and ' +
+    'everything you write here, apart from Intimate entries and including what you have ' +
+    'already written, is sorted by Aspect. Each reflection from your Higher Self can then ' +
+    'draw on a few of those passages, leaning toward where you stand in the course, rather ' +
+    'than only on your last few entries. Perfectly fine to leave as it is.',
   grounding_source: 'recent_entries',
   classified_fragment_count: 0,
 } as const;

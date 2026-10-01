@@ -5,6 +5,7 @@ import {
   CORPUS_CONSENT_CONSEQUENCE_HEADING,
   CORPUS_CONSENT_CONSEQUENCE_REMOVAL,
   CORPUS_CONSENT_CONSEQUENCE_SENDING,
+  CORPUS_CONSENT_GAIN,
   CORPUS_CONSENT_EYEBROW,
   CORPUS_CONSENT_FAILURE,
   CORPUS_CONSENT_INTIMATE_LINE,
@@ -208,6 +209,9 @@ const SourceRow = (props: SourceRowProps): React.JSX.Element => {
 /** The two consequences and the two guarantees, above every switch. */
 const Consequences = (): React.JSX.Element => (
   <EditorialSection title={CORPUS_CONSENT_CONSEQUENCE_HEADING} testID="corpus-consent-consequences">
+    <Text style={styles.paragraph} testID="corpus-consent-gain">
+      {CORPUS_CONSENT_GAIN}
+    </Text>
     <Text style={styles.paragraph}>{CORPUS_CONSENT_CONSEQUENCE_SENDING}</Text>
     <Text style={styles.paragraph}>{CORPUS_CONSENT_CONSEQUENCE_REMOVAL}</Text>
     <Text style={styles.paragraphSoft}>{CORPUS_CONSENT_INTIMATE_LINE}</Text>
