@@ -8,9 +8,11 @@ lease therefore lives in the database: one row per held slot, and
 ``UNIQUE(user_id, slot)`` makes a third concurrent insert fail on any worker.
 
 A lease is transient operational state, never content. It is deleted when its
-generation ends, and ``expires_at`` lets a crashed worker's slot be reclaimed
-once it is past any generation's worst-case lifetime
-(:data:`services.generation_guardrails.GENERATION_SLOT_TTL_SECONDS`).
+generation ends. While the generation runs, a heartbeat keeps ``expires_at``
+one TTL ahead (:data:`services.generation_guardrails.GENERATION_SLOT_TTL_SECONDS`),
+so a live generation's lease never expires however long it waits or dials;
+only a crashed worker's lease, whose heartbeat died with it, ages past
+``expires_at`` and is reclaimed.
 """
 
 from __future__ import annotations

@@ -8,28 +8,33 @@ application limiter and is per worker (documented in DEPLOYMENT.md).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import delete
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import col, func, select
 
+from domain.dates import ensure_aware
 from models.generation_slot import GenerationSlot
 from models.user import User
 from models.wallet_audit import BUCKET_MONTHLY, REASON_SPEND_MONTHLY, WalletAudit
 from rate_limit import limiter, user_throttle_key
 from services import generation_guardrails
-from services.botmason import WORST_CASE_DIAL_SECONDS
 from services.generation_guardrails import (
-    GENERATION_DIALS_PER_PASS,
     GENERATION_GUARD_UNAVAILABLE,
     GENERATION_IN_PROGRESS,
     GENERATION_IN_PROGRESS_RETRY_AFTER_SECONDS,
+    GENERATION_SLOT_HEARTBEAT_SECONDS,
+    GENERATION_SLOT_HEARTBEAT_TASK,
+    GENERATION_SLOT_HEARTBEATS_PER_TTL,
     GENERATION_SLOT_TTL_SECONDS,
     GENERATIONS_PER_MINUTE_PER_USER,
     MAX_CONCURRENT_GENERATIONS_PER_USER,
@@ -42,9 +47,20 @@ from services.generation_guardrails import (
 # Decision record §1.
 _RATIFIED_PER_MINUTE = 5
 _RATIFIED_CONCURRENT = 2
-# _LLM_TIMEOUT_SECONDS (30) x (_MAX_RETRIES (2) + 1) attempts + 1s + 2s backoff.
-_EXPECTED_WORST_CASE_DIAL_SECONDS = 93.0
-_EXPECTED_TTL_SECONDS = 279.0
+# A live lease is refreshed every 30s and lives 90s from its last refresh, so it
+# survives two consecutive failed refreshes and a crashed worker's frees in 90s.
+_EXPECTED_HEARTBEAT_SECONDS = 30.0
+_EXPECTED_HEARTBEATS_PER_TTL = 3
+_EXPECTED_TTL_SECONDS = 90.0
+# The static TTL this module shipped with before the heartbeat (3 x a 93s dial):
+# the reviewers showed a live generation outlasting it behind the account barrier.
+_PRE_HEARTBEAT_TTL_SECONDS = 279.0
+# A heartbeat interval short enough for a test to watch several ticks.
+_FAST_HEARTBEAT_SECONDS = 0.01
+# How long a test waits for a heartbeat it expects; only a broken one reaches it.
+_HEARTBEAT_WAIT_SECONDS = 10.0
+# A fixed instant the lease clock is frozen at.
+_T0 = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 _PROVIDER_TIMEOUT_SECONDS = 30
 # The release-failure test fails one release on an exception exit and one on a
 # normal exit.
@@ -73,12 +89,16 @@ async def _lease_count(session: AsyncSession, user_id: int | None = None) -> int
 
 
 def test_constants_are_the_ratified_numbers_and_derived_ttl() -> None:
-    """Every number is named, and the TTL is derived from the provider's own bounds."""
+    """Every number is named, and the TTL is a whole number of heartbeats."""
     assert GENERATIONS_PER_MINUTE_PER_USER == _RATIFIED_PER_MINUTE
     assert MAX_CONCURRENT_GENERATIONS_PER_USER == _RATIFIED_CONCURRENT
-    assert WORST_CASE_DIAL_SECONDS == _EXPECTED_WORST_CASE_DIAL_SECONDS
-    assert GENERATION_DIALS_PER_PASS == 3  # pass, corrective pass, detection
+    assert GENERATION_SLOT_HEARTBEAT_SECONDS == _EXPECTED_HEARTBEAT_SECONDS
+    assert GENERATION_SLOT_HEARTBEATS_PER_TTL == _EXPECTED_HEARTBEATS_PER_TTL
     assert GENERATION_SLOT_TTL_SECONDS == _EXPECTED_TTL_SECONDS
+    assert (
+        GENERATION_SLOT_TTL_SECONDS
+        == GENERATION_SLOT_HEARTBEAT_SECONDS * GENERATION_SLOT_HEARTBEATS_PER_TTL
+    )
     assert GENERATION_IN_PROGRESS_RETRY_AFTER_SECONDS == _PROVIDER_TIMEOUT_SECONDS
     assert GENERATION_IN_PROGRESS == "generation_in_progress"
     assert GENERATION_GUARD_UNAVAILABLE == "generation_guard_unavailable"
@@ -187,6 +207,224 @@ async def test_unexpired_leases_still_block(db_session: AsyncSession) -> None:
 
     assert exc.value.detail == GENERATION_IN_PROGRESS
     assert await _lease_count(db_session, user_id) == MAX_CONCURRENT_GENERATIONS_PER_USER
+
+
+# --- the expiry boundary and the heartbeat -------------------------------------------
+
+
+class _Clock:
+    """A settable stand-in for the guardrails' wall clock."""
+
+    def __init__(self) -> None:
+        self.now = _T0
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    """Freeze ``generation_guardrails``' notion of now at ``_T0``, movable by the test."""
+    frozen = _Clock()
+    monkeypatch.setattr(generation_guardrails, "_utc_now", frozen)
+    return frozen
+
+
+@pytest.fixture
+def fast_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tick the lease heartbeat every few milliseconds instead of every 30 seconds."""
+    monkeypatch.setattr(
+        generation_guardrails, "GENERATION_SLOT_HEARTBEAT_SECONDS", _FAST_HEARTBEAT_SECONDS
+    )
+
+
+async def _fill_every_slot(session: AsyncSession, user_id: int, expires_at: datetime) -> None:
+    """Hold every one of ``user_id``'s slots with leases expiring at ``expires_at``."""
+    for slot in range(MAX_CONCURRENT_GENERATIONS_PER_USER):
+        session.add(
+            GenerationSlot(
+                user_id=user_id,
+                slot=slot,
+                acquired_at=expires_at - timedelta(seconds=GENERATION_SLOT_TTL_SECONDS),
+                expires_at=expires_at,
+            )
+        )
+    await session.commit()
+
+
+async def _refusal(session: AsyncSession, user_id: int) -> object:
+    """The detail one more generation for ``user_id`` is refused with now; ``None`` if admitted."""
+    try:
+        async with generation_slot(session, user_id):
+            return None
+    except HTTPException as exc:
+        return exc.detail
+
+
+async def _leases_of(session: AsyncSession, user_id: int) -> list[GenerationSlot]:
+    query = select(GenerationSlot).where(col(GenerationSlot.user_id) == user_id)
+    return list((await session.execute(query)).scalars().all())
+
+
+async def _wait_until(predicate: Callable[[], object]) -> bool:
+    """Poll ``predicate`` (sync or async) until it is truthy; ``False`` on timeout."""
+
+    async def _poll() -> None:
+        while True:
+            outcome = predicate()
+            if asyncio.iscoroutine(outcome):
+                outcome = await outcome
+            if outcome:
+                return
+            await asyncio.sleep(_FAST_HEARTBEAT_SECONDS)
+
+    try:
+        await asyncio.wait_for(_poll(), _HEARTBEAT_WAIT_SECONDS)
+    except TimeoutError:
+        return False
+    return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_heartbeat")
+async def test_two_live_generations_past_the_old_ttl_still_block_a_third(
+    concurrent_session_factory: async_sessionmaker[AsyncSession], clock: _Clock
+) -> None:
+    """A live generation's lease never expires, however long the generation runs.
+
+    The regression: the slot is taken before ``hold_account``, which waits with
+    no timeout, so a static TTL let a live generation's lease age out and a
+    third generation in. Here both holders outlive the old 279s TTL and the new
+    90s one, and the heartbeat keeps their slots.
+    """
+    async with concurrent_session_factory() as setup:
+        user_id = await _make_user(setup, "long_haul@example.com")
+    finish = asyncio.Event()
+    holding: list[int] = []
+
+    async def _generate() -> None:
+        async with concurrent_session_factory() as session, generation_slot(session, user_id):
+            holding.append(user_id)
+            await finish.wait()
+
+    holders = [asyncio.create_task(_generate()) for _ in range(_RATIFIED_CONCURRENT)]
+    try:
+        assert await _wait_until(lambda: len(holding) == _RATIFIED_CONCURRENT)
+        later = _T0 + timedelta(seconds=_PRE_HEARTBEAT_TTL_SECONDS + GENERATION_SLOT_TTL_SECONDS)
+        clock.now = later
+
+        async def _refreshed() -> bool:
+            async with concurrent_session_factory() as probe:
+                leases = await _leases_of(probe, user_id)
+            return all(ensure_aware(lease.expires_at) > later for lease in leases)
+
+        # Give the heartbeat its chance; the assertion below is what decides.
+        await _wait_until(_refreshed)
+        async with concurrent_session_factory() as third:
+            refusal = await _refusal(third, user_id)
+            assert refusal == GENERATION_IN_PROGRESS, "a third generation was admitted"
+            assert await _lease_count(third, user_id) == _RATIFIED_CONCURRENT
+    finally:
+        finish.set()
+        await asyncio.gather(*holders)
+
+    async with concurrent_session_factory() as check:
+        assert await _lease_count(check, user_id) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_heartbeat")
+async def test_a_heartbeat_extends_the_lease_from_its_own_now(
+    db_session: AsyncSession, clock: _Clock
+) -> None:
+    """Each refresh moves ``expires_at`` to the refresh's now plus one TTL."""
+    user_id = await _make_user(db_session, "refresh@example.com")
+    later = _T0 + timedelta(hours=1)
+
+    async with generation_slot(db_session, user_id):
+        clock.now = later
+        expected = later + timedelta(seconds=GENERATION_SLOT_TTL_SECONDS)
+
+        async def _extended() -> bool:
+            await db_session.rollback()
+            leases = await _leases_of(db_session, user_id)
+            return [ensure_aware(lease.expires_at) for lease in leases] == [expected]
+
+        assert await _wait_until(_extended)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_heartbeat")
+async def test_a_failed_refresh_is_logged_and_the_generation_carries_on(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A refresh error is logged and retried next tick; it never fails the request."""
+    user_id = await _make_user(db_session, "blip@example.com")
+    real = open_lease_session
+
+    def _failed() -> bool:
+        return any(r.getMessage() == "generation_slot_refresh_failed" for r in caplog.records)
+
+    with caplog.at_level(logging.ERROR, logger=generation_guardrails.__name__):
+        async with generation_slot(db_session, user_id):
+            monkeypatch.setattr(
+                generation_guardrails, "open_lease_session", lambda _session: _BrokenSession()
+            )
+            assert await _wait_until(_failed)
+            monkeypatch.setattr(generation_guardrails, "open_lease_session", real)
+
+    assert await _lease_count(db_session, user_id) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_heartbeat")
+async def test_a_lease_reclaimed_from_under_a_live_generation_is_reported(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A refresh that finds its lease gone warns rather than silently over-admitting."""
+    user_id = await _make_user(db_session, "lost@example.com")
+
+    def _lost() -> bool:
+        return any(r.getMessage() == "generation_slot_lost" for r in caplog.records)
+
+    with caplog.at_level(logging.WARNING, logger=generation_guardrails.__name__):
+        async with generation_slot(db_session, user_id):
+            await db_session.execute(
+                delete(GenerationSlot).where(col(GenerationSlot.user_id) == user_id)
+            )
+            await db_session.commit()
+            assert await _wait_until(_lost)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("fast_heartbeat")
+async def test_the_heartbeat_stops_when_the_generation_ends(db_session: AsyncSession) -> None:
+    """No heartbeat outlives its generation, on a normal or an exception exit."""
+    user_id = await _make_user(db_session, "stopped@example.com")
+
+    def _heartbeats() -> list[asyncio.Task[object]]:
+        return [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == GENERATION_SLOT_HEARTBEAT_TASK and not task.done()
+        ]
+
+    async with generation_slot(db_session, user_id):
+        assert len(_heartbeats()) == 1
+    assert _heartbeats() == []
+
+    seen: list[int] = []
+
+    async def _fail_mid_flight() -> None:
+        async with generation_slot(db_session, user_id):
+            seen.append(len(_heartbeats()))
+            raise RuntimeError("mid-flight")
+
+    with pytest.raises(RuntimeError, match="mid-flight"):
+        await _fail_mid_flight()
+    assert seen == [1]
+    assert _heartbeats() == []
+    assert await _lease_count(db_session, user_id) == 0
 
 
 class _BrokenSession:

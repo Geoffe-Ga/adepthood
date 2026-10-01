@@ -32,13 +32,16 @@ A per-worker semaphore would admit ``WEB_CONCURRENCY`` x 2, double the
 ratified number at the default of two workers, so the slot is a lease row in
 ``generationslot`` with ``UNIQUE(user_id, slot)``: cross-worker by
 construction. It is taken before any charge, so a refusal never charges, and
-released on every exit. It ignores the limiter kill switch, because it is a
-cost guard rather than a throttle, and it fails closed: an error reading or
-writing the lease table refuses the generation with a 503.
+released on every exit. While held, a heartbeat refreshes the lease, so a live
+generation's slot never expires under it and only a crashed worker's lease is
+ever reclaimed. It ignores the limiter kill switch, because it is a cost guard
+rather than a throttle, and it fails closed: an error reading or writing the
+lease table at acquire refuses the generation with a 503.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -50,7 +53,7 @@ from typing import cast
 from fastapi import HTTPException
 from limits import RateLimitItemPerMinute
 from limits.strategies import MovingWindowRateLimiter
-from sqlalchemy import delete
+from sqlalchemy import CursorResult, delete, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col
@@ -63,8 +66,7 @@ from rate_limit import (
     rate_limiting_enabled,
     user_throttle_key,
 )
-from services.botmason import LLM_TIMEOUT_SECONDS, WORST_CASE_DIAL_SECONDS
-from services.creek_vault_client import VAULT_TOTAL_DEADLINE_SECONDS
+from services.botmason import LLM_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +80,22 @@ _GENERATION_BUCKET_SCOPE = "generation"
 # Decision record §1: "maximum 2 concurrent generations/user".
 MAX_CONCURRENT_GENERATIONS_PER_USER = 2
 
-# The most provider dials one generation can make: a resonance pass, its
-# corrective second pass, and completion detection.
-GENERATION_DIALS_PER_PASS = 3
-# How long a lease lives before another request may reclaim it. Only a crashed
-# worker's lease ever reaches it, because a live one is deleted when its
-# generation ends; it is sized so no live generation's dials can outlast it.
-GENERATION_SLOT_TTL_SECONDS = max(
-    WORST_CASE_DIAL_SECONDS * GENERATION_DIALS_PER_PASS, VAULT_TOTAL_DEADLINE_SECONDS
-)
+# How often a held lease pushes its ``expires_at`` forward. A live generation
+# can run for as long as it likes -- the slot is taken before ``hold_account``,
+# which waits with no timeout, and a vault pass chains handshake, reflect,
+# fallback and detection deadlines -- so no static TTL can be sized to outlast
+# it. The heartbeat makes "a live generation's lease never expires" hold by
+# construction instead of by arithmetic over every phase's deadline.
+GENERATION_SLOT_HEARTBEAT_SECONDS = 30.0
+# A lease lives this many heartbeats past its last refresh: two consecutive
+# refreshes can fail (a database blip) without the slot being reclaimed.
+GENERATION_SLOT_HEARTBEATS_PER_TTL = 3
+# How long a lease lives past its last refresh before another request may
+# reclaim it. Only a crashed worker's lease ever reaches it -- its heartbeat
+# died with it -- so this is also how long a crash can hold a slot.
+GENERATION_SLOT_TTL_SECONDS = GENERATION_SLOT_HEARTBEAT_SECONDS * GENERATION_SLOT_HEARTBEATS_PER_TTL
+# The heartbeat task's name, so a leak is findable among the loop's tasks.
+GENERATION_SLOT_HEARTBEAT_TASK = "generation_slot_heartbeat"
 # The server cannot know when the generation already in flight will finish, so
 # it advertises one provider-call timeout: the honest "try again shortly".
 GENERATION_IN_PROGRESS_RETRY_AFTER_SECONDS = int(LLM_TIMEOUT_SECONDS)
@@ -95,6 +104,11 @@ GENERATION_IN_PROGRESS_RETRY_AFTER_SECONDS = int(LLM_TIMEOUT_SECONDS)
 GENERATION_IN_PROGRESS = "generation_in_progress"
 # 503 detail: the lease table could not be read or written, so nothing is admitted.
 GENERATION_GUARD_UNAVAILABLE = "generation_guard_unavailable"
+
+
+def _utc_now() -> datetime:
+    """The lease clock: the wall clock in UTC, one seam for the expiry tests."""
+    return datetime.now(UTC)
 
 
 def _minute_window() -> MovingWindowRateLimiter:
@@ -176,7 +190,7 @@ async def _acquire(session: AsyncSession, user_id: int) -> int:
     holds. Raises 429 ``generation_in_progress`` when every slot is held and
     503 ``generation_guard_unavailable`` on any other database error.
     """
-    now = datetime.now(UTC)
+    now = _utc_now()
     expires_at = now + timedelta(seconds=GENERATION_SLOT_TTL_SECONDS)
     try:
         async with open_lease_session(session) as lease_session:
@@ -215,22 +229,81 @@ async def _release(session: AsyncSession, lease_id: int, user_id: int) -> None:
         )
 
 
+async def _refresh_lease(session: AsyncSession, lease_id: int, user_id: int) -> None:
+    """Push the lease's ``expires_at`` to one TTL from now; log, never raise, on failure.
+
+    A failed refresh is retried on the next heartbeat, and the TTL spans
+    :data:`GENERATION_SLOT_HEARTBEATS_PER_TTL` of them, so one database blip
+    never frees a live slot. A lease that is already gone -- reclaimed after
+    the loop stalled past the TTL -- cannot be taken back without racing a
+    newer holder for its slot, so it is reported rather than re-inserted.
+    """
+    expires_at = _utc_now() + timedelta(seconds=GENERATION_SLOT_TTL_SECONDS)
+    try:
+        async with open_lease_session(session) as lease_session:
+            result = await lease_session.execute(
+                update(GenerationSlot)
+                .where(col(GenerationSlot.id) == lease_id)
+                .values(expires_at=expires_at)
+            )
+            await lease_session.commit()
+    except SQLAlchemyError:
+        logger.exception(
+            "generation_slot_refresh_failed", extra={"user_id": user_id, "lease_id": lease_id}
+        )
+        return
+    if cast("CursorResult[object]", result).rowcount == 0:
+        logger.warning("generation_slot_lost", extra={"user_id": user_id, "lease_id": lease_id})
+
+
+async def _keep_lease_alive(
+    session: AsyncSession, lease_id: int, user_id: int, stop: asyncio.Event
+) -> None:
+    """Refresh the lease every :data:`GENERATION_SLOT_HEARTBEAT_SECONDS` until ``stop`` is set.
+
+    Stopped by the event rather than by cancellation, so a refresh already in
+    flight always finishes its transaction instead of being torn down mid-write.
+    """
+    while True:
+        try:
+            await asyncio.wait_for(stop.wait(), GENERATION_SLOT_HEARTBEAT_SECONDS)
+        except TimeoutError:
+            await _refresh_lease(session, lease_id, user_id)
+        else:
+            return
+
+
 @asynccontextmanager
 async def generation_slot(session: AsyncSession, user_id: int) -> AsyncIterator[None]:
     """Hold one of ``user_id``'s concurrent generation slots for the body.
 
-    Acquire before any charge; release on every exit. On an exception exit the
-    request session is rolled back *before* the release -- the rollback
-    :func:`database.get_session` performs a moment later anyway, moved earlier
-    so the release never waits behind, or commits, the route's own uncommitted
-    writes. A normal exit rolls nothing back: the route has already committed,
-    and expiring what it loaded would break the response it is building.
+    Acquire before any charge; release on every exit. While the body runs, a
+    heartbeat task keeps the lease's ``expires_at`` one TTL ahead, so however
+    long the generation takes -- waiting on ``hold_account``, chaining vault
+    and provider deadlines -- its slot is never reclaimed from under it; only a
+    crashed worker's lease, whose heartbeat died with it, ever expires.
+
+    On an exception exit the request session is rolled back *before* the
+    release -- the rollback :func:`database.get_session` performs a moment
+    later anyway, moved earlier so the release never waits behind, or commits,
+    the route's own uncommitted writes. A normal exit rolls nothing back: the
+    route has already committed, and expiring what it loaded would break the
+    response it is building.
     """
     lease_id = await _acquire(session, user_id)
+    stop = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _keep_lease_alive(session, lease_id, user_id, stop), name=GENERATION_SLOT_HEARTBEAT_TASK
+    )
     try:
         yield
     except BaseException:
         await session.rollback()
         raise
     finally:
-        await _release(session, lease_id, user_id)
+        stop.set()
+        try:
+            # Let a refresh in flight commit before the release deletes the row.
+            await asyncio.wait({heartbeat})
+        finally:
+            await _release(session, lease_id, user_id)

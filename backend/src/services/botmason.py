@@ -239,14 +239,6 @@ _RETRY_BASE_DELAY = 1.0  # seconds; doubles on each attempt
 # against it (the generation guardrails' honest ``Retry-After``, #623).
 LLM_TIMEOUT_SECONDS = _LLM_TIMEOUT_SECONDS
 
-# The longest one :func:`generate_response` dial can take: every attempt runs
-# to its timeout, with the doubling backoff slept between them. 30s x 3 + 1s +
-# 2s = 93s. The generation lease's TTL is derived from it, so a slot held by a
-# crashed worker frees itself once no live dial could still be using it.
-WORST_CASE_DIAL_SECONDS = _LLM_TIMEOUT_SECONDS * (_MAX_RETRIES + 1) + sum(
-    _RETRY_BASE_DELAY * (2**attempt) for attempt in range(_MAX_RETRIES)
-)
-
 # Statuses worth another attempt below the server-error floor: request timeout,
 # lock timeout, and rate limit. Everything at or above the floor is retryable as
 # a range rather than a set, because providers keep minting 5xx outside the RFC
