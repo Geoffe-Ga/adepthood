@@ -114,7 +114,7 @@ export function InboxList({ inbox, selectedId, onSelect }: InboxListProps): Reac
           <Button
             label={copy.RETRY}
             variant="secondary"
-            onPress={inbox.reload}
+            onPress={inbox.retry}
             testID="inbox-retry"
           />
         </View>

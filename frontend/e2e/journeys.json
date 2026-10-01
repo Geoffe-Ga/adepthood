@@ -1213,7 +1213,7 @@
   },
   {
     "id": "journal.corpus-survives-in-the-drawer-after-the-band-is-set-aside",
-    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering-to-import arm are pinned in the adjacent component suites because the browser starts from only one readiness state.",
+    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering-to-import arm are pinned in the adjacent component suites because the browser starts from only one readiness state. Retrying a failed 'Load older entries' in the same drawer asks again for the missing page and keeps the entries already shown (#2997); pinned in JournalDrawer.test.tsx because the e2e lane cannot force a mid-list failure.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalDrawer.tsx",
       "client": ["corpus"],
