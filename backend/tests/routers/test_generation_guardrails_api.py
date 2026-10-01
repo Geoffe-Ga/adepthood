@@ -324,6 +324,12 @@ async def test_cached_letter_reopens_are_free_and_never_spend_the_bucket(
     _assert_minute_refusal(
         await _resonate(async_client, headers, await _entry(db_session, user_id))
     )
+    # A spent minute still never blocks reopening a letter already bought (from a
+    # third address, past the second one's per-address budget).
+    third_address = {**headers, "X-Forwarded-For": "198.51.100.3"}
+    reopened = await _essay(async_client, third_address, note_id)
+    assert reopened.status_code == HTTPStatus.OK, reopened.text
+    assert reopened.json()["essay"] is not None
 
 
 @pytest.mark.asyncio
@@ -363,6 +369,11 @@ async def test_free_exits_never_spend_the_bucket(
     _assert_minute_refusal(
         await _resonate(async_client, headers, await _entry(db_session, user_id))
     )
+    # Once spent, the free exits still answer as themselves rather than 429.
+    assert (await _resonate(async_client, headers, intimate_entry)).status_code == HTTPStatus.OK
+    assert (await _essay(async_client, headers, intimate_note)).status_code == HTTPStatus.OK
+    unpriced = await _essay(async_client, headers, unpriced_note, {"price_acknowledged": False})
+    assert unpriced.status_code == HTTPStatus.CONFLICT
 
 
 @pytest.mark.asyncio
