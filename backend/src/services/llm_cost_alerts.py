@@ -48,7 +48,16 @@ def _usd(value: Decimal | None) -> str | None:
 
 
 async def _generation_costs(session: AsyncSession, since: datetime) -> tuple[list[Decimal], int]:
-    """Return one summed cost per priced charged generation, and the unpriced count."""
+    """Return one summed cost per priced charged generation, and the unpriced count.
+
+    The window filters rows, not generations, and is closed at ``since``. A
+    generation's calls all land within its one request, so only a generation
+    in flight at the instant ``since`` names can straddle it, and then only its
+    in-window calls are summed. Filtering whole generations with ``HAVING
+    MIN(timestamp) >= since`` would make that sample exact but must aggregate
+    every charged row ever written instead of reading the indexed window; for
+    a rolling 30-day p95 a sub-second edge is not worth that scan.
+    """
     rows = (
         await session.execute(
             select(

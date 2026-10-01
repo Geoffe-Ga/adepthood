@@ -28,6 +28,7 @@ from sqlmodel import col
 from domain.generation_cost import GENERATION_COST_WINDOW_DAYS
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
+from services.llm_cost_alerts import charged_generation_cost_report
 from tests.helpers.log_lines import production_line, records_for
 
 _PATH = "/admin/generation-cost"
@@ -44,6 +45,7 @@ class _Row:
     cost: Decimal | None
     charged: bool | None = True
     age_days: float = 1
+    age: timedelta | None = None
 
 
 async def _signup(client: AsyncClient, email: str) -> dict[str, str]:
@@ -63,17 +65,18 @@ async def _signup_admin(client: AsyncClient, db_session: AsyncSession) -> dict[s
     return headers
 
 
-async def _seed(db_session: AsyncSession, rows: list[_Row]) -> None:
+async def _seed(db_session: AsyncSession, rows: list[_Row], *, now: datetime | None = None) -> None:
     user = User(email="cost_seed@example.com", password_hash="x")
     db_session.add(user)
     await db_session.flush()
     assert user.id is not None
-    now = datetime.now(UTC)
+    clock = datetime.now(UTC) if now is None else now
     for row in rows:
+        age = timedelta(days=row.age_days) if row.age is None else row.age
         db_session.add(
             LLMUsageLog(
                 user_id=user.id,
-                timestamp=now - timedelta(days=row.age_days),
+                timestamp=clock - age,
                 provider="openai",
                 model="gpt-4o-mini",
                 prompt_tokens=1,
@@ -244,3 +247,35 @@ async def test_an_empty_window_reports_no_percentile_and_no_warning(
     assert body["p95_cost_usd"] is None
     assert body["over_threshold"] is False
     assert records_for(caplog.records, _WARNING) == []
+
+
+# A fixed clock, so a row can sit exactly on the window's edge.
+_FROZEN_NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
+_WINDOW = timedelta(days=GENERATION_COST_WINDOW_DAYS)
+# The column's resolution: the smallest step past the edge Postgres can store.
+_ONE_TICK = timedelta(microseconds=1)
+
+
+@pytest.mark.asyncio
+async def test_the_window_includes_its_edge_and_excludes_one_tick_older(
+    db_session: AsyncSession,
+) -> None:
+    """A row stamped exactly ``now - window`` is a sample; one microsecond older is not.
+
+    The window is closed at its far edge (``>=``). Each generation is one row
+    here, so the boundary is read without a multi-call generation straddling it.
+    """
+    await _seed(
+        db_session,
+        [
+            _Row(generation="on-edge", cost=Decimal("0.010000"), age=_WINDOW),
+            _Row(generation="past-edge", cost=Decimal("0.900000"), age=_WINDOW + _ONE_TICK),
+        ],
+        now=_FROZEN_NOW,
+    )
+
+    report = await charged_generation_cost_report(db_session, now=_FROZEN_NOW)
+
+    assert report.sample_count == 1
+    assert report.p95_cost_usd == Decimal("0.010000")
+    assert report.over_threshold is False
