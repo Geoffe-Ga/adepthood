@@ -248,6 +248,54 @@ async def test_sixth_mixed_generation_in_a_minute_is_refused_and_costs_nothing(
     assert await _leases(db_session) == 0
 
 
+def _admit_past_the_peek(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let a request through the admission peek, as if the minute filled after it.
+
+    The peek and the atomic hit are separate calls, so a request on another
+    worker thread (or another tab) can spend the last generation between them.
+    Silencing the peek puts the request exactly there: admitted, slotted and
+    charged, with only the hit left to refuse it.
+    """
+    monkeypatch.setattr(journal_router, "require_generation_minute_available", lambda _user: None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["resonance", "essay"])
+async def test_a_minute_spent_after_admission_refuses_at_payment_and_costs_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    provider: _Provider,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+) -> None:
+    """The hit refuses after the charge is staged, so the charge never commits.
+
+    429 ``rate_limit_exceeded``; the wallet and its audit trail unchanged; no
+    provider dial; no lease left behind.
+    """
+    headers, user_id = await _signup(async_client, f"late_{route}")
+    await _spend_the_minute(async_client, db_session, headers, user_id)
+    if route == "essay":
+        note_id = await _note(db_session, user_id, body=_REFUSED_BODY)
+    else:
+        entry_id = await _entry(db_session, user_id, body=_REFUSED_BODY)
+    _admit_past_the_peek(monkeypatch)
+    calls = provider.calls
+    wallet = await _wallet(db_session, user_id)
+    rows = await _audit_rows(db_session, user_id)
+
+    if route == "essay":
+        resp = await _essay(async_client, headers, note_id)
+    else:
+        resp = await _resonate(async_client, headers, entry_id)
+
+    _assert_minute_refusal(resp)
+    assert provider.calls == calls
+    assert await _wallet(db_session, user_id) == wallet
+    assert await _audit_rows(db_session, user_id) == rows
+    assert await _leases(db_session) == 0
+
+
 @pytest.mark.asyncio
 async def test_a_second_user_behind_the_same_address_is_unaffected(
     async_client: AsyncClient, db_session: AsyncSession, provider: _Provider
