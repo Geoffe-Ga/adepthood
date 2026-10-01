@@ -18,22 +18,29 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
+from dependencies.creek_vault import get_creek_vault_client
+from domain.creek_vault import CreekCapability, VaultReflection, VaultTierCeiling
+from main import app
 from models.goal import Goal
 from models.habit import Habit
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.user import User
-from models.wallet_audit import REASON_SPEND_MONTHLY, WalletAudit
+from models.wallet_audit import (
+    REASON_REFUND_FAILED_RESONANCE,
+    REASON_SPEND_MONTHLY,
+    WalletAudit,
+)
 from routers import journal
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
@@ -43,6 +50,7 @@ from tests.test_account_egress_barrier import (
     delete_account_recording_order,
     signup,
 )
+from tests.test_journal_vault_write import SequencedVaultClient
 
 # A server-paid first letter must say the writer saw its price (#623); without
 # it the route answers 409 before it charges or dials anything.
@@ -172,10 +180,16 @@ async def _seed_marginalia(
         return int(note.id)
 
 
-async def _create_entry(client: AsyncClient, headers: dict[str, str]) -> int:
-    """Write one personal entry and return its id."""
+async def _create_entry(
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    body: str = _BODY,
+    classification: str = "personal",
+) -> int:
+    """Write one entry (personal unless told otherwise) and return its id."""
     created = await client.post(
-        "/journal/", json={"message": _BODY, "classification": "personal"}, headers=headers
+        "/journal/", json={"message": body, "classification": classification}, headers=headers
     )
     assert created.status_code == HTTPStatus.CREATED
     return int(created.json()["id"])
@@ -504,3 +518,348 @@ async def test_two_concurrent_first_asks_charge_and_dial_exactly_once(
         stored = await session.get(Marginalia, note_id)
         assert stored is not None
         assert stored.essay == letter
+
+
+# ---------------------------------------------------------------------------
+# The resonance pass re-reads the tier under its own hold (#2998)
+# ---------------------------------------------------------------------------
+
+#: A caller-owned key, so the race can be run with nobody but the writer paying.
+_BYOK_HEADER = "X-LLM-API-Key"
+_BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
+
+#: A body the local care screen flags, so the bail must still surface care.
+_DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight."
+
+#: What every in-hold refusal leaves the provider: nothing at all.
+_NOTHING_SENT: list[str] = []
+
+
+class _RecordingReflectVault(SequencedVaultClient):
+    """A connected vault that can withdraw a copy *and* reflect, recording each reflect.
+
+    It extends the write-path double rather than the read-path one because the
+    intimate PATCH must withdraw the remote copy to answer 200: a vault without
+    ``JOURNAL_WITHDRAW`` answers 503 and the race this file stages never happens.
+    """
+
+    def __init__(self) -> None:
+        """Advertise journal, withdrawal, classification and reflection."""
+        super().__init__(
+            capabilities=frozenset(
+                {
+                    CreekCapability.JOURNAL,
+                    CreekCapability.JOURNAL_WITHDRAW,
+                    CreekCapability.CLASSIFY,
+                    CreekCapability.REFLECT,
+                }
+            )
+        )
+        self.reflect_calls: list[tuple[str, VaultTierCeiling]] = []
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
+        """Record what the vault was asked to read, at what tier, and say nothing."""
+        self.reflect_calls.append((body, tier_ceiling))
+        return await super().reflect(body, tier_ceiling)
+
+
+async def _race_the_pass_against(
+    client: AsyncClient,
+    pass_headers: dict[str, str],
+    entry_id: int,
+    door: _BarrierDoor,
+    mutate: Callable[[], Awaitable[Response]],
+) -> Response:
+    """Hold the pass at the barrier's door, let ``mutate`` win it, then let the pass in.
+
+    Returns the pass's response; ``mutate``'s own status is asserted here, so a
+    competing request that never succeeded cannot pass for a race that happened.
+    """
+    passing = asyncio.create_task(
+        client.post(f"/journal/{entry_id}/resonance", headers=pass_headers)
+    )
+    await asyncio.wait_for(door.reached.wait(), timeout=_SETTLE_TIMEOUT_SECONDS)
+    mutated = await mutate()
+    assert mutated.is_success, mutated.text
+    door.opened.set()
+    return await asyncio.wait_for(passing, timeout=_SETTLE_TIMEOUT_SECONDS)
+
+
+def _arm_the_door(monkeypatch: pytest.MonkeyPatch) -> _BarrierDoor:
+    """Pause the first barrier acquisition taken after this call."""
+    door = _BarrierDoor()
+    monkeypatch.setattr(
+        journal, "hold_account", _pause_at_the_first_hold(journal.hold_account, door)
+    )
+    return door
+
+
+def _released_provider(monkeypatch: pytest.MonkeyPatch) -> PausedProvider:
+    """A provider double that never blocks, so a wrong dial fails an assert, not a timeout."""
+    provider = PausedProvider("[]")
+    provider.release.set()
+    monkeypatch.setattr(marginalia_service, "generate_response", provider)
+    return provider
+
+
+def _connect_vault(monkeypatch: pytest.MonkeyPatch) -> _RecordingReflectVault:
+    """Connect a recording vault for every request in this test."""
+    vault = _RecordingReflectVault()
+    monkeypatch.setitem(app.dependency_overrides, get_creek_vault_client, lambda: vault)
+    return vault
+
+
+def _make_intimate(
+    client: AsyncClient, headers: dict[str, str], entry_id: int
+) -> Callable[[], Awaitable[Response]]:
+    """The PATCH that makes the entry intimate."""
+    return lambda: client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+
+async def _wallet(factory: async_sessionmaker[AsyncSession], user_id: int) -> tuple[int, int]:
+    """The account's (monthly messages used, offering balance)."""
+    async with factory() as session:
+        user = await session.get(User, user_id)
+        assert user is not None
+        return user.monthly_messages_used, user.offering_balance
+
+
+async def _audit_reasons(factory: async_sessionmaker[AsyncSession], user_id: int) -> list[str]:
+    """Every wallet-audit reason recorded for the account, oldest first."""
+    async with factory() as session:
+        rows = await session.execute(
+            select(WalletAudit.reason)
+            .where(col(WalletAudit.user_id) == user_id)
+            .order_by(col(WalletAudit.id))
+        )
+        return list(rows.scalars())
+
+
+async def _marginalia_count(factory: async_sessionmaker[AsyncSession], entry_id: int) -> int:
+    """How many margin notes the entry holds."""
+    async with factory() as session:
+        rows = await session.execute(
+            select(Marginalia.id).where(col(Marginalia.journal_entry_id) == entry_id)
+        )
+        return len(list(rows.scalars()))
+
+
+def _assert_private_and_unspent(answered: Response) -> None:
+    """The pass answered with the private floor's shape: 200, private, nothing produced."""
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    payload = answered.json()
+    assert payload["private"] is True
+    assert payload["marginalia"] == []
+    assert payload["suggestions"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_resonance_pass_never_dials_a_body_the_patch_already_made_intimate(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PATCH to intimate that wins the pass's barrier stops the whole pass (#2998).
+
+    The pass reads the INTIMATE floor before it charges and before it waits for
+    the barrier. ``PATCH /journal/{entry_id}`` takes the same exclusive hold, so a
+    PATCH that queues first completes, answers 200, and only then lets the pass
+    through. Neither the reflection nor completion detection may then carry the
+    now-intimate body, and the BotMason unit the pass already committed comes back.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_tier")
+    user_id = await _user_id(concurrent_session_factory, email)
+    await _seed_detection_candidate(concurrent_session_factory, user_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    before = await _wallet(concurrent_session_factory, user_id)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _make_intimate(concurrent_async_client, headers, entry_id),
+    )
+
+    assert provider.bodies == _NOTHING_SENT, (
+        f"a body the writer had already marked intimate -- in a PATCH that answered "
+        f"200 before this dial -- was handed to a model anyway: {provider.bodies}"
+    )
+    _assert_private_and_unspent(answered)
+    assert answered.json()["care"] is None
+    assert await _marginalia_count(concurrent_session_factory, entry_id) == 0
+    assert await _wallet(concurrent_session_factory, user_id) == before
+    assert await _audit_reasons(concurrent_session_factory, user_id) == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_FAILED_RESONANCE,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_writer_paid_pass_never_dials_a_body_the_patch_already_made_intimate(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor is about the body, not the payer: a BYOK pass stops too.
+
+    An intimate entry is never sent to a language model *whoever pays*. With the
+    writer's own key there is no BotMason unit to reverse, so the wallet is never
+    touched at all -- not even by a spend-and-refund pair.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_tier_byok")
+    user_id = await _user_id(concurrent_session_factory, email)
+    await _seed_detection_candidate(concurrent_session_factory, user_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    before = await _wallet(concurrent_session_factory, user_id)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        {**headers, _BYOK_HEADER: _BYOK_KEY},
+        entry_id,
+        door,
+        _make_intimate(concurrent_async_client, headers, entry_id),
+    )
+
+    assert provider.bodies == _NOTHING_SENT, (
+        f"a writer-paid pass sent a now-intimate body to a model: {provider.bodies}"
+    )
+    _assert_private_and_unspent(answered)
+    assert await _wallet(concurrent_session_factory, user_id) == before
+    assert await _audit_reasons(concurrent_session_factory, user_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_connected_vault_is_never_asked_to_reflect_a_body_made_intimate_mid_pass(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The vault is a model too, and its cloud fallback is the cloud: neither is dialled.
+
+    ``select_reflection_llm`` has no intimate gate of its own -- it would bind an
+    intimate-tier vault reflection whose degrade falls back to the cloud -- so the
+    pass must stop before it is ever asked.
+    """
+    provider = _released_provider(monkeypatch)
+    vault = _connect_vault(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_tier_vault")
+    user_id = await _user_id(concurrent_session_factory, email)
+    await _seed_detection_candidate(concurrent_session_factory, user_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _make_intimate(concurrent_async_client, headers, entry_id),
+    )
+
+    assert vault.withdraw_calls == [entry_id], "the PATCH never withdrew the vault copy"
+    assert vault.reflect_calls == [], f"the vault was asked to reflect: {vault.reflect_calls}"
+    assert provider.bodies == _NOTHING_SENT
+    _assert_private_and_unspent(answered)
+
+
+@pytest.mark.asyncio
+async def test_care_still_surfaces_when_the_pass_stops_for_a_mid_pass_intimate_patch(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-hold bail is a privacy floor, and the floor never suppresses care."""
+    provider = _released_provider(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, "pass_tier_care")
+    entry_id = await _create_entry(concurrent_async_client, headers, body=_DISTRESS_BODY)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        _make_intimate(concurrent_async_client, headers, entry_id),
+    )
+
+    assert provider.bodies == _NOTHING_SENT
+    _assert_private_and_unspent(answered)
+    assert answered.json()["care"] is not None, "the bail dropped the care surface"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_whose_entry_was_deleted_while_it_waited_answers_404_and_refunds(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deleted entry is gone, not private: 404, no dial, and the unit comes back."""
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "pass_deleted")
+    user_id = await _user_id(concurrent_session_factory, email)
+    await _seed_detection_candidate(concurrent_session_factory, user_id)
+    entry_id = await _create_entry(concurrent_async_client, headers)
+    before = await _wallet(concurrent_session_factory, user_id)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        lambda: concurrent_async_client.delete(f"/journal/{entry_id}", headers=headers),
+    )
+
+    assert provider.bodies == _NOTHING_SENT, f"a deleted entry was dialled: {provider.bodies}"
+    assert answered.status_code == HTTPStatus.NOT_FOUND, answered.text
+    assert await _wallet(concurrent_session_factory, user_id) == before
+    assert await _marginalia_count(concurrent_session_factory, entry_id) == 0
+
+
+@pytest.mark.parametrize(
+    ("admitted", "fresh", "bound"),
+    [
+        ("public", "personal", VaultTierCeiling.PERSONAL),
+        ("personal", "public", VaultTierCeiling.OPEN),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_mid_pass_reclassification_binds_the_tier_the_writer_now_allows(
+    concurrent_async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    admitted: str,
+    fresh: str,
+    bound: VaultTierCeiling,
+) -> None:
+    """The fresh read is bound as-is: never the stale tier, never the wider of the two.
+
+    A writer who narrows PERSONAL to PUBLIC mid-pass gets an OPEN-ceiling vault
+    read, not the PERSONAL one their earlier choice allowed; a writer who moves
+    PUBLIC to PERSONAL still gets a reflection, at the PERSONAL ceiling.
+    """
+    _released_provider(monkeypatch)
+    vault = _connect_vault(monkeypatch)
+    headers, _email = await signup(concurrent_async_client, f"pass_{admitted}_{fresh}")
+    entry_id = await _create_entry(concurrent_async_client, headers, classification=admitted)
+    door = _arm_the_door(monkeypatch)
+
+    answered = await _race_the_pass_against(
+        concurrent_async_client,
+        headers,
+        entry_id,
+        door,
+        lambda: concurrent_async_client.patch(
+            f"/journal/{entry_id}", json={"classification": fresh}, headers=headers
+        ),
+    )
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert answered.json()["private"] is False
+    assert vault.reflect_calls, "the reclassified entry was never reflected at all"
+    assert {tier for _body, tier in vault.reflect_calls} == {bound}

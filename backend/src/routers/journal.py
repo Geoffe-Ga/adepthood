@@ -1105,6 +1105,14 @@ async def _load_user_entry(
     return result.scalars().first()
 
 
+async def _require_user_entry(session: AsyncSession, entry_id: int, user_id: int) -> JournalEntry:
+    """Load the caller's own non-deleted entry, or raise the uniform 404."""
+    entry = await _load_user_entry(session, entry_id, user_id)
+    if entry is None:
+        raise not_found("journal_entry")
+    return entry
+
+
 async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> Grounding:
     """Gather the reflection's context and record which source answered.
 
@@ -1457,12 +1465,16 @@ def _unspent_resonance(
 async def _private_response(
     session: AsyncSession, user_id: int, care: CareResponse | None
 ) -> ResonanceResponse:
-    """Resonance response for an intimate entry: no cloud call, no charge.
+    """Resonance response for an intimate entry: no model call, no net charge.
 
-    An ``intimate`` entry is never sent to a cloud LLM (issue #895), so this is
-    returned *before* any wallet deduction or LLM construction: no marginalia,
-    no suggestions, unspent balances (read fresh, like :func:`_care_only_response`,
-    with no ``preflight_deduction``), and the non-shaming private message.
+    An ``intimate`` entry is never sent to a language model (issue #895), so this
+    is returned *before* any LLM construction: no marginalia, no suggestions,
+    unspent balances (read fresh, like :func:`_care_only_response`), and the
+    non-shaming private message. On the usual path it is returned before any
+    wallet deduction too. When the entry only became intimate while the pass
+    waited for the account barrier, :func:`_withdrawn_under_hold` has already
+    refunded the committed deduction before calling this, so the balances it
+    reads are unspent on that path as well (#2998).
 
     ``care`` is the locally-screened surface (never None-forced): a distressed
     intimate entry still points to human/professional support, with no cloud
@@ -1472,6 +1484,47 @@ async def _private_response(
     return _unspent_resonance(
         user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
     )
+
+
+async def _withdrawn_under_hold(
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    spent: SpendResult | None,
+    care: CareResponse | None,
+) -> ResonanceResponse | None:
+    """Re-read the entry under the pass's hold; settle and answer if it is no longer passable.
+
+    The pass reads the intimate floor before it charges and before it waits
+    for :func:`hold_account`. ``PATCH /journal/{entry_id}`` carrying
+    ``classification`` takes that same exclusive hold, so a PATCH that queues
+    first completes in full and answers 200 before the pass gets in. A dial
+    made from the pre-hold reading would then hand a now-intimate body to a
+    language model (#2998). The essay route re-reads under its hold for the
+    same reason (#623).
+
+    * A row deleted while the pass waited is gone, not private: any committed
+      BotMason unit is refunded and the caller gets the uniform 404.
+    * A row now ``intimate`` stops the whole pass: no vault, no cloud
+      reflection, no completion detection. Any committed unit is refunded and
+      the private, unspent response comes back, still carrying ``care``,
+      because the privacy floor never suppresses crisis support.
+
+    Otherwise this returns ``None`` and the refreshed ``entry.classification``
+    is what the caller binds. The fresh value is used as-is, never the wider
+    of the two readings: a lower classification maps to a narrower vault
+    ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
+    Tiers here only ever tighten what is sent.
+    """
+    await session.refresh(entry)
+    await session.commit()
+    if entry.deleted_at is not None:
+        await _refund_failed_pass(session, entry.user_id, spent)
+        raise not_found("journal_entry")
+    if entry.classification == JournalClassification.INTIMATE:
+        await _refund_failed_pass(session, entry.user_id, spent)
+        return await _private_response(session, entry.user_id, care)
+    return None
 
 
 async def _care_only_response(
@@ -1857,14 +1910,13 @@ async def run_resonance(
     would hand the writer exactly the model prose the guard refused. The
     any committed BotMason deduction is refunded, so the pass costs them nothing.
     """
-    entry = await _load_user_entry(session, entry_id, current_user)
-    if entry is None:
-        raise not_found("journal_entry")
+    entry = await _require_user_entry(session, entry_id, current_user)
     message = _sanitize_message(entry.message)
-    # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM.
-    # Decided from the *persisted* classification (never client-supplied) and
-    # returned here — before wallet charge, LLM construction, or usage-log write —
-    # so the cloud is provably unreachable for intimate entries. The LOCAL care
+    # Privacy floor (issue #895): an intimate entry is NEVER sent to a language
+    # model, whoever pays. Decided from the *persisted* classification (never
+    # client-supplied) and returned here — before wallet charge, LLM construction,
+    # or usage-log write — and checked again under the account hold below, where
+    # a PATCH that won the barrier may have made the entry intimate (#2998). The LOCAL care
     # screen (pure; no cloud/charge/log) still runs, so the privacy floor never
     # suppresses crisis support (NORTH-STAR §10) — the same screen feeds both
     # the intimate and non-intimate paths.
@@ -1894,6 +1946,9 @@ async def run_resonance(
     # waits only for the outbound half rather than for the wallet arithmetic.
     async with hold_account(session, current_user):
         await ensure_account_live(session, current_user)
+        withdrawn = await _withdrawn_under_hold(session, entry, spent=spent, care=care)
+        if withdrawn is not None:
+            return withdrawn
         reflection_llm = await select_reflection_llm(
             clients.vault_client,
             body=message,
