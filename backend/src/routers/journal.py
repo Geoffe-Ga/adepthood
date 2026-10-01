@@ -1521,6 +1521,12 @@ async def _withdrawn_under_hold(
     ceiling, so a writer who narrows the tier mid-pass gets the narrower read.
     Tiers here only ever tighten what is sent.
 
+    Completion detection (``POST /journal/{entry_id}/suggestions/detect``) is
+    the second caller (#3008). It waits for the same hold behind the same
+    PATCH and DELETE, but it is uncharged, so it passes ``spent=None`` and the
+    "refund" is a bare rollback. On ``True`` it answers
+    ``{items: [], checked: false}`` rather than :func:`_private_response`.
+
     Every path out of here has released the pooled connection -- the commit
     after the refresh, or the refund's own rollback and commit -- so nothing
     is held across the dials that follow.
@@ -2246,13 +2252,12 @@ async def _detect_fresh_suggestions(
     session: AsyncSession,
     *,
     entry: JournalEntry,
-    message: str,
     inputs: DetectionInputs,
     api_key_header: str | None,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset.
 
-    The dial carries ``message`` -- this account's *stored* entry body -- to a
+    The dial carries this account's *stored* entry body to a
     cloud provider, which is the same egress the vault sites take the account
     barrier for, by a different transport. Ordering it against erasure is
     therefore the same rule, not a new one; the only reason this site went
@@ -2264,14 +2269,29 @@ async def _detect_fresh_suggestions(
     the outbound half. The persistence stays inside it for the same reason the
     liveness read exists at all: a suggestion row written for an account that
     has already been erased is a ghost row nobody owns.
+
+    The tier and the body are re-read *under* the hold, after the liveness read
+    (so an erased account still answers 401). ``PATCH /journal/{entry_id}`` --
+    reclassifying or editing the body -- and ``DELETE`` take the same exclusive
+    hold and can answer 200 while this pass waits. A row now intimate sends
+    nothing, neither its body nor the names of the writer's habits and
+    practices, and answers ``checked: false``; a deleted row answers the uniform
+    404; otherwise the body dialled is the refreshed one. The re-read commits,
+    so no connection is held across the dial (#3008).
     """
     api_key = resolve_chat_api_key(api_key_header)
     llm = BotmasonResonanceLLM(api_key)
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
+        if await _withdrawn_under_hold(session, entry, spent=None):
+            return CompletionDetectionResponse(items=[], checked=False)
         return await _detect_and_persist(
-            session, entry=entry, message=message, inputs=inputs, llm=llm
+            session,
+            entry=entry,
+            message=_sanitize_message(entry.message),
+            inputs=inputs,
+            llm=llm,
         )
 
 
@@ -2320,11 +2340,13 @@ async def detect_entry_suggestions(
     habit/practice offer. Intimate entries keep their privacy floor and never
     leave the process. Provider failures remain best-effort, with ``checked``
     telling the client whether an empty result really means "no match".
+
+    The INTIMATE check here is only the cheap fast path: the authoritative
+    floor is re-read under the account hold, just before the dial (#3008).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
-    message = _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
         return CompletionDetectionResponse(items=[], checked=False)
 
@@ -2338,7 +2360,6 @@ async def detect_entry_suggestions(
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
-        message=message,
         inputs=inputs,
         api_key_header=x_llm_api_key,
     )
