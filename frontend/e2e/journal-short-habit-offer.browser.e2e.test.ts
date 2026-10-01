@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import {
   askForResonance,
   backendUrl,
+  dayKeyIn,
   seedHabit,
   sessionFor,
   signUp,
@@ -50,16 +51,6 @@ function writtenDay(dayKey: string): string {
     day: 'numeric',
     timeZone: 'UTC',
   });
-}
-
-/**
- * The day an instant falls on in `timeZone`, the way the server buckets one.
- *
- * `en-CA` is the locale that formats as `YYYY-MM-DD`, which is the shape the
- * backend serialises a `date` column in.
- */
-function dayKeyIn(instant: string, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date(instant));
 }
 
 test('a failed short-entry reflection still offers and checks off a completed habit', async ({

@@ -120,6 +120,29 @@ export async function sessionFor(
   return { token: body.token, timezone: body.timezone ?? 'UTC' };
 }
 
+/**
+ * The day an instant falls on in `timeZone`, the way the server buckets one.
+ *
+ * `en-CA` is the locale that formats as `YYYY-MM-DD`, which is the shape the
+ * backend serialises a `date` column in -- and the shape the app's
+ * `todayInUserTZ` hands back for the account's zone.
+ */
+export function dayKeyIn(instant: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date(instant));
+}
+
+/**
+ * The calendar day after `dayKey`, as `YYYY-MM-DD`. Calendar math through
+ * `Date.UTC`, not `+ 86_400_000`, so a DST transition cannot skip or repeat a day.
+ */
+export function nextDayKey(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`not a YYYY-MM-DD day key: ${dayKey}`);
+  }
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}
+
 export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
   return (await sessionFor(request, email)).token;
 }
