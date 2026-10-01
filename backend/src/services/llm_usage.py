@@ -218,7 +218,8 @@ async def record_llm_usage(
     user_id: int,
     journal_entry_id: int | None,
     responses: Sequence[LLMResponse],
-) -> None:
+    generation: GenerationKey,
+) -> GenerationUsage:
     """Stage an ``LLMUsageLog`` row for each real (non-stub) response.
 
     ``journal_entry_id`` is the entry the calls were about — the user's source
@@ -228,10 +229,14 @@ async def record_llm_usage(
     single-page journal transcription), which still meters its cost.  Stub
     responses are skipped (zero real tokens, no pricing-table lookup).  No commit
     is issued here; the row shares the caller's transaction with the reflection.
+
+    ``generation`` is required so no caller can meter a call without saying
+    which generation it belongs to and whether the server paid: every row is
+    stamped with both (#623 PR3). Returns the summed usage the caller's
+    settlement line reports, priced once from the same estimates the rows hold.
     """
-    for response in responses:
-        if response.provider == STUB_PROVIDER_NAME:
-            continue
+    priced = _priced(responses)
+    for response, cost in priced:
         session.add(
             LLMUsageLog(
                 user_id=user_id,
@@ -241,8 +246,9 @@ async def record_llm_usage(
                 prompt_tokens=response.prompt_tokens,
                 completion_tokens=response.completion_tokens,
                 total_tokens=response.total_tokens,
-                estimated_cost_usd=estimate_cost_usd(
-                    response.model, response.prompt_tokens, response.completion_tokens
-                ),
+                estimated_cost_usd=cost,
+                generation_id=generation.generation_id,
+                charged=generation.charged,
             )
         )
+    return _summarize(priced)
