@@ -784,3 +784,85 @@ describe('LiveMarkdownBody on native', () => {
     expect(onChangeBody).toHaveBeenLastCalledWith('> a\n');
   });
 });
+
+/** How much taller a programmatic write makes the textarea's content in these tests. */
+const GROWTH = 300;
+/** A fractional scrollHeight, so the whole-pixel rounding is observable. */
+const SUBPIXEL = 0.4;
+const FOLDED_BODY = 'short\n\n> First quote\n> — Me\n\n> Second quote\n> — Me';
+
+/** The field's flattened height as it is laid out. */
+function bodyHeight(getByTestId: ReturnType<typeof render>['getByTestId']): number {
+  return StyleSheet.flatten(getByTestId('journal-body-input').props.style).height as number;
+}
+
+/** The field driven straight from a test-owned body, the way a parent writes one. */
+function Direct({ body, inputRef }: { body: string; inputRef: React.RefObject<TextInput | null> }) {
+  return (
+    <LiveMarkdownBody
+      body={body}
+      onChangeBody={() => undefined}
+      bodyPlaceholder=""
+      inputRef={inputRef}
+    />
+  );
+}
+
+describe('LiveMarkdownBody growth on programmatic change (#3001)', () => {
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+    delete (globalThis as MutableGlobal).window;
+  });
+
+  it('grows the field when the body changes without an input event (a folded quote)', () => {
+    const ref: React.RefObject<TextInput | null> = { current: null };
+    const { getByTestId, rerender } = render(<Direct body="short" inputRef={ref} />);
+    const min = bodyHeight(getByTestId);
+    (ref as { current: unknown }).current = { scrollHeight: min + GROWTH + SUBPIXEL };
+
+    rerender(<Direct body={FOLDED_BODY} inputRef={ref} />);
+
+    const height = bodyHeight(getByTestId);
+    expect(height).toBe(Math.ceil(min + GROWTH + SUBPIXEL));
+    expect(height).toBeGreaterThan(min);
+  });
+
+  it('grows the field when a toolbar edit falls back to the controlled value (commit())', () => {
+    const fieldRef: React.RefObject<TextInput | null> = { current: null };
+    const { getByTestId, getByRole } = render(<Harness initial="a word" fieldRef={fieldRef} />);
+    const min = bodyHeight(getByTestId);
+    // Not an editable textarea, so applyEditToTextarea declines and commit() writes the value.
+    (fieldRef as { current: unknown }).current = { focus: jest.fn(), scrollHeight: min + GROWTH };
+    select(getByTestId('journal-body-input'), 2, 6);
+
+    fireEvent.press(getByRole('button', { name: 'Bold' }));
+
+    expect(getByTestId('journal-body-input').props.value).toBe('a **word**');
+    expect(bodyHeight(getByTestId)).toBe(Math.ceil(min + GROWTH));
+  });
+
+  it('leaves growth to onContentSizeChange on native, reading no scrollHeight', () => {
+    Platform.OS = 'ios';
+    const scrollHeight = jest.fn(() => GROWTH);
+    const ref: React.RefObject<TextInput | null> = { current: null };
+    const { getByTestId, rerender } = render(<Direct body="short" inputRef={ref} />);
+    const min = bodyHeight(getByTestId);
+    const node = {};
+    Object.defineProperty(node, 'scrollHeight', { get: scrollHeight });
+    (ref as { current: unknown }).current = node;
+
+    rerender(<Direct body={FOLDED_BODY} inputRef={ref} />);
+    expect(scrollHeight).not.toHaveBeenCalled();
+    expect(bodyHeight(getByTestId)).toBe(min);
+
+    fireEvent(getByTestId('journal-body-input'), 'contentSizeChange', {
+      nativeEvent: { contentSize: { height: min + GROWTH } },
+    });
+    expect(bodyHeight(getByTestId)).toBe(Math.ceil(min + GROWTH));
+  });
+});
