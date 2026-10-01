@@ -5,6 +5,8 @@ import * as path from 'path';
 
 import {
   CORPUS_CONSENT_COPY_ENTRIES,
+  CORPUS_CONSENT_GAIN,
+  CORPUS_CONSENT_LEAD,
   CORPUS_INVITATION_NEVER_LABEL,
   CORPUS_INVITATION_NOT_NOW_LABEL,
   CORPUS_INVITATION_OPEN_LABEL,
@@ -14,6 +16,7 @@ import {
   consentStatusLine,
   sourceCopy,
 } from '../corpusConsentCopy';
+import { HIGHER_SELF_GAIN } from '../higherSelfCopy';
 
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 import { backendPythonFiles, readBackendSource } from '@/testing/backendSource';
@@ -167,5 +170,23 @@ describe('consentStatusLine', () => {
 
     expect(line).toMatch(/^On\b/);
     expect(line).not.toMatch(/Invalid/i);
+  });
+});
+
+describe('the corpus-consent copy, on what saying yes gives (#3003)', () => {
+  test('the gain is the shared Higher Self sentence, word for word', () => {
+    expect(CORPUS_CONSENT_GAIN).toBe(HIGHER_SELF_GAIN);
+  });
+
+  test('the gain is swept, directly after the lead it sits beside', () => {
+    const lead = CORPUS_CONSENT_COPY_ENTRIES.indexOf(CORPUS_CONSENT_LEAD);
+
+    expect(lead).toBeGreaterThanOrEqual(0);
+    expect(CORPUS_CONSENT_COPY_ENTRIES[lead + 1]).toBe(CORPUS_CONSENT_GAIN);
+  });
+
+  test('the lead still names the recent-entries floor and the complete answer', () => {
+    expect(CORPUS_CONSENT_LEAD).toMatch(/reflections read your recent entries instead/u);
+    expect(CORPUS_CONSENT_LEAD).toMatch(/complete answer/u);
   });
 });

@@ -12,6 +12,8 @@ import type { CorpusInvitation } from '@/api';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 import {
   CORPUS_CONSENT_COPY_ENTRIES,
+  CORPUS_CONSENT_GAIN,
+  CORPUS_CONSENT_LEAD,
   CORPUS_INVITATION_REACH,
 } from '@/features/Settings/corpusConsentCopy';
 
@@ -103,6 +105,17 @@ describe('CorpusInvitationNote', () => {
     for (const line of rendered.filter((text) => text.length > 0)) {
       expect(swept).toContain(line);
     }
+  });
+
+  it('says what saying yes gives directly after the lead, keeping the lead (#3003)', async () => {
+    const view = renderNote(1);
+    const root = (await view.findByTestId(INVITATION)) as unknown as RenderedNode;
+
+    const rendered = collectRenderedStrings(root);
+    const lead = rendered.indexOf(CORPUS_CONSENT_LEAD);
+    expect(lead).toBeGreaterThanOrEqual(0);
+    expect(rendered[lead + 1]).toBe(CORPUS_CONSENT_GAIN);
+    expect(view.getByTestId(`${INVITATION}-gain`)).toHaveTextContent(CORPUS_CONSENT_GAIN);
   });
 
   it('stays silent when the client throws synchronously', async () => {

@@ -6,7 +6,9 @@ import React from 'react';
 import {
   CORPUS_CONSENT_CONSEQUENCE_REMOVAL,
   CORPUS_CONSENT_CONSEQUENCE_SENDING,
+  CORPUS_CONSENT_GAIN,
   CORPUS_CONSENT_INTIMATE_LINE,
+  CORPUS_CONSENT_LEAD,
   CORPUS_REVOKE_CONFIRM_LABEL,
 } from '../corpusConsentCopy';
 import CorpusConsentScreen from '../CorpusConsentScreen';
@@ -80,6 +82,13 @@ describe('CorpusConsentScreen — the offer', () => {
     expect(getByText(CORPUS_CONSENT_CONSEQUENCE_SENDING)).toBeTruthy();
     expect(getByText(CORPUS_CONSENT_CONSEQUENCE_REMOVAL)).toBeTruthy();
     expect(getByText(CORPUS_CONSENT_INTIMATE_LINE)).toBeTruthy();
+  });
+
+  test('says what saying yes gives, beside the lead rather than in place of it', async () => {
+    const { getByTestId, getByText } = await renderLoaded(UNDECIDED);
+
+    expect(getByText(CORPUS_CONSENT_LEAD)).toBeTruthy();
+    expect(getByTestId('corpus-consent-gain')).toHaveTextContent(CORPUS_CONSENT_GAIN);
   });
 
   test('shows a source nobody has been asked about as off, and asks nothing of the server', async () => {
