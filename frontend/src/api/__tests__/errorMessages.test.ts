@@ -3,7 +3,9 @@
 
 import {
   CREDIT_EXHAUSTED_COPY,
+  DAILY_GENERATION_LIMIT_COPY,
   formatApiError,
+  GENERATION_IN_PROGRESS_COPY,
   GENERIC_FALLBACK,
   messageForCode,
   SERVICE_CREDIT_EXHAUSTED_COPY,
@@ -62,6 +64,10 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'payment_required',
       'insufficient_offerings',
       'essay_price_unacknowledged',
+      // generation guardrails (#623)
+      'generation_in_progress',
+      'daily_generation_limit_reached',
+      'generation_guard_unavailable',
       'llm_key_required',
       'invalid_llm_api_key_format',
       // permanently exhausted provider balance -- caller's key, then ours
@@ -453,6 +459,55 @@ describe('exhausted provider balance (permanent, not transient)', () => {
     // Billing" would be an instruction they cannot carry out.
     expect(rendered.ours()).not.toMatch(
       /your (provider|openai|anthropic) account|top up|purchase credits|upgrade your plan/i,
+    );
+  });
+});
+
+describe('generation guardrail refusals (#623)', () => {
+  // Decision record §1 ratifies "maximum 2 concurrent generations/user" and a
+  // "configurable launch ceiling of 100 charged generations/day/user". The copy
+  // tells the writer why and when, promises nothing beyond that, and quotes no
+  // number (the ceiling is operator-configurable).
+  const guardrailCopies = [GENERATION_IN_PROGRESS_COPY, DAILY_GENERATION_LIMIT_COPY];
+
+  it('maps each refusal detail to its own copy', () => {
+    expect(messageForCode('generation_in_progress')).toBe(GENERATION_IN_PROGRESS_COPY);
+    expect(messageForCode('daily_generation_limit_reached')).toBe(DAILY_GENERATION_LIMIT_COPY);
+    expect(GENERATION_IN_PROGRESS_COPY).not.toBe(DAILY_GENERATION_LIMIT_COPY);
+  });
+
+  it('formats a 429 by its detail, not the generic per-minute copy', () => {
+    const busy = new ApiError(429, 'generation_in_progress');
+    const daily = new ApiError(429, 'daily_generation_limit_reached');
+    expect(formatApiError(busy)).toBe(GENERATION_IN_PROGRESS_COPY);
+    expect(formatApiError(daily)).toBe(DAILY_GENERATION_LIMIT_COPY);
+  });
+
+  it('says the daily limit resets at midnight UTC', () => {
+    expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/midnight UTC/);
+    expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/today/i);
+  });
+
+  it('tells the in-progress writer to ask again once the current one finishes', () => {
+    expect(GENERATION_IN_PROGRESS_COPY).toMatch(/already/i);
+    expect(GENERATION_IN_PROGRESS_COPY).toMatch(/ask again/i);
+    expect(GENERATION_IN_PROGRESS_COPY).toMatch(/finish/i);
+  });
+
+  it('says nothing was charged, quotes no number, and promises nothing unlimited', () => {
+    for (const copy of guardrailCopies) {
+      expect(copy).toMatch(/nothing was charged/i);
+      expect(copy).not.toMatch(/\d/);
+      expect(copy).not.toMatch(/unlimited|free|\$|price|offering/i);
+    }
+  });
+
+  it('leaves the generic per-minute copy unchanged', () => {
+    expect(USER_FACING_ERROR_MESSAGES.rate_limit_exceeded).toBe(
+      "That's a lot of requests in a short time. Give it a moment and try again.",
+    );
+    expect(formatApiError(new ApiError(429, 'rate_limit_exceeded'))).toBe(
+      USER_FACING_ERROR_MESSAGES.rate_limit_exceeded,
     );
   });
 });

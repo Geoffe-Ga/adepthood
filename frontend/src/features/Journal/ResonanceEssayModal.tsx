@@ -23,6 +23,7 @@ import {
 
 import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
+import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
 import { loadCostState, unknownCostState } from './resonanceCost';
 import {
@@ -57,6 +58,11 @@ interface EssayState {
   essay: string | null;
   loading: boolean;
   error: string | null;
+  /**
+   * Whether ``error`` offers "Tap to try again". False only for the daily
+   * generation ceiling (#623), which cannot clear before midnight UTC.
+   */
+  retryable?: boolean;
   /** The note has no letter yet: show its price and wait for the writer to ask. */
   offer: boolean;
 }
@@ -73,7 +79,13 @@ const LOADING_STATE: EssayState = { essay: null, loading: true, error: null, off
  * note itself cannot record "already asked" — so the fact is remembered here
  * instead, and only for as long as this screen is mounted.
  */
-type UnansweredNotes = Map<number, string>;
+type UnansweredNotes = Map<number, Unanswered>;
+
+/** What an ask that produced no letter said, and whether asking again could help. */
+interface Unanswered {
+  message: string;
+  retryable: boolean;
+}
 
 /**
  * The state a note is shown from: its own cached letter, else a remembered ask
@@ -84,7 +96,13 @@ function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState
   if (note.essay) return { essay: note.essay, loading: false, error: null, offer: false };
   const remembered = unanswered.get(note.id);
   if (remembered !== undefined) {
-    return { essay: null, loading: false, error: remembered, offer: false };
+    return {
+      essay: null,
+      loading: false,
+      error: remembered.message,
+      retryable: remembered.retryable,
+      offer: false,
+    };
   }
   return OFFER_STATE;
 }
@@ -94,7 +112,7 @@ interface EssaySettlers {
   /** A real letter arrived, and should be cached back onto the note. */
   onLetter: (_updated: Marginalia) => void;
   /** The ask produced no letter: a refusal, an intimate entry, or a failure. */
-  onUnanswered: (_message: string) => void;
+  onUnanswered: (_unanswered: Unanswered) => void;
   /** The ask was refused for want of a payer; nothing was spent. */
   onFunding: (_outcome: FundingOutcome) => void;
 }
@@ -108,7 +126,7 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
         settlers.onLetter(updated);
         return;
       }
-      settlers.onUnanswered(BLANK_ESSAY_MESSAGE);
+      settlers.onUnanswered({ message: BLANK_ESSAY_MESSAGE, retryable: true });
     })
     .catch((err: unknown) => {
       const funding = fundingOutcome(err);
@@ -116,7 +134,10 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
         settlers.onFunding(funding);
         return;
       }
-      settlers.onUnanswered(formatApiError(err));
+      settlers.onUnanswered({
+        message: formatApiError(err),
+        retryable: generationRefusal(err) !== 'daily_limit',
+      });
     });
 }
 
@@ -218,9 +239,16 @@ function useEssay(
       },
       // Remembered even if the modal has since closed: the ask did happen and
       // produced nothing, so reopening should show that, not offer again.
-      onUnanswered: (message) => {
-        unansweredRef.current.set(note.id, message);
-        if (isCurrent()) setState({ essay: null, loading: false, error: message, offer: false });
+      onUnanswered: (unanswered) => {
+        unansweredRef.current.set(note.id, unanswered);
+        if (!isCurrent()) return;
+        setState({
+          essay: null,
+          loading: false,
+          error: unanswered.message,
+          retryable: unanswered.retryable,
+          offer: false,
+        });
       },
       onFunding: (outcome) => {
         if (!isCurrent()) return;
@@ -282,17 +310,31 @@ function EssayBody({
   essay,
   loading,
   error,
+  retryable = true,
   retry,
 }: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
   }
   if (error != null) {
+    // Announced as it appears, like the margin's own error line: a writer on a
+    // screen reader would otherwise hear nothing after asking.
     return (
-      <TouchableOpacity onPress={retry} accessibilityRole="button" testID="essay-retry">
-        <Text style={styles.error}>{error}</Text>
-        <Text style={styles.retry}>Tap to try again</Text>
-      </TouchableOpacity>
+      <View>
+        <Text
+          style={styles.error}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          testID="essay-error"
+        >
+          {error}
+        </Text>
+        {retryable ? (
+          <TouchableOpacity onPress={retry} accessibilityRole="button" testID="essay-retry">
+            <Text style={styles.retry}>Tap to try again</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     );
   }
   return (
@@ -309,7 +351,7 @@ function ResonanceEssayModal({
   hasOwnKey = false,
   onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
-  const { essay, loading, error, offer, ask, retry } = useEssay(note, {
+  const { essay, loading, error, retryable, offer, ask, retry } = useEssay(note, {
     onEssayLoaded,
     onFundingRequired,
   });
@@ -344,7 +386,7 @@ function ResonanceEssayModal({
         {offer ? (
           <EssayOffer cost={cost} onAsk={ask} onDecline={onClose} />
         ) : (
-          <EssayBody essay={essay} loading={loading} error={error} retry={retry} />
+          <EssayBody {...{ essay, loading, error, retryable, retry }} />
         )}
       </ScrollView>
     </JournalModalShell>
