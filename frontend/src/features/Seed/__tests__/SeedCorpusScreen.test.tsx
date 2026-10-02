@@ -563,12 +563,28 @@ describe('an account with nowhere to keep a document yet (#3017)', () => {
     expect(mockNavigate).not.toHaveBeenCalledWith('CorpusConsent');
   });
 
-  test('sends nothing to the import route', async () => {
+  test('sends nothing to the import route, whatever is pressed', async () => {
+    // A document is waiting in the picker, so any control on this screen that
+    // could start a run would send it. Every button is pressed; none may open
+    // the picker or reach the import route.
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('vault_required'));
     mockVaultConnectionFetch.mockImplementation(() => vaultConnectionReply(false, null));
-    const { getByTestId } = render(<SeedCorpusScreen />);
-
+    const { getByTestId, getAllByRole } = render(<SeedCorpusScreen />);
     await waitFor(() => expect(getByTestId('seed-vault-invitation')).toBeTruthy());
 
+    const buttons = getAllByRole('button');
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      await act(async () => {
+        fireEvent.press(button);
+      });
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(getDocumentAsync).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
