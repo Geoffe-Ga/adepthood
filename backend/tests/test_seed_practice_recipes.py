@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,6 +23,36 @@ from seed_practice_recipes import (
     SYSTEM_TAGS,
     seed_practice_recipes,
 )
+
+# Prose standing an ASCII double hyphen in for a dash (#2823).
+_ASCII_DOUBLE_HYPHEN_DASH = re.compile(r"(?:^|\s)--(?:\s|$)")
+
+
+def _strings(value: object) -> Iterator[str]:
+    """Every string leaf of a seed definition, however deeply it is nested."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def test_seeded_recipe_copy_uses_the_house_dash() -> None:
+    """Recipe names, descriptions and step labels are shown in the app (#2823)."""
+    offenders = [
+        text
+        for text in _strings([*SYSTEM_RECIPES, *SYSTEM_TAGS])
+        if _ASCII_DOUBLE_HYPHEN_DASH.search(text)
+    ]
+    assert offenders == []
+    find_shapes = next(recipe for recipe in SYSTEM_RECIPES if recipe["slug"] == "find_shapes")
+    assert find_shapes["description"] == (
+        "Spot the three primitive shapes \u2014 square, circle, triangle \u2014 in the "
+        "room you're sitting in.  Repeat for several rounds."
+    )
 
 
 @pytest.mark.asyncio

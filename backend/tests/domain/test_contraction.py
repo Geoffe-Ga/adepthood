@@ -24,6 +24,7 @@ streak — it is a warm, declinable Higher Self reflection honoring
 from __future__ import annotations
 
 import dataclasses
+import re
 
 import pytest
 
@@ -45,6 +46,9 @@ from domain.contraction import (
 # ---------------------------------------------------------------------------
 
 _EMPTY = ContractionAggregates(habits=())
+
+# Prose standing an ASCII double hyphen in for a dash (#2823).
+_ASCII_DOUBLE_HYPHEN_DASH = re.compile(r"(?:^|\s)--(?:\s|$)")
 
 
 def _agg(*, unmet: int = 0, unchecked: int = 0, habit_id: int = 1) -> ContractionAggregates:
@@ -240,3 +244,29 @@ def test_simple_ease_off_message_does_not_mention_return() -> None:
     """The Return's specific wording is only emitted by the return variant."""
     invitation = build_contraction_invitation(highest_stage_reached=2)
     assert "return" not in invitation.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# 11. Typography: the house dash, never an ASCII double hyphen (#2823)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("highest_stage_reached", "variant", "dashed_clause"),
+    [
+        (1, ContractionVariant.SIMPLE_EASE_OFF, "ease off for a while \u2014 keep only"),
+        (
+            RETURN_MIN_HIGHEST_STAGE,
+            ContractionVariant.RETURN_OFFER,
+            "five-week Return \u2014 a slower, gentler arc",
+        ),
+    ],
+)
+def test_contraction_message_uses_the_house_dash(
+    highest_stage_reached: int, variant: ContractionVariant, dashed_clause: str
+) -> None:
+    """Each message a user is shown uses a spaced em dash, not ``--``."""
+    invitation = build_contraction_invitation(highest_stage_reached=highest_stage_reached)
+    assert invitation.variant == variant
+    assert dashed_clause in invitation.message
+    assert _ASCII_DOUBLE_HYPHEN_DASH.search(invitation.message) is None
