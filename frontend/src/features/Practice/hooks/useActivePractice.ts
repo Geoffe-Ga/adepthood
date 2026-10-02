@@ -27,7 +27,7 @@ import { practices, userPractices } from '@/api';
 import type { PracticeItem, UserPractice } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import type { ModeConfig } from '@/features/Practice/engine/types';
-import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 const LOAD_FALLBACK =
   "We couldn't load your practices. Check your connection, then tap Retry to try again.";

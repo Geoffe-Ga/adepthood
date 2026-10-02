@@ -14,8 +14,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { frequency, type FrequencyResponse } from '@/api';
-import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 import { toError } from '@/features/Practice/utils/toError';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 export interface UseFrequencyResult {
   data: FrequencyResponse | null;
