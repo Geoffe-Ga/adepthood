@@ -587,6 +587,21 @@ describe('the committed ledger is true of this repository', () => {
     );
   });
 
+  it('accounts for reopening a past-cycle review in the browser lane', () => {
+    const journey = committedJourney('journal.reopen-past-cycle-review-sees-its-own-sources');
+
+    expect(journey).toMatchObject({
+      status: 'covered',
+      coveredBy: 'frontend/e2e/journal-past-cycle-review-sources.browser.e2e.test.ts',
+    });
+    expect(journey).not.toHaveProperty('issue');
+    const description = committedDescription(
+      'journal.reopen-past-cycle-review-sees-its-own-sources',
+    );
+    expect(description).not.toContain('no begin-again journey exists yet');
+    expect(description).toContain('writing-only');
+  });
+
   it('passes the same audit the CI gate runs', () => {
     const audit = auditJourneyLedger(readLedger(REPO_ROOT), realLedgerEnvironment(REPO_ROOT));
 

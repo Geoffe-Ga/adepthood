@@ -74,6 +74,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-lost-answer.browser.e2e.test.ts',
   'journal-margin-alignment.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
+  'journal-past-cycle-review-sources.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
