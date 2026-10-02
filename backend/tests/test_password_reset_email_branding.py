@@ -7,12 +7,17 @@ raw URL dump, without the plain-text body losing anything.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from routers.auth import _build_reset_email
 from services.app_links import APP_BASE_URL_ENV_VAR
 
 ORIGIN = "https://app.example.test"
+# Prose standing an ASCII double hyphen in for a dash (#2823): whitespace or an
+# edge on both sides, so "<!--" markup and a "--flag" are not mistaken for one.
+ASCII_DOUBLE_HYPHEN_DASH = re.compile(r"(?:^|\s)--(?:\s|$)")
 TOKEN = "tok3n-value"
 
 
@@ -44,3 +49,12 @@ def test_html_offers_every_action_the_text_does() -> None:
     for action in ("/reset-password?token=", "/cancel-reset?token="):
         assert action in payload.html
     assert "adepthood://reset-password?token=" in payload.html
+
+
+def test_every_part_of_the_email_uses_the_house_dash() -> None:
+    """The plain-text part reads as the HTML part does: a spaced em dash (#2823)."""
+    payload = _build_reset_email("user@example.com", TOKEN)
+    assert "ignore this email \u2014 nothing happens until you click a link." in payload.body
+    assert payload.html is not None
+    for part in (payload.subject, payload.body, payload.html):
+        assert ASCII_DOUBLE_HYPHEN_DASH.search(part) is None, part

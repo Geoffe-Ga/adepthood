@@ -13,7 +13,7 @@ import { Button } from '@/components/Button';
 import { useAuth } from '@/context/AuthContext';
 
 const RESET_FALLBACK =
-  "We couldn't apply that reset. The link may have expired -- request a new one and try again.";
+  "We couldn't apply that reset. The link may have expired — request a new one and try again.";
 
 interface RouteParams {
   token?: string;

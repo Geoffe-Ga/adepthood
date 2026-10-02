@@ -239,8 +239,8 @@ SYSTEM_RECIPES: tuple[dict[str, Any], ...] = (
             "slug": "find_shapes",
             "name": "Find Shapes",
             "description": (
-                "Spot the three primitive shapes -- square, circle, triangle "
-                "-- in the room you're sitting in.  Repeat for several rounds."
+                "Spot the three primitive shapes — square, circle, triangle — "
+                "in the room you're sitting in.  Repeat for several rounds."
             ),
             "mode": PracticeMode.TALLIED_GROUNDING.value,
             "rounds": _DEFAULT_ROUNDS,

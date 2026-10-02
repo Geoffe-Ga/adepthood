@@ -14,6 +14,7 @@ are what a new model trips.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -30,12 +31,16 @@ from domain.data_export import (
     Omitted,
     included_rules,
     manifest_gaps,
+    omitted_rules,
 )
 from services.data_export import _SOFT_DELETE_COLUMN, _encode
 from services.journal_encryption import EncryptedString
 
 # Columns that hold a live secret. None of them belongs in a plaintext archive
 # a user is invited to keep on their own device.
+# Prose standing an ASCII double hyphen in for a dash (#2823).
+_ASCII_DOUBLE_HYPHEN_DASH = re.compile(r"(?:^|\s)--(?:\s|$)")
+
 _CREDENTIAL_COLUMNS = frozenset({"password_hash", "api_key", "token", "token_hash"})
 
 # One value per type the manifest is allowed to export, so the serialiser can
@@ -209,3 +214,17 @@ def test_the_writing_timer_link_is_exported_and_the_interface_flags_are_not() ->
     assert rule.key == "writing_timer"
     assert "writing_session_habit_id" not in rule.dropped()
     assert {"has_seen_welcome", "energy_scaffolding_archived"} <= rule.dropped()
+
+
+def test_every_omission_reason_written_into_the_archive_uses_the_house_dash() -> None:
+    """``not_included`` is read by the account holder, so it is copy (#2823).
+
+    Every reason is checked, not just the one that shipped ``--``, because the
+    archive prints them all verbatim.
+    """
+    reasons = omitted_rules()
+    offenders = sorted(
+        name for name, reason in reasons.items() if _ASCII_DOUBLE_HYPHEN_DASH.search(reason)
+    )
+    assert offenders == []
+    assert "beta report \u2014 status changes" in reasons["feedbacktriageevent"]

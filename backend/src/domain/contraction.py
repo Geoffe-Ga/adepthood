@@ -56,7 +56,7 @@ RETURN_MIN_HIGHEST_STAGE = RETURN_MINIMUM_STAGE
 _SIMPLE_EASE_OFF_MESSAGE = (
     "It looks like your foundation has grown quiet lately, and that is completely ok. "
     "Contraction follows expansion as naturally as an out-breath follows an in-breath. "
-    "You might ease off for a while -- keep only the habits that still feel alive, shrink "
+    "You might ease off for a while — keep only the habits that still feel alive, shrink "
     "a goal or two, or simply rest. Nothing here slips away when you take a break; the path "
     "waits for you, exactly as it is."
 )
@@ -69,7 +69,7 @@ _RETURN_OFFER_MESSAGE = (
     "It looks like your foundation has grown quiet lately, and after all the ground you have "
     "covered, that is completely ok. Contraction follows expansion; it is ok to need a break "
     "from progress. When it feels right, you are warmly invited to ease into the five-week "
-    "Return -- a slower, gentler arc back toward the practices that steadied you. It is here "
+    "Return — a slower, gentler arc back toward the practices that steadied you. It is here "
     "whenever you want it, and just as welcome to set aside for now."
 )
 
