@@ -29,7 +29,9 @@ credentials surface.)
 | ---- | ---- |
 | Vendored dataset (10 Stages × 6 phases, integrated + shadow) | `backend/src/curriculum/archetypal_wavelength.json` |
 | Typed loader (validated, frozen dataclasses) | `backend/src/curriculum/__init__.py` |
-| Stage seeder (reads the dataset) | `backend/src/seed_stages.py` |
+| Stage-correspondence artifact (generated, #2664) | `backend/src/curriculum/stage_correspondence.json` |
+| Artifact loader | `backend/src/curriculum/stage_correspondence.py` |
+| Stage seeder (artifact + dataset titles) | `backend/src/seed_stages.py` |
 | Loader + dataset tests | `backend/tests/test_curriculum.py` |
 | Seeder golden-value tests | `backend/tests/test_seed_stages.py` |
 | Course-copy pins + archetype drift guard | `backend/tests/test_vendored_course_copy_pins.py` |
@@ -82,9 +84,11 @@ per-phase manifestation copy are pulled from two different sources:
   `backup/2.PURPLE.md` (issue #2915). The archetype is the course's own name in
   `markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`
   and in the `aptitude-stages.md` heading; the description is paraphrased from
-  that chapter. `APTITUDE Complete Map.csv` is not vendored, so its own
-  description sentence, and a six-field comparison of the whole table against
-  the CSV, wait on #2664 / #2667.
+  that chapter. Since #2664 vendored `APTITUDE Complete Map.csv`, the
+  database carries the CSV's own description sentence instead (the seeder
+  reads the seven fields from the generated artifact, see "Consumers"); this
+  dataset's copy of the seven fields is an unread mirror until #2666 retires
+  it, and the full comparison against the CSV waits on #2667.
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
@@ -157,12 +161,14 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    today). Never hand-edit `backend/content/**` to make it match — that tree is
    excluded from every pre-commit hook and its drift gate,
    `python -m scripts.sync_content --check`, runs only in CI.
-6. Commit the JSON diff. Because the seeder derives `STAGE_DEFINITIONS` from the
-   dataset at import time, no seeder code change is needed. Seeding is
-   insert-plus-reconcile: on the next startup, `seed_stages()` inserts any
-   Stage missing from the table and updates the curriculum-sourced fields of
-   Stages already there that have drifted from the dataset, so a correction
-   like this propagates to already-seeded databases without a migration. The
+6. Commit the JSON diff. The seeder reads titles and subtitles from this
+   dataset on its first run (and the seven correspondence fields from the
+   generated artifact), so no seeder code change is needed. Seeding is
+   insert-plus-reconcile, keyed by the stable `stage_key`: on the next
+   startup, `seed_stages()` inserts any Stage missing from the table and
+   updates the sourced fields of Stages already there that have drifted, so a
+   correction like this propagates to already-seeded databases without a
+   migration. The
    seeder-owned `overview_url` is never touched by reconciliation and rows are
    never deleted. The golden-value test in `test_seed_stages.py` still flags
    any unintended change to a Stage's identifying attributes, so a copy
@@ -170,8 +176,12 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
 
 ## Consumers
 
-The Stage seeder (`seed_stages.py`) already reads its definitions from the
-dataset. Downstream features that describe per-phase manifestations — medicinal
+The Stage seeder (`seed_stages.py`) takes each Stage's title and subtitle from
+this dataset, and since #2665 its seven correspondence fields from the
+generated stage-correspondence artifact, stamping every `CourseStage` row with
+that artifact's provenance (source repo, commit, CSV path and sha256, schema
+version). `GET /stages/correspondence` serves those rows as the stable read
+contract. Downstream features that describe per-phase manifestations — medicinal
 / toxic expressions (#1018), chord-journal Aspect labels (#1020), and the
 explainer (#948) — pull their copy from `curriculum` rather than re-authoring
 it, so the manifestation prose lives in exactly one place.
