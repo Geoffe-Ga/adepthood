@@ -31,6 +31,7 @@ const INACTIVE_ACTIVATION = {
   active: false,
   state: 'inactive' as const,
   new_activation_available: true,
+  recovery_available: false,
   retryable: false,
   failure_reason: null,
   credential_received: false,
@@ -170,24 +171,30 @@ describe('vaultActivation', () => {
     expect(init?.body).toBeUndefined();
   });
 
-  test('starts and retries only on explicit POST actions', async () => {
+  test('starts, retries, and recovers only on explicit POST actions', async () => {
     mockFetch
       .mockReturnValueOnce(
         jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'pending' }, 202),
       )
       .mockReturnValueOnce(
         jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'pending' }, 202),
+      )
+      .mockReturnValueOnce(
+        jsonResponse({ ...INACTIVE_ACTIVATION, active: true, state: 'deleting' }, 202),
       );
 
     await vaultActivation.activate('tok');
     await vaultActivation.retry('tok');
+    await vaultActivation.recover('tok');
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch.mock.calls[0][0]).toBe(ACTIVATION_URL);
     expect(mockFetch.mock.calls[0][1].method).toBe('POST');
     expect(mockFetch.mock.calls[0][1].body).toBeUndefined();
     expect(mockFetch.mock.calls[1][0]).toBe(`${ACTIVATION_URL}/retry`);
     expect(mockFetch.mock.calls[1][1].method).toBe('POST');
+    expect(mockFetch.mock.calls[2][0]).toBe(`${ACTIVATION_URL}/recover`);
+    expect(mockFetch.mock.calls[2][1].method).toBe('POST');
   });
 
   test('accepts only the closed custody vocabulary', async () => {

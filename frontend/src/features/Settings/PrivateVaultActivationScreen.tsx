@@ -17,6 +17,7 @@ const POLLABLE_STATES = new Set<VaultActivation['state']>([
   'pending',
   'provisioning',
   'awaiting_handoff',
+  'deleting',
 ]);
 
 interface Props {
@@ -33,6 +34,8 @@ function progressCopy(state: VaultActivation['state']): string {
       return 'Creek is preparing your managed space…';
     case 'awaiting_handoff':
       return 'Your encrypted vault connection is being delivered…';
+    case 'deleting':
+      return 'Creek is securely removing the failed allocation…';
     default:
       return 'Checking your managed vault…';
   }
@@ -161,24 +164,51 @@ const Ready = ({ activation }: { activation: VaultActivation }): React.JSX.Eleme
 
 interface FailedProps {
   retryable: boolean;
+  recoveryAvailable: boolean;
   busy: boolean;
   error: string | null;
   onRetry: () => void;
+  onRecover: () => void;
 }
 
-const Failed = ({ retryable, busy, error, onRetry }: FailedProps): React.JSX.Element => (
+const Failed = ({
+  retryable,
+  recoveryAvailable,
+  busy,
+  error,
+  onRetry,
+  onRecover,
+}: FailedProps): React.JSX.Element => (
   <View style={styles.errorCard} testID="activation-failed">
     <Text style={styles.sectionTitle}>Your managed vault is not ready yet.</Text>
     <Text style={styles.body}>
       Your journal still works. INTIMATE entries still stay in Adepthood and out of the managed
       vault.
     </Text>
+    {recoveryAvailable ? (
+      <Text style={styles.body}>
+        Creek must remove the failed allocation before creating a fresh one. No old credential or
+        storage is reused.
+      </Text>
+    ) : !retryable ? (
+      <Text style={styles.body}>
+        Creek could not finish cleanup automatically. Contact support before trying again; the
+        failed allocation remains preserved.
+      </Text>
+    ) : null}
     {error ? (
       <Text style={styles.error} accessibilityRole="alert">
         {error}
       </Text>
     ) : null}
-    {retryable ? (
+    {recoveryAvailable ? (
+      <Button
+        label="Clean up and try again"
+        onPress={onRecover}
+        busy={busy}
+        testID="recover-vault-activation"
+      />
+    ) : retryable ? (
       <Button
         label="Try activation again"
         onPress={onRetry}
@@ -248,7 +278,7 @@ function useActivationCommands(
   setActivation: SetActivation,
   setBusy: Dispatch<SetStateAction<boolean>>,
   setError: Dispatch<SetStateAction<string | null>>,
-): { start: () => Promise<void>; retry: () => Promise<void> } {
+): { start: () => Promise<void>; retry: () => Promise<void>; recover: () => Promise<void> } {
   const run = useCallback(
     async (operation: () => Promise<VaultActivation>, failure: string) => {
       setBusy(true);
@@ -277,7 +307,15 @@ function useActivationCommands(
       run(() => vaultActivation.retry(), 'The retry did not reach Creek. Try again when ready.'),
     [run],
   );
-  return { start, retry };
+  const recover = useCallback(
+    () =>
+      run(
+        () => vaultActivation.recover(),
+        'Cleanup did not reach Creek. The failed allocation is still preserved.',
+      ),
+    [run],
+  );
+  return { start, retry, recover };
 }
 
 interface ActivationController extends StatusControl {
@@ -287,6 +325,7 @@ interface ActivationController extends StatusControl {
   formError: string | null;
   start: () => Promise<void>;
   retry: () => Promise<void>;
+  recover: () => Promise<void>;
 }
 
 function useActivationController(): ActivationController {
@@ -321,9 +360,11 @@ const ActivationContent = ({
     return (
       <Failed
         retryable={activation.retryable}
+        recoveryAvailable={activation.recovery_available}
         busy={controller.busy}
         error={controller.formError}
         onRetry={() => void controller.retry()}
+        onRecover={() => void controller.recover()}
       />
     );
   }

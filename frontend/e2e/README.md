@@ -93,9 +93,11 @@ plane on a kernel-selected loopback port. Adepthood still uses its production
 HTTP provisioning client, bearer files, contract-version header, routers,
 Postgres lifecycle, and authenticated one-way handoff endpoint; only Creek's
 external allocator is represented by the fake. A ceremony body is no longer
-part of the contract: the fake speaks provisioning `2.0.0`, moves
-directly through pending/provisioning to the authenticated handoff, and returns
-`custody_mode: provider_managed` with `attested_confidential: false`. The
+part of the contract: the fake speaks provisioning `2.0.0`, first returns one
+terminal provider rejection, confirms an authenticated DELETE, then accepts a
+fresh activation and moves through pending/provisioning to the authenticated
+handoff. It returns `custody_mode: provider_managed` with
+`attested_confidential: false`. The
 cross-platform screen tests pin the matching operator-readable/not-confidential-
 compute copy and the absence of ceremony controls. The fake is killed with its
 generated credential directory at teardown.

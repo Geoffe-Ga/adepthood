@@ -16,8 +16,10 @@ from schemas.vault_activation import VaultActivationResponse
 from services.creek_provisioning import (
     load_vault_activation,
     poll_vault_activation,
+    recover_vault_activation,
     retry_vault_activation,
     submit_vault_activation,
+    vault_activation_recovery_is_available,
 )
 from services.creek_provisioning_client import (
     CreekProvisioningClient,
@@ -34,6 +36,7 @@ _INACTIVE_RESPONSE = VaultActivationResponse(
     active=False,
     state="inactive",
     new_activation_available=False,
+    recovery_available=False,
     retryable=False,
     failure_reason=None,
     credential_received=False,
@@ -61,6 +64,7 @@ def _to_response(
         active=True,
         state=activation.state,
         new_activation_available=new_activation_available,
+        recovery_available=vault_activation_recovery_is_available(activation),
         retryable=activation.retryable,
         failure_reason=activation.failure_reason,
         credential_received=activation.credential_received_at is not None,
@@ -116,6 +120,12 @@ async def get_managed_vault_activation(
     available = managed_vault_activation_is_available(user_id)
     if _should_poll(activation):
         activation = await poll_vault_activation(session, activation, client)
+    elif (
+        activation is not None
+        and activation.state == VaultActivationState.DELETING.value
+        and activation.recovery_requested_at is not None
+    ):
+        activation = await recover_vault_activation(session, activation, client)
     return _to_response(
         activation,
         new_activation_available=available,
@@ -140,4 +150,25 @@ async def retry_managed_vault_activation(
         raise conflict("vault_activation_not_retryable")
     available = managed_vault_activation_is_available(user_id)
     activation = await retry_vault_activation(session, activation, client)
+    return _to_response(activation, new_activation_available=available)
+
+
+@router.post(
+    "/activation/recover",
+    response_model=VaultActivationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recover_managed_vault_activation(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    client: Annotated[CreekProvisioningClient, Depends(get_creek_provisioning_client)],
+) -> VaultActivationResponse:
+    """Delete one failed allocation before provisioning a fresh generation."""
+    activation = await load_vault_activation(session, user_id)
+    if activation is None or not vault_activation_recovery_is_available(activation):
+        raise conflict("vault_activation_not_recoverable")
+    available = managed_vault_activation_is_available(user_id)
+    activation = await recover_vault_activation(session, activation, client)
+    if activation is None:
+        raise conflict("vault_activation_not_recoverable")
     return _to_response(activation, new_activation_available=available)

@@ -70,6 +70,10 @@ class VaultActivation(SQLModel, table=True):
     state: str = Field(default=VaultActivationState.SUBMITTING.value, max_length=_STATE_WIDTH)
     retryable: bool = Field(default=False, nullable=False)
     failure_reason: str | None = Field(default=None, max_length=_REASON_WIDTH)
+    recovery_requested_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     credential_received_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
