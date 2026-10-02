@@ -8,13 +8,17 @@
  * adding to it is an invitation they already accepted.
  *
  * **Each line names the place the document actually reached.** A document goes
- * to the vault or to this account's own ontologized corpus, the server decides
- * which, and the two are different places with different guarantees. Telling
- * somebody "in your vault" about writing that is in the corpus — or the reverse
- * — would be the one sentence on this screen nobody could check.
+ * to the account's vault, or — since #3016, for an account the server finds no
+ * vault for — nowhere at all, and the server decides which. The corpus lines
+ * below the vault's are the server's other vocabulary; telling somebody "in
+ * your vault" about writing that is not there would be the one sentence on this
+ * screen nobody could check.
  */
 import { MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
 import type { SeedItemStatus, SeedRunTally } from './seedRun';
+
+import type { CorpusDestination } from '@/features/Journal/corpusDestination';
+import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 
 /** The line shown beneath each document's name, keyed by where it got to. */
 export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
@@ -66,6 +70,17 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   unclassified:
     "Adepthood couldn't place this among the frequencies, so it wasn't added — a corpus entry " +
     'has to sit somewhere on the map to be found again. Nothing changed, and you can try again.',
+  // The one answer the server gives an account it finds no vault for (#3016).
+  // Worded to stay true for each such account: one that never set a vault up,
+  // one whose vault is still being prepared, one whose vault could not be
+  // reached at the address on record. So it offers "set it up or check on it",
+  // never "set one up" alone, and says "for this account" rather than "you
+  // have none". It names the Settings row rather than a vault, because the
+  // corpus lines are held to never naming one.
+  vault_required:
+    'Nothing was stored. Documents you bring in are kept where your corpus lives, and that ' +
+    "isn't ready for this account yet. Open Where your corpus lives in Settings to set it up " +
+    'or check on it, then send this again.',
   // Decided on device, so it names neither destination: this extension is
   // outside everything either side could read, and it was never sent.
   unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',
@@ -178,3 +193,60 @@ export const SEED_LEAVE_STAY_LABEL = 'Stay while the rest go over';
 export const SEED_LEAVE_BROWSER_WARNING =
   'Documents are still going over. Leaving now stops the run, and everything still waiting is ' +
   'never sent.';
+
+// ---------------------------------------------------------------------------
+// The way in, when there is nowhere to keep a document yet (#3017)
+// ---------------------------------------------------------------------------
+//
+// A corpus lives in a vault (#3015), so "Bring in your writing" is offered to
+// an account with nowhere to keep a document as an invitation to give its
+// corpus a place first -- never hidden, never disabled, and never a task. These
+// lines are shown only when the server has said nothing is attached; an
+// account whose vault state is unknown gets the picker and the ordinary lines.
+
+/** The Settings row that opens the seeding screen, named as it always was. */
+export const SEED_ROW_LABEL = 'Bring in your writing';
+
+/** What that row says when there is a place to keep what comes in, or nobody knows. */
+export const SEED_ROW_DESCRIPTION =
+  'Add notes, exports, and documents you have already written elsewhere.';
+
+/** What that row says to an account with nowhere to keep a document yet. */
+export const SEED_ROW_VAULT_FIRST_DESCRIPTION =
+  `Documents you bring in are kept where your corpus lives. Set that up under ` +
+  `${VAULT_ROW_LABEL}, then bring them in.`;
+
+/** The Journal band's open action for an account with nowhere to keep a document yet. */
+export const VAULT_FIRST_CTA = 'Give your corpus a place to live';
+
+/**
+ * The words that open each corpus destination, keyed by the destination.
+ *
+ * One record rather than a label chosen beside a route, so the words a person
+ * taps cannot come to name somewhere other than where the tap goes.
+ */
+export const CORPUS_CTA_BY_DESTINATION: Readonly<Record<CorpusDestination, string>> = {
+  CorpusConsent: 'Look at the decision',
+  SeedCorpus: SEED_ROW_LABEL,
+  VaultSettings: VAULT_FIRST_CTA,
+};
+
+/** What the seeding screen says in place of the picker when there is nowhere to keep a document. */
+export const SEED_VAULT_INVITATION =
+  "Documents you bring in are kept where your corpus lives, and there isn't a place for " +
+  'them yet. Set one up, and they can come in from there. Your journal works the same ' +
+  'either way.';
+
+/** The way there from the seeding screen. */
+export const SEED_VAULT_INVITATION_LINK_LABEL = `Open ${VAULT_ROW_LABEL}`;
+
+/** Every line above, for the copy sweep. */
+export const VAULT_GATE_COPY: readonly string[] = [
+  SEED_ROW_LABEL,
+  SEED_ROW_DESCRIPTION,
+  SEED_ROW_VAULT_FIRST_DESCRIPTION,
+  VAULT_FIRST_CTA,
+  SEED_VAULT_INVITATION,
+  SEED_VAULT_INVITATION_LINK_LABEL,
+  ...Object.values(CORPUS_CTA_BY_DESTINATION),
+];

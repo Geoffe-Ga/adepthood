@@ -16,6 +16,8 @@ const mockList = jest.fn() as jest.MockedFunction<
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
+const mockVaultConnection =
+  jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -37,6 +39,10 @@ jest.mock('@/api', () => ({
   corpus: {
     voiceReadiness: (...a: unknown[]) =>
       (mockVoiceReadiness as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  vault: {
+    connection: (...a: unknown[]) =>
+      (mockVaultConnection as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -140,6 +146,7 @@ beforeEach(() => {
   headerLeftStore.listeners.clear();
   mockList.mockResolvedValue(page([entry(1)]));
   mockPromptCurrent.mockResolvedValue(prompt());
+  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
   mockVoiceReadiness.mockResolvedValue({
     ready: false,
     state: 'not_consented',
@@ -293,6 +300,25 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent'));
     expect(mockVoiceReadiness).toHaveBeenCalledTimes(callsBeforeDrawerPress + 1);
     expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it('routes a consented account with no vault from the shelf to where its corpus would live', async () => {
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVoiceReadiness.mockResolvedValue({
+      ready: false,
+      state: 'gathering',
+      message: 'Your voice is still taking shape.',
+      grounding_source: 'corpus',
+      classified_fragment_count: 2,
+    });
+    const { getByTestId, getByLabelText } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('VaultSettings'));
+    expect(mockNavigate).not.toHaveBeenCalledWith('SeedCorpus');
   });
 
   it('coalesces corpus presses and cancels a held route when the drawer closes', async () => {

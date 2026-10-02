@@ -64,13 +64,14 @@ Re-tiering an entry to intimate withdraws whatever it had already put in the
 corpus, mirroring the vault path's clearing of a ref an entry no longer consents
 to expose.
 
-**Two sources, one writer.** Journal writing composed in this app and a document
-imported from outside it are the same act as far as the corpus is concerned:
-the same consent gate, the same one-call ceiling, the same tier refusal, the
-same store. :func:`ingest_content` is that shared spine and
-:mod:`services.corpus_import` is its second caller. What stays here is only
-what is genuinely about a journal *row* -- its id, its soft-delete, and the
-replacement of the fragment it had before.
+**One spine, one writer today.** :func:`ingest_content` is the source-agnostic
+spine -- the consent gate, the one-call ceiling, the tier refusal, the store --
+and journal writing composed in this app is its only caller. A document brought
+in from outside used to be its second caller; since #3016 a document goes to the
+account's vault or nowhere (#3015), so nothing else reaches the local corpus.
+What stays in the journal wrapper is only what is genuinely about a journal
+*row* -- its id, its soft-delete, and the replacement of the fragment it had
+before.
 
 **An unclassified entry is not corpus material.** A provider outage and a reply
 that recognises no frequency both leave the corpus untouched. The corpus earns

@@ -136,6 +136,7 @@ describe('corpus.importDocument response', () => {
     'empty_document',
     'document_too_long',
     'unclassified',
+    'vault_required',
   ])('validates the %s corpus outcome', (corpusStatus) => {
     const parsed = documentImportSchema.parse({
       destination: 'corpus',
@@ -146,6 +147,24 @@ describe('corpus.importDocument response', () => {
     });
 
     expect(parsed.corpus_status).toBe(corpusStatus);
+  });
+
+  test('parses the answer an account with no vault gets, rather than rejecting it', () => {
+    // #3016: a corpus lives in a vault, so an account without one is answered
+    // vault_required and nothing is stored. A client whose enum lacked the
+    // value would render every such import as a failure it is not.
+    const body = {
+      destination: 'corpus',
+      stored: false,
+      vault_status: null,
+      vault_ref: null,
+      tags: [],
+      corpus_status: 'vault_required',
+      fragment_id: null,
+      message: 'Nothing was stored.',
+    };
+
+    expect(documentImportSchema.parse(body)).toEqual(body);
   });
 
   test('rejects a destination the client has no rendering for', () => {

@@ -37,6 +37,7 @@ import {
   type ScreenDrawerState,
 } from '@/components/drawer';
 import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/design/tokens';
+import { fetchVaultConnectionState } from '@/features/Settings/useVaultConnectionState';
 
 /** Row that starts a fresh, blank entry. */
 const NEW_ENTRY_LABEL = 'New entry';
@@ -689,12 +690,14 @@ function useOpenCorpusFromDrawer(
     requestPending.current = true;
     setState('pending');
     const generation = requestGeneration.current;
-    void corpus
-      .voiceReadiness()
-      .then((readiness) => {
+    // The vault is read beside readiness (#3017): a corpus lives in a vault,
+    // so this door must agree with the band and the hub. A failed vault read
+    // resolves unknown, never an error here -- only readiness can fail the door.
+    void Promise.all([corpus.voiceReadiness(), fetchVaultConnectionState()])
+      .then(([readiness, vault]) => {
         if (generation !== requestGeneration.current) return;
         close();
-        onOpenCorpus(corpusDestinationForReadiness(readiness));
+        onOpenCorpus(corpusDestinationForReadiness(readiness, vault));
       })
       .catch(() => {
         if (generation === requestGeneration.current) setState('error');

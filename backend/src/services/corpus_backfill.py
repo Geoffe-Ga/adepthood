@@ -103,11 +103,10 @@ head to the other end of the history and starves the recent writing in its
 place.
 
 **Only the journal source has a history to sweep.** Uploads and imports are not
-kept: ``POST /journal/upload`` forwards a document and stores no row, and
-``POST /corpus/import`` writes its fragment under the consent in force at the
-time and keeps nothing when there was none. There is no un-ontologized upload
-sitting anywhere for a later grant to find, so a grant for those sources
-correctly reaches nothing rather than pretending to.
+kept: ``POST /journal/upload`` is retired, and ``POST /corpus/import`` hands a
+document to the account's vault or, with no vault, keeps nothing at all (#3016).
+There is no un-ontologized upload sitting anywhere for a later grant to find, so
+a grant for those sources correctly reaches nothing rather than pretending to.
 
 **Cost.** One indexed count to see whether there is anything to do, a second
 read for the batch when there is, then per candidate one small UPDATE marking

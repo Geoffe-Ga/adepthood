@@ -55,15 +55,28 @@ class CorpusSource(enum.StrEnum):
 
     ``journal`` is writing composed in this app. ``upload`` is a file the user
     handed over directly, and ``import`` is material pulled from a service they
-    write on elsewhere — the two the import surface will produce. Recorded
-    because "what did I actually give this thing?" is a question a user is
-    entitled to an answer to, and a column is the only place that answer can
-    come from later.
+    write on elsewhere. Recorded because "what did I actually give this thing?"
+    is a question a user is entitled to an answer to, and a column is the only
+    place that answer can come from later.
+
+    ``upload`` has no writer since #3016: a document goes to the account's vault
+    or nowhere (#3015). Rows the retired local import wrote before that are kept
+    -- no migration deletes them -- but they are inert: every read that feeds
+    retrieval, grounding or a count leaves them out (:data:`INERT_SOURCES`), so
+    they reach no reflection and no language model. Turning the "Documents you
+    bring in" switch off still purges them, through the per-source withdrawal.
     """
 
     JOURNAL = "journal"
     UPLOAD = "upload"
     IMPORT = "import"
+
+
+#: Sources whose rows are stored but never read back for a reflection: no
+#: retrieval returns them, no count includes them, nothing sends them to a
+#: provider. ``upload`` is here because its only writer was retired in #3016
+#: and the privacy policy promises that what it left behind is no longer used.
+INERT_SOURCES: Final[frozenset[CorpusSource]] = frozenset({CorpusSource.UPLOAD})
 
 
 #: The tiers a fragment may carry. INTIMATE is absent, and its absence is the

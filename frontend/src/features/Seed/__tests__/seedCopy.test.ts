@@ -2,6 +2,7 @@
 /* global describe, test, expect */
 import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
 import {
+  CORPUS_CTA_BY_DESTINATION,
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
   SEED_LEAVE_BROWSER_WARNING,
@@ -9,13 +10,22 @@ import {
   SEED_LEAVE_STAY_LABEL,
   SEED_LEAVE_TITLE,
   SEED_LEAVE_WARNING,
+  SEED_ROW_DESCRIPTION,
+  SEED_ROW_LABEL,
+  SEED_ROW_VAULT_FIRST_DESCRIPTION,
   SEED_STATUS_LINES,
+  SEED_VAULT_INVITATION,
+  SEED_VAULT_INVITATION_LINK_LABEL,
+  VAULT_FIRST_CTA,
+  VAULT_GATE_COPY,
   seedProgressLine,
   seedSummaryLine,
 } from '../seedCopy';
 import type { SeedItemStatus } from '../seedRun';
 
+import type { CorpusDestination } from '@/features/Journal/corpusDestination';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
+import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 
 const EVERY_STATUS: readonly SeedItemStatus[] = [
   'queued',
@@ -32,6 +42,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'empty_document',
   'document_too_long',
   'unclassified',
+  'vault_required',
   'unsupported_format',
   'too_large',
   'unreadable',
@@ -82,6 +93,21 @@ describe('what each outcome says', () => {
     expect(SEED_STATUS_LINES.in_corpus).toContain('corpus');
     expect(SEED_STATUS_LINES.in_corpus.toLowerCase()).not.toContain('vault');
     expect(SEED_STATUS_LINES.in_corpus).not.toBe(SEED_STATUS_LINES.ingested);
+  });
+
+  test('a document with nowhere to live is told where that place is set up', () => {
+    // #3016. True for every account the server answers this for: one with no
+    // vault, one whose vault is still being prepared, one whose vault could not
+    // be reached at its stored address. So it never says "set one up" alone.
+    const line = SEED_STATUS_LINES.vault_required;
+
+    expect(line).toContain('Nothing was stored');
+    expect(line).toContain('Where your corpus lives');
+    expect(line.toLowerCase()).toContain('check on it');
+    expect(line.toLowerCase()).not.toContain('vault');
+    expect(line.toLowerCase()).not.toContain('creek');
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+    expect(ranksOrShames(line)).toBe(false);
   });
 
   test('a document in the vault is not described as being in the corpus', () => {
@@ -209,5 +235,59 @@ describe('the warning before leaving a run in flight', () => {
     expect(ranksOrShames(SEED_LEAVE_WARNING)).toBe(false);
     expect(ranksOrShames(SEED_LEAVE_BROWSER_WARNING)).toBe(false);
     expect(ranksOrShames(SEED_LEAVE_CONFIRM_LABEL)).toBe(false);
+  });
+});
+
+describe('the way in when there is nowhere to keep a document yet (#3017)', () => {
+  test('keeps the row named as it always was, with its original description', () => {
+    expect(SEED_ROW_LABEL).toBe('Bring in your writing');
+    expect(SEED_ROW_DESCRIPTION).toBe(
+      'Add notes, exports, and documents you have already written elsewhere.',
+    );
+  });
+
+  test('says, in the row itself, where the place for a corpus is set up', () => {
+    expect(SEED_ROW_VAULT_FIRST_DESCRIPTION).toContain(VAULT_ROW_LABEL);
+    expect(SEED_ROW_VAULT_FIRST_DESCRIPTION).not.toBe(SEED_ROW_DESCRIPTION);
+  });
+
+  test('offers the vault-first step as a place to live, not as a task', () => {
+    expect(VAULT_FIRST_CTA).toBe('Give your corpus a place to live');
+  });
+
+  test('pairs each corpus destination with the words that open it', () => {
+    const ctas: Record<CorpusDestination, string> = CORPUS_CTA_BY_DESTINATION;
+
+    expect(ctas).toEqual({
+      CorpusConsent: 'Look at the decision',
+      SeedCorpus: SEED_ROW_LABEL,
+      VaultSettings: VAULT_FIRST_CTA,
+    });
+  });
+
+  test('the seeding screen names the place and the way there', () => {
+    expect(SEED_VAULT_INVITATION).toContain('where your corpus lives');
+    expect(SEED_VAULT_INVITATION_LINK_LABEL).toContain(VAULT_ROW_LABEL);
+  });
+
+  test('exposes every new line to the sweep', () => {
+    expect(VAULT_GATE_COPY).toEqual(
+      expect.arrayContaining([
+        SEED_ROW_LABEL,
+        SEED_ROW_DESCRIPTION,
+        SEED_ROW_VAULT_FIRST_DESCRIPTION,
+        VAULT_FIRST_CTA,
+        SEED_VAULT_INVITATION,
+        SEED_VAULT_INVITATION_LINK_LABEL,
+        ...Object.values(CORPUS_CTA_BY_DESTINATION),
+      ]),
+    );
+  });
+
+  test.each(VAULT_GATE_COPY)('no line ranks, pressures or talks plumbing: %s', (line) => {
+    expect(ranksOrShames(line)).toBe(false);
+    expect(line).not.toMatch(/creek/i);
+    expect(line).not.toMatch(/https?|\burl\b|endpoint|server/i);
+    expect(line).not.toMatch(/\bmust\b|have to|need to|\blose\b|\blost\b|missing out/i);
   });
 });

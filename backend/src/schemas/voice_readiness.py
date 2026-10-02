@@ -3,8 +3,8 @@
 Three states rather than a boolean, because there are two genuinely different
 ways to not be ready and they have opposite remedies. An account that has
 agreed to have its journal sorted and simply has not written much yet is
-*early*: time and imported writing both move it. An account that has not agreed
-is not early at all —
+*early*: time moves it (a brought-in document no longer does, since #3016).
+An account that has not agreed is not early at all —
 :data:`services.corpus_consent.CONSENT_GRANTED_BY_DEFAULT` is ``False`` and
 :func:`services.corpus_ingest.ingest_journal_entry` returns before it
 classifies anything, so that account can write every day for a year and hold a

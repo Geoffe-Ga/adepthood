@@ -23,14 +23,15 @@ export type VaultSeedStatus =
   'ingested' | 'vault_unavailable' | 'capability_unsupported' | 'degraded';
 
 /**
- * The eight outcomes an account's own ontologized corpus answers with.
+ * The outcomes answered when no vault took the document.
  *
- * A separate vocabulary from the vault's rather than a translation into it,
- * because these are things a vault never says: the corpus gates on the consent
- * that account gave, it reads the document itself rather than handing it to an
- * ingestor, and it shows the writing to a language model to place it among the
- * frequencies — which is why the intimate tier is refused here and forwarded
- * nowhere.
+ * Since #3016 the server answers only `vault_required`: a corpus lives in a
+ * vault (#3015), so an account the server finds no vault for has its document
+ * stored nowhere. The other eight described the retired local corpus import —
+ * consent, a language model placing the writing, the intimate refusal — and
+ * stay because the server keeps them on the wire. A separate vocabulary from
+ * the vault's rather than a translation into it, because these are things a
+ * vault never says.
  */
 export type CorpusSeedStatus =
   | 'in_corpus'
@@ -40,7 +41,8 @@ export type CorpusSeedStatus =
   | 'not_text'
   | 'empty_document'
   | 'document_too_long'
-  | 'unclassified';
+  | 'unclassified'
+  | 'vault_required';
 
 /**
  * The outcomes decided on device, before or instead of a request.

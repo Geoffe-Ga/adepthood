@@ -138,7 +138,12 @@ export const CORPUS_SOURCE_COPY: Record<string, CorpusSourceCopy> = {
   },
   upload: {
     label: 'Documents you bring in',
-    description: 'Files you hand over through "Bring in your writing".',
+    // A document goes to the account's vault or nowhere (#3016), so nothing is
+    // sorted here under this switch; it stays offered because epic #3015 leaves
+    // consent untouched, and says honestly what it does today.
+    description:
+      'Files you hand over through "Bring in your writing". They go to your vault and have ' +
+      'nowhere to go without one, so this switch lets nothing in today.',
   },
   import: {
     label: 'Writing from somewhere else',
@@ -155,6 +160,10 @@ export const CORPUS_SOURCE_COPY: Record<string, CorpusSourceCopy> = {
  * explained, and offered no switch. ``corpusConsentCopy.test.ts`` derives the
  * same list from the backend, so adding a writer turns that test red until the
  * surface catches up.
+ *
+ * ``upload`` has had no writer since #3016 -- a document goes to a vault or
+ * nowhere -- but the backend still names it, and its switch is kept because
+ * epic #3015 leaves consent untouched. Whether to retire it is that epic's call.
  */
 export const SOURCES_ADEPTHOOD_SORTS: readonly string[] = ['journal', 'upload'];
 

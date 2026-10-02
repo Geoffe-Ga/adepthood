@@ -1,4 +1,9 @@
-import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import {
+  expect,
+  type APIRequestContext,
+  type Page,
+  type Response as PlaywrightResponse,
+} from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl, isoDaysAgo } from './journalHabitsBrowserSupport';
 
@@ -181,6 +186,13 @@ export async function seedCensusAccount(
   return { shareToken: await mintShareLink(request, token, practiceId) };
 }
 
+/**
+ * What `GET /vault/connection` answers a provider-managed vault: connected,
+ * with no address an account may see. The app reads it as unknown, which keeps
+ * the seeding picker (#3017).
+ */
+const MANAGED_VAULT_CONNECTION = { connected: true, vault_url: null } as const;
+
 const goTo = async (page: Page, path: string): Promise<void> => {
   await page.goto(`${frontendUrl()}${path}`);
 };
@@ -256,7 +268,40 @@ export const ROUTES: readonly Route[] = [
       await page.getByTestId('open-vault-activation').click();
     },
   },
-  settingsRow('SeedCorpus', 'Seed corpus', 'seed-corpus', 'seed-corpus-screen'),
+  {
+    // The walking account has no vault, so since #3017 the hub's seed row
+    // opens Where your corpus lives and the screen shows an invitation in
+    // place of its picker. To keep measuring the picker, the vault read is
+    // answered with the managed shape (connected, no address -- which reads
+    // unknown) for this one open only: the real response is still fetched so
+    // its CORS headers carry over, the hub's read and the screen's own read are
+    // each awaited, and the pin is removed in `finally` so nothing leaks to
+    // later routes or viewports. The gate itself is covered unstubbed by
+    // corpus-vault-first.browser.e2e.test.ts.
+    name: 'SeedCorpus',
+    label: 'Seed corpus',
+    anchor: 'seed-corpus-screen',
+    open: async (page) => {
+      const pattern = `${backendUrl()}/vault/connection`;
+      const isVaultRead = (response: PlaywrightResponse): boolean =>
+        response.url() === pattern && response.request().method() === 'GET';
+      await page.route(pattern, async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const response = await route.fetch();
+        return route.fulfill({ response, json: MANAGED_VAULT_CONNECTION });
+      });
+      try {
+        const hubRead = page.waitForResponse(isVaultRead);
+        await goTo(page, '/settings');
+        await hubRead;
+        const screenRead = page.waitForResponse(isVaultRead);
+        await page.getByTestId('settings-row-seed-corpus').click();
+        await screenRead;
+      } finally {
+        await page.unroute(pattern);
+      }
+    },
+  },
   settingsRow('CorpusConsent', 'Corpus consent', 'corpus-consent', 'corpus-consent-screen'),
   settingsRow('ExportData', 'Export data', 'export-data', 'export-data-screen'),
   // Viewed only: nothing here fills the confirmation or presses delete.

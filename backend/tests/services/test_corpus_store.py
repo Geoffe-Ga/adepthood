@@ -46,6 +46,7 @@ from services.corpus_store import (
     CANDIDATE_POOL_SIZE,
     DEFAULT_RETRIEVAL_LIMIT,
     MAX_RETRIEVAL_LIMIT,
+    WHOLE_CORPUS,
     FragmentDraft,
     RetrievalQuery,
     count_retrievable_fragments,
@@ -105,6 +106,26 @@ async def _store(
             source=CorpusSource.JOURNAL,
             classification=_classified(**weights),
             embedding=embedding,
+        ),
+    )
+    await session.commit()
+    return fragment
+
+
+async def _store_legacy_upload(session: AsyncSession, content: str) -> CorpusFragment:
+    """Record one fragment the retired local document import used to write.
+
+    Nothing has written ``upload`` since #3016; rows written before it are
+    still in the table, and these tests are about what the store does with them.
+    """
+    fragment = await record_fragment(
+        session,
+        user_id=_OWNER,
+        draft=FragmentDraft(
+            content=content,
+            tier=JournalClassification.PERSONAL,
+            source=CorpusSource.UPLOAD,
+            classification=_classified(F5=0.9),
         ),
     )
     await session.commit()
@@ -913,26 +934,71 @@ async def test_dropping_a_source_clears_that_source_and_nothing_else(
     documents somebody uploaded deliberately.
     """
     await _store_from_entry(db_session, "from the journal", entry_id=_OTHER_ENTRY, F5=0.9)
-    await record_fragment(
-        db_session,
-        user_id=_OWNER,
-        draft=FragmentDraft(
-            content="from an upload",
-            tier=JournalClassification.PERSONAL,
-            source=CorpusSource.UPLOAD,
-            classification=_classified(F5=0.9),
-        ),
-    )
-    await db_session.commit()
+    await _store_legacy_upload(db_session, "from an upload")
 
     removed = await delete_fragments_for_source(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL
     )
     await db_session.commit()
-    found = await retrieve_fragments(db_session, user_id=_OWNER)
+    # Read off the table rather than through a retrieval: a legacy upload row
+    # is stored but never retrieved (#3016), and what is pinned here is that
+    # the purge left it standing.
+    remaining = (await db_session.execute(select(CorpusFragment.source))).scalars().all()
 
     assert removed == 1
-    assert [fragment.content for fragment in found] == ["from an upload"]
+    assert list(remaining) == [CorpusSource.UPLOAD.value]
+
+
+@pytest.mark.asyncio
+async def test_dropping_the_upload_source_purges_legacy_upload_rows(
+    db_session: AsyncSession,
+) -> None:
+    """Turning off "Documents you bring in" still deletes what the old import kept."""
+    await _store_legacy_upload(db_session, "an essay the retired import sorted")
+    await _store_from_entry(db_session, "from the journal", entry_id=_OTHER_ENTRY, F5=0.9)
+
+    removed = await delete_fragments_for_source(
+        db_session, user_id=_OWNER, source=CorpusSource.UPLOAD
+    )
+    await db_session.commit()
+    remaining = (await db_session.execute(select(CorpusFragment.source))).scalars().all()
+
+    assert removed == 1
+    assert list(remaining) == [CorpusSource.JOURNAL.value]
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_upload_fragment_is_never_retrieved(db_session: AsyncSession) -> None:
+    """A document sorted before #3016 is stored, but no reflection may draw on it.
+
+    Every grounding path reads through this retrieval, so excluding the source
+    here is what keeps the privacy policy's "no longer used for reflections or
+    sent to any language model" true.
+    """
+    await _store_legacy_upload(db_session, "an essay the retired import sorted")
+    await _store(db_session, "from the journal", F5=0.9)
+
+    for query in (
+        WHOLE_CORPUS,
+        RetrievalQuery(frequency_bias=Frequency.F5),
+        RetrievalQuery(exclude_entry_id=_ENTRY_UNDER_REFLECTION),
+    ):
+        found = await retrieve_fragments(db_session, user_id=_OWNER, query=query)
+        assert [fragment.content for fragment in found] == ["from the journal"]
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_upload_fragment_takes_no_place_in_the_candidate_pool(
+    db_session: AsyncSession,
+) -> None:
+    """Excluded in SQL, so a pool full of old uploads cannot crowd out the journal."""
+    await _store(db_session, "the oldest journal page", F5=0.9)
+    for index in range(CANDIDATE_POOL_SIZE):
+        await _store_legacy_upload(db_session, f"upload {index}")
+
+    found = await retrieve_fragments(db_session, user_id=_OWNER)
+
+    assert [fragment.content for fragment in found] == ["the oldest journal page"]
 
 
 @pytest.mark.asyncio
@@ -998,6 +1064,17 @@ async def test_the_count_excludes_a_tier_a_retrieval_would_also_exclude(
     """
     await _store(db_session, "ordinary", F5=1.0)
     await _force_intimate_row(db_session, "the thing I have told nobody")
+
+    assert await count_retrievable_fragments(db_session, user_id=_OWNER) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_count_excludes_a_legacy_upload_as_a_retrieval_does(
+    db_session: AsyncSession,
+) -> None:
+    """A stored-but-inert upload is not writing a reflection can draw on, so it is not counted."""
+    await _store(db_session, "ordinary", F5=1.0)
+    await _store_legacy_upload(db_session, "an essay the retired import sorted")
 
     assert await count_retrievable_fragments(db_session, user_id=_OWNER) == 1
 

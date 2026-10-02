@@ -2,9 +2,9 @@
 
 Named for the surface these shapes were written for, ``POST /journal/upload``,
 which has since been retired: ``POST /corpus/import`` reuses the request
-verbatim and routes it per account -- to the vault when the account has one, to
-its own ontologized corpus when it has not -- so the vault-only route it grew
-out of had nothing left that it alone could do. The vocabulary stayed because
+verbatim and takes the document to the account's vault, answering
+``vault_required`` when it has none (#3016), so the vault-only route it grew out
+of had nothing left that it alone could do. The vocabulary stayed because
 it is the vault's, not the route's.
 
 The transport is deliberately **base64-in-JSON**, exactly as the page-capture
@@ -19,8 +19,7 @@ Nothing on this DTO is persisted locally when the document goes to a vault.
 It travels through adepthood and adepthood keeps no copy: there is no upload
 table, no spool, and no row that outlives the request. What comes back is the
 vault's own outcome, which is the only record either side keeps. An account
-with no vault is the other half of that decision and is
-:mod:`services.corpus_import`'s subject, not this module's.
+with no vault keeps nothing either -- see :mod:`services.corpus_import`.
 """
 
 from __future__ import annotations

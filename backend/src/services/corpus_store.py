@@ -63,13 +63,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, cast
 
-from sqlalchemy import ColumnElement, CursorResult, delete, func, or_
+from sqlalchemy import ColumnElement, CursorResult, and_, delete, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.corpus import MIN_SIMILARITY, blend_score, cosine_similarity, frequency_affinity
 from domain.frequencies import Frequency, frequency_for_color
-from models.corpus_fragment import RETRIEVABLE_TIERS, CorpusFragment, CorpusSource
+from models.corpus_fragment import (
+    INERT_SOURCES,
+    RETRIEVABLE_TIERS,
+    CorpusFragment,
+    CorpusSource,
+)
 from models.course_stage import CourseStage
 from models.journal_entry import JournalClassification
 from services.frequency_classification import FrequencyClassification, IntimateContentRefusedError
@@ -91,6 +96,13 @@ CANDIDATE_POOL_SIZE = 200
 
 # The tier values as the column stores them.
 _RETRIEVABLE_TIER_VALUES = tuple(tier.value for tier in RETRIEVABLE_TIERS)
+
+# The source values a read may return, as the column stores them: every source
+# but the inert ones. An allowlist like the tiers', so a row whose source is
+# none of these is outside the query rather than filtered out of it.
+_RETRIEVABLE_SOURCE_VALUES = tuple(
+    source.value for source in CorpusSource if source not in INERT_SOURCES
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +243,21 @@ def _affinity_ordering(bias: Frequency) -> ColumnElement[float]:
     )
 
 
+def _readable_for(user_id: int) -> ColumnElement[bool]:
+    """The one predicate every read of fragment content or count applies.
+
+    The account, the tier allowlist, and the source allowlist together. Written
+    once so a retrieval and a count cannot come to disagree about what an
+    account's corpus holds -- in particular about legacy ``upload`` rows, which
+    are stored but inert since #3016 (:data:`models.corpus_fragment.INERT_SOURCES`).
+    """
+    return and_(
+        col(CorpusFragment.user_id) == user_id,
+        col(CorpusFragment.tier).in_(_RETRIEVABLE_TIER_VALUES),
+        col(CorpusFragment.source).in_(_RETRIEVABLE_SOURCE_VALUES),
+    )
+
+
 def _not_derived_from(entry_id: int) -> ColumnElement[bool]:
     """Match every fragment that did not come from ``entry_id``.
 
@@ -264,10 +291,7 @@ async def _candidate_pool(
     of :data:`CANDIDATE_POOL_SIZE` slots, so on a large corpus excluding one
     entry would silently cost a fragment that had earned its place.
     """
-    statement = select(CorpusFragment).where(
-        col(CorpusFragment.user_id) == user_id,
-        col(CorpusFragment.tier).in_(_RETRIEVABLE_TIER_VALUES),
-    )
+    statement = select(CorpusFragment).where(_readable_for(user_id))
     if query.exclude_entry_id is not None:
         statement = statement.where(_not_derived_from(query.exclude_entry_id))
     if query.frequency_bias is not None:
@@ -369,10 +393,10 @@ async def count_retrievable_fragments(session: AsyncSession, *, user_id: int) ->
     corpus. This is what a caller asking "how much of their own writing is
     there" has to use.
 
-    The tier predicate is the same allowlist ``_candidate_pool`` applies, read
-    off the same :data:`_RETRIEVABLE_TIER_VALUES`, so an intimate row that
-    reached the table past a relaxed CHECK is outside this count exactly as it
-    is outside a retrieval. A hand-written tier list here would be a second
+    The predicate is the one ``_candidate_pool`` applies, :func:`_readable_for`,
+    so an intimate row that reached the table past a relaxed CHECK, and a
+    legacy ``upload`` row (#3016), are outside this count exactly as they are
+    outside a retrieval. A hand-written tier list here would be a second
     derivation of the store's central rule, free to drift from the one the
     reads use.
 
@@ -381,12 +405,7 @@ async def count_retrievable_fragments(session: AsyncSession, *, user_id: int) ->
     grow with the corpus it is measuring.
     """
     result = await session.execute(
-        select(func.count())
-        .select_from(CorpusFragment)
-        .where(
-            col(CorpusFragment.user_id) == user_id,
-            col(CorpusFragment.tier).in_(_RETRIEVABLE_TIER_VALUES),
-        )
+        select(func.count()).select_from(CorpusFragment).where(_readable_for(user_id))
     )
     return int(result.scalar_one())
 

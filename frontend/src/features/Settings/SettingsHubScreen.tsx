@@ -24,6 +24,8 @@ import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
 import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
+import { useVaultConnectionState } from './useVaultConnectionState';
+import { vaultComesFirst } from './vaultConnectionState';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
@@ -38,6 +40,11 @@ import {
 } from '@/features/Feedback/feedbackCopy';
 import { FEEDBACK_TEST_IDS } from '@/features/Feedback/feedbackTestIds';
 import { openFeedbackComposer } from '@/features/Feedback/navigation';
+import {
+  SEED_ROW_DESCRIPTION,
+  SEED_ROW_LABEL,
+  SEED_ROW_VAULT_FIRST_DESCRIPTION,
+} from '@/features/Seed/seedCopy';
 import ChooseDepthsSection from '@/features/Settings/ChooseDepthsSection';
 import JournalSection from '@/features/Settings/JournalSection';
 import SanghaSection from '@/features/Settings/SanghaSection';
@@ -120,28 +127,37 @@ interface CorpusSectionProps {
   onSeedCorpus: () => void;
   onCorpusConsent: () => void;
   onVault: () => void;
+  seedDescription: string;
 }
 
 /**
- * Corpus group: the way in for writing that already exists elsewhere, the
- * decision about whether any of it is sorted for reflections to draw on, and,
- * last, where an optional copy of it may live (#3007). Phrased as an offer, not
- * a task — the journal works fine on its own, and every row only widens what
- * reflections can reach or where a copy goes, for people who want that. The
- * consent row is off until somebody turns it on, so it is a question rather
- * than a setting to correct; the vault row comes after it because a vault is
- * not that yes.
+ * Corpus group: where a corpus lives, the way in for writing that already
+ * exists elsewhere, and the decision about whether any of it is sorted for
+ * reflections to draw on. A corpus lives in a vault (#3015), so the place comes
+ * first and the way in second (#3017). Phrased as an offer, not a task — the
+ * journal works fine on its own, and every row only widens what reflections can
+ * reach or where a copy goes, for people who want that. The consent row is off
+ * until somebody turns it on, so it is a question rather than a setting to
+ * correct.
  */
 const CorpusSection = ({
   onSeedCorpus,
   onCorpusConsent,
   onVault,
+  seedDescription,
 }: CorpusSectionProps): React.JSX.Element => (
   <EditorialSection title="Your corpus" testID="settings-group-corpus">
     <SettingsRow
+      icon={Vault}
+      label={VAULT_ROW_LABEL}
+      description={VAULT_ROW_DESCRIPTION}
+      onPress={onVault}
+      testID="settings-row-vault"
+    />
+    <SettingsRow
       icon={FolderUp}
-      label="Bring in your writing"
-      description="Add notes, exports, and documents you have already written elsewhere."
+      label={SEED_ROW_LABEL}
+      description={seedDescription}
       onPress={onSeedCorpus}
       testID="settings-row-seed-corpus"
     />
@@ -152,15 +168,31 @@ const CorpusSection = ({
       onPress={onCorpusConsent}
       testID="settings-row-corpus-consent"
     />
-    <SettingsRow
-      icon={Vault}
-      label={VAULT_ROW_LABEL}
-      description={VAULT_ROW_DESCRIPTION}
-      onPress={onVault}
-      testID="settings-row-vault"
-    />
   </EditorialSection>
 );
+
+/**
+ * Where "Bring in your writing" leads, and what its row says (#3017).
+ *
+ * An account the server says has nothing attached is shown where its corpus
+ * would live; every other account -- including one whose read is still out or
+ * failed -- gets the picker. The read never holds the hub's render.
+ */
+function useSeedCorpusRow(navigation: NativeStackNavigationProp<RootStackParamList>): {
+  onSeedCorpus: () => void;
+  seedDescription: string;
+} {
+  const { state } = useVaultConnectionState();
+  const vaultFirst = vaultComesFirst(state);
+  const onSeedCorpus = useCallback(
+    () => navigation.navigate(vaultFirst ? 'VaultSettings' : 'SeedCorpus'),
+    [navigation, vaultFirst],
+  );
+  return {
+    onSeedCorpus,
+    seedDescription: vaultFirst ? SEED_ROW_VAULT_FIRST_DESCRIPTION : SEED_ROW_DESCRIPTION,
+  };
+}
 
 /**
  * Your data group: the copy you can take away. It sits above Session on
@@ -287,7 +319,7 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
   const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
   const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
   const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
-  const openSeedCorpus = useCallback(() => navigation.navigate('SeedCorpus'), [navigation]);
+  const seedRow = useSeedCorpusRow(navigation);
   const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
   const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
@@ -304,7 +336,8 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
       />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
       <CorpusSection
-        onSeedCorpus={openSeedCorpus}
+        onSeedCorpus={seedRow.onSeedCorpus}
+        seedDescription={seedRow.seedDescription}
         onCorpusConsent={openCorpusConsent}
         onVault={openVault}
       />
