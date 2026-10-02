@@ -7,6 +7,7 @@ import { Text } from 'react-native';
 import * as apiModule from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
+import * as localModelStorage from '@/storage/localModelStorage';
 
 jest.mock('@/api', () => ({
   setLlmApiKeyGetter: jest.fn(),
@@ -19,8 +20,14 @@ jest.mock('@/storage/llmKeyStorage', () => ({
   clearLlmApiKey: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('@/storage/localModelStorage', () => ({
+  loadLocalModelPreferred: jest.fn(() => Promise.resolve(null)),
+  saveLocalModelPreferred: jest.fn(() => Promise.resolve(true)),
+}));
+
 const mockApi = apiModule as jest.Mocked<typeof apiModule>;
 const mockStorage = llmKeyStorage as jest.Mocked<typeof llmKeyStorage>;
+const mockLocalModel = localModelStorage as jest.Mocked<typeof localModelStorage>;
 
 function TestConsumer({
   onValue,
@@ -35,6 +42,8 @@ function TestConsumer({
 beforeEach(() => {
   jest.clearAllMocks();
   mockStorage.loadLlmApiKey.mockResolvedValue(null);
+  mockLocalModel.loadLocalModelPreferred.mockResolvedValue(null);
+  mockLocalModel.saveLocalModelPreferred.mockResolvedValue(true);
 });
 
 describe('ApiKeyProvider', () => {
@@ -295,5 +304,112 @@ describe('ApiKeyProvider', () => {
     expect(ctx!.apiKey).toBeNull();
     expect(result).toEqual({ cleared: false });
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Use Adepthood's own model": the key is kept but not sent while it is on.
+// ---------------------------------------------------------------------------
+
+describe('ApiKeyProvider — the local-model choice', () => {
+  type Ctx = ReturnType<typeof useApiKey>;
+
+  function mount(): { ctx: () => Ctx; getter: () => (() => string | null) | null } {
+    let latest: Ctx | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            latest = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+    return {
+      ctx: () => latest!,
+      getter: () => mockApi.setLlmApiKeyGetter.mock.calls[0]?.[0] ?? null,
+    };
+  }
+
+  test('is off by default on a device with no stored choice, so the key is sent as before', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    const { ctx, getter } = mount();
+
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+  });
+
+  test('reads a stored choice on mount, and withholds the key while it is on', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    mockLocalModel.loadLocalModelPreferred.mockResolvedValueOnce(true);
+    const { ctx, getter } = mount();
+
+    await waitFor(() => expect(ctx().localModel).toBe(true));
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+    // Kept, not cleared — and not sent.
+    expect(ctx().apiKey).toBe('sk-alpha');
+    expect(getter()?.()).toBeNull();
+    expect(mockStorage.clearLlmApiKey).not.toHaveBeenCalled();
+  });
+
+  test('turning it on persists the choice and withholds the key at once; off sends it again', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    const { ctx, getter } = mount();
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+
+    let result: { persisted: boolean } | undefined;
+    await act(async () => {
+      result = await ctx().setLocalModel(true);
+    });
+
+    expect(mockLocalModel.saveLocalModelPreferred).toHaveBeenCalledWith(true);
+    expect(result).toEqual({ persisted: true });
+    expect(ctx().localModel).toBe(true);
+    expect(getter()?.()).toBeNull();
+
+    await act(async () => {
+      result = await ctx().setLocalModel(false);
+    });
+
+    expect(mockLocalModel.saveLocalModelPreferred).toHaveBeenLastCalledWith(false);
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+  });
+
+  test('the getter honours the choice synchronously, before any re-render lands', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    let land: (_saved: boolean) => void = () => undefined;
+    mockLocalModel.saveLocalModelPreferred.mockReturnValueOnce(
+      new Promise((resolve) => (land = resolve)),
+    );
+    const { ctx, getter } = mount();
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+
+    let pending: Promise<{ persisted: boolean }> | undefined;
+    act(() => {
+      pending = ctx().setLocalModel(true);
+    });
+
+    // The write is still out; the very next request must already withhold the key.
+    expect(getter()?.()).toBeNull();
+    await act(async () => {
+      land(true);
+      await pending;
+    });
+  });
+
+  test('a choice whose write fails still holds for this session, and says it did not persist', async () => {
+    mockLocalModel.saveLocalModelPreferred.mockResolvedValueOnce(false);
+    const { ctx } = mount();
+    await waitFor(() => expect(ctx().isLoading).toBe(false));
+
+    let result: { persisted: boolean } | undefined;
+    await act(async () => {
+      result = await ctx().setLocalModel(true);
+    });
+
+    expect(result).toEqual({ persisted: false });
+    expect(ctx().localModel).toBe(true);
   });
 });
