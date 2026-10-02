@@ -93,8 +93,9 @@ describe('useVaultConnectionState', () => {
     const { result, unmount } = renderHook(() => useVaultConnectionState(onError));
     unmount();
     fail(new Error('late'));
-    await Promise.resolve();
-    await Promise.resolve();
+    // A macrotask, so every promise hop between the rejection and the hook's
+    // handlers has run before anything is asserted.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(onError).not.toHaveBeenCalled();
     expect(result.current.state).toEqual({ kind: 'unknown' });
