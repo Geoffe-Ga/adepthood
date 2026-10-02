@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -24,6 +27,7 @@ from models.practice_session import PracticeSession
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 from routers import stages as stages_router
+from seed_stages import seed_stages
 
 
 def _stage_data(stage_number: int = 1, **overrides: object) -> dict[str, object]:
@@ -853,3 +857,188 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
     # slot rather than cycle 1's. The leading None is cycle 1's destroyed anchor,
     # recorded as unknown -- never back-filled with a neighbour's value.
     assert progress.past_cycle_anchors == [None, cycle_two_anchor.isoformat()]
+
+
+# ── GET /stages/correspondence (#2665) ─────────────────────────────────
+
+_CORRESPONDENCE_PATH = "/stages/correspondence"
+_PINNED_CONTENT_SHA = "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20"  # pragma: allowlist secret
+_ARTIFACT_FILE = (
+    Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
+)
+_CORRESPONDENCE_KEYS = {
+    "stage_key",
+    "stage_number",
+    "start_week",
+    "category",
+    "aspect",
+    "spiral_dynamics_color",
+    "growing_up_stage",
+    "divine_gender_polarity",
+    "relationship_to_free_will",
+    "free_will_description",
+    "provenance",
+}
+_PROVENANCE_KEYS = {
+    "source_repo",
+    "source_sha",
+    "source_path",
+    "source_sha256",
+    "schema_version",
+    "reconciled_at",
+}
+_EXPECTED_STAGE_KEYS = [
+    "beige",
+    "purple",
+    "red",
+    "blue",
+    "orange",
+    "green",
+    "yellow",
+    "teal",
+    "ultraviolet",
+    "clearlight",
+]
+_EXPECTED_START_WEEKS = [1, 4, 7, 10, 13, 16, 19, 22, 25, 31]
+_BLUE_INDEX = 3
+_ORPHAN_STAGE_NUMBER = 11
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_requires_auth(async_client: AsyncClient) -> None:
+    """Reference data still sits behind sign-in, like ``/stages``."""
+    resp = await async_client.get(_CORRESPONDENCE_PATH)
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_lists_the_ten_stages_in_order(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Ten keyed Stages, on the program schedule, each with the full key set."""
+    headers, _user_id = await _signup(async_client)
+    await seed_stages(db_session)
+
+    resp = await async_client.get(_CORRESPONDENCE_PATH, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert [stage["stage_key"] for stage in body] == _EXPECTED_STAGE_KEYS
+    assert [stage["stage_number"] for stage in body] == list(range(1, TOTAL_STAGES + 1))
+    assert [stage["start_week"] for stage in body] == _EXPECTED_START_WEEKS
+    for stage in body:
+        assert set(stage) == _CORRESPONDENCE_KEYS
+        assert set(stage["provenance"]) == _PROVENANCE_KEYS
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_serves_every_field_of_a_stage(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Blue, field by field, including its supersession and its provenance."""
+    headers, _user_id = await _signup(async_client)
+    await seed_stages(db_session)
+    source = json.loads(_ARTIFACT_FILE.read_text())["source"]
+
+    blue = (await async_client.get(_CORRESPONDENCE_PATH, headers=headers)).json()[_BLUE_INDEX]
+
+    provenance = blue.pop("provenance")
+    assert blue == {
+        "stage_key": "blue",
+        "stage_number": 4,
+        "start_week": 10,
+        "category": "Love",
+        "aspect": "Community Love",
+        "spiral_dynamics_color": "Blue",
+        "growing_up_stage": "Conformity",
+        "divine_gender_polarity": "Divine Feminine",
+        "relationship_to_free_will": "Victim",
+        "free_will_description": (
+            "Behavior is determined by the attempt to meet the expectations of the "
+            "relationships that the individual is embedded within; we are defined by roles: "
+            "partners, parents, children, coworkers, friends, pupils, etc"
+        ),
+    }
+    reconciled_at = provenance.pop("reconciled_at")
+    assert provenance == {
+        "source_repo": "Geoffe-Ga/aptitude-course",
+        "source_sha": _PINNED_CONTENT_SHA,
+        "source_path": "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv",
+        "source_sha256": source["sha256"],
+        "schema_version": "1.0.0",
+    }
+    assert datetime.fromisoformat(reconciled_at) <= datetime.now(UTC).replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_omits_rows_outside_the_ten_stages(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A legacy ``stage-11`` orphan is kept in the table but never served."""
+    headers, _user_id = await _signup(async_client)
+    await seed_stages(db_session)
+    db_session.add(CourseStage(**_stage_data(stage_number=_ORPHAN_STAGE_NUMBER)))
+    await db_session.commit()
+
+    body = (await async_client.get(_CORRESPONDENCE_PATH, headers=headers)).json()
+
+    assert [stage["stage_key"] for stage in body] == _EXPECTED_STAGE_KEYS
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_serves_unreconciled_rows_with_null_provenance(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A row the seeder has not reconciled yet is served, not a 500."""
+    headers, _user_id = await _signup(async_client)
+    await _seed_stages(db_session, count=2)
+
+    body = (await async_client.get(_CORRESPONDENCE_PATH, headers=headers)).json()
+
+    assert [stage["stage_key"] for stage in body] == _EXPECTED_STAGE_KEYS[:2]
+    assert [stage["start_week"] for stage in body] == _EXPECTED_START_WEEKS[:2]
+    assert body[0]["provenance"] == dict.fromkeys(_PROVENANCE_KEYS)
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_orders_by_stage_number_then_id(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A total order, per the repo convention for list endpoints.
+
+    Asserted on the emitted SQL: the unique stage_number index means the
+    tiebreak can never be observed in the returned rows.
+    """
+    headers, _user_id = await _signup(async_client)
+    await seed_stages(db_session)
+    engine = (await db_session.connection()).engine.sync_engine
+    statements: list[str] = []
+
+    def _capture(*args: object) -> None:
+        statements.append(str(args[2]))
+
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        await async_client.get(_CORRESPONDENCE_PATH, headers=headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    selects = [s for s in statements if "FROM coursestage" in s]
+    assert len(selects) == 1
+    assert "ORDER BY coursestage.stage_number ASC, coursestage.id ASC" in selects[0]
+
+
+@pytest.mark.asyncio
+async def test_stage_correspondence_records_no_visit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Reading reference data is not a Map visit: no progress row appears."""
+    headers, user_id = await _signup(async_client)
+    await seed_stages(db_session)
+
+    await async_client.get(_CORRESPONDENCE_PATH, headers=headers)
+
+    progress = await db_session.execute(
+        select(StageProgress).where(StageProgress.user_id == user_id)
+    )
+    assert progress.scalars().all() == []

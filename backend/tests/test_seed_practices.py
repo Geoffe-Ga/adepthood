@@ -24,7 +24,7 @@ from seed_practices import (
     STAGE_TO_PRESET_NAME,
     seed_practices,
 )
-from seed_stages import STAGE_DEFINITIONS
+from seed_stages import stage_definitions
 
 #: Total catalog presets the seeder inserts. Derived from the source list
 #: so adding a preset never silently drifts these expectations — mirrors
@@ -694,19 +694,19 @@ def test_canonical_presets_match_stage_total() -> None:
     because a stage may carry alternative presets alongside its canonical
     one; the canonical subset stays 1:1 with the stages.
     """
-    assert len(CANONICAL_PRESET_PRACTICES) == len(STAGE_DEFINITIONS)
+    assert len(CANONICAL_PRESET_PRACTICES) == len(stage_definitions())
     assert len(PRESET_PRACTICES) > len(CANONICAL_PRESET_PRACTICES)
 
 
 def test_canonical_presets_cover_each_stage_once() -> None:
     """Stage numbers 1..10 appear exactly once across the canonical presets."""
     seen = sorted(p["stage_number"] for p in CANONICAL_PRESET_PRACTICES)
-    assert seen == list(range(1, len(STAGE_DEFINITIONS) + 1))
+    assert seen == list(range(1, len(stage_definitions()) + 1))
 
 
 def test_every_preset_sits_on_a_known_stage() -> None:
     """Every preset — canonical or alternative — lands on a defined stage."""
-    valid_stages = set(range(1, len(STAGE_DEFINITIONS) + 1))
+    valid_stages = set(range(1, len(stage_definitions()) + 1))
     for preset in PRESET_PRACTICES:
         assert preset["stage_number"] in valid_stages
 

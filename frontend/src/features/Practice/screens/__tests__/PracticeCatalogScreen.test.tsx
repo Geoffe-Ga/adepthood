@@ -6,6 +6,9 @@ import { Flower2, Hourglass, Shuffle } from 'lucide-react-native';
 import React from 'react';
 import { Alert, StyleSheet, Text } from 'react-native';
 
+// jest.mock calls below are hoisted above this import.
+import PracticeCatalogList from '../PracticeCatalogList';
+
 import type { PracticeItem, UserPractice } from '@/api';
 import { surface } from '@/design/tokens';
 import { FALLBACK_MODE_ICON } from '@/features/Practice/components/ModePicker';
@@ -689,5 +692,77 @@ describe('PracticeCatalogScreen — cross-stage copy', () => {
     );
     expect(mockPracticesCreate).not.toHaveBeenCalled();
     await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
+  });
+});
+
+// #2451: the Practice tab presents details in place and hands focus back to the
+// row that asked; the list records that row before it asks.
+describe('PracticeCatalogList — detail opener', () => {
+  /**
+   * What a ref on the pressable row resolves to under the Jest preset: the
+   * mocked ``View`` component wrapping the host node ``getByTestId`` returns.
+   * Compared by identity, never printed: a failing diff of two view instances
+   * serializes their whole fiber trees.
+   */
+  const refTarget = (host: { parent: { instance: unknown } | null }): unknown =>
+    host.parent?.instance;
+
+  const renderList = (detailOpenerRef: React.RefObject<{ focus: () => void } | null>) => {
+    const navigateToDetail = jest.fn<(id: number) => void>();
+    const view = render(
+      <PracticeCatalogList
+        embedded
+        initialStage={1}
+        loadPractices={async () => [presetA, presetB, myDraft]}
+        navigateToDetail={navigateToDetail}
+        detailOpenerRef={detailOpenerRef}
+      />,
+    );
+    return { view, navigateToDetail };
+  };
+
+  it('records the tapped row itself as the opener, then asks for its details by id alone', async () => {
+    const stale = { focus: jest.fn() };
+    const detailOpenerRef: React.RefObject<{ focus: () => void } | null> = { current: stale };
+    const { view, navigateToDetail } = renderList(detailOpenerRef);
+    await waitForLoad();
+    const row = view.getByTestId('practice-catalog-row-2');
+
+    fireEvent.press(row);
+
+    expect(navigateToDetail).toHaveBeenCalledTimes(1);
+    expect(navigateToDetail).toHaveBeenCalledWith(2);
+    // The very host view that was pressed, so focus returns to that row.
+    expect(detailOpenerRef.current).not.toBeNull();
+    expect(detailOpenerRef.current === refTarget(row)).toBe(true);
+    expect(stale.focus).not.toHaveBeenCalled();
+  });
+
+  it('records a "Recently used" row itself as the opener too', async () => {
+    await AsyncStorage.setItem(
+      '@adepthood/recent_practices',
+      JSON.stringify([
+        {
+          id: 2,
+          name: 'Awareness bells preset',
+          mode: 'random_interval_bell',
+          durationMinutes: 20,
+        },
+      ]),
+    );
+    const detailOpenerRef: React.RefObject<{ focus: () => void } | null> = { current: null };
+    const { view, navigateToDetail } = renderList(detailOpenerRef);
+    await waitForLoad();
+    const recent = view.getByTestId('practice-catalog-recent-row-2');
+
+    fireEvent.press(recent);
+
+    expect(navigateToDetail).toHaveBeenCalledWith(2);
+    expect(detailOpenerRef.current).not.toBeNull();
+    expect(detailOpenerRef.current === refTarget(recent)).toBe(true);
+    expect(detailOpenerRef.current === refTarget(view.getByTestId('practice-catalog-row-2'))).toBe(
+      false,
+    );
+    await AsyncStorage.clear();
   });
 });

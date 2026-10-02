@@ -24,13 +24,14 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
+from domain.stage_keys import STAGE_KEYS
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from seed_content import _ExistingRows, _load_stage_map, seed_content
 from seed_practice_recipes import seed_practice_recipes
-from seed_stages import STAGE_DEFINITIONS, seed_stages
+from seed_stages import seed_stages, stage_definitions
 
 
 async def _count(session: AsyncSession, model: type[CourseStage] | type[StageContent]) -> int:
@@ -43,7 +44,7 @@ async def test_duplicate_stage_number_rejected_by_db(db_session: AsyncSession) -
     """The DB itself must arbitrate stage uniqueness — the app pre-check is racy."""
     await seed_stages(db_session)
 
-    dupe = CourseStage(**STAGE_DEFINITIONS[0])
+    dupe = CourseStage(**stage_definitions()[0])
     db_session.add(dupe)
     with pytest.raises(IntegrityError):
         await db_session.commit()
@@ -81,16 +82,20 @@ async def test_seed_stages_race_loser_yields_to_winner(db_session: AsyncSession)
     this worker's existence SELECT ran before that commit and saw nothing.
     """
     first = await seed_stages(db_session)
-    assert first == len(STAGE_DEFINITIONS)
+    assert first == len(stage_definitions())
 
-    async def _stale_read(*_args: object, **_kwargs: object) -> dict[int, CourseStage]:
+    async def _stale_read(*_args: object, **_kwargs: object) -> dict[str, CourseStage]:
         return {}
 
     with patch("seed_stages._load_existing_stages", new=_stale_read):
         second = await seed_stages(db_session)
 
     assert second == 0, "race loser must report 0 inserts, not raise"
-    assert await _count(db_session, CourseStage) == len(STAGE_DEFINITIONS)
+    assert await _count(db_session, CourseStage) == len(stage_definitions())
+    keys = await db_session.execute(
+        select(CourseStage.stage_key).order_by(col(CourseStage.stage_number))
+    )
+    assert tuple(keys.scalars().all()) == STAGE_KEYS
 
 
 @pytest.mark.asyncio

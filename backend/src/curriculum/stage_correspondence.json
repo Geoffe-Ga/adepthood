@@ -1,0 +1,154 @@
+{
+  "schema_version": "1.0.0",
+  "source": {
+    "csv_path": "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv",
+    "repo": "Geoffe-Ga/aptitude-course",
+    "sha": "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20",
+    "sha256": "f6ab97c693ba0b455bd00973295f9f08959cffd7edf3fbb6a78668616eec4dde"
+  },
+  "stages": [
+    {
+      "aspect": "Agency",
+      "category": "Yes-And-Ness",
+      "divine_gender_polarity": "Divine Masculine",
+      "free_will_description": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "growing_up_stage": "Survival",
+      "id": "beige",
+      "relationship_to_free_will": "Biological Machine",
+      "spiral_dynamics_color": "Beige",
+      "stage_number": 1,
+      "start_week": 1
+    },
+    {
+      "aspect": "Receptivity",
+      "category": "Yes-And-Ness",
+      "divine_gender_polarity": "Divine Feminine",
+      "free_will_description": "Behavior is steered from the Sacral: toward what feels nice and away from what doesn't, before any argument has been made. Much of what feels nice was installed by inherited stories and by people with an interest in what you reach for, so pleasure is at once real information and an easy leash. Free Will here is not renouncing pleasure or obeying it, but learning to tell the yes that widens you from the yes that narrows you.",
+      "growing_up_stage": "Magic",
+      "id": "purple",
+      "relationship_to_free_will": "Pleasure Seeker",
+      "spiral_dynamics_color": "Purple",
+      "stage_number": 2,
+      "start_week": 4
+    },
+    {
+      "aspect": "Self-Love",
+      "category": "Love",
+      "divine_gender_polarity": "Divine Masculine",
+      "free_will_description": "Behavior is driven by a subconscious urge to alleviate the pain of emotions (that may or may not even be consciously noticed) that tell us that we are not enough. Without self-love toward these aversion based feelings, the tendency is to forge dominator \"power over others.\"",
+      "growing_up_stage": "Ego-centrism",
+      "id": "red",
+      "relationship_to_free_will": "Dominator",
+      "spiral_dynamics_color": "Red",
+      "stage_number": 3,
+      "start_week": 7
+    },
+    {
+      "aspect": "Community Love",
+      "category": "Love",
+      "divine_gender_polarity": "Divine Feminine",
+      "free_will_description": "Behavior is determined by the attempt to meet the expectations of the relationships that the individual is embedded within; we are defined by roles: partners, parents, children, coworkers, friends, pupils, etc",
+      "growing_up_stage": "Conformity",
+      "id": "blue",
+      "relationship_to_free_will": "Victim",
+      "spiral_dynamics_color": "Blue",
+      "stage_number": 4,
+      "start_week": 10
+    },
+    {
+      "aspect": "Intellectual Understanding",
+      "category": "Understanding",
+      "divine_gender_polarity": "Divine Masculine",
+      "free_will_description": "Behavior is based on chasing things valued by the culture: money, wealth, status, privilege, fame… in short, achievement. Although the question may arise, Free Will is still uninteresting and left largely unconsidered",
+      "growing_up_stage": "Achievest",
+      "id": "orange",
+      "relationship_to_free_will": "Status Seeker",
+      "spiral_dynamics_color": "Orange",
+      "stage_number": 5,
+      "start_week": 13
+    },
+    {
+      "aspect": "Embodied Understanding",
+      "category": "Understanding",
+      "divine_gender_polarity": "Divine Feminine",
+      "free_will_description": "Behavior is driven by a desire to be virtuous, to apply rules fairly, to reduce the influence of hierarchy, and to respect everyone's perspectives. Free Will is still absent as behavior follows predictably from a set of pluralistic heuristics.",
+      "growing_up_stage": "Pluralistic",
+      "id": "green",
+      "relationship_to_free_will": "Shadow Glorifier",
+      "spiral_dynamics_color": "Green",
+      "stage_number": 6,
+      "start_week": 16
+    },
+    {
+      "aspect": "Systems Wisdom",
+      "category": "Wisdom",
+      "divine_gender_polarity": "Divine Masculine",
+      "free_will_description": "The ability to reflect on all the influences of stages prior to Yellow develops and the individual becomes convinced that Free Will is essentially an illusion.",
+      "growing_up_stage": "Integrative",
+      "id": "yellow",
+      "relationship_to_free_will": "Despairing Analyst",
+      "spiral_dynamics_color": "Yellow",
+      "stage_number": 7,
+      "start_week": 19
+    },
+    {
+      "aspect": "True Self Connection",
+      "category": "Wisdom",
+      "divine_gender_polarity": "Divine Feminine",
+      "free_will_description": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
+      "growing_up_stage": "Nonduality",
+      "id": "teal",
+      "relationship_to_free_will": "True Self Embodier",
+      "spiral_dynamics_color": "Teal",
+      "stage_number": 8,
+      "start_week": 22
+    },
+    {
+      "aspect": "Unity",
+      "category": "Being",
+      "divine_gender_polarity": "Divine Hermaphrodite",
+      "free_will_description": "The obsession with \"Free\" Will of the previous two stages grows less all consuming and the goal becomes to subsume individual Will into alignment with the Will of Source. Blissful Union of Atman and Brahman.",
+      "growing_up_stage": "Effortless Being",
+      "id": "ultraviolet",
+      "relationship_to_free_will": "Blissy Adept",
+      "spiral_dynamics_color": "Ultraviolet",
+      "stage_number": 9,
+      "start_week": 25
+    },
+    {
+      "aspect": "Emptiness",
+      "category": "Awareness",
+      "divine_gender_polarity": "Divine Hermaphrodite",
+      "free_will_description": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "growing_up_stage": "Pure Awareness",
+      "id": "clearlight",
+      "relationship_to_free_will": "Whole Adept",
+      "spiral_dynamics_color": "Clear Light",
+      "stage_number": 10,
+      "start_week": 31
+    }
+  ],
+  "supersessions": [
+    {
+      "authority": "markdown/04-blue/02-the-mood-of-blue-lovecommunity-love.md",
+      "csv_value": "Universal Love",
+      "field": "aspect",
+      "stage_id": "blue",
+      "value": "Community Love"
+    },
+    {
+      "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
+      "csv_value": "Transcendent Wisdom",
+      "field": "aspect",
+      "stage_id": "teal",
+      "value": "True Self Connection"
+    },
+    {
+      "authority": "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md",
+      "csv_value": "Adept",
+      "field": "relationship_to_free_will",
+      "stage_id": "teal",
+      "value": "True Self Embodier"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "description": "Adepthood-owned, ratified departures from aptitude-course 'APTITUDE Complete Map.csv' (#2664). Read by backend/scripts/build_stage_correspondence.py and echoed into stage_correspondence.json. Each entry must: name a real stage_id and field; override a csv_value that still equals the vendored CSV cell (else it fails as stale); actually change it (no-ops fail); and cite as authority contracted vendored markdown (markdown/, never markdown/backup/) that contains the value. Chapter text wins over the CSV (owner ruling 2026-09-16). See docs/curriculum.md, 'Supersessions'.",
+  "supersessions": [
+    {
+      "stage_id": "blue",
+      "field": "aspect",
+      "csv_value": "Universal Love",
+      "value": "Community Love",
+      "authority": "markdown/04-blue/02-the-mood-of-blue-lovecommunity-love.md"
+    },
+    {
+      "stage_id": "teal",
+      "field": "aspect",
+      "csv_value": "Transcendent Wisdom",
+      "value": "True Self Connection",
+      "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md"
+    },
+    {
+      "stage_id": "teal",
+      "field": "relationship_to_free_will",
+      "csv_value": "Adept",
+      "value": "True Self Embodier",
+      "authority": "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md"
+    }
+  ]
+}

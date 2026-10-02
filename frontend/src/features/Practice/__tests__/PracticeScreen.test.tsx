@@ -1,11 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-env jest */
 import { jest, describe, it, expect, afterEach, beforeEach } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore, type ReactElement } from 'react';
+import { Animated, Modal, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
-import type { FrequencyResponse, PracticeItem, UserPractice } from '../../../api';
+import type {
+  FrequencyResponse,
+  PracticeCreatePayload,
+  PracticeItem,
+  PracticeStatsResponse,
+  UserPractice,
+} from '../../../api';
+import { motion } from '../../../design/tokens';
+import * as reducedMotion from '../../../hooks/useReducedMotion';
+import { TAB_CROSSFADE_LIFETIME_MS } from '../../../hooks/useTabCrossFade';
 import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
+import { recordRecentPractice } from '../../../storage/recentPracticesStorage';
+import { useProgramStore } from '../../../store/useProgramStore';
+import * as accessibilityFocus from '../../../utils/accessibilityFocus';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -70,11 +84,19 @@ const mockPracticeSessionsCreate = (jest.fn() as any).mockResolvedValue({
 const mockWeekCount = (jest.fn() as any).mockResolvedValue({ count: 2 });
 const mockInsights = (jest.fn() as any).mockRejectedValue(new Error('insights unavailable'));
 const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
+// The detail overlay (#2451) loads one practice and, once it resolves, the
+// caller's lifetime totals for it; both are typed so a wrong shape fails tsc.
+const mockPracticesGet = jest.fn<(id: number) => Promise<PracticeItem>>();
+const mockPracticesCreate = jest.fn<(payload: PracticeCreatePayload) => Promise<PracticeItem>>();
+const mockPracticeSessionsStats =
+  jest.fn<(userPracticeId: number) => Promise<PracticeStatsResponse>>();
+const mockPopToTop = jest.fn<() => void>();
 
 jest.mock('../../../api', () => ({
   practices: {
     listAll: (...args: unknown[]) => mockPracticesList(...args),
-    get: jest.fn() as any,
+    get: (...args: [number]) => mockPracticesGet(...args),
+    create: (...args: [PracticeCreatePayload]) => mockPracticesCreate(...args),
   },
   userPractices: {
     create: (...args: unknown[]) => mockUserPracticesCreate(...args),
@@ -85,10 +107,17 @@ jest.mock('../../../api', () => ({
     create: (...args: unknown[]) => mockPracticeSessionsCreate(...args),
     weekCount: (...args: unknown[]) => mockWeekCount(...args),
     insights: (...args: unknown[]) => mockInsights(...args),
+    stats: (...args: [number]) => mockPracticeSessionsStats(...args),
   },
   frequency: {
     current: (...args: unknown[]) => mockFrequency(...args),
   },
+}));
+
+// The share sheet the detail overlay can open lists its links; it has no
+// links to show here, and must not reach for a network in a unit test.
+jest.mock('../../../api/practiceShare', () => ({
+  practiceShare: { list: () => Promise.resolve([]) },
 }));
 
 jest.mock('../../../context/AuthContext', () => ({
@@ -131,7 +160,11 @@ jest.mock('@react-navigation/native', () => {
   };
   return {
     ...(jest.requireActual('@react-navigation/native') as object),
-    useNavigation: () => ({ navigate: mockRootNavigate, goBack: mockGoBack }),
+    useNavigation: () => ({
+      navigate: mockRootNavigate,
+      goBack: mockGoBack,
+      popToTop: mockPopToTop,
+    }),
     useRoute: () => ({ key: 'Practice-test', name: 'Practice', params: mockRouteParams }),
     useFocusEffect: (cb: () => void | (() => void)) => {
       reactMod.useEffect(() => {
@@ -197,6 +230,64 @@ const PracticeScreenWithHeader = (): ReactElement => {
       <PracticeScreen />
     </>
   );
+};
+
+/** A rendered node, as far as the ancestry walks below need one. */
+interface TreeNode {
+  parent: TreeNode | null;
+}
+
+/** Whether ``ancestor`` sits anywhere above ``node`` in the rendered tree. */
+const hasAncestor = (node: TreeNode, ancestor: TreeNode): boolean => {
+  for (let current = node.parent; current !== null; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+};
+
+interface CapturedTiming {
+  value: Animated.Value;
+  config: Animated.TimingAnimationConfig;
+  start: jest.Mock<(cb?: Animated.EndCallback) => void>;
+  stop: jest.Mock<() => void>;
+  /** Report completion the way the animation driver would. */
+  end: (finished: boolean) => void;
+}
+
+/**
+ * Stub ``Animated.timing`` from here on with animations that never advance by
+ * themselves, so a test decides when (and whether) a fade completes.
+ */
+function captureTimings(): CapturedTiming[] {
+  const calls: CapturedTiming[] = [];
+  jest.spyOn(Animated, 'timing').mockImplementation((value, config) => {
+    let callback: Animated.EndCallback | undefined;
+    const entry: CapturedTiming = {
+      value: value as Animated.Value,
+      config,
+      start: jest.fn((cb?: Animated.EndCallback) => {
+        callback = cb;
+      }),
+      stop: jest.fn(),
+      end: (finished) => callback?.({ finished }),
+    };
+    calls.push(entry);
+    return entry as unknown as Animated.CompositeAnimation;
+  });
+  return calls;
+}
+
+/** The tab cross-fade's own timings: the two that run over ``motion.threshold``. */
+const crossFades = (timings: readonly CapturedTiming[]): CapturedTiming[] =>
+  timings.filter((timing) => timing.config.duration === motion.threshold);
+
+/** Complete every captured cross-fade, as the driver would at the end of a flip. */
+const finishCrossFades = (timings: readonly CapturedTiming[]): void => {
+  act(() => {
+    for (const timing of crossFades(timings)) {
+      if (timing.config.toValue === 1) timing.end(true);
+    }
+  });
 };
 
 interface ModeFixture {
@@ -368,13 +459,16 @@ describe('PracticeScreen', () => {
   it('empty-state "Browse practices" flips to the Catalog tab in place, without a push', async () => {
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+    const timings = captureTimings();
 
     await act(async () => {
       fireEvent.press(getByTestId('browse-catalog-button'));
     });
 
     await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
-    expect(queryByTestId('practice-empty-state')).toBeNull();
+    // The flip cross-fades (#1952); once it completes the empty state is gone.
+    finishCrossFades(timings);
+    expect(queryByTestId('practice-empty-state', { includeHiddenElements: true })).toBeNull();
     expect(mockRootNavigate).not.toHaveBeenCalled();
   });
 
@@ -1062,10 +1156,12 @@ describe('PracticeScreen', () => {
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
 
+    const timings = captureTimings();
     await act(async () => {
       fireEvent.press(getByTestId('practice-tab-catalog'));
     });
     await waitFor(() => expect(getByTestId('practice-catalog-row-1-use')).toBeTruthy());
+    finishCrossFades(timings);
 
     const listCallsBeforeUse = mockUserPracticesList.mock.calls.length;
     await act(async () => {
@@ -1073,7 +1169,9 @@ describe('PracticeScreen', () => {
     });
 
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
-    expect(queryByTestId('practice-catalog-screen')).toBeNull();
+    // The flip back cross-fades (#1952); once it completes the catalog is gone.
+    finishCrossFades(timings);
+    expect(queryByTestId('practice-catalog-screen', { includeHiddenElements: true })).toBeNull();
     expect(getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
       expect.objectContaining({ selected: true }),
     );
@@ -1102,6 +1200,750 @@ describe('PracticeScreen', () => {
     });
     expect(getByTestId('practice-tab-switcher')).toBeTruthy();
     jest.useRealTimers();
+  });
+});
+
+// #2451: a row on the embedded Catalog tab opens the practice's details as an
+// overlay on the Practice tab, so the catalog (filters, search, scroll) is
+// still there underneath when the overlay is dismissed.
+describe('PracticeScreen embedded catalog detail overlay', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  // Stage 1 runs 21 days, so one day in is stage 1 and 25 days in is stage 2.
+  const STAGE_ONE_DAYS_AGO = 1;
+  const STAGE_TWO_DAYS_AGO = 25;
+
+  const setProgramStageAnchor = (daysAgo: number): void => {
+    useProgramStore.getState().hydrateProgramStartDate(new Date(Date.now() - daysAgo * DAY_MS));
+  };
+
+  interface TestNode {
+    type: unknown;
+    props: Record<string, unknown>;
+    parent: TestNode | null;
+  }
+
+  interface ScreenView {
+    getByTestId: (id: string, options?: { includeHiddenElements: boolean }) => TestNode;
+    queryByTestId: (id: string) => TestNode | null;
+    findByTestId: (id: string) => Promise<TestNode>;
+  }
+
+  /** The nearest Modal at or above ``node`` -- the Modal that presents it. */
+  const overlayModal = (node: TestNode): TestNode => {
+    let current: TestNode | null = node;
+    while (current !== null && current.type !== Modal) current = current.parent;
+    if (current === null) throw new Error('no Modal ancestor');
+    return current;
+  };
+
+  const openEmbeddedCatalog = async (): Promise<ScreenView> => {
+    const view = render(<PracticeScreen />) as ScreenView;
+    await waitFor(() => expect(view.getByTestId('active-practice-card')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-tab-catalog'));
+    });
+    await view.findByTestId('practice-catalog-row-1');
+    return view;
+  };
+
+  const openOverlayOnRow = async (view: ScreenView, id: number): Promise<void> => {
+    await act(async () => {
+      fireEvent.press(view.getByTestId(`practice-catalog-row-${id}`));
+    });
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId('practice-detail-overlay')).getByTestId('practice-detail-name'),
+      ).toBeTruthy(),
+    );
+  };
+
+  const expectCatalogTabSelected = (view: ScreenView): void => {
+    expect(view.getByTestId('practice-tab-catalog').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFocusCallbacks.length = 0;
+    mockPracticesList.mockResolvedValue([samplePractice()]);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockWeekCount.mockResolvedValue({ count: 2 });
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
+    mockPracticesGet.mockReset();
+    mockPracticesGet.mockResolvedValue(samplePractice());
+    mockPracticesCreate.mockReset();
+    mockPracticeSessionsStats.mockReset();
+    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+  });
+
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+    useProgramStore.getState().hydrateProgramStartDate(null);
+    await AsyncStorage.clear();
+  });
+
+  it('tapping an embedded catalog row opens the practice details in place and dismissing keeps the catalog as it was', async () => {
+    const { getByTestId, queryByTestId, findByTestId } = render(<PracticeScreen />);
+    await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-tab-catalog'));
+    });
+    await findByTestId('practice-catalog-row-1');
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-catalog-stage-2'));
+    });
+    await findByTestId('practice-catalog-row-1');
+    fireEvent.changeText(getByTestId('practice-catalog-search'), 'breath');
+    fireEvent.press(getByTestId('practice-catalog-mode-timers'));
+    const listCalls = mockPracticesList.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-catalog-row-1'));
+    });
+
+    expect(getByTestId('practice-detail-overlay')).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        within(getByTestId('practice-detail-overlay')).getByTestId('practice-detail-name'),
+      ).toBeTruthy(),
+    );
+    expect(mockRootNavigate).not.toHaveBeenCalledWith('PracticeDetail', expect.anything());
+    expect(mockNavigate).not.toHaveBeenCalledWith('PracticeDetail', expect.anything());
+    expect(getByTestId('practice-embedded-catalog')).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-detail-overlay-close'));
+    });
+
+    expect(queryByTestId('practice-detail-overlay')).toBeNull();
+    expect(getByTestId('practice-catalog-search').props.value).toBe('breath');
+    expect(getByTestId('practice-catalog-mode-timers').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(getByTestId('practice-catalog-stage-2').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(getByTestId('practice-catalog-row-1')).toBeTruthy();
+    expect(mockPracticesList.mock.calls.length).toBe(listCalls);
+    expect(getByTestId('practice-tab-catalog').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+  });
+
+  it('shows the overlay at once, with the loading state inside it, before the practice resolves', async () => {
+    mockPracticesGet.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = await openEmbeddedCatalog();
+
+    fireEvent.press(getByTestId('practice-catalog-row-1'));
+
+    expect(
+      within(getByTestId('practice-detail-overlay')).getByTestId('practice-detail-loading'),
+    ).toBeTruthy();
+  });
+
+  it("closes through the Modal's onRequestClose (Escape on the web, Android back), leaving the catalog", async () => {
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      const close = overlayModal(view.getByTestId('practice-detail-overlay')).props
+        .onRequestClose as () => void;
+      close();
+    });
+
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    expectCatalogTabSelected(view);
+    expect(view.getByTestId('practice-catalog-row-1')).toBeTruthy();
+  });
+
+  it('closes on a press of the scrim, leaving the catalog', async () => {
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      fireEvent.press(
+        view.getByTestId('practice-detail-overlay-scrim', { includeHiddenElements: true }),
+      );
+    });
+
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    expectCatalogTabSelected(view);
+  });
+
+  it('opens the overlay from a "Recently used" row too', async () => {
+    await recordRecentPractice({
+      id: 1,
+      name: 'Breath Awareness',
+      mode: 'meditation_timer',
+      durationMinutes: 10,
+    });
+    const view = await openEmbeddedCatalog();
+    const recent = await view.findByTestId('practice-catalog-recent-row-1');
+
+    await act(async () => {
+      fireEvent.press(recent);
+    });
+
+    await waitFor(() =>
+      expect(
+        within(view.getByTestId('practice-detail-overlay')).getByTestId('practice-detail-name'),
+      ).toBeTruthy(),
+    );
+    expect(mockPracticesGet).toHaveBeenCalledWith(1);
+    expect(mockRootNavigate).not.toHaveBeenCalledWith('PracticeDetail', expect.anything());
+  });
+
+  it('"Use for current stage" assigns, closes the overlay and flips to the player with one refresh', async () => {
+    setProgramStageAnchor(STAGE_ONE_DAYS_AGO);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    // The overlay's own totals read the user's practices once; the snapshot is
+    // taken after that settles, so the +1 below is the flip's refresh alone.
+    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalledWith(10));
+    const listCalls = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 });
+    await waitFor(() => expect(view.getByTestId('active-practice-card')).toBeTruthy());
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    expect(view.getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1);
+    expect(mockPopToTop).not.toHaveBeenCalled();
+    expect(mockGoBack).not.toHaveBeenCalled();
+  });
+
+  it('a choice from the overlay lands focus on the Practice tab, not the fading row', async () => {
+    setProgramStageAnchor(STAGE_ONE_DAYS_AGO);
+    const moveFocus = jest.spyOn(accessibilityFocus, 'moveAccessibilityFocus');
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    // Mounted for the length of the fade, the switcher's tab is the landing.
+    const practiceTab = view.getByTestId('practice-tab-practice') as TestNode & {
+      parent: { instance: unknown } | null;
+    };
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+
+    await waitFor(() => expect(moveFocus).toHaveBeenCalledTimes(1));
+    // Compared by identity, not printed: a failing diff of two view instances
+    // would serialize their whole fiber trees.
+    const landedOn = moveFocus.mock.calls[0]![0];
+    expect(landedOn).not.toBeNull();
+    expect(landedOn === practiceTab.parent?.instance).toBe(true);
+  });
+
+  it('the cross-stage copy works from the overlay and flips to the player', async () => {
+    setProgramStageAnchor(STAGE_TWO_DAYS_AGO);
+    // The player reads the stage from the anchor, so its practice lives there.
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
+    mockPracticesCreate.mockResolvedValue(samplePractice({ id: 2, stage_number: 2 }));
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+    });
+
+    expect(mockPracticesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ stage_number: 2, name: 'Breath Awareness' }),
+    );
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 2, stage_number: 2 });
+    await waitFor(() => expect(view.queryByTestId('practice-detail-overlay')).toBeNull());
+    expect(view.getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+    expect(mockPopToTop).not.toHaveBeenCalled();
+  });
+
+  it('the stage picker assigns from the overlay', async () => {
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    // No programme anchor, so the current stage is unknown and the picker opens.
+    fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-stage-pick-1'));
+    });
+
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 1, stage_number: 1 });
+    await waitFor(() => expect(view.queryByTestId('practice-detail-overlay')).toBeNull());
+    expect(mockPopToTop).not.toHaveBeenCalled();
+  });
+
+  it('a failed assign shows its error inside the overlay and keeps it open on the catalog', async () => {
+    setProgramStageAnchor(STAGE_ONE_DAYS_AGO);
+    mockUserPracticesCreate.mockRejectedValueOnce(new Error('Server unavailable'));
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+
+    expect(
+      within(view.getByTestId('practice-detail-overlay')).getByTestId(
+        'practice-detail-action-error',
+      ),
+    ).toBeTruthy();
+    expectCatalogTabSelected(view);
+    expect(view.getByTestId('practice-embedded-catalog')).toBeTruthy();
+  });
+
+  it('"Duplicate & edit" closes the overlay and opens the wizard with the route\'s own prefill', async () => {
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-customize-copy'));
+    });
+
+    expect(mockRootNavigate).toHaveBeenCalledWith('CreatePractice', {
+      prefill: {
+        config: { mode: 'meditation_timer', duration_minutes: 10 },
+        name: 'Breath Awareness',
+        description: 'Focus on the breath to develop concentration.',
+        instructions: 'Sit comfortably and focus on your breathing.',
+        duration: 10,
+        stageNumber: 1,
+      },
+    });
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+  });
+
+  it('mounts the share sheet and copy dialog beside the overlay Modal, never inside it', async () => {
+    setProgramStageAnchor(STAGE_TWO_DAYS_AGO);
+    // The player reads the stage from the anchor, so its practice lives there.
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    const sheetModal = overlayModal(view.getByTestId('practice-detail-overlay'));
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-share'));
+    });
+    const shareModal = overlayModal(view.getByTestId('share-sheet-close'));
+    expect(shareModal).not.toBe(sheetModal);
+    expect(hasAncestor(shareModal, sheetModal)).toBe(false);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+    const copyModal = overlayModal(view.getByTestId('practice-copy-dialog'));
+    expect(copyModal).not.toBe(sheetModal);
+    expect(hasAncestor(copyModal, sheetModal)).toBe(false);
+  });
+
+  it('starts each open fresh: a second practice shows its own name and no earlier error', async () => {
+    setProgramStageAnchor(STAGE_ONE_DAYS_AGO);
+    mockPracticesList.mockResolvedValue([
+      samplePractice(),
+      samplePractice({ id: 2, name: 'Body Scan' }),
+    ]);
+    mockPracticesGet.mockImplementation((id) =>
+      Promise.resolve(samplePractice({ id, name: id === 2 ? 'Body Scan' : 'Breath Awareness' })),
+    );
+    mockUserPracticesCreate.mockRejectedValueOnce(new Error('Server unavailable'));
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+    expect(view.getByTestId('practice-detail-action-error')).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
+    });
+
+    await openOverlayOnRow(view, 2);
+
+    expect(view.getByTestId('practice-detail-name')).toHaveTextContent('Body Scan');
+    expect(view.queryByTestId('practice-detail-action-error')).toBeNull();
+  });
+
+  // A request outlives the sheet that started it: the X, the scrim and
+  // onRequestClose stay live while it is pending, so the person can leave and
+  // open another practice before it lands. Its success is real on the server,
+  // so the player re-reads quietly -- but it must not close the sheet now on
+  // show, nor flip the tab out from under it.
+  const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  };
+
+  const twoPracticeCatalog = (): void => {
+    mockPracticesList.mockResolvedValue([
+      samplePractice(),
+      samplePractice({ id: 2, name: 'Body Scan' }),
+    ]);
+    mockPracticesGet.mockImplementation((id) =>
+      Promise.resolve(samplePractice({ id, name: id === 2 ? 'Body Scan' : 'Breath Awareness' })),
+    );
+  };
+
+  const expectSecondSheetUndisturbed = (view: ScreenView, listCalls: number): void => {
+    expect(
+      within(view.getByTestId('practice-detail-overlay')).getByTestId('practice-detail-name'),
+    ).toHaveTextContent('Body Scan');
+    expectCatalogTabSelected(view);
+    // The stale write did land, so the player's selection is re-read once.
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1);
+    expect(mockPopToTop).not.toHaveBeenCalled();
+  };
+
+  it('an assign that lands after its sheet was closed leaves the next sheet open', async () => {
+    twoPracticeCatalog();
+    const pending = deferred<UserPractice>();
+    mockUserPracticesCreate.mockReturnValueOnce(pending.promise);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    // No programme anchor: "Use for stage" opens the picker; picking stage 1
+    // (the home stage) assigns, and the request is left pending.
+    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-stage-pick-1'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
+    });
+    await openOverlayOnRow(view, 2);
+    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    const listCalls = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      pending.resolve(sampleUserPractice());
+      await pending.promise;
+    });
+
+    await waitFor(() => expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1));
+    expectSecondSheetUndisturbed(view, listCalls);
+  });
+
+  it('a cross-stage copy that lands after its sheet was closed leaves the next sheet open', async () => {
+    twoPracticeCatalog();
+    setProgramStageAnchor(STAGE_TWO_DAYS_AGO);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
+    const pending = deferred<PracticeItem>();
+    mockPracticesCreate.mockReturnValueOnce(pending.promise);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
+    });
+    await openOverlayOnRow(view, 2);
+    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    const listCalls = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      pending.resolve(samplePractice({ id: 3, stage_number: 2, approved: false }));
+      await pending.promise;
+    });
+
+    await waitFor(() => expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1));
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 3, stage_number: 2 });
+    expectSecondSheetUndisturbed(view, listCalls);
+  });
+
+  it('flipping to the Practice tab while the overlay is open closes it for good', async () => {
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-tab-practice'));
+    });
+
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    await waitFor(() => expect(view.getByTestId('active-practice-card')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-tab-catalog'));
+    });
+    await view.findByTestId('practice-catalog-row-1');
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+  });
+});
+
+// #1952: the in-place Practice | Catalog flip cross-fades in both directions.
+// Animated.timing is captured after mount so each test drives the fade's
+// completion itself (or withholds it) instead of racing a real driver.
+describe('PracticeScreen in-place tab cross-fade', () => {
+  const HIDDEN = { includeHiddenElements: true };
+
+  interface TestNode {
+    type: unknown;
+    props: Record<string, unknown>;
+    parent: TestNode | null;
+  }
+
+  interface ScreenView {
+    getByTestId: (id: string, options?: { includeHiddenElements: boolean }) => TestNode;
+    queryByTestId: (id: string, options?: { includeHiddenElements: boolean }) => TestNode | null;
+    findByTestId: (id: string) => Promise<TestNode>;
+    unmount: () => void;
+  }
+
+  const flatStyle = (node: TestNode): ViewStyle =>
+    StyleSheet.flatten(node.props.style as StyleProp<ViewStyle>);
+
+  const layerOpacity = (view: ScreenView, key: 'practice' | 'catalog'): ViewStyle['opacity'] =>
+    flatStyle(view.getByTestId(`practice-layer-${key}`, HIDDEN)).opacity;
+
+  const renderPlayer = async (): Promise<ScreenView> => {
+    const view = render(<PracticeScreen />) as ScreenView;
+    await waitFor(() => expect(view.getByTestId('active-practice-card')).toBeTruthy());
+    return view;
+  };
+
+  const pressTab = async (view: ScreenView, tab: 'practice' | 'catalog'): Promise<void> => {
+    await act(async () => {
+      fireEvent.press(view.getByTestId(`practice-tab-${tab}`));
+    });
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFocusCallbacks.length = 0;
+    mockPracticesList.mockResolvedValue([samplePractice()]);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockWeekCount.mockResolvedValue({ count: 2 });
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
+    mockPracticesGet.mockReset();
+    mockPracticesGet.mockResolvedValue(samplePractice());
+    mockPracticeSessionsStats.mockReset();
+    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  it('cross-fades Practice to Catalog over motion.threshold, keeping the player mounted until the fade completes', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'catalog');
+
+    // Both surfaces are mounted while the fade runs.
+    expect(view.getByTestId('practice-embedded-catalog')).toBeTruthy();
+    expect(view.getByTestId('active-practice-card', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings).map((t) => t.config)).toEqual([
+      { toValue: 0, duration: motion.threshold, useNativeDriver: true },
+      { toValue: 1, duration: motion.threshold, useNativeDriver: true },
+    ]);
+    expect(layerOpacity(view, 'catalog')).toBe(0);
+    expect(layerOpacity(view, 'practice')).toBe(1);
+    // The leaving player is out of reach of pointers and assistive tech; the
+    // incoming catalog takes input from the first frame.
+    const leaving = view.getByTestId('practice-layer-practice', HIDDEN);
+    expect(leaving.props.pointerEvents).toBe('none');
+    expect(leaving.props['aria-hidden']).toBe(true);
+    const incoming = view.getByTestId('practice-layer-catalog');
+    expect(incoming.props.pointerEvents).toBe('auto');
+    expect(incoming.props['aria-hidden']).toBe(false);
+    // Both layers stack inside the stage, never over the switcher above it.
+    const stage = view.getByTestId('practice-stage');
+    expect(hasAncestor(leaving, stage)).toBe(true);
+    expect(hasAncestor(incoming, stage)).toBe(true);
+    expect(hasAncestor(view.getByTestId('practice-tab-switcher'), stage)).toBe(false);
+    expect(flatStyle(leaving)).toEqual(
+      expect.objectContaining({ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }),
+    );
+    expect(flatStyle(incoming).position).toBeUndefined();
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(view.getByTestId('practice-embedded-catalog')).toBeTruthy();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+  });
+
+  it('cross-fades Catalog back to Practice from the tab', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+
+    await pressTab(view, 'practice');
+
+    expect(view.getByTestId('active-practice-card')).toBeTruthy();
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    const [out, into] = crossFades(timings);
+    expect(out!.config.toValue).toBe(0);
+    expect(into!.config.toValue).toBe(1);
+    expect(view.getByTestId('practice-layer-catalog', HIDDEN).props.pointerEvents).toBe('none');
+    expect(view.getByTestId('practice-layer-practice').props.pointerEvents).toBe('auto');
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'practice')).toBe(1);
+  });
+
+  it('cross-fades back to the player after a Use on the catalog, with exactly one refresh', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+    await view.findByTestId('practice-catalog-row-1-use');
+    const listCallsBeforeUse = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    });
+
+    // Mid-fade: the catalog is still mounted, and it has not refetched.
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings)).toHaveLength(2);
+    await waitFor(() =>
+      expect(mockUserPracticesList.mock.calls.length).toBe(listCallsBeforeUse + 1),
+    );
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCallsBeforeUse + 1);
+    expect(mockUserPracticesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('swaps at once under reduced motion, in either direction', async () => {
+    jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(true);
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'catalog');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+
+    await pressTab(view, 'practice');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'practice')).toBe(1);
+  });
+
+  it('starts no fade when the tab already on show is pressed', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'practice');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('practice-layer-catalog', HIDDEN)).toBeNull();
+  });
+
+  it('stops the fade when the screen unmounts mid-fade', async () => {
+    jest.useFakeTimers();
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    const fades = crossFades(timings);
+    expect(fades).toHaveLength(2);
+
+    view.unmount();
+
+    // The hook's own suite holds the timer count to zero; here the screen
+    // must at least hand the unmount through to both running animations.
+    for (const fade of fades) expect(fade.stop).toHaveBeenCalled();
+  });
+
+  it('fails open: a fade whose driver never reports is settled by the floor', async () => {
+    jest.useFakeTimers();
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    expect(crossFades(timings)).toHaveLength(2);
+
+    act(() => {
+      jest.advanceTimersByTime(TAB_CROSSFADE_LIFETIME_MS - 1);
+    });
+    expect(view.getByTestId('active-practice-card', HIDDEN)).toBeTruthy();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+  });
+
+  it('a re-flip mid-fade stops the first fade and settles on the latest tab alone', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    const first = crossFades(timings);
+
+    await pressTab(view, 'practice');
+
+    for (const fade of first) expect(fade.stop).toHaveBeenCalled();
+    finishCrossFades(timings);
+    expect(view.getByTestId('active-practice-card')).toBeTruthy();
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(view.getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+  });
+
+  it('keeps the session engine quiet while the player fades out', async () => {
+    const audio = require('expo-audio') as { createAudioPlayer: jest.Mock };
+    const keepAwake = require('expo-keep-awake') as { activateKeepAwakeAsync: jest.Mock };
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    const playersBefore = audio.createAudioPlayer.mock.calls.length;
+    const wakesBefore = keepAwake.activateKeepAwakeAsync.mock.calls.length;
+
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+
+    expect(audio.createAudioPlayer.mock.calls.length).toBe(playersBefore);
+    expect(keepAwake.activateKeepAwakeAsync.mock.calls.length).toBe(wakesBefore);
+  });
+
+  it('a flip while the practice details are open closes them, then fades as usual', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+    await act(async () => {
+      fireEvent.press(await view.findByTestId('practice-catalog-row-1'));
+    });
+    expect(view.getByTestId('practice-detail-overlay')).toBeTruthy();
+
+    await pressTab(view, 'practice');
+
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings)).toHaveLength(2);
+    finishCrossFades(timings);
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
   });
 });
 

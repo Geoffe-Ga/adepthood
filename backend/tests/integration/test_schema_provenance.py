@@ -23,7 +23,7 @@ pytestmark = pytest.mark.integration
 _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 
 # Functional / partial unique indexes that only a migration creates. The SQLite
-# fixture mirrors five of these by hand under ``_test``-suffixed names; on a
+# fixture mirrors seven of these by hand under ``_test``-suffixed names; on a
 # migrated database the real ones must be here under their real names.
 _MIGRATION_OWNED_INDEXES = frozenset(
     {
@@ -31,6 +31,7 @@ _MIGRATION_OWNED_INDEXES = frozenset(
         "ix_goal_completion_unique_per_day",
         "ix_practice_preset_stage_lower_name_unique",
         "ix_coursestage_stage_number_unique",
+        "ix_coursestage_stage_key_unique",
         "ix_stagecontent_stage_content_ref_unique",
         "ix_user_lower_email_unique",
     }

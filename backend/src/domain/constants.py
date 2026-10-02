@@ -54,3 +54,13 @@ STAGES_PER_SECTION = 3
 # (Clear Light) stands outside every section and closes the whole course on its
 # own.  A third named constant for "the leftover stage" would let the two drift.
 SECTION_COUNT = TOTAL_STAGES // STAGES_PER_SECTION
+
+# The program week each stage opens on, in stage order:
+# (1, 4, 7, 10, 13, 16, 19, 22, 25, 31).  Derived cumulatively from
+# WEEKS_PER_STAGE for the same reason that tuple is derived: the stage
+# correspondence artifact (#2665) carries a ``start_week`` per stage, and its
+# loader rejects one that disagrees with this schedule instead of trusting a
+# second copy.
+STAGE_START_WEEKS: tuple[int, ...] = tuple(
+    1 + sum(WEEKS_PER_STAGE[:index]) for index in range(len(WEEKS_PER_STAGE))
+)

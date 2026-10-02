@@ -42,6 +42,47 @@ class StageResponse(BaseModel):
     manifestations: list[StageManifestation] = Field(default_factory=list)
 
 
+class StageCorrespondenceProvenance(BaseModel):
+    """Which stage-correspondence artifact a Stage row was last reconciled from.
+
+    Every field is ``None`` until the stage seeder has reconciled the row
+    (for instance straight after the migration, if seeding failed), so the
+    list never 500s on an unreconciled row.
+    """
+
+    source_repo: str | None = Field(description="Upstream repository, as ``owner/name``.")
+    source_sha: str | None = Field(
+        description="Upstream commit the artifact was generated from (the content pin)."
+    )
+    source_path: str | None = Field(description="Path of the source CSV in that commit.")
+    source_sha256: str | None = Field(description="Hex sha256 of the source CSV's bytes.")
+    schema_version: str | None = Field(description="The artifact's shape version.")
+    reconciled_at: datetime | None = Field(
+        description="When the seeder last inserted or changed this row."
+    )
+
+
+class StageCorrespondenceResponse(BaseModel):
+    """One Stage's canonical correspondences, keyed by its stable colour slug (#2665).
+
+    Global reference data: the same for every user, with no progress overlay.
+    """
+
+    stage_key: str = Field(description="Stable colour-slug id, e.g. ``beige`` .. ``clearlight``.")
+    stage_number: int = Field(description="The Stage's 1-based position in the program.")
+    start_week: int = Field(description="Program week the Stage opens on.")
+    category: str = Field(description="Wheel category the Stage belongs to.")
+    aspect: str = Field(description="Aspect of that category the Stage develops.")
+    spiral_dynamics_color: str = Field(description="Spiral Dynamics colour of the Stage.")
+    growing_up_stage: str = Field(description="Developmental (Growing Up) stage name.")
+    divine_gender_polarity: str = Field(description="Divine gender polarity of the Stage.")
+    relationship_to_free_will: str = Field(description="Archetype of free will at this Stage.")
+    free_will_description: str = Field(description="Prose describing that relationship.")
+    provenance: StageCorrespondenceProvenance = Field(
+        description="Source of these values; fields are null until the row is reconciled."
+    )
+
+
 class ProgramCalendarResponse(BaseModel):
     """The server's date-derived program calendar.
 
