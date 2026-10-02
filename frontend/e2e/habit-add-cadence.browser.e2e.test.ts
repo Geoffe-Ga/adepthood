@@ -11,6 +11,7 @@ import {
   sessionFor,
   signUp,
 } from './journalHabitsBrowserSupport';
+import { instantAt } from './zonedClock';
 
 /**
  * #2708: a habit added after onboarding takes the next rung on the program
@@ -32,13 +33,24 @@ import {
  *    away. A today-stamped add would win that minimum and the Map would read
  *    stage 2 as one stage window from today.
  *
- * The zone is pinned to UTC and checked against the server's record, so every
- * day key here is the same day for the browser, the server and the oracle.
+ * The zone is pinned to UTC and checked against the server's record, and the
+ * page's clock is installed at midday on the host's today before the app
+ * loads, so the oracle and every screen count days from the same day however
+ * the run lines up with the real midnight -- a run straddling it would
+ * otherwise read the Map a day later than the oracle and see one day fewer.
+ * The clock still runs (a frozen one stalls the drawer's animation), and a
+ * run is minutes long, so it cannot leave the pinned day. Only the browser's
+ * clock is moved: nothing asserted here is a day the server stamps (each
+ * start_date is the client's, stored verbatim), so the server running on real
+ * time cannot disagree with it.
+ *
  * The oracle is plain calendar arithmetic over the stage windows, deliberately
  * not the app's own `calculateHabitStartDate`.
  */
 
 const PINNED_ZONE = 'UTC';
+/** Midday: as far from either midnight as the pinned day allows. */
+const PINNED_WALL = '12:00';
 /** How far ahead of today the seeded rows put the program's start. */
 const FUTURE_ANCHOR_DAYS = 30;
 /** Program rows already on the ladder before the add; the add takes the next slot. */
@@ -70,6 +82,12 @@ function rungKey(anchorKey: string, slot: number): string {
   return addDaysToKey(anchorKey, offset);
 }
 
+/** The Map counts days from the page's clock; prove it is still on the pinned day. */
+async function expectPinnedDay(page: Page, todayKey: string): Promise<void> {
+  const pageNow = await page.evaluate(() => new Date().toISOString());
+  expect(dayKeyIn(pageNow, PINNED_ZONE), 'the page clock left the pinned day').toBe(todayKey);
+}
+
 async function openMapFromJournal(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Map', exact: true }).click();
@@ -85,10 +103,16 @@ interface HabitRow {
 test('an added habit takes its rung on the cadence and does not undercut the program anchor', async ({
   page,
 }) => {
+  const pinned = instantAt(
+    dayKeyIn(new Date().toISOString(), PINNED_ZONE),
+    PINNED_WALL,
+    PINNED_ZONE,
+  );
+  await page.clock.install({ time: pinned });
+  const todayKey = dayKeyIn(pinned.toISOString(), PINNED_ZONE);
   const email = await signUp(page, 'habit-add-cadence');
   const { token, timezone } = await sessionFor(page.request, email);
   expect(timezone, 'the account did not take the pinned zone').toBe(PINNED_ZONE);
-  const todayKey = dayKeyIn(new Date().toISOString(), timezone);
   const anchorKey = addDaysToKey(todayKey, FUTURE_ANCHOR_DAYS);
   for (const [slot, name] of SEEDED_NAMES.entries()) {
     await seedHabit(page.request, token, name, rungKey(anchorKey, slot));
@@ -96,6 +120,7 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
 
   // The journal's habit load derives the anchor from the seeded rows.
   await page.reload();
+  await expectPinnedDay(page, todayKey);
   await openMapFromJournal(page);
   await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(EXPECTED_COUNTDOWN);
 
@@ -141,6 +166,7 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
     })
     .toBeNull();
   await logIn(page, email);
+  await expectPinnedDay(page, todayKey);
 
   // The anchor is re-derived from the rows -- the added one among them.
   await openMapFromJournal(page);
