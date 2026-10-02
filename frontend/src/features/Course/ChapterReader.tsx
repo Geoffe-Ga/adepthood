@@ -22,6 +22,8 @@ import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
 
+import { useMountedRef } from '@/hooks/useMountedRef';
+
 /** A passage folded out of the reader into the journal, with its scroll anchor. */
 export interface WriteNotePassage {
   text: string;
@@ -228,22 +230,14 @@ function useContentBody(source: ChapterReaderSource): {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const isMountedRef = useRef(true);
+  const isMountedRef = useMountedRef();
   // Hold the latest ``source`` so the fetch effect can read it without taking
   // the (referentially unstable) object as a dependency — see ``sourceKey``.
   const sourceRef = useRef(source);
   sourceRef.current = source;
   const fetchKey = sourceKey(source);
 
-  useEffect(
-    () => () => {
-      isMountedRef.current = false;
-    },
-    [],
-  );
-
   useEffect(() => {
-    isMountedRef.current = true;
     setLoading(true);
     setError(null);
     // The API call omits the explicit token — ``api/index.ts``'s
@@ -266,7 +260,7 @@ function useContentBody(source: ChapterReaderSource): {
         if (!isMountedRef.current) return;
         setLoading(false);
       });
-  }, [fetchKey, refreshKey]);
+  }, [fetchKey, refreshKey, isMountedRef]);
 
   const retry = useCallback(() => setRefreshKey((n) => n + 1), []);
   return { body, loading, error, retry };

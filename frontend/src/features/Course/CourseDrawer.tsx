@@ -32,6 +32,8 @@ import {
   stageStatusGlyph,
 } from './stageDisplay';
 
+import { useMountedRef } from '@/hooks/useMountedRef';
+
 /** Copy for the inline per-section retry row after a failed fetch. */
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
 /** Dim factor applied to a locked chapter row. */
@@ -86,36 +88,32 @@ export function useCourseDrawerContent(
 ): { sections: DrawerSections; retry: (_stageNumber: number) => void } {
   const [sections, setSections] = useState<Record<number, DrawerSection>>({});
   const requestSeq = useRef<Record<number, number>>({});
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const loadStage = useCallback((stageNumber: number) => {
-    const seq = (requestSeq.current[stageNumber] ?? 0) + 1;
-    requestSeq.current[stageNumber] = seq;
-    const isLatest = (): boolean => mountedRef.current && requestSeq.current[stageNumber] === seq;
-    setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loading' } }));
-    void courseApi
-      .stageContentAll(stageNumber)
-      .then((items) => {
-        if (isLatest()) {
-          setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
-        }
-      })
-      .catch((err: unknown) => {
-        // A per-section failure must not blank the drawer: flag only this stage
-        // so it shows an inline retry while siblings keep their chapters.
-        console.error('Failed to load drawer stage content:', err);
-        if (isLatest()) {
-          setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
-        }
-      });
-  }, []);
+  const loadStage = useCallback(
+    (stageNumber: number) => {
+      const seq = (requestSeq.current[stageNumber] ?? 0) + 1;
+      requestSeq.current[stageNumber] = seq;
+      const isLatest = (): boolean => mountedRef.current && requestSeq.current[stageNumber] === seq;
+      setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loading' } }));
+      void courseApi
+        .stageContentAll(stageNumber)
+        .then((items) => {
+          if (isLatest()) {
+            setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
+          }
+        })
+        .catch((err: unknown) => {
+          // A per-section failure must not blank the drawer: flag only this stage
+          // so it shows an inline retry while siblings keep their chapters.
+          console.error('Failed to load drawer stage content:', err);
+          if (isLatest()) {
+            setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
+          }
+        });
+    },
+    [mountedRef],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -201,15 +199,8 @@ export function useCourseDrawerBodies(sections: DrawerSections): {
 } {
   const [bodies, setBodies] = useState<Record<number, string>>({});
   const [status, setStatus] = useState<BodySweepStatus>('idle');
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
   const sweepingRef = useRef(false);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const confirmBodySearch = useCallback(() => {
     if (sweepingRef.current) return;
@@ -225,7 +216,7 @@ export function useCourseDrawerBodies(sections: DrawerSections): {
       sweepingRef.current = false;
       if (isMounted()) setStatus(succeeded === 0 ? 'error' : 'idle');
     });
-  }, [sections, bodies]);
+  }, [sections, bodies, mountedRef]);
 
   return { bodies, status, confirmBodySearch };
 }

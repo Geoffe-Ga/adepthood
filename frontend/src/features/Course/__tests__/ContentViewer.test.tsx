@@ -149,6 +149,57 @@ describe('ContentViewer', () => {
     });
   });
 
+  it('settles mark-read under StrictMode, whose effect re-run is not an unmount', async () => {
+    // StrictMode runs every effect's cleanup and setup once more on mount. A
+    // mounted ref that only clears in a cleanup is left false by that re-run, so
+    // the settle-time guard would skip the done state and strand the spinner.
+    const item = makeItem();
+    const { getByTestId, findAllByText, findByTestId } = render(
+      <React.StrictMode>
+        <ContentViewer item={item} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />
+      </React.StrictMode>,
+    );
+    await findAllByText('Chapter One');
+    await readToTheEnd(findByTestId);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+
+    await waitFor(() => {
+      expect(courseApi.markRead).toHaveBeenCalledWith(1);
+      expect(onMarkRead).toHaveBeenCalledTimes(1);
+      expect(within(getByTestId('mark-read-button')).getByText('✓ Read')).toBeTruthy();
+    });
+  });
+
+  it('drops a mark-read that resolves after the viewer unmounted', async () => {
+    // A fast back-tap while the request is in flight unmounts the viewer; the
+    // mounted guard then skips the whole settle step, list refresh included.
+    let resolveMarkRead: (value: typeof HAPPY_COMPLETION) => void = () => {};
+    courseApi.markRead.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMarkRead = resolve;
+        }),
+    );
+    const { getByTestId, findByTestId, unmount } = render(
+      <ContentViewer item={makeItem()} onBack={onBack} onMarkRead={onMarkRead} nav={makeNav()} />,
+    );
+    await readToTheEnd(findByTestId);
+    await act(async () => {
+      fireEvent.press(getByTestId('mark-read-button'));
+    });
+
+    unmount();
+    await act(async () => {
+      resolveMarkRead(HAPPY_COMPLETION);
+    });
+
+    expect(courseApi.markRead).toHaveBeenCalledWith(1);
+    expect(onMarkRead).not.toHaveBeenCalled();
+  });
+
   it('shows the quiet done state without a toast when item is pre-read', async () => {
     const item = makeItem({ is_read: true });
     const { getByTestId, queryByTestId, findByTestId } = render(
