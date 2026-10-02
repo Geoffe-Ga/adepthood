@@ -116,6 +116,18 @@ async function readSources(
   return (await response.json()) as SourcesResponse;
 }
 
+/**
+ * The instant a `YYYY-MM-DD` day begins in ACCOUNT_TIMEZONE. The zone is pinned
+ * to UTC, so that local midnight is the UTC midnight `Date.UTC` names.
+ */
+function localMidnightOf(dayKey: string): number {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`not a YYYY-MM-DD day key: ${dayKey}`);
+  }
+  return Date.UTC(year, month - 1, day);
+}
+
 function sourceIds(sources: SourcesResponse): number[] {
   return sources.items.map((item) => item.id);
 }
@@ -207,12 +219,18 @@ test('a first-pass review, reopened after beginning again, gathers only that cyc
   expect(sourceIds(declared)).not.toContain(account.cycleTwoDaily);
   const windowStart = declared.window_start ?? '';
   const windowEnd = declared.window_end ?? '';
-  // The first pass closes at the local midnight that opened the loop day ...
-  expect(dayKeyIn(windowEnd, ACCOUNT_TIMEZONE)).toBe(
-    dayKeyIn(account.loopInstant, ACCOUNT_TIMEZONE),
+  // The first pass closes EXACTLY at the local midnight that opened the loop
+  // day -- not at the loop instant itself, which would leave that morning
+  // inside both cycles. An exact instant, not a day-wide bracket: a clamp at the
+  // raw loop instant differs from it by however far past midnight the loop ran.
+  expect(Date.parse(windowEnd)).toBe(
+    localMidnightOf(dayKeyIn(account.loopInstant, ACCOUNT_TIMEZONE)),
   );
-  expect(Date.parse(windowEnd)).toBeLessThanOrEqual(Date.parse(account.loopInstant));
-  expect(Date.parse(account.loopInstant)).toBeLessThan(Date.parse(windowEnd) + MS_PER_DAY);
+  // ... and the second pass's first week opens at that same instant, so the
+  // two laps abut with neither gap nor overlap.
+  const secondPassOpens = (await readSources(page.request, account.token, 'week', NEW_WEEK_SCOPE))
+    .window_start;
+  expect(Date.parse(secondPassOpens ?? '')).toBe(Date.parse(windowEnd));
   // ... which is short of the 252 days the course would otherwise span: the clamp bit.
   expect(Date.parse(windowEnd)).toBeLessThan(
     Date.parse(account.anchorBefore) + TOTAL_PROGRAM_DAYS * MS_PER_DAY,
