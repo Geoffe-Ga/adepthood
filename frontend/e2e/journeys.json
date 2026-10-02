@@ -187,15 +187,15 @@
   },
   {
     "id": "habits.added-habit-joins-the-program-cadence",
-    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and the date on its tile is the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: driving this journey means opening the add-habit sheet and reading the date on the tile it creates, and while the POST /habits/ body does carry the start_date, observing only that would not prove the user sees the rung, which is the half that regressed. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
+    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and carries the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. The covering Playwright spec pins the browser to UTC, signs up through the UI and seeds two program rows over POST /habits/ on the rungs of an anchor thirty days in the future, then reloads so the journal derives that anchor -- which the Map confirms before anything is added: stage 2 reads Unlocks in 51 days. It adds a habit through the Habits drawer's Add Habit sheet and reads two things that can fail. On the wire, the sheet's POST /habits/ carries the third rung (anchor + 42 days), not today, and GET /habits/ echoes that start_date on a program row. On screen, after a real log-out from Settings -- the spec checks the stored anchor is gone -- and a log-in through POST /auth/login, the anchor is re-derived from the rows, the added one among them, and the Map still reads Unlocks in 51 days; a today-stamped add would make it read 21. No habit tile renders a date, the reorder modal re-lays every program row on the cadence the moment it opens, and the web date picker in habit settings renders nothing, so none of those is the observation. Pinned in process as well by src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["habits"],
-      "routes": ["POST /habits/", "GET /habits/"],
-      "tables": ["habit"]
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
     },
-    "status": "uncovered",
-    "issue": 2708
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-add-cadence.browser.e2e.test.ts"
   },
   {
     "id": "habits.scaffolding-start-date-anchors-the-program",
