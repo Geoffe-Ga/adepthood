@@ -95,7 +95,12 @@ from services.corpus_ingest import (
     INGEST_SOURCE,
     ingest_journal_entry,
 )
-from services.corpus_store import retrieve_fragments
+from services.corpus_store import (
+    FragmentDraft,
+    count_retrievable_fragments,
+    record_fragment,
+    retrieve_fragments,
+)
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import UploadedDocument
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
@@ -734,6 +739,66 @@ async def test_a_document_has_nowhere_to_go_without_a_vault() -> None:
     assert _NO_DOCUMENT_IN_THE_CORPUS in policy
     restated = [claim for claim in _RETIRED_DOCUMENT_ROUTES if claim in policy]
     assert not restated, f"the policy still routes a document into the corpus: {restated}"
+
+
+# What the policy promises about documents the retired local import sorted
+# into a corpus before #3016: still stored, never used, purged by the switch.
+# Owner decision on #3015 (2026-10-02): exclude them and say so.
+_LEGACY_DOCUMENTS_INERT: Final[str] = (
+    "documents sorted into your corpus before this change stay stored there but "
+    "are no longer used for reflections or sent to any language model"
+)
+_LEGACY_DOCUMENTS_PURGED: Final[str] = 'turning off "documents you bring in" deletes them'
+_LEGACY_ACCOUNT: Final[int] = 3016
+
+
+@pytest.mark.asyncio
+async def test_documents_sorted_before_the_change_are_kept_but_never_used(
+    db_session: AsyncSession,
+) -> None:
+    """The policy's sentence about legacy documents is the store's own behaviour.
+
+    A fragment the retired import wrote under ``upload`` is still a row, but no
+    retrieval returns it and no count includes it -- every reflection and every
+    provider call reads through those two -- and turning the documents switch
+    off deletes it.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    db_session.add(
+        User(
+            id=_LEGACY_ACCOUNT,
+            email="legacy-documents@example.com",
+            password_hash=_NEVER_VERIFIED_HASH,
+        )
+    )
+    await db_session.commit()
+    await set_consent(db_session, user_id=_LEGACY_ACCOUNT, source=IMPORT_SOURCE, granted=True)
+    await record_fragment(
+        db_session,
+        user_id=_LEGACY_ACCOUNT,
+        draft=FragmentDraft(
+            content="an essay the retired import sorted",
+            tier=JournalClassification.PERSONAL,
+            source=IMPORT_SOURCE,
+            classification=frequency_classification.FrequencyClassification(
+                weights=MappingProxyType({Frequency.F5: 0.9}),
+                overall_confidence=0.9,
+                source=frequency_classification.ClassificationSource.OPERATOR,
+            ),
+        ),
+    )
+    await db_session.commit()
+
+    assert await retrieve_fragments(db_session, user_id=_LEGACY_ACCOUNT) == []
+    assert await count_retrievable_fragments(db_session, user_id=_LEGACY_ACCOUNT) == 0
+    change = await set_consent(
+        db_session, user_id=_LEGACY_ACCOUNT, source=IMPORT_SOURCE, granted=False
+    )
+    await db_session.commit()
+    assert change.event is not None
+    assert change.event.fragments_removed == 1
+    assert _LEGACY_DOCUMENTS_INERT in policy
+    assert _LEGACY_DOCUMENTS_PURGED in policy
 
 
 # The policy section describing the deletion of a single entry, addressed by

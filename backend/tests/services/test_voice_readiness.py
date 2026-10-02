@@ -210,15 +210,18 @@ def test_the_not_consented_band_says_what_saying_yes_gives_and_bounds_it() -> No
 
 
 @pytest.mark.asyncio
-async def test_the_not_consented_band_claims_no_source_an_upload_grant_can_contradict(
+async def test_the_not_consented_band_claims_no_source_a_non_journal_fragment_can_contradict(
     db_session: AsyncSession,
 ) -> None:
     """``NOT_CONSENTED`` is read from the journal decision alone; grounding is not.
 
-    An account that agreed only to sorting the documents it brings in, and has
-    one sorted, is still not consented on the journal -- yet ``gather_grounding``
+    An account not consented on the journal can still hold a retrievable
+    fragment from another source -- an ``import``, the source reserved for a
+    service the account writes on elsewhere -- and ``gather_grounding`` then
     answers its reflections from the corpus. So the band may not say where
     reflections come from right now; it names the decision and its gain only.
+    (This used to be pinned with an ``upload``; since #3016 a legacy upload is
+    stored but never retrieved, so it can no longer ground anything.)
     """
     session = db_session
     session.add(
@@ -235,7 +238,7 @@ async def test_the_not_consented_band_claims_no_source_an_upload_grant_can_contr
         draft=FragmentDraft(
             content="an imported page",
             tier=JournalClassification.PERSONAL,
-            source=CorpusSource.UPLOAD,
+            source=CorpusSource.IMPORT,
             classification=_classified(F5=1.0),
         ),
     )
@@ -477,3 +480,33 @@ async def test_the_reported_source_stops_being_exact_if_grounding_starts_embeddi
     # would pass for the wrong reason, in precisely the case it exists to catch.
     assert len(seen) == 1
     assert seen[0].query_embedding is None
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_upload_neither_counts_nor_grounds(db_session: AsyncSession) -> None:
+    """A document sorted before #3016 is stored, but it is not writing reflections draw on.
+
+    Readiness counts nothing for it and grounding falls through to recent
+    entries, so its text never reaches a prompt.
+    """
+    await record_fragment(
+        db_session,
+        user_id=_OWNER,
+        draft=FragmentDraft(
+            content="an essay the retired import sorted",
+            tier=JournalClassification.PERSONAL,
+            source=CorpusSource.UPLOAD,
+            classification=_classified(F5=1.0),
+        ),
+    )
+    await db_session.commit()
+
+    readiness = await load_voice_readiness(db_session, user_id=_OWNER)
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert readiness.classified_fragment_count == 0
+    assert readiness.grounding_source is GroundingSource.RECENT_ENTRIES
+    assert grounding.source is GroundingSource.RECENT_ENTRIES
+    assert "an essay the retired import sorted" not in grounding.bodies

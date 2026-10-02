@@ -179,7 +179,9 @@ No document reaches this corpus, whichever way the switch for documents is
 set. A document you bring in goes to your Creek Vault and nowhere else, and
 with no vault ready for your account it has nowhere to go (see above). The
 switch for documents is still offered and your decision is still recorded,
-but today it lets nothing in.
+but today it lets nothing in. Documents sorted into your corpus before this
+change stay stored there but are no longer used for reflections or sent to
+any language model, and turning off "Documents you bring in" deletes them.
 
 Turning it on has three consequences worth knowing before you do.
 

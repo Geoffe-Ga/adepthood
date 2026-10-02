@@ -1096,7 +1096,7 @@
         "type": "object"
       },
       "CorpusSource": {
-        "description": "Where a fragment came from.\n\n``journal`` is writing composed in this app. ``upload`` is a file the user\nhanded over directly, and ``import`` is material pulled from a service they\nwrite on elsewhere — the two the import surface will produce. Recorded\nbecause \"what did I actually give this thing?\" is a question a user is\nentitled to an answer to, and a column is the only place that answer can\ncome from later.",
+        "description": "Where a fragment came from.\n\n``journal`` is writing composed in this app. ``upload`` is a file the user\nhanded over directly, and ``import`` is material pulled from a service they\nwrite on elsewhere. Recorded because \"what did I actually give this thing?\"\nis a question a user is entitled to an answer to, and a column is the only\nplace that answer can come from later.\n\n``upload`` has no writer since #3016: a document goes to the account's vault\nor nowhere (#3015). Rows the retired local import wrote before that are kept\n-- no migration deletes them -- but they are inert: every read that feeds\nretrieval, grounding or a count leaves them out (:data:`INERT_SOURCES`), so\nthey reach no reflection and no language model. Turning the \"Documents you\nbring in\" switch off still purges them, through the per-source withdrawal.",
         "enum": [
           "journal",
           "upload",
