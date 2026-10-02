@@ -11,6 +11,10 @@ import type { PracticeItem, UserPractice } from '@/api';
 import { touchTarget } from '@/design/tokens';
 import * as reducedMotion from '@/hooks/useReducedMotion';
 
+// The first render pulls in the whole detail view; under parallel-worker load its
+// cold start can pass Jest's 5s default (the PracticeCatalogScreen precedent).
+jest.setTimeout(15000);
+
 const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => ({
   id: 1,
   stage_number: 1,
