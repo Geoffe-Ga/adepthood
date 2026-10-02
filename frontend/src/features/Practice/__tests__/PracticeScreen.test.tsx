@@ -1435,8 +1435,11 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     });
 
     await waitFor(() => expect(moveFocus).toHaveBeenCalledTimes(1));
-    expect(moveFocus.mock.calls[0]![0]).toBe(practiceTab.parent?.instance);
-    expect(moveFocus.mock.calls[0]![0]).not.toBeNull();
+    // Compared by identity, not printed: a failing diff of two view instances
+    // would serialize their whole fiber trees.
+    const landedOn = moveFocus.mock.calls[0]![0];
+    expect(landedOn).not.toBeNull();
+    expect(landedOn === practiceTab.parent?.instance).toBe(true);
   });
 
   it('the cross-stage copy works from the overlay and flips to the player', async () => {

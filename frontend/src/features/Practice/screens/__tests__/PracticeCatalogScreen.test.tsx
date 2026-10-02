@@ -701,6 +701,8 @@ describe('PracticeCatalogList — detail opener', () => {
   /**
    * What a ref on the pressable row resolves to under the Jest preset: the
    * mocked ``View`` component wrapping the host node ``getByTestId`` returns.
+   * Compared by identity, never printed: a failing diff of two view instances
+   * serializes their whole fiber trees.
    */
   const refTarget = (host: { parent: { instance: unknown } | null }): unknown =>
     host.parent?.instance;
@@ -732,7 +734,7 @@ describe('PracticeCatalogList — detail opener', () => {
     expect(navigateToDetail).toHaveBeenCalledWith(2);
     // The very host view that was pressed, so focus returns to that row.
     expect(detailOpenerRef.current).not.toBeNull();
-    expect(detailOpenerRef.current).toBe(refTarget(row));
+    expect(detailOpenerRef.current === refTarget(row)).toBe(true);
     expect(stale.focus).not.toHaveBeenCalled();
   });
 
@@ -757,8 +759,10 @@ describe('PracticeCatalogList — detail opener', () => {
 
     expect(navigateToDetail).toHaveBeenCalledWith(2);
     expect(detailOpenerRef.current).not.toBeNull();
-    expect(detailOpenerRef.current).toBe(refTarget(recent));
-    expect(detailOpenerRef.current).not.toBe(refTarget(view.getByTestId('practice-catalog-row-2')));
+    expect(detailOpenerRef.current === refTarget(recent)).toBe(true);
+    expect(detailOpenerRef.current === refTarget(view.getByTestId('practice-catalog-row-2'))).toBe(
+      false,
+    );
     await AsyncStorage.clear();
   });
 });
