@@ -7,5 +7,13 @@
     "engineering convenience: everything else, including anything newly introduced,",
     "still fails the gate. See scripts/frontend/audit-gate.mjs."
   ],
-  "allow": []
+  "allow": [
+    {
+      "id": "GHSA-86w9-cpqp-85rv",
+      "package": "node-forge",
+      "expires": "2026-10-16",
+      "issue": 3023,
+      "reason": "No patched node-forge exists (affected <=1.4.0; 1.4.0 is latest). Reached only via the build-time Expo CLI (@expo/cli, @expo/code-signing-certificates), not the app bundle. Owner-approved 14-day box; re-check per #3023."
+    }
+  ]
 }
