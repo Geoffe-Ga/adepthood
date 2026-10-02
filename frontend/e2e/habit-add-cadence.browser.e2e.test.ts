@@ -133,13 +133,18 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
   const sheet = page.getByTestId('add-habit-modal');
   await expect(sheet).toBeVisible();
   await sheet.getByTestId('add-habit-name').fill(ADDED_HABIT_NAME);
+  // The response, not the request: the tile below is the optimistic row and
+  // shows before the server has the habit, so only the answer says the
+  // out-of-band read further down can find it.
   const [created] = await Promise.all([
-    page.waitForRequest(
-      (request) => request.method() === 'POST' && new URL(request.url()).pathname === HABITS_PATH,
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' && new URL(response.url()).pathname === HABITS_PATH,
     ),
     sheet.getByTestId('add-habit-save').click(),
   ]);
-  const sent = created.postDataJSON() as { name: string; start_date: string };
+  expect(created.ok(), 'the add did not reach the server').toBe(true);
+  const sent = created.request().postDataJSON() as { name: string; start_date: string };
   expect(sent.name).toBe(ADDED_HABIT_NAME);
   const expectedRung = rungKey(anchorKey, ADDED_SLOT);
   expect.soft(sent.start_date, 'the add should take its rung on the cadence').toBe(expectedRung);
