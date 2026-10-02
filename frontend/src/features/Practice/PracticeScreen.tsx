@@ -9,6 +9,10 @@
  * reach the controls below the fold. The Catalog tab embeds the shared catalog
  * list in place on its light paper ground — choosing a practice there flips
  * straight back to the player with the new practice live, no push navigation.
+ * The flip cross-fades both ways (`useTabCrossFade`): the outgoing surface stays
+ * mounted, out of reach of touch and assistive tech, for one `motion.threshold`
+ * while the incoming one fades in over it, and swaps at once under reduced
+ * motion.
  * The switcher hides while a session is running or paused so nothing competes
  * with the ritual.
  *
@@ -109,6 +113,7 @@ import {
 } from '@/features/Practice/hooks/useDetailOverlay';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import PracticeCatalogList from '@/features/Practice/screens/PracticeCatalogList';
+import { useTabCrossFade } from '@/hooks/useTabCrossFade';
 import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -153,28 +158,35 @@ function useFocusRefresh(refresh: (_opts?: { silent?: boolean }) => Promise<void
 }
 
 interface PracticeTabsState {
+  /** The tab on show and taking input -- the incoming one during a flip. */
   tab: PracticeTab;
+  /** The tab fading out of an in-place flip, still mounted, or ``null``. */
+  leaving: PracticeTab | null;
+  /** The opacity each tab's surface is drawn at. */
+  opacityOf: (_key: PracticeTab) => Animated.Value;
   setTab: (_next: PracticeTab) => void;
   openCatalogTab: () => void;
   onCatalogActivated: () => void;
 }
 
 /**
- * Owns the in-place Practice | Catalog tab. Activating a practice from the
- * embedded catalog flips back to the player and silently re-reads the active
- * selection exactly once — no focus event fires for an in-place flip, so the
- * focus-refresh path never doubles the fetch.
+ * Owns the in-place Practice | Catalog tab, cross-fading every flip (#1952).
+ * Activating a practice from the embedded catalog flips back to the player and
+ * silently re-reads the active selection exactly once — no focus event fires
+ * for an in-place flip, so the focus-refresh path never doubles the fetch, and
+ * the catalog fading out stays mounted rather than remounting, so it does not
+ * refetch either.
  */
 function usePracticeTabs(refresh: ActivePracticeHook['refresh']): PracticeTabsState {
-  const [tab, setTab] = useState<PracticeTab>('practice');
+  const { tab, leaving, select, opacityOf } = useTabCrossFade<PracticeTab>('practice');
   const openCatalogTab = useCallback(() => {
-    setTab('catalog');
-  }, []);
+    select('catalog');
+  }, [select]);
   const onCatalogActivated = useCallback(() => {
-    setTab('practice');
+    select('practice');
     void refresh({ silent: true });
-  }, [refresh]);
-  return { tab, setTab, openCatalogTab, onCatalogActivated };
+  }, [select, refresh]);
+  return { tab, leaving, opacityOf, setTab: select, openCatalogTab, onCatalogActivated };
 }
 
 interface QuickLaunchState {
@@ -314,34 +326,7 @@ const PracticeScreen = (): React.JSX.Element => {
     <>
       <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
         {s.showSwitcher && <PracticeCatalogSwitcher active={s.tab} onChange={s.setTab} />}
-        {s.tab === 'catalog' ? (
-          <View style={styles.catalogRegion} testID="practice-embedded-catalog">
-            <PracticeCatalogList
-              embedded
-              initialStage={s.stageNumber}
-              onActivated={s.onCatalogActivated}
-              navigateToDetail={s.detail.openDetail}
-              detailOpenerRef={s.detail.openerRef}
-            />
-          </View>
-        ) : (
-          <PracticeBody
-            active={s.active}
-            userTimezone={s.userTimezone}
-            weekly={s.weekly}
-            onWriteReflection={s.onWriteReflection}
-            stageNumber={s.stageNumber}
-            sessionRef={s.sessionRef}
-            onStageChange={s.onStageChange}
-            stageUnconfirmed={s.stageUnconfirmed}
-            onRetryStageLoad={s.onRetryStageLoad}
-            onCustomize={s.openConfigurator}
-            status={s.status}
-            onStatusChange={s.setStatus}
-            onBrowseCatalog={s.openCatalogTab}
-            quickLaunch={s.quickLaunch}
-          />
-        )}
+        <PracticeStage model={s} />
         {/* top: -s.topInset extends the fade up over the safe-area strip the
             shell pads for, so the whole ground dims together on focus. */}
         <Animated.View
@@ -354,6 +339,99 @@ const PracticeScreen = (): React.JSX.Element => {
     </>
   );
 };
+
+/** The in-place tabs, in a fixed order so each keeps its own mount across a flip. */
+const PRACTICE_TABS: readonly PracticeTab[] = ['practice', 'catalog'];
+
+/**
+ * The region under the switcher that the two tabs share.
+ *
+ * At rest it holds one surface, in flow, exactly as the old ternary did. During
+ * a flip it holds both: the incoming one in flow, the leaving one stretched
+ * over this stage -- not over the shell, so the fading surface never paints
+ * across the switcher or the safe-area strip above it. Each tab is keyed by
+ * name, so a re-flip mid-fade keeps the surface it returns to mounted, state
+ * and all, rather than building a new one.
+ */
+const PracticeStage = ({ model }: { model: PracticeScreenModel }): React.JSX.Element => (
+  <View style={styles.leaf} testID="practice-stage">
+    {PRACTICE_TABS.filter((key) => key === model.tab || key === model.leaving).map((key) => (
+      <CrossFadeLayer
+        key={key}
+        tabKey={key}
+        leaving={key === model.leaving}
+        opacity={model.opacityOf(key)}
+      >
+        <PracticeTabSurface tabKey={key} model={model} />
+      </CrossFadeLayer>
+    ))}
+  </View>
+);
+
+interface CrossFadeLayerProps {
+  tabKey: PracticeTab;
+  leaving: boolean;
+  opacity: Animated.Value;
+  children: React.ReactNode;
+}
+
+/**
+ * One tab's surface at its own opacity. A leaving surface is out of reach of
+ * touch and assistive tech for the length of its fade; the incoming one takes
+ * input from the first frame.
+ */
+const CrossFadeLayer = ({
+  tabKey,
+  leaving,
+  opacity,
+  children,
+}: CrossFadeLayerProps): React.JSX.Element => (
+  <Animated.View
+    style={[leaving ? StyleSheet.absoluteFill : styles.leaf, { opacity }]}
+    pointerEvents={leaving ? 'none' : 'auto'}
+    testID={`practice-layer-${tabKey}`}
+    {...decorativeHidden(leaving)}
+  >
+    {children}
+  </Animated.View>
+);
+
+/** What each tab shows: the embedded catalog on its paper ground, or the player. */
+const PracticeTabSurface = ({
+  tabKey,
+  model: s,
+}: {
+  tabKey: PracticeTab;
+  model: PracticeScreenModel;
+}): React.JSX.Element =>
+  tabKey === 'catalog' ? (
+    <View style={styles.catalogRegion} testID="practice-embedded-catalog">
+      <PracticeCatalogList
+        embedded
+        initialStage={s.stageNumber}
+        onActivated={s.onCatalogActivated}
+        navigateToDetail={s.detail.openDetail}
+        detailOpenerRef={s.detail.openerRef}
+      />
+    </View>
+  ) : (
+    <PracticeBody
+      active={s.active}
+      userTimezone={s.userTimezone}
+      weekly={s.weekly}
+      onWriteReflection={s.onWriteReflection}
+      stageNumber={s.stageNumber}
+      sessionRef={s.sessionRef}
+      onStageChange={s.onStageChange}
+      stageUnconfirmed={s.stageUnconfirmed}
+      onRetryStageLoad={s.onRetryStageLoad}
+      onCustomize={s.openConfigurator}
+      status={s.status}
+      onStatusChange={s.setStatus}
+      onBrowseCatalog={s.openCatalogTab}
+      quickLaunch={s.quickLaunch}
+    />
+  );
 
 /**
  * The things that float above the player: the header drawer, the manual-log

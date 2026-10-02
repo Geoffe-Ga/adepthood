@@ -14,6 +14,11 @@ import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupp
  * `onRequestClose`), or that choosing the practice there writes a real
  * adoption the player then shows.
  *
+ * The same walk crosses the in-place Practice | Catalog flip in both
+ * directions, which cross-fades (#1952): each time, the surface left behind
+ * must actually unmount once the fade completes under the browser's own
+ * animation driver.
+ *
  * The overlay is not a route, so the browser's back button leaves the tab
  * rather than closing it. That is an accepted limitation, and this spec does
  * not assert anything about the URL.
@@ -62,8 +67,12 @@ test('a practice opens in place over the embedded catalog, and declining it keep
   const search = page.getByTestId('practice-catalog-search');
 
   await openPracticeTab(page);
+  await expect(page.getByTestId('practice-empty-state')).toBeVisible();
   await page.getByTestId('practice-tab-catalog').click();
   await expect(page.getByTestId('practice-embedded-catalog')).toBeVisible();
+  // The flip cross-fades (#1952), and the surface it leaves is gone once the
+  // fade completes in a real browser's driver, not merely hidden.
+  await expect(page.getByTestId('practice-empty-state')).toHaveCount(0);
   await search.fill(SEARCH_TEXT);
   await expect(row).toBeVisible();
 
@@ -91,6 +100,7 @@ test('a practice opens in place over the embedded catalog, and declining it keep
   await overlay.getByTestId(`practice-detail-stage-pick-${ENTRY_STAGE}`).click();
   await expect(overlay).toHaveCount(0);
   await expect(page.getByTestId('practice-identity-title')).toHaveText(GROUNDING_PRACTICE);
+  await expect(page.getByTestId('practice-embedded-catalog')).toHaveCount(0);
 
   // The server agrees the adoption is real, not just painted.
   const adopted = await page.request.get(`${backendUrl()}/user-practices/`, {

@@ -3,7 +3,7 @@
 import { jest, describe, it, expect, afterEach, beforeEach } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSyncExternalStore, type ReactElement } from 'react';
-import { Modal } from 'react-native';
+import { Animated, Modal, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import type {
   FrequencyResponse,
@@ -12,6 +12,9 @@ import type {
   PracticeStatsResponse,
   UserPractice,
 } from '../../../api';
+import { motion } from '../../../design/tokens';
+import * as reducedMotion from '../../../hooks/useReducedMotion';
+import { TAB_CROSSFADE_LIFETIME_MS } from '../../../hooks/useTabCrossFade';
 import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 import { recordRecentPractice } from '../../../storage/recentPracticesStorage';
@@ -228,6 +231,64 @@ const PracticeScreenWithHeader = (): ReactElement => {
   );
 };
 
+/** A rendered node, as far as the ancestry walks below need one. */
+interface TreeNode {
+  parent: TreeNode | null;
+}
+
+/** Whether ``ancestor`` sits anywhere above ``node`` in the rendered tree. */
+const hasAncestor = (node: TreeNode, ancestor: TreeNode): boolean => {
+  for (let current = node.parent; current !== null; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+};
+
+interface CapturedTiming {
+  value: Animated.Value;
+  config: Animated.TimingAnimationConfig;
+  start: jest.Mock<(cb?: Animated.EndCallback) => void>;
+  stop: jest.Mock<() => void>;
+  /** Report completion the way the animation driver would. */
+  end: (finished: boolean) => void;
+}
+
+/**
+ * Stub ``Animated.timing`` from here on with animations that never advance by
+ * themselves, so a test decides when (and whether) a fade completes.
+ */
+function captureTimings(): CapturedTiming[] {
+  const calls: CapturedTiming[] = [];
+  jest.spyOn(Animated, 'timing').mockImplementation((value, config) => {
+    let callback: Animated.EndCallback | undefined;
+    const entry: CapturedTiming = {
+      value: value as Animated.Value,
+      config,
+      start: jest.fn((cb?: Animated.EndCallback) => {
+        callback = cb;
+      }),
+      stop: jest.fn(),
+      end: (finished) => callback?.({ finished }),
+    };
+    calls.push(entry);
+    return entry as unknown as Animated.CompositeAnimation;
+  });
+  return calls;
+}
+
+/** The tab cross-fade's own timings: the two that run over ``motion.threshold``. */
+const crossFades = (timings: readonly CapturedTiming[]): CapturedTiming[] =>
+  timings.filter((timing) => timing.config.duration === motion.threshold);
+
+/** Complete every captured cross-fade, as the driver would at the end of a flip. */
+const finishCrossFades = (timings: readonly CapturedTiming[]): void => {
+  act(() => {
+    for (const timing of crossFades(timings)) {
+      if (timing.config.toValue === 1) timing.end(true);
+    }
+  });
+};
+
 interface ModeFixture {
   label: string;
   practice: PracticeItem;
@@ -397,13 +458,16 @@ describe('PracticeScreen', () => {
   it('empty-state "Browse practices" flips to the Catalog tab in place, without a push', async () => {
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
+    const timings = captureTimings();
 
     await act(async () => {
       fireEvent.press(getByTestId('browse-catalog-button'));
     });
 
     await waitFor(() => expect(getByTestId('practice-catalog-screen')).toBeTruthy());
-    expect(queryByTestId('practice-empty-state')).toBeNull();
+    // The flip cross-fades (#1952); once it completes the empty state is gone.
+    finishCrossFades(timings);
+    expect(queryByTestId('practice-empty-state', { includeHiddenElements: true })).toBeNull();
     expect(mockRootNavigate).not.toHaveBeenCalled();
   });
 
@@ -1091,10 +1155,12 @@ describe('PracticeScreen', () => {
     const { getByTestId, queryByTestId } = render(<PracticeScreen />);
     await waitFor(() => expect(getByTestId('practice-empty-state')).toBeTruthy());
 
+    const timings = captureTimings();
     await act(async () => {
       fireEvent.press(getByTestId('practice-tab-catalog'));
     });
     await waitFor(() => expect(getByTestId('practice-catalog-row-1-use')).toBeTruthy());
+    finishCrossFades(timings);
 
     const listCallsBeforeUse = mockUserPracticesList.mock.calls.length;
     await act(async () => {
@@ -1102,7 +1168,9 @@ describe('PracticeScreen', () => {
     });
 
     await waitFor(() => expect(getByTestId('active-practice-card')).toBeTruthy());
-    expect(queryByTestId('practice-catalog-screen')).toBeNull();
+    // The flip back cross-fades (#1952); once it completes the catalog is gone.
+    finishCrossFades(timings);
+    expect(queryByTestId('practice-catalog-screen', { includeHiddenElements: true })).toBeNull();
     expect(getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
       expect.objectContaining({ selected: true }),
     );
@@ -1165,13 +1233,6 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     while (current !== null && current.type !== Modal) current = current.parent;
     if (current === null) throw new Error('no Modal ancestor');
     return current;
-  };
-
-  const hasAncestor = (node: TestNode, ancestor: TestNode): boolean => {
-    for (let current = node.parent; current !== null; current = current.parent) {
-      if (current === ancestor) return true;
-    }
-    return false;
   };
 
   const openEmbeddedCatalog = async (): Promise<ScreenView> => {
@@ -1503,6 +1564,270 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
       fireEvent.press(view.getByTestId('practice-tab-catalog'));
     });
     await view.findByTestId('practice-catalog-row-1');
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+  });
+});
+
+// #1952: the in-place Practice | Catalog flip cross-fades in both directions.
+// Animated.timing is captured after mount so each test drives the fade's
+// completion itself (or withholds it) instead of racing a real driver.
+describe('PracticeScreen in-place tab cross-fade', () => {
+  const HIDDEN = { includeHiddenElements: true };
+
+  interface TestNode {
+    type: unknown;
+    props: Record<string, unknown>;
+    parent: TestNode | null;
+  }
+
+  interface ScreenView {
+    getByTestId: (id: string, options?: { includeHiddenElements: boolean }) => TestNode;
+    queryByTestId: (id: string, options?: { includeHiddenElements: boolean }) => TestNode | null;
+    findByTestId: (id: string) => Promise<TestNode>;
+    unmount: () => void;
+  }
+
+  const flatStyle = (node: TestNode): ViewStyle =>
+    StyleSheet.flatten(node.props.style as StyleProp<ViewStyle>);
+
+  const layerOpacity = (view: ScreenView, key: 'practice' | 'catalog'): ViewStyle['opacity'] =>
+    flatStyle(view.getByTestId(`practice-layer-${key}`, HIDDEN)).opacity;
+
+  const renderPlayer = async (): Promise<ScreenView> => {
+    const view = render(<PracticeScreen />) as ScreenView;
+    await waitFor(() => expect(view.getByTestId('active-practice-card')).toBeTruthy());
+    return view;
+  };
+
+  const pressTab = async (view: ScreenView, tab: 'practice' | 'catalog'): Promise<void> => {
+    await act(async () => {
+      fireEvent.press(view.getByTestId(`practice-tab-${tab}`));
+    });
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFocusCallbacks.length = 0;
+    mockPracticesList.mockResolvedValue([samplePractice()]);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice()]);
+    mockWeekCount.mockResolvedValue({ count: 2 });
+    mockInsights.mockRejectedValue(new Error('insights unavailable'));
+    mockFrequency.mockResolvedValue(sampleFrequency);
+    mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
+    mockPracticesGet.mockReset();
+    mockPracticesGet.mockResolvedValue(samplePractice());
+    mockPracticeSessionsStats.mockReset();
+    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  it('cross-fades Practice to Catalog over motion.threshold, keeping the player mounted until the fade completes', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'catalog');
+
+    // Both surfaces are mounted while the fade runs.
+    expect(view.getByTestId('practice-embedded-catalog')).toBeTruthy();
+    expect(view.getByTestId('active-practice-card', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings).map((t) => t.config)).toEqual([
+      { toValue: 0, duration: motion.threshold, useNativeDriver: true },
+      { toValue: 1, duration: motion.threshold, useNativeDriver: true },
+    ]);
+    expect(layerOpacity(view, 'catalog')).toBe(0);
+    expect(layerOpacity(view, 'practice')).toBe(1);
+    // The leaving player is out of reach of pointers and assistive tech; the
+    // incoming catalog takes input from the first frame.
+    const leaving = view.getByTestId('practice-layer-practice', HIDDEN);
+    expect(leaving.props.pointerEvents).toBe('none');
+    expect(leaving.props['aria-hidden']).toBe(true);
+    const incoming = view.getByTestId('practice-layer-catalog');
+    expect(incoming.props.pointerEvents).toBe('auto');
+    expect(incoming.props['aria-hidden']).toBe(false);
+    // Both layers stack inside the stage, never over the switcher above it.
+    const stage = view.getByTestId('practice-stage');
+    expect(hasAncestor(leaving, stage)).toBe(true);
+    expect(hasAncestor(incoming, stage)).toBe(true);
+    expect(hasAncestor(view.getByTestId('practice-tab-switcher'), stage)).toBe(false);
+    expect(flatStyle(leaving)).toEqual(
+      expect.objectContaining({ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }),
+    );
+    expect(flatStyle(incoming).position).toBeUndefined();
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(view.getByTestId('practice-embedded-catalog')).toBeTruthy();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+  });
+
+  it('cross-fades Catalog back to Practice from the tab', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+
+    await pressTab(view, 'practice');
+
+    expect(view.getByTestId('active-practice-card')).toBeTruthy();
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    const [out, into] = crossFades(timings);
+    expect(out!.config.toValue).toBe(0);
+    expect(into!.config.toValue).toBe(1);
+    expect(view.getByTestId('practice-layer-catalog', HIDDEN).props.pointerEvents).toBe('none');
+    expect(view.getByTestId('practice-layer-practice').props.pointerEvents).toBe('auto');
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'practice')).toBe(1);
+  });
+
+  it('cross-fades back to the player after a Use on the catalog, with exactly one refresh', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+    await view.findByTestId('practice-catalog-row-1-use');
+    const listCallsBeforeUse = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-catalog-row-1-use'));
+    });
+
+    // Mid-fade: the catalog is still mounted, and it has not refetched.
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings)).toHaveLength(2);
+    await waitFor(() =>
+      expect(mockUserPracticesList.mock.calls.length).toBe(listCallsBeforeUse + 1),
+    );
+
+    finishCrossFades(timings);
+
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCallsBeforeUse + 1);
+    expect(mockUserPracticesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('swaps at once under reduced motion, in either direction', async () => {
+    jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(true);
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'catalog');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+
+    await pressTab(view, 'practice');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'practice')).toBe(1);
+  });
+
+  it('starts no fade when the tab already on show is pressed', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+
+    await pressTab(view, 'practice');
+
+    expect(crossFades(timings)).toHaveLength(0);
+    expect(view.queryByTestId('practice-layer-catalog', HIDDEN)).toBeNull();
+  });
+
+  it('stops the fade when the screen unmounts mid-fade', async () => {
+    jest.useFakeTimers();
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    const fades = crossFades(timings);
+    expect(fades).toHaveLength(2);
+
+    view.unmount();
+
+    // The hook's own suite holds the timer count to zero; here the screen
+    // must at least hand the unmount through to both running animations.
+    for (const fade of fades) expect(fade.stop).toHaveBeenCalled();
+  });
+
+  it('fails open: a fade whose driver never reports is settled by the floor', async () => {
+    jest.useFakeTimers();
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    expect(crossFades(timings)).toHaveLength(2);
+
+    act(() => {
+      jest.advanceTimersByTime(TAB_CROSSFADE_LIFETIME_MS - 1);
+    });
+    expect(view.getByTestId('active-practice-card', HIDDEN)).toBeTruthy();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(view.queryByTestId('active-practice-card', HIDDEN)).toBeNull();
+    expect(layerOpacity(view, 'catalog')).toBe(1);
+  });
+
+  it('a re-flip mid-fade stops the first fade and settles on the latest tab alone', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    const first = crossFades(timings);
+
+    await pressTab(view, 'practice');
+
+    for (const fade of first) expect(fade.stop).toHaveBeenCalled();
+    finishCrossFades(timings);
+    expect(view.getByTestId('active-practice-card')).toBeTruthy();
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
+    expect(view.getByTestId('practice-tab-practice').props.accessibilityState).toEqual(
+      expect.objectContaining({ selected: true }),
+    );
+  });
+
+  it('keeps the session engine quiet while the player fades out', async () => {
+    const audio = require('expo-audio') as { createAudioPlayer: jest.Mock };
+    const keepAwake = require('expo-keep-awake') as { activateKeepAwakeAsync: jest.Mock };
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    const playersBefore = audio.createAudioPlayer.mock.calls.length;
+    const wakesBefore = keepAwake.activateKeepAwakeAsync.mock.calls.length;
+
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+
+    expect(audio.createAudioPlayer.mock.calls.length).toBe(playersBefore);
+    expect(keepAwake.activateKeepAwakeAsync.mock.calls.length).toBe(wakesBefore);
+  });
+
+  it('a flip while the practice details are open closes them, then fades as usual', async () => {
+    const view = await renderPlayer();
+    const timings = captureTimings();
+    await pressTab(view, 'catalog');
+    finishCrossFades(timings);
+    timings.length = 0;
+    await act(async () => {
+      fireEvent.press(await view.findByTestId('practice-catalog-row-1'));
+    });
+    expect(view.getByTestId('practice-detail-overlay')).toBeTruthy();
+
+    await pressTab(view, 'practice');
+
+    expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
+    expect(view.getByTestId('practice-embedded-catalog', HIDDEN)).toBeTruthy();
+    expect(crossFades(timings)).toHaveLength(2);
+    finishCrossFades(timings);
+    expect(view.queryByTestId('practice-embedded-catalog', HIDDEN)).toBeNull();
     expect(view.queryByTestId('practice-detail-overlay')).toBeNull();
   });
 });
