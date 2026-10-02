@@ -59,8 +59,8 @@ import {
 } from './shared/settingsFormLayout';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
+import { useVaultConnectionState } from './useVaultConnectionState';
 import {
-  CONNECTION_UNKNOWN,
   NOTHING_CONNECTED,
   readConnectionState,
   type VaultConnectionState,
@@ -523,48 +523,6 @@ const VaultConnectForm = (props: VaultConnectFormProps): React.JSX.Element => (
 // Reading and writing the connection
 // ---------------------------------------------------------------------------
 
-interface ConnectionRead {
-  state: VaultConnectionState;
-  setState: Dispatch<SetStateAction<VaultConnectionState>>;
-  loading: boolean;
-}
-
-/**
- * Read the connection once, on mount.
- *
- * The route answers every account rather than 404ing one that has connected
- * nothing, so a failure here is a failure to reach the server — reported as
- * such, and never as "you have no vault". The state a failure leaves behind
- * says exactly that, and it is the state the read starts in: before the answer
- * arrives, nobody has checked either.
- */
-function useConnectionRead(setError: Dispatch<SetStateAction<string | null>>): ConnectionRead {
-  const [state, setState] = useState<VaultConnectionState>(CONNECTION_UNKNOWN);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let live = true;
-    void vault
-      .connection()
-      .then((answer) => {
-        if (live) setState(readConnectionState(answer));
-      })
-      .catch(() => {
-        if (!live) return;
-        setState(CONNECTION_UNKNOWN);
-        setError(VAULT_LOAD_FAILED);
-      })
-      .finally(() => {
-        if (live) setLoading(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [setError]);
-
-  return { state, setState, loading };
-}
-
 interface ConnectArgs {
   form: SettingsFormState;
   secret: string;
@@ -755,7 +713,8 @@ function useVaultConnection(): VaultController {
   const [secret, setSecret] = useState('');
   const [reveal, setReveal] = useState(false);
   const { setError } = form;
-  const { state, setState, loading } = useConnectionRead(setError);
+  const onLoadFailed = useCallback(() => setError(VAULT_LOAD_FAILED), [setError]);
+  const { state, setState, loading } = useVaultConnectionState(onLoadFailed);
   const performConnect = useConnectSubmit({ form, secret, setSecret, setReveal, setState });
   const performDisconnect = useDisconnectSubmit(form, setState);
   const { ask, ...confirmation } = usePendingConfirm();

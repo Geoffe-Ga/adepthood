@@ -54,6 +54,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'action-rows.browser.e2e.test.ts',
   'api-key-remove.browser.e2e.test.ts',
   AUTH_OVERFLOW_JOURNEY,
+  'corpus-vault-first.browser.e2e.test.ts',
   BROWSER_JOURNEY,
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',

@@ -149,14 +149,13 @@ on who receives your data says how many.
 A **document you upload** through "Bring in your writing" follows the same
 Intimate boundary. An Intimate document is refused before a vault or language
 model is contacted. At Public or Personal, it may be forwarded to your Creek
-Vault; that upload path itself calls no language model. If you have not
-connected a vault, it can instead enter Adepthood's corpus only under the
-separate consent described below.
+Vault; that upload path itself calls no language model.
 
-A document has one other destination, and it is not a vault: your own
-corpus here. That route is the next section's subject, it is governed by
-its own switch rather than by the tier you picked, and it is closed to an
-Intimate document exactly as the corpus is closed to an Intimate entry.
+A document has no other destination. If no Creek Vault is ready for your
+account — none is connected, the one you have is still being set up, or the
+address on record for it is one Adepthood will not connect to — a document
+you bring in has nowhere to go: it is not read, sorted or stored, no
+language model is sent it, and you are told there is no place for it yet.
 
 **Public** behaves as Personal does for everything above; the name
 anticipates sharing that does not exist yet.
@@ -176,13 +175,13 @@ type. They are separate decisions, separately dated, and each is off until
 you make it — agreeing that your entries may be sorted is not agreeing that
 your documents may be.
 
-A document reaches this corpus only when you have **no Creek Vault
-connected**. If you have one, a document you bring in goes there and
-nowhere else: nothing about it is sorted or stored here and none of this
-section applies to it. If you have not, the document is read, sorted and
-stored the way an entry of yours would be — and only if the switch for
-documents is on. An Intimate document is refused by the corpus exactly as
-an Intimate entry is, and reaches no language model on the way.
+No document reaches this corpus, whichever way the switch for documents is
+set. A document you bring in goes to your Creek Vault and nowhere else, and
+with no vault ready for your account it has nowhere to go (see above). The
+switch for documents is still offered and your decision is still recorded,
+but today it lets nothing in. Documents sorted into your corpus before this
+change stay stored there but are no longer used for reflections or sent to
+any language model, and turning off "Documents you bring in" deletes them.
 
 Turning it on has three consequences worth knowing before you do.
 
@@ -232,11 +231,8 @@ handwritten page when you ask for it to be transcribed, and, **only if you
 have turned the corpus on**, the body of each non-Intimate entry once as it
 is saved — and once for each non-Intimate entry that was already in your
 journal on the day you turned it on — so that it can be sorted into the ten
-frequencies, and the text
-of a document you bring in, once, on the same terms, when that document is
-going to your own corpus here rather than to a vault. It never receives an
-Intimate entry, and it is not sent an Intimate document that is being
-sorted here either. If you bring your own key, the production app sends it
+frequencies. It never receives an Intimate entry, and Adepthood does not
+send it a document you bring in. If you bring your own key, the production app sends it
 over HTTPS to Adepthood's server in the `X-LLM-API-Key` header. Adepthood
 forwards it over HTTPS to your account with the selected provider for that
 call. The key is used for that one call and is never persisted, logged or

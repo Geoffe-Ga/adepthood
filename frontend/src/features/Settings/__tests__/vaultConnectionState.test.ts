@@ -1,7 +1,12 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
-import { readConnectionState } from '../vaultConnectionState';
+import {
+  CONNECTION_UNKNOWN,
+  NOTHING_CONNECTED,
+  readConnectionState,
+  vaultComesFirst,
+} from '../vaultConnectionState';
 
 import type { VaultConnection } from '@/api';
 
@@ -45,5 +50,29 @@ describe('readConnectionState', () => {
     const connection: VaultConnection = { connected: false, vault_url: VAULT_URL };
 
     expect(readConnectionState(connection)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('vaultComesFirst', () => {
+  it('holds for an account the server says has nothing attached', () => {
+    expect(vaultComesFirst(NOTHING_CONNECTED)).toBe(true);
+  });
+
+  it('does not hold while nobody has established what is attached', () => {
+    // Unknown is never read as none: a failed or pending read must not send a
+    // person with a vault off to set one up.
+    expect(vaultComesFirst(CONNECTION_UNKNOWN)).toBe(false);
+  });
+
+  it('does not hold for a vault at an address', () => {
+    const connected = readConnectionState({ connected: true, vault_url: VAULT_URL });
+
+    expect(vaultComesFirst(connected)).toBe(false);
+  });
+
+  it('does not hold for a managed vault, which is answered with no address', () => {
+    const managed = readConnectionState({ connected: true, vault_url: null });
+
+    expect(vaultComesFirst(managed)).toBe(false);
   });
 });

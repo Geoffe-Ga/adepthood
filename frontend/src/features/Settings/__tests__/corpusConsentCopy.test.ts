@@ -84,6 +84,16 @@ describe('the corpus-consent copy, against what the backend actually does', () =
     }
   });
 
+  test('says where a brought-in document goes, and that it has nowhere to go without one', () => {
+    // #3016: a document goes to the account's vault or nowhere, so the switch
+    // for documents is described as what it does today rather than as a way in.
+    const { description } = sourceCopy('upload');
+
+    expect(description).toMatch(/vault/u);
+    expect(description).toMatch(/nowhere to go/u);
+    expect(ranksOrShames(description)).toBe(false);
+  });
+
   test('names an unknown source rather than rendering nothing for it', () => {
     const copy = sourceCopy('something-new');
 

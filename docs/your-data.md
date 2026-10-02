@@ -68,8 +68,9 @@ by Aspect, once you have said yes under **Settings → What reflections draw on*
 and something has been sorted, and otherwise from your most recent entries. An Intimate entry is never sorted and
 never sent. Connecting or creating a vault does not turn sorting on. Two things
 do change while a vault is connected: a vault that can answer reflections
-itself may answer them from its own copy, and documents you bring in go to the
-vault rather than being sorted here.
+itself may answer them from its own copy, and documents you bring in have
+somewhere to go. A document goes to your vault or nowhere: without a vault
+ready for your account it is not read, sorted or kept anywhere.
 
 ### That an export happened is recorded
 

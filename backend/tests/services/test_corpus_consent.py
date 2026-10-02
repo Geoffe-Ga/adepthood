@@ -32,7 +32,7 @@ from sqlmodel import col, select
 
 from domain.frequencies import Frequency
 from models.corpus_consent import ConsentDecision, CorpusConsentEvent
-from models.corpus_fragment import CorpusSource
+from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification
 from services.corpus_consent import (
     CONSENT_GRANTED_BY_DEFAULT,
@@ -40,7 +40,7 @@ from services.corpus_consent import (
     load_every_consent,
     set_consent,
 )
-from services.corpus_store import FragmentDraft, record_fragment, retrieve_fragments
+from services.corpus_store import FragmentDraft, record_fragment
 from services.frequency_classification import ClassificationSource, FrequencyClassification
 
 _OWNER = 1
@@ -193,9 +193,30 @@ async def test_revoking_consent_removes_the_writing_it_admitted(
 
     await set_consent(db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=False)
     await db_session.commit()
-    remaining = await retrieve_fragments(db_session, user_id=_OWNER)
+    # Read off the table: a legacy upload row is kept but never retrieved (#3016).
+    remaining = (await db_session.execute(select(CorpusFragment.source))).scalars().all()
 
-    assert [fragment.content for fragment in remaining] == ["from an upload"]
+    assert list(remaining) == [CorpusSource.UPLOAD.value]
+
+
+@pytest.mark.asyncio
+async def test_turning_off_documents_deletes_what_the_retired_import_kept(
+    db_session: AsyncSession,
+) -> None:
+    """The switch for documents admits nothing since #3016, but turning it off still purges.
+
+    Rows the retired local import wrote stay stored and inert until the account
+    turns "Documents you bring in" off, which is what the privacy policy says.
+    """
+    await set_consent(db_session, user_id=_OWNER, source=CorpusSource.UPLOAD, granted=True)
+    await _fragment(db_session, "an essay the retired import sorted", CorpusSource.UPLOAD)
+    await _fragment(db_session, "from the journal", CorpusSource.JOURNAL)
+
+    await set_consent(db_session, user_id=_OWNER, source=CorpusSource.UPLOAD, granted=False)
+    await db_session.commit()
+    remaining = (await db_session.execute(select(CorpusFragment.source))).scalars().all()
+
+    assert list(remaining) == [CorpusSource.JOURNAL.value]
 
 
 @pytest.mark.asyncio

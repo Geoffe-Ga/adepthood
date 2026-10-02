@@ -80,9 +80,10 @@ export const VAULT_WHAT_IT_IS =
  * plainly and bounds what a vault changes: it adds a copy and turns no sorting
  * on. It no longer says "nothing else changes", which was not true: a vault you
  * run that can answer reflections may answer them, and documents you bring in
- * go to a connected vault rather than being sorted here. For the same reason it
- * promises entries rather than "everything you have written": a document
- * brought in while a vault is connected is kept only in the vault.
+ * have somewhere to go -- a document goes to a vault or nowhere (#3015, #3016).
+ * For the same reason it promises entries rather than "everything you have
+ * written": a document brought in is kept only in the vault. "Complete without
+ * a vault" stays true of the journal and reflections, which are what it names.
  */
 export const VAULT_FLOOR =
   'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.';
@@ -122,7 +123,7 @@ export const VAULT_ADVANCED_TITLE = 'Advanced: connect a vault you run yourself'
  * What the fold is, who it is for, and everything Adepthood sends once it is
  * filled in: an entry each time it is saved or edited, a voice draft when the
  * vault advertises that it stores them, and any document brought in -- which
- * then goes to the vault instead of the corpus and so is kept only there. The
+ * is kept only there, because a document has no other destination (#3016). The
  * write, voice-draft and upload paths all withhold Intimate material before the
  * vault is contacted, so "Nothing Intimate is sent" holds for all three. It ends
  * on the floor.

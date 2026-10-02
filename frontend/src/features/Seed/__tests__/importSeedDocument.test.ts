@@ -95,15 +95,15 @@ describe('picker to request body', () => {
 });
 
 describe('an account with no vault', () => {
-  test('gets its document into its own corpus, in one request', async () => {
-    // The journey this surface exists for. Before the import route, an account
-    // that had connected no vault was told its vault had not answered — untrue
-    // of a vault they never had, and their corpus stayed empty forever.
-    mockFetch.mockReturnValueOnce(corpusReply('stored', 12));
+  test('is told it needs a place for its corpus, in one request', async () => {
+    // #3015/#3016: a corpus lives in a vault, so with none the server keeps
+    // nothing and says so. The run renders that answer as its own status, not
+    // as a failure and not as a document that landed.
+    mockFetch.mockReturnValueOnce(corpusReply('vault_required'));
 
     const status = await importSeedDocument(document(), 'personal');
 
-    expect(status).toBe('in_corpus');
+    expect(status).toBe('vault_required');
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');
   });
@@ -117,6 +117,7 @@ describe('an account with no vault', () => {
     ['empty_document', 'empty_document'],
     ['document_too_long', 'document_too_long'],
     ['unclassified', 'unclassified'],
+    ['vault_required', 'vault_required'],
   ])('renders the corpus %s answer as %s', async (wire, expected) => {
     mockFetch.mockReturnValueOnce(corpusReply(wire as string));
 

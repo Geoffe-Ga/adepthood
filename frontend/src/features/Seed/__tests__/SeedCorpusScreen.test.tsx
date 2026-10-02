@@ -12,6 +12,8 @@ import {
   SEED_CONSENT_LINK_LABEL,
   SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
+  SEED_VAULT_INVITATION,
+  SEED_VAULT_INVITATION_LINK_LABEL,
 } from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
 
@@ -32,8 +34,26 @@ jest.mock('@react-navigation/native', () => ({
   }),
 }));
 
+// Two servers' worth of answers on one fetch: the screen reads the account's
+// vault on mount (#3017), and every other request is the import route. Routing
+// by URL keeps `mockFetch` holding the import calls alone, so a test reads the
+// first document it sent as `calls[0]` whatever the vault read did.
 const mockFetch = jest.fn() as jest.Mock;
-global.fetch = mockFetch as unknown as typeof fetch;
+const mockVaultConnectionFetch = jest.fn() as jest.Mock;
+const VAULT_CONNECTION_PATH = '/vault/connection';
+global.fetch = ((url: string, init?: RequestInit) =>
+  String(url).endsWith(VAULT_CONNECTION_PATH)
+    ? mockVaultConnectionFetch(url, init)
+    : mockFetch(url, init)) as unknown as typeof fetch;
+
+/** What `GET /vault/connection` answers. */
+function vaultConnectionReply(connected: boolean, vaultUrl: string | null) {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({ connected, vault_url: vaultUrl }),
+  });
+}
 
 const getDocumentAsync = DocumentPicker.getDocumentAsync as unknown as jest.Mock;
 const mocked = FileSystem as unknown as { __fileBase64: jest.Mock; __fileSize: jest.Mock };
@@ -95,6 +115,10 @@ beforeEach(() => {
   mockDispatch.mockReset();
   mockListeners.clear();
   mockFetch.mockReset();
+  mockVaultConnectionFetch.mockReset();
+  mockVaultConnectionFetch.mockImplementation(() =>
+    vaultConnectionReply(true, 'https://v.example'),
+  );
   getDocumentAsync.mockReset();
   getDocumentAsync.mockResolvedValue({ canceled: true, assets: null });
   mocked.__fileBase64.mockReset();
@@ -265,11 +289,26 @@ describe('per-document status', () => {
   });
 });
 
-describe('a person who has no vault', () => {
-  test('imports a document into their own corpus and is told so', async () => {
-    // The journey the import route exists for. This account has connected no
-    // vault; before the route, this screen told them their vault had not
-    // answered and their corpus stayed empty.
+// The corpus vocabulary is the server's answer for an account it finds no vault
+// for. The picker is shown whenever this screen could not rule a vault out, so
+// these answers can still arrive; since #3016 the server sends only
+// vault_required, and the older lines stay renderable for as long as they stay
+// on the wire.
+describe('a corpus answer, for an account the screen did not see as vault-less', () => {
+  test('renders the vault_required answer as its own line, not as a failure', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('vault_required'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(SEED_STATUS_LINES.vault_required)).toBeTruthy();
+    });
+    expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');
+  });
+
+  test('renders a stored corpus answer as in the corpus', async () => {
     getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
     mockFetch.mockReturnValue(corpusReply('stored'));
     const { getByTestId, getByText } = render(<SeedCorpusScreen />);
@@ -494,5 +533,94 @@ describe('leaving the screen', () => {
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe('an account with nowhere to keep a document yet (#3017)', () => {
+  test('invites it to give its corpus a place, instead of offering a picker', async () => {
+    mockVaultConnectionFetch.mockImplementation(() => vaultConnectionReply(false, null));
+    const { getByTestId, queryByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    await waitFor(() => expect(getByTestId('seed-vault-invitation')).toBeTruthy());
+
+    expect(getByTestId('seed-corpus-screen')).toBeTruthy();
+    expect(getByText(SEED_VAULT_INVITATION)).toBeTruthy();
+    expect(queryByTestId('seed-choose-button')).toBeNull();
+    expect(queryByTestId('privacy-tier-intimate')).toBeNull();
+    expect(queryByTestId('privacy-tier-personal')).toBeNull();
+  });
+
+  test('the way there is a button, named for the place, that opens it', async () => {
+    mockVaultConnectionFetch.mockImplementation(() => vaultConnectionReply(false, null));
+    const { getByTestId } = render(<SeedCorpusScreen />);
+
+    const link = await waitFor(() => getByTestId('seed-vault-invitation-link'));
+    expect(link.props.accessibilityRole).toBe('button');
+    expect(link.props.accessibilityLabel).toBe(SEED_VAULT_INVITATION_LINK_LABEL);
+    fireEvent.press(link);
+
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+    expect(mockNavigate).not.toHaveBeenCalledWith('CorpusConsent');
+  });
+
+  test('sends nothing to the import route, whatever is pressed', async () => {
+    // A document is waiting in the picker, so any control on this screen that
+    // could start a run would send it. Every button is pressed; none may open
+    // the picker or reach the import route.
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('notes.md')] });
+    mockFetch.mockReturnValue(corpusReply('vault_required'));
+    mockVaultConnectionFetch.mockImplementation(() => vaultConnectionReply(false, null));
+    const { getByTestId, getAllByRole } = render(<SeedCorpusScreen />);
+    await waitFor(() => expect(getByTestId('seed-vault-invitation')).toBeTruthy());
+
+    const buttons = getAllByRole('button');
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      await act(async () => {
+        fireEvent.press(button);
+      });
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(getDocumentAsync).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test('keeps the picker when the vault read fails: unknown is not none', async () => {
+    mockVaultConnectionFetch.mockImplementation(() =>
+      Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }),
+    );
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    await waitFor(() => expect(mockVaultConnectionFetch).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getByTestId('seed-choose-button')).toBeTruthy();
+    expect(queryByTestId('seed-vault-invitation')).toBeNull();
+  });
+
+  test('keeps the picker while the vault read is still out', () => {
+    mockVaultConnectionFetch.mockImplementation(() => new Promise(() => undefined));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    expect(getByTestId('seed-choose-button')).toBeTruthy();
+    expect(queryByTestId('seed-vault-invitation')).toBeNull();
+  });
+
+  test('keeps the picker for a managed vault, which is answered with no address', async () => {
+    mockVaultConnectionFetch.mockImplementation(() => vaultConnectionReply(true, null));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    await waitFor(() => expect(mockVaultConnectionFetch).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(getByTestId('seed-choose-button')).toBeTruthy();
+    expect(queryByTestId('seed-vault-invitation')).toBeNull();
   });
 });

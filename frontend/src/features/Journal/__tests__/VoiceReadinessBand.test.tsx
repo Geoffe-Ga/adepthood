@@ -24,11 +24,18 @@ const mockReadiness = jest.fn() as jest.MockedFunction<() => Promise<VoiceReadin
 const mockLoadDismissed = jest.fn() as jest.MockedFunction<() => Promise<boolean>>;
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockNavigate = jest.fn();
+const mockVaultConnection = jest.fn() as jest.MockedFunction<
+  () => Promise<{ connected: boolean; vault_url: string | null }>
+>;
 
 jest.mock('@/api', () => ({
   corpus: {
     voiceReadiness: (...a: unknown[]) =>
       (mockReadiness as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  vault: {
+    connection: (...a: unknown[]) =>
+      (mockVaultConnection as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -106,7 +113,9 @@ beforeEach(() => {
   mockLoadDismissed.mockReset();
   mockSaveDismissed.mockReset();
   mockNavigate.mockReset();
+  mockVaultConnection.mockReset();
   mockReadiness.mockResolvedValue(readiness());
+  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
 });
@@ -226,6 +235,69 @@ describe('VoiceReadinessBand — where it goes', () => {
     const { findByTestId } = render(<VoiceReadinessBand />);
     fireEvent.press(await findByTestId(BAND));
     expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  it('invites an early account with no vault to give its corpus a place first', async () => {
+    // #3017: a corpus lives in a vault (#3015), so with nothing attached the
+    // band opens where the corpus would live, and says so in its own words.
+    mockReadiness.mockResolvedValue(
+      readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
+    );
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    const { findByTestId, getByText } = render(<VoiceReadinessBand />);
+    const band = await findByTestId(BAND);
+
+    expect(getByText('Give your corpus a place to live')).toBeTruthy();
+    expect(band.props.accessibilityLabel).toBe('Give your corpus a place to live');
+    fireEvent.press(band);
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+  });
+
+  it('keeps the import surface when the vault read fails: unknown is not none', async () => {
+    mockReadiness.mockResolvedValue(
+      readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
+    );
+    mockVaultConnection.mockRejectedValue(new Error('offline'));
+    const { findByTestId, getByText } = render(<VoiceReadinessBand />);
+    const band = await findByTestId(BAND);
+
+    expect(getByText('Bring in your writing')).toBeTruthy();
+    expect(band.props.accessibilityLabel).toBe('Bring in your writing');
+    fireEvent.press(band);
+    expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  it('asks an undecided account the decision first, vault or not', async () => {
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    const { findByTestId, getByText } = render(<VoiceReadinessBand />);
+    const band = await findByTestId(BAND);
+
+    expect(getByText('Look at the decision')).toBeTruthy();
+    fireEvent.press(band);
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent');
+  });
+
+  it('stays quiet when readiness fails, whatever the vault says', async () => {
+    mockReadiness.mockRejectedValue(new Error('offline'));
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    const { queryByTestId } = render(<VoiceReadinessBand />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(queryByTestId(BAND)).toBeNull();
+  });
+
+  it('can still be set aside when there is no vault', async () => {
+    mockReadiness.mockResolvedValue(
+      readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
+    );
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    const { findByTestId, queryByTestId } = render(<VoiceReadinessBand />);
+    fireEvent.press(await findByTestId(DISMISS));
+
+    expect(mockSaveDismissed).toHaveBeenCalledWith(true);
+    expect(queryByTestId(BAND)).toBeNull();
   });
 
   it('routes on the state alone, whatever the reported grounding source says', async () => {

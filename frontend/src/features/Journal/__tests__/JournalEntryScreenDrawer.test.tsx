@@ -22,6 +22,8 @@ const mockJournalList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
+const mockVaultConnection =
+  jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
 const mockRootNavigate = jest.fn();
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
@@ -57,6 +59,10 @@ jest.mock('@/api', () => ({
   corpus: {
     voiceReadiness: (...a: unknown[]) =>
       (mockVoiceReadiness as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  vault: {
+    connection: (...a: unknown[]) =>
+      (mockVaultConnection as unknown as (...x: unknown[]) => unknown)(...a),
   },
 }));
 
@@ -147,6 +153,7 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockResonanceList.mockResolvedValue({ items: [] });
   mockJournalList.mockResolvedValue(page([]));
+  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
   mockVoiceReadiness.mockResolvedValue({
     ready: false,
     state: 'gathering',
@@ -282,5 +289,49 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('SeedCorpus'));
     expect(mockVoiceReadiness).toHaveBeenCalledTimes(1);
     expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it('routes a consented account with no vault to where its corpus would live', async () => {
+    // #3017: a corpus lives in a vault (#3015). The drawer reads the vault on
+    // press beside readiness, so this door agrees with the band and the hub.
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    const { getByTestId, getByLabelText, navigation } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('VaultSettings'));
+    expect(navigation.navigate).not.toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  it('keeps the import surface when the vault read fails, and shows no drawer error', async () => {
+    mockVaultConnection.mockRejectedValue(new Error('offline'));
+    const { getByTestId, getByLabelText, navigation, queryByRole } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('SeedCorpus'));
+    expect(queryByRole('alert')).toBeNull();
+  });
+
+  it('asks an undecided account with no vault the decision first', async () => {
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVoiceReadiness.mockResolvedValue({
+      ready: false,
+      state: 'not_consented',
+      message: 'Choose whether your journal can shape your reflections.',
+      grounding_source: 'recent_entries',
+      classified_fragment_count: 0,
+    });
+    const { getByTestId, getByLabelText, navigation } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    fireEvent.press(getByTestId('journal-drawer-corpus'));
+
+    await waitFor(() => expect(navigation.navigate).toHaveBeenCalledWith('CorpusConsent'));
   });
 });

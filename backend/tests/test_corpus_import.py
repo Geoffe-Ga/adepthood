@@ -1,9 +1,9 @@
 """The import surface: a document a user chose, routed by whether they have a vault.
 
-Until this existed, a person's corpus held only what they had typed into this
-app. The upload path was real but had exactly one destination -- the vault --
-so an account with no vault connected sent a document and was told their vault
-had not answered, which was not true of a vault they never had.
+Owner ruling on #3015: a corpus is something you keep in a vault, so you can
+only have one if you have a vault to keep it in. A document is therefore taken
+to the account's vault or nowhere -- since #3016 there is no second, local
+destination for an account the resolver finds no vault for.
 
 Three properties are asserted here, each through the real HTTP surface.
 
@@ -11,14 +11,14 @@ Three properties are asserted here, each through the real HTTP surface.
 its own tier, at every tier, and nothing is written to the local corpus and no
 provider is contacted -- the vault ingests documents itself.
 
-*A caller who reaches no vault is answered honestly.* Their document is read,
-classified once, and stored in their own corpus, under the same consent gate
-and through the same writer a journal entry goes through.
+*A caller who reaches no vault is told so, and nothing else happens.* The
+answer is ``vault_required``: the document is not read, no consent is
+consulted, no language model is contacted and nothing is stored -- whatever the
+format, the tier, or the switch for documents says.
 
-*INTIMATE never becomes a fragment.* With no vault, an intimate document is
-declined outright rather than stored unclassified, and the refusal happens
-before any provider is contacted. That asymmetry with the vault path is
-deliberate: the vault path calls no language model, and this one does.
+*The request is bounded before it is routed.* The size and encoding guards run
+first for every caller, so an oversized or undecodable document is refused as
+such whether or not the account has a vault.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from http import HTTPStatus
-from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -35,7 +35,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import OWNER_ENV_VAR, get_creek_vault_client
 from domain.corpus_import import CorpusImportStatus, ImportDestination
 from domain.creek_vault import (
     CONTRACT_VERSION,
@@ -54,12 +54,11 @@ from domain.creek_vault import (
     VaultUploadStatus,
     VaultWheelBalance,
 )
-from domain.document_text import DocumentReadFailure, read_document
 from domain.frequencies import Frequency
 from main import app
 from models.corpus_fragment import CorpusFragment, CorpusSource
+from routers import corpus as corpus_router
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES
-from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
 from schemas.journal_upload import (
     MAX_UPLOAD_BASE64_CHARS,
     MAX_UPLOAD_BYTES,
@@ -67,14 +66,9 @@ from schemas.journal_upload import (
     decode_document,
 )
 from services import frequency_classification as fc
-from services.botmason import LLMCreditExhaustedError
-from services.corpus_import import (
-    _INGEST_STATUS,
-    _READ_FAILURE_STATUS,
-    reaches_a_vault,
-)
-from services.corpus_ingest import IngestOutcome
+from services.corpus_import import VAULT_REQUIRED_RESULT, import_document, reaches_a_vault
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_upload import UploadedDocument
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -88,10 +82,6 @@ _MARKDOWN_B64 = base64.b64encode(_PROSE.encode()).decode("ascii")
 
 # A reply the classifier's parser accepts, naming one position on the ontology.
 _CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9})
-
-# A well-formed reply that recognises nothing, which is a real outcome rather
-# than a provider fault.
-_UNCLASSIFIED_REPLY = json.dumps({"weights": {}, "overall_confidence": 0.0})
 
 
 class _ClassifierCalls:
@@ -250,44 +240,6 @@ async def _fragments(session: AsyncSession, source: CorpusSource) -> list[Corpus
     return list(result.scalars().all())
 
 
-class TestReadingADocument:
-    """What adepthood can and cannot read out of a document on its own."""
-
-    def test_markdown_is_read_as_the_text_it_is(self) -> None:
-        """Markdown is text somebody wrote; it needs no parser to be readable."""
-        assert read_document(_MARKDOWN_NAME, _PROSE.encode()) == _PROSE
-
-    def test_plain_text_is_read_as_the_text_it_is(self) -> None:
-        """A ``.txt`` export is the other half of what a person can hand over by hand."""
-        assert read_document("notes.txt", _PROSE.encode()) == _PROSE
-
-    def test_the_suffix_is_matched_regardless_of_case(self) -> None:
-        """A file named in capitals is the same file; the extension is not a password."""
-        assert read_document("NOTES.MD", _PROSE.encode()) == _PROSE
-
-    def test_a_binary_document_format_is_not_readable_here(self) -> None:
-        """A PDF needs an ingestor. Adepthood has none and never claims to."""
-        assert read_document("scan.pdf", b"%PDF-1.7 pages") is DocumentReadFailure.FORMAT_UNREADABLE
-
-    def test_bytes_that_are_not_text_are_refused_rather_than_mangled(self) -> None:
-        """A ``.md`` full of arbitrary bytes is not writing, whatever it is named."""
-        assert read_document("broken.md", b"\xff\xfe\x00rubbish") is DocumentReadFailure.NOT_TEXT
-
-    def test_a_document_with_no_writing_in_it_is_refused(self) -> None:
-        """Whitespace carries no position on the ontology, so there is nothing to store."""
-        assert read_document("blank.md", b"   \n\n  \t ") is DocumentReadFailure.EMPTY
-
-    def test_more_writing_than_one_fragment_may_hold_is_refused(self) -> None:
-        """A fragment is quoted verbatim into a grounding prompt, so it stays bounded."""
-        oversized = "a" * (JOURNAL_MESSAGE_MAX_LENGTH + 1)
-        assert read_document("essay.md", oversized.encode()) is DocumentReadFailure.TOO_LONG
-
-    def test_a_document_at_the_ceiling_is_read(self) -> None:
-        """The ceiling is inclusive; a document exactly at it is not a document over it."""
-        at_ceiling = "a" * JOURNAL_MESSAGE_MAX_LENGTH
-        assert read_document("essay.md", at_ceiling.encode()) == at_ceiling
-
-
 class TestVaultDestinationUnchanged:
     """A caller who reaches a vault gets the vault, at every tier, as before."""
 
@@ -352,114 +304,48 @@ class TestVaultDestinationUnchanged:
 
 
 @pytest.mark.usefixtures("no_vault")
-class TestCorpusDestination:
-    """A caller who reaches no vault imports into their own corpus, or is told why not."""
+class TestAnAccountWithNoVaultIsAskedForOne:
+    """With no vault there is nowhere to keep a document, and the answer says so (#3015)."""
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("classifier")
-    async def test_a_consented_document_becomes_a_fragment(
-        self, async_client: AsyncClient, db_session: AsyncSession
+    async def test_a_consented_no_vault_import_is_answered_vault_required_and_stores_nothing(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession,
+        classifier: _ClassifierCalls,
     ) -> None:
-        """The whole point: writing from outside the app reaches the corpus."""
-        headers = await _signup(async_client, "import-corpus")
+        """Even with the switch for documents on, a document with nowhere to live is not kept."""
+        headers = await _signup(async_client, "import-asked-for-a-vault")
         await _grant_consent(async_client, headers)
         response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         assert response.status_code == HTTPStatus.ACCEPTED
         body = response.json()
         assert body["destination"] == ImportDestination.CORPUS.value
-        assert body["corpus_status"] == CorpusImportStatus.STORED.value
-        assert body["stored"] is True
-        assert body["fragment_id"] is not None
-        stored = await _fragments(db_session, CorpusSource.UPLOAD)
-        assert [fragment.content for fragment in stored] == [_PROSE]
+        assert body["stored"] is False
+        assert body["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
+        assert body["fragment_id"] is None
+        assert body["vault_status"] is None
+        assert body["vault_ref"] is None
+        assert body["message"] == CORPUS_IMPORT_MESSAGES[CorpusImportStatus.VAULT_REQUIRED]
+        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
+        assert classifier.count == 0
 
     @pytest.mark.asyncio
-    async def test_the_import_costs_exactly_one_classification(
+    async def test_a_no_vault_account_without_consent_is_asked_for_a_vault_not_for_consent(
         self, async_client: AsyncClient, classifier: _ClassifierCalls
     ) -> None:
-        """One document, one provider call. A second would double every account's bill."""
-        headers = await _signup(async_client, "import-corpus-cost")
-        await _grant_consent(async_client, headers)
-        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-        assert classifier.count == 1
-
-    @pytest.mark.asyncio
-    async def test_no_pooled_connection_is_held_across_the_classification(
-        self,
-        async_client: AsyncClient,
-        db_session: AsyncSession,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """An import must not hold a pooled connection while a provider is thinking.
-
-        The request has read the account's consent by the time it dials, and a
-        Session holds the connection it autobegan on until something ends that
-        transaction. Held across the call, a pool of fifteen would be spent by
-        fifteen concurrent imports and the sixteenth request to any
-        database-backed endpoint would block on checkout.
-
-        Asserted through the real surface rather than at the spine because this
-        is the second caller: it reaches the provider without passing through
-        the journal wrapper at all, so it is the one a release placed in the
-        wrapper would miss.
-        """
-        in_transaction: list[bool] = []
-
-        async def watching(**_kwargs: object) -> object:
-            in_transaction.append(db_session.in_transaction())
-            return _Reply(_CLASSIFIED_REPLY)
-
-        monkeypatch.setattr(fc, "generate_response", watching)
-        headers = await _signup(async_client, "import-corpus-pool")
-        await _grant_consent(async_client, headers)
-
-        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-
-        assert in_transaction, "no classification was observed"
-        assert not any(in_transaction)
-
-    @pytest.mark.asyncio
-    async def test_without_consent_nothing_is_stored_and_nobody_is_contacted(
-        self,
-        async_client: AsyncClient,
-        db_session: AsyncSession,
-        classifier: _ClassifierCalls,
-    ) -> None:
-        """An account that has agreed to nothing has its writing sent nowhere."""
-        headers = await _signup(async_client, "import-corpus-noconsent")
+        """Consent is never consulted on this branch, so it cannot be the answer."""
+        headers = await _signup(async_client, "import-vault-before-consent")
         response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-        body = response.json()
-        assert body["corpus_status"] == CorpusImportStatus.CONSENT_REQUIRED.value
-        assert body["stored"] is False
+        assert response.json()["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
         assert classifier.count == 0
-        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
 
     @pytest.mark.asyncio
-    async def test_an_intimate_document_is_declined_before_any_provider_is_reached(
-        self,
-        async_client: AsyncClient,
-        db_session: AsyncSession,
-        classifier: _ClassifierCalls,
-    ) -> None:
-        """The asymmetry with the vault path: this destination calls a language model."""
-        headers = await _signup(async_client, "import-corpus-intimate")
-        await _grant_consent(async_client, headers)
-        response = await async_client.post(
-            _IMPORT_PATH, json=_payload(classification="intimate"), headers=headers
-        )
-        body = response.json()
-        assert body["destination"] == ImportDestination.CORPUS.value
-        assert body["corpus_status"] == CorpusImportStatus.TIER_REFUSED.value
-        assert body["stored"] is False
-        assert classifier.count == 0
-        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
-
-    @pytest.mark.asyncio
-    async def test_a_format_adepthood_cannot_read_is_declined_before_classification(
+    async def test_a_no_vault_pdf_is_asked_for_a_vault_not_refused_as_unreadable(
         self, async_client: AsyncClient, classifier: _ClassifierCalls
     ) -> None:
-        """With no vault there is no ingestor, and saying so beats storing nothing quietly."""
-        headers = await _signup(async_client, "import-corpus-pdf")
+        """The document is never read, so its format is never the reason."""
+        headers = await _signup(async_client, "import-vault-before-format")
         await _grant_consent(async_client, headers)
         pdf = base64.b64encode(b"%PDF-1.7 pages").decode("ascii")
         response = await async_client.post(
@@ -467,79 +353,90 @@ class TestCorpusDestination:
             json=_payload(filename="scan.pdf", content_base64=pdf),
             headers=headers,
         )
-        assert response.json()["corpus_status"] == CorpusImportStatus.FORMAT_UNREADABLE.value
+        assert response.json()["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
         assert classifier.count == 0
 
-    @pytest.mark.parametrize("classifier", [_UNCLASSIFIED_REPLY], indirect=True)
     @pytest.mark.asyncio
-    async def test_a_document_carrying_no_frequency_is_not_stored(
+    async def test_a_no_vault_intimate_document_is_asked_for_a_vault_not_refused_by_tier(
+        self, async_client: AsyncClient, classifier: _ClassifierCalls
+    ) -> None:
+        """No language model is in reach on this branch, so the tier is not the reason."""
+        headers = await _signup(async_client, "import-vault-before-tier")
+        await _grant_consent(async_client, headers)
+        response = await async_client.post(
+            _IMPORT_PATH, json=_payload(classification="intimate"), headers=headers
+        )
+        assert response.json()["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
+        assert response.json()["stored"] is False
+        assert classifier.count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_vault_pipeline_is_driven_for_a_document_with_nowhere_to_go(
+        self, async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ontologization pass belongs to a vault; an account without one starts none."""
+        driven: list[object] = []
+
+        async def counting(*args: object, **kwargs: object) -> None:
+            driven.append((args, kwargs))
+
+        monkeypatch.setattr(corpus_router, "drive_vault_pipeline", counting)
+        headers = await _signup(async_client, "import-vault-no-pipeline")
+        await _grant_consent(async_client, headers)
+        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+        assert response.json()["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
+        assert driven == []
+
+
+class TestTheRealResolverAnswersVaultRequired:
+    """The rule reads the resolver itself, not only a test's override of it."""
+
+    @pytest.mark.asyncio
+    async def test_an_account_the_resolver_finds_no_vault_for_is_asked_for_one(
         self,
         async_client: AsyncClient,
         db_session: AsyncSession,
         classifier: _ClassifierCalls,
-    ) -> None:
-        """The corpus earns its place by being ontologized; an unplaced fragment cannot rank."""
-        headers = await _signup(async_client, "import-corpus-unclassified")
-        await _grant_consent(async_client, headers)
-        response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-        assert response.json()["corpus_status"] == CorpusImportStatus.UNCLASSIFIED.value
-        assert classifier.count == 1
-        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
-
-    @pytest.mark.asyncio
-    async def test_a_provider_that_refused_to_bill_answers_what_a_dead_one_answers(
-        self,
-        async_client: AsyncClient,
-        db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """One import is one call, so a spent balance changes nothing this caller sees.
-
-        The condition is raised rather than degraded so that a caller offering a
-        *batch* can stop paying for a refusal it has already been given. This
-        caller offers one document, so it is answered exactly as a dead provider
-        already is, stores nothing, and can be offered again.
-        """
-
-        async def refusing(**_kwargs: object) -> SimpleNamespace:
-            raise LLMCreditExhaustedError("credit balance is too low", provider="anthropic")
-
-        monkeypatch.setattr(fc, "generate_response", refusing)
-        headers = await _signup(async_client, "import-corpus-unbilled")
+        """No connection row and no deployment binding: the resolver's fallback answers."""
+        monkeypatch.delenv(OWNER_ENV_VAR, raising=False)
+        monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
+        assert get_creek_vault_client not in app.dependency_overrides
+        headers = await _signup(async_client, "import-real-resolver")
         await _grant_consent(async_client, headers)
-
         response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-
-        assert response.status_code == HTTPStatus.ACCEPTED, response.text
-        assert response.json()["corpus_status"] == CorpusImportStatus.UNCLASSIFIED.value
+        assert response.status_code == HTTPStatus.ACCEPTED
+        assert response.json()["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
         assert await _fragments(db_session, CorpusSource.UPLOAD) == []
+        assert classifier.count == 0
+
+
+class TestTheServiceTakesNoLocalBranch:
+    """The no-vault answer is decided before anything about the document is looked at."""
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("classifier")
-    async def test_withdrawing_consent_takes_the_imported_writing_with_it(
-        self, async_client: AsyncClient, db_session: AsyncSession
+    async def test_import_document_answers_vault_required_without_reading_or_classifying(
+        self, classifier: _ClassifierCalls
     ) -> None:
-        """A permission that can be revoked while the material stays is a preference."""
-        headers = await _signup(async_client, "import-corpus-revoke")
-        await _grant_consent(async_client, headers)
-        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-        assert await _fragments(db_session, CorpusSource.UPLOAD) != []
-        revoked = await async_client.put(_CONSENT_PATH, json={"granted": False}, headers=headers)
-        assert revoked.status_code == HTTPStatus.OK
-        assert await _fragments(db_session, CorpusSource.UPLOAD) == []
+        """An undecodable intimate PDF still gets the one answer, and costs nothing.
 
-    @pytest.mark.asyncio
-    @pytest.mark.usefixtures("classifier")
-    async def test_an_imported_fragment_is_marked_as_uploaded_not_as_journal(
-        self, async_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Consent is per source, so a fragment has to say which source it came from."""
-        headers = await _signup(async_client, "import-corpus-source")
-        await _grant_consent(async_client, headers)
-        await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
-        assert await _fragments(db_session, CorpusSource.JOURNAL) == []
-        [fragment] = await _fragments(db_session, CorpusSource.UPLOAD)
-        assert fragment.source_entry_id is None
+        The service is handed no session, so there is no consent to read and no
+        fragment it could write; the classifier count proves no provider call.
+        """
+        document = UploadedDocument(
+            owner_user_id=1,
+            filename="scan.pdf",
+            content_base64=base64.b64encode(b"\xff\xfe not text").decode("ascii"),
+            classification="intimate",
+            created_at=datetime.now(UTC),
+        )
+        result = await import_document(LocalFallbackCreekVaultClient(), document)
+        assert result is VAULT_REQUIRED_RESULT
+        assert result.status is CorpusImportStatus.VAULT_REQUIRED
+        assert result.stored is False
+        assert result.fragment_id is None
+        assert classifier.count == 0
 
 
 @pytest.mark.usefixtures("no_vault")
@@ -616,30 +513,21 @@ class TestTheAnswerIsSelfDescribing:
         assert body["message"]
 
     @pytest.mark.asyncio
-    @pytest.mark.usefixtures("no_vault", "classifier")
+    @pytest.mark.usefixtures("no_vault")
     async def test_a_corpus_answer_carries_no_vault_status(self, async_client: AsyncClient) -> None:
         """The mirror of the above, and the reason the destination field exists."""
         headers = await _signup(async_client, "import-shape-corpus")
-        await _grant_consent(async_client, headers)
         response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
         body = response.json()
         assert body["vault_status"] is None
         assert body["vault_ref"] is None
-        assert body["corpus_status"] is not None
+        assert body["corpus_status"] == CorpusImportStatus.VAULT_REQUIRED.value
         assert body["message"]
 
     def test_every_corpus_outcome_has_a_sentence_for_the_person_who_sent_it(self) -> None:
         """A status with no message would reach a user as a bare token from an enum."""
         assert set(CORPUS_IMPORT_MESSAGES) == set(CorpusImportStatus)
         assert all(CORPUS_IMPORT_MESSAGES[status] for status in CorpusImportStatus)
-
-    def test_every_read_failure_has_a_status_of_its_own(self) -> None:
-        """A reader outcome with no projection would reach a person as a KeyError."""
-        assert set(_READ_FAILURE_STATUS) == set(DocumentReadFailure)
-
-    def test_every_ingest_outcome_has_a_status_of_its_own(self) -> None:
-        """The ingest spine is shared, so an outcome added there must land here."""
-        assert set(_INGEST_STATUS) == set(IngestOutcome)
 
 
 class TestTheRoutingRuleReadsTheResolver:

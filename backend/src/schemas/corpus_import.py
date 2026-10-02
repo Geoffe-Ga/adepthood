@@ -9,11 +9,13 @@ asserts by grep that no form-encoded file surface exists anywhere in the source
 tree, so an import endpoint that reached for one would break a privacy
 guarantee the repository enforces.
 
-The response reports the destination first, because the two destinations answer
-in two different vocabularies and a client that could not tell which applied
-would have to guess. Exactly one of ``vault_status`` and ``corpus_status`` is
-ever populated, and ``stored`` states in one boolean the fact every client
-actually branches on.
+The response reports the destination first, because the two answers come in
+two different vocabularies and a client that could not tell which applied would
+have to guess. Exactly one of ``vault_status`` and ``corpus_status`` is ever
+populated, and ``stored`` states in one boolean the fact every client actually
+branches on. Since #3016 a ``corpus`` answer is always ``vault_required`` and
+never stores anything -- see :mod:`domain.corpus_import` for why the other
+corpus statuses stay on the wire.
 """
 
 from __future__ import annotations
@@ -27,9 +29,8 @@ from domain.corpus_import import CorpusImportStatus, ImportDestination
 from domain.creek_vault import VaultUploadStatus
 from domain.document_text import MAX_DOCUMENT_CHARS, READABLE_SUFFIXES
 
-# The formats named in the copy below, rendered from the set the reader
-# actually enforces so the sentence a person is shown cannot come to list
-# something the code declines.
+# The formats named in the copy below, rendered from the set
+# :mod:`domain.document_text` names so the sentence cannot drift from it.
 _READABLE_LIST = ", ".join(sorted(READABLE_SUFFIXES))
 
 
@@ -37,7 +38,9 @@ _READABLE_LIST = ", ".join(sorted(READABLE_SUFFIXES))
 # names what happened and the one thing they can do next, in the same register
 # as ``schemas.journal_upload.UPLOAD_MESSAGES`` -- none of them ends at
 # "contact support", because every one of these has a self-serve remedy or is
-# not a failure at all.
+# not a failure at all. Total over the enum, so the eight statuses the import
+# route no longer produces (see :mod:`domain.corpus_import`) keep their lines
+# for as long as they stay on the wire.
 CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
     {
         CorpusImportStatus.STORED: (
@@ -87,6 +90,18 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
             "added — a corpus entry has to sit somewhere on the map to be found again. "
             "Nothing was changed, and you can try again."
         ),
+        # The one answer an account with no vault gets (#3015, #3016). Worded
+        # to stay true for every account the resolver falls back for: one that
+        # never set a vault up, one whose managed vault is still being prepared,
+        # one whose stored host could not be used, and one the deployment's
+        # vault does not belong to -- so it says the place is not ready *for
+        # this account* and offers "set it up or check on it", never "set one
+        # up" to somebody who already has one.
+        CorpusImportStatus.VAULT_REQUIRED: (
+            "Nothing was stored. A document you bring in is kept where your corpus "
+            "lives, and that isn't ready for this account yet. Open Where your corpus "
+            "lives in Settings to set it up or check on it, then send this again."
+        ),
     }
 )
 
@@ -114,7 +129,11 @@ class DocumentImportResponse(BaseModel):
         default_factory=list, description="Tags the vault's ingest pipeline assigned."
     )
     corpus_status: CorpusImportStatus | None = Field(
-        default=None, description="What the local corpus did, for a corpus destination."
+        default=None,
+        description=(
+            "Why no vault took the document, for a corpus destination: since #3016 "
+            "always vault_required."
+        ),
     )
     fragment_id: int | None = Field(
         default=None, description="The stored corpus fragment's id, present only when stored."

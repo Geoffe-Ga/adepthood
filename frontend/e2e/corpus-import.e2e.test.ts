@@ -10,27 +10,23 @@ import type { DocumentImportT } from '@/api';
 /**
  * Importing a document when you have no vault, proven across the wire.
  *
- * This is the journey the import route exists for. Until it shipped, a document
- * had exactly one destination, so an account that had never connected a vault
- * sent one and was told their vault had not answered — untrue of a vault they
- * never had — and their corpus stayed empty forever. Both halves stayed green
- * through that: the screen's tests build their own fixtures, and the router's
- * tests never see this client. This is the one place the two agree on the path,
- * the verb, the request body, and which of the two destinations answered.
+ * Owner ruling on #3015: a corpus lives in a vault, so you can only have one if
+ * you have a vault to keep it in. Since #3016 an account the server finds no
+ * vault for is answered `vault_required` and nothing else happens -- the
+ * document is not read, consent is not consulted, no provider is called and
+ * nothing is stored. This spec is the one place the client and the server agree
+ * on that across the wire: the path, the verb, the body, and the answer.
  *
  * **The accounts here have no vault, and that is the case under test.** The lane
- * does configure one now — `seed-upload.e2e.test.ts` needs somewhere to seed
- * into — but `CREEK_VAULT_OWNER_USER_ID` binds it to a single pre-provisioned
+ * does configure one -- `seed-upload.e2e.test.ts` needs somewhere to seed into
+ * -- but `CREEK_VAULT_OWNER_USER_ID` binds it to a single pre-provisioned
  * account, and every account this spec creates is somebody else. The resolver
- * hands those the local fallback, byte for byte as it did when the lane had no
- * vault at all, so every import here still routes to the account's own corpus.
- * The first assertion below is what proves it rather than assumes it.
+ * hands those the local fallback, so every import here reaches no vault.
  *
- * What it does not assert is a stored fragment. Placing writing among the
- * frequencies costs a provider call and this lane has no provider, so a
- * consented import settles as `unclassified` here — the provider-free half of
- * the path, which is every part a person actually touches: where the document
- * went, whether they had agreed to it, and what the intimate tier does.
+ * Each case below is a reason the retired local import used to answer
+ * something else -- no consent yet, a format it could not read, the Intimate
+ * tier, consent granted -- and each now gets the one answer, which is what
+ * proves the document was never looked at.
  */
 
 // `@example.test` is a reserved TLD the signup validator rejects with 422.
@@ -40,11 +36,14 @@ const TIMEZONE = 'UTC';
 const LICENSE_KEY = freshLicenseKey();
 const SECOND_LICENSE_KEY = freshLicenseKey();
 
-/** The source an imported document carries, and the consent that gates it. */
+/** The source the switch for documents is recorded under. */
 const UPLOAD = 'upload';
 
-/** Where a document goes for an account that has connected no vault. */
+/** The answer's vocabulary for an account that reaches no vault. */
 const CORPUS = 'corpus';
+
+/** The one answer such an account gets since #3016. */
+const VAULT_REQUIRED = 'vault_required';
 
 const email = `e2e-import-${randomUUID()}${EMAIL_DOMAIN}`;
 
@@ -58,6 +57,17 @@ function importDocument(
   classification: 'personal' | 'intimate' = 'personal',
 ): Promise<DocumentImportT> {
   return corpus.importDocument({ filename, contentBase64: encode(text), classification });
+}
+
+/** Everything the no-vault answer must say, and everything it must leave unset. */
+function expectAskedForAVault(result: DocumentImportT): void {
+  expect(result.destination).toBe(CORPUS);
+  expect(result.corpus_status).toBe(VAULT_REQUIRED);
+  expect(result.stored).toBe(false);
+  expect(result.fragment_id ?? null).toBeNull();
+  expect(result.vault_status ?? null).toBeNull();
+  expect(result.vault_ref ?? null).toBeNull();
+  expect(result.message.length).toBeGreaterThan(0);
 }
 
 describe('importing a document without a vault, against a live server', () => {
@@ -81,65 +91,32 @@ describe('importing a document without a vault, against a live server', () => {
     setTokenGetter(() => sessionToken);
   });
 
-  it('routes the document to the corpus this account has, not to a vault it lacks', async () => {
-    // The defect this closes, stated as an assertion: an account with no vault
-    // must not be answered in the vault's vocabulary.
-    const result = await importDocument('field-notes.md', '# Notes\n\nSomething I wrote.');
-
-    expect(result.destination).toBe(CORPUS);
-    expect(result.vault_status ?? null).toBeNull();
-    expect(result.vault_ref ?? null).toBeNull();
-    expect(result.message.length).toBeGreaterThan(0);
+  it('answers that the document needs a vault, and stores nothing', async () => {
+    expectAskedForAVault(await importDocument('field-notes.md', '# Notes\n\nSomething I wrote.'));
   });
 
-  it('stores nothing until this account has agreed to it', async () => {
-    // Opt-in, read rather than assumed: the corpus is off until somebody turns
-    // it on, so the first honest answer is the question, not a fragment.
-    const result = await importDocument('field-notes.md', 'Something else I wrote.');
-
-    expect(result.corpus_status).toBe('consent_required');
-    expect(result.stored).toBe(false);
-    expect(result.fragment_id ?? null).toBeNull();
+  it('never reads the document, so an unreadable format gets the same answer', async () => {
+    // The retired local import refused a .pdf as format_unreadable. Getting the
+    // vault answer instead is what proves nothing read the document.
+    expectAskedForAVault(await importDocument('export.pdf', 'not really a pdf'));
   });
 
-  it('decides a format it cannot read before it ever reaches the consent gate', async () => {
-    // Free to decide and decided first: a format adepthood cannot open costs no
-    // provider call and needs no permission, so it is refused on its own terms
-    // rather than reported as a consent problem.
-    const result = await importDocument('export.pdf', 'not really a pdf');
-
-    expect(result.destination).toBe(CORPUS);
-    expect(result.corpus_status).toBe('format_unreadable');
-    expect(result.stored).toBe(false);
-  });
-
-  it('takes the document past the consent gate once the switch is on', async () => {
+  it('stays the same answer once the switch for documents is on', async () => {
+    // The switch is still offered and still recorded, but with no vault there
+    // is nowhere for it to let a document in to.
     const state = await corpusConsent.set(UPLOAD, true);
     expect(state.granted).toBe(true);
 
-    const result = await importDocument('field-notes.md', 'A paragraph worth keeping.');
-
-    expect(result.destination).toBe(CORPUS);
-    // `stored` needs a classification, which needs a provider this lane has
-    // not got; `unclassified` is that absence and is a real outcome of the
-    // same path. What matters here is that consent is no longer the answer.
-    expect(['stored', 'unclassified']).toContain(result.corpus_status);
+    expectAskedForAVault(await importDocument('field-notes.md', 'A paragraph worth keeping.'));
   });
 
-  it('refuses an Intimate document outright, whatever this account agreed to', async () => {
-    // The asymmetry the corpus destination exists to express: placing writing
-    // among the frequencies means reading it with a language model, and this
-    // tier never goes to one. Consent does not unlock it.
-    const result = await importDocument('diary.md', 'Only for me.', 'intimate');
-
-    expect(result.corpus_status).toBe('tier_refused');
-    expect(result.stored).toBe(false);
-    expect(result.fragment_id ?? null).toBeNull();
+  it('gives an Intimate document the same answer, contacting nothing', async () => {
+    expectAskedForAVault(await importDocument('diary.md', 'Only for me.', 'intimate'));
   });
 
-  it('leaves the decision with the account that made it', async () => {
-    // The route reads the subject from the JWT alone, so a neighbour who has
-    // agreed to nothing is still asked rather than swept along.
+  it('answers a neighbour who agreed to nothing the same way', async () => {
+    // The route reads the subject from the JWT alone; consent is not consulted
+    // on this answer, so a neighbour's undecided switch changes nothing.
     const neighbour = await auth.signup({
       email: `e2e-import-neighbour-${randomUUID()}${EMAIL_DOMAIN}`,
       password: PASSWORD,
@@ -148,9 +125,6 @@ describe('importing a document without a vault, against a live server', () => {
     });
     sessionToken = neighbour.token;
 
-    const result = await importDocument('field-notes.md', 'A neighbour writes too.');
-
-    expect(result.destination).toBe(CORPUS);
-    expect(result.corpus_status).toBe('consent_required');
+    expectAskedForAVault(await importDocument('field-notes.md', 'A neighbour writes too.'));
   });
 });

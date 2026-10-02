@@ -3,12 +3,14 @@
  * they already have to their corpus, so reflections read from everything they
  * have written rather than only what they have typed here.
  *
- * **Where a document lands is the server's answer, not this screen's.** One
- * request goes to `POST /corpus/import`, which routes per account: the vault
- * for somebody who has connected one, their own ontologized corpus for somebody
- * who has not. That is why an account with no vault can seed at all, and why
- * this screen asks no question about vaults — it reports the destination it was
- * told.
+ * **A corpus lives in a vault (#3015).** A document goes to the account's vault
+ * or nowhere, so this screen reads the account's vault once on mount (#3017).
+ * When the server says nothing is attached, the picker is replaced by an
+ * invitation to give the corpus a place first — never a dead end, and the
+ * screen itself stays where it is. Every other answer, including a read still
+ * out or one that failed, keeps the picker: unknown is never read as none, and
+ * the server's own `vault_required` answer is the backstop. Where a sent
+ * document lands is still the server's answer, and each row reports it.
  *
  * The invitation is declinable and unhurried: no counter to fill, no streak, no
  * praise for bringing in more. The tier chooser sits above the picker so the
@@ -40,6 +42,8 @@ import {
   SEED_LEAVE_TITLE,
   SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
+  SEED_VAULT_INVITATION,
+  SEED_VAULT_INVITATION_LINK_LABEL,
   seedProgressLine,
   seedSummaryLine,
 } from './seedCopy';
@@ -61,6 +65,8 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import PrivacyTierControl from '@/features/Journal/PrivacyTierControl';
+import { useVaultConnectionState } from '@/features/Settings/useVaultConnectionState';
+import { vaultComesFirst } from '@/features/Settings/vaultConnectionState';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Sits above the tier control, so the choice reads as a choice. */
@@ -171,25 +177,40 @@ const SeedLeavePrompt = ({ onLeave, onStay }: SeedLeavePromptProps): React.JSX.E
   </Modal>
 );
 
+interface SeedInvitationProps {
+  prompt: string;
+  linkLabel: string;
+  onPress: () => void;
+  testID: string;
+  linkTestID: string;
+}
+
 /**
- * The way to the permission a held-back document is waiting on.
+ * A sentence and the way somewhere else, asking for nothing here.
  *
- * Shown only once the server has actually answered `consent_required`, so it is
- * a response to something that happened rather than a pre-flight check this
- * screen invented. It leads to the consent screen and asks for nothing here:
- * agreeing to have documents sorted is a decision made where its consequences
- * are spelled out, not a switch smuggled onto an import surface.
+ * Two uses. The consent one is shown only once the server has actually answered
+ * `consent_required`, so it is a response to something that happened rather
+ * than a pre-flight check this screen invented; agreeing to have documents
+ * sorted is a decision made where its consequences are spelled out. The vault
+ * one is shown in place of the picker when there is nowhere to keep a document
+ * yet (#3017), and leads to where a corpus lives.
  */
-const ConsentInvitation = ({ onPress }: { onPress: () => void }): React.JSX.Element => (
-  <View style={styles.consent} testID="seed-consent-invitation">
-    <Text style={styles.consentPrompt}>{SEED_CONSENT_PROMPT}</Text>
+const SeedInvitation = ({
+  prompt,
+  linkLabel,
+  onPress,
+  testID,
+  linkTestID,
+}: SeedInvitationProps): React.JSX.Element => (
+  <View style={styles.consent} testID={testID}>
+    <Text style={styles.consentPrompt}>{prompt}</Text>
     <TouchableOpacity
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={SEED_CONSENT_LINK_LABEL}
-      testID="seed-consent-link"
+      accessibilityLabel={linkLabel}
+      testID={linkTestID}
     >
-      <Text style={styles.consentLink}>{SEED_CONSENT_LINK_LABEL}</Text>
+      <Text style={styles.consentLink}>{linkLabel}</Text>
     </TouchableOpacity>
   </View>
 );
@@ -213,16 +234,35 @@ interface SeedCorpusBodyProps {
   onOpenConsent: () => void;
 }
 
+/** The screen's heading, the same whether or not there is a picker beneath it. */
+const SeedHeader = (): React.JSX.Element => (
+  <ScreenHeader
+    eyebrow="Your corpus"
+    title="Bring in what you've written"
+    lead={SEED_EMPTY_INVITATION}
+  />
+);
+
+/** What the screen shows when there is nowhere to keep a document yet (#3017). */
+const SeedVaultFirst = ({ onOpenVault }: { onOpenVault: () => void }): React.JSX.Element => (
+  <>
+    <SeedHeader />
+    <SeedInvitation
+      prompt={SEED_VAULT_INVITATION}
+      linkLabel={SEED_VAULT_INVITATION_LINK_LABEL}
+      onPress={onOpenVault}
+      testID="seed-vault-invitation"
+      linkTestID="seed-vault-invitation-link"
+    />
+  </>
+);
+
 /** The screen body, given a run to read and drive. */
 const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.Element => {
   const summary = seedSummaryLine(run.tally);
   return (
     <>
-      <ScreenHeader
-        eyebrow="Your corpus"
-        title="Bring in what you've written"
-        lead={SEED_EMPTY_INVITATION}
-      />
+      <SeedHeader />
       <EditorialSection title="Privacy" testID="seed-privacy">
         <Text style={styles.tierPrompt}>{TIER_PROMPT}</Text>
         <PrivacyTierControl value={run.classification} onChange={run.chooseClassification} />
@@ -239,7 +279,15 @@ const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.
           {summary}
         </Text>
       ) : null}
-      {run.needsConsent ? <ConsentInvitation onPress={onOpenConsent} /> : null}
+      {run.needsConsent ? (
+        <SeedInvitation
+          prompt={SEED_CONSENT_PROMPT}
+          linkLabel={SEED_CONSENT_LINK_LABEL}
+          onPress={onOpenConsent}
+          testID="seed-consent-invitation"
+          linkTestID="seed-consent-link"
+        />
+      ) : null}
       <SeedRunList items={run.items} />
     </>
   );
@@ -250,13 +298,19 @@ function SeedCorpusScreen(): React.JSX.Element {
   const run = useSeedRun();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const openConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
+  const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
   const leaveGuard = useSeedLeaveGuard(run.isSending, run.cancel);
+  const { state: vault } = useVaultConnectionState();
   return (
     <ScreenScaffold scroll testID="seed-corpus-screen">
       {leaveGuard.isPrompting ? (
         <SeedLeavePrompt onLeave={leaveGuard.confirmLeave} onStay={leaveGuard.stay} />
       ) : null}
-      <SeedCorpusBody run={run} onOpenConsent={openConsent} />
+      {vaultComesFirst(vault) ? (
+        <SeedVaultFirst onOpenVault={openVault} />
+      ) : (
+        <SeedCorpusBody run={run} onOpenConsent={openConsent} />
+      )}
     </ScreenScaffold>
   );
 }

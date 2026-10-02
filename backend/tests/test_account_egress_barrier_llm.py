@@ -910,6 +910,7 @@ async def test_a_mid_pass_reclassification_binds_the_tier_the_writer_now_allows(
 _OTHER_ENTRY_MARKER = "zebra-quartz: the secret about my brother nobody may read."
 _OTHER_LETTER_MARKER = "okapi-violet: a letter about the brother nobody may read."
 _UPLOAD_MARKER = "heron-slate: an uploaded essay with no journal entry behind it."
+_KEPT_MARKER = "lynx-amber: a journal page nobody withdrew while the pass waited."
 
 
 def _make_deleted(
@@ -1035,23 +1036,32 @@ async def test_a_corpus_copy_withdrawn_while_the_pass_waited_is_not_sent(
     monkeypatch: pytest.MonkeyPatch,
     withdrawal: str,
 ) -> None:
-    """The corpus path too: the withdrawn entry's fragment goes, an upload stays.
+    """The corpus path too: the withdrawn entry's fragment goes, an untouched one stays.
 
     PATCH-to-intimate and DELETE both withdraw the entry's local corpus copy under
-    the same hold. An upload has no entry behind it, so nothing withdrew it and it
+    the same hold. A third entry's fragment is untouched by the withdrawal, so it
     is still legitimate context -- which pins that the fix re-gathers rather than
-    simply dropping the corpus.
+    simply dropping the corpus. (This used to be an upload; since #3016 a legacy
+    upload is never sent at all, which the last assertion pins on this path too.)
     """
     provider = _released_provider(monkeypatch)
     headers, email = await signup(concurrent_async_client, f"ctx_corpus_{withdrawal}")
     user_id = await _user_id(concurrent_session_factory, email)
     other_id = await _create_entry(concurrent_async_client, headers, body="An ordinary day.")
+    kept_id = await _create_entry(concurrent_async_client, headers, body="A quiet afternoon.")
     await _seed_fragment(
         concurrent_session_factory,
         user_id,
         content=_OTHER_ENTRY_MARKER,
         source=CorpusSource.JOURNAL,
         source_entry_id=other_id,
+    )
+    await _seed_fragment(
+        concurrent_session_factory,
+        user_id,
+        content=_KEPT_MARKER,
+        source=CorpusSource.JOURNAL,
+        source_entry_id=kept_id,
     )
     await _seed_fragment(
         concurrent_session_factory, user_id, content=_UPLOAD_MARKER, source=CorpusSource.UPLOAD
@@ -1071,7 +1081,46 @@ async def test_a_corpus_copy_withdrawn_while_the_pass_waited_is_not_sent(
     assert not _sent(provider, _OTHER_ENTRY_MARKER), (
         f"a corpus copy withdrawn before this dial was sent: {provider.bodies}"
     )
-    assert _sent(provider, _UPLOAD_MARKER), "an upload nothing withdrew was dropped"
+    assert _sent(provider, _KEPT_MARKER), "a corpus copy nothing withdrew was dropped"
+    assert not _sent(provider, _UPLOAD_MARKER), (
+        f"a legacy upload fragment was sent to the provider: {provider.bodies}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_upload_fragment_is_never_sent_to_the_provider(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No race: a document the retired import sorted is stored, but no prompt carries it.
+
+    The journal fragment beside it is the control -- it really is sent -- so the
+    upload's absence cannot be explained by the corpus never reaching the prompt.
+    """
+    provider = _released_provider(monkeypatch)
+    headers, email = await signup(concurrent_async_client, "ctx_legacy_upload")
+    user_id = await _user_id(concurrent_session_factory, email)
+    kept_id = await _create_entry(concurrent_async_client, headers, body="A quiet afternoon.")
+    await _seed_fragment(
+        concurrent_session_factory,
+        user_id,
+        content=_KEPT_MARKER,
+        source=CorpusSource.JOURNAL,
+        source_entry_id=kept_id,
+    )
+    await _seed_fragment(
+        concurrent_session_factory, user_id, content=_UPLOAD_MARKER, source=CorpusSource.UPLOAD
+    )
+    entry_id = await _create_entry(concurrent_async_client, headers)
+
+    answered = await concurrent_async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert answered.status_code == HTTPStatus.OK, answered.text
+    assert _sent(provider, _KEPT_MARKER), "the control fragment never reached the provider"
+    assert not _sent(provider, _UPLOAD_MARKER), (
+        f"a legacy upload fragment was sent to the provider: {provider.bodies}"
+    )
 
 
 @pytest.mark.parametrize("withdrawal", sorted(_WITHDRAWALS))
