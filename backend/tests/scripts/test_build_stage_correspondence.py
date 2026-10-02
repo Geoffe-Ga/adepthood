@@ -514,6 +514,51 @@ def test_invalid_supersession_fails_the_build_and_the_cli(
     assert main(workspace.argv()) == 1
 
 
+@pytest.mark.parametrize(
+    "authority",
+    [
+        # Each collapses, under PurePosixPath, onto the uncontracted
+        # markdown/backup/old.md (which does contain the value), so a check on
+        # the raw string would wave it through.
+        "markdown/./backup/old.md",
+        "markdown//backup/old.md",
+        "markdown/./backup/old.md/.",
+        "markdown/.//backup/old.md",
+        # Non-canonical spellings of a contracted chapter are refused too: the
+        # authority must be written exactly as the file is named.
+        "markdown/04-blue/./02-community-love.md",
+        "markdown/04-blue//02-community-love.md",
+        "markdown/04-blue/02-community-love.md/",
+    ],
+)
+def test_a_non_canonical_authority_spelling_is_refused(
+    workspace: Workspace, authority: str
+) -> None:
+    """Only the canonical spelling is checked, so ``.`` and ``//`` cannot reach backup/."""
+    workspace.write_supersessions(_entry(authority=authority))
+    with pytest.raises(StageCorrespondenceError, match="canonical"):
+        workspace.build()
+    assert main(workspace.argv()) == 1
+
+
+@pytest.mark.parametrize(
+    ("authority", "message"),
+    [
+        ("./markdown/04-blue/02-community-love.md", "canonical"),
+        ("/markdown/04-blue/02-community-love.md", "must be under markdown/"),
+        ("markdown", "must be under markdown/"),
+        ("markdown/", "canonical"),
+    ],
+)
+def test_an_authority_outside_markdown_files_is_refused(
+    workspace: Workspace, authority: str, message: str
+) -> None:
+    """Leading ``./``, absolute paths and the bare directory never name a chapter."""
+    workspace.write_supersessions(_entry(authority=authority))
+    with pytest.raises(StageCorrespondenceError, match=message):
+        workspace.build()
+
+
 def test_no_op_supersession_like_the_stale_teal_colour_is_rejected(workspace: Workspace) -> None:
     """The dropped 'stage 8 color Teal' entry would come back as a no-op; it must fail."""
     workspace.write_supersessions(

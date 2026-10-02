@@ -115,6 +115,10 @@ AUTHORITY_PREFIX = "markdown/"
 #: ...and never the uncontracted backup copies that are vendored beside it.
 AUTHORITY_EXCLUDED_PREFIX = "markdown/backup/"
 
+#: The two prefixes as path segments, which is how they are compared.
+_AUTHORITY_PREFIX_PARTS = PurePosixPath(AUTHORITY_PREFIX).parts
+_AUTHORITY_EXCLUDED_PARTS = PurePosixPath(AUTHORITY_EXCLUDED_PREFIX).parts
+
 _SUPERSESSIONS_KEY = "supersessions"
 
 
@@ -230,12 +234,29 @@ def _collapse(text: str) -> str:
 
 
 def _authority_path(entry: Supersession, content_dir: Path) -> Path:
-    """Resolve the authority, requiring contracted (non-backup) markdown."""
+    """Resolve the authority, requiring contracted (non-backup) markdown.
+
+    The containment rules are tested on the normalised path's *parts*, and
+    only after requiring the authority to be spelled canonically: a raw-string
+    prefix test would pass ``markdown/./backup/x.md`` or ``markdown//backup/x.md``,
+    which ``PurePosixPath`` then collapses onto the excluded backup copy.
+    """
     authority = PurePosixPath(entry.authority)
-    if not entry.authority.startswith(AUTHORITY_PREFIX) or ".." in authority.parts:
+    if str(authority) != entry.authority:
+        msg = (
+            f"supersession authority {entry.authority!r} is not canonical; "
+            f"write it as {str(authority)!r}"
+        )
+        raise StageCorrespondenceError(msg)
+    parts = authority.parts
+    if (
+        parts[: len(_AUTHORITY_PREFIX_PARTS)] != _AUTHORITY_PREFIX_PARTS
+        or len(parts) <= len(_AUTHORITY_PREFIX_PARTS)
+        or ".." in parts
+    ):
         msg = f"supersession authority {entry.authority!r} must be under {AUTHORITY_PREFIX}"
         raise StageCorrespondenceError(msg)
-    if entry.authority.startswith(AUTHORITY_EXCLUDED_PREFIX):
+    if parts[: len(_AUTHORITY_EXCLUDED_PARTS)] == _AUTHORITY_EXCLUDED_PARTS:
         msg = f"supersession authority {entry.authority!r} is uncontracted backup copy"
         raise StageCorrespondenceError(msg)
     return content_dir / authority
