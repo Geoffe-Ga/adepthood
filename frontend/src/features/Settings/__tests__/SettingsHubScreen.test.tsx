@@ -51,12 +51,20 @@ const mockUiFlagsGet = jest.fn(() =>
   }),
 );
 
+// The corpus group gates "Bring in your writing" on the account's vault
+// (#3017); each test that cares says what the server answers. The default is a
+// vault at an address, so every other suite here renders the hub as before.
+const mockVaultConnection = jest.fn<Promise<{ connected: boolean; vault_url: string | null }>, []>(
+  () => Promise.resolve({ connected: true, vault_url: 'https://v.example' }),
+);
+
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
     uiFlags: { get: () => mockUiFlagsGet(), update: jest.fn() },
+    vault: { connection: () => mockVaultConnection() },
   };
 });
 
@@ -73,6 +81,11 @@ import SettingsHubScreen from '../SettingsHubScreen';
 
 import { ApiError } from '@/api';
 import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
+import {
+  SEED_ROW_DESCRIPTION,
+  SEED_ROW_LABEL,
+  SEED_ROW_VAULT_FIRST_DESCRIPTION,
+} from '@/features/Seed/seedCopy';
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 beforeEach(() => {
@@ -269,7 +282,7 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Vault row, last in the Your corpus group (#3007)
+// Vault row, first in the Your corpus group (#3007, reordered by #3017)
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — vault row', () => {
@@ -279,7 +292,7 @@ describe('SettingsHubScreen — vault row', () => {
   const VAULT_ROW_DESCRIPTION =
     'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
 
-  test('renders the vault row inside the Your corpus group, after the corpus-consent row', () => {
+  test('renders the vault row first in the Your corpus group, before the way in', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
     const corpus = getByTestId('settings-group-corpus');
     const privacy = getByTestId('settings-group-privacy');
@@ -292,10 +305,12 @@ describe('SettingsHubScreen — vault row', () => {
     const rowIds = within(corpus)
       .getAllByTestId(/^settings-row-/u)
       .map((node) => node.props.testID as string);
+    // A corpus lives in a vault (#3015), so the place it lives comes before
+    // the way writing comes in, and the decision about sorting comes last.
     expect(rowIds).toEqual([
+      'settings-row-vault',
       'settings-row-seed-corpus',
       'settings-row-corpus-consent',
-      'settings-row-vault',
     ]);
   });
 
@@ -462,12 +477,66 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
     expect(getByTestId('settings-row-seed-corpus')).toBeTruthy();
   });
 
-  test('tapping it opens the corpus screen', () => {
-    const { getByTestId } = render(<SettingsHubScreen />);
+  test('with a vault at an address, opens the corpus screen with the ordinary words', async () => {
+    const { getByTestId, getByText } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(mockVaultConnection).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     fireEvent.press(getByTestId('settings-row-seed-corpus'));
 
+    expect(getByText(SEED_ROW_DESCRIPTION)).toBeTruthy();
     expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  test('when the vault read fails, still opens the corpus screen: unknown is not none', async () => {
+    mockVaultConnection.mockImplementationOnce(() => Promise.reject(new Error('offline')));
+    const { getByTestId, getByText } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(mockVaultConnection).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.press(getByTestId('settings-row-seed-corpus'));
+
+    expect(getByText(SEED_ROW_DESCRIPTION)).toBeTruthy();
+    expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  test('while the vault read is still out, opens the corpus screen rather than waiting', () => {
+    mockVaultConnection.mockImplementationOnce(() => new Promise(() => undefined));
+    const { getByTestId, getByText } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-seed-corpus'));
+
+    expect(getByText(SEED_ROW_DESCRIPTION)).toBeTruthy();
+    expect(mockNavigate).toHaveBeenCalledWith('SeedCorpus');
+  });
+
+  test('with nothing attached, invites the account to give its corpus a place first', async () => {
+    mockVaultConnection.mockImplementationOnce(() =>
+      Promise.resolve({ connected: false, vault_url: null }),
+    );
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const row = getByTestId('settings-row-seed-corpus');
+    await waitFor(() =>
+      expect(getByTestId('settings-row-seed-corpus').props.accessibilityHint).toBe(
+        SEED_ROW_VAULT_FIRST_DESCRIPTION,
+      ),
+    );
+
+    fireEvent.press(getByTestId('settings-row-seed-corpus'));
+
+    // Never hidden and never disabled: the same row, named the same way, that
+    // now opens where a corpus lives instead of a picker with nowhere to send.
+    expect(row.props.accessibilityLabel).toBe(SEED_ROW_LABEL);
+    expect(getByTestId('settings-row-seed-corpus').props.accessibilityRole).toBe('button');
+    expect(getByTestId('settings-row-seed-corpus').props.accessibilityState?.disabled).not.toBe(
+      true,
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+    expect(mockNavigate).not.toHaveBeenCalledWith('SeedCorpus');
   });
 });
 

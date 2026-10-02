@@ -17,14 +17,18 @@
  * agreed and is simply early — and they have opposite remedies. Only the server
  * knows which happened, so the copy comes down with the state rather than being
  * chosen here off a boolean. What this component owns is the destination: the
- * consent decision for the first, the import surface for the second.
+ * consent decision for the first, the import surface for the second -- or,
+ * since a corpus lives in a vault (#3015, #3017), where the corpus would live
+ * for an account the server says has nothing attached. Readiness and the vault
+ * are read together, so the words on the band and where they lead are decided
+ * once and cannot flicker apart.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { corpusDestinationForReadiness } from './corpusDestination';
+import { corpusDestinationForReadiness, type CorpusDestination } from './corpusDestination';
 import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { corpus } from '@/api';
@@ -40,6 +44,9 @@ import {
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
+import { CORPUS_CTA_BY_DESTINATION } from '@/features/Seed/seedCopy';
+import { fetchVaultConnectionState } from '@/features/Settings/useVaultConnectionState';
+import type { VaultConnectionState } from '@/features/Settings/vaultConnectionState';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import {
   loadVoiceReadinessDismissed,
@@ -64,19 +71,15 @@ const BAND_LABEL = 'Where your reflections come from';
 // reader used to see lives on in the accessible name alone.
 const DISMISS_A11Y = 'Not now — set this note about your corpus aside';
 
-/** The call to action per state, and where it goes. */
-const NOT_CONSENTED_CTA = 'Look at the decision';
-const GATHERING_CTA = 'Bring in your writing';
-
 type BandNavigation = NativeStackNavigationProp<RootStackParamList>;
 
-/** The two states that say something. ``ready`` renders nothing at all. */
-type SpeakingState = 'not_consented' | 'gathering';
-
-/** A readiness the band will actually render: not ready, with a sentence. */
+/**
+ * A readiness the band will actually render: not ready (``ready`` renders
+ * nothing at all), with a sentence and a door.
+ */
 interface SpeakingReadiness {
-  state: SpeakingState;
   message: string;
+  destination: CorpusDestination;
 }
 
 /**
@@ -88,21 +91,33 @@ interface SpeakingReadiness {
  * sentence is also silence — a band with a heading and no body is worse than
  * no band.
  */
-function speaking(readiness: VoiceReadinessT): SpeakingReadiness | null {
+function speaking(
+  readiness: VoiceReadinessT,
+  vault: VaultConnectionState,
+): SpeakingReadiness | null {
   if (readiness.ready || readiness.state === 'ready') return null;
   if (readiness.message == null) return null;
-  return { state: readiness.state, message: readiness.message };
+  return {
+    message: readiness.message,
+    destination: corpusDestinationForReadiness(readiness, vault),
+  };
 }
 
 /**
- * Fetch readiness and derive the band, or null when there is nothing to show.
- * Any failure resolves null so the shelf never sees an error from a background
- * read — the note simply stays quiet.
+ * Fetch readiness and the vault together and derive the band, or null when
+ * there is nothing to show. A readiness failure resolves null so the shelf never
+ * sees an error from a background read — the note simply stays quiet. A vault
+ * failure is not a reason for silence: it reads as unknown, which keeps the
+ * import surface.
  */
 async function resolveBand(): Promise<SpeakingReadiness | null> {
   try {
     if (await loadVoiceReadinessDismissed()) return null;
-    return speaking(await corpus.voiceReadiness());
+    const [readiness, vault] = await Promise.all([
+      corpus.voiceReadiness(),
+      fetchVaultConnectionState(),
+    ]);
+    return speaking(readiness, vault);
   } catch {
     return null;
   }
@@ -135,7 +150,7 @@ function useVoiceReadiness(navigation: BandNavigation) {
     // that has not made it: granting also sorts the writing already there,
     // where the import surface would offer a person a second thing to do
     // before the first one is answered.
-    navigation.navigate(corpusDestinationForReadiness(band));
+    navigation.navigate(band.destination);
   }, [band, navigation]);
 
   const onDismiss = useCallback(() => {
@@ -151,7 +166,7 @@ function VoiceReadinessBand(): React.JSX.Element | null {
   const { band, onOpen, onDismiss } = useVoiceReadiness(navigation);
   if (band == null) return null;
 
-  const cta = band.state === 'not_consented' ? NOT_CONSENTED_CTA : GATHERING_CTA;
+  const cta = CORPUS_CTA_BY_DESTINATION[band.destination];
 
   // A plain container, not a pressable, so the inner "open" and "decline"
   // buttons stay independently reachable by assistive tech (a pressable wrapper

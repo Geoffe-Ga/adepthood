@@ -45,14 +45,34 @@ function connectedTo(address: string): VaultConnectionState {
  * Read a server answer as one of the three states.
  *
  * ``connected`` with a null address maps to *unknown* rather than to *none*.
- * The server cannot produce that pair, but the type can, and reading it as
- * "nothing attached" would answer a question nobody answered: it would render
- * the empty state and let one press replace a binding without asking, which is
- * the exact defect the third state exists to remove. Unknown costs a
- * confirmation; none costs somebody their vault.
+ * The server does produce that pair: a provider-managed vault is connected and
+ * has no address an account may see. Reading it as "nothing attached" would
+ * answer a question nobody answered: it would render the empty state and let
+ * one press replace a binding without asking, which is the exact defect the
+ * third state exists to remove. Unknown costs a confirmation; none costs
+ * somebody their vault. Every gate on this state must therefore treat unknown
+ * as possibly having a vault -- see {@link vaultComesFirst}.
  */
 export function readConnectionState(connection: VaultConnection): VaultConnectionState {
   if (!connection.connected) return NOTHING_CONNECTED;
   if (connection.vault_url === null) return CONNECTION_UNKNOWN;
   return connectedTo(connection.vault_url);
+}
+
+/**
+ * Whether bringing in writing has to wait for a place to keep it (#3017).
+ *
+ * A corpus lives in a vault (#3015), so a document has nowhere to go until the
+ * account has one. True only when the server has said nothing is attached:
+ * unknown -- a read still pending, a read that failed, a managed vault -- is
+ * never read as none, and the server's own `vault_required` answer is the
+ * backstop for those.
+ *
+ * One known gap, accepted: the deployment-wide vault's single owner
+ * (`CREEK_VAULT_OWNER_USER_ID`) has no connection row, so the server answers
+ * them `connected: false` and this holds for them although their imports land.
+ * The fix is a server-side has-a-vault signal, not a guess made here.
+ */
+export function vaultComesFirst(vault: VaultConnectionState): boolean {
+  return vault.kind === 'none';
 }

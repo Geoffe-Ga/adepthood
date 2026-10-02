@@ -17,6 +17,9 @@
 import { MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
 import type { SeedItemStatus, SeedRunTally } from './seedRun';
 
+import type { CorpusDestination } from '@/features/Journal/corpusDestination';
+import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
+
 /** The line shown beneath each document's name, keyed by where it got to. */
 export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   queued: 'Waiting its turn.',
@@ -190,3 +193,60 @@ export const SEED_LEAVE_STAY_LABEL = 'Stay while the rest go over';
 export const SEED_LEAVE_BROWSER_WARNING =
   'Documents are still going over. Leaving now stops the run, and everything still waiting is ' +
   'never sent.';
+
+// ---------------------------------------------------------------------------
+// The way in, when there is nowhere to keep a document yet (#3017)
+// ---------------------------------------------------------------------------
+//
+// A corpus lives in a vault (#3015), so "Bring in your writing" is offered to
+// an account with nowhere to keep a document as an invitation to give its
+// corpus a place first -- never hidden, never disabled, and never a task. These
+// lines are shown only when the server has said nothing is attached; an
+// account whose vault state is unknown gets the picker and the ordinary lines.
+
+/** The Settings row that opens the seeding screen, named as it always was. */
+export const SEED_ROW_LABEL = 'Bring in your writing';
+
+/** What that row says when there is a place to keep what comes in, or nobody knows. */
+export const SEED_ROW_DESCRIPTION =
+  'Add notes, exports, and documents you have already written elsewhere.';
+
+/** What that row says to an account with nowhere to keep a document yet. */
+export const SEED_ROW_VAULT_FIRST_DESCRIPTION =
+  `Documents you bring in are kept where your corpus lives. Set that up under ` +
+  `${VAULT_ROW_LABEL}, then bring them in.`;
+
+/** The Journal band's open action for an account with nowhere to keep a document yet. */
+export const VAULT_FIRST_CTA = 'Give your corpus a place to live';
+
+/**
+ * The words that open each corpus destination, keyed by the destination.
+ *
+ * One record rather than a label chosen beside a route, so the words a person
+ * taps cannot come to name somewhere other than where the tap goes.
+ */
+export const CORPUS_CTA_BY_DESTINATION: Readonly<Record<CorpusDestination, string>> = {
+  CorpusConsent: 'Look at the decision',
+  SeedCorpus: SEED_ROW_LABEL,
+  VaultSettings: VAULT_FIRST_CTA,
+};
+
+/** What the seeding screen says in place of the picker when there is nowhere to keep a document. */
+export const SEED_VAULT_INVITATION =
+  "Documents you bring in are kept where your corpus lives, and there isn't a place for " +
+  'them yet. Set one up, and they can come in from there. Your journal works the same ' +
+  'either way.';
+
+/** The way there from the seeding screen. */
+export const SEED_VAULT_INVITATION_LINK_LABEL = `Open ${VAULT_ROW_LABEL}`;
+
+/** Every line above, for the copy sweep. */
+export const VAULT_GATE_COPY: readonly string[] = [
+  SEED_ROW_LABEL,
+  SEED_ROW_DESCRIPTION,
+  SEED_ROW_VAULT_FIRST_DESCRIPTION,
+  VAULT_FIRST_CTA,
+  SEED_VAULT_INVITATION,
+  SEED_VAULT_INVITATION_LINK_LABEL,
+  ...Object.values(CORPUS_CTA_BY_DESTINATION),
+];
