@@ -1262,6 +1262,7 @@ export const vaultActivationResponseSchema = z
       'deleted',
     ]),
     new_activation_available: z.boolean(),
+    recovery_available: z.boolean(),
     retryable: z.boolean(),
     failure_reason: z
       .enum([

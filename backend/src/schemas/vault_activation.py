@@ -40,6 +40,7 @@ class VaultActivationResponse(BaseModel):
     active: bool
     state: VaultActivationStateValue
     new_activation_available: bool
+    recovery_available: bool
     retryable: bool
     failure_reason: VaultFailureReason | None
     credential_received: bool

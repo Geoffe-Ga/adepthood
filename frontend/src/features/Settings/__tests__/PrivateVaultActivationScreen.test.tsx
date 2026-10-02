@@ -19,6 +19,7 @@ jest.mock('@/api', () => {
       status: jest.fn(),
       activate: jest.fn(),
       retry: jest.fn(),
+      recover: jest.fn(),
     },
   };
 });
@@ -28,11 +29,13 @@ const mockActivate = vaultActivation.activate as jest.MockedFunction<
   typeof vaultActivation.activate
 >;
 const mockRetry = vaultActivation.retry as jest.MockedFunction<typeof vaultActivation.retry>;
+const mockRecover = vaultActivation.recover as jest.MockedFunction<typeof vaultActivation.recover>;
 
 const INACTIVE: VaultActivation = {
   active: false,
   state: 'inactive',
   new_activation_available: true,
+  recovery_available: false,
   retryable: false,
   failure_reason: null,
   credential_received: false,
@@ -65,6 +68,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockActivate.mockResolvedValue(PROVISIONING);
   mockRetry.mockResolvedValue(PROVISIONING);
+  mockRecover.mockResolvedValue({ ...PROVISIONING, state: 'deleting' });
 });
 
 describe('provider-managed vault activation choice', () => {
@@ -197,6 +201,42 @@ describe('resumable progress and honest custody', () => {
 
     expect(view.getByText('The retry did not reach Creek. Try again when ready.')).toBeTruthy();
     expect(view.getByTestId('retry-vault-activation')).toBeTruthy();
+  });
+
+  it('offers confirmed cleanup instead of retry for a terminal failed allocation', async () => {
+    const failed: VaultActivation = {
+      ...PROVISIONING,
+      state: 'failed',
+      retryable: false,
+      failure_reason: 'provider_rejected',
+      recovery_available: true,
+    };
+    const view = await renderActivation(failed);
+
+    expect(
+      view.getByText(/remove the failed allocation before creating a fresh one/u),
+    ).toBeTruthy();
+    await act(async () => fireEvent.press(view.getByTestId('recover-vault-activation')));
+
+    expect(mockRecover).toHaveBeenCalledTimes(1);
+    expect(mockRetry).not.toHaveBeenCalled();
+    expect(view.getByText(/securely removing the failed allocation/u)).toBeTruthy();
+  });
+
+  it('gives a safe next step when Creek refuses cleanup permanently', async () => {
+    const failed: VaultActivation = {
+      ...PROVISIONING,
+      state: 'failed',
+      retryable: false,
+      failure_reason: 'internal_error',
+      recovery_available: false,
+    };
+
+    const view = await renderActivation(failed);
+
+    expect(view.getByText(/Contact support before trying again/u)).toBeTruthy();
+    expect(view.queryByTestId('retry-vault-activation')).toBeNull();
+    expect(view.queryByTestId('recover-vault-activation')).toBeNull();
   });
 
   it('renders explicit provider-managed truth at readiness', async () => {

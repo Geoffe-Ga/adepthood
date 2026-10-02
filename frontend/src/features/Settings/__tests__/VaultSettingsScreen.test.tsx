@@ -130,6 +130,7 @@ const AVAILABLE_ACTIVATION: VaultActivation = {
   active: false,
   state: 'inactive',
   new_activation_available: true,
+  recovery_available: false,
   retryable: false,
   failure_reason: null,
   credential_received: false,
