@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from curriculum.stage_correspondence import stage_correspondence
 from domain.frequencies import (
     FREQUENCY_COLORS,
     FREQUENCY_NAMES,
@@ -465,9 +466,12 @@ async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
 # --- the vocabulary is one thing, not three ----------------------------------
 # Aspects of Wholeness == Frequencies == Stages, keyed by colour. NORTH-STAR.md
 # states the identity and graph/ontology-spine.md writes it as an equation per
-# row. These tests hold the vendored table to the curriculum dataset so the two
+# row. These tests hold the vendored table to the curriculum so the two
 # spellings of one ontology cannot drift apart -- which is the whole reason the
-# vendored copy is allowed to exist.
+# vendored copy is allowed to exist. The colour join reads the generated
+# stage_correspondence.json, the canonical source the database is seeded from
+# (#2667); the labelings test still reads the curriculum dataset because it
+# needs the stage ``title``, which the artifact does not carry.
 
 
 def _curriculum_stages() -> list[dict[str, object]]:
@@ -485,13 +489,15 @@ def _curriculum_stages() -> list[dict[str, object]]:
 def test_the_vendored_colours_match_the_curriculum() -> None:
     """Colour is the primary key, so it is the join that must hold exactly.
 
-    If this fails, one of the two spellings of a single ontology has moved and
-    every colour-keyed surface -- content directories, STAGE_COLORS, the habit
-    ring -- is now pointing somewhere the other does not agree with.
+    Held against the generated stage-correspondence artifact, not the
+    ``archetypal_wavelength.json`` mirror, so the table follows the source the
+    ``coursestage`` rows are seeded from. If this fails, one of the two
+    spellings of a single ontology has moved and every colour-keyed surface --
+    content directories, STAGE_COLORS, the habit ring -- is now pointing
+    somewhere the other does not agree with.
     """
     curriculum = {
-        int(str(stage["stage_number"])): stage["spiral_dynamics_color"]
-        for stage in _curriculum_stages()
+        stage.stage_number: stage.spiral_dynamics_color for stage in stage_correspondence().stages
     }
 
     assert curriculum == {int(code.value[1:]): FREQUENCY_COLORS[code] for code in Frequency}

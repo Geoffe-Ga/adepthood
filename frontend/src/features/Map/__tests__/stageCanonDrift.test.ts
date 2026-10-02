@@ -16,8 +16,14 @@ import { readBackendSource } from '@/testing/backendSource';
  * Until now three of them were guarded against tables hand-copied into
  * `mapLayout.test.ts` under a "keep in sync" comment — which is the same
  * duplication one level removed, and is exactly how a stage vocabulary the
- * ontology never had once reached the screen. This reads the curriculum
- * dataset and the practice seeder instead, so the next divergence fails here.
+ * ontology never had once reached the screen. This reads the backend sources
+ * and the practice seeder instead, so the next divergence fails here.
+ *
+ * Category, aspect and persona come from the generated
+ * `stage_correspondence.json` (#2667), the canonical artifact the
+ * `coursestage` rows are seeded from and its `--check` gate regenerates. Only
+ * the stage `title` still comes from the curriculum dataset
+ * (`archetypal_wavelength.json`), because the artifact does not carry it.
  *
  * What this cannot catch, and must not pretend to: a value that is wrong *in*
  * the canon. Expectations derived from a source stay green when that source
@@ -28,11 +34,16 @@ import { readBackendSource } from '@/testing/backendSource';
  * CI run this file on the change that would break it.
  */
 
-/** One APTITUDE stage as the curriculum dataset declares it. */
-interface CanonStage {
+/** One stage's title as the curriculum dataset declares it. */
+interface CurriculumTitle {
   stage_number: number;
   /** The stage's archetype word — the Map's `descriptor`. */
   title: string;
+}
+
+/** One stage's correspondences as the generated artifact declares them. */
+interface CorrespondenceStage {
+  stage_number: number;
   /** The aspect of wholeness — the Map's `arrowLabel` and title watermark. */
   aspect: string;
   /** The band the stage sits in — a `MAP_ROWS` right-column label. */
@@ -40,6 +51,9 @@ interface CanonStage {
   /** The egoic character — the Map's `persona`. */
   relationship_to_free_will: string;
 }
+
+/** One APTITUDE stage: its curriculum title joined to its correspondences. */
+type CanonStage = CurriculumTitle & CorrespondenceStage;
 
 /**
  * The `_CANONICAL_PRESETS: list[dict[str, Any]] = [ ... ]` literal, up to the
@@ -65,11 +79,18 @@ const capture = (pattern: RegExp, source: string, what: string): string => {
   return group;
 };
 
-const canonStages = (): CanonStage[] => {
+const curriculumTitles = (): CurriculumTitle[] => {
   const dataset = JSON.parse(
     readBackendSource('src', 'curriculum', 'archetypal_wavelength.json'),
-  ) as { stages: CanonStage[] };
+  ) as { stages: CurriculumTitle[] };
   return dataset.stages;
+};
+
+const correspondenceStages = (): CorrespondenceStage[] => {
+  const artifact = JSON.parse(
+    readBackendSource('src', 'curriculum', 'stage_correspondence.json'),
+  ) as { stages: CorrespondenceStage[] };
+  return artifact.stages;
 };
 
 const canonPracticeByStage = (): ReadonlyMap<number, string> => {
@@ -86,14 +107,42 @@ const canonPracticeByStage = (): ReadonlyMap<number, string> => {
   );
 };
 
-const CANON_BY_STAGE: ReadonlyMap<number, CanonStage> = new Map(
-  canonStages().map((stage) => [stage.stage_number, stage]),
-);
-
-const PRACTICE_BY_STAGE = canonPracticeByStage();
-
 /** Stage numbers bottom → top, the order the canon itself is written in. */
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, index) => index + 1);
+
+const TITLES = curriculumTitles();
+const CORRESPONDENCES = correspondenceStages();
+
+/**
+ * Join each stage's curriculum title to its artifact correspondences.
+ *
+ * A stage missing from either side throws, naming the stage and the source,
+ * rather than leaving a join that compares `undefined` to a hardcode.
+ */
+const joinCanon = (
+  titles: readonly CurriculumTitle[],
+  correspondences: readonly CorrespondenceStage[],
+): ReadonlyMap<number, CanonStage> => {
+  const titleBy = new Map(titles.map((stage) => [stage.stage_number, stage]));
+  const correspondenceBy = new Map(correspondences.map((stage) => [stage.stage_number, stage]));
+  return new Map(
+    ALL_STAGES.map((stageNumber) => {
+      const title = titleBy.get(stageNumber);
+      const correspondence = correspondenceBy.get(stageNumber);
+      if (!title) {
+        throw new Error(`archetypal_wavelength.json has no stage ${stageNumber}`);
+      }
+      if (!correspondence) {
+        throw new Error(`stage_correspondence.json has no stage ${stageNumber}`);
+      }
+      return [stageNumber, { ...correspondence, title: title.title }];
+    }),
+  );
+};
+
+const CANON_BY_STAGE = joinCanon(TITLES, CORRESPONDENCES);
+
+const PRACTICE_BY_STAGE = canonPracticeByStage();
 
 /** The two stages whose aspect is the title watermark rather than an arrow label. */
 const TITLE_STAGES = [9, 10];
@@ -183,8 +232,14 @@ describe('the Map mirrors of the APTITUDE ten', () => {
   // Both of these guard a parse rather than a value. A regex or a JSON shape
   // that silently matched nothing would leave every join below comparing an
   // empty set to an empty set, which passes while checking nothing.
-  it('reads the ten APTITUDE stages out of the curriculum dataset', () => {
-    expect([...CANON_BY_STAGE.keys()].sort((a, b) => a - b)).toEqual(ALL_STAGES);
+  it('reads the ten APTITUDE stages out of the correspondence artifact', () => {
+    expect(CORRESPONDENCES.map((stage) => stage.stage_number).sort((a, b) => a - b)).toEqual(
+      ALL_STAGES,
+    );
+  });
+
+  it('reads the ten stage titles out of the curriculum dataset', () => {
+    expect(TITLES.map((stage) => stage.stage_number).sort((a, b) => a - b)).toEqual(ALL_STAGES);
   });
 
   it('reads the ten canonical practice presets out of the seeder', () => {
