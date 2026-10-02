@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
-import { CORPUS_CONSENT_ROW_LABEL } from '../corpusConsentCopy';
+import { CORPUS_GROUP_TITLE } from '../corpusConsentCopy';
 import * as higherSelfCopy from '../higherSelfCopy';
 import * as vaultCopy from '../vaultCopy';
 
@@ -235,9 +235,11 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_SORTING_CHOICE says a vault is not the yes, and where the yes lives', () => {
     expect(VAULT_SORTING_CHOICE).toBe(
-      'Creating a vault does not turn sorting on; that stays a separate choice, under What reflections draw on in Settings.',
+      'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your corpus in Settings.',
     );
-    expect(VAULT_SORTING_CHOICE).toContain(CORPUS_CONSENT_ROW_LABEL);
+    // The switches sit in the hub group, beside the vault row (not behind a sub-screen).
+    expect(VAULT_SORTING_CHOICE).toContain(CORPUS_GROUP_TITLE);
+    expect(VAULT_SORTING_CHOICE).toMatch(/switch/);
   });
 
   it('VAULT_ADVANCED_TITLE names the fold as advanced and for a vault you run', () => {

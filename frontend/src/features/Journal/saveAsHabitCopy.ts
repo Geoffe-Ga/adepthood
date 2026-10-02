@@ -125,14 +125,14 @@ export function writingTimerRowLabel(
 }
 
 /**
- * Settings: bring the end-of-session offer back. The answer it clears is kept
- * on this device only, so the copy says so rather than promising more.
+ * Settings: the switch for the end-of-session offer. On, the offer is made
+ * after the next finished session; answering it in the moment turns the
+ * switch off, and the writer can turn it either way here. The answer it holds
+ * is kept on this device only, so the copy says so rather than promising more.
  */
-export const OFFER_AGAIN_LABEL = 'Offer again at the end of a session';
-export const OFFER_AGAIN_DESCRIPTION =
-  'Shows the keep-this offer after your next finished session, on this device.';
-export const OFFER_AGAIN_DONE =
-  'The offer will be there after your next finished session on this device.';
+export const OFFER_SWITCH_LABEL = 'Offer to keep a session';
+export const OFFER_SWITCH_DESCRIPTION =
+  'After a finished writing session, offers to keep it as a habit or a practice. Answering it once turns this off; turn it back on here. Kept on this device.';
 
 /**
  * The new Journaling habit, kept AND linked to the timer. It starts locked like
@@ -158,12 +158,10 @@ export const LINK_HABIT_NUDGE_SETTINGS_A11Y =
 export const LINK_HABIT_NUDGE_DECLINE = "Don't show again";
 export const LINK_HABIT_NUDGE_DECLINE_A11Y = "Don't show this note again";
 
-/** Settings: bring the note back. Kept on this device only, and the copy says so. */
-export const LINK_HABIT_NUDGE_AGAIN_LABEL = 'Show the habit note again';
-export const LINK_HABIT_NUDGE_AGAIN_DESCRIPTION =
-  'Shows the note about linking a habit after a finished session, on this device.';
-export const LINK_HABIT_NUDGE_AGAIN_DONE =
-  'The note will be there after your next finished session while no habit is linked, on this device.';
+/** Settings: the switch for the note. Kept on this device only, and the copy says so. */
+export const LINK_HABIT_NUDGE_SWITCH_LABEL = 'Show the habit note';
+export const LINK_HABIT_NUDGE_SWITCH_DESCRIPTION =
+  "After a finished session with no habit linked, leaves a note pointing here. Its Don't show again turns this off; turn it back on here. Kept on this device.";
 
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
@@ -204,15 +202,13 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   WRITING_TIMER_ROW_LINKED_PENDING,
   writingTimerRowLabel(JOURNALING_HABIT_NAME),
   writingTimerRowLabel(JOURNALING_HABIT_NAME, { paused: true }),
-  OFFER_AGAIN_LABEL,
-  OFFER_AGAIN_DESCRIPTION,
-  OFFER_AGAIN_DONE,
+  OFFER_SWITCH_LABEL,
+  OFFER_SWITCH_DESCRIPTION,
   LINK_HABIT_NUDGE_PROMPT,
   LINK_HABIT_NUDGE_SETTINGS,
   LINK_HABIT_NUDGE_SETTINGS_A11Y,
   LINK_HABIT_NUDGE_DECLINE,
   LINK_HABIT_NUDGE_DECLINE_A11Y,
-  LINK_HABIT_NUDGE_AGAIN_LABEL,
-  LINK_HABIT_NUDGE_AGAIN_DESCRIPTION,
-  LINK_HABIT_NUDGE_AGAIN_DONE,
+  LINK_HABIT_NUDGE_SWITCH_LABEL,
+  LINK_HABIT_NUDGE_SWITCH_DESCRIPTION,
 ];

@@ -10,7 +10,7 @@ import {
 
 /**
  * "Don't show this again" retires the morning-pages tip for good, and
- * Settings → Journal → "Offer morning pages again" brings it back (#3005).
+ * Settings → Journal → the "Offer morning pages" switch brings it back (#3005).
  *
  * The X only sets the tip aside for today (its own spec,
  * `journal-morning-pages-dismiss.browser.e2e.test.ts`). This is the other,
@@ -25,8 +25,6 @@ import {
 const NEVER_OFFER_KEY = '@adepthood/morning_pages_tip_never_offer';
 /** `MORNING_PAGES_NEVER_A11Y`: the link's visible words first, then what it stops. */
 const NEVER_NAME = 'Don’t show this again: stop offering morning pages on the shelf';
-/** `MORNING_PAGES_OFFER_AGAIN_DONE`: what the Settings row says once pressed. */
-const OFFER_AGAIN_DONE = 'Morning pages are on your Journal shelf again on this device.';
 
 test('“Don’t show this again” retires the morning-pages tip until Settings offers it again', async ({
   page,
@@ -63,11 +61,14 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   await page.waitForLoadState('networkidle');
   await expect(band).toHaveCount(0);
 
-  // 4. The way back is the writer's own choice, in Settings → Journal.
+  // 4. The way back is the writer's own choice, in Settings → Journal: the
+  //    "Offer morning pages" switch, which the decline above turned off.
   await page.goto(`${frontendUrl()}/settings`);
-  const offerAgain = page.getByTestId('settings-row-morning-pages-offer-again');
-  await offerAgain.click();
-  await expect(offerAgain.getByText(OFFER_AGAIN_DONE)).toBeVisible();
+  const offerSwitch = page.getByTestId('settings-row-morning-pages-offer-switch');
+  await expect(offerSwitch).toBeEnabled();
+  await expect(offerSwitch).not.toBeChecked();
+  await offerSwitch.click();
+  await expect(offerSwitch).toBeChecked();
   expect(await page.evaluate((key) => localStorage.getItem(key), NEVER_OFFER_KEY)).toBe('false');
 
   // 5. And the shelf offers it again.

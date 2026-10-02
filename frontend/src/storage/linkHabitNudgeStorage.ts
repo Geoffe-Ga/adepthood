@@ -5,8 +5,8 @@
  * the timer, and points to Settings → Journal, where one can be chosen. It is
  * a pointer, not a question, so it keeps appearing until the writer either
  * links a habit (the server's ``/ui-flags`` answer, checked by the note) or
- * asks it to stop — which is this flag. Settings → Journal → "Show the habit
- * note again" clears it.
+ * asks it to stop — which is this flag. Settings → Journal → the "Show the
+ * habit note" switch clears it, and can set it too.
  *
  * Device-local (AsyncStorage), like the end-of-session offer's flag beside it,
  * and modelled on ``morningPagesTipStorage``: a read error fails open (the note
@@ -35,16 +35,20 @@ export async function loadLinkHabitNudgeDeclined(): Promise<boolean> {
  * "Don't show again". Never rejects: the note is already hidden in memory and
  * the caller fires this and forgets, so a failed write (quota exceeded,
  * storage blocked) is reported here and the note simply returns next session.
+ * Resolves whether it was saved, for the Settings switch that also turns the
+ * note off and must not show it off when it is not.
  */
-export async function saveLinkHabitNudgeDeclined(): Promise<void> {
+export async function saveLinkHabitNudgeDeclined(): Promise<boolean> {
   try {
     await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_TRUE);
+    return true;
   } catch (err) {
     console.warn('[linkHabitNudgeStorage] failed to save the decline', err);
+    return false;
   }
 }
 
-/** Settings → "Show the habit note again". Resolves whether it was saved. */
+/** Settings → the "Show the habit note" switch, turned on. Resolves whether it was saved. */
 export async function restoreLinkHabitNudge(): Promise<boolean> {
   try {
     await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_FALSE);

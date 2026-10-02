@@ -58,11 +58,23 @@ const mockVaultConnection = jest.fn<Promise<{ connected: boolean; vault_url: str
   () => Promise.resolve({ connected: true, vault_url: 'https://v.example' }),
 );
 
+// The corpus group's sorting switches read every source's decision; the
+// default is a server with nothing to say, so the other suites see no switch.
+type ConsentState = { source: string; granted: boolean; decided_at: string | null };
+const mockCorpusList = jest.fn<Promise<ConsentState[]>, []>(() => Promise.resolve([]));
+const mockCorpusSet = jest.fn<Promise<ConsentState>, [string, boolean]>((source, granted) =>
+  Promise.resolve({ source, granted, decided_at: '2026-10-02T09:00:00Z' }),
+);
+
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
+    corpusConsent: {
+      list: () => mockCorpusList(),
+      set: (source: string, granted: boolean) => mockCorpusSet(source, granted),
+    },
     uiFlags: { get: () => mockUiFlagsGet(), update: jest.fn() },
     vault: { connection: () => mockVaultConnection() },
   };
@@ -382,7 +394,7 @@ describe('SettingsHubScreen — Choose your depths section', () => {
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — Journal section', () => {
-  test('renders the Journal group with the writing-timer row and the offer-again row', async () => {
+  test('renders the Journal group with the writing-timer row and the offer switch', async () => {
     const { getByTestId } = render(<SettingsHubScreen />);
 
     expect(getByTestId('settings-group-journal')).toBeTruthy();
@@ -391,15 +403,20 @@ describe('SettingsHubScreen — Journal section', () => {
         'Writing timer → not linked',
       ),
     );
-    expect(getByTestId('settings-row-writing-offer-again').props.accessibilityLabel).toBe(
-      'Offer again at the end of a session',
-    );
+    const offer = getByTestId('settings-row-writing-offer-switch');
+    expect(offer.props.accessibilityRole).toBe('switch');
+    expect(offer.props.accessibilityLabel).toBe('Offer to keep a session');
   });
 
-  test('offering again clears this device’s answer', () => {
+  test('turning the offer switch on clears this device’s answer', async () => {
     const { getByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() =>
+      expect(
+        getByTestId('settings-row-writing-offer-switch').props.accessibilityState.disabled,
+      ).toBe(false),
+    );
 
-    fireEvent.press(getByTestId('settings-row-writing-offer-again'));
+    fireEvent(getByTestId('settings-row-writing-offer-switch'), 'valueChange', true);
 
     expect(mockSaveWritingOfferAnswered).toHaveBeenCalledWith(false);
   });
@@ -412,6 +429,50 @@ describe('SettingsHubScreen — Journal section', () => {
     expect(tree.indexOf('settings-group-journal')).toBeGreaterThan(
       tree.indexOf('settings-group-depths'),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The order of the groups: what you chose, who you are, what you write, where
+// it goes, what we promise, what you can take, how to reach us, the small
+// print, and last the ways out.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the order of the groups', () => {
+  test('runs depths, account, journal, corpus, privacy, data, feedback, support, legal, session', () => {
+    const { getAllByTestId } = render(<SettingsHubScreen />);
+
+    const groups = getAllByTestId(/^settings-group-/u).map((node) => node.props.testID as string);
+
+    expect(groups).toEqual([
+      'settings-group-depths',
+      'settings-group-account',
+      'settings-group-journal',
+      'settings-group-corpus',
+      'settings-group-privacy',
+      'settings-group-your-data',
+      'settings-group-feedback',
+      'settings-group-support',
+      'settings-group-legal',
+      'settings-group-session',
+    ]);
+  });
+
+  test('the Sangha door, when configured, sits right under the depths that open it', () => {
+    mockSanghaInviteUrl = 'https://discord.gg/hub-order-test';
+    try {
+      const { getAllByTestId } = render(<SettingsHubScreen />);
+
+      const groups = getAllByTestId(/^settings-group-/u).map((node) => node.props.testID as string);
+
+      expect(groups.slice(0, 3)).toEqual([
+        'settings-group-depths',
+        'settings-group-sangha',
+        'settings-group-account',
+      ]);
+    } finally {
+      mockSanghaInviteUrl = '';
+    }
   });
 });
 
@@ -546,7 +607,7 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — the corpus-consent destination', () => {
-  test('offers the decision about what may be sorted into the corpus', () => {
+  test('offers the full account of what may be sorted into the corpus', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
 
     expect(getByTestId('settings-row-corpus-consent')).toBeTruthy();
@@ -558,6 +619,66 @@ describe('SettingsHubScreen — the corpus-consent destination', () => {
     fireEvent.press(getByTestId('settings-row-corpus-consent'));
 
     expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The sorting switches, on the hub itself: a decision nowhere to be seen reads
+// as one already made, and the vault screen says this is where it lives.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the sorting switches under Your corpus', () => {
+  const JOURNAL_OFF: ConsentState = { source: 'journal', granted: false, decided_at: null };
+  const UPLOAD_ON: ConsentState = {
+    source: 'upload',
+    granted: true,
+    decided_at: '2026-09-30T09:00:00Z',
+  };
+
+  test('renders a switch per sorted source, between the way in and the full account', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    const { getByTestId, toJSON } = render(<SettingsHubScreen />);
+    const corpus = getByTestId('settings-group-corpus');
+
+    await waitFor(() => expect(within(corpus).getByTestId('corpus-consent-switch-journal')));
+    expect(within(corpus).getByTestId('corpus-consent-switch-journal').props.value).toBe(false);
+    expect(within(corpus).getByTestId('corpus-consent-switch-upload').props.value).toBe(true);
+    expect(within(corpus).getByTestId('settings-corpus-sorting-lead')).toBeTruthy();
+
+    const tree = JSON.stringify(toJSON());
+    const order = [
+      'settings-row-seed-corpus',
+      'settings-corpus-sorting-lead',
+      'corpus-consent-switch-journal',
+      'settings-row-corpus-consent',
+    ].map((id) => tree.indexOf(id));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((index) => index > -1)).toBe(true);
+  });
+
+  test('turning a source on records the decision; turning one off asks first', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
+    await waitFor(() => expect(mockCorpusSet).toHaveBeenCalledWith('journal', true));
+
+    fireEvent(getByTestId('corpus-consent-switch-upload'), 'valueChange', false);
+    expect(getByTestId('corpus-consent-revoke-upload')).toBeTruthy();
+    expect(mockCorpusSet).not.toHaveBeenCalledWith('upload', false);
+    fireEvent.press(getByTestId('corpus-consent-revoke-cancel-upload'));
+    expect(queryByTestId('corpus-consent-revoke-upload')).toBeNull();
+    expect(getByTestId('corpus-consent-switch-upload').props.value).toBe(true);
+  });
+
+  test('the sorting lead states the send, the Intimate guarantee, and the default', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const lead = getByTestId('settings-corpus-sorting-lead').props.children as string;
+
+    expect(lead).toMatch(/sent once/);
+    expect(lead).toMatch(/Intimate never/);
+    expect(lead).toMatch(/Off unless you turn it on/);
   });
 });
 

@@ -21,7 +21,13 @@ import React, { useCallback, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
-import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
+import {
+  CORPUS_CONSENT_ROW_DESCRIPTION,
+  CORPUS_CONSENT_ROW_LABEL,
+  CORPUS_GROUP_TITLE,
+  CORPUS_SORTING_HUB_LEAD,
+} from './corpusConsentCopy';
+import { CorpusConsentRows } from './CorpusConsentRows';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
 import { useVaultConnectionState } from './useVaultConnectionState';
@@ -58,6 +64,13 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
  * Account (API key, time zone) and Session (log out) — as warm editorial rows
  * on the shared scaffold. The header-right gear points here (not at a single
  * sub-screen); logout moved off the tab header and lives in the Session group.
+ *
+ * The groups run in the order a person meets them: the depths they chose
+ * (and the Sangha door those open) first, then their account, their journal,
+ * their corpus, the privacy promise, the copy they can take away, the ways to
+ * reach us, the legal documents, and last the two ways out. Session sits at
+ * the bottom on purpose: everything above it is how to keep and shape what
+ * is here, and the only honest order is that before how to leave.
  */
 
 const ICON_SIZE = 22;
@@ -132,44 +145,55 @@ interface CorpusSectionProps {
 
 /**
  * Corpus group: where a corpus lives, the way in for writing that already
- * exists elsewhere, and the decision about whether any of it is sorted for
- * reflections to draw on. A corpus lives in a vault (#3015), so the place comes
- * first and the way in second (#3017). Phrased as an offer, not a task — the
- * journal works fine on its own, and every row only widens what reflections can
- * reach or where a copy goes, for people who want that. The consent row is off
- * until somebody turns it on, so it is a question rather than a setting to
- * correct.
+ * exists elsewhere, the sorting switches themselves, and the full account of
+ * what they do. A corpus lives in a vault (#3015), so the place comes first
+ * and the way in second (#3017). The switches sit here on the hub, not only
+ * behind a sub-screen, because this is where somebody who has just given
+ * their corpus a vault goes looking for them — the vault screen points here —
+ * and a decision that is nowhere to be seen reads as one already made. Phrased
+ * as an offer, not a task: the journal works fine on its own, every row only
+ * widens what reflections can reach or where a copy goes, for people who want
+ * that, and each switch is off until somebody turns it on, so it is a question
+ * rather than a setting to correct.
  */
 const CorpusSection = ({
   onSeedCorpus,
   onCorpusConsent,
   onVault,
   seedDescription,
-}: CorpusSectionProps): React.JSX.Element => (
-  <EditorialSection title="Your corpus" testID="settings-group-corpus">
-    <SettingsRow
-      icon={Vault}
-      label={VAULT_ROW_LABEL}
-      description={VAULT_ROW_DESCRIPTION}
-      onPress={onVault}
-      testID="settings-row-vault"
-    />
-    <SettingsRow
-      icon={FolderUp}
-      label={SEED_ROW_LABEL}
-      description={seedDescription}
-      onPress={onSeedCorpus}
-      testID="settings-row-seed-corpus"
-    />
-    <SettingsRow
-      icon={BookOpen}
-      label={CORPUS_CONSENT_ROW_LABEL}
-      description={CORPUS_CONSENT_ROW_DESCRIPTION}
-      onPress={onCorpusConsent}
-      testID="settings-row-corpus-consent"
-    />
-  </EditorialSection>
-);
+}: CorpusSectionProps): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  return (
+    <EditorialSection title={CORPUS_GROUP_TITLE} testID="settings-group-corpus">
+      <SettingsRow
+        icon={Vault}
+        label={VAULT_ROW_LABEL}
+        description={VAULT_ROW_DESCRIPTION}
+        onPress={onVault}
+        testID="settings-row-vault"
+      />
+      <SettingsRow
+        icon={FolderUp}
+        label={SEED_ROW_LABEL}
+        description={seedDescription}
+        onPress={onSeedCorpus}
+        testID="settings-row-seed-corpus"
+      />
+      <Text style={[t.caption, styles.sortingLead]} testID="settings-corpus-sorting-lead">
+        {CORPUS_SORTING_HUB_LEAD}
+      </Text>
+      <CorpusConsentRows />
+      <SettingsRow
+        icon={BookOpen}
+        label={CORPUS_CONSENT_ROW_LABEL}
+        description={CORPUS_CONSENT_ROW_DESCRIPTION}
+        onPress={onCorpusConsent}
+        testID="settings-row-corpus-consent"
+      />
+    </EditorialSection>
+  );
+};
 
 /**
  * Where "Bring in your writing" leads, and what its row says (#3017).
@@ -196,8 +220,9 @@ function useSeedCorpusRow(navigation: NativeStackNavigationProp<RootStackParamLi
 
 /**
  * Your data group: the copy you can take away. It sits above Session on
- * purpose -- deletion is down there, and the only honest order is "here is how
- * to keep your writing" before "here is how to destroy it".
+ * purpose -- deletion is down there, at the very end, and the only honest
+ * order is "here is how to keep your writing" before "here is how to destroy
+ * it".
  */
 const YourDataSection = ({ onExportData }: { onExportData: () => void }): React.JSX.Element => (
   <EditorialSection title="Your data" testID="settings-group-your-data">
@@ -334,7 +359,12 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
         titleHidden
         lead="Manage how Adepthood works for you."
       />
+      <ChooseDepthsSection />
+      <SanghaSection />
       <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>
+        <JournalSection focus={focus} />
+      </View>
       <CorpusSection
         onSeedCorpus={seedRow.onSeedCorpus}
         seedDescription={seedRow.seedDescription}
@@ -342,17 +372,12 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
         onVault={openVault}
       />
       <PrivacySection />
-      <ChooseDepthsSection />
-      <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>
-        <JournalSection focus={focus} />
-      </View>
-      <SanghaSection />
       <YourDataSection onExportData={openExportData} />
-      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
-      <SupportSection onSupportCare={openSupportCare} />
       <FeedbackSection />
       <AdminInboxSettingsSection />
+      <SupportSection onSupportCare={openSupportCare} />
       <LegalSection />
+      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
     </ScreenScaffold>
   );
 };
@@ -373,6 +398,10 @@ const styles = StyleSheet.create({
   privacyLineSoft: {
     color: ink.soft,
     marginTop: rhythm.blockGap / 3,
+  },
+  sortingLead: {
+    color: ink.soft,
+    marginTop: rhythm.blockGap,
   },
 });
 

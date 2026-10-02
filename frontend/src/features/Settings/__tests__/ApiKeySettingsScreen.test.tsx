@@ -10,6 +10,13 @@ import ApiKeySettingsScreen, {
 } from '../ApiKeySettingsScreen';
 import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
+import {
+  LOCAL_MODEL_OFF_NOTE,
+  LOCAL_MODEL_ON_NOTE,
+  LOCAL_MODEL_SAVE_FAILED,
+  LOCAL_MODEL_SWITCH_DESCRIPTION,
+  LOCAL_MODEL_SWITCH_LABEL,
+} from '../localModelCopy';
 
 import { useApiKey } from '@/context/ApiKeyContext';
 import habitStyles from '@/features/Habits/Habits.styles';
@@ -29,6 +36,8 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
     loadError: null,
     saveApiKey: jest.fn(() => Promise.resolve({ persisted: true })),
     clearApiKey: jest.fn(() => Promise.resolve({ cleared: true })),
+    localModel: false,
+    setLocalModel: jest.fn(() => Promise.resolve({ persisted: true })),
   };
   const value = { ...base, ...partial } as ReturnType<typeof useApiKey>;
   mockUseApiKey.mockReturnValue(value);
@@ -415,5 +424,103 @@ describe('ApiKeySettingsScreen', () => {
     expect(queryByTestId('api-key-status')).toBeNull();
     expect(queryByTestId('api-key-error')).toBeNull();
     expect(getByTestId('api-key-input').props.value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Use Adepthood's own model": on, the key area is greyed and inert; off, the
+// key can be added as before.
+// ---------------------------------------------------------------------------
+
+describe('ApiKeySettingsScreen — the local-model switch', () => {
+  const disabledOf = (node: { props: { accessibilityState?: { disabled?: boolean } } }) =>
+    node.props.accessibilityState?.disabled;
+
+  test('sits above the key with its label and its four promises, off by default', () => {
+    setApiKeyState({});
+    const { getByTestId, getByText, toJSON } = render(<ApiKeySettingsScreen />);
+
+    const toggle = getByTestId('local-model-switch');
+    expect(toggle.props.accessibilityRole).toBe('switch');
+    expect(toggle.props.accessibilityLabel).toBe(LOCAL_MODEL_SWITCH_LABEL);
+    expect(toggle.props.value).toBe(false);
+    expect(getByText(LOCAL_MODEL_SWITCH_DESCRIPTION)).toBeTruthy();
+    expect(getByTestId('local-model-note').props.children).toBe(LOCAL_MODEL_OFF_NOTE);
+
+    const tree = JSON.stringify(toJSON());
+    expect(tree.indexOf('local-model-choice')).toBeLessThan(tree.indexOf('api-key-area'));
+  });
+
+  test('the promises name the four things not done with your writing', () => {
+    for (const promise of [/not read/, /keep/, /sell/, /train/, /profile/]) {
+      expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(promise);
+    }
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/open-source/);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/servers Adepthood operates/);
+  });
+
+  test('off, the key area is live: the input takes text and Save is enabled', () => {
+    setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('api-key-input').props.editable).toBe(true);
+    expect(disabledOf(getByTestId('save-key-button'))).toBe(false);
+    expect(disabledOf(getByTestId('api-key-area'))).toBe(false);
+    expect(getByTestId('api-key-area').props.pointerEvents).toBe('auto');
+  });
+
+  test('on, the whole key area is greyed and inert, and the note says the key is not sent', () => {
+    setApiKeyState({ localModel: true, apiKey: VALID_KEY });
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('local-model-switch').props.value).toBe(true);
+    expect(getByTestId('local-model-note').props.children).toBe(LOCAL_MODEL_ON_NOTE);
+    const area = getByTestId('api-key-area');
+    expect(disabledOf(area)).toBe(true);
+    expect(area.props.pointerEvents).toBe('none');
+    expect(getByTestId('api-key-input').props.editable).toBe(false);
+    expect(disabledOf(getByTestId('reveal-toggle'))).toBe(true);
+    expect(disabledOf(getByTestId('save-key-button'))).toBe(true);
+    expect(disabledOf(getByTestId('remove-key-button'))).toBe(true);
+    // Still there, still masked: kept on the device, not sent.
+    expect(getByTestId('stored-key-card')).toBeTruthy();
+  });
+
+  test('a saved key is still shown as stored while the model is on, never as removed', () => {
+    setApiKeyState({ localModel: true, apiKey: VALID_KEY });
+    const { getByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('stored-key-card')).toBeTruthy();
+    expect(queryByTestId('no-key-hint')).toBeNull();
+  });
+
+  test('moving the switch hands the choice to the context', () => {
+    const state = setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent(getByTestId('local-model-switch'), 'valueChange', true);
+
+    expect(state.setLocalModel).toHaveBeenCalledWith(true);
+  });
+
+  test('says so when the device could not keep the choice, and clears it once it can', async () => {
+    const state = setApiKeyState({
+      setLocalModel: jest
+        .fn()
+        .mockResolvedValueOnce({ persisted: false })
+        .mockResolvedValueOnce({ persisted: true }),
+    });
+    const { getByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);
+
+    await act(async () => {
+      fireEvent(getByTestId('local-model-switch'), 'valueChange', true);
+    });
+    expect(getByTestId('api-key-error').props.children).toBe(LOCAL_MODEL_SAVE_FAILED);
+
+    await act(async () => {
+      fireEvent(getByTestId('local-model-switch'), 'valueChange', false);
+    });
+    expect(queryByTestId('api-key-error')).toBeNull();
+    expect(state.setLocalModel).toHaveBeenCalledTimes(2);
   });
 });
