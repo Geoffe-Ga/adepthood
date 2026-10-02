@@ -221,6 +221,9 @@ describe('resumable progress and honest custody', () => {
     expect(mockRecover).toHaveBeenCalledTimes(1);
     expect(mockRetry).not.toHaveBeenCalled();
     expect(view.getByText(/securely removing the failed allocation/u)).toBeTruthy();
+    expect(view.getByText(/may take up to 24 hours/u)).toBeTruthy();
+    expect(view.getByText(/leave this page and return later/u)).toBeTruthy();
+    expect(view.getByText(/journal remains available/u)).toBeTruthy();
   });
 
   it('gives a safe next step when Creek refuses cleanup permanently', async () => {
