@@ -38,6 +38,17 @@ const SECTION_RED_SCOPE = 'c1:x1';
 const SECTION_SCOPES = ['c1:x1', 'c1:x2', 'c1:x3'] as const;
 const COURSE_SCOPE = 'c1:course';
 const SECTION_RED_TITLE = 'Section Review — Red';
+/**
+ * The course's three sections, by the Wavelength turn each closes, written out
+ * rather than derived from SECTION_SCOPES so a seed dropped from the arrange
+ * cannot quietly shrink what the decomposition is expected to hold.
+ */
+const SECTION_TITLES = [
+  SECTION_RED_TITLE,
+  'Section Review — Green',
+  'Section Review — Ultraviolet',
+] as const;
+const STAGE_TEN_DAILY_TITLE = 'A late page';
 const COURSE_TITLE = 'Course Review';
 const REFLECTION_TAG = 'hierarchical_reflection';
 const SECTION_EYEBROW = 'Section reflection';
@@ -58,6 +69,7 @@ interface SavedEntry {
 interface SourceItem {
   kind: 'reflection' | 'entry';
   id: number;
+  title: string | null;
 }
 
 interface DueResponse {
@@ -135,10 +147,10 @@ test('on the program’s final day the Course Review gathers the three sections 
   await expectDue(page.request, token, COURSE_LEVEL, COURSE_SCOPE);
 
   const sectionIds: number[] = [];
-  for (const scopeKey of SECTION_SCOPES) {
+  for (const [index, scopeKey] of SECTION_SCOPES.entries()) {
     sectionIds.push(
       await seedFinished(page.request, token, {
-        title: `Section ${scopeKey}`,
+        title: SECTION_TITLES[index] ?? scopeKey,
         message: `Looking back on ${scopeKey}.`,
         tag: REFLECTION_TAG,
         reflection_level: SECTION_LEVEL,
@@ -154,7 +166,7 @@ test('on the program’s final day the Course Review gathers the three sections 
   });
   // Today is week 36, stage 10, which no section covers.
   const stageTenDaily = await seedFinished(page.request, token, {
-    title: 'A late page',
+    title: STAGE_TEN_DAILY_TITLE,
     message: 'The last week of the arc.',
   });
 
@@ -171,6 +183,7 @@ test('on the program’s final day the Course Review gathers the three sections 
     ...sectionIds.map((id) => ({ kind: 'reflection', id })),
     { kind: 'entry', id: stageTenDaily },
   ]);
+  expect(items.map(({ title }) => title)).toEqual([...SECTION_TITLES, STAGE_TEN_DAILY_TITLE]);
 
   await page.reload();
   const cta = page.getByRole('button', { name: /^Write your Course Review/ });
