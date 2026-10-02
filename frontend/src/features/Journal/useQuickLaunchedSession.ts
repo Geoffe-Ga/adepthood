@@ -17,6 +17,10 @@
  * be asked to keep a practice they already hold. So the offer is withheld by
  * the launch itself rather than by what happens to be on disk.
  *
+ * What is NOT withheld is the link-a-habit note (#3006): it asks no question,
+ * only says where the timer's habit can be chosen, so the page renders it in
+ * the offer's place when no habit is linked.
+ *
  * ## Why nothing is sent for a stage the writer has not reached
  *
  * ``POST /practice-sessions/`` refuses a session logged against a stage the

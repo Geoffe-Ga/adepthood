@@ -1,7 +1,7 @@
 /* eslint-env jest */
 // Pins the Journal "Finish" data-loss bug: a failed final write can silently flip status to 'finished' on top of a stale/shorter autosaved body.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -434,40 +434,30 @@ describe('JournalEntryScreen Finish — prompt-compose has no Finish affordance'
 /** A rendered host or composite node, as the query helpers return one. */
 type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
 
-/** The rail's slot and Finish testIDs, in render order, ignoring everything nested deeper. */
-const RAIL_PARTS = new Set([
-  'journal-writing-controls-leading',
-  'journal-finish-button',
-  'journal-writing-controls-trailing',
-]);
+/** Every distinct testID a HOST node under ``node`` carries, in render order. */
+function hostTestIDs(node: RenderedNode): string[] {
+  const ids: string[] = node
+    .findAll((child: RenderedNode) => typeof child.type === 'string' && child !== node)
+    .map((child: RenderedNode): unknown => child.props.testID)
+    .filter((id: unknown): id is string => typeof id === 'string');
+  return [...new Set(ids)];
+}
 
 describe('JournalEntryScreen Finish — centres under the text box', () => {
-  it('holds Finish between two equal side slots on a centred rail', () => {
+  // #3002: the flanks that balanced Finish against Sources are gone with it;
+  // the row's own centring holds Finish under the text box.
+  it('holds Finish alone on a centred rail', () => {
     const { getByTestId } = renderScreen();
+    const rail = getByTestId('journal-writing-controls');
+    expect(hostTestIDs(rail)).toEqual([]);
+
     fireEvent.changeText(getByTestId('journal-body-input'), 'A first line.');
 
-    const rail = getByTestId('journal-writing-controls');
-    const railStyle = StyleSheet.flatten(rail.props.style);
+    const railStyle = StyleSheet.flatten(getByTestId('journal-writing-controls').props.style);
+    expect(railStyle.flexDirection).toBe('row');
     expect(railStyle.alignItems).toBe('center');
     expect(railStyle.justifyContent).toBe('center');
-
-    for (const slot of ['journal-writing-controls-leading', 'journal-writing-controls-trailing']) {
-      const slotStyle = StyleSheet.flatten(within(rail).getByTestId(slot).props.style);
-      expect(slotStyle.flex).toBe(1);
-      expect(slotStyle.flexBasis).toBe(0);
-    }
-
-    const order = rail
-      .findAll(
-        (node: RenderedNode) =>
-          typeof node.type === 'string' && RAIL_PARTS.has(String(node.props.testID)),
-      )
-      .map((node: RenderedNode) => String(node.props.testID));
-    expect(order).toEqual([
-      'journal-writing-controls-leading',
-      'journal-finish-button',
-      'journal-writing-controls-trailing',
-    ]);
+    expect(hostTestIDs(getByTestId('journal-writing-controls'))).toEqual(['journal-finish-button']);
   });
 
   it('centres a Finish error beneath the button', async () => {

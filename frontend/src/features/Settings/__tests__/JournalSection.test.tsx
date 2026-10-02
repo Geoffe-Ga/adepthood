@@ -13,6 +13,9 @@ import {
   MORNING_PAGES_SETTINGS_COPY_ENTRIES,
 } from '@/features/Journal/morningPagesCopy';
 import {
+  LINK_HABIT_NUDGE_AGAIN_DESCRIPTION,
+  LINK_HABIT_NUDGE_AGAIN_DONE,
+  LINK_HABIT_NUDGE_AGAIN_LABEL,
   OFFER_AGAIN_DESCRIPTION,
   OFFER_AGAIN_DONE,
   OFFER_AGAIN_LABEL,
@@ -28,6 +31,9 @@ const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Pr
 const mockLoadHabits = jest.fn<(_tz?: string) => Promise<void>>();
 const mockSaveAnswered = jest.fn<(_value: boolean) => Promise<void>>();
 const mockRestoreTip = jest.fn<() => Promise<boolean>>();
+const mockRestoreNudge = jest.fn<() => Promise<boolean>>();
+/** The account's zone, which AuthContext can adopt from the server mid-mount. */
+const mockUserTimezone = { current: 'Europe/Lisbon' };
 
 jest.mock('@/api', () => ({
   uiFlags: {
@@ -37,7 +43,7 @@ jest.mock('@/api', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'settings-tok', userTimezone: 'Europe/Lisbon' }),
+  useAuth: () => ({ token: 'settings-tok', userTimezone: mockUserTimezone.current }),
 }));
 
 jest.mock('@/features/Habits/services/habitManager', () => ({
@@ -50,6 +56,10 @@ jest.mock('@/storage/writingOfferStorage', () => ({
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
   restoreMorningPagesTip: () => mockRestoreTip(),
+}));
+
+jest.mock('@/storage/linkHabitNudgeStorage', () => ({
+  restoreLinkHabitNudge: () => mockRestoreNudge(),
 }));
 
 const ladder = (): Goal[] =>
@@ -100,6 +110,8 @@ beforeEach(() => {
   mockLoadHabits.mockResolvedValue(undefined);
   mockSaveAnswered.mockResolvedValue(undefined);
   mockRestoreTip.mockResolvedValue(true);
+  mockRestoreNudge.mockResolvedValue(true);
+  mockUserTimezone.current = 'Europe/Lisbon';
 });
 
 describe('JournalSection — the writing timer row', () => {
@@ -322,5 +334,110 @@ describe('JournalSection — offering morning pages again (#3005)', () => {
     for (const entry of MORNING_PAGES_SETTINGS_COPY_ENTRIES) {
       expect(seen).toContain(entry);
     }
+  });
+});
+
+describe('JournalSection — opened on the writing-habit row (#3006)', () => {
+  it('opens the picker at once when Settings is opened on the writing habit', async () => {
+    const view = render(<JournalSection focus="writing-habit" />);
+
+    expect(view.getByTestId('writing-habit-picker')).toBeTruthy();
+    expect(mockLoadHabits).toHaveBeenCalledWith('Europe/Lisbon');
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+  });
+
+  it('starts closed without a focus, as before', async () => {
+    const view = render(<JournalSection />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+    expect(mockLoadHabits).not.toHaveBeenCalled();
+  });
+
+  it('opens the picker when the focus arrives after the section has mounted', async () => {
+    const view = render(<JournalSection />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+
+    view.rerender(<JournalSection focus="writing-habit" />);
+
+    expect(view.getByTestId('writing-habit-picker')).toBeTruthy();
+  });
+
+  it('never reopens a picker the writer closed when the time zone changes under it', async () => {
+    const view = render(<JournalSection focus="writing-habit" />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+    fireEvent.press(view.getByTestId('writing-habit-cancel'));
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+    mockLoadHabits.mockClear();
+
+    // e.g. TimezoneSettings pushed over the hub, or the server's zone adopted.
+    mockUserTimezone.current = 'Asia/Tokyo';
+    view.rerender(<JournalSection focus="writing-habit" />);
+
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+    expect(mockLoadHabits).not.toHaveBeenCalled();
+  });
+
+  it('never reopens it on a later render with the same focus, or after a save', async () => {
+    const view = render(<JournalSection focus="writing-habit" />);
+    await waitFor(() => expect(useWritingHabitLinkStore.getState().hydrated).toBe(true));
+    fireEvent.press(view.getByTestId('writing-habit-choose-31'));
+    await waitFor(() =>
+      expect(view.queryByTestId('writing-habit-picker')?.props.testID).toBeUndefined(),
+    );
+
+    view.rerender(<JournalSection focus="writing-habit" />);
+
+    expect(view.queryByTestId('writing-habit-picker')).toBeNull();
+  });
+});
+
+describe('JournalSection — showing the habit note again (#3006)', () => {
+  const row = (view: ReturnType<typeof render>) =>
+    view.getByTestId('settings-row-link-habit-nudge-again');
+
+  it('is a fourth row, after the three that were there', () => {
+    const view = render(<JournalSection />);
+    const ids = view
+      .getAllByRole('button')
+      .map((button) => button.props.testID as string)
+      .filter((id) => id.startsWith('settings-row-'));
+
+    expect(ids).toEqual([
+      'settings-row-writing-habit',
+      'settings-row-writing-offer-again',
+      'settings-row-morning-pages-offer-again',
+      'settings-row-link-habit-nudge-again',
+    ]);
+  });
+
+  it('clears this device’s "Don’t show again", and says the note is back', async () => {
+    const view = render(<JournalSection />);
+    expect(row(view).props.accessibilityLabel).toBe(LINK_HABIT_NUDGE_AGAIN_LABEL);
+    expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DESCRIPTION);
+
+    fireEvent.press(row(view));
+
+    expect(mockRestoreNudge).toHaveBeenCalledTimes(1);
+    expect(mockSaveAnswered).not.toHaveBeenCalled();
+    expect(mockRestoreTip).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DONE),
+    );
+  });
+
+  it('keeps its description when the restore could not be saved, rather than claiming it worked', async () => {
+    mockRestoreNudge.mockResolvedValueOnce(false);
+    const view = render(<JournalSection />);
+
+    fireEvent.press(row(view));
+
+    await waitFor(() => expect(mockRestoreNudge).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DESCRIPTION);
+    expect(view.queryByText(LINK_HABIT_NUDGE_AGAIN_DONE)).toBeNull();
   });
 });

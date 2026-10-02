@@ -1,5 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
@@ -13,6 +14,7 @@ import React from 'react';
  */
 import type { JournalMessage } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';
+import { saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
@@ -44,9 +46,12 @@ jest.mock('@/api', () => ({
   },
 }));
 
+const mockRootNavigate = jest.fn();
+
 jest.mock('@/navigation/hooks', () => ({
   ...(jest.requireActual('@/navigation/hooks') as Record<string, unknown>),
   useAppNavigation: () => ({ navigate: jest.fn(), setOptions: jest.fn() }),
+  useRootNavigation: () => ({ navigate: mockRootNavigate }),
 }));
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
@@ -89,7 +94,10 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
   } as JournalMessage;
 }
 
-function renderScreen(params?: { entryId?: number }) {
+function renderScreen(params?: {
+  entryId?: number;
+  writingSession?: { minutes: number; userPracticeId: number | null };
+}) {
   const route = { key: 'k', name: 'JournalEntry' as const, params };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
@@ -145,16 +153,16 @@ describe('JournalEntryScreen — where the writing timer appears', () => {
   });
 });
 
-describe('JournalEntryScreen — the timer and the resonance button share a corner', () => {
+describe('JournalEntryScreen — the timer and the resonance button are both in reach', () => {
   /**
-   * The resonance button's floating wrapper spans the page edge to edge, and it
-   * is up precisely when the writer has paused with something written — which is
-   * exactly the moment they reach for the timer. This drives that moment.
+   * The resonance button is up precisely when the writer has paused with
+   * something written — which is exactly the moment they reach for the timer.
+   * This drives that moment.
    *
    * It proves the two affordances are simultaneously mounted and independently
-   * operable. It does NOT prove the geometry: RNTL performs no layout, so an
-   * overlapping absolutely-positioned sibling is invisible to `fireEvent`. The
-   * geometric half is pinned structurally in `writingTimerLayout.test.tsx` and
+   * operable. It does NOT prove the geometry: RNTL performs no layout. The
+   * geometric half — the timer floats alone, resonance stays in the margin's
+   * flow (#3004) — is pinned structurally in `writingTimerLayout.test.tsx` and
    * `GetResonanceButton.test.tsx`.
    */
   it('starts a session from the pill while the resonance button is up', async () => {
@@ -254,5 +262,168 @@ describe('JournalEntryScreen — a finished session checks off the linked habit'
     await settle(TWENTY_MINUTES_MS);
 
     expect(mockCheckOff).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3006: a finished session with no habit linked points to Settings, on BOTH
+ * kinds of page — and on the ordinary page only once the end-of-session offer
+ * has been answered, so a note never carries two invitations.
+ */
+describe('JournalEntryScreen — an unlinked timer points to Settings', () => {
+  const LAUNCH = { minutes: 20, userPracticeId: null };
+  const LINKED_HABIT_ID = 42;
+
+  /** A running session collapses the pill; the next one starts from it re-opened. */
+  function startAnotherSession(getByTestId: ReturnType<typeof renderScreen>['getByTestId']): void {
+    fireEvent.press(getByTestId('writing-timer-compact'));
+    fireEvent.press(getByTestId('writing-timer-start'));
+  }
+
+  beforeEach(async () => {
+    jest.useFakeTimers();
+    mockRootNavigate.mockClear();
+    await AsyncStorage.clear();
+    useWritingHabitLinkStore.setState({ habitId: null, hydrated: true });
+  });
+
+  it('shows the link-a-habit note at the end of a quick-launched session when no habit is linked', async () => {
+    const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(TWENTY_MINUTES_MS);
+
+    const banner = getByTestId('writing-session-banner');
+    await within(banner).findByTestId('link-habit-nudge');
+    expect(within(banner).getByTestId('link-habit-nudge-settings')).toBeTruthy();
+    expect(within(banner).getByLabelText("Don't show this note again")).toBeTruthy();
+    expect(queryByTestId('save-as-habit-offer')).toBeNull();
+  });
+
+  it('never makes the keep-this offer on a quick-launched page, even unanswered', async () => {
+    const { findByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(TWENTY_MINUTES_MS);
+    await findByTestId('link-habit-nudge');
+
+    expect(queryByTestId('save-as-habit-offer')).toBeNull();
+    expect(queryByTestId('save-as-habit-accept')).toBeNull();
+  });
+
+  it('shows the note on an ordinary page once the offer has been answered', async () => {
+    await saveWritingOfferAnswered(true);
+    const { getByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    await within(getByTestId('writing-session-banner')).findByTestId('link-habit-nudge');
+    expect(queryByTestId('save-as-habit-offer')).toBeNull();
+  });
+
+  it('lets the unanswered offer have the note to itself on an ordinary page', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    await findByTestId('save-as-habit-offer');
+    await settle(0);
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+  });
+
+  it('does not swap a declined offer for the note in the same note, only in the next', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+    fireEvent.press(await findByTestId('save-as-habit-decline'));
+    // Long enough for any re-read of the offer's flag to land: there must be none.
+    await settle(1_000);
+
+    expect(queryByTestId('save-as-habit-offer')).toBeNull();
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+
+    startAnotherSession(getByTestId);
+    await settle(TWENTY_MINUTES_MS);
+
+    await within(getByTestId('writing-session-banner')).findByTestId('link-habit-nudge');
+  });
+
+  it('shows nothing when a habit is linked, even though the note was never declined', async () => {
+    useWritingHabitLinkStore.setState({ habitId: LINKED_HABIT_ID, hydrated: true });
+    const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(TWENTY_MINUTES_MS);
+    await settle(0);
+
+    expect(getByTestId('writing-session-banner')).toBeTruthy();
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+  });
+
+  it('shows nothing while the link is unknown: a failed read is not "unlinked"', async () => {
+    useWritingHabitLinkStore.setState({ habitId: null, hydrated: false });
+    const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(TWENTY_MINUTES_MS);
+    await settle(0);
+
+    expect(getByTestId('writing-session-banner')).toBeTruthy();
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+  });
+
+  it('shows nothing to a writer who stopped early, because no note is left', async () => {
+    const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(60_000);
+    fireEvent.press(getByTestId('writing-timer-stop'));
+    await settle(0);
+
+    expect(queryByTestId('writing-session-banner')).toBeNull();
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+  });
+
+  it('opens Settings on the writing-habit row', async () => {
+    const { findByTestId } = renderScreen({ writingSession: LAUNCH });
+
+    await settle(TWENTY_MINUTES_MS);
+    fireEvent.press(await findByTestId('link-habit-nudge-settings'));
+
+    expect(mockRootNavigate).toHaveBeenCalledWith('Settings', { focus: 'writing-habit' });
+  });
+
+  it("stays gone after Don't show again, on a later session and a later page", async () => {
+    const first = renderScreen({ writingSession: LAUNCH });
+    await settle(TWENTY_MINUTES_MS);
+    fireEvent.press(await first.findByTestId('link-habit-nudge-decline'));
+
+    expect(first.queryByTestId('link-habit-nudge')).toBeNull();
+    first.unmount();
+
+    await saveWritingOfferAnswered(true);
+    const second = renderScreen();
+    fireEvent.press(second.getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+    await settle(0);
+
+    expect(second.getByTestId('writing-session-banner')).toBeTruthy();
+    expect(second.queryByTestId('link-habit-nudge')).toBeNull();
+  });
+
+  it('is absent on the next session once a habit has been linked', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+    await settle(TWENTY_MINUTES_MS);
+    await findByTestId('link-habit-nudge');
+
+    act(() => {
+      useWritingHabitLinkStore.setState({ habitId: LINKED_HABIT_ID, hydrated: true });
+    });
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
+
+    startAnotherSession(getByTestId);
+    await settle(TWENTY_MINUTES_MS);
+    await settle(0);
+
+    expect(getByTestId('writing-session-banner')).toBeTruthy();
+    expect(queryByTestId('link-habit-nudge')).toBeNull();
   });
 });

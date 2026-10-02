@@ -109,6 +109,13 @@ Eight rules, each one a reviewer can answer yes or no:
   with the word kept as its `accessibilityLabel` and a hit area of at least
   `touchTarget.minimum`, never a text link; words are for actions that need
   them (Finish, Get Resonance, Begin a page).
+- **One home per control.** A control lives in one place at every width and
+  in every mode, chosen by what it acts on. On the journal entry (#3002,
+  #3004) the exit row holds the page-level doors as glyphs —
+  [Return?][Key][Sources? while writing a reflection][Camera writing | Edit
+  reading][X] — the body's own tools sit under it (formatting toolbar, save
+  footer, then Finish or Promote), and Get Resonance sits at the foot of the
+  margin, beside the page or stacked under it, never floating over the text.
 - **Decorative glyphs are hidden by one spelling.** A glyph the control around
   it already names -- an icon, an emoji, a check box, pager dots -- spreads
   `decorativeHidden()` from `components/a11yHidden.ts`, on the glyph or on its
