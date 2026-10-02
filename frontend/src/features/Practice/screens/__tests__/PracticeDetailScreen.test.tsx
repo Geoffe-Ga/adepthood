@@ -77,7 +77,7 @@ jest.mock('@/features/Practice/components/ShareSheet', () => {
   return { __esModule: true, default: Stub };
 });
 
-const { PracticeDetailScreen } = require('../PracticeDetailScreen');
+const { PracticeDetailScreen, buildCustomizePrefill } = require('../PracticeDetailScreen');
 
 interface NavMock {
   goBack: jest.Mock<() => void>;
@@ -399,6 +399,24 @@ describe('PracticeDetailScreen — Duplicate & edit', () => {
     expect(button.props.accessibilityState?.disabled).toBe(true);
     fireEvent.press(button);
     expect(nav.navigate).not.toHaveBeenCalled();
+  });
+
+  // The route and the Practice tab's in-place sheet (#2451) share this prefill.
+  it('builds the wizard prefill from the practice, rounding a fractional length', () => {
+    expect(buildCustomizePrefill({ ...samplePractice, default_duration_minutes: 7.6 })).toEqual({
+      prefill: {
+        config: samplePractice.mode_config,
+        name: 'Forest grounding',
+        description: 'A 5-minute reset under canopy.',
+        instructions: 'Find a tree, place a palm on the bark, breathe.',
+        duration: 8,
+        stageNumber: 4,
+      },
+    });
+  });
+
+  it('offers no prefill for a practice with no mode_config', () => {
+    expect(buildCustomizePrefill({ ...samplePractice, mode_config: undefined })).toBeNull();
   });
 });
 
