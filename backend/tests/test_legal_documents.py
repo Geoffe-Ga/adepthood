@@ -84,7 +84,12 @@ from sentry import scrub_event
 from services import frequency_classification, journal_encryption
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import CONSENT_GRANTED_BY_DEFAULT, set_consent
-from services.corpus_import import IMPORT_SOURCE, reaches_a_vault
+from services.corpus_import import (
+    IMPORT_SOURCE,
+    VAULT_REQUIRED_RESULT,
+    import_document,
+    reaches_a_vault,
+)
 from services.corpus_ingest import (
     CLASSIFICATION_CALLS_PER_INGEST,
     INGEST_SOURCE,
@@ -92,6 +97,7 @@ from services.corpus_ingest import (
 )
 from services.corpus_store import retrieve_fragments
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_upload import UploadedDocument
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
 from services.journal_encryption import EncryptedString
@@ -619,12 +625,13 @@ def test_the_terms_do_not_promise_a_service_level() -> None:
     assert "99." not in text
 
 
-# Every consent source something in this backend actually writes a fragment
-# under, read off the writers' own constants rather than off the enum. A member
-# nothing collects under is a name, not a kind of material somebody is being
-# asked about -- and the policy owes a reader a description of each kind that
-# can hold their writing, not of each token the schema can store.
-_SOURCES_WITH_A_WRITER: Final[frozenset[CorpusSource]] = frozenset({INGEST_SOURCE, IMPORT_SOURCE})
+# Every consent source the consent screen offers a switch for, read off the
+# backend's own named constants rather than off the enum. ``INGEST_SOURCE`` is
+# written under; ``IMPORT_SOURCE`` has had no writer since #3016 (a document
+# goes to a vault or nowhere) but its switch is still offered, so the policy
+# still owes a reader an account of what that switch does -- which today is
+# nothing, and the policy has to say so.
+_SOURCES_WITH_A_SWITCH: Final[frozenset[CorpusSource]] = frozenset({INGEST_SOURCE, IMPORT_SOURCE})
 
 # What the policy must call each of those kinds, in the words the consent
 # screen offers the switch under. Keyed by the enum member, so a writer that
@@ -644,63 +651,89 @@ _CORPUS_SOURCE_DISCLOSURES: Final[Mapping[CorpusSource, str]] = MappingProxyType
 _NO_DISCLOSURE_WRITTEN: Final[str] = "\x00"
 
 # The claim the corpus section shipped with, true while ``journal`` was the
-# only source with a writer and false the moment a second one landed.
+# only source with a switch and false the moment a second one was offered.
 _SINGLE_SOURCE_CLAIM: Final[str] = "the only kind"
 
 
 def test_the_policy_names_every_kind_of_material_the_corpus_can_hold() -> None:
-    """Each source something writes fragments under is described, by name.
+    """Each source the consent screen offers a switch for is described, by name.
 
-    The consent switch is per source, so a source with a writer is a permission
-    a reader can be asked for -- and one the policy has to have explained
-    before they are. ``POST /corpus/import`` collects under the ``upload``
-    source rather than adding one of its own, which is precisely the change a
-    phrase match on the corpus section would not have seen: no wording went
-    stale, the meaning of an existing switch widened.
+    The consent switch is per source, so each offered source is a permission a
+    reader can be asked for -- and one the policy has to have explained before
+    they are, including a switch that currently lets nothing in.
 
-    Both halves are derived. The population is the writers' constants, so a
-    third writer fails here until somebody writes down what it collects, and
-    the count is what retires the "only kind" sentence rather than a reviewer
-    remembering it exists.
+    Both halves are derived. The population is the backend's named constants,
+    so a third source fails here until somebody writes down what it collects,
+    and the count is what retires the "only kind" sentence rather than a
+    reviewer remembering it exists.
     """
     policy = _prose(_PRIVACY_POLICY)
 
     undisclosed = sorted(
         source.value
-        for source in _SOURCES_WITH_A_WRITER
+        for source in _SOURCES_WITH_A_SWITCH
         if _CORPUS_SOURCE_DISCLOSURES.get(source, _NO_DISCLOSURE_WRITTEN) not in policy
     )
 
     assert not undisclosed, (
-        f"something writes corpus fragments under {undisclosed}, and the policy "
+        f"a consent switch is offered for {undisclosed}, and the policy "
         f"describes no such kind of material"
     )
-    assert len(_SOURCES_WITH_A_WRITER) == 1 or _SINGLE_SOURCE_CLAIM not in policy, (
-        f"{len(_SOURCES_WITH_A_WRITER)} sources have writers; the policy still "
+    assert len(_SOURCES_WITH_A_SWITCH) == 1 or _SINGLE_SOURCE_CLAIM not in policy, (
+        f"{len(_SOURCES_WITH_A_SWITCH)} sources have switches; the policy still "
         f"tells a reader there is only one kind of material"
     )
 
 
-def test_an_imported_document_reaches_the_corpus_only_without_a_vault() -> None:
-    """The routing rule the policy states is the resolver's own answer.
+# What the policy promises about a document brought in with no vault ready,
+# and about the corpus section's switch for documents. Both are re-derived
+# below from the import path itself rather than paraphrased from its docstring.
+_NO_VAULT_PROMISE: Final[str] = "has nowhere to go"
+_NO_DOCUMENT_IN_THE_CORPUS: Final[str] = "no document reaches this corpus"
+
+# The routing claims the policy made while a document with no vault was sorted
+# into the account's own corpus (#2232, retired by #3016). Any of them back in
+# the policy would tell a reader their document is kept where it is not.
+_RETIRED_DOCUMENT_ROUTES: Final[tuple[str, ...]] = (
+    "it can instead enter adepthood's corpus",
+    "a document reaches this corpus only when",
+    "when that document is going to your own corpus here",
+)
+
+
+@pytest.mark.asyncio
+async def test_a_document_has_nowhere_to_go_without_a_vault() -> None:
+    """The routing rule the policy states is the import path's own answer.
 
     The policy tells a reader that a document they bring in goes to their vault
-    if they have connected one and is sorted into their own corpus only if they
-    have not. That sentence is a promise about where their writing ends up, so
-    it is re-derived from :func:`services.corpus_import.reaches_a_vault` -- the
-    predicate the import path actually branches on -- rather than paraphrased
-    from the module that documents it.
+    or nowhere: with no vault ready for their account it is not read, sorted or
+    stored (#3015, #3016). That sentence is a promise about where their writing
+    ends up, so it is re-derived by running
+    :func:`services.corpus_import.import_document` against the client the
+    resolver hands an account with no vault, rather than paraphrased from the
+    module that documents it.
     """
     policy = _prose(_PRIVACY_POLICY)
+    document = UploadedDocument(
+        owner_user_id=1,
+        filename="notes.md",
+        content_base64="bm90ZXM=",
+        classification=JournalClassification.PERSONAL.value,
+        created_at=datetime.now(UTC),
+    )
 
-    assert reaches_a_vault(LocalFallbackCreekVaultClient()) is False, (
-        "an account with no vault no longer takes the local-corpus branch; "
+    result = await import_document(LocalFallbackCreekVaultClient(), document)
+
+    assert reaches_a_vault(LocalFallbackCreekVaultClient()) is False
+    assert result is VAULT_REQUIRED_RESULT, (
+        "an account with no vault now has its document taken somewhere; "
         "the policy describes the routing rule and must be rewritten with it"
     )
-    assert _CORPUS_SOURCE_DISCLOSURES.get(IMPORT_SOURCE, _NO_DISCLOSURE_WRITTEN) in policy, (
-        f"an imported document is now collected under {IMPORT_SOURCE.value!r}, which the "
-        f"policy does not describe as a kind of material"
-    )
+    assert result.stored is False
+    assert _NO_VAULT_PROMISE in policy
+    assert _NO_DOCUMENT_IN_THE_CORPUS in policy
+    restated = [claim for claim in _RETIRED_DOCUMENT_ROUTES if claim in policy]
+    assert not restated, f"the policy still routes a document into the corpus: {restated}"
 
 
 # The policy section describing the deletion of a single entry, addressed by
