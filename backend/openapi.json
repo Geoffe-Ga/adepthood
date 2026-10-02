@@ -7096,6 +7096,168 @@
         "title": "SiteResourceResponse",
         "type": "object"
       },
+      "StageCorrespondenceProvenance": {
+        "description": "Which stage-correspondence artifact a Stage row was last reconciled from.\n\nEvery field is ``None`` until the stage seeder has reconciled the row\n(for instance straight after the migration, if seeding failed), so the\nlist never 500s on an unreconciled row.",
+        "properties": {
+          "reconciled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the seeder last inserted or changed this row.",
+            "title": "Reconciled At"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The artifact's shape version.",
+            "title": "Schema Version"
+          },
+          "source_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Path of the source CSV in that commit.",
+            "title": "Source Path"
+          },
+          "source_repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upstream repository, as ``owner/name``.",
+            "title": "Source Repo"
+          },
+          "source_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Upstream commit the artifact was generated from (the content pin).",
+            "title": "Source Sha"
+          },
+          "source_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hex sha256 of the source CSV's bytes.",
+            "title": "Source Sha256"
+          }
+        },
+        "required": [
+          "source_repo",
+          "source_sha",
+          "source_path",
+          "source_sha256",
+          "schema_version",
+          "reconciled_at"
+        ],
+        "title": "StageCorrespondenceProvenance",
+        "type": "object"
+      },
+      "StageCorrespondenceResponse": {
+        "description": "One Stage's canonical correspondences, keyed by its stable colour slug (#2665).\n\nGlobal reference data: the same for every user, with no progress overlay.",
+        "properties": {
+          "aspect": {
+            "description": "Aspect of that category the Stage develops.",
+            "title": "Aspect",
+            "type": "string"
+          },
+          "category": {
+            "description": "Wheel category the Stage belongs to.",
+            "title": "Category",
+            "type": "string"
+          },
+          "divine_gender_polarity": {
+            "description": "Divine gender polarity of the Stage.",
+            "title": "Divine Gender Polarity",
+            "type": "string"
+          },
+          "free_will_description": {
+            "description": "Prose describing that relationship.",
+            "title": "Free Will Description",
+            "type": "string"
+          },
+          "growing_up_stage": {
+            "description": "Developmental (Growing Up) stage name.",
+            "title": "Growing Up Stage",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/StageCorrespondenceProvenance",
+            "description": "Source of these values; fields are null until the row is reconciled."
+          },
+          "relationship_to_free_will": {
+            "description": "Archetype of free will at this Stage.",
+            "title": "Relationship To Free Will",
+            "type": "string"
+          },
+          "spiral_dynamics_color": {
+            "description": "Spiral Dynamics colour of the Stage.",
+            "title": "Spiral Dynamics Color",
+            "type": "string"
+          },
+          "stage_key": {
+            "description": "Stable colour-slug id, e.g. ``beige`` .. ``clearlight``.",
+            "title": "Stage Key",
+            "type": "string"
+          },
+          "stage_number": {
+            "description": "The Stage's 1-based position in the program.",
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "start_week": {
+            "description": "Program week the Stage opens on.",
+            "title": "Start Week",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage_key",
+          "stage_number",
+          "start_week",
+          "category",
+          "aspect",
+          "spiral_dynamics_color",
+          "growing_up_stage",
+          "divine_gender_polarity",
+          "relationship_to_free_will",
+          "free_will_description",
+          "provenance"
+        ],
+        "title": "StageCorrespondenceResponse",
+        "type": "object"
+      },
       "StageHistoryResponse": {
         "description": "Aggregated history of practices and habits for a stage.",
         "properties": {
@@ -24640,6 +24802,120 @@
           }
         },
         "summary": "Begin Again",
+        "tags": [
+          "stages"
+        ]
+      }
+    },
+    "/stages/correspondence": {
+      "get": {
+        "description": "The canonical per-Stage correspondences, keyed by stable stage key (#2665).\n\nGlobal reference data: identical for every user, so there is no progress\noverlay and reading it is not a visit. The set is fixed at the ten\nStages, so the list is not paginated; a legacy row outside them (an\norphan the seeder kept rather than deleted) is not served. Ordered by\n``stage_number`` then ``id`` for a total order. Registered ABOVE\n``/{stage_number}`` so the static path wins route matching.",
+        "operationId": "list_stage_correspondence_stages_correspondence_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StageCorrespondenceResponse"
+                  },
+                  "title": "Response List Stage Correspondence Stages Correspondence Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Stage Correspondence",
         "tags": [
           "stages"
         ]
