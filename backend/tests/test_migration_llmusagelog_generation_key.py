@@ -81,7 +81,6 @@ def test_the_generation_key_migration_chains_from_the_lease_head(
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_REVISION]
 
 
 def test_upgrade_adds_two_nullable_columns_and_keeps_legacy_rows_null(

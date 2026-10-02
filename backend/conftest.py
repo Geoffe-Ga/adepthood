@@ -136,6 +136,12 @@ _SQLITE_ALWAYS_INDEXES: tuple[str, ...] = (
         'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_number_unique_test" '
         "ON coursestage (stage_number)"
     ),
+    # coursestage: one row per stable stage key, the identity the stage seeder
+    # reconciles by (#2665). Mirrors production migration ``d7f9b1c3e5a2``.
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS "ix_coursestage_stage_key_unique_test" '
+        "ON coursestage (stage_key)"
+    ),
     # stagecontent: one ``content://`` reference per stage — the seeder's
     # stable chapter identity. Scoped to the content:// scheme so legacy
     # rows with empty/CMS urls stay unconstrained. Mirrors production
