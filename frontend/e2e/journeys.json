@@ -387,15 +387,15 @@
   },
   {
     "id": "journal.promote-a-passage-deep-in-a-long-entry",
-    "description": "A reader on a phone opens an entry several screens long, taps Promote a quote, and selects a passage near its end. The mirrored field wears no browser focus ring and grows to its text instead of becoming an inner scroll pane, and the preview / Promote / Cancel footer stays pinned at the foot of the viewport (web position: sticky) while the body scrolls, so the confirm is in reach without scrolling past the whole entry. Uncovered because the browser lane's promote spec (journal.promote-reopen-and-remove-quote) drives a one-line body and never scrolls; the focus fragment, growth wiring and pinned footer are pinned meanwhile by QuoteSelectionSurface.test.tsx and readingSurfaceStyles.test.ts.",
+    "description": "A reader on a phone opens an entry several screens long, taps Promote a quote, and selects a passage near its end. The mirrored field wears no browser focus ring and grows to its text instead of becoming an inner scroll pane, and the preview / Promote / Cancel footer stays pinned at the foot of the viewport (web position: sticky) while the body scrolls, so the confirm is in reach without scrolling past the whole entry. The browser spec seeds and finishes a 121-line entry over the API, opens it from the shelf at 390x844, clicks through the one-time promote explainer, and asserts the field has outline-style none, no inner scroll (scrollHeight <= clientHeight) and a height over three viewports; with the field's top at the top of the screen, the footer and Promote selection are in the viewport and pinned over the field. It then scrolls the closing line clear of the footer, drags a real mouse selection over it, and promotes it over POST /journal/{entry_id}/promote, whose stored anchor_text equals the preview. Native, where the footer stays in flow, is pinned by QuoteSelectionSurface.test.tsx and readingSurfaceStyles.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/QuoteSelectionSurface.tsx",
       "client": ["promotions"],
       "routes": ["POST /journal/{entry_id}/promote"],
       "tables": ["promotedquote"]
     },
-    "status": "uncovered",
-    "issue": 2967
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-quote-long-entry.browser.e2e.test.ts"
   },
   {
     "id": "journal.find-promoted-quotes-any-day",
