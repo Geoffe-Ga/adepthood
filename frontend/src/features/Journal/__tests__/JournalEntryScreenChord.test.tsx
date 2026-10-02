@@ -26,11 +26,19 @@ const mockUpdate = jest.fn() as jest.MockedFunction<
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;
 const mockGenerate = jest.fn() as jest.MockedFunction<(_id: number) => Promise<unknown>>;
 const mockRespond = jest.fn() as jest.MockedFunction<(_w: number, _b: string) => Promise<unknown>>;
+// GET /stages records a program visit, so the Journal must never call it; the
+// chord reads its personas from the visit-free correspondence list (#2666).
+const mockStagesListAll = jest.fn();
+const mockStagesCorrespondence = jest.fn() as jest.MockedFunction<() => Promise<unknown[]>>;
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  stages: {
+    listAll: (...a: unknown[]) => mockStagesListAll(...a),
+    correspondence: () => mockStagesCorrespondence(),
+  },
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -114,6 +122,37 @@ beforeEach(() => {
   mockGenerate.mockReset();
   mockRespond.mockReset();
   mockRespond.mockResolvedValue({});
+  mockStagesListAll.mockReset();
+  mockStagesCorrespondence.mockReset();
+  mockStagesCorrespondence.mockResolvedValue([]);
+});
+
+// ---------------------------------------------------------------------------
+// The chord never reads GET /stages
+// ---------------------------------------------------------------------------
+
+describe('JournalEntryScreen — chord personas without a program visit', () => {
+  it('never calls GET /stages across mount, expand and select', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, primary_aspect: null, secondary_aspect: null }));
+    const { getByTestId } = renderScreen({ entryId: 7 });
+    await waitFor(() => {
+      expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+    });
+    const page = within(getByTestId('journal-page'));
+    fireEvent.press(page.getByTestId('aspect-chord-trigger'));
+    fireEvent.press(within(getByTestId('journal-page')).getByTestId('aspect-primary-2'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockStagesListAll).not.toHaveBeenCalled();
+    // The empty store sent it to the visit-free list instead, once.
+    expect(mockStagesCorrespondence).toHaveBeenCalledTimes(1);
+    // An empty answer leaves every chip under its colour name, never blank.
+    expect(
+      within(getByTestId('journal-page')).getByTestId('aspect-primary-2').props.accessibilityLabel,
+    ).toBe('Purple');
+  });
 });
 
 // ---------------------------------------------------------------------------
