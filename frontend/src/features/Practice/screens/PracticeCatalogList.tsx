@@ -28,7 +28,7 @@
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { LucideIcon } from 'lucide-react-native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   SectionList,
@@ -79,7 +79,11 @@ export interface CatalogProps {
   initialStage?: number;
   /** Override for tests so the catalog doesn't poke the live API. */
   loadPractices?: (stageNumber: number) => Promise<PracticeItem[]>;
-  /** Override for tests; otherwise wires through ``RootStack`` navigator. */
+  /**
+   * Presents a practice's details. The Practice tab passes one that opens them
+   * in place over the embedded catalog (#2451); when omitted, the row pushes
+   * the ``RootStack`` ``PracticeDetail`` route.
+   */
   navigateToDetail?: (practiceId: number) => void;
   /** Override for tests; otherwise opens ``CreatePractice``. */
   navigateToCreate?: () => void;
@@ -93,7 +97,19 @@ export interface CatalogListProps extends CatalogProps {
   embedded?: boolean;
   /** Runs after a practice is activated; defaults to popping the pushed route. */
   onActivated?: () => void;
+  /**
+   * Written with the row that asked for details just before
+   * ``navigateToDetail`` runs, so an in-place presenter can hand focus back to
+   * it on close. Unused on the push path, which leaves the screen.
+   */
+  detailOpenerRef?: React.RefObject<DetailOpener | null>;
 }
+
+/** What a details presenter needs of the row that opened it. */
+type DetailOpener = { focus: () => void };
+
+/** A row's detail tap: the id, plus the row itself as the focus target. */
+type OnDetail = (id: number, opener?: React.RefObject<View | null>) => void;
 
 interface CatalogState {
   practices: PracticeItem[];
@@ -110,7 +126,7 @@ interface CatalogScreenModel {
   setQuery: (query: string) => void;
   state: CatalogState;
   reload: () => void;
-  onDetail: (id: number) => void;
+  onDetail: OnDetail;
   onCreate: () => void;
   recents: readonly RecentPractice[];
   catalogUse: CatalogUse;
@@ -142,6 +158,7 @@ function useCatalogScreen(props: CatalogListProps): CatalogScreenModel {
     navigateToCreate,
     setActive,
     onActivated,
+    detailOpenerRef,
   } = props;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const seededStage = useSeededStage(initialStage);
@@ -152,8 +169,8 @@ function useCatalogScreen(props: CatalogListProps): CatalogScreenModel {
 
   const { onDetail, onCreate } = useCatalogNavigation(
     navigation,
-    navigateToDetail,
-    navigateToCreate,
+    { navigateToDetail, navigateToCreate },
+    detailOpenerRef,
   );
   const handleActivated = useActivatedHandler(onActivated, navigation);
   const setActivePractice = useCatalogSetActive(stageNumber, handleActivated, setActive);
@@ -338,7 +355,7 @@ function useCatalogList(
   state: CatalogState,
   query: string,
   modeCategory: string | null,
-  onDetail: (id: number) => void,
+  onDetail: OnDetail,
   onUse: (practice: PracticeItem) => void,
 ): { sections: CatalogSection[]; renderItem: (info: { item: PracticeItem }) => React.JSX.Element } {
   const sections = useMemo(
@@ -382,15 +399,22 @@ function useCatalogSetActive(
 
 function useCatalogNavigation(
   navigation: NativeStackNavigationProp<RootStackParamList>,
-  navigateToDetail: CatalogProps['navigateToDetail'],
-  navigateToCreate: CatalogProps['navigateToCreate'],
-): { onDetail: (id: number) => void; onCreate: () => void } {
-  const onDetail = useCallback(
-    (id: number) =>
-      navigateToDetail
-        ? navigateToDetail(id)
-        : navigation.navigate('PracticeDetail', { practiceId: id }),
-    [navigation, navigateToDetail],
+  {
+    navigateToDetail,
+    navigateToCreate,
+  }: Pick<CatalogProps, 'navigateToDetail' | 'navigateToCreate'>,
+  detailOpenerRef: CatalogListProps['detailOpenerRef'],
+): { onDetail: OnDetail; onCreate: () => void } {
+  const onDetail = useCallback<OnDetail>(
+    (id, opener) => {
+      if (!navigateToDetail) {
+        navigation.navigate('PracticeDetail', { practiceId: id });
+        return;
+      }
+      if (detailOpenerRef) detailOpenerRef.current = opener?.current ?? null;
+      navigateToDetail(id);
+    },
+    [navigation, navigateToDetail, detailOpenerRef],
   );
   const onCreate = useCallback(
     () => (navigateToCreate ? navigateToCreate() : navigation.navigate('CreatePractice')),
@@ -492,7 +516,7 @@ interface CatalogHeaderProps {
   onMode: (category: string | null) => void;
   onCreate: () => void;
   recents: readonly RecentPractice[];
-  onDetail: (id: number) => void;
+  onDetail: OnDetail;
 }
 
 /** Non-scrolling-away header for the SectionList (kept as an element so the
@@ -511,7 +535,7 @@ const CatalogHeader = (props: CatalogHeaderProps): React.JSX.Element => (
 
 interface RecentlyUsedProps {
   recents: readonly RecentPractice[];
-  onDetail: (id: number) => void;
+  onDetail: OnDetail;
 }
 
 /** A quick "Recently used" shortcut above the full catalog; hidden when empty. */
@@ -529,10 +553,11 @@ const RecentlyUsed = ({ recents, onDetail }: RecentlyUsedProps): React.JSX.Eleme
 
 interface RecentRowProps {
   recent: RecentPractice;
-  onDetail: (id: number) => void;
+  onDetail: OnDetail;
 }
 
 const RecentRow = ({ recent, onDetail }: RecentRowProps): React.JSX.Element => {
+  const rowRef = useRef<View>(null);
   const mode = resolvePickableMode(recent.mode);
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const rounded = Math.round(recent.durationMinutes);
@@ -540,7 +565,8 @@ const RecentRow = ({ recent, onDetail }: RecentRowProps): React.JSX.Element => {
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={`${recent.name}. ${label}, ${rounded} minutes.`}
-      onPress={() => onDetail(recent.id)}
+      ref={rowRef}
+      onPress={() => onDetail(recent.id, rowRef)}
       style={[styles.row, styles.recentRow]}
       testID={`practice-catalog-recent-row-${recent.id}`}
     >
@@ -727,7 +753,7 @@ const FilterChip = ({ label, selected, onPress, testID }: FilterChipProps): Reac
 
 interface PracticeRowProps {
   practice: PracticeItem;
-  onDetail: (id: number) => void;
+  onDetail: OnDetail;
   onUse: (practice: PracticeItem) => void;
 }
 
@@ -750,6 +776,7 @@ const PracticeRowComponent = ({
   onDetail,
   onUse,
 }: PracticeRowProps): React.JSX.Element => {
+  const rowRef = useRef<View>(null);
   const mode = resolvePickableMode(practice.mode);
   const { label, icon } = MODE_PRESENTATION[mode] ?? FALLBACK_PRESENTATION;
   const rounded = Math.round(practice.default_duration_minutes);
@@ -762,7 +789,8 @@ const PracticeRowComponent = ({
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={a11yLabel}
-        onPress={() => onDetail(practice.id)}
+        ref={rowRef}
+        onPress={() => onDetail(practice.id, rowRef)}
         style={styles.row}
         testID={`practice-catalog-row-${practice.id}`}
       >

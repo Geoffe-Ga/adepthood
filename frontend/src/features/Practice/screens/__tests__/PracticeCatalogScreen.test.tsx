@@ -6,6 +6,9 @@ import { Flower2, Hourglass, Shuffle } from 'lucide-react-native';
 import React from 'react';
 import { Alert, StyleSheet, Text } from 'react-native';
 
+// jest.mock calls below are hoisted above this import.
+import PracticeCatalogList from '../PracticeCatalogList';
+
 import type { PracticeItem, UserPractice } from '@/api';
 import { surface } from '@/design/tokens';
 import { FALLBACK_MODE_ICON } from '@/features/Practice/components/ModePicker';
@@ -689,5 +692,33 @@ describe('PracticeCatalogScreen — cross-stage copy', () => {
     );
     expect(mockPracticesCreate).not.toHaveBeenCalled();
     await waitFor(() => expect(mockNavigation.goBack).toHaveBeenCalledTimes(1));
+  });
+});
+
+// #2451: the Practice tab presents details in place and hands focus back to the
+// row that asked; the list records that row before it asks.
+describe('PracticeCatalogList — detail opener', () => {
+  it('records the tapped row as the opener, then asks for its details by id alone', async () => {
+    const stale = { focus: jest.fn() };
+    const detailOpenerRef: React.RefObject<{ focus: () => void } | null> = { current: stale };
+    const navigateToDetail = jest.fn<(id: number) => void>();
+    const view = render(
+      <PracticeCatalogList
+        embedded
+        initialStage={1}
+        loadPractices={async () => [presetA, presetB, myDraft]}
+        navigateToDetail={navigateToDetail}
+        detailOpenerRef={detailOpenerRef}
+      />,
+    );
+    await waitForLoad();
+
+    fireEvent.press(view.getByTestId('practice-catalog-row-2'));
+
+    expect(navigateToDetail).toHaveBeenCalledTimes(1);
+    expect(navigateToDetail).toHaveBeenCalledWith(2);
+    expect(detailOpenerRef.current).not.toBe(stale);
+    expect(detailOpenerRef.current).not.toBeNull();
+    expect(stale.focus).not.toHaveBeenCalled();
   });
 });

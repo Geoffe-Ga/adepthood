@@ -97,11 +97,16 @@ import LogPracticeSessionSheet from '@/features/Practice/components/LogPracticeS
 import PracticeCatalogSwitcher, {
   type PracticeTab,
 } from '@/features/Practice/components/PracticeCatalogSwitcher';
+import PracticeDetailSheet from '@/features/Practice/components/PracticeDetailSheet';
 import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
 import PracticeIdentityHeader from '@/features/Practice/components/PracticeIdentityHeader';
 import QuickLaunchWriting from '@/features/Practice/components/QuickLaunchWriting';
 import type { RitualState } from '@/features/Practice/engine/types';
 import { useActivePractice } from '@/features/Practice/hooks/useActivePractice';
+import {
+  useDetailOverlay,
+  type DetailOverlayState,
+} from '@/features/Practice/hooks/useDetailOverlay';
 import { useWeeklyProgress } from '@/features/Practice/hooks/useWeeklyProgress';
 import PracticeCatalogList from '@/features/Practice/screens/PracticeCatalogList';
 import { useThresholdFade } from '@/hooks/useThresholdFade';
@@ -230,6 +235,7 @@ interface PracticeScreenModel extends PracticeTabsState {
   openLogSheet: () => void;
   closeLogSheet: () => void;
   quickLaunch: QuickLaunchState;
+  detail: DetailOverlayState;
 }
 
 interface LogSheetState {
@@ -263,6 +269,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   const sessionRef = useRef<ActiveRitualSessionHandle>(null);
   const insets = useSafeAreaInsets();
   const tabs = usePracticeTabs(active.refresh);
+  const detail = useDetailOverlay(tabs.tab, tabs.onCatalogActivated);
   const logSheet = useLogSheet();
   const quickLaunch = useQuickLaunch(active, userTimezone);
   // Mirror of the engine status, lifted to screen level so the tab switcher
@@ -296,6 +303,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
     setStatus,
     showSwitcher: status !== 'running' && status !== 'paused',
     quickLaunch,
+    detail,
   };
 }
 
@@ -312,6 +320,8 @@ const PracticeScreen = (): React.JSX.Element => {
               embedded
               initialStage={s.stageNumber}
               onActivated={s.onCatalogActivated}
+              navigateToDetail={s.detail.openDetail}
+              detailOpenerRef={s.detail.openerRef}
             />
           </View>
         ) : (
@@ -346,9 +356,10 @@ const PracticeScreen = (): React.JSX.Element => {
 };
 
 /**
- * The two things that float above the player: the header drawer and the
- * manual-log sheet it opens. Grouped so the screen's own render stays a
- * readable description of the body rather than a list of every layer.
+ * The things that float above the player: the header drawer, the manual-log
+ * sheet it opens, and the embedded catalog's in-place practice details.
+ * Grouped so the screen's own render stays a readable description of the body
+ * rather than a list of every layer.
  */
 const PracticeScreenOverlays = ({ model }: { model: PracticeScreenModel }): React.JSX.Element => (
   <>
@@ -362,6 +373,13 @@ const PracticeScreenOverlays = ({ model }: { model: PracticeScreenModel }): Reac
       onLogSession={model.openLogSheet}
     />
     <LogSheetHost model={model} />
+    <PracticeDetailSheet
+      practiceId={model.detail.practiceId}
+      onClose={model.detail.closeDetail}
+      onAssigned={model.detail.onActivated}
+      onCustomizeCopy={model.detail.onCustomizeCopy}
+      restoreFocusTo={model.detail.openerRef}
+    />
   </>
 );
 
