@@ -30,10 +30,16 @@ const samplePractice = (overrides: Partial<PracticeItem> = {}): PracticeItem => 
 
 const mockPracticesGet = jest.fn<(id: number) => Promise<PracticeItem>>();
 const mockUserPracticesList = jest.fn<() => Promise<UserPractice[]>>();
+const mockUserPracticesCreate =
+  jest.fn<(payload: { practice_id: number; stage_number: number }) => Promise<UserPractice>>();
 
 jest.mock('@/api', () => ({
   practices: { get: (...args: [number]) => mockPracticesGet(...args) },
-  userPractices: { list: () => mockUserPracticesList() },
+  userPractices: {
+    list: () => mockUserPracticesList(),
+    create: (...args: [{ practice_id: number; stage_number: number }]) =>
+      mockUserPracticesCreate(...args),
+  },
 }));
 
 interface SheetHarness {
@@ -41,19 +47,27 @@ interface SheetHarness {
   restoreFocusTo?: React.RefObject<{ focus: () => void } | null>;
 }
 
+/** Each open gets its own session; here the practice id doubles as one. */
 function renderSheet({ practiceId, restoreFocusTo = { current: null } }: SheetHarness) {
   const onClose = jest.fn<() => void>();
+  const onAssigned = jest.fn<(session: number) => void>();
   const element = (id: number | null) => (
     <PracticeDetailSheet
       practiceId={id}
+      session={id ?? 0}
       onClose={onClose}
-      onAssigned={jest.fn()}
+      onAssigned={onAssigned}
       onCustomizeCopy={jest.fn()}
       restoreFocusTo={restoreFocusTo}
     />
   );
   const view = render(element(practiceId));
-  return { ...view, onClose, rerenderWith: (id: number | null) => view.rerender(element(id)) };
+  return {
+    ...view,
+    onClose,
+    onAssigned,
+    rerenderWith: (id: number | null) => view.rerender(element(id)),
+  };
 }
 
 interface TestNode {
@@ -174,6 +188,26 @@ describe('PracticeDetailSheet', () => {
 
     rerenderWith(null);
     expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a success with the session of the open that started it', async () => {
+    mockUserPracticesCreate.mockResolvedValue({
+      id: 9,
+      practice_id: 4,
+      stage_number: 1,
+      start_date: '2026-04-12',
+      end_date: null,
+    });
+    const { getByTestId, onAssigned } = renderSheet({ practiceId: 4 });
+    await flush();
+    fireEvent.press(getByTestId('practice-detail-use-for-stage'));
+
+    await act(async () => {
+      fireEvent.press(getByTestId('practice-detail-stage-pick-1'));
+    });
+
+    expect(onAssigned).toHaveBeenCalledTimes(1);
+    expect(onAssigned).toHaveBeenCalledWith(4);
   });
 
   it('starts every open fresh, keyed on the practice', async () => {

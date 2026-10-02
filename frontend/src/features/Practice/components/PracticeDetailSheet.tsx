@@ -23,7 +23,7 @@
  * The sheet is not a route, so the browser's back button leaves the tab rather
  * than closing it; that is an accepted limitation, not an oversight.
  */
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { decorativeHidden } from '@/components/a11yHidden';
@@ -41,6 +41,7 @@ import {
   PracticeDetailDialogs,
   usePracticeDetailController,
   type CustomizeCopyParams,
+  type PracticeDetailController,
 } from '@/features/Practice/screens/PracticeDetailScreen';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
@@ -54,10 +55,15 @@ export const CLOSE_DETAIL_LABEL = 'Close practice details';
 export interface PracticeDetailSheetProps {
   /** The practice on show, or ``null`` while the sheet is closed. */
   practiceId: number | null;
+  /**
+   * Which open this is. A success reports it back, so the host can tell a
+   * request that outlived its sheet from one on the sheet now on show.
+   */
+  session: number;
   /** Declines the details: the X, the scrim, Escape, Android back. */
   onClose: () => void;
-  /** Runs after an assign or a cross-stage copy succeeds from the sheet. */
-  onAssigned: () => void;
+  /** Runs with ``session`` after an assign or a cross-stage copy succeeds. */
+  onAssigned: (session: number) => void;
   /** "Duplicate & edit": the host closes the sheet and opens the wizard. */
   onCustomizeCopy: (params: CustomizeCopyParams) => void;
   /** The control that opened the sheet, given focus back when it closes. */
@@ -66,6 +72,7 @@ export interface PracticeDetailSheetProps {
 
 export default function PracticeDetailSheet({
   practiceId,
+  session,
   onClose,
   onAssigned,
   onCustomizeCopy,
@@ -73,12 +80,13 @@ export default function PracticeDetailSheet({
 }: PracticeDetailSheetProps): React.JSX.Element | null {
   useRestoreFocusOnClose(practiceId !== null, restoreFocusTo);
   if (practiceId === null) return null;
-  // Keyed on the practice so every open starts fresh: no stale practice,
-  // action error, or open picker carries over from the last one.
+  // Keyed on the open so every open starts fresh: no stale practice, action
+  // error, or open picker carries over from the last one.
   return (
     <SheetBody
-      key={practiceId}
+      key={session}
       practiceId={practiceId}
+      session={session}
       onClose={onClose}
       onAssigned={onAssigned}
       onCustomizeCopy={onCustomizeCopy}
@@ -90,15 +98,35 @@ type SheetBodyProps = Omit<PracticeDetailSheetProps, 'practiceId' | 'restoreFocu
   practiceId: number;
 };
 
+/**
+ * The shared detail controller, with its success bound to this open: a
+ * request this sheet started reports the session it came from, however long
+ * it takes and whatever is on show when it lands.
+ */
+function useSessionController({
+  practiceId,
+  session,
+  onAssigned,
+  onCustomizeCopy,
+}: Omit<SheetBodyProps, 'onClose'>): PracticeDetailController {
+  const onSessionAssigned = useCallback(() => onAssigned(session), [onAssigned, session]);
+  return usePracticeDetailController({
+    practiceId,
+    onAssigned: onSessionAssigned,
+    onCustomizeCopy,
+  });
+}
+
 function SheetBody({
   practiceId,
+  session,
   onClose,
   onAssigned,
   onCustomizeCopy,
 }: SheetBodyProps): React.JSX.Element {
   const reduced = useReducedMotion();
   const { height } = useWindowDimensions();
-  const controller = usePracticeDetailController({ practiceId, onAssigned, onCustomizeCopy });
+  const controller = useSessionController({ practiceId, session, onAssigned, onCustomizeCopy });
   return (
     <>
       <Modal

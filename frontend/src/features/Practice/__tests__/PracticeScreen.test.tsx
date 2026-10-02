@@ -1549,6 +1549,98 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     expect(view.queryByTestId('practice-detail-action-error')).toBeNull();
   });
 
+  // A request outlives the sheet that started it: the X, the scrim and
+  // onRequestClose stay live while it is pending, so the person can leave and
+  // open another practice before it lands. Its success is real on the server,
+  // so the player re-reads quietly -- but it must not close the sheet now on
+  // show, nor flip the tab out from under it.
+  const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+    let resolve: (value: T) => void = () => undefined;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  };
+
+  const twoPracticeCatalog = (): void => {
+    mockPracticesList.mockResolvedValue([
+      samplePractice(),
+      samplePractice({ id: 2, name: 'Body Scan' }),
+    ]);
+    mockPracticesGet.mockImplementation((id) =>
+      Promise.resolve(samplePractice({ id, name: id === 2 ? 'Body Scan' : 'Breath Awareness' })),
+    );
+  };
+
+  const expectSecondSheetUndisturbed = (view: ScreenView, listCalls: number): void => {
+    expect(
+      within(view.getByTestId('practice-detail-overlay')).getByTestId('practice-detail-name'),
+    ).toHaveTextContent('Body Scan');
+    expectCatalogTabSelected(view);
+    // The stale write did land, so the player's selection is re-read once.
+    expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1);
+    expect(mockPopToTop).not.toHaveBeenCalled();
+  };
+
+  it('an assign that lands after its sheet was closed leaves the next sheet open', async () => {
+    twoPracticeCatalog();
+    const pending = deferred<UserPractice>();
+    mockUserPracticesCreate.mockReturnValueOnce(pending.promise);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    // No programme anchor: "Use for stage" opens the picker; picking stage 1
+    // (the home stage) assigns, and the request is left pending.
+    fireEvent.press(view.getByTestId('practice-detail-use-for-stage'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-stage-pick-1'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
+    });
+    await openOverlayOnRow(view, 2);
+    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    const listCalls = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      pending.resolve(sampleUserPractice());
+      await pending.promise;
+    });
+
+    await waitFor(() => expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1));
+    expectSecondSheetUndisturbed(view, listCalls);
+  });
+
+  it('a cross-stage copy that lands after its sheet was closed leaves the next sheet open', async () => {
+    twoPracticeCatalog();
+    setProgramStageAnchor(STAGE_TWO_DAYS_AGO);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ stage_number: 2 })]);
+    const pending = deferred<PracticeItem>();
+    mockPracticesCreate.mockReturnValueOnce(pending.promise);
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-copy-dialog-confirm'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
+    });
+    await openOverlayOnRow(view, 2);
+    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    const listCalls = mockUserPracticesList.mock.calls.length;
+
+    await act(async () => {
+      pending.resolve(samplePractice({ id: 3, stage_number: 2, approved: false }));
+      await pending.promise;
+    });
+
+    await waitFor(() => expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1));
+    expect(mockUserPracticesCreate).toHaveBeenCalledWith({ practice_id: 3, stage_number: 2 });
+    expectSecondSheetUndisturbed(view, listCalls);
+  });
+
   it('flipping to the Practice tab while the overlay is open closes it for good', async () => {
     const view = await openEmbeddedCatalog();
     await openOverlayOnRow(view, 1);

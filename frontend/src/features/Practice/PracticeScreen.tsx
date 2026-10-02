@@ -281,7 +281,7 @@ function usePracticeScreenModel(): PracticeScreenModel {
   const sessionRef = useRef<ActiveRitualSessionHandle>(null);
   const insets = useSafeAreaInsets();
   const tabs = usePracticeTabs(active.refresh);
-  const detail = useDetailOverlay(tabs.tab, tabs.onCatalogActivated);
+  const detail = useDetailOverlay(tabs.tab, tabs.onCatalogActivated, active.refresh);
   const logSheet = useLogSheet();
   const quickLaunch = useQuickLaunch(active, userTimezone);
   // Mirror of the engine status, lifted to screen level so the tab switcher
@@ -453,6 +453,7 @@ const PracticeScreenOverlays = ({ model }: { model: PracticeScreenModel }): Reac
     <LogSheetHost model={model} />
     <PracticeDetailSheet
       practiceId={model.detail.practiceId}
+      session={model.detail.session}
       onClose={model.detail.closeDetail}
       onAssigned={model.detail.onActivated}
       onCustomizeCopy={model.detail.onCustomizeCopy}

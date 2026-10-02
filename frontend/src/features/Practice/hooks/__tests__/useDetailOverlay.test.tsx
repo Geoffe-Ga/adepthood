@@ -27,13 +27,14 @@ const PREFILL: CustomizeCopyParams = {
 
 function renderOverlay(initialTab: PracticeTab = 'catalog') {
   const onCatalogActivated = jest.fn<() => void>();
+  const refresh = jest.fn<(opts?: { silent?: boolean }) => Promise<void>>(() => Promise.resolve());
   const view = renderHook(
-    ({ tab }: { tab: PracticeTab }) => useDetailOverlay(tab, onCatalogActivated),
+    ({ tab }: { tab: PracticeTab }) => useDetailOverlay(tab, onCatalogActivated, refresh),
     {
       initialProps: { tab: initialTab },
     },
   );
-  return { ...view, onCatalogActivated };
+  return { ...view, onCatalogActivated, refresh };
 }
 
 describe('useDetailOverlay', () => {
@@ -56,16 +57,57 @@ describe('useDetailOverlay', () => {
   });
 
   it('an activation closes the overlay, forgets the opener, and flips exactly once', () => {
-    const { result, onCatalogActivated } = renderOverlay();
+    const { result, onCatalogActivated, refresh } = renderOverlay();
     result.current.openerRef.current = { focus: jest.fn() };
     act(() => result.current.openDetail(7));
 
-    act(() => result.current.onActivated());
+    act(() => result.current.onActivated(result.current.session));
 
     expect(result.current.practiceId).toBeNull();
     expect(result.current.openerRef.current).toBeNull();
     expect(onCatalogActivated).toHaveBeenCalledTimes(1);
+    // The flip does its own refresh; the overlay adds none.
+    expect(refresh).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('numbers every open afresh, the same practice included', () => {
+    const { result } = renderOverlay();
+    act(() => result.current.openDetail(7));
+    const first = result.current.session;
+    act(() => result.current.closeDetail());
+    act(() => result.current.openDetail(7));
+    expect(result.current.session).not.toBe(first);
+  });
+
+  it('a success from a closed session only re-reads, leaving the open sheet and tab alone', () => {
+    const { result, onCatalogActivated, refresh } = renderOverlay();
+    act(() => result.current.openDetail(1));
+    const stale = result.current.session;
+    act(() => result.current.closeDetail());
+    act(() => result.current.openDetail(2));
+    const opener = { focus: jest.fn() };
+    result.current.openerRef.current = opener;
+
+    act(() => result.current.onActivated(stale));
+
+    expect(result.current.practiceId).toBe(2);
+    expect(result.current.openerRef.current).toBe(opener);
+    expect(onCatalogActivated).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it('a success that lands after the overlay closed only re-reads', () => {
+    const { result, onCatalogActivated, refresh } = renderOverlay();
+    act(() => result.current.openDetail(1));
+    const session = result.current.session;
+    act(() => result.current.closeDetail());
+
+    act(() => result.current.onActivated(session));
+
+    expect(onCatalogActivated).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith({ silent: true });
   });
 
   it('"Duplicate & edit" closes the overlay, forgets the opener, and opens the wizard', () => {
