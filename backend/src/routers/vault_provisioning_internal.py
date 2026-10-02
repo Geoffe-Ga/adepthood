@@ -52,6 +52,7 @@ class _FleetAlertKind(StrEnum):
     ORPHAN_RESOURCE = "orphan_resource"
     STUCK_DELETION = "stuck_deletion"
     CONTINUOUS_RUNNING = "continuous_running"
+    INCOMPLETE_CREATE = "incomplete_create"
     MONTHLY_BUDGET_DEPARTURE = "monthly_budget_departure"
 
 
