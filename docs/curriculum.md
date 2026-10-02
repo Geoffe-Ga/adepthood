@@ -79,16 +79,17 @@ per-phase manifestation copy are pulled from two different sources:
   supersession is a one-line JSON change; there is no exception table in the
   tests.
 - `stage_2_free_will_source` — Stage 2's `relationship_to_free_will`
-  ("Pleasure Seeker") and `free_will_description` follow the vendored course
-  at the `9d0f896` pin, not the stale value carried over from
-  `backup/2.PURPLE.md` (issue #2915). The archetype is the course's own name in
+  ("Pleasure Seeker") follows the vendored course at the `9d0f896` pin, not
+  the stale value carried over from `backup/2.PURPLE.md` (issue #2915). The
+  archetype is the course's own name in
   `markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`
-  and in the `aptitude-stages.md` heading; the description is paraphrased from
-  that chapter. Since #2664 vendored `APTITUDE Complete Map.csv`, the
-  database carries the CSV's own description sentence instead (the seeder
-  reads the seven fields from the generated artifact, see "Consumers"); this
-  dataset's copy of the seven fields is an unread mirror until #2666 retires
-  it, and the full comparison against the CSV waits on #2667.
+  and in the `aptitude-stages.md` heading. Its `free_will_description` is the
+  vendored `APTITUDE Complete Map.csv` sentence carried by the generated
+  `stage_correspondence.json` (#2664), which replaced the earlier chapter
+  paraphrase (dataset 2.2.1). The database reads the seven fields from that
+  artifact (see "Consumers"); this dataset's copy of them is held equal to it,
+  field by field for every stage, by `backend/tests/test_stage_correspondence.py`
+  (#2667) until #2666 retires it.
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
