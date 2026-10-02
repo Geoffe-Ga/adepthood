@@ -59,13 +59,13 @@ const STATUS_COPY: Record<Exclude<CancelStatus, 'pending'>, { title: string; bod
     title: 'Cancel Link Invalid',
     body:
       'That cancel link is missing or malformed. If you did not request a reset, you can ignore ' +
-      'the original email -- nothing happens until the link is clicked.',
+      'the original email — nothing happens until the link is clicked.',
   },
   error: {
     title: 'Could Not Reach Server',
     body:
       'We could not confirm the cancellation. Check your connection and tap the link again, or ' +
-      'ignore the original email -- the link expires in 30 minutes either way.',
+      'ignore the original email — the link expires in 30 minutes either way.',
   },
   success: {
     title: 'Reset Cancelled',
