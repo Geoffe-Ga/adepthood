@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 
 from domain.stage_keys import STAGE_KEYS
 
-_BASE_REVISION = "c4e6a8b0d2f1"  # pragma: allowlist secret
+_BASE_REVISION = "d6f1a8c4e2b9"  # pragma: allowlist secret
 _REVISION = "d7f9b1c3e5a2"  # pragma: allowlist secret
 _MIGRATION_FILE = (
     Path(__file__).parent.parent
@@ -145,7 +145,7 @@ def _load_migration() -> ModuleType:
     return module
 
 
-def test_the_revision_chains_from_the_generation_key_head(migration_config: Config) -> None:
+def test_the_revision_chains_from_the_vault_recovery_head(migration_config: Config) -> None:
     """One linear chain: this revision sits on the head it was written against."""
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)

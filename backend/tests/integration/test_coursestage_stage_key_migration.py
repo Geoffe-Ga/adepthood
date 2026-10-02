@@ -29,7 +29,7 @@ _ALEMBIC_INI = _BACKEND_ROOT / "alembic.ini"
 _MIGRATIONS = _BACKEND_ROOT / "migrations"
 _DATABASE_URL_ENV = "DATABASE_URL"
 
-_PARENT_REVISION = "c4e6a8b0d2f1"  # pragma: allowlist secret
+_PARENT_REVISION = "d6f1a8c4e2b9"  # pragma: allowlist secret
 _KEY_INDEX = "ix_coursestage_stage_key_unique"
 _NUMBER_INDEX = "ix_coursestage_stage_number_unique"
 _NEW_COLUMNS = frozenset(

@@ -16,6 +16,7 @@ survives anonymised, and why, is declared once in
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends
@@ -27,6 +28,7 @@ from dependencies.creek_vault import account_has_configured_vault
 from error_responses import build_router
 from errors import bad_request
 from models.user import User
+from models.vault_activation import VaultActivationState
 from schemas.account_deletion import (
     AccountDeletionReceipt,
     AccountDeletionRequest,
@@ -45,6 +47,7 @@ from services.creek_provisioning import (
     request_vault_teardown,
 )
 from services.creek_provisioning_client import (
+    FAILURE_PROVIDER_REJECTED,
     CreekProvisioningClient,
     get_creek_provisioning_client,
 )
@@ -124,12 +127,53 @@ async def _resolve_account_vault_disposition(
     """Resolve external erasure truth before the local sweep removes its rows."""
     activation = await load_vault_activation(session, user_id)
     if activation is not None:
+        # Account erasure owns this teardown. Clear the managed-recovery marker
+        # before dialing Creek so a concurrent poll or process restart can
+        # never replace the allocation being erased with a fresh generation.
+        activation.state = VaultActivationState.DELETING.value
+        activation.recovery_requested_at = None
+        activation.updated_at = datetime.now(UTC)
+        session.add(activation)
+        await session.commit()
         teardown = await request_vault_teardown(session, activation, provisioning)
         if teardown is not None:
             return AccountVaultDisposition.provisioned(teardown.state)
     if await account_has_configured_vault(session, user_id):
         return AccountVaultDisposition.manual()
     return AccountVaultDisposition.unconfigured()
+
+
+async def _release_vault_after_failed_account_sweep(
+    session: AsyncSession,
+    user_id: int,
+) -> None:
+    """Leave a surviving account with an explicit, safe vault next step.
+
+    Account erasure clears the managed-recovery marker before dialing Creek so
+    neither a concurrent request nor restart can replace an allocation the user
+    is deleting. If the later local sweep fails, that durable erasure claim must
+    not become a dead end. A known Creek job returns to the terminal recovery
+    choice, whose first action is another idempotent confirmed delete; a row that
+    never acquired an upstream job can simply be removed for a clean restart.
+    """
+    await session.rollback()
+    activation = await load_vault_activation(session, user_id)
+    if (
+        activation is None
+        or activation.state != VaultActivationState.DELETING.value
+        or activation.recovery_requested_at is not None
+    ):
+        await session.commit()
+        return
+    if activation.creek_job_id is None:
+        await session.delete(activation)
+    else:
+        activation.state = VaultActivationState.FAILED.value
+        activation.retryable = False
+        activation.failure_reason = FAILURE_PROVIDER_REJECTED
+        activation.updated_at = datetime.now(UTC)
+        session.add(activation)
+    await session.commit()
 
 
 @router.delete("/me", response_model=AccountDeletionReceipt)
@@ -167,14 +211,25 @@ async def delete_my_account(
     if user_id is None:  # pragma: no cover - a persisted row always has an id
         raise bad_request("account_not_persisted")
     async with hold_account(session, user_id, on_unavailable="proceed"):
-        vault_disposition = await _resolve_account_vault_disposition(
-            session,
-            user_id,
-            provisioning,
-        )
-        receipt = await delete_account(
-            session,
-            Account(user_id=user_id, email=current_user.email),
-            vault_disposition=vault_disposition,
-        )
+        try:
+            vault_disposition = await _resolve_account_vault_disposition(
+                session,
+                user_id,
+                provisioning,
+            )
+            receipt = await delete_account(
+                session,
+                Account(user_id=user_id, email=current_user.email),
+                vault_disposition=vault_disposition,
+            )
+        except Exception:
+            try:
+                await _release_vault_after_failed_account_sweep(session, user_id)
+            except Exception:
+                await session.rollback()
+                logger.exception(
+                    "account_deletion_vault_release_failed",
+                    extra={"user_id": user_id},
+                )
+            raise
     return _to_receipt(receipt)

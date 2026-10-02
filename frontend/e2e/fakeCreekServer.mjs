@@ -12,6 +12,7 @@ const CALLBACK_FILE = process.env.FAKE_CREEK_CALLBACK_FILE;
 const CLIENT_VAULT_URL = 'https://1.1.1.1';
 const CLIENT_CREDENTIAL = 'e2e-provisioned-vault-credential'; // pragma: allowlist secret
 const jobs = new Map();
+let activationCount = 0;
 
 function requiredFile(path, name) {
   if (!path) throw new Error(`${name} is unset`);
@@ -42,7 +43,7 @@ function jobResponse(job) {
     state: job.state,
     attempts: job.attempts,
     retryable: false,
-    failure_reason: null,
+    failure_reason: job.state === 'failed' ? 'provider_rejected' : null,
     created_at: job.createdAt,
     updated_at: new Date().toISOString(),
     attested_confidential: false,
@@ -83,10 +84,11 @@ async function activate(request, response) {
     jobId: `job-${randomUUID()}`,
     activationId: body.activation_id,
     consumerIdentity: body.consumer_identity,
-    state: 'pending',
+    state: activationCount === 0 ? 'failed' : 'pending',
     attempts: 1,
     createdAt: now,
   };
+  if (!existing) activationCount += 1;
   jobs.set(job.jobId, job);
   send(response, 202, jobResponse(job));
 }
@@ -107,6 +109,10 @@ async function handleJob(request, response, pathname) {
       job.state = 'ready';
     }
     return send(response, 200, jobResponse(job));
+  }
+  if (request.method === 'DELETE') {
+    job.state = 'deleted';
+    return send(response, 202, jobResponse(job));
   }
   return send(response, 405, { code: 'invalid_request' });
 }

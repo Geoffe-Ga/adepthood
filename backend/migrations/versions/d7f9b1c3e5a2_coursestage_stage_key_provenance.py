@@ -1,7 +1,7 @@
 """Add coursestage.stage_key and stage-correspondence provenance (#2665).
 
 Revision ID: d7f9b1c3e5a2
-Revises: c4e6a8b0d2f1
+Revises: d6f1a8c4e2b9
 Create Date: 2026-10-02 00:00:00.000000
 
 ``CourseStage`` becomes the canonical stage-correspondence table (epic #2663)
@@ -33,7 +33,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d7f9b1c3e5a2"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "c4e6a8b0d2f1"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "d6f1a8c4e2b9"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

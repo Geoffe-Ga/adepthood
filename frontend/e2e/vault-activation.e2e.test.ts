@@ -40,6 +40,7 @@ describe('provider-managed activation against a fake Creek v2 control plane', ()
       active: false,
       state: 'inactive',
       new_activation_available: true,
+      recovery_available: false,
       retryable: false,
       failure_reason: null,
       credential_received: false,
@@ -48,11 +49,23 @@ describe('provider-managed activation against a fake Creek v2 control plane', ()
     });
   });
 
-  it('progresses directly through pending and provisioning without a ceremony', async () => {
+  it('fails closed, confirms cleanup, and starts a fresh generation', async () => {
     const started = await vaultActivation.activate();
     expect(started).toMatchObject({
       active: true,
+      state: 'failed',
+      recovery_available: true,
+      retryable: false,
+      failure_reason: 'provider_rejected',
+      credential_received: false,
+      custody_mode: null,
+    });
+
+    const recovered = await vaultActivation.recover();
+    expect(recovered).toMatchObject({
+      active: true,
       state: 'pending',
+      recovery_available: false,
       credential_received: false,
       custody_mode: null,
     });
@@ -75,6 +88,6 @@ describe('provider-managed activation against a fake Creek v2 control plane', ()
     });
     expect(Object.keys(ready)).not.toContain('passphrase');
     expect(Object.keys(ready)).not.toContain('recovery_key');
-    expect(Object.keys(vaultActivation)).toEqual(['status', 'activate', 'retry']);
+    expect(Object.keys(vaultActivation)).toEqual(['status', 'activate', 'retry', 'recover']);
   });
 });
