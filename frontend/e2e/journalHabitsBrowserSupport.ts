@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
 import { readBrowserLaneState } from './browserState';
+import { runBackendModule } from './laneDatabase';
 import { BACKEND_DIR, pythonExecutable, readLaneState } from './laneState';
 import { freshLicenseKey } from './licenseKey';
 
@@ -74,6 +75,47 @@ export function setProgramAnchorDaysAgo(email: string, daysAgo: number): void {
   if (result.status !== 0) {
     throw new Error(`program anchor arrange failed: ${result.stderr || result.stdout}`);
   }
+}
+
+/** The out-of-band module that arranges and reports an account's program anchor. */
+const PROGRAM_ANCHOR_MODULE = 'tests.e2e.program_anchor';
+
+/** An account's stage-progress row, as `tests.e2e.program_anchor` reports it. */
+export interface ProgramProgressRow {
+  user_id: number;
+  current_stage: number;
+  completed_stages: number[];
+  cycle_number: number;
+  highest_stage_reached: number;
+  program_started_at: string;
+  stage_started_at: string;
+  /** Element i is cycle i + 1's program start; null where it is not on record. */
+  past_cycle_anchors: Array<string | null>;
+}
+
+/** Read an account's stage-progress row straight from the lane database, changing nothing. */
+export function showProgramProgress(email: string): ProgramProgressRow {
+  return JSON.parse(
+    runBackendModule(PROGRAM_ANCHOR_MODULE, ['show', '--email', email]),
+  ) as ProgramProgressRow;
+}
+
+/**
+ * Null past cycle `cycle`'s retained anchor, standing up the state a begin-again
+ * from before #2894 left: the cycle happened, but when it began is not on record.
+ * Begin-again now always records the anchor, so no HTTP call can reach this
+ * state; the module refuses the live cycle and an anchor already forgotten.
+ */
+export function forgetPastCycleAnchor(email: string, cycle: number): ProgramProgressRow {
+  return JSON.parse(
+    runBackendModule(PROGRAM_ANCHOR_MODULE, [
+      'forget-past-anchor',
+      '--email',
+      email,
+      '--cycle',
+      String(cycle),
+    ]),
+  ) as ProgramProgressRow;
 }
 
 /** A week into the program: the anchor the promoted-quote reflection journey needs. */

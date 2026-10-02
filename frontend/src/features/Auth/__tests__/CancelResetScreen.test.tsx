@@ -64,6 +64,25 @@ describe('CancelResetScreen', () => {
     expect(await findByText('Could Not Reach Server')).toBeTruthy();
   });
 
+  it('renders the invalid-link body with an em dash, never an ASCII double hyphen (#2823)', () => {
+    const { getByText, queryByText } = render(<CancelResetScreen navigation={navigation} />);
+    expect(
+      getByText(/the original email — nothing happens until the link is clicked\./),
+    ).toBeTruthy();
+    expect(queryByText(/ -- /)).toBeNull();
+  });
+
+  it('renders the network-error body with an em dash, never an ASCII double hyphen (#2823)', async () => {
+    mockCancel.mockRejectedValueOnce(new TypeError('offline'));
+    const { findByText, queryByText } = render(
+      <CancelResetScreen navigation={navigation} route={{ params: { token: VALID_TOKEN } }} />,
+    );
+    expect(
+      await findByText(/ignore the original email — the link expires in 30 minutes either way\./),
+    ).toBeTruthy();
+    expect(queryByText(/ -- /)).toBeNull();
+  });
+
   it('routes back to login from any terminal state', async () => {
     mockCancel.mockResolvedValueOnce(undefined);
     const { findByTestId } = render(

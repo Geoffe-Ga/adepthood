@@ -254,8 +254,8 @@ MANIFEST: Mapping[str, ExportRule] = {
         "reporter's archive would turn a private note into a message.",
     ),
     "feedbacktriageevent": Omitted(
-        "The operator audit trail of a beta report -- status changes, duplicate "
-        "links, notes added -- recorded about the report by an administrator. "
+        "The operator audit trail of a beta report — status changes, duplicate "
+        "links, notes added — recorded about the report by an administrator. "
         "Content-free operational history, not writing the account did.",
     ),
     "generationslot": Omitted(

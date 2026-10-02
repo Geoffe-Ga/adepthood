@@ -1264,7 +1264,7 @@ def _build_reset_email(to_address: str, plaintext_token: str) -> EmailMessagePay
         f"Reset your password:  adepthood://reset-password?token={plaintext_token}\n"
         f"This wasn't me:       adepthood://cancel-reset?token={plaintext_token}\n\n"
         "Links expire in 30 minutes.  If you did not request this, you can\n"
-        "ignore this email -- nothing happens until you click a link."
+        "ignore this email — nothing happens until you click a link."
     )
     return EmailMessagePayload(
         to=to_address,

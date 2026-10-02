@@ -90,6 +90,18 @@ describe('ResetPasswordScreen', () => {
     expect(await findByText(/expired/i)).toBeTruthy();
   });
 
+  it('surfaces the expired-link fallback with an em dash, never an ASCII double hyphen (#2823)', async () => {
+    mockConfirm.mockRejectedValueOnce({ status: 400, detail: 'invalid_or_expired_token' });
+    const { getByLabelText, getByText, findByText, queryByText } = render(
+      <ResetPasswordScreen navigation={navigation} route={{ params: { token: VALID_TOKEN } }} />,
+    );
+    fireEvent.changeText(getByLabelText('New password'), 'longenough');
+    fireEvent.changeText(getByLabelText('Confirm new password'), 'longenough');
+    fireEvent.press(getByText('Set Password'));
+    expect(await findByText(/may have expired — request a new one and try again\./)).toBeTruthy();
+    expect(queryByText(/ -- /)).toBeNull();
+  });
+
   it('lets the user request a new link from the missing-token view', () => {
     const { getByTestId } = render(<ResetPasswordScreen navigation={navigation} />);
     fireEvent.press(getByTestId('reset-request-new'));

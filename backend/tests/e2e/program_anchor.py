@@ -5,8 +5,9 @@ Run it the way the frontend lane runs its launcher: from ``backend``, with
 
     python -m tests.e2e.program_anchor anchor --email <EMAIL> --days-ago <N>
     python -m tests.e2e.program_anchor show --email <EMAIL>
+    python -m tests.e2e.program_anchor forget-past-anchor --email <EMAIL> --cycle <K>
 
-Both subcommands write a single JSON object to stdout and exit 0.
+Each subcommand writes a single JSON object to stdout and exits 0.
 
 Why this exists at all: advancing a stage is not an action a person takes. The
 calendar laid over the 21x8 + 42x2 schedule decides which stage is on offer, and
@@ -42,6 +43,18 @@ else. ``current_stage``, ``completed_stages``, ``highest_stage_reached`` and
 move the record: that the record catches up on the next read is the assertion the
 spec is there to make.
 
+``forget-past-anchor`` writes one column, ``past_cycle_anchors``, and nothing
+else: it nulls cycle ``K``'s retained program start. Begin-again has recorded
+that anchor since issue #2894, so a loop made before then -- whose anchor was
+destroyed and cannot be rebuilt -- is no longer reachable over HTTP; this is
+the arrange that stands one up, so the reflection feed's "unrecorded" period
+can be driven end to end. It pads a short list with ``None`` exactly as
+``routers.stages._padded_anchors`` does and REBINDS the column (an in-place
+mutation of a JSON column is silently dropped on commit). It refuses an
+account with no progress row (it never creates one), a cycle below 1, the live
+cycle or any later one, and an anchor already not on record, because nulling a
+null is an arrange that changed nothing.
+
 Failure is loud everywhere. A missing ``DATABASE_URL``, an email no user holds, a
 ``show`` for a user with no progress row, or a negative ``--days-ago`` each raise
 and exit non-zero. There is no fallback and no silent success: an arrange step
@@ -76,6 +89,12 @@ ANCHOR_COMMAND = "anchor"
 
 #: Subcommand that reports the row and changes nothing.
 SHOW_COMMAND = "show"
+
+#: Subcommand that nulls one past cycle's retained anchor, as a pre-#2894 loop left it.
+FORGET_PAST_ANCHOR_COMMAND = "forget-past-anchor"
+
+#: The lowest cycle number that names a real cycle.
+FIRST_CYCLE = 1
 
 #: The JSON object each subcommand emits; values are ints, lists and strings.
 JsonObject = dict[str, object]
@@ -154,6 +173,7 @@ def _serialize(row: StageProgress) -> JsonObject:
         "highest_stage_reached": row.highest_stage_reached,
         "program_started_at": _require_anchor(row).isoformat(),
         "stage_started_at": row.stage_started_at.isoformat(),
+        "past_cycle_anchors": list(row.past_cycle_anchors or []),
     }
 
 
@@ -192,20 +212,86 @@ async def _anchor(session: AsyncSession, email: str, days_ago: int) -> JsonObjec
     return _serialize(row)
 
 
+async def _require_progress(session: AsyncSession, email: str) -> StageProgress:
+    """Return the stage-progress row of the user registered under ``email``.
+
+    Reads it and never provisions one: an arrange that created the row it was
+    asked to inspect or edit would hide the very state it was pointed at.
+
+    Raises:
+        ProgramAnchorError: No user holds that address, or it has no row yet.
+    """
+    user_id = await _load_user_id(session, email)
+    row = await get_user_progress(session, user_id)
+    if row is None:
+        msg = (
+            f"{email!r} has no stage progress row; it is created on first "
+            f"course access, or by the anchor subcommand"
+        )
+        raise ProgramAnchorError(msg)
+    return row
+
+
 async def _show(session: AsyncSession, email: str) -> JsonObject:
     """Report the user's stage progress without writing anything.
 
     Raises:
         ProgramAnchorError: The user has no stage-progress row yet.
     """
-    user_id = await _load_user_id(session, email)
-    row = await get_user_progress(session, user_id)
-    if row is None:
+    return _serialize(await _require_progress(session, email))
+
+
+def _padded_past_anchors(row: StageProgress) -> list[str | None]:
+    """The row's retained anchors as a NEW list, left-padded to one per past cycle.
+
+    Mirrors ``routers.stages._padded_anchors``: a list short of
+    ``cycle_number - 1`` elements is missing its leading, unrecoverable cycles.
+    """
+    retained = list(row.past_cycle_anchors or [])
+    missing = max(0, row.cycle_number - 1 - len(retained))
+    return [None] * missing + retained
+
+
+def _require_past_cycle(row: StageProgress, cycle: int) -> int:
+    """Return the list index of past cycle ``cycle``, refusing one that is not past.
+
+    Raises:
+        ProgramAnchorError: ``cycle`` is below 1, or is the live cycle or later.
+    """
+    if cycle < FIRST_CYCLE:
+        msg = f"--cycle must be {FIRST_CYCLE} or more; got {cycle}"
+        raise ProgramAnchorError(msg)
+    if cycle >= row.cycle_number:
         msg = (
-            f"{email!r} has no stage progress row to show; it is created on first "
-            f"course access, or by the anchor subcommand"
+            f"cycle {cycle} is not a past cycle: the account is living cycle "
+            f"{row.cycle_number}, whose anchor is live rather than retained"
         )
         raise ProgramAnchorError(msg)
+    return cycle - FIRST_CYCLE
+
+
+async def forget_past_anchor(session: AsyncSession, email: str, cycle: int) -> JsonObject:
+    """Null past cycle ``cycle``'s retained anchor, and report the row.
+
+    Stands up the state a begin-again from before issue #2894 left behind: the
+    cycle happened, but the instant it began is no longer on record. Only
+    ``past_cycle_anchors`` is written, and it is rebound to a new list.
+
+    Raises:
+        ProgramAnchorError: No such user or row, ``cycle`` is not a past cycle,
+            or its anchor is already not on record.
+    """
+    row = await _require_progress(session, _normalize_email(email))
+    index = _require_past_cycle(row, cycle)
+    anchors = _padded_past_anchors(row)
+    if anchors[index] is None:
+        msg = f"cycle {cycle}'s anchor is already not on record; nothing to forget"
+        raise ProgramAnchorError(msg)
+    anchors[index] = None
+    row.past_cycle_anchors = anchors
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
     return _serialize(row)
 
 
@@ -223,7 +309,7 @@ async def _in_session(operation: Operation) -> JsonObject:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Return the parser for the two subcommands the frontend lane invokes."""
+    """Return the parser for the subcommands the frontend lane invokes."""
     parser = argparse.ArgumentParser(
         description="Arrange the program anchor for the frontend e2e lane.",
     )
@@ -238,6 +324,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     show = subcommands.add_parser(SHOW_COMMAND, help="report the row, changing nothing")
     show.add_argument("--email", required=True, help="address the account signed up with")
+    forget = subcommands.add_parser(
+        FORGET_PAST_ANCHOR_COMMAND, help="null one past cycle's retained anchor"
+    )
+    forget.add_argument("--email", required=True, help="address the account signed up with")
+    forget.add_argument(
+        "--cycle",
+        required=True,
+        type=int,
+        help="the past cycle whose anchor to forget (1 is the first)",
+    )
     return parser
 
 
@@ -246,6 +342,8 @@ def _select_operation(args: argparse.Namespace) -> Operation:
     email = _normalize_email(str(args.email))
     if str(args.command) == ANCHOR_COMMAND:
         return partial(_anchor, email=email, days_ago=_require_days_ago(int(args.days_ago)))
+    if str(args.command) == FORGET_PAST_ANCHOR_COMMAND:
+        return partial(forget_past_anchor, email=email, cycle=int(args.cycle))
     return partial(_show, email=email)
 
 
