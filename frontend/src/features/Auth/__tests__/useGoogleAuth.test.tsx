@@ -100,6 +100,11 @@ const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 
 const promptAsync = jest.fn();
 let currentResponse: unknown = null;
+/**
+ * The provider's loaded request. Like ``useLoadedAuthRequest`` it is ``null``
+ * on the first render and only appears once the auth URL has been built.
+ */
+let currentRequest: typeof AUTH_REQUEST | null = null;
 let renderTick = 0;
 
 interface Deferred<T> {
@@ -190,9 +195,26 @@ function renderGoogleAuth() {
 
 type Harness = ReturnType<typeof renderGoogleAuth>;
 
-async function readyHarness(): Promise<Harness> {
+/** A later render with the provider's request swapped for ``request``. */
+async function deliverGoogleRequest(
+  harness: Harness,
+  request: typeof AUTH_REQUEST | null,
+): Promise<void> {
+  currentRequest = request;
+  renderTick += 1;
+  await act(async () => {
+    harness.rerender({ tick: renderTick });
+  });
+}
+
+/**
+ * Mount with no request yet, then let it load — the order the real provider
+ * follows — unless ``loadRequest`` is off.
+ */
+async function readyHarness({ loadRequest = true } = {}): Promise<Harness> {
   const harness = renderGoogleAuth();
   await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('anonymous'));
+  if (loadRequest) await deliverGoogleRequest(harness, AUTH_REQUEST);
   return harness;
 }
 
@@ -233,11 +255,12 @@ async function reachLicenseStep(harness: Harness): Promise<string | null> {
 beforeEach(() => {
   jest.clearAllMocks();
   currentResponse = null;
+  currentRequest = null;
   renderTick = 0;
   mockLoadToken.mockResolvedValue(null);
   promptAsync.mockResolvedValue({ type: 'dismiss' });
   mockUseAuthRequest.mockImplementation((config?: { shouldAutoExchangeCode?: boolean }) => [
-    AUTH_REQUEST,
+    currentRequest,
     providerResponse(config),
     promptAsync,
   ]);
@@ -733,17 +756,54 @@ describe('useGoogleAuth — native code exchange', () => {
   });
 
   it('surfaces the fallback copy when a code arrives before the request has loaded', async () => {
-    mockUseAuthRequest.mockImplementation((config?: { shouldAutoExchangeCode?: boolean }) => [
-      null,
-      providerResponse(config),
-      promptAsync,
-    ]);
-    const harness = await readyHarness();
+    const harness = await readyHarness({ loadRequest: false });
 
     await signInWithCode(harness);
 
     expect(harness.result.current.google.error).toBe(GOOGLE_FALLBACK_COPY);
     expect(mockExchangeCodeAsync).not.toHaveBeenCalled();
+  });
+
+  it('trades with the request that loaded after mount, not the empty first render', async () => {
+    mockExchangeCodeAsync.mockResolvedValueOnce({ idToken: ID_TOKEN });
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    // The provider really did mount with no request, as the real one does.
+    const [firstRequest] = mockUseAuthRequest.mock.results[0]?.value as [unknown];
+    expect(firstRequest).toBeNull();
+
+    await signInWithCode(harness);
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).toHaveBeenCalledWith(
+      {
+        clientId: AUTH_REQUEST.clientId,
+        redirectUri: AUTH_REQUEST.redirectUri,
+        code: AUTH_CODE,
+        extraParams: { code_verifier: AUTH_REQUEST.codeVerifier },
+      },
+      { tokenEndpoint: GOOGLE_TOKEN_ENDPOINT },
+    );
+  });
+
+  it('never spends the single-use code twice when the request is re-created mid-trade', async () => {
+    const pending = deferred<{ idToken: string }>();
+    mockExchangeCodeAsync.mockReturnValueOnce(pending.promise);
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    await signInWithCode(harness);
+
+    await deliverGoogleRequest(harness, { ...AUTH_REQUEST });
+    await flushMicrotasks();
+
+    expect(mockExchangeCodeAsync).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve({ idToken: ID_TOKEN });
+    });
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledWith({ id_token: ID_TOKEN, timezone: DEVICE_TIMEZONE });
   });
 
   it('never trades a code on web, where the redirect already carries the id token', async () => {
