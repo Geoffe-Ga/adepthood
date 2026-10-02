@@ -214,6 +214,13 @@ export async function openHabits(page: Page): Promise<void> {
   await expect(page.getByTestId('habits-list')).toBeVisible();
 }
 
+/** Back to the journal shelf from the Habits tab, through its drawer -- a return, not a remount. */
+export async function openJournal(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open Habits menu' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Journal', exact: true }).click();
+  await expect(page.getByTestId('journal-habits-tile')).toBeVisible();
+}
+
 export async function openReorder(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Open Habits menu' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Edit', exact: true }).click();

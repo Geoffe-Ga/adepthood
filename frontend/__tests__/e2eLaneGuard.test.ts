@@ -62,6 +62,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'feedback-resilience.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
+  'habits-day-rollover.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
