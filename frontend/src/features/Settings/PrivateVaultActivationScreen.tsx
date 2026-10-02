@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
@@ -9,6 +9,7 @@ import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { BORDER_RADIUS, SPACING, accent, colors, ink, rhythm, surface } from '@/design/tokens';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 const POLL_INTERVAL_MS = 2_000;
 const POLLABLE_STATES = new Set<VaultActivation['state']>([
@@ -20,17 +21,6 @@ const POLLABLE_STATES = new Set<VaultActivation['state']>([
 
 interface Props {
   navigation?: { goBack?: () => void };
-}
-
-function useMountedRef(): React.RefObject<boolean> {
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  return mounted;
 }
 
 function progressCopy(state: VaultActivation['state']): string {

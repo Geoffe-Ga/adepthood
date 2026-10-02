@@ -17,8 +17,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { practiceSessions } from '@/api';
-import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 import { toError } from '@/features/Practice/utils/toError';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 export interface UseWeeklyProgressResult {
   count: number;

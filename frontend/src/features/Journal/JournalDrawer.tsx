@@ -29,11 +29,15 @@ import { corpus, type JournalMessage } from '@/api';
 import {
   DrawerItem,
   DrawerNavSection,
-  DrawerSearch,
+  DrawerSearchField,
   NAV_ICON_SIZE,
   NAV_ICON_STROKE,
   rankMatches,
   ScreenDrawer,
+  SearchSweepStatus,
+  sweepStatusFrom,
+  useDrawerSearch,
+  type DrawerSearchState,
   type ScreenDrawerState,
 } from '@/components/drawer';
 import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/design/tokens';
@@ -68,6 +72,8 @@ const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try a
 const LOAD_MORE_LABEL = 'Load older entries';
 /** Fallback label for an entry saved without a title. */
 const UNTITLED_LABEL = 'Untitled';
+/** Test hook for the drawer's search-field wrapper (and its sweep-status rows). */
+const SEARCH_TESTID = 'journal-drawer-search';
 /** Placeholder for the drawer's fuzzy entry-search field. */
 const SEARCH_PLACEHOLDER = 'Search entries...';
 /** Accessibility label for the drawer's fuzzy entry-search field. */
@@ -82,6 +88,13 @@ const RETRY_LABEL = 'Tap to retry';
 const SEARCH_LOADING_LABEL = 'Searching all your entries...';
 /** Quiet caption shown when the deep-search sweep failed, above its retry row. */
 const SEARCH_ERROR_LABEL = 'We could not finish searching your entries.';
+/** The entry-specific identity and copy the shared search field renders. */
+const SEARCH_FIELD_COPY = {
+  testID: SEARCH_TESTID,
+  placeholder: SEARCH_PLACEHOLDER,
+  accessibilityLabel: SEARCH_ACCESSIBILITY_LABEL,
+  deepSearchLabel: DEEP_SEARCH_LABEL,
+};
 
 /**
  * Fetch the drawer's entries lazily on its first open and cache them across
@@ -308,51 +321,6 @@ function SearchResults({
   );
 }
 
-interface SearchSweepStatusProps {
-  /** True once the deep body search is confirmed; gates the sweep's status. */
-  active: boolean;
-  /** True while the confirm-triggered page sweep is in flight. */
-  loading: boolean;
-  /** True when that sweep failed. */
-  error: boolean;
-  /** Re-run the sweep after a failure. */
-  onRetry: () => void;
-}
-
-/**
- * A quiet inline status row shown beneath the search field while the deep body
- * search is active: a "searching..." caption during the confirm-triggered page
- * sweep, or a failure caption plus a retry row if that sweep rejected. It keeps
- * the sweep's in-flight and error states visible without leaving the results
- * view (which would otherwise swallow both until the query is cleared).
- */
-function SearchSweepStatus({
-  active,
-  loading,
-  error,
-  onRetry,
-}: SearchSweepStatusProps): React.JSX.Element | null {
-  const { width } = useWindowDimensions();
-  if (!active) return null;
-  if (loading) {
-    return (
-      <View testID="journal-drawer-search-loading" style={styles.searchStatusRow}>
-        <ActivityIndicator size="small" color={accent.primary} />
-        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_LOADING_LABEL}</Text>
-      </View>
-    );
-  }
-  if (error) {
-    return (
-      <View testID="journal-drawer-search-error" style={styles.searchStatusBlock}>
-        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_ERROR_LABEL}</Text>
-        <DrawerItem testID="journal-drawer-search-retry" label={RETRY_LABEL} onPress={onRetry} />
-      </View>
-    );
-  }
-  return null;
-}
-
 interface SearchViewProps {
   matches: JournalMessage[];
   bodySearchActive: boolean;
@@ -377,51 +345,14 @@ function SearchView({
     <View>
       <SearchSweepStatus
         active={bodySearchActive}
-        loading={loading}
-        error={error}
+        status={sweepStatusFrom(loading, error)}
         onRetry={onConfirmBodySearch}
+        testIDPrefix={SEARCH_TESTID}
+        loadingLabel={SEARCH_LOADING_LABEL}
+        errorLabel={SEARCH_ERROR_LABEL}
       />
       <SearchResults matches={matches} currentEntryId={currentEntryId} onRowPress={onRowPress} />
     </View>
-  );
-}
-
-interface DrawerSearchFieldProps {
-  /** Match count for the active query, or undefined to hide the caption. */
-  resultCount?: number;
-  /** True once the deep body search is confirmed; hides the confirm row. */
-  bodySearchActive: boolean;
-  /** Receives the debounced query (or '' on clear). */
-  onQueryChange: (_query: string) => void;
-  /** Confirm widening the search into entry bodies. */
-  onConfirmDeepSearch: () => void;
-}
-
-/**
- * The drawer's search field. The deep-search confirm row is offered only until
- * body search is active; because ``DrawerSearchProps`` is an exclusive union, we
- * branch the element rather than widen the props to keep the deep pair paired.
- */
-function DrawerSearchField({
-  resultCount,
-  bodySearchActive,
-  onQueryChange,
-  onConfirmDeepSearch,
-}: DrawerSearchFieldProps): React.JSX.Element {
-  const shared = {
-    testID: 'journal-drawer-search',
-    placeholder: SEARCH_PLACEHOLDER,
-    accessibilityLabel: SEARCH_ACCESSIBILITY_LABEL,
-    resultCount,
-    onQueryChange,
-  };
-  if (bodySearchActive) return <DrawerSearch {...shared} />;
-  return (
-    <DrawerSearch
-      {...shared}
-      onConfirmDeepSearch={onConfirmDeepSearch}
-      deepSearchLabel={DEEP_SEARCH_LABEL}
-    />
   );
 }
 
@@ -463,37 +394,21 @@ export interface JournalDrawerProps {
   onConfirmBodySearch: () => void;
 }
 
-interface DrawerSearchState {
-  bodySearchActive: boolean;
-  isSearching: boolean;
+interface JournalDrawerSearchState extends Omit<DrawerSearchState, 'query'> {
+  /** The entries ranked against the active query, or every entry when idle. */
   matches: JournalMessage[];
-  handleQueryChange: (_next: string) => void;
-  handleConfirmDeepSearch: () => void;
 }
 
 /**
- * Own the drawer's search query and body-search gate, and derive the ranked
- * matches. A cleared query drops back to title-only until body search is
- * re-confirmed; body search additionally ranks against each entry's message.
+ * The shared drawer query and body-search gate, plus the ranked matches they
+ * select: titles always, and each entry's message too once body search is on.
  */
-function useDrawerSearch(
+function useJournalDrawerSearch(
   items: JournalMessage[],
   onConfirmBodySearch: () => void,
-): DrawerSearchState {
-  const [query, setQuery] = useState('');
-  const [bodySearchActive, setBodySearchActive] = useState(false);
-
-  const handleQueryChange = useCallback((next: string) => {
-    setQuery(next);
-    if (next.length === 0) setBodySearchActive(false);
-  }, []);
-
-  const handleConfirmDeepSearch = useCallback(() => {
-    setBodySearchActive(true);
-    onConfirmBodySearch();
-  }, [onConfirmBodySearch]);
-
-  const isSearching = query.length > 0;
+): JournalDrawerSearchState {
+  const { query, bodySearchActive, isSearching, handleQueryChange, handleConfirmDeepSearch } =
+    useDrawerSearch(onConfirmBodySearch);
   const getText = (entry: JournalMessage): string =>
     bodySearchActive ? `${entryLabel(entry)} ${entry.message}` : entryLabel(entry);
   const matches = isSearching ? rankMatches(query, items, getText) : items;
@@ -593,7 +508,7 @@ function CorpusDrawerAction({
 /** The Journal header drawer's contents: New entry, a search field, then the list. */
 export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Element {
   const { bodySearchActive, isSearching, matches, handleQueryChange, handleConfirmDeepSearch } =
-    useDrawerSearch(props.items, props.onConfirmBodySearch);
+    useJournalDrawerSearch(props.items, props.onConfirmBodySearch);
 
   return (
     <View testID="journal-drawer">
@@ -606,6 +521,7 @@ export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Elem
         corpusOpenState={props.corpusOpenState}
       />
       <DrawerSearchField
+        {...SEARCH_FIELD_COPY}
         resultCount={isSearching ? matches.length : undefined}
         bodySearchActive={bodySearchActive}
         onQueryChange={handleQueryChange}
@@ -770,21 +686,6 @@ const styles = StyleSheet.create({
   corpusError: {
     color: ink.muted,
     paddingBottom: SPACING.xs,
-  },
-  searchStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-  },
-  searchStatusBlock: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    gap: SPACING.xs,
-  },
-  searchStatusText: {
-    color: ink.muted,
   },
   section: {
     marginBottom: SPACING.sm,

@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { practiceSessions, userPractices, type PracticeStatsResponse } from '@/api';
-import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 export interface UsePracticeStatsResult {
   stats: PracticeStatsResponse | null;

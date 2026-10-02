@@ -492,3 +492,71 @@ describe('useJournalDrawerEntries confirm-gated body search (wiring)', () => {
     expect(mockList).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('JournalDrawer sweep status precedence', () => {
+  it('shows the searching row, not the failure row, while a retry runs over a failed sweep', async () => {
+    // The paging hook's loading and error are separate flags; while both are
+    // set, the in-flight caption wins over the failure it is retrying.
+    const { getByTestId, queryByTestId } = render(
+      <JournalDrawer
+        items={[entry(1)]}
+        now={Date.now()}
+        loading
+        error
+        hasMore
+        onRowPress={jest.fn()}
+        onNewEntry={jest.fn()}
+        onOpenCorpus={jest.fn()}
+        onOpenVoiceDrafts={jest.fn()}
+        corpusOpenState="idle"
+        onLoadMore={jest.fn()}
+        onRetry={jest.fn()}
+        onConfirmBodySearch={jest.fn()}
+      />,
+    );
+    await typeQuery(getByTestId, 'x');
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-search-deep-search'));
+    });
+
+    expect(getByTestId('journal-drawer-search-loading')).toBeTruthy();
+    expect(queryByTestId('journal-drawer-search-error')).toBeNull();
+  });
+
+  it.each([
+    [true, false, 'journal-drawer-search-loading', 'Searching all your entries...'],
+    [false, true, 'journal-drawer-search-error', 'We could not finish searching your entries.'],
+  ])(
+    'captions the sweep in entry terms (loading=%s, error=%s)',
+    async (loading, error, testID, caption) => {
+      const { getByTestId, queryByTestId } = render(
+        <JournalDrawer
+          items={[entry(1)]}
+          now={Date.now()}
+          loading={loading}
+          error={error}
+          hasMore
+          onRowPress={jest.fn()}
+          onNewEntry={jest.fn()}
+          onOpenCorpus={jest.fn()}
+          onOpenVoiceDrafts={jest.fn()}
+          corpusOpenState="idle"
+          onLoadMore={jest.fn()}
+          onRetry={jest.fn()}
+          onConfirmBodySearch={jest.fn()}
+        />,
+      );
+      await typeQuery(getByTestId, 'x');
+      await act(async () => {
+        fireEvent.press(getByTestId('drawer-search-deep-search'));
+      });
+
+      expect(getByTestId(testID)).toHaveTextContent(caption, { exact: false });
+      if (error) {
+        expect(getByTestId('journal-drawer-search-retry')).toHaveTextContent('Tap to retry');
+      } else {
+        expect(queryByTestId('journal-drawer-search-retry')).toBeNull();
+      }
+    },
+  );
+});

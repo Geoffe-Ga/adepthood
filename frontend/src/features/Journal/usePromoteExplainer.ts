@@ -17,10 +17,11 @@
  * dismissed" would flash it at someone who already turned it off. The read is
  * warmed at mount, so in practice it has settled before the button is reachable.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useStoredDismissal } from './useStoredDismissal';
 
+import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   loadPromoteExplainerDismissed,
   savePromoteExplainerDismissed,
@@ -38,18 +39,6 @@ export interface PromoteExplainerGate {
   onContinue: () => void;
   /** "Not now", the scrim, or the hardware back: close the note, select nothing. */
   onCancel: () => void;
-}
-
-/** Whether the host is still mounted, so a late flag read cannot act on a gone screen. */
-function useMountedRef(): { readonly current: boolean } {
-  const mounted = useRef(true);
-  useEffect(
-    () => () => {
-      mounted.current = false;
-    },
-    [],
-  );
-  return mounted;
 }
 
 /** Gate ``startSelecting`` behind the one-time promote explainer. */

@@ -1,6 +1,7 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
+import React from 'react';
 
 /**
  * The promote gate's timing, with the stored flag's read held open by hand.
@@ -71,6 +72,22 @@ describe('usePromoteExplainer — a press before the stored flag has loaded wait
 
     expect(seen).toEqual([false, false]);
     expect(startSelecting).toHaveBeenCalledTimes(1);
+  });
+
+  it('a read landing after StrictMode replays the mount effects still opens the note', async () => {
+    // StrictMode runs every effect's cleanup and setup once more on mount; that
+    // replay is not an unmount, so the late read must still be acted on.
+    const settle = holdRead();
+    const startSelecting = jest.fn();
+    const { result } = renderHook(() => usePromoteExplainer(startSelecting), {
+      wrapper: React.StrictMode,
+    });
+
+    act(() => result.current.onPress());
+    await act(async () => settle(false));
+
+    expect(result.current.visible).toBe(true);
+    expect(startSelecting).not.toHaveBeenCalled();
   });
 
   it('a read landing after the screen has gone does nothing', async () => {

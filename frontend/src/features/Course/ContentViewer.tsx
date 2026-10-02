@@ -12,6 +12,8 @@ import type { ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
 
+import { useMountedRef } from '@/hooks/useMountedRef';
+
 // Read-toast choreography: fade in, hold, fade out. Hold plus exit fade must
 // finish comfortably inside the reader tests' 5s settle window.
 const READ_TOAST_PAUSE_MS = 1800;
@@ -362,13 +364,7 @@ function useMarkReadHandler(
   // future versions) tearing down updates of subsequent screens.  The
   // mounted-ref guard skips the setState calls without changing the
   // happy-path behaviour.
-  const isMountedRef = useRef(true);
-  useEffect(
-    () => () => {
-      isMountedRef.current = false;
-    },
-    [],
-  );
+  const isMountedRef = useMountedRef();
 
   const handleMarkRead = useCallback(async () => {
     if (isRead || marking) return;
@@ -394,7 +390,7 @@ function useMarkReadHandler(
     } finally {
       if (isMountedRef.current && currentItemIdRef.current === requestedId) setMarking(false);
     }
-  }, [isRead, marking, item.id, onMarkRead, onMarkedRead]);
+  }, [isRead, marking, item.id, onMarkRead, onMarkedRead, isMountedRef]);
 
   return { marking, isRead, handleMarkRead };
 }

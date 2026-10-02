@@ -21,7 +21,14 @@ import {
 } from 'react-native';
 
 import { course as courseApi, type ContentItem, type Stage } from '../../api';
-import { DrawerItem, DrawerSearch, fuzzyMatch } from '../../components/drawer';
+import {
+  DrawerSearchField,
+  SearchSweepStatus,
+  fuzzyMatch,
+  useDrawerSearch,
+  type DrawerSearchState,
+  type SweepStatus,
+} from '../../components/drawer';
 import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../design/tokens';
 
 import {
@@ -31,6 +38,8 @@ import {
   STAGE_LOCKED_GLYPH,
   stageStatusGlyph,
 } from './stageDisplay';
+
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 /** Copy for the inline per-section retry row after a failed fetch. */
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
@@ -50,8 +59,13 @@ const DEEP_SEARCH_LABEL = 'Search inside chapters? This downloads chapter text.'
 const SEARCH_LOADING_LABEL = 'Searching inside chapters...';
 /** Quiet caption shown when the body sweep failed, above its retry row. */
 const SEARCH_ERROR_LABEL = 'We could not finish searching the chapters.';
-/** Retry affordance shown alongside the sweep-error caption. */
-const SEARCH_RETRY_LABEL = 'Tap to retry';
+/** The chapter-specific identity and copy the shared search field renders. */
+const SEARCH_FIELD_COPY = {
+  testID: SEARCH_TESTID,
+  placeholder: SEARCH_PLACEHOLDER,
+  accessibilityLabel: SEARCH_ACCESSIBILITY_LABEL,
+  deepSearchLabel: DEEP_SEARCH_LABEL,
+};
 
 /** Load state for one stage's chapter list within the drawer. */
 type DrawerSection =
@@ -63,7 +77,7 @@ type DrawerSection =
 export type DrawerSections = Readonly<Record<number, DrawerSection | undefined>>;
 
 /** Progress of the confirm-gated chapter-body sweep for deep search. */
-export type BodySweepStatus = 'idle' | 'loading' | 'error';
+export type BodySweepStatus = SweepStatus;
 
 /**
  * Lazily load every stage's chapters while the drawer is open, caching the
@@ -86,36 +100,32 @@ export function useCourseDrawerContent(
 ): { sections: DrawerSections; retry: (_stageNumber: number) => void } {
   const [sections, setSections] = useState<Record<number, DrawerSection>>({});
   const requestSeq = useRef<Record<number, number>>({});
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const loadStage = useCallback((stageNumber: number) => {
-    const seq = (requestSeq.current[stageNumber] ?? 0) + 1;
-    requestSeq.current[stageNumber] = seq;
-    const isLatest = (): boolean => mountedRef.current && requestSeq.current[stageNumber] === seq;
-    setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loading' } }));
-    void courseApi
-      .stageContentAll(stageNumber)
-      .then((items) => {
-        if (isLatest()) {
-          setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
-        }
-      })
-      .catch((err: unknown) => {
-        // A per-section failure must not blank the drawer: flag only this stage
-        // so it shows an inline retry while siblings keep their chapters.
-        console.error('Failed to load drawer stage content:', err);
-        if (isLatest()) {
-          setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
-        }
-      });
-  }, []);
+  const loadStage = useCallback(
+    (stageNumber: number) => {
+      const seq = (requestSeq.current[stageNumber] ?? 0) + 1;
+      requestSeq.current[stageNumber] = seq;
+      const isLatest = (): boolean => mountedRef.current && requestSeq.current[stageNumber] === seq;
+      setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loading' } }));
+      void courseApi
+        .stageContentAll(stageNumber)
+        .then((items) => {
+          if (isLatest()) {
+            setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
+          }
+        })
+        .catch((err: unknown) => {
+          // A per-section failure must not blank the drawer: flag only this stage
+          // so it shows an inline retry while siblings keep their chapters.
+          console.error('Failed to load drawer stage content:', err);
+          if (isLatest()) {
+            setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
+          }
+        });
+    },
+    [mountedRef],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -201,15 +211,8 @@ export function useCourseDrawerBodies(sections: DrawerSections): {
 } {
   const [bodies, setBodies] = useState<Record<number, string>>({});
   const [status, setStatus] = useState<BodySweepStatus>('idle');
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
   const sweepingRef = useRef(false);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const confirmBodySearch = useCallback(() => {
     if (sweepingRef.current) return;
@@ -225,7 +228,7 @@ export function useCourseDrawerBodies(sections: DrawerSections): {
       sweepingRef.current = false;
       if (isMounted()) setStatus(succeeded === 0 ? 'error' : 'idle');
     });
-  }, [sections, bodies]);
+  }, [sections, bodies, mountedRef]);
 
   return { bodies, status, confirmBodySearch };
 }
@@ -451,119 +454,27 @@ function countMatches(matched: readonly MatchedStage[]): number {
   return matched.reduce((sum, stage) => sum + stage.items.length, 0);
 }
 
-interface SearchSweepStatusProps {
-  /** True once the deep body search is confirmed; gates the sweep's status. */
-  active: boolean;
-  /** Current progress of the confirm-triggered body sweep. */
-  status: BodySweepStatus;
-  /** Re-run the sweep after a failure. */
-  onRetry: () => void;
+interface CourseChapterSearchState extends DrawerSearchState {
+  /** Loaded stages narrowed to the chapters that match the active query. */
+  matched: MatchedStage[];
 }
 
 /**
- * A quiet inline status row shown beneath the search field while deep body
- * search is active: a "searching..." caption during the sweep, or a failure
- * caption plus a retry row if it rejected. It keeps the sweep's in-flight and
- * error states visible without leaving the results view.
+ * The shared drawer query and body-search gate, plus the chapter matches they
+ * select: titles always, and cached unlocked bodies once body search is active.
  */
-function SearchSweepStatus({
-  active,
-  status,
-  onRetry,
-}: SearchSweepStatusProps): React.JSX.Element | null {
-  const { width } = useWindowDimensions();
-  if (!active) return null;
-  if (status === 'loading') {
-    return (
-      <View testID="course-drawer-search-loading" style={styles.searchStatusRow}>
-        <ActivityIndicator size="small" color={accent.primary} />
-        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_LOADING_LABEL}</Text>
-      </View>
-    );
-  }
-  if (status === 'error') {
-    return (
-      <View testID="course-drawer-search-error" style={styles.searchStatusBlock}>
-        <Text style={[type(width).caption, styles.searchStatusText]}>{SEARCH_ERROR_LABEL}</Text>
-        <DrawerItem
-          testID="course-drawer-search-retry"
-          label={SEARCH_RETRY_LABEL}
-          onPress={onRetry}
-        />
-      </View>
-    );
-  }
-  return null;
-}
-
-interface DrawerSearchFieldProps {
-  /** Match count for the active query, or undefined to hide the caption. */
-  resultCount?: number;
-  /** True once the deep body search is confirmed; hides the confirm row. */
-  bodySearchActive: boolean;
-  /** Receives the debounced query (or '' on clear). */
-  onQueryChange: (_query: string) => void;
-  /** Confirm widening the search into chapter bodies. */
-  onConfirmDeepSearch: () => void;
-}
-
-/**
- * The drawer's search field. The deep-search confirm row is offered only until
- * body search is active; because ``DrawerSearchProps`` is an exclusive union, we
- * branch the element rather than widen the props to keep the deep pair paired.
- */
-function DrawerSearchField({
-  resultCount,
-  bodySearchActive,
-  onQueryChange,
-  onConfirmDeepSearch,
-}: DrawerSearchFieldProps): React.JSX.Element {
-  const shared = {
-    testID: SEARCH_TESTID,
-    placeholder: SEARCH_PLACEHOLDER,
-    accessibilityLabel: SEARCH_ACCESSIBILITY_LABEL,
-    resultCount,
-    onQueryChange,
-  };
-  if (bodySearchActive) return <DrawerSearch {...shared} />;
-  return (
-    <DrawerSearch
-      {...shared}
-      onConfirmDeepSearch={onConfirmDeepSearch}
-      deepSearchLabel={DEEP_SEARCH_LABEL}
-    />
+function useCourseChapterSearch(
+  sections: DrawerSections,
+  bodies: Readonly<Record<number, string>>,
+  onConfirmBodySearch: () => void,
+): CourseChapterSearchState {
+  const search = useDrawerSearch(onConfirmBodySearch);
+  const { query, bodySearchActive } = search;
+  const matched = useMemo(
+    () => matchStages(query, sections, bodies, bodySearchActive),
+    [query, sections, bodies, bodySearchActive],
   );
-}
-
-interface CourseDrawerSearchState {
-  query: string;
-  bodySearchActive: boolean;
-  isSearching: boolean;
-  handleQueryChange: (_next: string) => void;
-  handleConfirmDeepSearch: () => void;
-}
-
-/**
- * Own the drawer's search query and body-search gate. Clearing the query drops
- * back to title-only matching until body search is re-confirmed; confirming
- * flips the gate and asks the host to sweep the chapter bodies.
- */
-function useCourseDrawerSearch(onConfirmBodySearch: () => void): CourseDrawerSearchState {
-  const [query, setQuery] = useState('');
-  const [bodySearchActive, setBodySearchActive] = useState(false);
-
-  const handleQueryChange = useCallback((next: string) => {
-    setQuery(next);
-    if (next.length === 0) setBodySearchActive(false);
-  }, []);
-
-  const handleConfirmDeepSearch = useCallback(() => {
-    setBodySearchActive(true);
-    onConfirmBodySearch();
-  }, [onConfirmBodySearch]);
-
-  const isSearching = query.length > 0;
-  return { query, bodySearchActive, isSearching, handleQueryChange, handleConfirmDeepSearch };
+  return { ...search, matched };
 }
 
 interface StageListProps {
@@ -629,6 +540,9 @@ function CourseSearchView({
         active={bodySearchActive}
         status={sweepStatus}
         onRetry={onConfirmBodySearch}
+        testIDPrefix={SEARCH_TESTID}
+        loadingLabel={SEARCH_LOADING_LABEL}
+        errorLabel={SEARCH_ERROR_LABEL}
       />
       {matched.map(({ stageNumber, items }) => (
         <StageSection
@@ -678,16 +592,13 @@ export default function CourseDrawer({
 }: CourseDrawerProps): React.JSX.Element {
   const stageById = useMemo(() => new Map(stages.map((s) => [s.stage_number, s])), [stages]);
   const stageNumbers = useMemo(() => [...stageById.keys()].sort((a, b) => a - b), [stageById]);
-  const { query, bodySearchActive, isSearching, handleQueryChange, handleConfirmDeepSearch } =
-    useCourseDrawerSearch(onConfirmBodySearch);
-  const matched = useMemo(
-    () => matchStages(query, sections, bodies, bodySearchActive),
-    [query, sections, bodies, bodySearchActive],
-  );
+  const { matched, bodySearchActive, isSearching, handleQueryChange, handleConfirmDeepSearch } =
+    useCourseChapterSearch(sections, bodies, onConfirmBodySearch);
 
   return (
     <View testID="course-drawer">
       <DrawerSearchField
+        {...SEARCH_FIELD_COPY}
         resultCount={isSearching ? countMatches(matched) : undefined}
         bodySearchActive={bodySearchActive}
         onQueryChange={handleQueryChange}
@@ -719,21 +630,6 @@ export default function CourseDrawer({
 }
 
 const styles = StyleSheet.create({
-  searchStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-  },
-  searchStatusBlock: {
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.xs,
-    gap: SPACING.xs,
-  },
-  searchStatusText: {
-    color: ink.muted,
-  },
   section: {
     marginBottom: SPACING.sm,
   },

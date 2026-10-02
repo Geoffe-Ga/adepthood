@@ -175,6 +175,18 @@ describe('ChapterReader', () => {
     await findByText(/retried body/);
   });
 
+  it('loads the body under StrictMode, whose effect re-run is not an unmount', async () => {
+    // StrictMode replays every effect's cleanup and setup on mount; the reader's
+    // mounted guard must read true again afterwards or the body never lands.
+    const { findByText, queryByTestId } = render(
+      <React.StrictMode>
+        <ChapterReader source={{ kind: 'content', id: 1 }} fallbackTitle="x" onBack={jest.fn()} />
+      </React.StrictMode>,
+    );
+    await findByText(/chapter body with/);
+    expect(queryByTestId('reader-error')).toBeNull();
+  });
+
   it('never renders legacy CMS error copy', async () => {
     mockContentBody.mockRejectedValueOnce({ detail: 'cms_auth_failed' });
     const { findByTestId, queryByText } = render(

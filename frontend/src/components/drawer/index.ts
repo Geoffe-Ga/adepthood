@@ -1,7 +1,9 @@
 /**
  * Public surface of the shared screen-drawer module: the panel, its header-left
  * toggle, a row primitive, the state hook that ties a screen to its drawer, and
- * the reusable search field plus its dependency-free fuzzy matcher.
+ * the reusable search field plus its dependency-free fuzzy matcher, and the
+ * deep-search scaffolding both searchable drawers share: the field with its
+ * confirm row, the sweep-status row, and the query/body-gate hook.
  */
 export { default as ScreenDrawer } from './ScreenDrawer';
 export type { ScreenDrawerProps } from './ScreenDrawer';
@@ -17,3 +19,13 @@ export type { ScreenDrawerState } from './useScreenDrawer';
 export { default as DrawerSearch } from './DrawerSearch';
 export type { DrawerSearchProps } from './DrawerSearch';
 export { fuzzyMatch, rankMatches } from './fuzzyMatch';
+export { default as DrawerSearchField } from './DrawerSearchField';
+export type { DrawerSearchFieldProps } from './DrawerSearchField';
+export {
+  default as SearchSweepStatus,
+  SWEEP_RETRY_LABEL,
+  sweepStatusFrom,
+} from './SearchSweepStatus';
+export type { SearchSweepStatusProps, SweepStatus } from './SearchSweepStatus';
+export { useDrawerSearch } from './useDrawerSearch';
+export type { DrawerSearchState } from './useDrawerSearch';
