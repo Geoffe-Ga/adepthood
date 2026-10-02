@@ -2,15 +2,18 @@
  * ``PracticeDetailScreen`` — read-only summary of a single practice with
  * the actions a user can take from the catalog.
  *
- * Reachable from the catalog (preset / draft / imported rows) and from the
- * wizard after a successful create. The summary intentionally renders the
+ * Reachable from the pushed catalog (preset / draft / imported rows), from the
+ * Practice drawer, and from the wizard after a successful create. The Practice
+ * tab's embedded catalog shows the same view in place instead
+ * (``PracticeDetailSheet``, #2451), which is why the body is exported as a
+ * navigator-free controller + content pair. The summary intentionally renders the
  * mode + config as plain bullet points; deep customization stays in the
  * configurator sheet (per-user override) and the wizard (full copy).
  */
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { ModeConfig } from '../engine/types';
 
@@ -110,6 +113,207 @@ function useDetailUseHandlers(
   return { onUseForCurrentStage, onPickStage };
 }
 
+/** The params "Duplicate & edit" opens the wizard with. */
+export type CustomizeCopyParams = NonNullable<RootStackParamList['CreatePractice']>;
+
+/**
+ * The wizard prefill for "Duplicate & edit", or ``null`` when the practice has
+ * no ``mode_config`` to copy (the action is disabled for those rows anyway).
+ */
+export function buildCustomizePrefill(practice: PracticeItem): CustomizeCopyParams | null {
+  if (practice.mode_config === undefined) return null;
+  return {
+    prefill: {
+      config: practice.mode_config,
+      name: practice.name,
+      description: practice.description,
+      instructions: practice.instructions,
+      duration: Math.round(practice.default_duration_minutes),
+      stageNumber: practice.stage_number,
+    },
+  };
+}
+
+export interface PracticeDetailControllerOptions {
+  practiceId: number;
+  /** A failure handed in by the opener, shown in the same banner as this view's own. */
+  initialActionError?: string | null;
+  /** Runs after an assign or a cross-stage copy succeeds. */
+  onAssigned: () => void;
+  /** Opens the wizard with a copy of this practice. */
+  onCustomizeCopy: (params: CustomizeCopyParams) => void;
+}
+
+/** Everything the detail view needs, free of any navigator. */
+export interface PracticeDetailController {
+  detail: PracticeDetailHook;
+  shareOpen: boolean;
+  openShare: () => void;
+  closeShare: () => void;
+  customizeCopy: (practice: PracticeItem) => void;
+}
+
+/**
+ * The navigation-agnostic heart of the detail view (#2451).
+ *
+ * The route screen and the Practice tab's in-place overlay both run this; only
+ * what happens after an assign and where "Duplicate & edit" goes differ, and
+ * those arrive as callbacks rather than as a navigator, so neither host has to
+ * pretend to be the other.
+ */
+export function usePracticeDetailController({
+  practiceId,
+  initialActionError = null,
+  onAssigned,
+  onCustomizeCopy,
+}: PracticeDetailControllerOptions): PracticeDetailController {
+  const detail = usePracticeDetail(practiceId, onAssigned, initialActionError);
+  const [shareOpen, setShareOpen] = useState(false);
+  const openShare = useCallback(() => setShareOpen(true), []);
+  const closeShare = useCallback(() => setShareOpen(false), []);
+  const customizeCopy = useCallback(
+    (practice: PracticeItem) => {
+      const params = buildCustomizePrefill(practice);
+      if (params !== null) onCustomizeCopy(params);
+    },
+    [onCustomizeCopy],
+  );
+  return { detail, shareOpen, openShare, closeShare, customizeCopy };
+}
+
+/**
+ * Where the detail view is presented. ``screen`` is the pushed route, whose
+ * markup is unchanged; ``sheet`` is the card of the Practice tab's overlay,
+ * which keeps loading and errors inside the card so a tap always shows it.
+ */
+export type PracticeDetailFrame = 'screen' | 'sheet';
+
+interface DetailContentProps {
+  controller: PracticeDetailController;
+  frame: PracticeDetailFrame;
+}
+
+/** The scroller the loaded view sits in for each frame. */
+function DetailScroller({
+  frame,
+  children,
+}: {
+  frame: PracticeDetailFrame;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  if (frame === 'screen') {
+    return (
+      <ScreenScaffold scroll style={styles.scaffold} testID="practice-detail-screen">
+        {children}
+      </ScreenScaffold>
+    );
+  }
+  return (
+    <ScrollView
+      style={styles.sheetScroll}
+      contentContainerStyle={styles.sheetScrollContent}
+      testID="practice-detail-sheet-scroll"
+    >
+      {children}
+    </ScrollView>
+  );
+}
+
+/** The loaded detail view (practice guaranteed non-null). */
+function LoadedDetail({
+  controller,
+  practice,
+  frame,
+}: DetailContentProps & { practice: PracticeItem }): React.JSX.Element {
+  const state = controller.detail;
+  const { onUseForCurrentStage, onPickStage } = useDetailUseHandlers(state, practice);
+  // Keyed on the catalog id the screen was opened with; the hook resolves the
+  // caller's own adoption of it before asking for any totals.
+  const { stats } = usePracticeStats(practice.id);
+
+  return (
+    <DetailScroller frame={frame}>
+      <DetailHeader practice={practice} />
+      <DetailBody practice={practice} />
+      <PracticeStatsBlock stats={stats} />
+      {state.actionError !== null && (
+        <Text style={styles.errorText} testID="practice-detail-action-error">
+          {state.actionError}
+        </Text>
+      )}
+      <ActionRow
+        practice={practice}
+        onUseForCurrentStage={onUseForCurrentStage}
+        onUseForStage={state.openPicker}
+        onCustomizeCopy={() => controller.customizeCopy(practice)}
+        onShare={controller.openShare}
+      />
+      {state.pickerOpen && (
+        <StagePicker assigning={state.assigning} onPick={onPickStage} onClose={state.closePicker} />
+      )}
+    </DetailScroller>
+  );
+}
+
+/** The detail view's loading, error and loaded states, framed for its host. */
+export function PracticeDetailContent({
+  controller,
+  frame,
+}: DetailContentProps): React.JSX.Element {
+  const state = controller.detail;
+  const sheet = frame === 'sheet';
+  if (state.loading) {
+    return (
+      <LoadingBlock
+        style={sheet ? styles.sheetLoading : styles.loading}
+        color={accent.primary}
+        size="large"
+        testID="practice-detail-loading"
+      />
+    );
+  }
+  if (state.loadError !== null || state.practice === null) {
+    return (
+      <LoadErrorRetry
+        message={state.loadError ?? 'Could not load practice.'}
+        onRetry={state.reload}
+        containerStyle={sheet ? styles.sheetErrorBlock : styles.errorBlock}
+        containerTestID="practice-detail-error"
+        messageStyle={styles.errorText}
+        retryStyle={styles.actionButton}
+        retryTextStyle={styles.actionButtonText}
+        retryTestID="practice-detail-retry"
+        retryAccessibilityLabel="Retry"
+      />
+    );
+  }
+  return <LoadedDetail controller={controller} practice={state.practice} frame={frame} />;
+}
+
+/**
+ * The copy dialog and share sheet. Both are Modals of their own, so a host
+ * that is itself a Modal mounts these BESIDE it, never inside: iOS presents a
+ * nested modal underneath its parent, hiding it.
+ */
+export function PracticeDetailDialogs({
+  controller,
+}: {
+  controller: PracticeDetailController;
+}): React.JSX.Element | null {
+  const { practice } = controller.detail;
+  if (practice === null) return null;
+  return (
+    <>
+      <DetailCopyDialog state={controller.detail} practice={practice} />
+      <ShareSheet
+        visible={controller.shareOpen}
+        practiceId={practice.id}
+        onClose={controller.closeShare}
+      />
+    </>
+  );
+}
+
 /** The cross-stage confirm-and-copy dialog for the detail screen. */
 function DetailCopyDialog({
   state,
@@ -131,52 +335,7 @@ function DetailCopyDialog({
   );
 }
 
-/** The loaded detail view (practice guaranteed non-null); owns the share sheet. */
-function LoadedDetail({
-  props,
-  state,
-  practice,
-}: {
-  props: PracticeDetailScreenProps;
-  state: PracticeDetailHook;
-  practice: PracticeItem;
-}): React.JSX.Element {
-  const [shareOpen, setShareOpen] = useState(false);
-  const { onUseForCurrentStage, onPickStage } = useDetailUseHandlers(state, practice);
-  // Keyed on the catalog id the screen was opened with; the hook resolves the
-  // caller's own adoption of it before asking for any totals.
-  const { stats } = usePracticeStats(practice.id);
-
-  return (
-    <ScreenScaffold scroll style={styles.scaffold} testID="practice-detail-screen">
-      <DetailHeader practice={practice} />
-      <DetailBody practice={practice} />
-      <PracticeStatsBlock stats={stats} />
-      {state.actionError !== null && (
-        <Text style={styles.errorText} testID="practice-detail-action-error">
-          {state.actionError}
-        </Text>
-      )}
-      <ActionRow
-        practice={practice}
-        onUseForCurrentStage={onUseForCurrentStage}
-        onUseForStage={state.openPicker}
-        onCustomizeCopy={() => navigateToCopy(props, practice)}
-        onShare={() => setShareOpen(true)}
-      />
-      {state.pickerOpen && (
-        <StagePicker assigning={state.assigning} onPick={onPickStage} onClose={state.closePicker} />
-      )}
-      <DetailCopyDialog state={state} practice={practice} />
-      <ShareSheet
-        visible={shareOpen}
-        practiceId={practice.id}
-        onClose={() => setShareOpen(false)}
-      />
-    </ScreenScaffold>
-  );
-}
-
+/** The pushed route: the shared detail view, returning to the player on assign. */
 export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JSX.Element {
   const { practiceId, assignError } = props.route.params;
   const { navigation } = props;
@@ -185,38 +344,27 @@ export function PracticeDetailScreen(props: PracticeDetailScreenProps): React.JS
   // pushed on top), matching the catalog's one-tap "Use" which also returns the
   // user to where they can see the active practice.
   const onAssigned = useCallback(() => navigation.popToTop(), [navigation]);
+  const onCustomizeCopy = useCallback(
+    (params: CustomizeCopyParams) => navigation.navigate('CreatePractice', params),
+    [navigation],
+  );
   // A wizard stage-assign that failed hands its message down via the route so
   // the same banner used for this screen's own assign() failures surfaces it.
-  const state = usePracticeDetail(practiceId, onAssigned, assignError ?? null);
-  if (state.loading) {
-    return (
-      <LoadingBlock
-        style={styles.loading}
-        color={accent.primary}
-        size="large"
-        testID="practice-detail-loading"
-      />
-    );
-  }
-  if (state.loadError !== null || state.practice === null) {
-    return (
-      <LoadErrorRetry
-        message={state.loadError ?? 'Could not load practice.'}
-        onRetry={state.reload}
-        containerStyle={styles.errorBlock}
-        containerTestID="practice-detail-error"
-        messageStyle={styles.errorText}
-        retryStyle={styles.actionButton}
-        retryTextStyle={styles.actionButtonText}
-        retryTestID="practice-detail-retry"
-        retryAccessibilityLabel="Retry"
-      />
-    );
-  }
-  return <LoadedDetail props={props} state={state} practice={state.practice} />;
+  const controller = usePracticeDetailController({
+    practiceId,
+    initialActionError: assignError ?? null,
+    onAssigned,
+    onCustomizeCopy,
+  });
+  return (
+    <>
+      <PracticeDetailContent controller={controller} frame="screen" />
+      <PracticeDetailDialogs controller={controller} />
+    </>
+  );
 }
 
-interface PracticeDetailHook {
+export interface PracticeDetailHook {
   practice: PracticeItem | null;
   loadError: string | null;
   actionError: string | null;
@@ -336,20 +484,6 @@ function usePracticeDetail(
   const { openCopy, cancelCopy, confirmCopy } = useCopyFlow(state, setState, onAssigned);
 
   return { ...state, reload, openPicker, closePicker, assign, openCopy, cancelCopy, confirmCopy };
-}
-
-function navigateToCopy(props: PracticeDetailScreenProps, practice: PracticeItem) {
-  if (practice.mode_config === undefined) return;
-  props.navigation.navigate('CreatePractice', {
-    prefill: {
-      config: practice.mode_config,
-      name: practice.name,
-      description: practice.description,
-      instructions: practice.instructions,
-      duration: Math.round(practice.default_duration_minutes),
-      stageNumber: practice.stage_number,
-    },
-  });
 }
 
 interface DetailHeaderProps {
@@ -599,6 +733,16 @@ const styles = StyleSheet.create({
     backgroundColor: surface.canvas,
   },
   scaffold: { paddingBottom: SPACING.xl },
+  // The overlay card's frame: content-sized, shrinking to the card's cap.
+  sheetScroll: { flexGrow: 0 },
+  sheetScrollContent: { paddingBottom: SPACING.sm },
+  sheetLoading: { alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl },
+  sheetErrorBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.md,
+    paddingVertical: SPACING.lg,
+  },
   headerBlock: { marginBottom: SPACING.md },
   eyebrow: {
     ...editorialType.caption,
