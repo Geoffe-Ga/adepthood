@@ -52,6 +52,18 @@
     "coveredBy": "frontend/e2e/auth-overflow.browser.e2e.test.ts"
   },
   {
+    "id": "auth.google-sign-in-provider-failure",
+    "description": "A user taps Continue with Google and the sign-in fails on Google's side: Google refuses the redirect (a misconfigured client, a server error, a state mismatch), or on native the one-time code cannot be traded for an ID token (a refused trade or a dead network). The Google error slot then shows \"Google couldn't complete that sign-in. Try again, or continue with email instead.\" and the button is free to retry, while a user who cancels, dismisses or declines on Google's own screen sees nothing. Uncovered because Playwright cannot drive Google's consent sheet, and every failure leg is produced inside expo-auth-session or Google's token endpoint before any request crosses our seam; pinned meanwhile by useGoogleAuth.test.tsx and the SocialAuthButtons tests.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SocialAuthButtons.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/oauth/google"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 3026
+  },
+  {
     "id": "welcome.first-run-walkthrough-to-journal",
     "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {
