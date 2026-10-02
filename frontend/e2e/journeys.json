@@ -52,6 +52,18 @@
     "coveredBy": "frontend/e2e/auth-overflow.browser.e2e.test.ts"
   },
   {
+    "id": "auth.google-sign-in-provider-failure",
+    "description": "A user taps Continue with Google and the sign-in fails on Google's side: Google refuses the redirect (a misconfigured client, a server error, a state mismatch), or on native the one-time code cannot be traded for an ID token (a refused trade or a dead network). The Google error slot then shows \"Google couldn't complete that sign-in. Try again, or continue with email instead.\" and the button is free to retry, while a user who cancels, dismisses or declines on Google's own screen sees nothing. Uncovered because Playwright cannot drive Google's consent sheet, and every failure leg is produced inside expo-auth-session or Google's token endpoint before any request crosses our seam; pinned meanwhile by useGoogleAuth.test.tsx and the SocialAuthButtons tests.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SocialAuthButtons.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/oauth/google"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 3026
+  },
+  {
     "id": "welcome.first-run-walkthrough-to-journal",
     "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {
@@ -387,15 +399,15 @@
   },
   {
     "id": "journal.promote-a-passage-deep-in-a-long-entry",
-    "description": "A reader on a phone opens an entry several screens long, taps Promote a quote, and selects a passage near its end. The mirrored field wears no browser focus ring and grows to its text instead of becoming an inner scroll pane, and the preview / Promote / Cancel footer stays pinned at the foot of the viewport (web position: sticky) while the body scrolls, so the confirm is in reach without scrolling past the whole entry. Uncovered because the browser lane's promote spec (journal.promote-reopen-and-remove-quote) drives a one-line body and never scrolls; the focus fragment, growth wiring and pinned footer are pinned meanwhile by QuoteSelectionSurface.test.tsx and readingSurfaceStyles.test.ts.",
+    "description": "A reader on a phone opens an entry several screens long, taps Promote a quote, and selects a passage near its end. The mirrored field wears no browser focus ring and grows to its text instead of becoming an inner scroll pane, and the preview / Promote / Cancel footer stays pinned at the foot of the viewport (web position: sticky) while the body scrolls, so the confirm is in reach without scrolling past the whole entry. The browser spec seeds and finishes a 121-line entry over the API, opens it from the shelf at 390x844, clicks through the one-time promote explainer, and asserts the field has outline-style none, no inner scroll (scrollHeight <= clientHeight) and a height over three viewports; with the field's top at the top of the screen, the footer and Promote selection are in the viewport and pinned over the field. It then scrolls the closing line clear of the footer, drags a real mouse selection over it, and promotes it over POST /journal/{entry_id}/promote, whose stored anchor_text equals the preview. Native, where the footer stays in flow, is pinned by QuoteSelectionSurface.test.tsx and readingSurfaceStyles.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/QuoteSelectionSurface.tsx",
       "client": ["promotions"],
       "routes": ["POST /journal/{entry_id}/promote"],
       "tables": ["promotedquote"]
     },
-    "status": "uncovered",
-    "issue": 2967
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-quote-long-entry.browser.e2e.test.ts"
   },
   {
     "id": "journal.find-promoted-quotes-any-day",

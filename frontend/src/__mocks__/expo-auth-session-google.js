@@ -4,5 +4,6 @@
 // preset's transformIgnorePatterns allowlist, so Jest cannot parse the real
 // module. Tests that care about the flow override this with jest.mock.
 module.exports = {
+  discovery: { tokenEndpoint: 'https://oauth2.googleapis.com/token' },
   useAuthRequest: jest.fn(() => [null, null, jest.fn(() => Promise.resolve({ type: 'dismiss' }))]),
 };
