@@ -29,7 +29,7 @@ from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 from schemas.frequency import BANNER_TEMPLATE, render_banner_text
 from seed_practices import STAGE_TO_PRESET_NAME, seed_practices
-from seed_stages import STAGE_DEFINITIONS, seed_stages
+from seed_stages import seed_stages, stage_definitions
 
 # Two 21-day stages have closed by day 42, so day 50 sits inside stage 3.
 _DAYS_INTO_THE_THIRD_STAGE = 50
@@ -442,7 +442,7 @@ async def test_frequency_respects_stage_progress(
     assert resp.status_code == HTTPStatus.OK, resp.text
     body = resp.json()
 
-    # Stage 3 = Red / Self-Love (per seed_stages.STAGE_DEFINITIONS).
+    # Stage 3 = Red / Self-Love (per seed_stages.stage_definitions).
     assert body["stage_number"] == 3
     assert body["color"] == "Red"
     assert body["aspect"] == "Self-Love"
@@ -494,7 +494,7 @@ def test_every_stage_has_a_preset_name() -> None:
     seeders in sync (the import-time assertion in ``seed_practices.py``
     only catches duplicates, not omissions against ``seed_stages``).
     """
-    expected_stages = {int(s["stage_number"]) for s in STAGE_DEFINITIONS}
+    expected_stages = {int(s["stage_number"]) for s in stage_definitions()}
     assert set(STAGE_TO_PRESET_NAME) == expected_stages
 
 
@@ -604,16 +604,16 @@ async def test_frequency_without_override_still_uses_stage_progress(
 async def test_frequency_stage_number_above_max_is_rejected(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A stage above ``len(STAGE_DEFINITIONS)`` is rejected at validation.
+    """A stage above the seeded catalogue's size is rejected at validation.
 
-    The bound is derived from the seeded catalogue so adding an 11th
-    stage to ``STAGE_DEFINITIONS`` automatically widens the accepted
-    range — there is no separate magic number to update.
+    The route bounds the query by ``TOTAL_STAGES``; deriving ``over_max`` from
+    the seed definitions instead pins the two together, so the bound cannot
+    drift from the catalogue the seeder actually writes.
     """
     await _seed_catalog(db_session)
     headers, _user_id = await _signup(async_client, "out-of-range")
 
-    over_max = len(STAGE_DEFINITIONS) + 1
+    over_max = len(stage_definitions()) + 1
     resp = await async_client.get(
         "/user-practices/current/frequency",
         params={"stage_number": over_max},
