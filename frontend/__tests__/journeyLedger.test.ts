@@ -541,22 +541,65 @@ describe('the ledger gate rejects a malformed ledger', () => {
   });
 });
 
+/** One row of the committed ledger by id, failing loudly when it is absent. */
+function committedJourney(id: string): Record<string, unknown> {
+  const ledger = readLedger(REPO_ROOT);
+  if (!Array.isArray(ledger)) throw new Error('the committed journey ledger is not an array');
+  const journey: unknown = ledger.find(
+    (entry: unknown) =>
+      typeof entry === 'object' && entry !== null && 'id' in entry && entry.id === id,
+  );
+  if (typeof journey !== 'object' || journey === null) {
+    throw new Error(`journey ${id} is not in the committed ledger`);
+  }
+  return journey as Record<string, unknown>;
+}
+
+/** A committed row's description, read as the prose it is. */
+function committedDescription(id: string): string {
+  return String(committedJourney(id)['description']);
+}
+
 describe('the committed ledger is true of this repository', () => {
   it('accounts for retrying a journal deletion across the connected Creek seam', () => {
-    const ledger = readLedger(REPO_ROOT);
-    if (!Array.isArray(ledger)) throw new Error('the committed journey ledger is not an array');
-    const journey = ledger.find(
-      (entry: unknown) =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        'id' in entry &&
-        entry.id === 'journal.withdraw-connected-vault-copy',
-    );
-
-    expect(journey).toMatchObject({
+    expect(committedJourney('journal.withdraw-connected-vault-copy')).toMatchObject({
       status: 'covered',
       coveredBy: 'frontend/e2e/journal-vault-withdrawal.e2e.test.ts',
     });
+  });
+
+  it('accounts for the section and course review invitations in the browser lane', () => {
+    const journey = committedJourney('journal.section-and-course-review-invitations');
+
+    expect(journey).toMatchObject({
+      status: 'covered',
+      coveredBy: 'frontend/e2e/journal-section-course-review.browser.e2e.test.ts',
+    });
+    expect(journey).not.toHaveProperty('issue');
+    const description = committedDescription('journal.section-and-course-review-invitations');
+    expect(description).not.toContain('ReflectionInvitationBand.test.tsx');
+    expect(description).not.toContain('none asserts a review title');
+    expect(committedDescription('journal.review-from-the-shelf-cta')).not.toContain(
+      'the stage, section and course CTAs',
+    );
+    expect(committedDescription('journal.fold-promoted-quote-into-reopened-reflection')).toContain(
+      'journal.review-from-the-shelf-cta',
+    );
+  });
+
+  it('accounts for reopening a past-cycle review in the browser lane', () => {
+    const journey = committedJourney('journal.reopen-past-cycle-review-sees-its-own-sources');
+
+    expect(journey).toMatchObject({
+      status: 'covered',
+      coveredBy: 'frontend/e2e/journal-past-cycle-review-sources.browser.e2e.test.ts',
+    });
+    expect(journey).not.toHaveProperty('issue');
+    const description = committedDescription(
+      'journal.reopen-past-cycle-review-sees-its-own-sources',
+    );
+    expect(description).not.toContain('no begin-again journey exists yet');
+    expect(description).toContain('writing-only');
   });
 
   it('passes the same audit the CI gate runs', () => {
