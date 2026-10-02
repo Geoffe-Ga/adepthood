@@ -18,6 +18,7 @@ import { useContractionSignalActive } from './contractionSignal';
 
 import { mettaReturn } from '@/api';
 import type { ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import { loadReturnOfferDismissed, saveReturnOfferDismissed } from '@/storage/returnOfferStorage';
 
 export interface UseMettaReturnResult {
@@ -63,11 +64,10 @@ function useLoadedReturn(): LoadedReturn {
   const [arc, setArc] = useState<ReturnArc | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [releasedHabits, setReleasedHabits] = useState<ReleasedHabit[]>([]);
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
   const serverAppliedRef = useRef(false);
 
   useEffect(() => {
-    mountedRef.current = true;
     serverAppliedRef.current = false;
     void loadReturnOfferDismissed()
       .then((wasDismissed) => {
@@ -92,10 +92,7 @@ function useLoadedReturn(): LoadedReturn {
       .catch(() => {
         // A failed load stays silent — the Return must never nag or crash the tab.
       });
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  }, [mountedRef]);
 
   return {
     eligible,

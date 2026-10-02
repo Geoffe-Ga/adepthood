@@ -37,6 +37,7 @@ import type { ResonanceRequestOutcome } from './useResonance';
 import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
 
 import { useApiKey } from '@/context/ApiKeyContext';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   loadResonanceExplainerDismissed,
   saveResonanceExplainerDismissed,
@@ -90,25 +91,27 @@ function useResonanceCost(): {
 } {
   const [current, setCurrent] = useState(UNKNOWN_COST_STATE);
   const generationRef = useRef(0);
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
   useEffect(
     () => () => {
-      mountedRef.current = false;
       generationRef.current += 1;
     },
     [],
   );
 
-  const refresh = useCallback(async (apiKey: string | null): Promise<ResonanceCostState | null> => {
-    const generation = ++generationRef.current;
-    if (apiKey === null) {
-      setCurrent({ ...UNKNOWN_COST_STATE, canContinue: false, loading: true });
-    }
-    const next = await loadCostState(apiKey !== null);
-    if (!mountedRef.current || generationRef.current !== generation) return null;
-    setCurrent(next);
-    return next;
-  }, []);
+  const refresh = useCallback(
+    async (apiKey: string | null): Promise<ResonanceCostState | null> => {
+      const generation = ++generationRef.current;
+      if (apiKey === null) {
+        setCurrent({ ...UNKNOWN_COST_STATE, canContinue: false, loading: true });
+      }
+      const next = await loadCostState(apiKey !== null);
+      if (!mountedRef.current || generationRef.current !== generation) return null;
+      setCurrent(next);
+      return next;
+    },
+    [mountedRef],
+  );
   return useMemo(() => ({ current, refresh }), [current, refresh]);
 }
 
@@ -175,13 +178,7 @@ function useDisclosureDecision(input: DisclosureDecisionInput) {
   const [pending, setPending] = useState(false);
   const inFlightRef = useRef<Promise<void> | null>(null);
   const generationRef = useRef(0);
-  const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-    },
-    [],
-  );
+  const mountedRef = useMountedRef();
   const decideOnce = useCallback(
     async (isCurrent: () => boolean): Promise<void> => {
       const known = input.flag.known();
@@ -203,13 +200,13 @@ function useDisclosureDecision(input: DisclosureDecisionInput) {
       inFlightRef.current = task;
       return task;
     },
-    [decideOnce],
+    [decideOnce, mountedRef],
   );
   const cancel = useCallback(() => {
     generationRef.current += 1;
     inFlightRef.current = null;
     if (mountedRef.current) setPending(false);
-  }, []);
+  }, [mountedRef]);
   return { decide, pending, cancel };
 }
 

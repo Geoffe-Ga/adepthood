@@ -222,6 +222,23 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 
+  it('answers the first press with the explainer under StrictMode', async () => {
+    // StrictMode replays the mount effects; the cost read's mounted guard must
+    // read true again afterwards or the explainer never opens.
+    const view = render(<React.StrictMode>{screenElement()}</React.StrictMode>);
+    await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
+    await act(async () => {
+      fireEvent.press(view.getByTestId('get-resonance-button'));
+    });
+
+    expect(await view.findByTestId('resonance-explainer')).toBeTruthy();
+    expect(mockGenerate).not.toHaveBeenCalled();
+    // The settled preflight must release the button's busy state too.
+    await waitFor(() =>
+      expect(view.getByTestId('get-resonance-button').props.accessibilityState.busy).toBe(false),
+    );
+  });
+
   it('uses the deployment-served monthly cap without calling the allowance free', async () => {
     mockUsage.mockResolvedValueOnce({
       monthly_messages_used: 0,

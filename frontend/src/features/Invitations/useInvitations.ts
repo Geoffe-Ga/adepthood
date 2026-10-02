@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { invitations } from '@/api';
 import type { Invitation } from '@/api';
+import { useMountedRef } from '@/hooks/useMountedRef';
 
 export interface UseInvitationsResult {
   invitations: Invitation[];
@@ -26,7 +27,7 @@ export function useInvitations(): UseInvitationsResult {
   const [items, setItems] = useState<Invitation[]>([]);
   const itemsRef = useRef<Invitation[]>([]);
   const pendingIdsRef = useRef<Set<number>>(new Set());
-  const mountedRef = useRef(true);
+  const mountedRef = useMountedRef();
 
   // Mirror committed state into a ref so ``dismiss`` can snapshot it
   // synchronously — a functional-updater side-effect runs at render time,
@@ -36,7 +37,6 @@ export function useInvitations(): UseInvitationsResult {
   }, [items]);
 
   useEffect(() => {
-    mountedRef.current = true;
     void invitations
       .list()
       .then((loaded) => {
@@ -45,25 +45,25 @@ export function useInvitations(): UseInvitationsResult {
       .catch(() => {
         // A failed load stays silent — invitations must never nag or crash the tab.
       });
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  }, [mountedRef]);
 
-  const dismiss = useCallback(async (id: number): Promise<void> => {
-    if (pendingIdsRef.current.has(id)) return; // per-id guard — no double-fire
-    pendingIdsRef.current.add(id);
-    const snapshot = itemsRef.current;
-    setItems((prev) => withoutId(prev, id)); // optimistic
-    try {
-      await invitations.dismiss(id);
-    } catch (err) {
-      if (mountedRef.current) setItems(snapshot); // revert
-      throw err;
-    } finally {
-      pendingIdsRef.current.delete(id);
-    }
-  }, []);
+  const dismiss = useCallback(
+    async (id: number): Promise<void> => {
+      if (pendingIdsRef.current.has(id)) return; // per-id guard — no double-fire
+      pendingIdsRef.current.add(id);
+      const snapshot = itemsRef.current;
+      setItems((prev) => withoutId(prev, id)); // optimistic
+      try {
+        await invitations.dismiss(id);
+      } catch (err) {
+        if (mountedRef.current) setItems(snapshot); // revert
+        throw err;
+      } finally {
+        pendingIdsRef.current.delete(id);
+      }
+    },
+    [mountedRef],
+  );
 
   return { invitations: items, dismiss };
 }
