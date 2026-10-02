@@ -19,15 +19,25 @@
  * so a request can land after its sheet is gone and another is on show. Such
  * a stale success still happened on the server, so the player's selection is
  * re-read quietly; it never closes the sheet now on show or flips the tab.
+ *
+ * A choice also says where focus goes. react-native-web's Modal hands focus
+ * back, as it unmounts, to whatever held it before it opened: the catalog row.
+ * After a flip that row is still mounted for the cross-fade, but aria-hidden
+ * and out of reach, and once it unmounts focus falls to the page body. So the
+ * live choice lands focus on ``landingRef`` -- the player's Practice tab --
+ * from an effect of the commit that closes the sheet, which React runs after
+ * the Modal's own unmount cleanup. Native readers get the same landing.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { View } from 'react-native';
 
 import type { PracticeTab } from '@/features/Practice/components/PracticeCatalogSwitcher';
 import type { CustomizeCopyParams } from '@/features/Practice/screens/PracticeDetailScreen';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 
 export interface DetailOverlayState {
   /** The practice whose details float over the catalog, or ``null``. */
@@ -46,6 +56,8 @@ export interface DetailOverlayState {
   onCustomizeCopy: (_params: CustomizeCopyParams) => void;
   /** The catalog row that opened the overlay, which gets focus back on dismiss. */
   openerRef: React.RefObject<{ focus: () => void } | null>;
+  /** Where focus lands after a choice flips to the player: the Practice tab. */
+  landingRef: React.RefObject<View | null>;
 }
 
 interface OpenDetail {
@@ -75,6 +87,17 @@ function useDetailSessions(): {
   return { open, live, openDetail, closeDetail };
 }
 
+/** A focus target, and a request to land on it once the current commit settles. */
+function useFocusLanding(): { landingRef: React.RefObject<View | null>; land: () => void } {
+  const landingRef = useRef<View>(null);
+  const [landings, setLandings] = useState(0);
+  useEffect(() => {
+    if (landings > 0) moveAccessibilityFocus(landingRef.current);
+  }, [landings]);
+  const land = useCallback(() => setLandings((count) => count + 1), []);
+  return { landingRef, land };
+}
+
 export function useDetailOverlay(
   tab: PracticeTab,
   onCatalogActivated: () => void,
@@ -83,6 +106,7 @@ export function useDetailOverlay(
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { open, live, openDetail, closeDetail } = useDetailSessions();
   const openerRef = useRef<{ focus: () => void } | null>(null);
+  const { landingRef, land } = useFocusLanding();
   const leaveWithoutFocus = useCallback(() => {
     openerRef.current = null;
     closeDetail();
@@ -97,9 +121,10 @@ export function useDetailOverlay(
         return;
       }
       leaveWithoutFocus();
+      land();
       onCatalogActivated();
     },
-    [live, refresh, leaveWithoutFocus, onCatalogActivated],
+    [live, refresh, leaveWithoutFocus, land, onCatalogActivated],
   );
   const onCustomizeCopy = useCallback(
     (params: CustomizeCopyParams) => {
@@ -116,5 +141,6 @@ export function useDetailOverlay(
     onActivated,
     onCustomizeCopy,
     openerRef,
+    landingRef,
   };
 }

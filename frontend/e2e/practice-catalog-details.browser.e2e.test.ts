@@ -49,6 +49,23 @@ async function groundingPracticeId(request: APIRequestContext, token: string): P
   return grounding.id;
 }
 
+interface FocusedElement {
+  testID: string | null;
+  /** Whether it sits inside a subtree assistive tech has been told to skip. */
+  insideHidden: boolean;
+}
+
+/** Where keyboard focus is right now. */
+async function focusedElement(page: Page): Promise<FocusedElement> {
+  return page.evaluate(() => {
+    const active = document.activeElement;
+    return {
+      testID: active?.getAttribute('data-testid') ?? null,
+      insideHidden: active?.closest('[aria-hidden="true"]') != null,
+    };
+  });
+}
+
 /** Reach the Practice tab through the screen drawer, as a person would. */
 async function openPracticeTab(page: Page): Promise<void> {
   await page.getByRole('button', { name: /^Open \w+ menu$/ }).click();
@@ -99,8 +116,17 @@ test('a practice opens in place over the embedded catalog, and declining it keep
   await overlay.getByTestId('practice-detail-use-for-stage').click();
   await overlay.getByTestId(`practice-detail-stage-pick-${ENTRY_STAGE}`).click();
   await expect(overlay).toHaveCount(0);
+  // Focus lands on the player's Practice tab, never back on the row that
+  // opened the sheet: during the cross-fade that row is still mounted but
+  // aria-hidden, and once it unmounts focus would fall to the page body.
+  expect((await focusedElement(page)).insideHidden).toBe(false);
+  await expect(page.getByTestId('practice-tab-practice')).toBeFocused();
   await expect(page.getByTestId('practice-identity-title')).toHaveText(GROUNDING_PRACTICE);
   await expect(page.getByTestId('practice-embedded-catalog')).toHaveCount(0);
+  expect(await focusedElement(page)).toEqual({
+    testID: 'practice-tab-practice',
+    insideHidden: false,
+  });
 
   // The server agrees the adoption is real, not just painted.
   const adopted = await page.request.get(`${backendUrl()}/user-practices/`, {

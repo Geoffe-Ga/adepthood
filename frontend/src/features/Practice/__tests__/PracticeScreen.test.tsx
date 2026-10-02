@@ -19,6 +19,7 @@ import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 import { recordRecentPractice } from '../../../storage/recentPracticesStorage';
 import { useProgramStore } from '../../../store/useProgramStore';
+import * as accessibilityFocus from '../../../utils/accessibilityFocus';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -1417,6 +1418,25 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     expect(mockUserPracticesList.mock.calls.length).toBe(listCalls + 1);
     expect(mockPopToTop).not.toHaveBeenCalled();
     expect(mockGoBack).not.toHaveBeenCalled();
+  });
+
+  it('a choice from the overlay lands focus on the Practice tab, not the fading row', async () => {
+    setProgramStageAnchor(STAGE_ONE_DAYS_AGO);
+    const moveFocus = jest.spyOn(accessibilityFocus, 'moveAccessibilityFocus');
+    const view = await openEmbeddedCatalog();
+    await openOverlayOnRow(view, 1);
+    // Mounted for the length of the fade, the switcher's tab is the landing.
+    const practiceTab = view.getByTestId('practice-tab-practice') as TestNode & {
+      parent: { instance: unknown } | null;
+    };
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-detail-use-current-stage'));
+    });
+
+    await waitFor(() => expect(moveFocus).toHaveBeenCalledTimes(1));
+    expect(moveFocus.mock.calls[0]![0]).toBe(practiceTab.parent?.instance);
+    expect(moveFocus.mock.calls[0]![0]).not.toBeNull();
   });
 
   it('the cross-stage copy works from the overlay and flips to the player', async () => {

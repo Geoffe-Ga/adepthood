@@ -17,6 +17,8 @@ export interface PracticeCatalogSwitcherProps {
   active: PracticeTab;
   /** Fired with the pressed tab's id (also fires for the already-active tab). */
   onChange: (tab: PracticeTab) => void;
+  /** Refs onto individual tabs, for a caller that needs to hand focus to one. */
+  tabRefs?: Partial<Record<PracticeTab, React.Ref<View>>>;
 }
 
 /** Underline thickness marking the active tab. */
@@ -31,6 +33,7 @@ const TABS: ReadonlyArray<{ id: PracticeTab; label: string }> = [
 export default function PracticeCatalogSwitcher({
   active,
   onChange,
+  tabRefs,
 }: PracticeCatalogSwitcherProps): React.JSX.Element {
   return (
     <View accessibilityRole="tablist" style={styles.tablist} testID="practice-tab-switcher">
@@ -39,6 +42,7 @@ export default function PracticeCatalogSwitcher({
         return (
           <TouchableOpacity
             key={id}
+            ref={tabRefs?.[id]}
             accessibilityRole="tab"
             accessibilityLabel={label}
             accessibilityState={{ selected }}

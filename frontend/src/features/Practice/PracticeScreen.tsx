@@ -325,7 +325,13 @@ const PracticeScreen = (): React.JSX.Element => {
   return (
     <>
       <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
-        {s.showSwitcher && <PracticeCatalogSwitcher active={s.tab} onChange={s.setTab} />}
+        {s.showSwitcher && (
+          <PracticeCatalogSwitcher
+            active={s.tab}
+            onChange={s.setTab}
+            tabRefs={{ practice: s.detail.landingRef }}
+          />
+        )}
         <PracticeStage model={s} />
         {/* top: -s.topInset extends the fade up over the safe-area strip the
             shell pads for, so the whole ground dims together on focus. */}

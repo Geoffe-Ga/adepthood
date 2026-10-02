@@ -10,6 +10,11 @@ import type { CustomizeCopyParams } from '@/features/Practice/screens/PracticeDe
 
 const mockNavigate = jest.fn<(route: string, params?: unknown) => void>();
 
+const mockMoveFocus = jest.fn<(target: unknown) => void>();
+jest.mock('@/utils/accessibilityFocus', () => ({
+  moveAccessibilityFocus: (target: unknown) => mockMoveFocus(target),
+}));
+
 jest.mock('@react-navigation/native', () => ({
   useNavigation: () => ({ navigate: mockNavigate }),
 }));
@@ -40,6 +45,31 @@ function renderOverlay(initialTab: PracticeTab = 'catalog') {
 describe('useDetailOverlay', () => {
   beforeEach(() => {
     mockNavigate.mockReset();
+    mockMoveFocus.mockReset();
+  });
+
+  // react-native-web's Modal hands focus back to whatever held it before it
+  // opened -- the catalog row, which a flip leaves mounted but aria-hidden for
+  // the length of the cross-fade -- so a choice must name its own landing.
+  it('lands focus on the player after a choice, never on a dismiss or a stale success', () => {
+    const { result } = renderOverlay();
+    const landing = { focus: jest.fn() };
+    (result.current.landingRef as { current: unknown }).current = landing;
+
+    act(() => result.current.openDetail(1));
+    const stale = result.current.session;
+    act(() => result.current.closeDetail());
+    act(() => result.current.openDetail(2));
+    act(() => result.current.onActivated(stale));
+    expect(mockMoveFocus).not.toHaveBeenCalled();
+
+    act(() => result.current.onActivated(result.current.session));
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
+    expect(mockMoveFocus).toHaveBeenCalledWith(landing);
+
+    act(() => result.current.openDetail(3));
+    act(() => result.current.closeDetail());
+    expect(mockMoveFocus).toHaveBeenCalledTimes(1);
   });
 
   it('opens and closes on the practice it was given, keeping the opener for focus return', () => {
