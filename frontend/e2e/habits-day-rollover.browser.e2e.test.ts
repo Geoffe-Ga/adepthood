@@ -47,8 +47,8 @@ import { instantAt } from './zonedClock';
  * of UTC -- is not here. Driven through this lane, the zone backfill's refresh
  * revokes the resumed token while the app's first requests still carry it;
  * their 401s then refresh a token that is already revoked, and the session is
- * signed out. That is a product defect, not a spec to write around, so the
- * half stays registered `uncovered` in journeys.json until it is fixed.
+ * signed out. That is a product defect (#3034), not a spec to write around, so
+ * the half stays registered `uncovered` in journeys.json until it is fixed.
  *
  * Every fake page time is built from the day the SERVER recorded the
  * completion on, so a run straddling the account's real midnight cannot make
