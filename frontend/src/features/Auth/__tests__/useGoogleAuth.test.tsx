@@ -1,11 +1,17 @@
 /* eslint-env jest */
 /* global describe, it, expect, beforeEach, jest */
 import { renderHook, act, waitFor } from '@testing-library/react-native';
+import { exchangeCodeAsync } from 'expo-auth-session';
 import { useAuthRequest } from 'expo-auth-session/providers/google';
 import React from 'react';
 
 jest.mock('expo-auth-session/providers/google', () => ({
   useAuthRequest: jest.fn(),
+  discovery: { tokenEndpoint: 'https://oauth2.googleapis.com/token' },
+}));
+
+jest.mock('expo-auth-session', () => ({
+  exchangeCodeAsync: jest.fn(),
 }));
 
 jest.mock('@/api', () => {
@@ -66,17 +72,39 @@ const ID_TOKEN = 'google-id-token-header.google-id-token-payload.google-id-token
 const OTHER_ID_TOKEN = 'second-header.second-payload.second-signature';
 const SESSION_JWT = 'session.jwt.signature';
 const VALID_LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allowlist secret
-const AUTH_REQUEST = { url: 'https://accounts.google.com/o/oauth2/v2/auth' };
+const AUTH_REQUEST = {
+  url: 'https://accounts.google.com/o/oauth2/v2/auth',
+  clientId: 'native-client-id.apps.googleusercontent.com',
+  redirectUri: 'com.example.adepthood:/oauthredirect',
+  codeVerifier: 'pkce-code-verifier',
+};
+const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+/** The one-time authorization code native's code flow redirects back with. */
+const AUTH_CODE = 'one-time-authorization-code';
 /** Asserted by value: the hook keeps its fallback copy module-private on purpose. */
 const GOOGLE_FALLBACK_COPY = "We couldn't finish that Google sign-in. Try again in a moment.";
+/** Asserted by value: the copy for a refusal Google itself reported on the redirect (#1989). */
+const GOOGLE_PROVIDER_ERROR_COPY =
+  "Google couldn't complete that sign-in. Try again, or continue with email instead.";
+/** A provider description that must never reach the screen or hook state. */
+const PROVIDER_SENTINEL = 'SENTINEL-PROVIDER-DESCRIPTION';
+const PROVIDER_REDIRECT_URL = 'https://example.invalid/redirect';
+/** Google's code for a user who pressed Cancel or Deny on its own screen. */
+const USER_DECLINED_CODE = 'access_denied';
 
 const mockUseAuthRequest = useAuthRequest as unknown as jest.Mock;
 const mockOauthGoogle = auth.oauthGoogle as unknown as jest.Mock;
+const mockExchangeCodeAsync = exchangeCodeAsync as unknown as jest.Mock;
 const mockSaveToken = saveToken as jest.MockedFunction<typeof saveToken>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 
 const promptAsync = jest.fn();
 let currentResponse: unknown = null;
+/**
+ * The provider's loaded request. Like ``useLoadedAuthRequest`` it is ``null``
+ * on the first render and only appears once the auth URL has been built.
+ */
+let currentRequest: typeof AUTH_REQUEST | null = null;
 let renderTick = 0;
 
 interface Deferred<T> {
@@ -95,8 +123,63 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/** Native's code-flow redirect: a code to trade, and no id token yet. */
+function googleCodeSuccess() {
+  return {
+    type: 'success',
+    errorCode: null,
+    error: null,
+    params: { code: AUTH_CODE, state: 'request-state' },
+    authentication: null,
+    url: 'com.example.adepthood:/oauthredirect?code=one-time-authorization-code',
+  };
+}
+
+function isCodeResult(response: unknown): boolean {
+  if (typeof response !== 'object' || response === null || !('params' in response)) return false;
+  const { params } = response as { params: Record<string, string> };
+  return params.code !== undefined && params.id_token === undefined;
+}
+
+/**
+ * The provider as ``expo-auth-session`` 57.0.13 behaves: unless auto-exchange
+ * is switched off, it withholds a code result while it trades the code
+ * itself, and its trade has no ``.catch`` — a refused trade never delivers a
+ * response at all. That withheld-forever result is what this fake hands back.
+ */
+function providerResponse(config: { shouldAutoExchangeCode?: boolean } | undefined): unknown {
+  const autoExchanges = config?.shouldAutoExchangeCode !== false;
+  return autoExchanges && isCodeResult(currentResponse) ? null : currentResponse;
+}
+
 function googleSuccess(idToken: string) {
   return { type: 'success', params: { id_token: idToken }, authentication: null };
+}
+
+interface ProviderErrorShape {
+  /** Put the code on the ``AuthError`` (the current library shape). */
+  withAuthError?: boolean;
+  /** Put the code on the raw redirect ``params`` (the legacy shape). */
+  withParams?: boolean;
+}
+
+/**
+ * An ``error`` result as ``expo-auth-session`` builds it from a redirect that
+ * carries ``error=<code>``. ``null`` models a redirect with no code at all.
+ */
+function googleProviderError(
+  code: string | null,
+  { withAuthError = true, withParams = true }: ProviderErrorShape = {},
+) {
+  return {
+    type: 'error',
+    errorCode: null,
+    error: withAuthError && code !== null ? { code, description: PROVIDER_SENTINEL } : null,
+    params:
+      withParams && code !== null ? { error: code, error_description: PROVIDER_SENTINEL } : {},
+    authentication: null,
+    url: PROVIDER_REDIRECT_URL,
+  };
 }
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -112,9 +195,26 @@ function renderGoogleAuth() {
 
 type Harness = ReturnType<typeof renderGoogleAuth>;
 
-async function readyHarness(): Promise<Harness> {
+/** A later render with the provider's request swapped for ``request``. */
+async function deliverGoogleRequest(
+  harness: Harness,
+  request: typeof AUTH_REQUEST | null,
+): Promise<void> {
+  currentRequest = request;
+  renderTick += 1;
+  await act(async () => {
+    harness.rerender({ tick: renderTick });
+  });
+}
+
+/**
+ * Mount with no request yet, then let it load — the order the real provider
+ * follows — unless ``loadRequest`` is off.
+ */
+async function readyHarness({ loadRequest = true } = {}): Promise<Harness> {
   const harness = renderGoogleAuth();
   await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('anonymous'));
+  if (loadRequest) await deliverGoogleRequest(harness, AUTH_REQUEST);
   return harness;
 }
 
@@ -155,10 +255,15 @@ async function reachLicenseStep(harness: Harness): Promise<string | null> {
 beforeEach(() => {
   jest.clearAllMocks();
   currentResponse = null;
+  currentRequest = null;
   renderTick = 0;
   mockLoadToken.mockResolvedValue(null);
   promptAsync.mockResolvedValue({ type: 'dismiss' });
-  mockUseAuthRequest.mockImplementation(() => [AUTH_REQUEST, currentResponse, promptAsync]);
+  mockUseAuthRequest.mockImplementation((config?: { shouldAutoExchangeCode?: boolean }) => [
+    currentRequest,
+    providerResponse(config),
+    promptAsync,
+  ]);
 });
 
 describe('useGoogleAuth — success', () => {
@@ -408,14 +513,17 @@ describe('useGoogleAuth — anti-enumeration', () => {
   });
 });
 
+/** Every result that means the user closed or abandoned the sheet themselves. */
+const QUIET_RESULTS = [{ type: 'cancel' }, { type: 'dismiss' }, { type: 'locked' }];
+
 describe('useGoogleAuth — dismissed prompt', () => {
-  it('stays idle and silent when the user closes the Google sheet', async () => {
+  it.each(QUIET_RESULTS)('stays idle and silent on a $type result', async (result) => {
     const harness = await readyHarness();
 
     act(() => {
       harness.result.current.google.signIn();
     });
-    await deliverGoogleResponse(harness, { type: 'dismiss' });
+    await deliverGoogleResponse(harness, result);
     await flushMicrotasks();
 
     expect(mockOauthGoogle).not.toHaveBeenCalled();
@@ -424,12 +532,12 @@ describe('useGoogleAuth — dismissed prompt', () => {
     expect(harness.result.current.google.submitting).toBe(false);
   });
 
-  it('releases the in-flight guard so a dismissed prompt can be retried', async () => {
+  it.each(QUIET_RESULTS)('releases the in-flight guard after a $type result', async (result) => {
     const harness = await readyHarness();
     act(() => {
       harness.result.current.google.signIn();
     });
-    await deliverGoogleResponse(harness, { type: 'dismiss' });
+    await deliverGoogleResponse(harness, result);
     await flushMicrotasks();
 
     act(() => {
@@ -437,6 +545,292 @@ describe('useGoogleAuth — dismissed prompt', () => {
     });
 
     expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['on the auth error and the params', {}],
+    ['on the params only', { withAuthError: false }],
+    ['on the auth error only', { withParams: false }],
+  ])('stays silent when the user declines on Google’s screen, code %s', async (_label, shape) => {
+    const harness = await readyHarness();
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, googleProviderError(USER_DECLINED_CODE, shape));
+    await flushMicrotasks();
+
+    expect(harness.result.current.google.error).toBeNull();
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+  });
+});
+
+describe('useGoogleAuth — provider errors', () => {
+  async function signInAndFail(harness: Harness, response: unknown): Promise<void> {
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, response);
+    await flushMicrotasks();
+  }
+
+  it('surfaces the provider-error copy when Google returns redirect_uri_mismatch', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError('redirect_uri_mismatch'));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(harness.result.current.auth.authStatus).toBe('anonymous');
+  });
+
+  it.each([
+    ['invalid_client'],
+    ['unauthorized_client'],
+    ['server_error'],
+    ['temporarily_unavailable'],
+    ['state_mismatch'],
+  ])('surfaces the provider-error copy for %s', async (code) => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError(code));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+  });
+
+  it('classifies a legacy result by params.error when the auth error is null', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(
+      harness,
+      googleProviderError('redirect_uri_mismatch', { withAuthError: false }),
+    );
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never stays silent about an error result that carries no code at all', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError(null));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never exchanges an error redirect, even one that happens to carry an id token', async () => {
+    const harness = await readyHarness();
+    const failure = googleProviderError('server_error');
+
+    await signInAndFail(harness, { ...failure, params: { ...failure.params, id_token: ID_TOKEN } });
+
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never shows the raw provider code or description', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError('redirect_uri_mismatch'));
+
+    expect(harness.result.current.google.error).not.toContain(PROVIDER_SENTINEL);
+    expect(harness.result.current.google.error).not.toContain('redirect_uri_mismatch');
+    expect(JSON.stringify(harness.result.current.google)).not.toContain(PROVIDER_SENTINEL);
+  });
+
+  it('reads as finished prose with an escape and no dead end', () => {
+    expect(GOOGLE_PROVIDER_ERROR_COPY).toMatch(/[.!?]$/);
+    expect(GOOGLE_PROVIDER_ERROR_COPY).toMatch(/email/);
+    expect(GOOGLE_PROVIDER_ERROR_COPY).not.toMatch(/support|you entered|invalid/i);
+  });
+
+  it('releases the in-flight guard so the user can try again', async () => {
+    const harness = await readyHarness();
+    await signInAndFail(harness, googleProviderError('server_error'));
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the error on a fresh attempt and authenticates on a following success', async () => {
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    await signInAndFail(harness, googleProviderError('temporarily_unavailable'));
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    expect(harness.result.current.google.error).toBeNull();
+    await deliverGoogleResponse(harness, googleSuccess(ID_TOKEN));
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockOauthGoogle).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledWith({
+      id_token: ID_TOKEN,
+      timezone: DEVICE_TIMEZONE,
+    });
+  });
+});
+
+describe('useGoogleAuth — native code exchange', () => {
+  async function signInWithCode(harness: Harness): Promise<void> {
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, googleCodeSuccess());
+    await flushMicrotasks();
+  }
+
+  it('releases the guard and tells the user when the code exchange is refused', async () => {
+    mockExchangeCodeAsync.mockRejectedValueOnce(
+      new Error('invalid_grant: SENTINEL-PROVIDER-DESCRIPTION'),
+    );
+    const harness = await readyHarness();
+
+    await signInWithCode(harness);
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(JSON.stringify(harness.result.current.google)).not.toContain(PROVIDER_SENTINEL);
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the guard when the code exchange fails on the network', async () => {
+    mockExchangeCodeAsync.mockRejectedValueOnce(new TypeError('Network request failed'));
+    const harness = await readyHarness();
+
+    await signInWithCode(harness);
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.submitting).toBe(false);
+  });
+
+  it('trades the code with the request PKCE verifier and signs in with the id token', async () => {
+    mockExchangeCodeAsync.mockResolvedValueOnce({ idToken: ID_TOKEN, accessToken: 'access' });
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+
+    await signInWithCode(harness);
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).toHaveBeenCalledTimes(1);
+    expect(mockExchangeCodeAsync).toHaveBeenCalledWith(
+      {
+        clientId: AUTH_REQUEST.clientId,
+        redirectUri: AUTH_REQUEST.redirectUri,
+        code: AUTH_CODE,
+        extraParams: { code_verifier: AUTH_REQUEST.codeVerifier },
+      },
+      { tokenEndpoint: GOOGLE_TOKEN_ENDPOINT },
+    );
+    expect(mockOauthGoogle).toHaveBeenCalledWith({ id_token: ID_TOKEN, timezone: DEVICE_TIMEZONE });
+  });
+
+  it.each([
+    ['no id token', {}],
+    ['an empty id token', { idToken: '' }],
+  ])('surfaces the fallback copy when the exchange returns %s', async (_label, tokens) => {
+    mockExchangeCodeAsync.mockResolvedValueOnce(tokens);
+    const harness = await readyHarness();
+
+    await signInWithCode(harness);
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_FALLBACK_COPY);
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the fallback copy when a code arrives before the request has loaded', async () => {
+    const harness = await readyHarness({ loadRequest: false });
+
+    await signInWithCode(harness);
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_FALLBACK_COPY);
+    expect(mockExchangeCodeAsync).not.toHaveBeenCalled();
+  });
+
+  it('trades with the request that loaded after mount, not the empty first render', async () => {
+    mockExchangeCodeAsync.mockResolvedValueOnce({ idToken: ID_TOKEN });
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    // The provider really did mount with no request, as the real one does.
+    const [firstRequest] = mockUseAuthRequest.mock.results[0]?.value as [unknown];
+    expect(firstRequest).toBeNull();
+
+    await signInWithCode(harness);
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).toHaveBeenCalledWith(
+      {
+        clientId: AUTH_REQUEST.clientId,
+        redirectUri: AUTH_REQUEST.redirectUri,
+        code: AUTH_CODE,
+        extraParams: { code_verifier: AUTH_REQUEST.codeVerifier },
+      },
+      { tokenEndpoint: GOOGLE_TOKEN_ENDPOINT },
+    );
+  });
+
+  it('never spends the single-use code twice when the request is re-created mid-trade', async () => {
+    const pending = deferred<{ idToken: string }>();
+    mockExchangeCodeAsync.mockReturnValueOnce(pending.promise);
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    await signInWithCode(harness);
+
+    await deliverGoogleRequest(harness, { ...AUTH_REQUEST });
+    await flushMicrotasks();
+
+    expect(mockExchangeCodeAsync).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve({ idToken: ID_TOKEN });
+    });
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledWith({ id_token: ID_TOKEN, timezone: DEVICE_TIMEZONE });
+  });
+
+  it('never trades a code on web, where the redirect already carries the id token', async () => {
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+
+    await signInAndDeliver(harness, ID_TOKEN);
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockExchangeCodeAsync).not.toHaveBeenCalled();
+  });
+
+  it('drops a code exchange that settles after the screen unmounts', async () => {
+    const pending = deferred<{ idToken: string }>();
+    mockExchangeCodeAsync.mockReturnValueOnce(pending.promise);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const harness = await readyHarness();
+    await signInWithCode(harness);
+
+    harness.unmount();
+    await act(async () => {
+      pending.resolve({ idToken: ID_TOKEN });
+    });
+
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
 

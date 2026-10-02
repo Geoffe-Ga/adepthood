@@ -31,8 +31,8 @@ import {
 import { practiceShare, type ShareLinkResponse } from '@/api/practiceShare';
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
-import { useMountedRef } from '@/features/Practice/hooks/useMountedRef';
 import { parsePositiveInt } from '@/features/Practice/utils/parsePositiveInt';
+import { useMountedRef } from '@/hooks/useMountedRef';
 import { copyToClipboard } from '@/utils/clipboard';
 
 const DEEP_LINK_PREFIX = 'adepthood://practices/share/';

@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { renderHook } from '@testing-library/react-native';
+import React from 'react';
 
 import { useMountedRef } from '../useMountedRef';
 
@@ -14,6 +15,11 @@ describe('useMountedRef', () => {
     const first = result.current;
     rerender({});
     expect(result.current).toBe(first);
+  });
+
+  it('reads true after StrictMode simulates an unmount and remount', () => {
+    const { result } = renderHook(() => useMountedRef(), { wrapper: React.StrictMode });
+    expect(result.current.current).toBe(true);
   });
 
   it('flips to false after unmount', () => {
