@@ -3929,6 +3929,14 @@ export const vaultActivation = {
       retry: false,
     });
   },
+  recover(token?: string): Promise<VaultActivation> {
+    return request<VaultActivation>('/vault/activation/recover', {
+      method: 'POST',
+      token,
+      schema: activationSchema,
+      retry: false,
+    });
+  },
 };
 
 // Private beta feedback (#2897 intake contract; #2898 reporter; #2899 seam verification; #2900 inbox)

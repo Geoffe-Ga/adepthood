@@ -21,8 +21,8 @@ from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
 from routers import vault_provisioning_internal
+from services import creek_provisioning, journal_encryption
 from services import creek_provisioning_client as provisioning_client
-from services import journal_encryption
 from services.creek_provisioning import (
     reconcile_vault_teardowns,
     request_vault_teardown,
@@ -91,6 +91,7 @@ class FakeProvisioningClient:
         self.fail_activate = False
         self.reject_activate = False
         self.fail_delete = False
+        self.reject_delete = False
         self.delete_state = "deleting"
         self.assert_released: object | None = None
 
@@ -139,6 +140,8 @@ class FakeProvisioningClient:
         self.calls.append(("delete", job_id))
         if self.fail_delete:
             raise ProvisioningUnavailableError("provisioning unavailable")
+        if self.reject_delete:
+            raise ProvisioningRejectedError("provisioning rejected")
         current = await self.status(job_id)
         deleting = replace(current, state=self.delete_state, retryable=False, failure_reason=None)
         self.jobs[current.activation_id] = deleting
@@ -232,6 +235,29 @@ async def _handoff(
     return response.status_code
 
 
+async def _settle_provider_rejection(
+    client: AsyncClient,
+    session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    headers: dict[str, str],
+) -> VaultActivation:
+    """Move one submitted activation through Creek's terminal failure wire."""
+    await _activate(client, headers)
+    activation = (await session.execute(select(VaultActivation))).scalar_one()
+    current = creek_client.jobs[activation.activation_id]
+    creek_client.jobs[activation.activation_id] = replace(
+        current,
+        state="failed",
+        retryable=False,
+        failure_reason="provider_rejected",
+    )
+    response = await client.get("/vault/activation", headers=headers)
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["recovery_available"] is True
+    await session.refresh(activation)
+    return activation
+
+
 @pytest.mark.asyncio
 async def test_signup_and_first_journal_save_make_zero_provisioning_calls(
     async_client: AsyncClient,
@@ -274,6 +300,7 @@ async def test_activation_is_idempotent_secret_free_and_releases_the_transaction
         "active": True,
         "state": "pending",
         "new_activation_available": True,
+        "recovery_available": False,
         "retryable": False,
         "failure_reason": None,
         "credential_received": False,
@@ -316,6 +343,7 @@ async def test_unavailable_rollout_refuses_new_activation_without_an_oracle(
         "active": False,
         "state": "inactive",
         "new_activation_available": False,
+        "recovery_available": False,
         "retryable": False,
         "failure_reason": None,
         "credential_received": False,
@@ -442,6 +470,286 @@ async def test_provider_rejection_is_not_retryable(
     assert refused_retry.status_code == HTTPStatus.CONFLICT
     assert refused_retry.json() == {"detail": "vault_activation_not_retryable"}
     assert [call[0] for call in creek_client.calls] == ["activate"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_is_deleted_before_a_fresh_identity_is_submitted(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """Recovery never replaces an identity until Creek proves zero resources."""
+    headers, _, _ = await _signup(async_client, "recover-terminal")
+    original = await _settle_provider_rejection(
+        async_client,
+        db_session,
+        creek_client,
+        headers,
+    )
+    old_activation_id = original.activation_id
+    old_consumer_identity = original.consumer_identity
+    old_job_id = original.creek_job_id
+
+    def assert_released() -> None:
+        assert not db_session.in_transaction()
+
+    creek_client.assert_released = assert_released
+
+    deleting = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert deleting.status_code == HTTPStatus.ACCEPTED
+    assert deleting.json()["state"] == "deleting"
+    assert deleting.json()["recovery_available"] is False
+    await db_session.refresh(original)
+    assert original.activation_id == old_activation_id
+    assert original.consumer_identity == old_consumer_identity
+    assert original.creek_job_id == old_job_id
+    assert [call[0] for call in creek_client.calls].count("activate") == 1
+
+    creek_client.delete_state = "deleted"
+    recovered = await async_client.get("/vault/activation", headers=headers)
+
+    assert recovered.status_code == HTTPStatus.OK
+    assert recovered.json()["state"] == "pending"
+    current = (await db_session.execute(select(VaultActivation))).scalar_one()
+    assert current.activation_id != old_activation_id
+    assert current.consumer_identity != old_consumer_identity
+    assert current.creek_job_id != old_job_id
+    assert [call[0] for call in creek_client.calls].count("activate") == 2
+
+    late_handoff = await _handoff(async_client, original)
+    assert late_handoff == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_recovery_survives_a_retryable_delete_failure_and_closed_rollout(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An admitted activation keeps its cleanup surface through an outage."""
+    headers, _, _ = await _signup(async_client, "recover-delete-outage")
+    original = await _settle_provider_rejection(
+        async_client,
+        db_session,
+        creek_client,
+        headers,
+    )
+    old_activation_id = original.activation_id
+    creek_client.fail_delete = True
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "false")
+
+    pending = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert pending.status_code == HTTPStatus.ACCEPTED
+    assert pending.json()["state"] == "deleting"
+    assert pending.json()["new_activation_available"] is False
+    await db_session.refresh(original)
+    assert original.activation_id == old_activation_id
+    assert len((await db_session.execute(select(VaultActivation))).scalars().all()) == 1
+
+    creek_client.fail_delete = False
+    creek_client.delete_state = "deleted"
+    recovered = await async_client.get("/vault/activation", headers=headers)
+
+    assert recovered.json()["state"] == "pending"
+    assert recovered.json()["new_activation_available"] is False
+    assert len((await db_session.execute(select(VaultActivation))).scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_restart_resumes_confirmed_cleanup_and_submits_the_new_generation(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """The persisted deleting state is sufficient to recover after process loss."""
+    headers, _, _ = await _signup(concurrent_async_client, "recover-restart")
+    async with concurrent_session_factory() as session:
+        original = await _settle_provider_rejection(
+            concurrent_async_client,
+            session,
+            creek_client,
+            headers,
+        )
+        old_activation_id = original.activation_id
+    pending = await concurrent_async_client.post("/vault/activation/recover", headers=headers)
+    assert pending.json()["state"] == "deleting"
+    creek_client.delete_state = "deleted"
+
+    await resume_vault_activations(concurrent_session_factory, creek_client)
+
+    async with concurrent_session_factory() as session:
+        recovered = (await session.execute(select(VaultActivation))).scalar_one()
+    assert recovered.activation_id != old_activation_id
+    assert recovered.state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_recovery_requests_create_one_fresh_generation(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lost-response retries may duplicate calls but never activation identities."""
+    headers, _, _ = await _signup(concurrent_async_client, "recover-concurrent")
+    async with concurrent_session_factory() as session:
+        original = await _settle_provider_rejection(
+            concurrent_async_client,
+            session,
+            creek_client,
+            headers,
+        )
+        old_activation_id = original.activation_id
+    creek_client.delete_state = "deleted"
+
+    original_persist = vars(creek_provisioning)["_persist_recovery_intent"]
+    persist_arrivals = 0
+    all_loaded_failed = asyncio.Event()
+
+    async def synchronize_recovery_intents(
+        session: AsyncSession,
+        identity: object,
+    ) -> bool:
+        """Hold requests after route admission so each retains the old generation."""
+        nonlocal persist_arrivals
+        persist_arrivals += 1
+        if persist_arrivals == 8:
+            all_loaded_failed.set()
+        await asyncio.wait_for(all_loaded_failed.wait(), timeout=5)
+        return cast("bool", await original_persist(session, identity))
+
+    monkeypatch.setattr(
+        creek_provisioning,
+        "_persist_recovery_intent",
+        synchronize_recovery_intents,
+    )
+
+    original_load = vars(creek_provisioning)["_load_teardown_receipt"]
+    empty_reads = 0
+    all_read_empty = asyncio.Event()
+
+    async def collide_receipt_inserts(
+        session: AsyncSession,
+        job_id: str,
+    ) -> VaultTeardownReceipt | None:
+        """Force every request through the unique-insert rollback path."""
+        nonlocal empty_reads
+        receipt = await original_load(session, job_id)
+        if receipt is not None:
+            return cast("VaultTeardownReceipt", receipt)
+        empty_reads += 1
+        if empty_reads == 8:
+            all_read_empty.set()
+        await asyncio.wait_for(all_read_empty.wait(), timeout=5)
+        return None
+
+    monkeypatch.setattr(
+        creek_provisioning,
+        "_load_teardown_receipt",
+        collide_receipt_inserts,
+    )
+
+    responses = await asyncio.gather(
+        *[
+            concurrent_async_client.post("/vault/activation/recover", headers=headers)
+            for _ in range(8)
+        ]
+    )
+
+    assert HTTPStatus.ACCEPTED in {response.status_code for response in responses}
+    assert {response.status_code for response in responses} <= {
+        HTTPStatus.ACCEPTED,
+        HTTPStatus.CONFLICT,
+    }
+    async with concurrent_session_factory() as session:
+        activations = (await session.execute(select(VaultActivation))).scalars().all()
+    assert len(activations) == 1
+    assert activations[0].activation_id != old_activation_id
+    assert len(creek_client.jobs) == 2
+
+
+@pytest.mark.asyncio
+async def test_nonretryable_delete_failure_never_mints_a_new_identity(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """A terminal teardown refusal fails closed without an unsafe reset loop."""
+    headers, _, _ = await _signup(async_client, "recover-delete-rejected")
+    original = await _settle_provider_rejection(
+        async_client,
+        db_session,
+        creek_client,
+        headers,
+    )
+    old_activation_id = original.activation_id
+    creek_client.reject_delete = True
+
+    refused = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert refused.status_code == HTTPStatus.ACCEPTED
+    assert refused.json()["state"] == "failed"
+    assert refused.json()["failure_reason"] == "internal_error"
+    assert refused.json()["recovery_available"] is False
+    current = (await db_session.execute(select(VaultActivation))).scalar_one()
+    assert current.activation_id == old_activation_id
+    assert current.recovery_requested_at is None
+    assert [call[0] for call in creek_client.calls].count("activate") == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_rejects_every_nonterminal_or_unowned_shape(
+    async_client: AsyncClient,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """The recovery route cannot become a generic activation-reset oracle."""
+    del creek_client
+    first_headers, _, _ = await _signup(async_client, "recover-owner")
+    other_headers, _, _ = await _signup(async_client, "recover-other")
+
+    inactive = await async_client.post("/vault/activation/recover", headers=first_headers)
+    await _activate(async_client, first_headers)
+    in_flight = await async_client.post("/vault/activation/recover", headers=first_headers)
+    other = await async_client.post("/vault/activation/recover", headers=other_headers)
+
+    assert inactive.status_code == HTTPStatus.CONFLICT
+    assert in_flight.status_code == HTTPStatus.CONFLICT
+    assert other.status_code == HTTPStatus.CONFLICT
+    assert {inactive.json()["detail"], in_flight.json()["detail"], other.json()["detail"]} == {
+        "vault_activation_not_recoverable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_account_erasure_deleting_state_never_resumes_as_recovery(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """Only the durable recovery marker authorizes replacement after deletion."""
+    headers, _, _ = await _signup(async_client, "recover-erasure-boundary")
+    original = await _settle_provider_rejection(
+        async_client,
+        db_session,
+        creek_client,
+        headers,
+    )
+    original.state = "deleting"
+    original.recovery_requested_at = None
+    db_session.add(original)
+    await db_session.commit()
+    calls_before = tuple(creek_client.calls)
+
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    refused = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert status_response.status_code == HTTPStatus.OK
+    assert status_response.json()["state"] == "deleting"
+    assert refused.status_code == HTTPStatus.CONFLICT
+    assert tuple(creek_client.calls) == calls_before
 
 
 @pytest.mark.asyncio
@@ -920,6 +1228,7 @@ async def test_retired_ceremony_state_becomes_a_visible_terminal_failure(
         "active": True,
         "state": "failed",
         "new_activation_available": True,
+        "recovery_available": True,
         "retryable": False,
         "failure_reason": "provider_rejected",
         "credential_received": False,
@@ -972,6 +1281,124 @@ async def test_account_deletion_queues_upstream_teardown_and_retains_only_a_rece
     assert email not in repr(receipts[0])
     audit = (await db_session.execute(select(AccountDeletionAudit))).scalar_one()
     assert audit.vault_disposition == "deleting"
+
+
+@pytest.mark.asyncio
+async def test_failed_local_account_sweep_releases_vault_for_explicit_recovery(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed local erasure cannot strand a surviving account in deleting."""
+    headers, user_id, email = await _signup(async_client, "teardown-sweep-failure")
+    await _activate(async_client, headers)
+
+    async def fail_local_sweep(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced local account sweep failure")
+
+    monkeypatch.setattr("routers.users.delete_account", fail_local_sweep)
+
+    failed = await async_client.request(
+        "DELETE",
+        "/users/me",
+        headers=headers,
+        json={"confirm_email": email},
+    )
+
+    assert failed.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert await db_session.get(User, user_id) is not None
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    assert activation.state == "failed"
+    assert activation.retryable is False
+    assert activation.failure_reason == "provider_rejected"
+    assert activation.recovery_requested_at is None
+
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    assert status_response.status_code == HTTPStatus.OK
+    assert status_response.json()["recovery_available"] is True
+
+    creek_client.delete_state = "deleted"
+    recovered = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert recovered.status_code == HTTPStatus.ACCEPTED
+    assert recovered.json()["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_failed_teardown_setup_releases_vault_for_explicit_recovery(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure after the erasure claim but before the sweep cannot strand it."""
+    headers, user_id, email = await _signup(async_client, "teardown-setup-failure")
+    await _activate(async_client, headers)
+
+    async def fail_teardown_setup(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced teardown receipt failure")
+
+    monkeypatch.setattr("routers.users.request_vault_teardown", fail_teardown_setup)
+
+    failed = await async_client.request(
+        "DELETE",
+        "/users/me",
+        headers=headers,
+        json={"confirm_email": email},
+    )
+
+    assert failed.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert await db_session.get(User, user_id) is not None
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+    assert activation.state == "failed"
+    assert activation.retryable is False
+    assert activation.failure_reason == "provider_rejected"
+    assert activation.recovery_requested_at is None
+
+    status_response = await async_client.get("/vault/activation", headers=headers)
+    assert status_response.status_code == HTTPStatus.OK
+    assert status_response.json()["recovery_available"] is True
+
+    creek_client.delete_state = "deleted"
+    recovered = await async_client.post("/vault/activation/recover", headers=headers)
+
+    assert recovered.status_code == HTTPStatus.ACCEPTED
+    assert recovered.json()["state"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_failed_local_account_sweep_discards_an_unallocated_activation(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No Creek job means an interrupted erasure needs no recovery fiction."""
+    headers, user_id, email = await _signup(async_client, "teardown-before-job")
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id="activation-before-job",
+            consumer_identity="consumer-before-job",
+        )
+    )
+    await db_session.commit()
+
+    async def fail_local_sweep(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced local account sweep failure")
+
+    monkeypatch.setattr("routers.users.delete_account", fail_local_sweep)
+
+    failed = await async_client.request(
+        "DELETE",
+        "/users/me",
+        headers=headers,
+        json={"confirm_email": email},
+    )
+
+    assert failed.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert await db_session.get(User, user_id) is not None
+    assert (await db_session.execute(select(VaultActivation))).scalars().all() == []
 
 
 @pytest.mark.asyncio
@@ -1160,12 +1587,16 @@ def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> Non
     document = app.openapi()
     assert set(document["paths"]["/vault/activation"]) >= {"get", "post"}
     assert "post" in document["paths"]["/vault/activation/retry"]
+    assert "post" in document["paths"]["/vault/activation/recover"]
     assert document["paths"]["/vault/activation"]["get"]["summary"] == (
         "Get Managed Vault Activation"
     )
     assert document["paths"]["/vault/activation"]["post"]["summary"] == ("Activate Managed Vault")
     assert document["paths"]["/vault/activation/retry"]["post"]["summary"] == (
         "Retry Managed Vault Activation"
+    )
+    assert document["paths"]["/vault/activation/recover"]["post"]["summary"] == (
+        "Recover Managed Vault Activation"
     )
     assert "/vault/activation/key-ceremony" not in document["paths"]
     response_schema = document["components"]["schemas"]["VaultActivationResponse"]
@@ -1177,6 +1608,7 @@ def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> Non
         "active",
         "state",
         "new_activation_available",
+        "recovery_available",
         "retryable",
         "failure_reason",
         "credential_received",
