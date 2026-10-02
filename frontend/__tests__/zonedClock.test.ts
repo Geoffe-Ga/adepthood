@@ -30,6 +30,11 @@ describe('instantAt', () => {
     expect(instantAt('2026-03-08', '01:30', LOS_ANGELES).toISOString()).toBe(
       '2026-03-08T09:30:00.000Z',
     );
+    // Read naively as UTC, 03:30 still falls before the change; only a second
+    // look at the answer finds the summer offset that actually applies.
+    expect(instantAt('2026-03-08', '03:30', LOS_ANGELES).toISOString()).toBe(
+      '2026-03-08T10:30:00.000Z',
+    );
     expect(instantAt('2026-03-08', '23:58', LOS_ANGELES).toISOString()).toBe(
       '2026-03-09T06:58:00.000Z',
     );
