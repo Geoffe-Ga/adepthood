@@ -132,7 +132,7 @@ export function writingTimerRowLabel(
  */
 export const OFFER_SWITCH_LABEL = 'Offer to keep a session';
 export const OFFER_SWITCH_DESCRIPTION =
-  'After a finished writing session, offers to keep it as a habit or a practice. Answering it once turns this off; turn it back on here. Kept on this device.';
+  'Offers to keep a finished writing session as a habit or a practice. Answering it turns this off. Kept on this device.';
 
 /**
  * The new Journaling habit, kept AND linked to the timer. It starts locked like
@@ -161,7 +161,7 @@ export const LINK_HABIT_NUDGE_DECLINE_A11Y = "Don't show this note again";
 /** Settings: the switch for the note. Kept on this device only, and the copy says so. */
 export const LINK_HABIT_NUDGE_SWITCH_LABEL = 'Show the habit note';
 export const LINK_HABIT_NUDGE_SWITCH_DESCRIPTION =
-  "After a finished session with no habit linked, leaves a note pointing here. Its Don't show again turns this off; turn it back on here. Kept on this device.";
+  "After a session with no habit linked, leaves a note pointing here. Don't show again turns this off. Kept on this device.";
 
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [

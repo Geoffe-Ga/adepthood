@@ -61,7 +61,7 @@ export const MORNING_PAGES_NEVER_A11Y = `${MORNING_PAGES_NEVER_LINK}: stop offer
  */
 export const MORNING_PAGES_SWITCH_LABEL = 'Offer morning pages';
 export const MORNING_PAGES_SWITCH_DESCRIPTION =
-  "Keeps the morning-pages invitation on your Journal shelf. Its Don't show this again turns this off; turn it back on here. Kept on this device.";
+  "Keeps the morning-pages invitation on your Journal shelf. Don't show this again turns this off. Kept on this device.";
 
 /** Every string the card itself shows or speaks. */
 export const MORNING_PAGES_CARD_COPY_ENTRIES: readonly string[] = [

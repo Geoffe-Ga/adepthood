@@ -183,7 +183,7 @@ const CorpusSection = ({
       <Text style={[t.caption, styles.sortingLead]} testID="settings-corpus-sorting-lead">
         {CORPUS_SORTING_HUB_LEAD}
       </Text>
-      <CorpusConsentRows />
+      <CorpusConsentRows offeredOnly />
       <SettingsRow
         icon={BookOpen}
         label={CORPUS_CONSENT_ROW_LABEL}

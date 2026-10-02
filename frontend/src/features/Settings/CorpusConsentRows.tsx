@@ -1,5 +1,6 @@
+import { FileQuestion, FileText, Globe, PenLine, type LucideIcon } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import {
   CORPUS_CONSENT_FAILURE,
@@ -12,18 +13,17 @@ import {
   sourceCopy,
 } from './corpusConsentCopy';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
+import {
+  SETTINGS_ROW_TEXT_INSET,
+  SettingsRowText,
+  SettingsSwitchRow,
+} from './shared/SettingsSwitchRow';
 
 import { corpusConsent, type CorpusConsent } from '@/api';
-import {
-  BORDER_RADIUS,
-  SPACING,
-  accent,
-  colors,
-  ink,
-  rhythm,
-  surface,
-  touchTarget,
-} from '@/design/tokens';
+import { BORDER_RADIUS, SPACING, colors, ink, rhythm, surface, touchTarget } from '@/design/tokens';
+
+/** The note row's glyph, the same size as a switch row's. */
+const NOTE_ICON_SIZE = 22;
 
 /**
  * The corpus-consent switches themselves: one per kind of material the server
@@ -146,42 +146,31 @@ interface SourceRowProps {
   onCancelRevoke: () => void;
 }
 
-/** The switch, or the reason there is not one, for a single kind of material. */
+/** The glyph for each kind of material; a source this release has not met gets a question. */
+const SOURCE_ICONS: Record<string, LucideIcon> = {
+  journal: PenLine,
+  upload: FileText,
+  import: Globe,
+};
+
+/** The switch for a single kind of material, with the question a withdrawal asks. */
 const SourceRow = (props: SourceRowProps): React.JSX.Element => {
   const { decision, busy, confirming } = props;
   const { source } = decision;
   const copy = sourceCopy(source);
-  const offered = sortsAnything(source);
   return (
-    <View style={styles.row} testID={`corpus-consent-row-${source}`}>
-      <View style={styles.rowHead}>
-        <View style={styles.rowText}>
-          <Text style={styles.rowLabel}>{copy.label}</Text>
-          <Text style={styles.rowDescription}>{copy.description}</Text>
-        </View>
-        {offered ? (
-          <Switch
-            testID={`corpus-consent-switch-${source}`}
-            accessibilityRole="switch"
-            accessibilityLabel={copy.label}
-            accessibilityState={{ checked: decision.granted, disabled: busy }}
-            value={decision.granted}
-            disabled={busy}
-            onValueChange={props.onValueChange}
-            trackColor={{ false: surface.hairline, true: accent.primary }}
-            thumbColor={surface.raised}
-          />
-        ) : null}
-      </View>
-      {offered ? (
-        <Text style={styles.rowStatus} testID={`corpus-consent-status-${source}`}>
-          {consentStatusLine(decision)}
-        </Text>
-      ) : (
-        <Text style={styles.rowStatus} testID={`corpus-consent-note-${source}`}>
-          {CORPUS_NOT_SORTED_YET_NOTE}
-        </Text>
-      )}
+    <SettingsSwitchRow
+      icon={SOURCE_ICONS[source] ?? FileQuestion}
+      label={copy.label}
+      description={copy.description}
+      status={consentStatusLine(decision)}
+      statusTestID={`corpus-consent-status-${source}`}
+      value={decision.granted}
+      disabled={busy}
+      onValueChange={props.onValueChange}
+      testID={`corpus-consent-row-${source}`}
+      switchTestID={`corpus-consent-switch-${source}`}
+    >
       {confirming ? (
         <RevokeConfirm
           source={source}
@@ -189,12 +178,42 @@ const SourceRow = (props: SourceRowProps): React.JSX.Element => {
           onCancel={props.onCancelRevoke}
         />
       ) : null}
+    </SettingsSwitchRow>
+  );
+};
+
+/** A kind of material nothing here collects yet: named, explained, and offered no switch. */
+const SourceNoteRow = ({ source }: { source: string }): React.JSX.Element => {
+  const Icon = SOURCE_ICONS[source] ?? FileQuestion;
+  const copy = sourceCopy(source);
+  return (
+    <View style={styles.noteRow} testID={`corpus-consent-row-${source}`}>
+      <View style={styles.noteIcon}>
+        <Icon color={ink.muted} size={NOTE_ICON_SIZE} />
+      </View>
+      <SettingsRowText
+        label={copy.label}
+        description={copy.description}
+        status={CORPUS_NOT_SORTED_YET_NOTE}
+        statusTestID={`corpus-consent-note-${source}`}
+      />
     </View>
   );
 };
 
+export interface CorpusConsentRowsProps {
+  /**
+   * Show only the sources that have a switch. The hub passes this: a row
+   * that explains why there is no switch belongs on the screen that explains
+   * everything else, not between two rows that do something.
+   */
+  offeredOnly?: boolean;
+}
+
 /** Every source's row, the revoke question, and the banner for a failed read or write. */
-export function CorpusConsentRows(): React.JSX.Element {
+export function CorpusConsentRows({
+  offeredOnly = false,
+}: CorpusConsentRowsProps = {}): React.JSX.Element {
   const { decisions, error, pending, decide } = useCorpusConsent();
   const [confirming, setConfirming] = useState<string | null>(null);
 
@@ -220,55 +239,43 @@ export function CorpusConsentRows(): React.JSX.Element {
   return (
     <>
       <SettingsFeedbackBanner idPrefix="corpus-consent" error={error} status={null} />
-      {(decisions ?? []).map((decision) => (
-        <SourceRow
-          key={decision.source}
-          decision={decision}
-          busy={pending === decision.source}
-          confirming={confirming === decision.source}
-          onValueChange={(next) => onValueChange(decision.source, next)}
-          onConfirmRevoke={() => onConfirmRevoke(decision.source)}
-          onCancelRevoke={() => setConfirming(null)}
-        />
-      ))}
+      {(decisions ?? []).map((decision) => {
+        if (!sortsAnything(decision.source)) {
+          return offeredOnly ? null : (
+            <SourceNoteRow key={decision.source} source={decision.source} />
+          );
+        }
+        return (
+          <SourceRow
+            key={decision.source}
+            decision={decision}
+            busy={pending === decision.source}
+            confirming={confirming === decision.source}
+            onValueChange={(next) => onValueChange(decision.source, next)}
+            onConfirmRevoke={() => onConfirmRevoke(decision.source)}
+            onCancelRevoke={() => setConfirming(null)}
+          />
+        );
+      })}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
+  noteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: touchTarget.minimum,
     paddingVertical: rhythm.blockGap,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: surface.hairline,
   },
-  rowHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: touchTarget.minimum,
-  },
-  rowText: {
-    flex: 1,
-    paddingRight: SPACING.md,
-  },
-  rowLabel: {
-    fontSize: 16,
-    color: ink.primary,
-  },
-  rowDescription: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: ink.soft,
-    marginTop: SPACING.xs,
-  },
-  rowStatus: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: ink.muted,
-    marginTop: SPACING.xs,
+  noteIcon: {
+    width: SETTINGS_ROW_TEXT_INSET,
   },
   revoke: {
     marginTop: rhythm.blockGap,
+    marginLeft: SETTINGS_ROW_TEXT_INSET,
     padding: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
     backgroundColor: surface.sunken,

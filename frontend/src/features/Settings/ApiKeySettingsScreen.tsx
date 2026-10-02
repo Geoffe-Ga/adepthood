@@ -30,7 +30,7 @@ import {
   settingsFormStyles,
   settingsFormType,
 } from './shared/settingsFormLayout';
-import { SettingsSwitchRow } from './shared/SettingsSwitchRow';
+import { SETTINGS_ROW_TEXT_INSET, SettingsSwitchRow } from './shared/SettingsSwitchRow';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
@@ -55,7 +55,9 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  *
  * Above the key sits the "Use Adepthood's own model" switch: the open-source
  * model Adepthood runs on servers it operates, in place of a provider reached
- * with a key. While it is on the whole key area is greyed and inert — the
+ * with a key. It is the first choice on the screen; everything about the key
+ * itself, from where it travels to the Save button, sits below it in one
+ * area. While the switch is on that whole area is greyed and inert — the
  * switch is the way to use it again — and a key already saved stays on the
  * device but is not sent (``ApiKeyContext`` withholds it per request).
  */
@@ -282,22 +284,32 @@ const LocalModelChoice = ({
   );
 };
 
-const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => {
+const ScreenTitle = (): React.JSX.Element => {
   const face = settingsFormType(useWindowDimensions().width);
   return (
-    <>
-      <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
-        BotMason API Key
-      </Text>
-      <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
-      {!apiKey && (
-        <Text style={styles.hint} testID="no-key-hint">
-          No key saved yet. BotMason will use the shared server key if one is configured.
-        </Text>
-      )}
-    </>
+    <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
+      BotMason API Key
+    </Text>
   );
 };
+
+interface KeyDisclosureProps {
+  apiKey: string | null;
+  /** While Adepthood's own model is chosen, "no key" needs no explaining: the note above said what is in use. */
+  localModel: boolean;
+}
+
+/** Where a key travels, and what it means to have none; part of the key area. */
+const KeyDisclosure = ({ apiKey, localModel }: KeyDisclosureProps): React.JSX.Element => (
+  <>
+    <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
+    {!apiKey && !localModel && (
+      <Text style={styles.hint} testID="no-key-hint">
+        No key saved yet. BotMason will use the shared server key if one is configured.
+      </Text>
+    )}
+  </>
+);
 
 const ProviderDirectory = (): React.JSX.Element => (
   <View style={styles.providerSection} testID="provider-directory">
@@ -402,6 +414,7 @@ const KeyArea = (props: KeyAreaProps): React.JSX.Element => {
       accessibilityState={{ disabled: inert }}
       testID="api-key-area"
     >
+      <KeyDisclosure apiKey={apiKey} localModel={localModel} />
       <ProviderDirectory />
       {apiKey && (
         <StoredKeyCard
@@ -432,7 +445,7 @@ const ScreenBody = ({
   ...keyArea
 }: ScreenBodyProps): React.JSX.Element => (
   <>
-    <ScreenIntro apiKey={keyArea.apiKey} />
+    <ScreenTitle />
     <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
     <LocalModelChoice
       localModel={keyArea.localModel}
@@ -660,7 +673,7 @@ const styles = StyleSheet.create({
   detected: { color: colors.successText, marginBottom: SPACING.md, fontSize: 13 },
   localModel: { marginBottom: SPACING.xl },
   /** Ink and spacing only: the face is ``settingsFormType(width).cardLabel`` (the ramp caption). */
-  localModelNote: { color: ink.soft, marginTop: SPACING.sm },
+  localModelNote: { color: ink.soft, marginTop: SPACING.sm, marginLeft: SETTINGS_ROW_TEXT_INSET },
   keyAreaInert: { opacity: KEY_AREA_INERT_OPACITY },
 });
 

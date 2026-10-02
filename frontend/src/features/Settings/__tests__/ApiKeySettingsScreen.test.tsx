@@ -486,6 +486,14 @@ describe('ApiKeySettingsScreen — the local-model switch', () => {
     expect(getByTestId('stored-key-card')).toBeTruthy();
   });
 
+  test('on with no key, the shared-server-key hint stays out of the way: the note already says what is in use', () => {
+    setApiKeyState({ localModel: true, apiKey: null });
+    const { queryByTestId, getByText } = render(<ApiKeySettingsScreen />);
+
+    expect(queryByTestId('no-key-hint')).toBeNull();
+    expect(getByText(BYOK_DETAIL_DISCLOSURE)).toBeTruthy();
+  });
+
   test('a saved key is still shown as stored while the model is on, never as removed', () => {
     setApiKeyState({ localModel: true, apiKey: VALID_KEY });
     const { getByTestId, queryByTestId } = render(<ApiKeySettingsScreen />);

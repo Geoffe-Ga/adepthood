@@ -672,6 +672,16 @@ describe('SettingsHubScreen — the sorting switches under Your corpus', () => {
     expect(getByTestId('corpus-consent-switch-upload').props.value).toBe(true);
   });
 
+  test('shows no row at all for a source nothing sorts yet; that explanation lives on the full screen', async () => {
+    const IMPORT_UNDECIDED: ConsentState = { source: 'import', granted: false, decided_at: null };
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, IMPORT_UNDECIDED]);
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('corpus-consent-row-import')).toBeNull();
+    expect(queryByTestId('corpus-consent-note-import')).toBeNull();
+  });
+
   test('the sorting lead states the send, the Intimate guarantee, and the default', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
     const lead = getByTestId('settings-corpus-sorting-lead').props.children as string;

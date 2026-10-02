@@ -27,7 +27,7 @@
  * "a habit" — never "not linked", which would tell a linked writer the opposite
  * of the truth — and the habits are read so the name can resolve.
  */
-import { NotebookPen } from 'lucide-react-native';
+import { Bookmark, Link, NotebookPen, Sunrise, type LucideIcon } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
@@ -139,6 +139,7 @@ function useWritingHabitRow({ initiallyOpen }: { initiallyOpen: boolean }): {
 }
 
 interface OfferSwitchRowProps {
+  icon: LucideIcon;
   label: string;
   description: string;
   storage: OfferSwitchStorage;
@@ -146,10 +147,11 @@ interface OfferSwitchRowProps {
 }
 
 /** One invitation's switch, driven from its device-kept flag. */
-function OfferSwitchRow({ label, description, storage, testID }: OfferSwitchRowProps) {
+function OfferSwitchRow({ icon, label, description, storage, testID }: OfferSwitchRowProps) {
   const control = useOfferSwitch(storage);
   return (
     <SettingsSwitchRow
+      icon={icon}
       label={label}
       description={description}
       value={control.value}
@@ -165,18 +167,21 @@ function OfferSwitchRows(): React.JSX.Element {
   return (
     <>
       <OfferSwitchRow
+        icon={Bookmark}
         label={OFFER_SWITCH_LABEL}
         description={OFFER_SWITCH_DESCRIPTION}
         storage={WRITING_OFFER_SWITCH}
         testID="settings-row-writing-offer"
       />
       <OfferSwitchRow
+        icon={Sunrise}
         label={MORNING_PAGES_SWITCH_LABEL}
         description={MORNING_PAGES_SWITCH_DESCRIPTION}
         storage={MORNING_PAGES_SWITCH}
         testID="settings-row-morning-pages-offer"
       />
       <OfferSwitchRow
+        icon={Link}
         label={LINK_HABIT_NUDGE_SWITCH_LABEL}
         description={LINK_HABIT_NUDGE_SWITCH_DESCRIPTION}
         storage={LINK_HABIT_NUDGE_SWITCH}
