@@ -490,3 +490,27 @@ describe('useCourseDrawerBodies confirm-gated body search (wiring)', () => {
     expect(getByTestId('course-drawer-chapter-21')).toBeTruthy();
   });
 });
+
+describe('CourseDrawer sweep status copy', () => {
+  it('captions the in-flight sweep in chapter terms', async () => {
+    const { getByTestId } = renderDrawer({ sweepStatus: 'loading' });
+    await typeQuery(getByTestId, 'gratitude');
+    fireEvent.press(getByTestId('drawer-search-deep-search'));
+
+    expect(getByTestId('course-drawer-search-loading')).toHaveTextContent(
+      'Searching inside chapters...',
+    );
+  });
+
+  it('captions the failed sweep in chapter terms above a "Tap to retry" row', async () => {
+    const { getByTestId } = renderDrawer({ sweepStatus: 'error' });
+    await typeQuery(getByTestId, 'gratitude');
+    fireEvent.press(getByTestId('drawer-search-deep-search'));
+
+    expect(getByTestId('course-drawer-search-error')).toHaveTextContent(
+      'We could not finish searching the chapters.',
+      { exact: false },
+    );
+    expect(getByTestId('course-drawer-search-retry')).toHaveTextContent('Tap to retry');
+  });
+});
