@@ -175,6 +175,111 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    any unintended change to a Stage's identifying attributes, so a copy
    refresh cannot silently alter seeded rows.
 
+## Updating stage correspondences
+
+The seven per-Stage correspondence fields (category, aspect, Spiral Dynamics
+colour, Growing Up stage, divine gender polarity, relationship to free will and
+its description) are generated, never hand-edited. Their source is the
+`APTITUDE Complete Map.csv` vendored at the `backend/content/CONTENT_VERSION`
+pin, plus the adepthood-owned supersessions. The output is
+`backend/src/curriculum/stage_correspondence.json`. The vendoring exception and
+its exit plan are recorded in `docs/adr/0001-git-content-pipeline.md` (the
+2026-09-25 note). This is the whole path for a change, from upstream to a
+running database.
+
+1. **Edit upstream.** Change the CSV or the chapter text in the
+   `aptitude-course` repository and merge it there. Never edit
+   `backend/content/**` by hand: it is excluded from every pre-commit hook, and
+   its drift gate fails the next CI run.
+2. **Re-pin.** Vendor the new upstream commit, which rewrites `backend/content/`
+   and `CONTENT_VERSION` (sha, timestamp, tree digest), then confirm the tree
+   matches the pin:
+
+   ```bash
+   make sync-content REF=<sha>      # or: cd backend && python -m scripts.sync_content --ref <sha>
+   cd backend && python -m scripts.sync_content --check
+   ```
+
+3. **Regenerate.** Rebuild the artifact from the newly vendored CSV and the
+   supersessions, then confirm it is current:
+
+   ```bash
+   cd backend && python -m scripts.build_stage_correspondence
+   cd backend && python -m scripts.build_stage_correspondence --check
+   ```
+
+   CI runs that `--check` in the `content-drift` job of `backend-ci.yml`, right
+   after `sync_content --check`, so a re-pin that skips this step fails there.
+   If a supersession has gone stale, the generator refuses to build; see below.
+4. **Run the parity and consumer tests.** `backend/tests/test_stage_correspondence.py`
+   holds `archetypal_wavelength.json`'s copy of the seven fields equal to the
+   artifact, stage by stage, and pins the #1637 stages literally.
+   `frontend/src/features/Map/__tests__/stageCanonDrift.test.ts` (run by
+   backend CI through `scripts/frontend/cross-boundary-drift.sh`) holds the Map
+   copy to it. A red parity test after a re-pin is a decision: carry the new
+   value into the mirror (bumping its `dataset_version`) or record a
+   supersession.
+5. **Commit** the `CONTENT_VERSION` bump, the vendored tree, the regenerated
+   artifact and any mirror change together, so that `--check` holds at every
+   commit.
+
+### Supersessions
+
+`backend/src/curriculum/stage_correspondence_supersessions.json` lists the
+ratified departures from the CSV (chapter text wins over the CSV, owner ruling
+2026-09-16). The generator enforces the rules for each entry:
+
+- `stage_id` and `field` name a real stage and one of the seven fields;
+- `csv_value` must equal the vendored CSV cell exactly. When upstream later
+  edits that cell, the entry fails as stale and must be revisited, never
+  silently reapplied;
+- `value` must differ from `csv_value`. No-op entries are refused;
+- `authority` must be contracted vendored markdown under `markdown/` (never
+  `markdown/backup/`) that contains `value`.
+
+To add a supersession, append an entry, regenerate and run `--check`. To retire
+one (for example once upstream adopts the value in the CSV, which makes the
+entry stale), delete it and regenerate. Either way, update the literal pins in
+`test_stage_correspondence.py`, which exist so the change is a visible decision.
+
+### What happens on deploy
+
+On startup `seed_stages()` reconciles the `coursestage` table against the
+artifact, keyed by the stable `stage_key` (the colour slug):
+
+- a missing `stage_key` is inserted;
+- a row whose artifact-sourced fields or provenance have drifted is updated in
+  place, keeping its id and its seeder-owned `overview_url`. Its
+  `reconciled_at` moves only when something actually changed;
+- a row whose `stage_key` and `stage_number` disagree with the artifact raises
+  before anything is written;
+- a row whose `stage_key` the artifact no longer names is logged as an orphan
+  and kept. Rows are never deleted.
+
+No migration is needed for a data change.
+
+**Verify** after deploy by reading `GET /stages/correspondence`. Each stage's
+`provenance` names `source_repo`, `source_sha` (the new pin), `source_path`,
+`source_sha256` and `schema_version`, and `reconciled_at` shows which rows
+moved. Before merging, the three drift gates must all exit 0:
+
+```bash
+cd backend && python -m scripts.sync_content --check
+cd backend && python -m scripts.build_stage_correspondence --check
+python scripts/backend/export_openapi.py --check
+```
+
+The last one matters only if the response shape changed, which a data change
+never does.
+
+### Rollback
+
+Re-pin the previous upstream SHA (step 2 with the old `REF`), regenerate
+(step 3) and redeploy. The reconciler moves the rows back on the next startup
+and stamps a fresh `reconciled_at` on each one that changed. Because no
+migration is involved, there is nothing to downgrade. A supersession added or
+removed in the bad change is reverted in the same commit.
+
 ## Consumers
 
 The Stage seeder (`seed_stages.py`) takes each Stage's title and subtitle from
