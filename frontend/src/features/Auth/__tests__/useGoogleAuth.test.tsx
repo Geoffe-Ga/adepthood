@@ -69,6 +69,14 @@ const VALID_LICENSE_KEY = 'A1B2C3D4-E5F6A7B8-C9D0E1F2-A3B4C5D6'; // pragma: allo
 const AUTH_REQUEST = { url: 'https://accounts.google.com/o/oauth2/v2/auth' };
 /** Asserted by value: the hook keeps its fallback copy module-private on purpose. */
 const GOOGLE_FALLBACK_COPY = "We couldn't finish that Google sign-in. Try again in a moment.";
+/** Asserted by value: the copy for a refusal Google itself reported on the redirect (#1989). */
+const GOOGLE_PROVIDER_ERROR_COPY =
+  "Google couldn't complete that sign-in. Try again, or continue with email instead.";
+/** A provider description that must never reach the screen or hook state. */
+const PROVIDER_SENTINEL = 'SENTINEL-PROVIDER-DESCRIPTION';
+const PROVIDER_REDIRECT_URL = 'https://example.invalid/redirect';
+/** Google's code for a user who pressed Cancel or Deny on its own screen. */
+const USER_DECLINED_CODE = 'access_denied';
 
 const mockUseAuthRequest = useAuthRequest as unknown as jest.Mock;
 const mockOauthGoogle = auth.oauthGoogle as unknown as jest.Mock;
@@ -97,6 +105,32 @@ function deferred<T>(): Deferred<T> {
 
 function googleSuccess(idToken: string) {
   return { type: 'success', params: { id_token: idToken }, authentication: null };
+}
+
+interface ProviderErrorShape {
+  /** Put the code on the ``AuthError`` (the current library shape). */
+  withAuthError?: boolean;
+  /** Put the code on the raw redirect ``params`` (the legacy shape). */
+  withParams?: boolean;
+}
+
+/**
+ * An ``error`` result as ``expo-auth-session`` builds it from a redirect that
+ * carries ``error=<code>``. ``null`` models a redirect with no code at all.
+ */
+function googleProviderError(
+  code: string | null,
+  { withAuthError = true, withParams = true }: ProviderErrorShape = {},
+) {
+  return {
+    type: 'error',
+    errorCode: null,
+    error: withAuthError && code !== null ? { code, description: PROVIDER_SENTINEL } : null,
+    params:
+      withParams && code !== null ? { error: code, error_description: PROVIDER_SENTINEL } : {},
+    authentication: null,
+    url: PROVIDER_REDIRECT_URL,
+  };
 }
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -408,14 +442,17 @@ describe('useGoogleAuth — anti-enumeration', () => {
   });
 });
 
+/** Every result that means the user closed or abandoned the sheet themselves. */
+const QUIET_RESULTS = [{ type: 'cancel' }, { type: 'dismiss' }, { type: 'locked' }];
+
 describe('useGoogleAuth — dismissed prompt', () => {
-  it('stays idle and silent when the user closes the Google sheet', async () => {
+  it.each(QUIET_RESULTS)('stays idle and silent on a $type result', async (result) => {
     const harness = await readyHarness();
 
     act(() => {
       harness.result.current.google.signIn();
     });
-    await deliverGoogleResponse(harness, { type: 'dismiss' });
+    await deliverGoogleResponse(harness, result);
     await flushMicrotasks();
 
     expect(mockOauthGoogle).not.toHaveBeenCalled();
@@ -424,12 +461,12 @@ describe('useGoogleAuth — dismissed prompt', () => {
     expect(harness.result.current.google.submitting).toBe(false);
   });
 
-  it('releases the in-flight guard so a dismissed prompt can be retried', async () => {
+  it.each(QUIET_RESULTS)('releases the in-flight guard after a $type result', async (result) => {
     const harness = await readyHarness();
     act(() => {
       harness.result.current.google.signIn();
     });
-    await deliverGoogleResponse(harness, { type: 'dismiss' });
+    await deliverGoogleResponse(harness, result);
     await flushMicrotasks();
 
     act(() => {
@@ -437,6 +474,139 @@ describe('useGoogleAuth — dismissed prompt', () => {
     });
 
     expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['on the auth error and the params', {}],
+    ['on the params only', { withAuthError: false }],
+    ['on the auth error only', { withParams: false }],
+  ])('stays silent when the user declines on Google’s screen, code %s', async (_label, shape) => {
+    const harness = await readyHarness();
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, googleProviderError(USER_DECLINED_CODE, shape));
+    await flushMicrotasks();
+
+    expect(harness.result.current.google.error).toBeNull();
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+  });
+});
+
+describe('useGoogleAuth — provider errors', () => {
+  async function signInAndFail(harness: Harness, response: unknown): Promise<void> {
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    await deliverGoogleResponse(harness, response);
+    await flushMicrotasks();
+  }
+
+  it('surfaces the provider-error copy when Google returns redirect_uri_mismatch', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError('redirect_uri_mismatch'));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.status).toBe('idle');
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(harness.result.current.auth.authStatus).toBe('anonymous');
+  });
+
+  it.each([
+    ['invalid_client'],
+    ['unauthorized_client'],
+    ['server_error'],
+    ['temporarily_unavailable'],
+    ['state_mismatch'],
+  ])('surfaces the provider-error copy for %s', async (code) => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError(code));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+    expect(harness.result.current.google.submitting).toBe(false);
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+  });
+
+  it('classifies a legacy result by params.error when the auth error is null', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(
+      harness,
+      googleProviderError('redirect_uri_mismatch', { withAuthError: false }),
+    );
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never stays silent about an error result that carries no code at all', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError(null));
+
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never exchanges an error redirect, even one that happens to carry an id token', async () => {
+    const harness = await readyHarness();
+    const failure = googleProviderError('server_error');
+
+    await signInAndFail(harness, { ...failure, params: { ...failure.params, id_token: ID_TOKEN } });
+
+    expect(mockOauthGoogle).not.toHaveBeenCalled();
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+  });
+
+  it('never shows the raw provider code or description', async () => {
+    const harness = await readyHarness();
+
+    await signInAndFail(harness, googleProviderError('redirect_uri_mismatch'));
+
+    expect(harness.result.current.google.error).not.toContain(PROVIDER_SENTINEL);
+    expect(harness.result.current.google.error).not.toContain('redirect_uri_mismatch');
+    expect(JSON.stringify(harness.result.current.google)).not.toContain(PROVIDER_SENTINEL);
+  });
+
+  it('reads as finished prose with an escape and no dead end', () => {
+    expect(GOOGLE_PROVIDER_ERROR_COPY).toMatch(/[.!?]$/);
+    expect(GOOGLE_PROVIDER_ERROR_COPY).toMatch(/email/);
+    expect(GOOGLE_PROVIDER_ERROR_COPY).not.toMatch(/support|you entered|invalid/i);
+  });
+
+  it('releases the in-flight guard so the user can try again', async () => {
+    const harness = await readyHarness();
+    await signInAndFail(harness, googleProviderError('server_error'));
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the error on a fresh attempt and authenticates on a following success', async () => {
+    mockOauthGoogle.mockResolvedValue({ token: SESSION_JWT, user_id: 7 });
+    const harness = await readyHarness();
+    await signInAndFail(harness, googleProviderError('temporarily_unavailable'));
+    expect(harness.result.current.google.error).toBe(GOOGLE_PROVIDER_ERROR_COPY);
+
+    act(() => {
+      harness.result.current.google.signIn();
+    });
+    expect(harness.result.current.google.error).toBeNull();
+    await deliverGoogleResponse(harness, googleSuccess(ID_TOKEN));
+
+    await waitFor(() => expect(harness.result.current.auth.authStatus).toBe('authenticated'));
+    expect(mockOauthGoogle).toHaveBeenCalledTimes(1);
+    expect(mockOauthGoogle).toHaveBeenCalledWith({
+      id_token: ID_TOKEN,
+      timezone: DEVICE_TIMEZONE,
+    });
   });
 });
 

@@ -32,7 +32,37 @@ const GOOGLE_REQUEST_CONFIG = {
 /** Copy for failures with no backend code of their own (a dead browser sheet). */
 const GOOGLE_FALLBACK = "We couldn't finish that Google sign-in. Try again in a moment.";
 
+/**
+ * Copy for a refusal Google reports on the redirect itself — a misconfigured
+ * client, a server hiccup, a state mismatch. Waiting may not help, so it offers
+ * the email path too, and it never echoes the provider's code or description.
+ */
+const GOOGLE_PROVIDER_ERROR =
+  "Google couldn't complete that sign-in. Try again, or continue with email instead.";
+
+/**
+ * Google's code when the user presses Cancel or Deny on its own screen: their
+ * choice, not a failure, so it stays as silent as a closed sheet. Mirrors
+ * ``useAppleAuth``'s ``USER_CANCELED_CODE``.
+ */
+const GOOGLE_USER_DECLINED_CODE = 'access_denied';
+
 type GoogleAuthResponse = ReturnType<typeof useAuthRequest>[1];
+
+/**
+ * The redirect-carrying member of the library union. ``'error'`` and
+ * ``'success'`` share it, so it is selected by its fields, not its ``type``.
+ */
+type GoogleRedirectResult = Extract<NonNullable<GoogleAuthResponse>, { params: unknown }>;
+
+/**
+ * The copy for an ``error`` result, or ``null`` when the user declined. A
+ * missing code is surfaced, never silenced.
+ */
+function providerErrorCopy(result: GoogleRedirectResult): string | null {
+  const code = result.error?.code ?? result.params.error;
+  return code === GOOGLE_USER_DECLINED_CODE ? null : GOOGLE_PROVIDER_ERROR;
+}
 
 /** Public shape of the flow, as {@link useGoogleAuth} hands it to the UI. */
 export interface GoogleAuthState extends SocialAuthView {
@@ -54,7 +84,12 @@ function useResponseBridge(
 ): void {
   useEffect(() => {
     if (!response) return;
-    // A closed sheet is not a failure — drop the guard and say nothing.
+    if (response.type === 'error') {
+      release(providerErrorCopy(response));
+      return;
+    }
+    // cancel / dismiss / locked: a closed sheet is not a failure — drop the
+    // guard and say nothing.
     if (response.type !== 'success') {
       release(null);
       return;
