@@ -422,11 +422,13 @@ export const importDestinationSchema = z.enum(['vault', 'corpus']);
 export type ImportDestinationT = z.infer<typeof importDestinationSchema>;
 
 /**
- * What the local corpus did with one imported document — the wire strings of
- * the backend's ``CorpusImportStatus``. Eight outcomes, one of which stores
- * anything, each with a different next step for the person holding the
- * document. Pinned rather than left as a bare string for the same reason
- * {@link vaultUploadStatusSchema} is: a ninth value this release has no honest
+ * Why no vault took one imported document — the wire strings of the backend's
+ * ``CorpusImportStatus``. Since #3016 the server answers only
+ * ``vault_required``: a corpus lives in a vault (#3015), so an account with none
+ * has its document stored nowhere. The other eight described the retired local
+ * corpus import and stay because the server keeps them on the wire. Pinned
+ * rather than left as a bare string for the same reason
+ * {@link vaultUploadStatusSchema} is: a value this release has no honest
  * sentence for must surface as ``ApiValidationError`` rather than render blank.
  */
 export const corpusImportStatusSchema = z.enum([
@@ -438,6 +440,7 @@ export const corpusImportStatusSchema = z.enum([
   'empty_document',
   'document_too_long',
   'unclassified',
+  'vault_required',
 ]);
 export type CorpusImportStatusT = z.infer<typeof corpusImportStatusSchema>;
 

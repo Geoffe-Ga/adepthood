@@ -1034,7 +1034,7 @@
         "type": "object"
       },
       "CorpusImportStatus": {
-        "description": "What became of a document routed to the account's own ontologized corpus.\n\nEight outcomes, one of which stores anything. They are enumerated rather\nthan flattened into a boolean because each has a *different next step* for\nthe person holding the document -- turn the setting on, choose another\ntier, export it as markdown, split it, or nothing at all -- and a surface\nthat could not tell them apart would answer every one of them with \"it\ndidn't work\".\n\n:attr:`FORMAT_UNREADABLE` and :attr:`NOT_TEXT` look alike and are not. The\nfirst is a format adepthood never claimed to open, and a connected vault\nwould have opened it; the second is a file whose name says text and whose\nbytes are not.",
+        "description": "What became of a document that reached no vault.\n\n:attr:`VAULT_REQUIRED` is the only member the import route produces since\n#3016: the account has nowhere a corpus can be kept, and the next step is\nto set up, or check on, the place it lives -- *Where your corpus lives* in\nSettings. Nothing is stored.\n\nThe other eight described the retired local-corpus import, one of which\n(:attr:`STORED`) stored anything. They are unreachable from\n``POST /corpus/import`` and stay only for wire stability, as the module\ndocstring explains.",
         "enum": [
           "stored",
           "consent_required",
@@ -1043,7 +1043,8 @@
           "not_text",
           "empty_document",
           "document_too_long",
-          "unclassified"
+          "unclassified",
+          "vault_required"
         ],
         "title": "CorpusImportStatus",
         "type": "string"
@@ -1256,7 +1257,7 @@
                 "type": "null"
               }
             ],
-            "description": "What the local corpus did, for a corpus destination."
+            "description": "Why no vault took the document, for a corpus destination: since #3016 always vault_required."
           },
           "destination": {
             "$ref": "#/components/schemas/ImportDestination",
@@ -3533,7 +3534,7 @@
         "type": "object"
       },
       "ImportDestination": {
-        "description": "Where one imported document actually went.\n\nResolved per account rather than per deployment: an account that has\nconnected a vault of their own reaches it, and an account that has\nconnected none reaches their local corpus. Neither is a fallback from the\nother -- they are two different places writing can live, and a person is\nentitled to be told which of them theirs is in.",
+        "description": "Which vocabulary one import's answer is in.\n\nResolved per account rather than per deployment. ``vault`` means the\naccount reaches a vault and the vault answered. ``corpus`` means it reaches\nnone: since #3016 that answer is always\n:attr:`CorpusImportStatus.VAULT_REQUIRED` and nothing was stored anywhere --\nthe label is the one the wire has always carried for a vault-less account,\nnot a claim that a local corpus took the document.",
         "enum": [
           "vault",
           "corpus"
@@ -11888,7 +11889,7 @@
     },
     "/corpus/import": {
       "post": {
-        "description": "Import one document into whichever corpus this account has.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take files is a\nnormal condition of an optional integration, and so is an account that has\nnot yet agreed to ontologize uploads.\n\nBounded and synchronous, and it stays that way honestly: one request is one\ndocument, one document is one fragment, and one fragment is one\nclassification call. Nothing here needs backgrounding because nothing here\nfans out -- an import that *did* fan out, over a whole-account archive,\nwould need a queue and observable progress, which is why\n:mod:`domain.document_text` refuses a document too long for one fragment\nrather than quietly splitting it into a job nobody can watch.\n\nThe commit is here rather than in the service because the fragment is what\nthis route is for and the router is what owns its arrival. The import is not\nquite one transaction: the ingest ends the one it inherited immediately\nbefore the classification, so no pooled connection is held while a language\nmodel is thinking. Nothing of the document is written before that point, so\nwhat the early commit lands is the account's consent read and nothing else,\nand the fragment still arrives here or not at all.\n\nThe vault ontologization pass is driven from here, after that commit, and\nnot from inside :func:`services.corpus_import.import_document` -- which\nstates that it commits nothing and that the caller owns the transaction, and\nwould have to break that promise to schedule anything. The router is also the\nlayer that can tell the two destinations apart without asking anything twice:\nthe import's result *type* already says which one it reached, so a document\nthat went to the account's own corpus never consults a vault it does not\nhave. Bounded and synchronous, like everything else on this route: the pass\nstands down inside its own per-stage intervals, starts no stage it cannot\nafford, and never raises.",
+        "description": "Take one document to this account's vault, or answer that it needs one.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take\nfiles is a normal condition of an optional integration. An account with no\nvault at all is answered ``vault_required`` (#3015): a corpus lives in a\nvault, so there is nowhere to keep the document.\n\nThe payload guard runs first, for every caller, so an oversized or\nundecodable document is refused as such whether or not the account has a\nvault. It is the only thing done with the document on the no-vault answer.\n\nThe commit is here rather than in the service because the service commits\nnothing and the caller owns the transaction. The vault ontologization pass\nis driven from here, after that commit, for the same reason: the service\nwould have to break that promise to schedule anything. The router is also\nthe layer that can tell the two answers apart without asking anything twice:\nthe import's result *type* already says whether a vault was reached, so a\n``vault_required`` answer never consults a vault the account does not have.\nBounded and synchronous, like everything else on this route: the pass stands\ndown inside its own per-stage intervals, starts no stage it cannot afford,\nand never raises.",
         "operationId": "import_corpus_document_corpus_import_post",
         "parameters": [
           {

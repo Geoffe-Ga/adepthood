@@ -32,6 +32,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'empty_document',
   'document_too_long',
   'unclassified',
+  'vault_required',
   'unsupported_format',
   'too_large',
   'unreadable',
@@ -82,6 +83,21 @@ describe('what each outcome says', () => {
     expect(SEED_STATUS_LINES.in_corpus).toContain('corpus');
     expect(SEED_STATUS_LINES.in_corpus.toLowerCase()).not.toContain('vault');
     expect(SEED_STATUS_LINES.in_corpus).not.toBe(SEED_STATUS_LINES.ingested);
+  });
+
+  test('a document with nowhere to live is told where that place is set up', () => {
+    // #3016. True for every account the server answers this for: one with no
+    // vault, one whose vault is still being prepared, one whose vault could not
+    // be reached at its stored address. So it never says "set one up" alone.
+    const line = SEED_STATUS_LINES.vault_required;
+
+    expect(line).toContain('Nothing was stored');
+    expect(line).toContain('Where your corpus lives');
+    expect(line.toLowerCase()).toContain('check on it');
+    expect(line.toLowerCase()).not.toContain('vault');
+    expect(line.toLowerCase()).not.toContain('creek');
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+    expect(ranksOrShames(line)).toBe(false);
   });
 
   test('a document in the vault is not described as being in the corpus', () => {

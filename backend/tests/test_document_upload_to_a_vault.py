@@ -11,8 +11,8 @@ Written against ``POST /journal/upload`` and re-pointed when that route was
 retired for having no caller. Nothing under test moved: the import route
 resolves the account's client, finds a vault, and calls the same
 :func:`services.creek_vault_upload.store_upload` through the same request
-schema and the same size guard. What it adds is a destination for the account
-that has no vault, which ``tests/test_corpus_import.py`` is about.
+schema and the same size guard. What it adds is the ``vault_required`` answer
+for an account that has no vault, which ``tests/test_corpus_import.py`` is about.
 
 Four properties are pinned here that no lower layer can guarantee alone:
 

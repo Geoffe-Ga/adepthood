@@ -4,9 +4,9 @@
  * with the single settled status the run renders.
  *
  * **One route, and the destination is the server's answer.** `POST
- * /corpus/import` routes per account — the vault for somebody who has connected
- * one, their own ontologized corpus for somebody who has not — so this module
- * asks once and reads which of the two answered. It never checks for a vault
+ * /corpus/import` takes the document to the account's vault, or — for an
+ * account the server finds no vault for — keeps nothing and answers
+ * `vault_required` (#3016), so this module asks once and reads which answered. It never checks for a vault
  * itself and never re-sends a corpus answer to the vault surface: a second
  * caller with overlapping meaning is a second answer to a question the server
  * has already settled, and the day the two disagree the person is told
@@ -60,6 +60,7 @@ const CORPUS_SEED_STATUS: Record<CorpusImportStatusT, CorpusSeedStatus> = {
   empty_document: 'empty_document',
   document_too_long: 'document_too_long',
   unclassified: 'unclassified',
+  vault_required: 'vault_required',
 };
 
 /** Map a thrown import failure onto the run's vocabulary, bytes untouched. */

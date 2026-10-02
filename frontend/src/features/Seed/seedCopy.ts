@@ -8,10 +8,11 @@
  * adding to it is an invitation they already accepted.
  *
  * **Each line names the place the document actually reached.** A document goes
- * to the vault or to this account's own ontologized corpus, the server decides
- * which, and the two are different places with different guarantees. Telling
- * somebody "in your vault" about writing that is in the corpus — or the reverse
- * — would be the one sentence on this screen nobody could check.
+ * to the account's vault, or — since #3016, for an account the server finds no
+ * vault for — nowhere at all, and the server decides which. The corpus lines
+ * below the vault's are the server's other vocabulary; telling somebody "in
+ * your vault" about writing that is not there would be the one sentence on this
+ * screen nobody could check.
  */
 import { MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
 import type { SeedItemStatus, SeedRunTally } from './seedRun';
@@ -66,6 +67,17 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   unclassified:
     "Adepthood couldn't place this among the frequencies, so it wasn't added — a corpus entry " +
     'has to sit somewhere on the map to be found again. Nothing changed, and you can try again.',
+  // The one answer the server gives an account it finds no vault for (#3016).
+  // Worded to stay true for each such account: one that never set a vault up,
+  // one whose vault is still being prepared, one whose vault could not be
+  // reached at the address on record. So it offers "set it up or check on it",
+  // never "set one up" alone, and says "for this account" rather than "you
+  // have none". It names the Settings row rather than a vault, because the
+  // corpus lines are held to never naming one.
+  vault_required:
+    'Nothing was stored. Documents you bring in are kept where your corpus lives, and that ' +
+    "isn't ready for this account yet. Open Where your corpus lives in Settings to set it up " +
+    'or check on it, then send this again.',
   // Decided on device, so it names neither destination: this extension is
   // outside everything either side could read, and it was never sent.
   unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',

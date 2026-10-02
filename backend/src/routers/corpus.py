@@ -33,13 +33,14 @@ permission recorded and the writing the sweep reached already ontologized, but
 not the sweep's own receipt, which is appended last and dies with the caller's
 transaction.
 
-``POST /import`` is the third verb and the reason the other two now have
-something to gate. It takes one document a person chose -- exported journal
-history, a blog post, notes, an AI conversation saved as Markdown -- and routes
-it to whichever corpus that account actually has: their vault if they have
-connected one, their own ontologized corpus if they have not.
+``POST /import`` is the third verb. It takes one document a person chose --
+exported journal history, a blog post, notes, an AI conversation saved as
+Markdown -- and takes it to their vault. A corpus lives in a vault (owner
+ruling on #3015), so since #3016 an account that reaches no vault is answered
+``vault_required`` and nothing is read, consulted, classified or stored; the
+consent decisions above gate nothing on this route.
 :mod:`services.corpus_import` owns the routing rule and the reasons for it. The
-endpoint itself only decodes, calls, commits, and picks the sentence.
+endpoint itself only checks the payload, calls, commits, and picks the sentence.
 
 ``GET /voice-readiness`` is the fourth verb and the only read here that is
 about the corpus rather than about permission to have one. It reports whether
@@ -359,47 +360,35 @@ async def import_corpus_document(
     session: Annotated[AsyncSession, Depends(get_session)],
     vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> DocumentImportResponse:
-    """Import one document into whichever corpus this account has.
+    """Take one document to this account's vault, or answer that it needs one.
 
     202 for every outcome, including the ones that stored nothing: adepthood
     accepted the request and acted on it, and what became of the document is in
     the body where a client can render a specific sentence rather than infer one
-    from a status code. A vault that is missing, unreachable or unable to take files is a
-    normal condition of an optional integration, and so is an account that has
-    not yet agreed to ontologize uploads.
+    from a status code. A vault that is missing, unreachable or unable to take
+    files is a normal condition of an optional integration. An account with no
+    vault at all is answered ``vault_required`` (#3015): a corpus lives in a
+    vault, so there is nowhere to keep the document.
 
-    Bounded and synchronous, and it stays that way honestly: one request is one
-    document, one document is one fragment, and one fragment is one
-    classification call. Nothing here needs backgrounding because nothing here
-    fans out -- an import that *did* fan out, over a whole-account archive,
-    would need a queue and observable progress, which is why
-    :mod:`domain.document_text` refuses a document too long for one fragment
-    rather than quietly splitting it into a job nobody can watch.
+    The payload guard runs first, for every caller, so an oversized or
+    undecodable document is refused as such whether or not the account has a
+    vault. It is the only thing done with the document on the no-vault answer.
 
-    The commit is here rather than in the service because the fragment is what
-    this route is for and the router is what owns its arrival. The import is not
-    quite one transaction: the ingest ends the one it inherited immediately
-    before the classification, so no pooled connection is held while a language
-    model is thinking. Nothing of the document is written before that point, so
-    what the early commit lands is the account's consent read and nothing else,
-    and the fragment still arrives here or not at all.
-
-    The vault ontologization pass is driven from here, after that commit, and
-    not from inside :func:`services.corpus_import.import_document` -- which
-    states that it commits nothing and that the caller owns the transaction, and
-    would have to break that promise to schedule anything. The router is also the
-    layer that can tell the two destinations apart without asking anything twice:
-    the import's result *type* already says which one it reached, so a document
-    that went to the account's own corpus never consults a vault it does not
-    have. Bounded and synchronous, like everything else on this route: the pass
-    stands down inside its own per-stage intervals, starts no stage it cannot
-    afford, and never raises.
+    The commit is here rather than in the service because the service commits
+    nothing and the caller owns the transaction. The vault ontologization pass
+    is driven from here, after that commit, for the same reason: the service
+    would have to break that promise to schedule anything. The router is also
+    the layer that can tell the two answers apart without asking anything twice:
+    the import's result *type* already says whether a vault was reached, so a
+    ``vault_required`` answer never consults a vault the account does not have.
+    Bounded and synchronous, like everything else on this route: the pass stands
+    down inside its own per-stage intervals, starts no stage it cannot afford,
+    and never raises.
     """
-    raw = guard_document_payload(payload.content_base64)
+    guard_document_payload(payload.content_base64)
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         result = await import_document(
-            session,
             vault_client,
             UploadedDocument(
                 owner_user_id=user_id,
@@ -408,7 +397,6 @@ async def import_corpus_document(
                 classification=payload.classification,
                 created_at=datetime.now(UTC),
             ),
-            raw,
         )
         await session.commit()
         if isinstance(result, VaultImportResult) and result.stored:
