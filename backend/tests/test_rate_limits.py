@@ -825,10 +825,10 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 154 mounted ``APIRoute``s share 128 distinct paths. Pinned so a future router
+# 155 mounted ``APIRoute``s share 129 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 128
+_DISTINCT_MOUNTED_PATHS = 129
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
@@ -852,7 +852,7 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     """Every distinct mounted path is charged, not merely the three app-level ones.
 
     Deliberately iterates distinct *paths* with a reset between them rather than
-    routes: 154 routes share 128 paths, the ambient bucket is keyed per path,
+    routes: 155 routes share 129 paths, the ambient bucket is keyed per path,
     and a per-route walk would see the second and third method on a shared path
     charged to a bucket the first already spent.
     """

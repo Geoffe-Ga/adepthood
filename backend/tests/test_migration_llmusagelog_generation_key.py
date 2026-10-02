@@ -21,7 +21,6 @@ from sqlalchemy import Connection, create_engine, inspect, text
 
 _BASE_REVISION = "a1c3e5f7b9d2"  # pragma: allowlist secret
 _REVISION = "c4e6a8b0d2f1"  # pragma: allowlist secret
-_HEAD_REVISION = "d6f1a8c4e2b9"  # pragma: allowlist secret
 _TABLE = "llmusagelog"
 _INDEX = "ix_llmusagelog_generation_id"
 _INSERT_LEGACY_ROW = text(
@@ -82,7 +81,6 @@ def test_the_generation_key_migration_chains_from_the_lease_head(
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_HEAD_REVISION]
 
 
 def test_upgrade_adds_two_nullable_columns_and_keeps_legacy_rows_null(

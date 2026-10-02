@@ -17,6 +17,7 @@ from bounds import MAX_PAGE_OFFSET
 from database import get_session
 from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
+from domain.constants import TOTAL_STAGES
 from domain.dates import today_in_tz
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_authority import open_through
@@ -40,7 +41,6 @@ from schemas.practice import (
 )
 from schemas.practice_mode_config import ModeConfigAdapter
 from seed_practices import STAGE_TO_PRESET_NAME
-from seed_stages import STAGE_DEFINITIONS
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +506,7 @@ async def get_current_frequency(
         int | None,
         Query(
             ge=1,
-            le=len(STAGE_DEFINITIONS),
+            le=TOTAL_STAGES,
             description=(
                 "Pin the banner to a specific stage. When omitted the server "
                 "derives the stage from the user's StageProgress. Clients pass "

@@ -9,12 +9,14 @@ the seeders, idempotently, every time the app starts.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import logging
-from collections.abc import AsyncGenerator, Coroutine, Generator
+import sys
+from collections.abc import AsyncGenerator, Coroutine, Generator, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,10 +24,13 @@ from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
+import curriculum.stage_correspondence as stage_correspondence_module
+
 # Direct import rather than a fixture: the lifespan patch needs the engine
 # object itself (so it can wire a session factory at it), not a per-test
 # session yielded from a fixture.
 from conftest import test_engine
+from curriculum.stage_correspondence import StageCorrespondenceError, load_stage_correspondence
 from database_schema import DatabaseSchemaMismatchError
 from main import _log_botmason_provider, _log_content_status, _seed_startup_data, app, lifespan
 from models.course_stage import CourseStage
@@ -335,6 +340,98 @@ async def test_seed_startup_data_skips_dependents_when_stages_fails(
         await _seed_startup_data(db_session)
 
     assert calls == [], f"dependent seeders must not run when stages fails: {calls}"
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_correspondence_artifact_fails_only_the_stages_seeder(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broken artifact is a logged ``seed_failed``, not a crash, and dependents wait.
+
+    Drives the real ``seed_stages`` through its default loader seam, so the
+    failure is the one a bad committed artifact would produce in production.
+    """
+    broken = tmp_path / "stage_correspondence.json"
+    broken.write_text('{"schema_version": "1.0.0", "stages": [')
+    calls: list[str] = []
+
+    async def _track_practices(_session: AsyncSession) -> int:
+        calls.append("practices")
+        return 0
+
+    async def _track_content(_session: AsyncSession) -> int:
+        calls.append("content")
+        return 0
+
+    caplog.set_level(logging.ERROR, logger="main")
+    with (
+        patch(
+            "seed_stages.stage_correspondence",
+            new=lambda: load_stage_correspondence(broken),
+        ),
+        patch("main.seed_practices", new=_track_practices),
+        patch("main.seed_content", new=_track_content),
+    ):
+        await _seed_startup_data(db_session)
+
+    assert calls == []
+    failures = [r for r in caplog.records if r.getMessage() == "seed_failed seeder=stages"]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None
+    assert isinstance(failures[0].exc_info[1], StageCorrespondenceError)
+    assert (await db_session.execute(select(CourseStage))).scalars().all() == []
+
+
+@pytest.fixture
+def broken_default_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Point the default artifact path at garbage, with the parse cache emptied.
+
+    The cache is cleared again on the way out, after ``monkeypatch`` restores
+    the real path, so no later test inherits the broken artifact or an error.
+    """
+    broken = tmp_path / "stage_correspondence.json"
+    broken.write_text("not json")
+    monkeypatch.setattr(stage_correspondence_module, "ARTIFACT_PATH", broken)
+    stage_correspondence_module.stage_correspondence.cache_clear()
+    try:
+        yield broken
+    finally:
+        monkeypatch.undo()
+        stage_correspondence_module.stage_correspondence.cache_clear()
+
+
+def _execute_fresh_copy(module_name: str) -> ModuleType:
+    """Execute ``src/<module_name>.py`` again as a new, unregistered module."""
+    path = Path(__file__).resolve().parents[1] / "src" / f"{module_name.replace('.', '/')}.py"
+    spec = importlib.util.spec_from_file_location(f"_fresh_{module_name}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered while it executes because dataclass creation looks the
+    # defining module up in ``sys.modules``; dropped again so nothing else
+    # can import the copy.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
+    return module
+
+
+@pytest.mark.usefixtures("broken_default_artifact")
+@pytest.mark.parametrize("module_name", ["seed_stages", "routers.user_practices"])
+def test_importing_a_stage_consumer_does_not_load_the_artifact(module_name: str) -> None:
+    """The artifact is parsed on first use, so a bad one cannot break ``import main``.
+
+    ``main`` imports both modules; executing each afresh while the default
+    artifact is broken must succeed, and the failure must wait for a caller.
+    """
+    _execute_fresh_copy(module_name)
+
+    with pytest.raises(StageCorrespondenceError, match="is not valid JSON"):
+        _execute_fresh_copy("seed_stages").stage_definitions()
 
 
 @pytest.mark.asyncio

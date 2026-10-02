@@ -103,6 +103,34 @@ assets to a site resource validate. Purely additive — a resource without `medi
 stays valid, and `additionalProperties: false` still rejects unknown keys. This
 matched the shape the `aptitude-course` content pin already publishes.
 
+**2026-09-25 — temporary vendoring of the Complete Map CSV (#2664).**
+Under the owner ruling of 2026-09-23 on #2664, `scripts/sync_content.py`
+also copies `google_docs/database_of_course_curriculum/APTITUDE Complete
+Map.csv` to `backend/content/curriculum/aptitude_complete_map.csv`. This is a
+deliberate, documented deviation from `aptitude-course` `CONSUMPTION.md` §1,
+which names `google_docs/` internal: until upstream publishes a
+`stage_correspondence[]` tier in `manifest.json`, that CSV is the only
+machine-readable source of the per-stage correspondence attributes. The
+exception is mitigated, not closed. The CSV comes from the *same* tarball and
+SHA as the rest of `backend/content/` (no second pin); it is copied
+byte-for-byte; it falls inside the `CONTENT_VERSION` tree digest, so
+`--check` catches a hand-edit; and a tarball without it fails the sync. The
+exception is declared as the single entry of `VENDORED_EXTRA_FILES`, and
+`scripts/build_stage_correspondence.py` derives the versioned
+`backend/src/curriculum/stage_correspondence.json` from it. **Exit plan:** once
+the upstream manifest carries `stage_correspondence[]`, empty
+`VENDORED_EXTRA_FILES` and point the generator at the manifest tier.
+
+Two notes for that upstream bump. First, **pick `schema_version 1.3.0`, not
+`1.2.0`**. This ADR already spends `1.2.0` on `site_resource.media[]` (the
+note above), while the upstream schema still reads `1.1.0`, so an upstream
+`1.2.0` would mean two different contracts. Second, the local
+`backend/content/manifest.schema.json` sets top-level
+`additionalProperties: false`, so a manifest carrying `stage_correspondence[]`
+fails `_validate_manifest_file` during sync. The local schema has to add an
+optional `stage_correspondence` property *before* the bumped manifest is
+vendored.
+
 ## Consequences
 
 - Issues #390–#399 implement against this contract without

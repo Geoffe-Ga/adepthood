@@ -21,6 +21,16 @@ the schema, stamped with ``CONTENT_VERSION`` (resolved SHA, ISO
 timestamp, tree digest), and only then swapped into place with two
 renames. A failed sync never partially overwrites the target.
 
+Temporary uncontracted surface — **the Complete Map CSV** (#2664): until
+``aptitude-course`` publishes ``stage_correspondence[]`` in its manifest,
+the sync also copies ``google_docs/database_of_course_curriculum/APTITUDE
+Complete Map.csv`` from the *same* tarball and SHA (no second pin) to
+``curriculum/aptitude_complete_map.csv``. It is byte-for-byte, falls inside
+the tree digest, and is declared in :data:`VENDORED_EXTRA_FILES`, so
+retiring it after the upstream bump is a one-line deletion. See the ADR
+0001 addendum (2026-09-25) for why this deviation from CONSUMPTION.md §1
+is accepted.
+
 Vendoring policy — **``backend/content/`` is committed** (not built at
 deploy time): the image is reproducible from the repo alone and every
 content pin bump is a reviewable diff. The directory is marked
@@ -59,6 +69,23 @@ DEFAULT_REF = "main"
 #: Files owned by *this* repo that a clean sync must never remove — the
 #: frozen contract (issue #389) lives beside the vendored content.
 PRESERVED_FILES = ("manifest.schema.json", "manifest.example.json")
+
+#: Where the stage-correspondence source lives inside the content tarball.
+#: ``google_docs/`` is outside the upstream contract (CONSUMPTION.md §1); the
+#: ADR 0001 addendum (2026-09-25, #2664) records this temporary exception.
+STAGE_CORRESPONDENCE_CSV_SOURCE = (
+    "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv"
+)
+
+#: Where the stage-correspondence CSV is vendored, relative to the content dir.
+STAGE_CORRESPONDENCE_CSV_VENDORED = "curriculum/aptitude_complete_map.csv"
+
+#: Extra ``(tarball path, vendored path)`` files copied verbatim beside the
+#: published surface. Every entry is required: a tarball missing one fails the
+#: sync. Empty this once the upstream manifest carries the data (#2664).
+VENDORED_EXTRA_FILES: tuple[tuple[str, str], ...] = (
+    (STAGE_CORRESPONDENCE_CSV_SOURCE, STAGE_CORRESPONDENCE_CSV_VENDORED),
+)
 
 #: The audit-trail file recording what is vendored.
 CONTENT_VERSION_FILE = "CONTENT_VERSION"
@@ -201,10 +228,27 @@ def _stage_published_surface(source_root: Path, staging: Path, content_dir: Path
     markdown_src = source_root / "markdown"
     if markdown_src.is_dir():
         shutil.copytree(markdown_src, staging / "markdown")
+    _stage_extra_files(source_root, staging)
     for name in PRESERVED_FILES:
         preserved = content_dir / name
         if preserved.is_file():
             shutil.copy(preserved, staging / name)
+
+
+def _stage_extra_files(source_root: Path, staging: Path) -> None:
+    """Copy each :data:`VENDORED_EXTRA_FILES` entry byte-for-byte into ``staging``.
+
+    Raises :class:`SyncContentError` (before any swap, so the target is left
+    untouched) when the tarball lacks a declared file.
+    """
+    for source_rel, vendored_rel in VENDORED_EXTRA_FILES:
+        source = source_root / source_rel
+        if not source.is_file():
+            msg = f"content tarball has no {source_rel} — cannot vendor {vendored_rel}"
+            raise SyncContentError(msg)
+        destination = staging / vendored_rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
 
 
 def _validate_manifest_file(directory: Path) -> None:

@@ -15,11 +15,12 @@ from curriculum import CurriculumDataError, stage_curriculum
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
-from domain.constants import TOTAL_STAGES
+from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
 from domain.dates import ensure_aware
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
+from domain.stage_keys import STAGE_KEYS
 from domain.stage_progress import (
     compute_stage_progress,
     compute_stage_progress_batch,
@@ -39,6 +40,8 @@ from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.stage import (
     ProgramCalendarResponse,
+    StageCorrespondenceProvenance,
+    StageCorrespondenceResponse,
     StageExpression,
     StageHistoryResponse,
     StageManifestation,
@@ -52,6 +55,9 @@ from services.creek_vault_wheel import select_wheel_balance
 logger = logging.getLogger(__name__)
 
 router = build_router(prefix="/stages", tags=["stages"], extra_statuses=(status.HTTP_409_CONFLICT,))
+
+#: The week each Stage opens on, by stable key.
+_START_WEEK_BY_KEY: dict[str, int] = dict(zip(STAGE_KEYS, STAGE_START_WEEKS, strict=True))
 
 
 def _stage_manifestations(stage_number: int) -> list[StageManifestation]:
@@ -178,6 +184,53 @@ async def list_stages(
     if pagination.paginate:
         return build_page(responses, total, pagination)
     return responses
+
+
+def _correspondence_response(stage: CourseStage, stage_key: str) -> StageCorrespondenceResponse:
+    """Project one keyed ``CourseStage`` row onto the correspondence contract."""
+    return StageCorrespondenceResponse(
+        stage_key=stage_key,
+        stage_number=stage.stage_number,
+        start_week=_START_WEEK_BY_KEY[stage_key],
+        category=stage.category,
+        aspect=stage.aspect,
+        spiral_dynamics_color=stage.spiral_dynamics_color,
+        growing_up_stage=stage.growing_up_stage,
+        divine_gender_polarity=stage.divine_gender_polarity,
+        relationship_to_free_will=stage.relationship_to_free_will,
+        free_will_description=stage.free_will_description,
+        provenance=StageCorrespondenceProvenance(
+            source_repo=stage.source_repo,
+            source_sha=stage.source_sha,
+            source_path=stage.source_path,
+            source_sha256=stage.source_sha256,
+            schema_version=stage.artifact_schema_version,
+            reconciled_at=stage.reconciled_at,
+        ),
+    )
+
+
+@router.get("/correspondence", response_model=list[StageCorrespondenceResponse])
+async def list_stage_correspondence(
+    _current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[StageCorrespondenceResponse]:
+    """The canonical per-Stage correspondences, keyed by stable stage key (#2665).
+
+    Global reference data: identical for every user, so there is no progress
+    overlay and reading it is not a visit. The set is fixed at the ten
+    Stages, so the list is not paginated; a legacy row outside them (an
+    orphan the seeder kept rather than deleted) is not served. Ordered by
+    ``stage_number`` then ``id`` for a total order. Registered ABOVE
+    ``/{stage_number}`` so the static path wins route matching.
+    """
+    query = (
+        select(CourseStage)
+        .where(col(CourseStage.stage_key).in_(STAGE_KEYS))
+        .order_by(col(CourseStage.stage_number).asc(), col(CourseStage.id).asc())
+    )
+    stages = (await session.execute(query)).scalars().all()
+    return [_correspondence_response(stage, str(stage.stage_key)) for stage in stages]
 
 
 @router.get("/program-calendar", response_model=ProgramCalendarResponse)

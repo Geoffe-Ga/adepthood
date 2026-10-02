@@ -57,13 +57,12 @@ def _url(config: Config) -> str:
     return value
 
 
-def test_recovery_intent_migration_is_the_linear_head(migration_config: Config) -> None:
+def test_recovery_intent_migration_chains_from_its_authored_head(migration_config: Config) -> None:
     """The marker revision extends the exact head it was authored against."""
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_REVISION]
 
 
 def test_recovery_intent_upgrade_is_nullable_and_preserves_legacy_rows(

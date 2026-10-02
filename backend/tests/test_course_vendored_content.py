@@ -23,7 +23,7 @@ from content_config import CONTENT_REF_SCHEME
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
 from seed_content import seed_content
-from seed_stages import STAGE_DEFINITIONS, seed_stages
+from seed_stages import seed_stages, stage_definitions
 from services.content_repository import (
     ContentRepository,
     reset_content_repository_for_tests,
@@ -78,7 +78,7 @@ async def partially_seeded_vendored_course(db_session: AsyncSession) -> AsyncIte
     Stage 1.
     """
     set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
-    for definition in STAGE_DEFINITIONS[:_UNLOCKED_STAGE_COUNT]:
+    for definition in stage_definitions()[:_UNLOCKED_STAGE_COUNT]:
         db_session.add(CourseStage(**definition))
     await db_session.commit()
     await seed_content(db_session)

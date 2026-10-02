@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import tarfile
 from collections.abc import Callable
@@ -66,16 +67,26 @@ def _make_tarball(files: dict[str, str], root: str = f"aptitude-course-{_SHA}") 
     return buffer.getvalue()
 
 
-def _content_tarball(manifest: dict[str, Any] | None = None) -> bytes:
-    """A tarball holding a valid manifest plus its Markdown files."""
+#: A stand-in Complete Map CSV. The trailing space in ``"Whole Adept "`` is
+#: deliberate: vendoring must copy bytes verbatim, never normalise them.
+_CSV_TEXT = (
+    "Week,Category,Relationship to Free Will\n"
+    "1,Yes-And-Ness,Biological Machine\n"
+    "31,Awareness,Whole Adept \n"
+)
+
+
+def _content_tarball(manifest: dict[str, Any] | None = None, *, include_csv: bool = True) -> bytes:
+    """A tarball holding a valid manifest, its Markdown files and the CSV."""
     payload = manifest if manifest is not None else _MANIFEST
-    return _make_tarball(
-        {
-            "manifest.json": json.dumps(payload),
-            "markdown/01-beige/01-survival.md": "# Survival\n",
-            "README.md": "not part of the published surface\n",
-        }
-    )
+    files = {
+        "manifest.json": json.dumps(payload),
+        "markdown/01-beige/01-survival.md": "# Survival\n",
+        "README.md": "not part of the published surface\n",
+    }
+    if include_csv:
+        files[sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE] = _CSV_TEXT
+    return _make_tarball(files)
 
 
 @pytest.fixture
@@ -270,7 +281,12 @@ def test_sync_handles_markdownless_manifest_and_missing_example(tmp_path: Path) 
     target.mkdir()
     shutil.copy(_SCHEMA_SRC, target / "manifest.schema.json")
     manifest = {"schema_version": "1.0.0", "chapters": [], "site_resources": []}
-    tarball = _make_tarball({"manifest.json": json.dumps(manifest)})
+    tarball = _make_tarball(
+        {
+            "manifest.json": json.dumps(manifest),
+            sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE: _CSV_TEXT,
+        }
+    )
 
     sha = sync(_SHA, target, fetch=_fetch_for(tarball), sleep=lambda _: None)
 
@@ -289,6 +305,61 @@ def test_sync_cleans_leftover_old_dir_from_crashed_swap(content_dir: Path) -> No
     assert not leftover.exists()
 
 
+def test_sync_vendors_stage_correspondence_csv(content_dir: Path) -> None:
+    """#2664: the Complete Map CSV is vendored byte-for-byte and digest-covered."""
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+
+    vendored = content_dir / sync_content_module.STAGE_CORRESPONDENCE_CSV_VENDORED
+    assert vendored.read_bytes() == _CSV_TEXT.encode()
+    # The rest of the published surface is still vendored unchanged.
+    assert json.loads((content_dir / "manifest.json").read_text()) == _MANIFEST
+    assert (content_dir / "markdown/01-beige/01-survival.md").read_text() == "# Survival\n"
+    # The CSV sits inside the digest: editing it changes the tree digest.
+    digest_before = compute_tree_digest(content_dir)
+    vendored.write_bytes(vendored.read_bytes() + b"x")
+    assert compute_tree_digest(content_dir) != digest_before
+
+
+def test_vendored_extra_files_table_names_the_csv() -> None:
+    """The temporary uncontracted surface is exactly one declared file."""
+    assert sync_content_module.VENDORED_EXTRA_FILES == (
+        (
+            sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE,
+            sync_content_module.STAGE_CORRESPONDENCE_CSV_VENDORED,
+        ),
+    )
+    assert sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE == (
+        "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv"
+    )
+
+
+def test_sync_aborts_when_tarball_lacks_stage_correspondence_csv(content_dir: Path) -> None:
+    """A tarball without the CSV fails the sync and leaves the target untouched."""
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+    snapshot = {
+        path.relative_to(content_dir).as_posix(): path.read_bytes()
+        for path in content_dir.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(
+        SyncContentError, match=re.escape(sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE)
+    ):
+        sync(
+            _SHA,
+            content_dir,
+            fetch=_fetch_for(_content_tarball(include_csv=False)),
+            sleep=lambda _: None,
+        )
+
+    after = {
+        path.relative_to(content_dir).as_posix(): path.read_bytes()
+        for path in content_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == snapshot
+
+
 # ── check ───────────────────────────────────────────────────────────────
 
 
@@ -302,6 +373,17 @@ def test_check_fails_on_tampered_file(content_dir: Path) -> None:
     (content_dir / "markdown/01-beige/01-survival.md").write_text("tampered\n")
     with pytest.raises(SyncContentError):
         check(content_dir)
+
+
+def test_check_fails_when_vendored_csv_edited(content_dir: Path) -> None:
+    """Hand-editing the vendored CSV after a sync trips the drift gate."""
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+    vendored = content_dir / sync_content_module.STAGE_CORRESPONDENCE_CSV_VENDORED
+    vendored.write_text(_CSV_TEXT.replace("Whole Adept ", "Whole Adept"))
+
+    with pytest.raises(SyncContentError, match="drift"):
+        check(content_dir)
+    assert main(["--check", "--content-dir", str(content_dir)]) == 1
 
 
 def test_check_bootstrap_passes_without_manifest_or_stamp(content_dir: Path) -> None:
