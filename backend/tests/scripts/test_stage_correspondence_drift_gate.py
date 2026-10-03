@@ -17,6 +17,11 @@ third-party imports, so this module also walks those imports and fails when
 one of them is missing from the install step: an ``ImportError`` exits 1 too,
 and a gate that is red for the wrong reason teaches people to ignore it.
 
+A gate can also be disarmed without touching its exit code: a condition on
+the step or the job (``if: ${{ false }}``, or any never-true expression) skips
+it while the job reports green. The job carries no condition, so any live
+``if:`` key in it fails here.
+
 Parsed as plain text through ``tests.workflow_text``, like the other guards in
 this directory: PyYAML is deliberately in no requirements file. Every check is
 a predicate over workflow text, so the code that grades the real workflow is
@@ -27,6 +32,7 @@ fail is not known to be a gate.
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -115,6 +121,19 @@ def _disarming_fragments(workflow_text: str) -> list[str]:
     return [fragment for fragment in _DISARMING_FRAGMENTS if fragment in live]
 
 
+# A live ``if:`` key -- a job's own, or a step's, with or without the sequence
+# dash. The job carries no condition today, so any one is a way to skip the gate
+# while the job reports green: ``${{ false }}``, a never-true expression, or a
+# job-level condition all leave every other predicate here satisfied.
+_IF_KEY = re.compile(r"^\s*(?:- )?(?P<key>if:.*?)\s*$")
+
+
+def _job_conditions(workflow_text: str) -> list[str]:
+    """Return every live ``if:`` condition in the ``content-drift`` job, as written."""
+    live = without_comment_lines(_content_drift_job(workflow_text)).splitlines()
+    return [found.group("key") for line in live if (found := _IF_KEY.match(line)) is not None]
+
+
 def _third_party_import_roots(paths: tuple[Path, ...]) -> set[str]:
     """Return the top-level module names the scripts import that are neither stdlib nor ours."""
     roots: set[str] = set()
@@ -162,8 +181,9 @@ def test_the_gate_runs_after_the_vendored_content_check() -> None:
 
 
 def test_the_job_is_not_disarmed() -> None:
-    """Nothing in the job lets the gate's exit code be swallowed."""
+    """Nothing in the job lets the gate's exit code be swallowed, or the gate be skipped."""
     assert _disarming_fragments(_real_workflow()) == []
+    assert _job_conditions(_real_workflow()) == []
 
 
 def test_the_install_step_covers_every_drift_script_import() -> None:
@@ -211,6 +231,7 @@ def test_the_predicates_accept_a_well_formed_job() -> None:
     assert _gate_problems(good) == []
     assert _ordering_problems(good) == []
     assert _disarming_fragments(good) == []
+    assert _job_conditions(good) == []
     assert _install_problems(good, set(_DISTRIBUTION_FOR_IMPORT)) == []
 
 
@@ -294,3 +315,37 @@ def test_a_disarm_mentioned_only_in_a_comment_is_ignored() -> None:
     """The header may explain why ``|| true`` is not used without tripping the check."""
     explained = _fixture(_SYNC, "      # never append || true or continue-on-error here\n" + _GATE)
     assert _disarming_fragments(explained) == []
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected"),
+    [
+        (
+            _fixture(_SYNC, _GATE + "        if: ${{ false }}\n"),
+            "if: ${{ false }}",
+        ),
+        (
+            _fixture(_SYNC, _GATE + "        if: github.event_name == 'never'\n"),
+            "if: github.event_name == 'never'",
+        ),
+        (
+            _fixture(_SYNC, _GATE).replace(
+                "    runs-on: ubuntu-latest\n",
+                "    runs-on: ubuntu-latest\n    if: ${{ false }}\n",
+            ),
+            "if: ${{ false }}",
+        ),
+    ],
+    ids=["step-expression-false", "step-never-true", "job-expression-false"],
+)
+def test_any_condition_in_the_job_is_a_disarm(fixture: str, expected: str) -> None:
+    """A condition can skip the gate while the job stays green, whatever it spells."""
+    assert _gate_problems(fixture) == []
+    assert _job_conditions(fixture) == [expected]
+
+
+def test_a_condition_mentioned_only_in_a_comment_or_a_value_is_ignored() -> None:
+    """Only a live ``if:`` key counts; prose and string values do not."""
+    quiet = _fixture(_SYNC, "      # if: ${{ false }} would skip it\n" + _GATE)
+    quiet += "        env:\n          NOTE: 'if: never'\n"
+    assert _job_conditions(quiet) == []
