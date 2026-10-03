@@ -1516,15 +1516,15 @@
   },
   {
     "id": "map.stage-persona-is-the-course-archetype",
-    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column, and the stage name in the Journal AspectChordControl's label and accessibility label -- and it is the course's own archetype: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use, not the retired name the dataset carried until #2915. Uncovered because today that persona never crosses a seam: it is a client-side copy of coursestage.relationship_to_free_will hardcoded in STAGE_DISPLAY (frontend/src/features/Map/mapLayout.ts), so no browser spec could watch it come from the server. The route, client and table named here are the seam the persona moves onto when #2663 deletes that mirror and reads it from GET /stages, not the path it takes now. Until then it is pinned by frontend/src/features/Map/__tests__/stageCanonDrift.test.ts, which joins every persona to the generated backend/src/curriculum/stage_correspondence.json and which backend CI runs through scripts/frontend/cross-boundary-drift.sh, and the dataset itself is held to the vendored course headings by backend/tests/test_vendored_course_copy_pins.py.",
+    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column and in its spoken label -- and it is the course's own archetype as the coursestage row holds it: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use. Since #2666 nothing about it is hardcoded client-side: stageService fills the stage store from GET /stages and stageVocabulary.ts derives the persona from relationship_to_free_will, so the covering spec names no persona of its own. It reads the persona the Map shows, rewrites that stage's row out of band with tests.e2e.stage_copy set-field (which reports the value it replaced) and requires the replaced value to be exactly what was on screen, then reloads and requires the left column and the hotspot's aria-label to follow the row to a string the curriculum never held -- an assertion a client answering from its own copy of the seeded words cannot pass. The row is put back before the file ends. The Journal AspectChordControl reads the same persona without a program visit: from the stage store when the Map or Practice filled it, otherwise from GET /stages/correspondence, otherwise the stage colour name; that path is pinned by frontend/src/features/Journal/__tests__/useAspectOptions.test.tsx and JournalEntryScreenChord.test.tsx rather than a browser spec.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages"],
       "routes": ["GET /stages"],
       "tables": ["coursestage"]
     },
-    "status": "uncovered",
-    "issue": 2663
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-stage-persona.browser.e2e.test.ts"
   },
   {
     "id": "journal.higher-self-does-not-repeat-itself",
