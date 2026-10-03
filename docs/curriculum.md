@@ -291,3 +291,11 @@ contract. Downstream features that describe per-phase manifestations — medicin
 / toxic expressions (#1018), chord-journal Aspect labels (#1020), and the
 explainer (#948) — pull their copy from `curriculum` rather than re-authoring
 it, so the manifestation prose lives in exactly one place.
+
+On the frontend (#2666), the Map's stage words -- persona, descriptor (the
+title), arrow label, the UNITY / EMPTINESS watermark and the row category --
+are derived from the `GET /stages` rows by
+`frontend/src/features/Map/stageVocabulary.ts`; `mapLayout.ts` keeps only each
+stage's practice line and artwork colours. The Journal chord labels its Aspects
+with the same persona through `useAspectOptions`: the stage store first, then
+the visit-free `GET /stages/correspondence`, then the stage colour name.
