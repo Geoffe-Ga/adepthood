@@ -1,45 +1,36 @@
 /* eslint-env jest */
-import { describe, it, expect } from '@jest/globals';
+import * as fs from 'fs';
+import * as path from 'path';
 
-import { MAP_ROWS, STAGE_DISPLAY, TITLE_BY_STAGE } from '../mapLayout';
+import { describe, it, expect } from '@jest/globals';
+import * as ts from 'typescript';
+
+import { HYPHENATION_BREAKS } from '../../../design/hyphenation';
+import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 
 import { readBackendSource } from '@/testing/backendSource';
 
 /**
- * The Map's left column, right column and title watermark restate vocabulary
- * the backend owns: each stage's archetype word, its free-will persona, its
- * aspect of wholeness, its category, and the practice the Practice tab seeds
- * for it. Every one of those is a second copy, and a second copy is only
- * honest while something fails when it drifts from the first.
+ * What the Map still keeps of its own, and proof it keeps no stage words (#2666).
  *
- * Until now three of them were guarded against tables hand-copied into
- * `mapLayout.test.ts` under a "keep in sync" comment — which is the same
- * duplication one level removed, and is exactly how a stage vocabulary the
- * ontology never had once reached the screen. This reads the curriculum
- * dataset and the practice seeder instead, so the next divergence fails here.
+ * The Map's stage words -- persona, descriptor, arrow label, watermark and
+ * category -- used to be hand-kept copies in `mapLayout.ts`, guarded here
+ * against the backend. Since #2666 they are derived from the stage the server
+ * served (`stageVocabulary.ts`), and `stageVocabulary.test.ts` runs that
+ * derivation over the backend's own sources. What is left in `mapLayout.ts` is
+ * each stage's practice line, which mirrors the seeder's canonical preset and is
+ * still joined to it here, and the artwork colours, which are design data.
  *
- * What this cannot catch, and must not pretend to: a value that is wrong *in*
- * the canon. Expectations derived from a source stay green when that source
- * is itself mistaken. The drift this fails on is a frontend hardcode moving
- * away from a correct canon.
+ * Two guards keep the words from coming back. `STAGE_DISPLAY` and `MAP_ROWS`
+ * may carry only the fields named here. And no production file may spell a
+ * persona, aspect or category of the generated
+ * `backend/src/curriculum/stage_correspondence.json` as a string of its own,
+ * save the right column's typographic break table.
  *
- * The read goes through `@/testing/backendSource`, which is what makes backend
+ * The reads go through `@/testing/backendSource`, which is what makes backend
  * CI run this file on the change that would break it.
  */
-
-/** One APTITUDE stage as the curriculum dataset declares it. */
-interface CanonStage {
-  stage_number: number;
-  /** The stage's archetype word — the Map's `descriptor`. */
-  title: string;
-  /** The aspect of wholeness — the Map's `arrowLabel` and title watermark. */
-  aspect: string;
-  /** The band the stage sits in — a `MAP_ROWS` right-column label. */
-  category: string;
-  /** The egoic character — the Map's `persona`. */
-  relationship_to_free_will: string;
-}
 
 /**
  * The `_CANONICAL_PRESETS: list[dict[str, Any]] = [ ... ]` literal, up to the
@@ -65,13 +56,6 @@ const capture = (pattern: RegExp, source: string, what: string): string => {
   return group;
 };
 
-const canonStages = (): CanonStage[] => {
-  const dataset = JSON.parse(
-    readBackendSource('src', 'curriculum', 'archetypal_wavelength.json'),
-  ) as { stages: CanonStage[] };
-  return dataset.stages;
-};
-
 const canonPracticeByStage = (): ReadonlyMap<number, string> => {
   const block = capture(
     CANONICAL_PRESETS_BLOCK,
@@ -86,83 +70,30 @@ const canonPracticeByStage = (): ReadonlyMap<number, string> => {
   );
 };
 
-const CANON_BY_STAGE: ReadonlyMap<number, CanonStage> = new Map(
-  canonStages().map((stage) => [stage.stage_number, stage]),
-);
+/** One stage's correspondences as the generated artifact declares them. */
+interface CorrespondenceStage {
+  stage_number: number;
+  category: string;
+  aspect: string;
+  relationship_to_free_will: string;
+}
+
+const CORRESPONDENCES: readonly CorrespondenceStage[] = (
+  JSON.parse(readBackendSource('src', 'curriculum', 'stage_correspondence.json')) as {
+    stages: CorrespondenceStage[];
+  }
+).stages;
 
 const PRACTICE_BY_STAGE = canonPracticeByStage();
 
 /** Stage numbers bottom → top, the order the canon itself is written in. */
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, index) => index + 1);
 
-/** The two stages whose aspect is the title watermark rather than an arrow label. */
-const TITLE_STAGES = [9, 10];
-
-/** The stages whose aspect reaches the screen as an arrow label instead. */
-const ARROW_STAGES = ALL_STAGES.filter((stageNumber) => !TITLE_STAGES.includes(stageNumber));
-
-/**
- * How many opening words of its aspect each arrow label carries.
- *
- * The arrow loop is narrow, so a multi-word aspect is allowed to reach the
- * screen shortened — 'True Self' for 'True Self Connection'. Which words
- * survive that shortening is an editorial call with no backend source, so the
- * budget is stated here and the expected label is then built from the canon
- * aspect rather than from the label being checked.
- *
- * Stating it is the whole point. Reading the width off the value under test
- * instead lets a label that has lost a word narrow its own expectation to
- * match, so `'True'` would be compared against the first word of `'True Self
- * Connection'` and pass. A budget fixed up front cannot move when the label
- * does, and the diff on a real trim names the words that went missing.
- */
-const ASPECT_WORDS_ON_ARROW: ReadonlyMap<number, number> = new Map([
-  [1, 1],
-  [2, 1],
-  [3, 1],
-  [4, 1],
-  [5, 1],
-  [6, 1],
-  [7, 1],
-  [8, 2],
-]);
-
-/** A stage's declared arrow budget, failing loudly rather than as `undefined`. */
-const requireArrowWords = (stageNumber: number): number => {
-  const count = ASPECT_WORDS_ON_ARROW.get(stageNumber);
-  if (count === undefined) {
-    throw new Error(`no arrow word budget declared for stage ${stageNumber}`);
-  }
-  return count;
-};
-
-/** Locate a stage in the canon, failing loudly rather than as `undefined`. */
-const requireCanon = (stageNumber: number): CanonStage => {
-  const stage = CANON_BY_STAGE.get(stageNumber);
-  if (!stage) {
-    throw new Error(`the curriculum dataset has no stage ${stageNumber}`);
-  }
-  return stage;
-};
-
-/** Locate a stage's Map copy, failing loudly rather than as `undefined`. */
-const requireDisplay = (stageNumber: number) => {
-  const display = STAGE_DISPLAY[stageNumber];
-  if (!display) {
-    throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
-  }
-  return display;
-};
-
-/** The first `count` space-separated words of `text`. */
-const leadingWords = (text: string, count: number): string =>
-  text.split(' ').slice(0, count).join(' ');
-
 /** The identity key — a stage's own number, not copy, so nothing to join. */
 const IDENTITY_FIELD = 'stageNumber';
 
-/** Every `StageDisplay` field this guard joins to a backend source. */
-const CANON_JOINED_FIELDS = ['arrowLabel', 'descriptor', 'persona', 'practice'];
+/** The one `StageDisplay` field joined to a backend source: the seeded practice. */
+const CANON_JOINED_FIELDS = ['practice'];
 
 /**
  * The two fields deliberately not joined. `mapLayout.ts` states the rationale
@@ -174,76 +105,158 @@ const CANON_JOINED_FIELDS = ['arrowLabel', 'descriptor', 'persona', 'practice'];
  */
 const DESIGN_ONLY_FIELDS = ['leftTextColor', 'textColor'];
 
-/** Every stage number paired with the right-column label of the row holding it. */
-const ROW_LABEL_BY_STAGE = MAP_ROWS.flatMap((row) =>
-  row.stageNumbers.map((stageNumber) => [stageNumber, row.rightLabel] as const),
-);
+/** The longest line a right-column fallback may set; longer categories must break. */
+const MAX_RIGHT_LABEL_LINE_LENGTH = 9;
 
-describe('the Map mirrors of the APTITUDE ten', () => {
+/** Locate a stage's static display, failing loudly rather than as `undefined`. */
+const requireDisplay = (stageNumber: number) => {
+  const display = STAGE_DISPLAY[stageNumber];
+  if (!display) {
+    throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
+  }
+  return display;
+};
+
+// --- The no-hardcoded-vocabulary guard --------------------------------------
+
+const SRC = path.resolve(__dirname, '..', '..', '..');
+
+/** Directories whose files are test support, not production code. */
+const IGNORED_DIRS = new Set(['__tests__', '__mocks__', 'testing', 'node_modules']);
+
+/**
+ * The one production file allowed to spell a category: the right column's
+ * break table, which is typographic design data keyed by the word it breaks.
+ * Whitelisted by path, so the same word anywhere else is still caught.
+ */
+const VOCABULARY_WHITELIST = new Set([path.join(SRC, 'design', 'hyphenation.ts')]);
+
+const isSourceFile = (name: string): boolean =>
+  /\.tsx?$/u.test(name) && !/\.(test|spec)\.tsx?$/u.test(name);
+
+function productionFiles(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && !IGNORED_DIRS.has(entry.name)) {
+      found.push(...productionFiles(full));
+    } else if (entry.isFile() && isSourceFile(entry.name)) {
+      found.push(full);
+    }
+  }
+  return found;
+}
+
+/** Every whole string a file spells: string literals, plain templates and JSX text. */
+function spelledStrings(file: string): string[] {
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      found.push(node.text);
+    } else if (ts.isJsxText(node)) {
+      found.push(node.text.trim());
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/** Every persona, aspect (and its watermark spelling) and category the backend serves. */
+const servedVocabulary = (stages: readonly CorrespondenceStage[]): ReadonlySet<string> =>
+  new Set(
+    stages.flatMap((stage) => [
+      stage.relationship_to_free_will,
+      stage.aspect,
+      stage.aspect.toUpperCase(),
+      stage.category,
+    ]),
+  );
+
+/** `file: word` for every served word a non-whitelisted file spells. */
+const hardcodedVocabulary = (
+  files: readonly string[],
+  vocabulary: ReadonlySet<string>,
+  whitelist: ReadonlySet<string>,
+): string[] =>
+  files
+    .filter((file) => !whitelist.has(file))
+    .flatMap((file) =>
+      spelledStrings(file)
+        .filter((text) => vocabulary.has(text))
+        .map((text) => `${path.relative(SRC, file)}: ${text}`),
+    );
+
+describe('the Map keeps no stage words of its own', () => {
   // Both of these guard a parse rather than a value. A regex or a JSON shape
-  // that silently matched nothing would leave every join below comparing an
+  // that silently matched nothing would leave every check below comparing an
   // empty set to an empty set, which passes while checking nothing.
-  it('reads the ten APTITUDE stages out of the curriculum dataset', () => {
-    expect([...CANON_BY_STAGE.keys()].sort((a, b) => a - b)).toEqual(ALL_STAGES);
+  it('reads the ten APTITUDE stages out of the correspondence artifact', () => {
+    expect(CORRESPONDENCES.map((stage) => stage.stage_number).sort((a, b) => a - b)).toEqual(
+      ALL_STAGES,
+    );
   });
 
   it('reads the ten canonical practice presets out of the seeder', () => {
     expect([...PRACTICE_BY_STAGE.keys()].sort((a, b) => a - b)).toEqual(ALL_STAGES);
   });
 
-  it.each(ALL_STAGES)('stage %i descriptor is the curriculum title', (stageNumber) => {
-    expect(requireDisplay(stageNumber).descriptor).toBe(requireCanon(stageNumber).title);
-  });
-
-  it.each(ALL_STAGES)(
-    'stage %i persona is the curriculum relationship to free will',
-    (stageNumber) => {
-      expect(requireDisplay(stageNumber).persona).toBe(
-        requireCanon(stageNumber).relationship_to_free_will,
-      );
-    },
-  );
-
   it.each(ALL_STAGES)('stage %i practice is the seeded canonical preset', (stageNumber) => {
     expect(requireDisplay(stageNumber).practice).toBe(PRACTICE_BY_STAGE.get(stageNumber));
   });
 
-  it.each(ROW_LABEL_BY_STAGE)(
-    'stage %i sits in the row labelled %s, its curriculum category',
-    (stageNumber, rightLabel) => {
-      expect(rightLabel).toBe(requireCanon(stageNumber).category);
-    },
-  );
-
-  // A budget declared for a stage that carries no arrow label, or missing for
-  // one that does, would leave a label unjoined or a rule guarding nothing.
-  it('budgets arrow words for exactly the stages that carry an arrow label', () => {
-    expect([...ASPECT_WORDS_ON_ARROW.keys()].sort((a, b) => a - b)).toEqual(ARROW_STAGES);
-  });
-
-  it.each(ARROW_STAGES)('stage %i arrow label opens the curriculum aspect', (stageNumber) => {
-    const { arrowLabel } = requireDisplay(stageNumber);
-    const { aspect } = requireCanon(stageNumber);
-    // Stages 1-3 budget their whole single-word aspect, so this is strict
-    // equality against the canon; stages 4-8 budget its opening words.
-    expect(arrowLabel).not.toBe('');
-    expect(arrowLabel).toBe(leadingWords(aspect, requireArrowWords(stageNumber)));
-  });
-
-  it.each(TITLE_STAGES)(
-    'stage %i spells its aspect as the title watermark and carries no arrow label',
-    (stageNumber) => {
-      expect(requireDisplay(stageNumber).arrowLabel).toBe('');
-      expect(TITLE_BY_STAGE[stageNumber]).toBe(requireCanon(stageNumber).aspect.toUpperCase());
-    },
-  );
-
   it.each(ALL_STAGES)('stage %i declares no unjoined copy field', (stageNumber) => {
-    // An eighth field added to StageDisplay is red here until it is either
-    // joined to a backend source above or named as design-only, so the next
-    // hardcoded stage string cannot arrive unguarded.
+    // A word field added back to StageDisplay is red here until it is either
+    // joined to a backend source above or named as design-only, so a hardcoded
+    // stage string cannot return unguarded.
     expect(Object.keys(requireDisplay(stageNumber)).sort()).toEqual(
       [IDENTITY_FIELD, ...CANON_JOINED_FIELDS, ...DESIGN_ONLY_FIELDS].sort(),
     );
+  });
+
+  it('lays out the ten stages in six rows that carry no label of their own', () => {
+    for (const row of MAP_ROWS) {
+      expect(Object.keys(row)).toEqual(['stageNumbers']);
+    }
+    expect(MAP_ROWS.flatMap((row) => row.stageNumbers).sort((a, b) => a - b)).toEqual(ALL_STAGES);
+  });
+
+  it('can break every served category that is too long for one right-column line', () => {
+    const unbroken = CORRESPONDENCES.map((stage) => stage.category).filter(
+      (category) =>
+        category.length > MAX_RIGHT_LABEL_LINE_LENGTH && !HYPHENATION_BREAKS.has(category),
+    );
+    expect(unbroken).toEqual([]);
+    for (const lines of HYPHENATION_BREAKS.values()) {
+      for (const line of lines) {
+        expect(line.length).toBeLessThanOrEqual(MAX_RIGHT_LABEL_LINE_LENGTH);
+      }
+    }
+  });
+
+  it('finds no persona, aspect or category spelled in production code', () => {
+    const files = productionFiles(SRC);
+    expect(files.length).toBeGreaterThan(0);
+    expect(
+      hardcodedVocabulary(files, servedVocabulary(CORRESPONDENCES), VOCABULARY_WHITELIST),
+    ).toEqual([]);
+  });
+
+  it('would catch a served word spelled outside the whitelist, and only there', () => {
+    const hyphenation = path.join(SRC, 'design', 'hyphenation.ts');
+    const vocabulary = servedVocabulary(CORRESPONDENCES);
+    // The break table spells three categories: caught once the path is not
+    // whitelisted, ignored while it is.
+    expect(hardcodedVocabulary([hyphenation], vocabulary, new Set()).length).toBeGreaterThan(0);
+    expect(hardcodedVocabulary([hyphenation], vocabulary, VOCABULARY_WHITELIST)).toEqual([]);
+    expect(vocabulary.has('UNITY')).toBe(true);
+    expect(vocabulary.has('Victim')).toBe(true);
   });
 });

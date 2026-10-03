@@ -23,7 +23,6 @@ import {
   glideDurationMs,
   inertialStageTarget,
   lensCaptionWidth,
-  lensStageIdentity,
   lensCenterForStage,
   lensFrame,
   magnifierTransform,
@@ -489,18 +488,14 @@ const LensCaptionBlock = ({
  * pill sheds but a screen-reader user can't cross-reference) and speaks the
  * title + subtitle, then names what the lens can do.
  */
-const lensAccessibilityLabel = (
-  stageNumber: number,
-  caption: LensCaption,
-  isCurrent: boolean,
-): string => {
+const lensAccessibilityLabel = (caption: LensCaption, isCurrent: boolean): string => {
   const prefix = isCurrent ? 'You are here. ' : '';
   // Skip empty facts (the pre-load / missing-data window) so the spoken label
   // never degrades to stray doubled punctuation.
   const facts = [caption.title, caption.subtitle].filter(Boolean).join('. ');
   const factsPhrase = facts ? `${facts}. ` : '';
   return (
-    `${prefix}Magnifier over ${lensStageIdentity(stageNumber)}. ${factsPhrase}` +
+    `${prefix}Magnifier over ${caption.identity}. ${factsPhrase}` +
     'Tap to read about this stage; drag to explore others.'
   );
 };
@@ -594,7 +589,7 @@ export const MagnifierLens = (props: MagnifierLensProps): React.JSX.Element => {
       frame={frame}
       motion={motion}
       handlers={dragHandlers}
-      label={lensAccessibilityLabel(hoverStage, caption, isCurrent)}
+      label={lensAccessibilityLabel(caption, isCurrent)}
     >
       <LensGlass
         motion={motion}

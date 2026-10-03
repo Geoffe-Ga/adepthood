@@ -533,6 +533,42 @@ export const programCalendarSchema = z.object({
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;
 
+/**
+ * Which stage-correspondence artifact a stage row was last reconciled from
+ * (mirrors ``StageCorrespondenceProvenance``). Every field is null until the
+ * seeder has reconciled the row. ``reconciled_at`` stays a plain string: the
+ * client never reads it, and the column's offset handling is the server's.
+ */
+export const stageCorrespondenceProvenanceSchema = z.object({
+  source_repo: z.string().nullable(),
+  source_sha: z.string().nullable(),
+  source_path: z.string().nullable(),
+  source_sha256: z.string().nullable(),
+  schema_version: z.string().nullable(),
+  reconciled_at: z.string().nullable(),
+});
+
+/**
+ * One stage's canonical correspondences (mirrors ``StageCorrespondenceResponse``,
+ * served by ``GET /stages/correspondence``; #2665/#2666). Global reference data:
+ * no title, no progress, and reading it records no visit.
+ */
+export const stageCorrespondenceSchema = z.object({
+  stage_key: z.string(),
+  stage_number: z.number().int(),
+  start_week: z.number().int(),
+  category: z.string(),
+  aspect: z.string(),
+  spiral_dynamics_color: z.string(),
+  growing_up_stage: z.string(),
+  divine_gender_polarity: z.string(),
+  relationship_to_free_will: z.string(),
+  free_will_description: z.string(),
+  provenance: stageCorrespondenceProvenanceSchema,
+});
+
+export type StageCorrespondenceT = z.infer<typeof stageCorrespondenceSchema>;
+
 /** A catalog practice (mirrors ``PracticeItem``); exported for reuse (issue 06). */
 export const practiceItemSchema = z.object({
   id: z.number().int(),

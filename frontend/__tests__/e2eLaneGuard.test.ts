@@ -95,6 +95,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-unlinked-timer-nudge.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
+  'map-stage-persona.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',

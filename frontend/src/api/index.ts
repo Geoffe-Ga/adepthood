@@ -33,6 +33,7 @@ import {
   practiceSessionResponseSchema,
   practiceTagSchema,
   programCalendarSchema,
+  stageCorrespondenceSchema,
   promotedQuoteListResponseSchema,
   promotedQuoteSchema,
   promptListResponseSchema,
@@ -85,6 +86,7 @@ import {
   type ReturnWeekT,
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
+  type StageCorrespondenceT,
   type StagePromptsResponseT,
   type PromotedQuoteListItemT,
   type PromotedQuoteListResponseT,
@@ -2606,7 +2608,22 @@ export const stages = {
       schema: programCalendarSchema,
     });
   },
+  /**
+   * Every stage's canonical correspondences (category, aspect, persona and the
+   * rest), unpaginated. Global and visit-free: unlike ``listAll`` it records no
+   * program visit, so a screen that only needs the vocabulary -- the Journal
+   * chord -- reads this rather than ``GET /stages`` (#2666).
+   */
+  correspondence(token?: string): Promise<StageCorrespondenceT[]> {
+    return request<StageCorrespondenceT[]>('/stages/correspondence', {
+      token,
+      schema: z.array(stageCorrespondenceSchema),
+    });
+  },
 };
+
+/** Public alias of the zod-inferred stage-correspondence type. */
+export type { StageCorrespondenceT as StageCorrespondence } from './schemas';
 
 /** Public aliases of the zod-inferred stage-prompt types so consumers avoid duplicate shapes. */
 export type {

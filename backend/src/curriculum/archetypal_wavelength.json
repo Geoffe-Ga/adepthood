@@ -1,11 +1,11 @@
 {
-  "dataset_version": "2.2.0",
+  "dataset_version": "2.2.1",
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
-    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' and free_will_description follow the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md (the description is paraphrased from it) and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype and habits/personalities description carried over from backup/2.PURPLE.md (issue #2915). APTITUDE Complete Map.csv is not vendored; its own description sentence replaces this one when #2664 vendors the CSV",
+    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
     "refresh_doc": "docs/curriculum.md",
     "supersessions": [
       {"stage_number": 4, "field": "aspect", "value": "Community Love"},
@@ -70,7 +70,7 @@
       "growing_up_stage": "Magic",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Pleasure Seeker",
-      "free_will_description": "Will is steered from the Sacral, about three inches below the navel: toward the pleasant, away from the unpleasant, before the argument starts. Pleasure is real information, and it is also a leash; Free Will at Purple lives in the ability to tell one pleasure from another.",
+      "free_will_description": "Behavior is steered from the Sacral: toward what feels nice and away from what doesn't, before any argument has been made. Much of what feels nice was installed by inherited stories and by people with an interest in what you reach for, so pleasure is at once real information and an easy leash. Free Will here is not renouncing pleasure or obeying it, but learning to tell the yes that widens you from the yes that narrows you.",
       "manifestations": [
         {
           "phase": "Rising",
