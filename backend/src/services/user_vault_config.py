@@ -1,7 +1,7 @@
 """Reading, replacing and removing one account's stored vault connection.
 
-Three functions and one table. They are here rather than inline in the router
-because the *read* has a second caller with nothing to do with HTTP:
+The shared connection operations live here because the *read* has a second
+caller with nothing to do with HTTP:
 :mod:`dependencies.creek_vault` runs it on every request that touches a vault,
 and a lookup written twice is a lookup that can come to disagree about which
 row belongs to whom.
@@ -17,7 +17,9 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import col, delete, select
 
+from models.user import User
 from models.user_vault_config import UserVaultConfig
+from models.vault_activation import VaultActivation, VaultActivationState
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,3 +92,26 @@ async def clear_vault_config(session: AsyncSession, user_id: int) -> None:
     """
     await session.execute(delete(UserVaultConfig).where(col(UserVaultConfig.user_id) == user_id))
     await session.commit()
+
+
+async def lock_vault_connection_owner(session: AsyncSession, user_id: int) -> None:
+    """Serialize connection changes with handoff, activation and account deletion."""
+    await session.execute(select(User.id).where(User.id == user_id).with_for_update())
+
+
+async def managed_vault_owns_connection(session: AsyncSession, user_id: int) -> bool:
+    """Check lifecycle ownership without reading a stored credential."""
+    binding = await session.execute(
+        select(UserVaultConfig.id).where(
+            UserVaultConfig.user_id == user_id, col(UserVaultConfig.provisioned).is_(True)
+        )
+    )
+    if binding.scalar_one_or_none() is not None:
+        return True
+    activation = await session.execute(
+        select(VaultActivation.id).where(
+            VaultActivation.user_id == user_id,
+            VaultActivation.state != VaultActivationState.DELETED.value,
+        )
+    )
+    return activation.scalar_one_or_none() is not None
