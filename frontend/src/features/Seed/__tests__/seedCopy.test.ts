@@ -45,6 +45,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'vault_required',
   'unsupported_format',
   'too_large',
+  'managed_too_large',
   'unreadable',
   'failed',
   'cancelled',

@@ -309,7 +309,13 @@ export class TranscriptionError extends Error {
  * lands here.
  */
 export type DocumentUploadErrorKind =
-  'too_large' | 'invalid_document' | 'rate_limited' | 'network' | 'timeout' | 'unknown';
+  | 'too_large'
+  | 'managed_too_large'
+  | 'invalid_document'
+  | 'rate_limited'
+  | 'network'
+  | 'timeout'
+  | 'unknown';
 
 /**
  * Upload timeout: 120s, four times {@link FETCH_TIMEOUT_MS}. A 10 MB document
@@ -1838,6 +1844,9 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
     return new DocumentUploadError('timeout', null, err);
   }
   if (err instanceof ApiError) {
+    if (err.status === 413 && err.detail === 'managed_document_too_large') {
+      return new DocumentUploadError('managed_too_large', err.status);
+    }
     return new DocumentUploadError(UPLOAD_STATUS_KINDS[err.status] ?? 'unknown', err.status, err);
   }
   // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
