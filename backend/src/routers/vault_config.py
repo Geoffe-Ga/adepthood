@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from error_responses import build_router
-from errors import unprocessable
+from errors import conflict, unprocessable
 from models.user_vault_config import UserVaultConfig
 from routers.auth import get_current_user
 from schemas.vault_config import (
@@ -61,9 +61,15 @@ from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
-from services.user_vault_config import clear_vault_config, load_vault_config, store_vault_config
+from services.user_vault_config import (
+    clear_vault_config,
+    load_vault_config,
+    lock_vault_connection_owner,
+    managed_vault_owns_connection,
+    store_vault_config,
+)
 
-router = build_router(prefix="/vault", tags=["vault"])
+router = build_router(prefix="/vault", tags=["vault"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 # The refusal a caller sees for a URL this seam cannot use, prefixed so it reads
 # as a code rather than as prose, and suffixed with the classifier's own defect
@@ -123,6 +129,13 @@ async def _refuse_a_url_this_endpoint_must_not_store(session: AsyncSession, url:
         raise unprocessable(f"{_URL_REFUSED_PREFIX}{destination.defect.value}")
 
 
+async def _require_unmanaged_connection(session: AsyncSession, user_id: int) -> None:
+    """Keep BYO mutations from abandoning an allocation owned by the lifecycle."""
+    await lock_vault_connection_owner(session, user_id)
+    if await managed_vault_owns_connection(session, user_id):
+        raise conflict("managed_vault_connection_requires_teardown")
+
+
 def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     """Project a stored row, or its absence, onto the response DTO.
 
@@ -159,7 +172,7 @@ async def put_vault_connection(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> VaultConnectionResponse:
-    """Set or replace this account's vault connection, refusing a URL it cannot use.
+    """Set or replace a BYO connection, refusing managed lifecycle ownership.
 
     The URL is judged before anything is written, so a refused connection leaves
     no row behind and the account keeps whatever it had -- a half-applied
@@ -178,6 +191,7 @@ async def put_vault_connection(
     await _refuse_a_url_this_endpoint_must_not_store(session, payload.vault_url)
     if not credential_is_usable(payload.api_key):
         raise unprocessable(_KEY_REFUSED)
+    await _require_unmanaged_connection(session, user_id)
     config = await store_vault_config(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )
@@ -189,11 +203,11 @@ async def delete_vault_connection(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
-    """Remove this account's vault connection, credential included.
+    """Remove a BYO connection, refusing managed lifecycle ownership.
 
-    Idempotent, and 204 either way: an account that had no connection ends up in
-    the state it asked for, so reporting a 404 would describe the plumbing
-    rather than the outcome.
+    A managed binding or unresolved activation returns 409 without mutation.
+    Otherwise removal is idempotent: an absent BYO connection also returns 204.
     """
+    await _require_unmanaged_connection(session, user_id)
     await clear_vault_config(session, user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

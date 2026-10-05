@@ -27,7 +27,11 @@ from services.email import (
     get_email_sender,
 )
 from services.managed_vault_rollout import managed_vault_alert_destination
-from services.user_vault_config import load_vault_config, store_vault_config
+from services.user_vault_config import (
+    load_vault_config,
+    lock_vault_connection_owner,
+    store_vault_config,
+)
 
 router = build_router(
     prefix="/internal/vault-provisioning",
@@ -162,6 +166,7 @@ async def _persist_handoff(
     payload: CreekConnectionHandoff,
 ) -> None:
     """Persist one idempotent encrypted handoff and settle its activation."""
+    await lock_vault_connection_owner(session, activation.user_id)
     if activation.state in _TERMINAL_HANDOFF_STATES:
         raise conflict("invalid_transition")
     existing = await load_vault_config(session, activation.user_id)

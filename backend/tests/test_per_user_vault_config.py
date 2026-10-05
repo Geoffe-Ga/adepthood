@@ -51,6 +51,7 @@ from domain.creek_vault import (
     VaultIngestResult,
 )
 from models.user_vault_config import VAULT_URL_MAX_LENGTH, UserVaultConfig
+from models.vault_activation import VaultActivation, VaultActivationState
 from schemas.vault_config import VAULT_API_KEY_MAX_LENGTH
 from services import creek_vault_client as vault_client_module
 from services import creek_vault_url_resolution, journal_encryption
@@ -713,3 +714,135 @@ async def test_one_users_writing_only_ever_reaches_their_own_vault(
     assert any(_BETA_SENTINEL in body for body in beta_vault.ingested)
     assert not any(_BETA_SENTINEL in body for body in alpha_vault.ingested)
     assert not any(_ALPHA_SENTINEL in body for body in beta_vault.ingested)
+
+
+async def _mutate_connection(client: AsyncClient, headers: dict[str, str], method: str) -> int:
+    """Try one generic mutation and return its content-free status."""
+    if method == "DELETE":
+        response = await client.delete(_CONNECTION_PATH, headers=headers)
+    else:
+        response = await client.put(
+            _CONNECTION_PATH,
+            headers=headers,
+            json={"vault_url": _VAULT_B_URL, "api_key": _KEY_B},
+        )
+    assert _KEY_A not in response.text
+    assert _KEY_B not in response.text
+    return response.status_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+@pytest.mark.parametrize("method", ["PUT", "DELETE"])
+async def test_generic_mutations_preserve_a_managed_binding(
+    async_client: AsyncClient, db_session: AsyncSession, method: str
+) -> None:
+    """A managed credential cannot be replaced or erased by BYO endpoints."""
+    headers, user_id = await _signup(async_client, "managed-binding")
+    await _connect(async_client, headers, _VAULT_A_URL, _KEY_A)
+    config = (await db_session.execute(select(UserVaultConfig))).scalar_one()
+    config.provisioned = True
+    await db_session.commit()
+    ciphertext = await _stored_api_key(db_session, user_id)
+
+    assert await _mutate_connection(async_client, headers, method) == HTTPStatus.CONFLICT
+
+    await db_session.refresh(config)
+    assert config.provisioned is True
+    assert config.vault_url == _VAULT_A_URL
+    assert await _stored_api_key(db_session, user_id) == ciphertext
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+@pytest.mark.parametrize("method", ["PUT", "DELETE"])
+@pytest.mark.parametrize(
+    "state", [state for state in VaultActivationState if state is not VaultActivationState.DELETED]
+)
+async def test_generic_mutations_preserve_an_unresolved_managed_activation(
+    async_client: AsyncClient, db_session: AsyncSession, method: str, state: VaultActivationState
+) -> None:
+    """Before or after handoff, the durable lifecycle owns the connection slot."""
+    headers, user_id = await _signup(async_client, "managed-activation")
+    activation = VaultActivation(
+        user_id=user_id,
+        activation_id="activation-guard",
+        consumer_identity="consumer-guard",
+        creek_job_id="job-guard",
+        state=state.value,
+    )
+    db_session.add(activation)
+    await db_session.commit()
+
+    assert await _mutate_connection(async_client, headers, method) == HTTPStatus.CONFLICT
+
+    await db_session.refresh(activation)
+    assert activation.state == state.value
+    assert (await db_session.execute(select(UserVaultConfig))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_completed_managed_teardown_allows_an_ordinary_connection(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A confirmed deleted activation does not reserve the account forever."""
+    headers, user_id = await _signup(async_client, "managed-deleted")
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id="activation-deleted",
+            consumer_identity="consumer-deleted",
+            state=VaultActivationState.DELETED.value,
+        )
+    )
+    await db_session.commit()
+
+    assert await _mutate_connection(async_client, headers, "PUT") == HTTPStatus.OK
+    assert await _mutate_connection(async_client, headers, "DELETE") == HTTPStatus.NO_CONTENT
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_connection_guard_checks_after_dns_can_deliver_a_managed_handoff(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The off-pool DNS boundary cannot hide a newly committed managed binding."""
+    headers, user_id = await _signup(async_client, "handoff-during-dns")
+
+    async def deliver_binding(_host: str) -> tuple[str, ...]:
+        db_session.add(
+            UserVaultConfig(
+                user_id=user_id, vault_url=_VAULT_A_URL, api_key=_KEY_A, provisioned=True
+            )
+        )
+        await db_session.commit()
+        return (_PUBLIC_ADDRESS,)
+
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", deliver_binding)
+
+    assert await _mutate_connection(async_client, headers, "PUT") == HTTPStatus.CONFLICT
+    config = (await db_session.execute(select(UserVaultConfig))).scalar_one()
+    assert config.provisioned is True
+    assert config.api_key == _KEY_A
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_managed_connection_guard_does_not_reserve_another_accounts_slot(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Lifecycle ownership is scoped to the authenticated caller."""
+    owner_headers, owner_id = await _signup(async_client, "managed-owner")
+    await _connect(async_client, owner_headers, _VAULT_A_URL, _KEY_A)
+    config = (await db_session.execute(select(UserVaultConfig))).scalar_one()
+    config.provisioned = True
+    await db_session.commit()
+    other_headers, _ = await _signup(async_client, "ordinary-owner")
+
+    assert await _mutate_connection(async_client, other_headers, "PUT") == HTTPStatus.OK
+    assert await _mutate_connection(async_client, other_headers, "DELETE") == HTTPStatus.NO_CONTENT
+    await db_session.refresh(config)
+    assert config.user_id == owner_id
+    assert config.provisioned is True
+    assert config.api_key == _KEY_A
