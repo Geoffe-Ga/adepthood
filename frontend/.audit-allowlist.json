@@ -14,6 +14,13 @@
       "expires": "2026-10-16",
       "issue": 3023,
       "reason": "No patched node-forge exists (affected <=1.4.0; 1.4.0 is latest). Reached only via the build-time Expo CLI (@expo/cli, @expo/code-signing-certificates), not the app bundle. Owner-approved 14-day box; re-check per #3023."
+    },
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "expires": "2026-10-19",
+      "issue": 3054,
+      "reason": "No patched braces release exists (affected <=3.0.3; latest 3.0.3). Reached through Expo/Metro build tooling and Jest; the web deployment serves the static export through nginx. This limits observed exposure but does not fix the stack-exhaustion vulnerability. Owner-approved time box ending 2026-10-19; re-check and remediate per #3054."
     }
   ]
 }
