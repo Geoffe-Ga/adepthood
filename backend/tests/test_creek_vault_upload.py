@@ -1186,3 +1186,74 @@ class TestLocalFallbackUpload:
     async def test_fallback_never_advertises_the_upload_capability(self) -> None:
         """The write service's gate must see "unsupported" and degrade before calling."""
         assert LocalFallbackCreekVaultClient().supports(CreekCapability.UPLOAD) is False
+
+
+@pytest.mark.asyncio
+class TestManagedUploadBodyLimit:
+    """Bound the actual Fly replay body, not the decoded document alone."""
+
+    @pytest.mark.parametrize("offset", [-1, 0, 1])
+    @pytest.mark.parametrize(
+        "filename", ["notes.txt", "界" * 200 + ".txt"], ids=["ascii", "unicode"]
+    )
+    async def test_serialized_boundary(
+        self, vault_http_clients: _VaultClientFactory, offset: int, filename: str
+    ) -> None:
+        """Include UTF-8 names, base64 and metadata in the exact byte boundary."""
+        limit = 1024 * 1024
+        body = {
+            "filename": filename,
+            "content_base64": "",
+            "external_id": upload_external_id(_OWNER_ID, filename),
+            "timestamp": _CREATED_AT.isoformat(),
+            "tier": "personal",
+        }
+        overhead = len(httpx.Request("POST", _UPLOAD_URL, json=body).content)
+        encoded_length = ((limit + offset - overhead) // 4) * 4
+        padding = limit + offset - overhead - encoded_length
+        request = VaultUploadRequest(
+            external_id=str(body["external_id"]),
+            filename="a" * padding + filename,
+            content_base64="A" * encoded_length,
+            tier=VaultTierCeiling.PERSONAL,
+            tier_ceiling=VaultTierCeiling.PERSONAL,
+            created_at=_CREATED_AT,
+        )
+        routes = _UploadRoutes(upload_payload=_stored_payload())
+        client = HttpCreekVaultClient(
+            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(routes), managed=True
+        )
+        await client.handshake()
+        if offset > 0:
+            with pytest.raises(ValueError, match="managed_document_too_large"):
+                await client.upload(request)
+            assert routes.uploads == []
+        else:
+            assert (await client.upload(request)).stored
+            assert len(routes.uploads[0].content) == limit + offset
+
+    @pytest.mark.parametrize("managed", [True, False])
+    async def test_one_mib_document_only_exceeds_managed_transport(
+        self, vault_http_clients: _VaultClientFactory, managed: bool
+    ) -> None:
+        """Keep self-hosted uploads and base64 padding independent of replay."""
+        routes = _UploadRoutes(upload_payload=_stored_payload())
+        client = HttpCreekVaultClient(
+            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(routes), managed=managed
+        )
+        await client.handshake()
+        request = VaultUploadRequest(
+            external_id=upload_external_id(_OWNER_ID, _FILENAME),
+            filename=_FILENAME,
+            content_base64=base64.b64encode(b"x" * (1024 * 1024)).decode("ascii"),
+            tier=VaultTierCeiling.PERSONAL,
+            tier_ceiling=VaultTierCeiling.PERSONAL,
+            created_at=_CREATED_AT,
+        )
+        if managed:
+            with pytest.raises(ValueError, match="managed_document_too_large"):
+                await client.upload(request)
+            assert routes.uploads == []
+        else:
+            assert (await client.upload(request)).stored
+            assert len(routes.uploads[0].content) > 1024 * 1024

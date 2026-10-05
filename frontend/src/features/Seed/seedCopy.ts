@@ -85,6 +85,8 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // outside everything either side could read, and it was never sent.
   unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,
+  managed_too_large:
+    'Too large for this managed vault. Nothing was sent to it. Choose a file under 750 KB and try again.',
   unreadable: "This file wouldn't open on this device.",
   failed: "This didn't get through, and nothing was stored. You can send it again.",
   // Not a refusal by anything. The run was stopped while this one was still

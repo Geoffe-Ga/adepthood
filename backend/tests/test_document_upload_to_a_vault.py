@@ -62,6 +62,7 @@ from schemas.journal_upload import (
     UPLOAD_MESSAGES,
     UPLOAD_RATE_LIMIT,
 )
+from services.creek_vault_upload_limits import ManagedUploadTooLargeError
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -654,3 +655,18 @@ def _as_vault_client(client: CreekVaultClient) -> CreekVaultClient:
 def test_scripted_client_satisfies_the_vault_protocol() -> None:
     """The fake must implement the whole seam, upload included."""
     assert _as_vault_client(ScriptedUploadClient()) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vault", [{"upload_error": ManagedUploadTooLargeError()}], indirect=True)
+async def test_managed_body_limit_is_an_actionable_private_413(
+    async_client: AsyncClient, vault: ScriptedUploadClient
+) -> None:
+    """A local transport bound must not be reported as a retryable outage."""
+    headers = await _signup(async_client, "managed-upload-limit")
+    response = await async_client.post(_IMPORT_PATH, headers=headers, json=_payload())
+    assert response.status_code == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+    assert response.json()["detail"] == "managed_document_too_large"
+    assert len(vault.upload_calls) == 1
+    assert _CONTENT_B64 not in response.text
+    assert _FILENAME not in response.text

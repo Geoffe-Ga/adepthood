@@ -53,7 +53,7 @@ export type CorpusSeedStatus =
  * because the run that would have sent it is over.
  */
 export type LocalSeedStatus =
-  'unsupported_format' | 'too_large' | 'unreadable' | 'failed' | 'cancelled';
+  'unsupported_format' | 'too_large' | 'managed_too_large' | 'unreadable' | 'failed' | 'cancelled';
 
 /**
  * A settled document's outcome: what its destination said, or what the device
