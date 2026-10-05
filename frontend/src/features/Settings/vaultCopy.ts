@@ -213,6 +213,10 @@ export const VAULT_CONNECTED_LABEL = 'Connected to';
  */
 export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
 
+/** A confirmed managed binding says nothing about current runtime health. */
+export const VAULT_MANAGED_CONNECTED =
+  'A managed vault is connected to your account. This does not check whether it is reachable right now.';
+
 /**
  * Said when the read could not establish whether a vault is attached at all.
  * "No vault connected yet" would be an answer nobody gave, and for somebody who
