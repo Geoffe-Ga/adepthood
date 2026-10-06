@@ -16275,7 +16275,7 @@
     },
     "/invitations": {
       "get": {
-        "description": "Generate newly-warranted invitations, then return the caller's pending ones.\n\nThe generation pass runs first and is idempotent — it inserts only\ncoordinates that have no prior row (dismissed rows included), so polling\nthis endpoint never accumulates duplicates. A connected vault also feeds a\ncorpus-theme source into that pass. The listing that follows returns only\nthe caller's rows with ``dismissed_at IS NULL``, ordered by ``created_at``;\ndeclined and other users' invitations are excluded.",
+        "description": "Generate newly-warranted invitations, then return the caller's pending ones.\n\nThe generation pass runs first and is idempotent — it inserts only\ncoordinates that have no prior row (dismissed rows included), so polling\nthis endpoint never accumulates duplicates. A connected vault also feeds a\ncorpus-theme source into that pass while the course ring is enabled. The\nlisting that follows returns only the caller's rows with\n``dismissed_at IS NULL`` whose ring the caller has not declined, ordered by\n``created_at``; declined, quieted and other users' invitations are excluded.",
         "operationId": "list_invitations_invitations_get",
         "parameters": [
           {
