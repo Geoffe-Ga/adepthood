@@ -17,6 +17,7 @@ tasks and Celery / RQ workers without modification.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import copy
 import logging
@@ -209,11 +210,10 @@ _CAUSE_SEPARATOR = "\nThe above exception was the direct cause of the following 
 _CONTEXT_SEPARATOR = "\nDuring handling of the above exception, another exception occurred:\n\n"
 _GROUP_MEMBER_HEADER = "+---- exception group member {index} ----\n"
 
+_SEPARATORS = frozenset({_CAUSE_SEPARATOR, _CONTEXT_SEPARATOR})
+
 #: What a record that cannot be formatted is reduced to: level and logger only.
 _UNFORMATTABLE_RECORD = "<unformattable log record: {level} {logger}>"
-
-#: What a ``%``-format mismatch or a missing format field raises.
-_FORMAT_FAILURES = (TypeError, ValueError, KeyError, AttributeError)
 
 
 def _neutralised(value: object) -> object:
@@ -238,36 +238,59 @@ def _render_one(exc: BaseException) -> str:
     return f"{_TRACEBACK_HEADER}{frames}{exception_label(exc)}\n"
 
 
-def _render_predecessor(exc: BaseException, seen: set[int]) -> str:
-    """Render the cause (or unsuppressed context) ``exc`` was raised from, with its separator."""
+def _predecessor(exc: BaseException) -> tuple[BaseException, str] | None:
+    """Return the cause (or unsuppressed context) ``exc`` was raised from, with its separator."""
     if exc.__cause__ is not None:
-        predecessor, separator = exc.__cause__, _CAUSE_SEPARATOR
-    elif exc.__context__ is not None and not exc.__suppress_context__:
-        predecessor, separator = exc.__context__, _CONTEXT_SEPARATOR
-    else:
-        return ""
-    rendered = render_exception(predecessor, seen)
-    return rendered + separator if rendered else ""
+        return exc.__cause__, _CAUSE_SEPARATOR
+    if exc.__context__ is not None and not exc.__suppress_context__:
+        return exc.__context__, _CONTEXT_SEPARATOR
+    return None
 
 
-def render_exception(exc: BaseException, seen: set[int] | None = None) -> str:
+def _render_work(exc: BaseException) -> list[str | BaseException]:
+    """Return what rendering ``exc`` expands to, in output order, links left unexpanded."""
+    work: list[str | BaseException] = []
+    predecessor = _predecessor(exc)
+    if predecessor is not None:
+        work.extend(predecessor)
+    work.append(_render_one(exc))
+    for index, member in enumerate(getattr(exc, "exceptions", ()), start=1):
+        work.extend((_GROUP_MEMBER_HEADER.format(index=index), member))
+    return work
+
+
+def _drop_dangling_separator(pending: list[str | BaseException]) -> None:
+    """Drop the separator queued to introduce a link that will not be rendered."""
+    if pending and isinstance(pending[-1], str) and pending[-1] in _SEPARATORS:
+        pending.pop()
+
+
+def render_exception(exc: BaseException) -> str:
     """Render ``exc`` like a standard traceback, with every message withheld.
 
     Same order and separators as :func:`traceback.format_exception` -- the
     cause or context first, then the exception, then an exception group's
     members -- so an operator reads a familiar traceback. The final line of
     each block is :func:`telemetry_safety.exception_label`, never ``str(exc)``.
-    ``seen`` guards against a context cycle, which Python permits.
+
+    Iterative, with an explicit stack: a chain thousands of links long renders
+    in full instead of raising ``RecursionError``. Each exception renders once,
+    so a context cycle (which Python permits) terminates; a link already
+    rendered also drops the separator that would have introduced it.
     """
-    seen = set() if seen is None else seen
-    if id(exc) in seen:
-        return ""
-    seen.add(id(exc))
-    parts = [_render_predecessor(exc, seen), _render_one(exc)]
-    if isinstance(exc, BaseExceptionGroup):
-        for index, member in enumerate(exc.exceptions, start=1):
-            parts.append(_GROUP_MEMBER_HEADER.format(index=index))
-            parts.append(render_exception(member, seen))
+    parts: list[str] = []
+    seen: set[int] = set()
+    pending: list[str | BaseException] = [exc]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if id(item) in seen:
+            _drop_dangling_separator(pending)
+            continue
+        seen.add(id(item))
+        pending.extend(reversed(_render_work(item)))
     return "".join(parts)
 
 
@@ -295,18 +318,21 @@ class ContentFreeFormatter(logging.Formatter):
         """Format a content-free copy of ``record``; never raise.
 
         A formatter that raises hands the record to ``Handler.handleError``,
-        which prints the raw ``msg`` and ``args`` to stderr -- the very text
-        this class withholds. A record that cannot be formatted (a ``%``
-        mismatch, a missing format field) is therefore reduced to a fixed line
-        naming only its level and logger.
+        which prints ``--- Logging error ---``, a traceback chained to the
+        exception being logged, and ``Message: %r / Arguments: %s`` with the raw
+        values -- the very text this class withholds. So *every* failure is
+        absorbed, deliberately not a list of "format errors": an argument's
+        ``__str__`` can raise anything (a lazy load on a detached ORM row, a
+        RuntimeError), and nothing can be logged from inside a formatter. The
+        record is then reduced to a fixed line naming its level and logger.
         """
-        try:
-            return self._format_content_free(record)
-        except _FORMAT_FAILURES:
-            return _UNFORMATTABLE_RECORD.format(level=record.levelname, logger=record.name)
+        line = _UNFORMATTABLE_RECORD.format(level=record.levelname, logger=record.name)
+        with contextlib.suppress(Exception):
+            line = self._format_content_free(record)
+        return line
 
     def _format_content_free(self, record: logging.LogRecord) -> str:
-        """Format a copy of ``record`` with every exception text replaced by its label."""
+        """Build and format the content-free copy."""
         safe = copy.copy(record)
         safe.msg = _neutralised(record.msg)
         safe.args = _neutralised_args(record.args)

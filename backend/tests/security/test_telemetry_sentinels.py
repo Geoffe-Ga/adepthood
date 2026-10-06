@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import sys
 from collections.abc import Callable, Iterator
 from typing import ClassVar, NoReturn
 
@@ -751,6 +752,91 @@ def test_uvicorns_own_traceback_is_content_free(
     # uvicorn's handlers carry no trace filter; a format needing one would fail
     # into ``handleError``, which prints the raw record to stderr.
     assert "Logging error" not in capsys.readouterr().err
+
+
+class _UnprintableRowError(Exception):
+    """Stands in for an ORM row whose ``__str__`` lazy-loads and fails."""
+
+
+class _UnprintableRow:
+    """A ``%s`` argument that cannot be rendered (e.g. a detached ORM instance)."""
+
+    def __str__(self) -> str:
+        """Fail the way a lazy load on an expired row does."""
+        raise _UnprintableRowError
+
+
+@pytest.mark.parametrize("canary", SENTINELS, ids=SENTINEL_IDS)
+def test_an_argument_that_cannot_render_leaks_nothing_through_handle_error(
+    app_stream: io.StringIO, capsys: pytest.CaptureFixture[str], canary: str
+) -> None:
+    """Any failure while formatting -- not only a ``%`` mismatch -- yields the fixed line.
+
+    Logged from inside the ``except`` holding the canary, as ``logger.exception``
+    always is: a formatter that raised would hand the record to
+    ``handleError``, whose traceback chains to the canary's exception and whose
+    ``Arguments:`` line prints the raw args.
+    """
+    try:
+        _raise(ValueError(canary))
+    except ValueError:
+        record = _LOGGER.makeRecord(
+            _LOGGER.name,
+            logging.ERROR,
+            __file__,
+            0,
+            "saving %s for %s",
+            (canary, _UnprintableRow()),
+            sys.exc_info(),
+        )
+        for handler in _app_handlers():
+            handler.handle(record)
+
+    output = app_stream.getvalue()
+    stderr = capsys.readouterr().err
+    assert_no_canary(output, canary)
+    assert_no_canary(stderr, canary)
+    assert "Logging error" not in stderr
+    assert f"<unformattable log record: ERROR {_LOGGER.name}>" in output
+
+
+_DEEP_CHAIN = 5000
+
+
+def _deep_cause_chain(depth: int) -> BaseException:
+    """Return an exception whose ``__cause__`` chain is ``depth`` links long."""
+    exc: BaseException = KeyError(SHORT_CANARY)
+    for _ in range(depth - 1):
+        outer = ValueError(SHORT_CANARY)
+        outer.__cause__ = exc
+        exc = outer
+    return exc
+
+
+def test_a_very_deep_chain_still_renders_every_link(app_stream: io.StringIO) -> None:
+    """A long cause chain renders in full -- no RecursionError, no fallback line."""
+    _LOGGER.error("deep", exc_info=_deep_cause_chain(_DEEP_CHAIN))
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert "<unformattable log record" not in output
+    assert output.count("The above exception was the direct cause") == _DEEP_CHAIN - 1
+    assert output.index("KeyError: ") < output.rindex("ValueError: ")
+
+
+def test_a_context_cycle_renders_each_link_once(app_stream: io.StringIO) -> None:
+    """Python permits a context cycle; it terminates, without a dangling separator."""
+    first = ValueError(SHORT_CANARY)
+    second = KeyError(SHORT_CANARY)
+    first.__context__ = second
+    second.__context__ = first
+
+    _LOGGER.error("cycle", exc_info=first)
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert output.count("Traceback (most recent call last):") == 2
+    assert output.count("During handling of the above exception") == 1
 
 
 @pytest.mark.parametrize("canary", SENTINELS, ids=SENTINEL_IDS)
