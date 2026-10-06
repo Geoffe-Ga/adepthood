@@ -44,11 +44,10 @@ import { instantAt } from './zonedClock';
  *  3. Foregrounding the app onto the tab the user never left re-reads it once.
  *
  * The resumed-session half -- a stored token with no cached zone, reloaded west
- * of UTC -- is not here. Driven through this lane, the zone backfill's refresh
- * revokes the resumed token while the app's first requests still carry it;
- * their 401s then refresh a token that is already revoked, and the session is
- * signed out. That is a product defect (#3034), not a spec to write around, so
- * the half stays registered `uncovered` in journeys.json until it is fixed.
+ * of UTC -- lives in its own spec, habits-resumed-session.browser.e2e.test.ts:
+ * its zone backfill rotates the token the app's first reads still carry, and
+ * the assertion that matters there is that the session refreshes exactly once
+ * and stays signed in (#3034), not a day turning over on a mounted screen.
  *
  * Every fake page time is built from the day the SERVER recorded the
  * completion on, so a run straddling the account's real midnight cannot make
