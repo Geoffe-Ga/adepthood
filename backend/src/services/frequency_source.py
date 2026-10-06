@@ -19,10 +19,18 @@ averaged, not called. A second opinion nobody asked for still costs the user a
 provider call and still ships their writing to a cloud they were running a vault
 specifically to avoid.
 
-**Every failure degrades in silence, and none of them is ever a failed write.**
-An absent, unavailable, capability-poor, refusing or unreadable vault falls back
-to the operator-side classifier exactly as ``_read_balance`` falls back to the
-local balance, and the degrade is recorded through
+**Whether a failure may fall back depends on the caller's boundary (#3061).**
+For a caller with no vault
+(:attr:`~services.reflection_boundary.ReflectionBoundary.APP_PROVIDER`), an
+absent, unavailable, capability-poor, refusing or unreadable vault falls back to
+the operator-side classifier exactly as ``_read_balance`` falls back to the local
+balance. For a caller whose AI operations are bound to their vault
+(:attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND`), it never
+does: a vault that gives no usable answer raises
+:class:`~services.reflection_boundary.VaultSourceUnavailableError` and the
+operator-side classifier is not entered -- falling back would ship their writing
+to exactly the provider they connected a vault to stay answered without. Either
+way the vault's own fault is recorded through
 :func:`services.creek_vault_read.log_read_degraded` -- the same closed-vocabulary
 record the wheel path writes, because a read that is invisible to the user is
 one only a log can count. The single exception is
@@ -41,10 +49,11 @@ those four.
 
 The vault branch is unreachable in this deployment today --
 :meth:`services.creek_vault_client.HttpCreekVaultClient.classify` refuses
-outright while Creek's ``/v1`` classify shape is unratified upstream -- so the
-rule degrades to the operator-side classifier on every call. That is the correct
-steady state, and it is why the rule is written now rather than after rows
-exist: provenance added later is a backfill nobody can answer.
+outright while Creek's ``/v1`` classify shape is unratified upstream -- and no
+route calls :func:`select_frequency_classification` yet. The rule is written now
+rather than after rows exist because provenance added later is a backfill nobody
+can answer, and its boundary is a required argument so that whoever wires it in
+cannot reintroduce a silent vault-then-cloud fallback by omission.
 
 Storing the provenance is a separate step this module does not take.
 ``CorpusFragment`` carries no column for it yet, and the classification a
@@ -72,6 +81,11 @@ from services.frequency_classification import (
     FrequencyClassification,
     IntimateContentRefusedError,
     classify_frequencies,
+)
+from services.reflection_boundary import (
+    ReflectionBoundary,
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
 )
 
 #: What one vault tag is worth. Creek's classify answer is a *set of positions*,
@@ -181,12 +195,21 @@ async def select_frequency_classification(
     content: str,
     *,
     classification: JournalClassification,
+    boundary: ReflectionBoundary,
     api_key: str | None = None,
 ) -> FrequencyClassification:
-    """Return the vault's classification of ``content``, else the operator-side one.
+    """Return the vault's classification of ``content``, else the operator-side one if allowed.
 
     The precedence rule, and the only place it is written: one source per
     fragment, never a hybrid, the answer stamped with whichever side produced it.
+
+    ``boundary`` is required, with no default, and decides the "else". Under
+    :attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND` a vault
+    that gives no usable answer raises
+    :class:`~services.reflection_boundary.VaultSourceUnavailableError`
+    (``NO_ANSWER``; the vault's own fault, if any, is already recorded) and the
+    operator side is never entered. Under ``APP_PROVIDER`` it falls back as it
+    always has.
 
     Raises :class:`~services.frequency_classification.IntimateContentRefusedError`
     for INTIMATE content, before the handshake and before the operator-side call
@@ -211,4 +234,6 @@ async def select_frequency_classification(
     from_vault = await fetch_vault_classification(client, content, classification=classification)
     if from_vault is not None:
         return from_vault
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        raise VaultSourceUnavailableError(VaultSourceUnavailableReason.NO_ANSWER)
     return await classify_frequencies(content, classification=classification, api_key=api_key)
