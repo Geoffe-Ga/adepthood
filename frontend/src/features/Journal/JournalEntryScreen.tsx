@@ -122,6 +122,7 @@ import {
   writingField,
   writingFieldFocus,
 } from '@/design/tokens';
+import DepthGate from '@/features/Depth/DepthGate';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
@@ -4424,12 +4425,16 @@ function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.E
  *
  * The link-a-habit note (#3006) sits beside it and waits for the offer to have
  * been answered, so the two never share a note: the offer while it is
- * unanswered, the pointer to Settings after.
+ * unanswered, the pointer to Settings after. The note points at a habit, so a
+ * declined habits ring never mounts it (#3073); the offer gates its own two
+ * depths.
  */
 const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
   <>
     <WritingSessionOffer result={result} />
-    <LinkHabitNudge waitForAnsweredOffer />
+    <DepthGate ring="habits">
+      <LinkHabitNudge waitForAnsweredOffer />
+    </DepthGate>
   </>
 );
 
@@ -4439,7 +4444,11 @@ const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
  * linked — a writer who launches a practice may never have been asked (#3006).
  * Module-level for the same stable identity as ``renderSessionOffer``.
  */
-const renderLaunchedSessionNote = (): React.ReactNode => <LinkHabitNudge />;
+const renderLaunchedSessionNote = (): React.ReactNode => (
+  <DepthGate ring="habits">
+    <LinkHabitNudge />
+  </DepthGate>
+);
 
 /** The launch this page was opened with, when it was opened to run a practice. */
 type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writingSession'];
@@ -4486,7 +4495,11 @@ function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
   return (
     <>
       <CareSupportNote care={ctl.resonance.care} />
-      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      {/* Names a thinning habit foundation, so a declined habits ring quiets it
+          here as well as on the server (#3073). */}
+      <DepthGate ring="habits">
+        <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      </DepthGate>
     </>
   );
 }

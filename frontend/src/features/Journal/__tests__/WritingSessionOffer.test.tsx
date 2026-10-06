@@ -1,6 +1,6 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import { keepAsPractice } from '../keepAsPractice';
@@ -8,13 +8,18 @@ import {
   linkedHabitConfirmation,
   savedAndLinkedConfirmation,
   savedHabitConfirmation,
+  SAVE_AS_HABIT_ACCEPT_A11Y,
+  SAVE_AS_HABIT_DECLINE_A11Y,
+  SAVE_AS_HABIT_PROMPT,
 } from '../saveAsHabitCopy';
+import { SAVE_AS_PRACTICE_ACCEPT_A11Y } from '../saveAsPracticeCopy';
 import WritingSessionOffer from '../WritingSessionOffer';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
+import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
@@ -163,6 +168,46 @@ describe('WritingSessionOffer — the invitation', () => {
     expect(saveAnswered).toHaveBeenCalledWith(true);
     await waitFor(() => expect(view.queryByTestId('save-as-habit-accept')).toBeNull());
     expect(insertHabitAt).not.toHaveBeenCalled();
+  });
+});
+
+describe('WritingSessionOffer — only the depths the writer kept (#3073)', () => {
+  afterEach(() => {
+    useDepthPreferencesStore.getState().reset();
+  });
+
+  it('offers only the practice, with the decline, once the habits ring is declined', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    await waitFor(() => expect(view.queryByTestId('save-as-practice-accept')).not.toBeNull());
+    expect(view.queryByTestId('save-as-habit-accept')).toBeNull();
+    expect(view.queryByText(SAVE_AS_HABIT_PROMPT)).toBeNull();
+    expect(view.getByLabelText(SAVE_AS_PRACTICE_ACCEPT_A11Y)).toBeTruthy();
+    expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
+  });
+
+  it('offers only the habit, with the decline, once the practices ring is declined', async () => {
+    useDepthPreferencesStore.setState({ enable_practices: false });
+    const view = await renderOffer();
+
+    expect(view.queryByTestId('save-as-practice-accept')).toBeNull();
+    expect(view.getByLabelText(SAVE_AS_HABIT_ACCEPT_A11Y)).toBeTruthy();
+    expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
+  });
+
+  it('makes no offer at all when both rings are declined', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false, enable_practices: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    // Let the stored-answer read land, so a null here is the gate and not the
+    // "still reading" state the offer also renders as nothing.
+    await waitFor(() => expect(loadAnswered).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.queryByTestId('save-as-habit-offer')).toBeNull();
+    expect(view.toJSON()).toBeNull();
   });
 });
 
