@@ -21,6 +21,10 @@ device or a reinstall, and a second account on the same device inherits it (P10)
 | Contraction ("foundation easing off") reflection | `routers/journal.py` `_contraction_reflection` -> `ContractionReflectionNote` | habits (server returns `null`; client mount also gated) | none: it is computed on each resonance pass |
 | Completion suggestions inside resonance | `routers/journal.py` resonance detection -> `CompletionSuggestionNote` | **ungated (next slice, AC17)**: habit and practice names still go into detection with a ring off | server: suggestion dismiss |
 
+`InvitationStack` also drops a declined ring's cards live on the client
+(`RING_FOR_TARGET` in `features/Depth/depthRings.ts`), because the list is
+fetched once and the shelf stays mounted while Settings is open.
+
 A declined ring keeps its stored invitation rows. They are hidden while the ring
 is off and listed again when it is turned back on. A dismissed row stays
 dismissed in both states.

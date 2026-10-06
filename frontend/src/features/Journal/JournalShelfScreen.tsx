@@ -737,8 +737,8 @@ function ShelfTopMatter({
       <JournalHero />
       <StatTileRow />
       {/* Return is a way back into habits, so a declined habits ring quiets it
-          (#3073). Invitations need no client gate: the server lists only
-          those whose ring is still on. */}
+          (#3073). Invitations filter their own cards by ring, so one ring's
+          decline drops only that ring's cards. */}
       <DepthGate ring="habits">
         <ReturnStack />
       </DepthGate>

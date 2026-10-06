@@ -8,6 +8,7 @@
  * contraction reflection); this hook gates the offers that are composed on the
  * client, such as the finished-writing-session note.
  */
+import type { InvitationTargetTypeT } from '@/api';
 import {
   useDepthPreferencesStore,
   type DepthPreferencesStoreState,
@@ -31,4 +32,31 @@ export const RING_FLAG: Readonly<Record<DepthRing, RingFlag>> = {
 export function useRingEnabled(ring: DepthRing): boolean {
   const flag = RING_FLAG[ring];
   return useDepthPreferencesStore((state: DepthPreferencesStoreState) => state[flag]);
+}
+
+/**
+ * The ring that owns each invitation target. Mirrors ``RING_FOR_TARGET`` in
+ * ``backend/src/domain/invitations.py``; typed over the API's target-type enum
+ * so a new target type does not compile until it names its ring.
+ */
+export const RING_FOR_TARGET: Readonly<Record<InvitationTargetTypeT, DepthRing>> = {
+  habit: 'habits',
+  practice: 'practices',
+  course: 'course',
+  sangha: 'sangha',
+  embodied_community: 'sangha',
+};
+
+/**
+ * Which rings are on right now, one narrow subscription per ring. For a
+ * surface that lists items across rings and must drop a declined ring's items
+ * live, without waiting for its next fetch.
+ */
+export function useEnabledRings(): Readonly<Record<DepthRing, boolean>> {
+  return {
+    habits: useRingEnabled('habits'),
+    practices: useRingEnabled('practices'),
+    course: useRingEnabled('course'),
+    sangha: useRingEnabled('sangha'),
+  };
 }
