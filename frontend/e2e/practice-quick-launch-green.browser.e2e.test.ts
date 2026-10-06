@@ -212,8 +212,10 @@ test('records a quick-launched writing session once Green has actually opened', 
   setProgramAnchorDaysAgo(email, DAYS_INTO_GREEN);
   const token = await tokenFor(page.request, email);
   const selectionId = await selectJournalingAtGreen(page.request, token);
-  // The stage store was seeded at stage 1 when the account was made; a fresh
-  // page load reads the moved calendar, and the selection, cold.
+  // A fresh page load reads the moved calendar, and the selection, cold. Today
+  // nothing on the journal seeds the stage store before Practice opens, so the
+  // Practice screen's own first load would also read the moved calendar; the
+  // reload keeps the arrange true if the shell ever starts seeding it earlier.
   await page.reload();
 
   // --- The Practice player offers the page, and says nothing about waiting. ---
@@ -254,12 +256,14 @@ test('records a quick-launched writing session once Green has actually opened', 
   await pressTimer(page, 'writing-timer-start');
   await page.clock.fastForward(PAST_A_SESSION);
   await expectSessionKept(await fullLength, selectionId, PRACTICE_MINUTES);
+  // The banner draws its slot in the same render as itself, so once it is up
+  // an offer would already be in it: the two absences cannot pass merely
+  // because nothing was drawn yet.
   await expect(page.getByTestId('writing-session-banner')).toBeVisible();
-  // The launched page's slot occupant: proof the slot rendered, so the two
-  // absences below cannot pass merely because nothing was drawn yet.
-  await expect(page.getByTestId('link-habit-nudge')).toBeVisible();
   await expect(page.getByTestId('save-as-habit-offer')).toHaveCount(0);
   await expect(page.getByTestId('save-as-practice-accept')).toHaveCount(0);
+  // And what does occupy the slot on a launched page: the link-a-habit note.
+  await expect(page.getByTestId('link-habit-nudge')).toBeVisible();
   await sessionPosts.expectSinceMark(
     BOTH_SESSIONS,
     'the second session was not posted exactly once',
