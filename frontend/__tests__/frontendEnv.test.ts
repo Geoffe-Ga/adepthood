@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { describe, expect, it } from '@jest/globals';
+import { loadProjectEnv } from '@expo/env';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
   DEFAULT_FRONTEND_PORT,
@@ -17,8 +20,9 @@ import { backendPath } from '@/testing/backendSource';
  * The browser lane's frontend env (#2491). The demo flag is inlined into the
  * bundle when Expo builds it, so whatever reaches the server's env decides
  * which app every spec on that server tests. These pin that the default lane
- * cannot be turned into a demo build by a shell that happens to export the
- * flag, and that both lane ports are origins the backend's development CORS
+ * carries the flag as an explicit off, so neither a shell that exports it nor
+ * a dotenv file Expo loads at start can turn it into a demo build, and that
+ * both lane ports are origins the backend's development CORS
  * actually allows.
  */
 
@@ -35,7 +39,7 @@ describe('frontendServerEnv', () => {
       PATH: '/bin',
     });
 
-    expect(env).not.toHaveProperty(HABIT_DEMO_FLAG);
+    expect(env[HABIT_DEMO_FLAG]).toBe('false');
     expect(env.PATH).toBe('/bin');
     expect(env.CI).toBe('1');
     expect(env.EXPO_PUBLIC_API_BASE_URL).toBe(API_URL);
@@ -49,6 +53,46 @@ describe('frontendServerEnv', () => {
     const inherited: LaneEnv = { ...PARENT_ENV, [HABIT_DEMO_FLAG]: 'true' };
     frontendServerEnv(API_URL, inherited);
     expect(inherited[HABIT_DEMO_FLAG]).toBe('true');
+  });
+});
+
+/**
+ * `expo start` loads the project's dotenv files into its own env before it
+ * builds anything, and fills a key ONLY when it is undefined there. A flag that
+ * is merely absent from the spawn env is therefore exactly what lets a
+ * developer's gitignored `.env.local` turn the shared lane into a demo build;
+ * the default env has to carry the flag as an explicit off. These run Expo's
+ * own loader (the copy `@expo/cli` resolves) over a throwaway project dir.
+ */
+describe('frontendServerEnv against Expo dotenv loading', () => {
+  let projectRoot = '';
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), 'lane-dotenv-'));
+    writeFileSync(join(projectRoot, '.env.local'), `${HABIT_DEMO_FLAG}=true\n`);
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  /** What the Expo server process would see once its dotenv load has run. */
+  function afterDotenv(env: LaneEnv): string | undefined {
+    const systemEnv: Record<string, string | undefined> = { ...env };
+    loadProjectEnv(projectRoot, { mode: 'development', silent: true, systemEnv });
+    return systemEnv[HABIT_DEMO_FLAG];
+  }
+
+  it('loads the flag from .env.local into an env that lacks it (the hazard is real)', () => {
+    expect(afterDotenv({ ...PARENT_ENV })).toBe('true');
+  });
+
+  it('keeps the default lane off even when a .env.local turns the flag on', () => {
+    expect(afterDotenv(frontendServerEnv(API_URL, PARENT_ENV))).toBe('false');
+  });
+
+  it('keeps the demo server on whatever .env.local says', () => {
+    expect(afterDotenv(frontendServerEnv(API_URL, PARENT_ENV, HABIT_DEMO_ENV))).toBe('true');
   });
 });
 

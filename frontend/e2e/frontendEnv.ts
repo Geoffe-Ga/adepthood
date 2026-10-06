@@ -8,9 +8,14 @@
  *
  * The one value that matters most is the habits demo flag (#2671). The default
  * lane must never be a demo build -- every other habits spec measures rows the
- * server returned, not fixtures -- so the builder fails closed: an inherited
- * `EXPO_PUBLIC_HABIT_DEMO_MODE` is dropped, and only a caller that asks for the
- * demo explicitly through `extra` gets one.
+ * server returned, not fixtures -- so the builder fails closed BY VALUE: the
+ * flag is always set, to `'false'` unless a caller asks for the demo explicitly
+ * through `extra`. Dropping the key would not be enough. `expo start` loads the
+ * project's dotenv files (`@expo/env`) before it builds anything and fills a key
+ * only when it is undefined, so an absent flag is exactly what would let a
+ * developer's gitignored `.env.local` turn the shared lane into a demo build.
+ * A defined `'false'` is never overwritten, and `config.ts` treats anything but
+ * the literal `'true'` as off.
  */
 
 /**
@@ -42,14 +47,19 @@ export const HABIT_DEMO_ENV: Readonly<Record<string, string>> = { [HABIT_DEMO_FL
  *
  * @param apiUrl - The lane backend the bundle should call.
  * @param inherited - The parent's env, copied rather than mutated.
- * @param extra - Explicit additions, applied last; the only way in for the demo flag.
+ * @param extra - Explicit additions, applied last; the only way to turn the demo flag on.
  */
 export function frontendServerEnv(
   apiUrl: string,
   inherited: LaneEnv,
   extra: Readonly<Record<string, string>> = {},
 ): LaneEnv {
-  const env: LaneEnv = { ...inherited };
-  delete env[HABIT_DEMO_FLAG];
-  return { ...env, CI: '1', EXPO_PUBLIC_API_BASE_URL: apiUrl, ...extra };
+  return {
+    ...inherited,
+    // Defined, not deleted: see the module note on Expo's dotenv loading.
+    [HABIT_DEMO_FLAG]: 'false',
+    CI: '1',
+    EXPO_PUBLIC_API_BASE_URL: apiUrl,
+    ...extra,
+  };
 }
