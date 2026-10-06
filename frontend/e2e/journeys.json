@@ -1632,15 +1632,15 @@
   },
   {
     "id": "habits.resumed-session-reads-its-own-calendar",
-    "description": "A user west of UTC whose device holds a session token but no cached zone -- one that signed in before #2847 cached it -- opens the app after 17:00 local, when UTC has turned over and their day has not. The resumed session should carry the zone the server has on record, fetched by one POST /auth/refresh, so yesterday evening's completion still reads as today rather than running on the UTC default. That is the bug as reported: \"I just had to log out and log back in to get my habits to reset for today.\" Uncovered because driving it through the browser lane exposes a defect on the same path (#3034): the backfill's refresh rotates the token, revoking the one the app's first wave of requests is still carrying; those requests come back 401, the 401 handler refreshes whichever token the session holds at that instant, and either that refresh revokes the token the first one just minted (a cascade of refreshes that only succeeds because the lane disarms the 1/minute limiter) or it presents the already-revoked resumed token and the session is signed out to the get-started screen. Pinned in process meanwhile by src/context/__tests__/ResumedSessionDayBoundary.test.tsx, which joins the real AuthProvider to the real useHabitsSummary at 08:00 in Los Angeles.",
+    "description": "A user west of UTC whose device holds a session token but no cached zone -- one that signed in before #2847 cached it -- opens the app late in their evening, when UTC has turned over and their day has not. The resumed session carries the zone the server has on record, fetched by exactly one POST /auth/refresh, so the completion they logged today still reads as today rather than running on the UTC default. That is the bug as reported: \"I just had to log out and log back in to get my habits to reset for today.\" The refresh rotates the token and revokes the one the app's first wave of reads is still carrying; those reads 401 and are retried on the successor through the client's single refresh path, so the count on the wire stays at one and the session stays signed in (#3034). The lane disarms the 1/minute limiter, so the spec asserts the refresh count rather than provoking the 429 a second refresh would earn in production. Pinned in process as well by src/context/__tests__/ResumedSessionDayBoundary.test.tsx (the zone, at 08:00 in Los Angeles) and ResumedSessionRefreshRace.integration.test.tsx (one refresh from every entry point).",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["auth", "habits"],
       "routes": ["POST /auth/refresh", "GET /habits/"],
       "tables": ["user", "habit", "goalcompletion"]
     },
-    "status": "uncovered",
-    "issue": 3034
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-resumed-session.browser.e2e.test.ts"
   },
   {
     "id": "journal.voice-drafts-shelf",

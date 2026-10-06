@@ -13,12 +13,13 @@ jest.mock('@/api', () => {
     auth: {
       login: jest.fn(),
       signup: jest.fn(),
-      refresh: jest.fn(),
       requestPasswordReset: jest.fn(),
       confirmPasswordReset: jest.fn(),
       cancelPasswordReset: jest.fn(),
       oauthGoogle: jest.fn(),
     },
+    refreshSessionToken: jest.fn(),
+    resetTokenRotations: jest.fn(),
     setTokenGetter: jest.fn(),
     setOnUnauthorized: jest.fn(),
     setOnTokenRefreshed: jest.fn(),
@@ -53,7 +54,9 @@ jest.mock('@/utils/token', () => ({
 import {
   ApiError,
   auth,
+  refreshSessionToken,
   resetLlmApiKey,
+  resetTokenRotations,
   setOnTokenRefreshed,
   setOnUnauthorized,
   setTokenGetter,
@@ -73,6 +76,10 @@ import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 import type * as tokenModule from '@/utils/token';
 
 const mockAuth = auth as jest.Mocked<typeof auth>;
+const mockRefreshSession = refreshSessionToken as jest.MockedFunction<typeof refreshSessionToken>;
+const mockResetTokenRotations = resetTokenRotations as jest.MockedFunction<
+  typeof resetTokenRotations
+>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 const mockSaveToken = saveToken as jest.MockedFunction<typeof saveToken>;
 const mockClearToken = clearToken as jest.MockedFunction<typeof clearToken>;
@@ -510,6 +517,81 @@ describe('AuthContext', () => {
     });
   });
 
+  // #3034: the HTTP client remembers which tokens it has rotated so a request
+  // that carried one is retried with its successor. That memory belongs to
+  // ONE session: every boundary forgets it, first, so a late request of the
+  // previous session can never be forwarded to that session's token.
+  describe('rotation memory is forgotten at every session boundary (#3034)', () => {
+    async function signedIn() {
+      mockLoadToken.mockResolvedValue('existing-jwt');
+      const hook = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(hook.result.current.token).toBe('existing-jwt'));
+      mockResetTokenRotations.mockClear();
+      return hook;
+    }
+
+    it('a resumed session does not forget anything on its own', async () => {
+      await signedIn();
+      expect(mockResetTokenRotations).not.toHaveBeenCalled();
+    });
+
+    it('logout forgets before it clears the stored token', async () => {
+      const { result } = await signedIn();
+      await act(async () => {
+        await result.current.logout();
+      });
+
+      expect(mockResetTokenRotations).toHaveBeenCalledTimes(1);
+      expect(mockResetTokenRotations.mock.invocationCallOrder[0]).toBeLessThan(
+        mockClearToken.mock.invocationCallOrder[0] ?? 0,
+      );
+    });
+
+    it('dismissing the re-auth sheet forgets', async () => {
+      const { result } = await signedIn();
+      await act(async () => {
+        await result.current.dismissReauth();
+      });
+
+      expect(mockResetTokenRotations).toHaveBeenCalledTimes(1);
+    });
+
+    it('the context onUnauthorized forgets before it clears the stored token', async () => {
+      const { result } = await signedIn();
+      await act(async () => {
+        result.current.onUnauthorized();
+      });
+
+      expect(mockResetTokenRotations).toHaveBeenCalledTimes(1);
+      expect(mockResetTokenRotations.mock.invocationCallOrder[0]).toBeLessThan(
+        mockClearToken.mock.invocationCallOrder[0] ?? 0,
+      );
+    });
+
+    it('the API-layer 401 sink forgets', async () => {
+      await signedIn();
+      const unauthorized = mockSetOnUnauthorized.mock.calls.at(-1)?.[0];
+      await act(async () => {
+        unauthorized?.('session_expired');
+      });
+
+      expect(mockResetTokenRotations).toHaveBeenCalledTimes(1);
+    });
+
+    it('a fresh sign-in forgets before it stores the new token', async () => {
+      const { result } = await signedIn();
+      mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 1 });
+      await act(async () => {
+        await result.current.login('user@test.com', 'password123'); // pragma: allowlist secret
+      });
+
+      expect(mockResetTokenRotations).toHaveBeenCalledTimes(1);
+      expect(mockResetTokenRotations.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSaveToken.mock.invocationCallOrder.at(-1) ?? 0,
+      );
+    });
+  });
+
   // BUG-NAV-001 / BUG-NAV-002: the navigator must discriminate between
   // "transient 401, ask to re-auth" and "user is anonymous" — otherwise
   // any 401 during a tab switch unmounts BottomTabs and boots the user
@@ -861,7 +943,7 @@ describe('AuthContext', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
-      expect(mockAuth.refresh).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
     });
 
     it('records the zone a login returns so the next cold start can resume on it', async () => {
@@ -904,7 +986,7 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue('stored-jwt');
       mockLoadUserTimezone.mockResolvedValue(null);
       mockSaveToken.mockResolvedValue(undefined);
-      mockAuth.refresh.mockResolvedValue({
+      mockRefreshSession.mockResolvedValue({
         token: 'fresh-jwt',
         user_id: 7,
         timezone: 'America/Los_Angeles',
@@ -913,7 +995,7 @@ describe('AuthContext', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       await waitFor(() => expect(result.current.userTimezone).toBe('America/Los_Angeles'));
-      expect(mockAuth.refresh).toHaveBeenCalledWith('stored-jwt');
+      expect(mockRefreshSession).toHaveBeenCalledWith('stored-jwt');
       expect(result.current.token).toBe('fresh-jwt');
       expect(mockSaveUserTimezone).toHaveBeenCalledWith('America/Los_Angeles');
     });
@@ -928,7 +1010,7 @@ describe('AuthContext', () => {
       mockLoadUserTimezone.mockResolvedValue(null);
       mockShouldRefreshToken.mockReturnValue(true);
       mockSaveToken.mockResolvedValue(undefined);
-      mockAuth.refresh.mockImplementation(() => new Promise(() => undefined));
+      mockRefreshSession.mockImplementation(() => new Promise(() => undefined));
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -937,7 +1019,7 @@ describe('AuthContext', () => {
         await Promise.resolve();
       });
 
-      expect(mockAuth.refresh.mock.calls.filter(([t]) => t === 'stored-jwt')).toHaveLength(1);
+      expect(mockRefreshSession.mock.calls.filter(([t]) => t === 'stored-jwt')).toHaveLength(1);
     });
 
     it('stays authenticated when the backfill cannot reach the server', async () => {
@@ -945,7 +1027,7 @@ describe('AuthContext', () => {
       // to the pre-#2847 default rather than to the device's own clock.
       mockLoadToken.mockResolvedValue('stored-jwt');
       mockLoadUserTimezone.mockResolvedValue(null);
-      mockAuth.refresh.mockRejectedValue(new Error('offline'));
+      mockRefreshSession.mockRejectedValue(new Error('offline'));
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -963,7 +1045,7 @@ describe('AuthContext', () => {
       mockSaveToken.mockResolvedValue(undefined);
       let resolveRefresh:
         ((_r: { token: string; user_id: number; timezone: string }) => void) | null = null;
-      mockAuth.refresh.mockImplementation(
+      mockRefreshSession.mockImplementation(
         () =>
           new Promise((resolve) => {
             resolveRefresh = resolve;
@@ -1008,13 +1090,13 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue('near-expiry-jwt');
       mockIsTokenExpired.mockReturnValue(false);
       mockShouldRefreshToken.mockReturnValue(true);
-      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+      mockRefreshSession.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
       await waitFor(() => expect(result.current.token).toBe('refreshed-jwt'));
 
-      expect(mockAuth.refresh).toHaveBeenCalledWith('near-expiry-jwt');
+      expect(mockRefreshSession).toHaveBeenCalledWith('near-expiry-jwt');
       expect(mockSaveToken).toHaveBeenCalledWith('refreshed-jwt');
     });
 
@@ -1022,7 +1104,7 @@ describe('AuthContext', () => {
       mockLoadToken.mockResolvedValue('near-expiry-jwt');
       mockIsTokenExpired.mockReturnValue(false);
       mockShouldRefreshToken.mockReturnValue(true);
-      mockAuth.refresh.mockRejectedValue(new Error('network error'));
+      mockRefreshSession.mockRejectedValue(new Error('network error'));
 
       const { result } = renderHook(() => useAuth(), { wrapper });
 
@@ -1048,20 +1130,20 @@ describe('AuthContext', () => {
       ).decodeJwtPayload.mockReturnValue({
         exp: nowSec + 600,
       });
-      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+      mockRefreshSession.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
 
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('fresh-jwt'));
 
       // Not yet past the buffer → no refresh.
-      expect(mockAuth.refresh).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
 
       await act(async () => {
         // Advance past the scheduled refresh point (5 minutes + 1s).
         jest.advanceTimersByTime(5 * 60 * 1000 + 1000);
       });
 
-      await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockRefreshSession).toHaveBeenCalledTimes(1));
     });
 
     // #2804: ``setTimeout`` treats a delay above 2^31-1 ms (~24.8 days) as
@@ -1083,7 +1165,7 @@ describe('AuthContext', () => {
         exp: nowSec + 60 * (DAY_MS / 1000),
         iat: nowSec,
       });
-      mockAuth.refresh.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
+      mockRefreshSession.mockResolvedValue({ token: 'refreshed-jwt', user_id: 1 });
 
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('long-lived-jwt'));
@@ -1092,14 +1174,14 @@ describe('AuthContext', () => {
         jest.advanceTimersByTime(SETTIMEOUT_CEILING_MS + 1000);
       });
       // The clamped timer fired, but the deadline is still days away.
-      expect(mockAuth.refresh).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
 
       await act(async () => {
         jest.advanceTimersByTime(30 * DAY_MS - SETTIMEOUT_CEILING_MS + 1000);
       });
 
-      await waitFor(() => expect(mockAuth.refresh).toHaveBeenCalledTimes(1));
-      expect(mockAuth.refresh).toHaveBeenCalledWith('long-lived-jwt');
+      await waitFor(() => expect(mockRefreshSession).toHaveBeenCalledTimes(1));
+      expect(mockRefreshSession).toHaveBeenCalledWith('long-lived-jwt');
     });
   });
 
@@ -1125,7 +1207,7 @@ describe('AuthContext', () => {
     it('survives a logout that fires while a token refresh is in flight', async () => {
       mockLoadToken.mockResolvedValue('existing-jwt');
       let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
-      mockAuth.refresh.mockImplementationOnce(
+      mockRefreshSession.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveRefresh = resolve;
@@ -1229,7 +1311,7 @@ describe('AuthContext', () => {
       // login token is not, so no second refresh races the assertion.
       mockShouldRefreshToken.mockImplementation((t: string) => t === 'existing-jwt');
       let resolveRefresh: ((value: { token: string; user_id: number }) => void) | null = null;
-      mockAuth.refresh.mockImplementationOnce(
+      mockRefreshSession.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             resolveRefresh = resolve;
@@ -1238,7 +1320,7 @@ describe('AuthContext', () => {
       const { result } = renderHook(() => useAuth(), { wrapper });
       await waitFor(() => expect(result.current.token).toBe('existing-jwt'));
 
-      expect(mockAuth.refresh).toHaveBeenCalledWith('existing-jwt');
+      expect(mockRefreshSession).toHaveBeenCalledWith('existing-jwt');
       mockAuth.login.mockResolvedValue({ token: 'second-jwt', user_id: 2 });
 
       await act(async () => {
