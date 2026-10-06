@@ -10,6 +10,8 @@ import { freshLicenseKey } from './licenseKey';
 
 const ACCOUNT_PHRASE = 'Journal-habits-browser-passphrase';
 const START_DATE = '2026-01-01';
+/** The journal's drawer toggle: the landmark every signed-in arrival waits for. */
+const JOURNAL_MENU = 'Open Journal menu';
 const HTTP_OK = 200;
 const MS_PER_DAY = 86_400_000;
 /** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
@@ -135,8 +137,25 @@ export async function signUp(page: Page, prefix: string): Promise<string> {
   await page.getByRole('textbox', { name: 'Gumroad license key' }).fill(freshLicenseKey());
   await page.getByRole('button', { name: 'Create account' }).click();
   await page.getByRole('button', { name: 'Skip the welcome' }).click();
-  await expect(page.getByRole('button', { name: 'Open Journal menu' })).toBeVisible();
+  await expect(page.getByRole('button', { name: JOURNAL_MENU })).toBeVisible();
   return email;
+}
+
+/**
+ * Sign an existing account back in through the log-in screen, landing on the
+ * journal. Whether the welcome is offered again after a log-out is not this
+ * helper's question, so it is skipped when it is shown and not required.
+ */
+export async function logIn(page: Page, email: string): Promise<void> {
+  await page.goto(`${frontendUrl()}/login`);
+  await page.getByRole('textbox', { name: 'Email' }).fill(email);
+  await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
+  await page.getByRole('button', { name: 'Log in' }).click();
+  const skipWelcome = page.getByRole('button', { name: 'Skip the welcome' });
+  const journalMenu = page.getByRole('button', { name: JOURNAL_MENU });
+  await expect(skipWelcome.or(journalMenu)).toBeVisible();
+  if (await skipWelcome.isVisible()) await skipWelcome.click();
+  await expect(journalMenu).toBeVisible();
 }
 
 /**
@@ -193,13 +212,14 @@ export async function seedHabit(
   request: APIRequestContext,
   token: string,
   name: string,
+  startDate: string = START_DATE,
 ): Promise<number> {
   const response = await request.post(`${backendUrl()}/habits/`, {
     headers: { Authorization: `Bearer ${token}` },
     data: {
       name,
       icon: '★',
-      start_date: START_DATE,
+      start_date: startDate,
       energy_cost: 2,
       energy_return: 4,
     },
@@ -209,9 +229,16 @@ export async function seedHabit(
 }
 
 export async function openHabits(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Open Journal menu' }).click();
+  await page.getByRole('button', { name: JOURNAL_MENU }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Habits', exact: true }).click();
   await expect(page.getByTestId('habits-list')).toBeVisible();
+}
+
+/** Back to the journal shelf from the Habits tab, through its drawer -- a return, not a remount. */
+export async function openJournal(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open Habits menu' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Journal', exact: true }).click();
+  await expect(page.getByTestId('journal-habits-tile')).toBeVisible();
 }
 
 export async function openReorder(page: Page): Promise<void> {

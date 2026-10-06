@@ -120,6 +120,9 @@ exception is declared as the single entry of `VENDORED_EXTRA_FILES`, and
 `backend/src/curriculum/stage_correspondence.json` from it. **Exit plan:** once
 the upstream manifest carries `stage_correspondence[]`, empty
 `VENDORED_EXTRA_FILES` and point the generator at the manifest tier.
+Until then, the step-by-step path for a correspondence change (re-pin,
+regenerate, supersessions, reconcile, verify, rollback) is the runbook in
+`docs/curriculum.md`, "Updating stage correspondences" (#2667).
 
 Two notes for that upstream bump. First, **pick `schema_version 1.3.0`, not
 `1.2.0`**. This ADR already spends `1.2.0` on `site_resource.media[]` (the

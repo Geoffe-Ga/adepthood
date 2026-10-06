@@ -2,7 +2,7 @@
  * The Map header-drawer body: a compact legend of all ten stages rendered as
  * ``ScreenDrawer`` children (the panel supplies the scroll surface, so this maps
  * plain rows). Each row shows the stage's color swatch, its category, and — when
- * present — its Aspect; the current stage is marked, and a locked stage carries a
+ * present — its Aspect, both as the server serves them; the current stage is marked, and a locked stage carries a
  * padlock plus its calendar unlock estimate. Tapping any row — locked or not —
  * glides the magnifier lens to that stage, opens its detail modal, and closes the
  * drawer.
@@ -15,20 +15,15 @@ import { useDaysUntilStage } from '../../store/useProgramProgression';
 
 import { useJourneySummary } from './hooks/useJourneySummary';
 import { unlockTimeline } from './journeyNarrative';
-import { MAP_ROWS, STAGE_DISPLAY, type StageDisplay } from './mapLayout';
+import { STAGE_DISPLAY, type StageDisplay } from './mapLayout';
 import { isStageUnlocked } from './services/stageService';
 import { STAGE_COUNT, type StageData } from './stageData';
 import { drawerStageLabel } from './stageLegend';
+import { stageArrowLabel, stageCategory, stageFallbackName } from './stageVocabulary';
 
 /** Glyph shown on a locked stage row. */
 const LOCKED_GLYPH = '🔒';
 
-/** Stage number → its category (the containing MAP_ROWS row's rightLabel). */
-const CATEGORY_BY_STAGE: Readonly<Record<number, string>> = Object.fromEntries(
-  MAP_ROWS.flatMap((row) =>
-    row.stageNumbers.map((stageNumber): [number, string] => [stageNumber, row.rightLabel]),
-  ),
-);
 /** Diameter of the current-stage marker dot in dp. */
 const MARKER_SIZE = 10;
 /** Side of the square color swatch in dp. */
@@ -69,6 +64,8 @@ const UnlockRow = ({ stageNumber }: { stageNumber: number }): React.JSX.Element 
 interface LegendRowProps {
   stageNumber: number;
   display: StageDisplay;
+  /** The stage as the server served it; absent until it loads. */
+  stage: StageData | undefined;
   locked: boolean;
   selected: boolean;
   onSelectStage: (_stageNumber: number) => void;
@@ -79,13 +76,16 @@ interface LegendRowProps {
 const LegendRow = ({
   stageNumber,
   display,
+  stage,
   locked,
   selected,
   onSelectStage,
 }: LegendRowProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
-  const category = CATEGORY_BY_STAGE[stageNumber] ?? '';
-  const aspect = display.arrowLabel;
+  // The row's words come from the served stage (#2666); a stage not yet
+  // served is named by its colour so the row is never blank.
+  const category = stage ? stageCategory(stage) : stageFallbackName(stageNumber);
+  const aspect = stage ? stageArrowLabel(stage) : '';
   return (
     <TouchableOpacity
       testID={`map-drawer-stage-${stageNumber}`}
@@ -149,6 +149,7 @@ export default function MapDrawer({
             key={stageNumber}
             stageNumber={stageNumber}
             display={display}
+            stage={stage}
             locked={stage ? !isStageUnlocked(stage, currentStage) : true}
             selected={stageNumber === currentStage}
             onSelectStage={onSelectStage}

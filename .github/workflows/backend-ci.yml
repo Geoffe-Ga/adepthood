@@ -450,9 +450,18 @@ jobs:
           cache-dependency-glob: backend/requirements*.txt
 
       - name: Install drift-check deps
-        # The check needs only the sync script's imports, not the app.
+        # The checks need only the sync_content and build_stage_correspondence
+        # imports, not the app (tests/scripts/test_stage_correspondence_drift_gate.py
+        # fails when either script grows an import this line does not install).
         run: uv pip install --system httpx 'jsonschema>=4.0'
 
       - name: Verify vendored content matches CONTENT_VERSION
         working-directory: backend
         run: python -m scripts.sync_content --check
+
+      # Issue #2667: stage_correspondence.json is generated from the CSV the
+      # step above just verified, plus the ratified supersessions; --check
+      # exits 1 when the committed artifact no longer matches those inputs.
+      - name: Verify stage_correspondence.json is current
+        working-directory: backend
+        run: python -m scripts.build_stage_correspondence --check
