@@ -1748,7 +1748,8 @@ class _PassSettlementInput:
     Everything here was produced with no transaction open: ``anchored`` by the
     reflection dial and ``hits`` by the detection dial. ``spent`` is the
     server-paid deduction that committed before either, or ``None`` for BYOK.
-    ``llm`` carries the usage the settlement records beside the rows it stages.
+    ``usage`` is every app-provider response the pass metered, recorded beside
+    the rows it stages; it is empty when no app provider was dialled at all.
     ``key`` is the pass's generation, stamped on every usage row it meters.
     """
 
@@ -1757,7 +1758,7 @@ class _PassSettlementInput:
     spent: SpendResult | None
     anchored: MarginaliaOutcome
     hits: list[CompletionDetected]
-    llm: BotmasonResonanceLLM
+    usage: Sequence[LLMResponse]
     key: GenerationKey
 
 
@@ -1853,7 +1854,7 @@ async def _persist_settle_commit(
             session,
             user_id=prepared.user_id,
             journal_entry_id=prepared.entry_id,
-            responses=prepared.llm.usage,
+            responses=prepared.usage,
             generation=prepared.key,
         )
         await session.commit()
@@ -1868,7 +1869,7 @@ async def _persist_settle_commit(
                 trace=_FailedGeneration(
                     feature=GenerationFeature.RESONANCE,
                     key=prepared.key,
-                    usage=prepared.llm.usage,
+                    usage=prepared.usage,
                     attempts=prepared.anchored.attempts,
                 ),
             )
@@ -2199,7 +2200,7 @@ async def _run_admitted_resonance(
                 spent=spent,
                 anchored=anchored,
                 hits=attempt.hits,
-                llm=llm,
+                usage=llm.usage,
                 key=key,
             ),
         )
