@@ -44,6 +44,8 @@ const BROWSER_E2E_SCRIPT = 'test:e2e:web';
 const AUTH_OVERFLOW_JOURNEY = 'auth-overflow.browser.e2e.test.ts';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
+/** The one browser journey that boots its own, demo-configured frontend (#2491). */
+const DEMO_TILE_JOURNEY = 'habits-demo-tile.browser.e2e.test.ts';
 const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
 /**
  * Sorted, because `e2eFiles` is a bare `readdirSync` filter and directory order
@@ -63,6 +65,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habit-add-cadence.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
+  DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
@@ -101,6 +104,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'map-stage-persona.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
+  'practice-quick-launch-green.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
@@ -433,6 +437,28 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(spec).toContain('scrollHeight');
     expect(spec).toContain('boundingBox()');
     expect(spec).toContain('element.scrollTop = element.scrollHeight');
+  });
+
+  it('keeps the default browser lane non-demo and confines the demo build to one spec', () => {
+    // `EXPO_PUBLIC_HABIT_DEMO_MODE` is inlined into the bundle at build time, so
+    // a server started with it changes the app for every spec that runs there.
+    // Keyed on what STARTS a server with it -- the demo env constant and the
+    // launcher -- rather than on the flag's name, which a spec may mention in
+    // prose (habits-viewport explains why it does not use it).
+    for (const [path, why] of [
+      [join(E2E_DIR, 'browserGlobalSetup.ts'), 'The browser lane boot is missing.'],
+      [BROWSER_E2E_CONFIG, 'The browser journey needs a Playwright config.'],
+      [WORKFLOW, 'The e2e lane only runs once a workflow invokes it.'],
+    ] as const) {
+      const text = read(path, why);
+      expect(text).not.toContain('HABIT_DEMO_ENV');
+      expect(text).not.toContain('EXPO_PUBLIC_HABIT_DEMO_MODE');
+    }
+    const demoServers = EXPECTED_BROWSER_JOURNEYS.filter((name) => {
+      const spec = read(join(E2E_DIR, name), `The browser journey spec ${name} is missing.`);
+      return spec.includes('HABIT_DEMO_ENV') || spec.includes('launchFrontend(');
+    });
+    expect(demoServers).toEqual([DEMO_TILE_JOURNEY]);
   });
 
   it('keeps Playwright specs out of the Jest API journey lane', () => {
