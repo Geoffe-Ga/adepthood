@@ -11,8 +11,6 @@ import { Alert } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
-  ApiError,
-  ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
@@ -25,6 +23,12 @@ import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
 import {
+  clearCheckInReplayState,
+  loadCheckInReplayState,
+  saveCheckInReplayState,
+} from '../../../storage/checkInReplayState';
+import type { ReplayHeadState } from '../../../storage/checkInReplayState';
+import {
   saveHabits as saveHabitsToDisk,
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
@@ -34,7 +38,11 @@ import {
   recordDroppedCheckIn,
   replacePendingCheckIns,
 } from '../../../storage/habitStorage';
-import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStorage';
+import type {
+  DroppedCheckIn,
+  DroppedCheckInReason,
+  PendingCheckIn,
+} from '../../../storage/habitStorage';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
@@ -70,6 +78,7 @@ import {
   toApiPayload,
 } from './habitMerge';
 import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
 import {
   ClientMintedIdError,
   isNotDemoSeed,
@@ -984,37 +993,6 @@ const syncRevealState = (next: Habit[], failureMessage: string, tz: string): voi
   Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
 };
 
-/**
- * Statuses that mean this queued check-in will never post, however many
- * times we try it. Deliberately a closed allowlist: an unrecognised status
- * falls through to "transient", because mis-reading a transient failure as
- * permanent destroys a check-in the user actually made, while the reverse
- * only costs one retry.
- *
- * NOT the complement of ``TRANSIENT_STATUSES`` in ``api/index.ts``, and the
- * two must not be unified. That set governs an in-flight retry milliseconds
- * apart, where re-sending an expired token is pointless, so it excludes 401.
- * This queue spans app launches and ``AuthContext`` re-hydrates the token at
- * launch, so a 401 here means "not signed in right now", never "this
- * check-in is invalid" — dropping on it would wipe the queue of exactly the
- * user who has one.
- */
-const PERMANENT_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 422]);
-
-/** Whether a replay failure is futile to retry, so the entry is dropped. */
-const isPermanentRejection = (err: unknown): err is ApiError | ApiValidationError => {
-  // Checked before any status lookup: ApiValidationError does not extend
-  // ApiError and carries the response's own status, which can be a 2xx. It is
-  // raised only when a received body failed its Zod schema — a deterministic
-  // client/server contract defect, so a retry receives the same shape and
-  // fails identically, forever. Retrying is harmful for a signed-unit entry:
-  // unlike the legacy amount-less natural-key no-op, each explicit replay is a
-  // fresh delta. Drop this known-bad response rather than both applying the
-  // arithmetic again and wedging every genuine check-in behind it.
-  if (err instanceof ApiValidationError) return true;
-  return err instanceof ApiError && PERMANENT_REJECTION_STATUSES.has(err.status);
-};
-
 /** POST one queued check-in, bucketing its day into the user's zone. */
 const postPendingCheckIn = async (
   checkIn: PendingCheckIn,
@@ -1049,24 +1027,77 @@ const postPendingCheckIn = async (
  * reportable to the user who made the check-in. ``loadHabits`` has already
  * overwritten their optimistic completion with the server's canonical state by
  * the time we get here, so without the quarantine the action vanishes with no
- * trace anyone will ever see.
+ * trace anyone will ever see. A give-up (#2473) takes exactly this path, so it
+ * is never quieter than an outright rejection.
+ *
+ * The record is built field by field rather than spread from the entry, so
+ * nothing the queue might one day carry leaks into the quarantine unnamed.
  */
-const warnDroppedCheckIn = async (
+const quarantineCheckIn = async (
   checkIn: PendingCheckIn,
-  err: ApiError | ApiValidationError,
+  status: number,
+  reason: DroppedCheckInReason,
 ): Promise<void> => {
   console.warn(
-    'replayPendingCheckIns: dropping permanently rejected check-in for goal',
+    reason === 'gave_up'
+      ? 'replayPendingCheckIns: giving up on repeatedly rejected check-in for goal'
+      : 'replayPendingCheckIns: dropping permanently rejected check-in for goal',
     checkIn.goal_id,
     'status',
-    err.status,
+    status,
   );
   const quarantined: DroppedCheckIn = {
-    ...checkIn,
-    status: err.status,
+    goal_id: checkIn.goal_id,
+    did_complete: checkIn.did_complete,
+    ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
+    ...(checkIn.operation_id === undefined ? {} : { operation_id: checkIn.operation_id }),
+    timestamp: checkIn.timestamp,
+    ...(checkIn.completed_on === undefined ? {} : { completed_on: checkIn.completed_on }),
+    status,
     dropped_at: new Date().toISOString(),
+    reason,
   };
   await recordDroppedCheckIn(quarantined);
+};
+
+/** Whether the drain moves on to the next entry or stops for this pass. */
+type DrainStep = 'continue' | 'stop';
+
+/**
+ * Settle the failure of ``pending[i]``, the current head. A permanent
+ * rejection, or a counted one that has now exhausted its retries, is
+ * quarantined and the drain continues. Anything else keeps the unprocessed
+ * suffix — byte-identical, every index below ``i`` being terminal — and stops,
+ * so the next replay does not repost the prefix (the BUG-FE-HABIT-205
+ * partial-success regression). Only a counted rejection touches the retry
+ * record; an offline or availability failure leaves it exactly as it was.
+ */
+const handleReplayFailure = async (
+  pending: PendingCheckIn[],
+  i: number,
+  err: unknown,
+  headState: ReplayHeadState | null,
+  nowMs: number,
+): Promise<DrainStep> => {
+  const checkIn = pending[i]!;
+  const failure = classifyReplayFailure(err);
+  if (failure.kind === 'permanent') {
+    // Awaited, not fired and forgotten: a floating quarantine write can
+    // outlive the drain and lose the record it exists to keep.
+    await quarantineCheckIn(checkIn, failure.status, 'rejected');
+    return 'continue';
+  }
+  if (failure.kind === 'counted') {
+    const next = nextHeadState(headState, checkIn, failure.status, nowMs);
+    if (hasExhaustedRetries(next, nowMs)) {
+      await quarantineCheckIn(checkIn, failure.status, 'gave_up');
+      await clearCheckInReplayState();
+      return 'continue';
+    }
+    await saveCheckInReplayState(next);
+  }
+  await replacePendingCheckIns(pending.slice(i));
+  return 'stop';
 };
 
 /**
@@ -1085,7 +1116,11 @@ const hydrateDroppedCheckIns = async (): Promise<void> => {
  * transient failure, the suffix that didn't post is rewritten back to
  * disk so we don't double-post on the next replay; a permanently rejected
  * entry is dropped so it cannot wedge the queue ahead of everything the
- * user logged behind it.
+ * user logged behind it. So, eventually, is a head whose unclassified
+ * rejection keeps recurring — but only after both
+ * ``MAX_CHECK_IN_REPLAY_ATTEMPTS`` counted rejections and
+ * ``MIN_POISON_AGE_MS`` since the first (#2473); offline, timeout, 401 and
+ * availability failures never count toward that.
  *
  * Each queued timestamp is forwarded as ``completed_on`` (the user-local
  * calendar day) so a check-in queued offline on Monday lands on Monday's
@@ -1099,26 +1134,20 @@ const drainPendingCheckIns = async (tz?: string): Promise<void> => {
   // Device zone is the stand-in until auth hydrates the stored zone.
   const zone = tz ?? detectDeviceTimezone();
   const today = todayInUserTZ(zone);
+  // One clock read and one record read per pass: the policy is pure, and
+  // only the head can carry a retry record, so a stale read cannot matter.
+  const nowMs = Date.now();
+  const headState = await loadCheckInReplayState();
   for (let i = 0; i < pending.length; i += 1) {
-    const checkIn = pending[i]!;
     try {
-      await postPendingCheckIn(checkIn, zone, today);
+      await postPendingCheckIn(pending[i]!, zone, today);
     } catch (err) {
-      if (isPermanentRejection(err)) {
-        // Awaited, not fired and forgotten: a floating quarantine write can
-        // outlive the drain and lose the record it exists to keep.
-        await warnDroppedCheckIn(checkIn, err);
-        continue;
-      }
-      // Still offline, or a failure worth retrying. Persist only the
-      // unprocessed suffix so the next replay doesn't repost the prefix —
-      // every index below ``i`` is terminal, posted or dropped. That was
-      // the BUG-FE-HABIT-205 partial-success regression.
-      await replacePendingCheckIns(pending.slice(i));
-      return;
+      const step = await handleReplayFailure(pending, i, err, headState, nowMs);
+      if (step === 'stop') return;
     }
   }
   await clearPendingCheckIns();
+  await clearCheckInReplayState();
 };
 
 /**

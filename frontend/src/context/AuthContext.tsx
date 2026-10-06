@@ -23,6 +23,7 @@ import {
   saveToken,
   saveUserTimezone,
 } from '@/storage/authStorage';
+import { clearCheckInReplayState } from '@/storage/checkInReplayState';
 import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
@@ -288,6 +289,8 @@ async function wipeUserState(): Promise<void> {
     ['habits', clearHabits()],
     ['pending check-ins', clearPendingCheckIns()],
     ['dropped check-ins', clearDroppedCheckIns()],
+    // #2473: the queue head's retry record names one of this user's check-ins.
+    ['check-in replay state', clearCheckInReplayState()],
     ['LLM API key', clearLlmApiKey()],
     ['notification data', clearAllNotificationData()],
     // #2847: the cached zone is this user's calendar, so it leaves with the

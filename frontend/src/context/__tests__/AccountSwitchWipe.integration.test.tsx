@@ -9,6 +9,7 @@ import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { clearUserTimezone, saveUserTimezone } from '@/storage/authStorage';
+import { loadCheckInReplayState, saveCheckInReplayState } from '@/storage/checkInReplayState';
 import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import {
   loadDroppedCheckIns,
@@ -193,6 +194,12 @@ async function seedDeviceStateForUserA(): Promise<void> {
     status: 404,
     dropped_at: '2026-08-29T10:00:05.000Z',
   });
+  await saveCheckInReplayState({
+    identity: '909|2026-08-30T10:00:00.000Z||true|',
+    attempts: 2,
+    first_rejected_at: '2026-08-30T10:05:00.000Z',
+    last_status: 500,
+  });
 }
 
 describe('an account switch with no explicit logout', () => {
@@ -312,6 +319,32 @@ describe('an account switch with no explicit logout', () => {
   });
 });
 
+describe('the queue head’s retry record (#2473)', () => {
+  test('leaves with the previous user on an account switch', async () => {
+    mockAuthApi.login
+      .mockResolvedValueOnce({ token: 'token-a', user_id: USER_A })
+      .mockResolvedValueOnce({ token: 'token-b', user_id: USER_B });
+    const result = await mountSignedOut();
+
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await act(async () => {
+      await seedDeviceStateForUserA();
+    });
+    expect(await loadCheckInReplayState()).not.toBeNull();
+
+    await act(async () => {
+      await result.current.auth.login('b@test.com', 'password123');
+    });
+
+    // B's namespace never had it; the point is that A's namespace no longer does.
+    expect(await loadCheckInReplayState()).toBeNull();
+    setActiveUser(USER_A);
+    expect(await loadCheckInReplayState()).toBeNull();
+  });
+});
+
 describe('re-authenticating as the same user', () => {
   test('keeps that user’s unsent check-in queue, which is real unsaved work', async () => {
     mockAuthApi.login
@@ -338,6 +371,8 @@ describe('re-authenticating as the same user', () => {
 
     expect(await loadPendingCheckIns()).toHaveLength(1);
     expect(await loadHabits()).toHaveLength(1);
+    // The retry record travels with the queue it describes.
+    expect(await loadCheckInReplayState()).not.toBeNull();
     expect(mockLlmStorage.clearLlmApiKey).not.toHaveBeenCalled();
     expect(mockNotificationStorage.clearAllNotificationData).not.toHaveBeenCalled();
     // Without this half the new guard is one-sided: a refactor that wiped on
