@@ -29,13 +29,13 @@ function progressCopy(state: VaultActivation['state']): string {
     case 'submitting':
       return 'Sending your activation request…';
     case 'pending':
-      return 'Your managed space is waiting for capacity…';
+      return 'Waiting for room to open up for your vault…';
     case 'provisioning':
-      return 'Creek is preparing your managed space…';
+      return 'Your managed vault is being set up…';
     case 'awaiting_handoff':
-      return 'Your encrypted vault connection is being delivered…';
+      return 'Connecting Adepthood to your new vault…';
     case 'deleting':
-      return 'Creek is securely removing the failed allocation…';
+      return 'Clearing away the vault that did not finish…';
     default:
       return 'Checking your managed vault…';
   }
@@ -50,15 +50,15 @@ function progressDetail(state: VaultActivation['state']): string {
 
 const CustodyNotice = (): React.JSX.Element => (
   <View style={styles.notice} testID="activation-custody-notice">
-    <Text style={styles.noticeTitle}>Provider-managed custody</Text>
+    <Text style={styles.noticeTitle}>Who can read a managed vault</Text>
     <Text style={styles.body}>
-      Ordinary Fly storage is encrypted with provider-managed keys. Fly and a sufficiently
-      privileged Adepthood or Creek operator can access stored bytes. This is not confidential
-      compute.
+      A managed vault lives on servers run by a hosting company called Fly. It is encrypted, but Fly
+      holds the keys, so Fly, and anyone with enough access at Adepthood or at Creek (the software
+      behind the vault), could read what is stored there. It is not hidden from them.
     </Text>
     <Text style={styles.body}>
-      INTIMATE entries stay in Adepthood and are never sent to this managed vault or a cloud
-      language model. Activating it does not change that boundary.
+      Entries you mark Intimate stay in Adepthood and are never sent to a managed vault or to any
+      AI. Creating a vault does not change that.
     </Text>
   </View>
 );
@@ -107,13 +107,13 @@ const ActivationConsent = ({
   <View style={styles.card} testID="activation-consent">
     <Text style={styles.sectionTitle}>Create an isolated managed vault</Text>
     <Text style={styles.body}>
-      Creek will create one Fly app, machine, and volume for this account. Provider-managed keys
-      unlock it after unattended restarts; Adepthood will not ask you to create or store unlock
-      material.
+      Adepthood will set up a vault just for your account, on Fly's servers. The hosting company
+      holds the keys that open it, so it can come back on its own after a restart, and you will
+      never be asked to make or keep a key yourself.
     </Text>
     <Text style={styles.body}>
-      Creating the vault starts an allocation. You can leave while it finishes, and your journal
-      remains available.
+      Setting it up takes a little while. You can leave before it finishes, and your journal is here
+      the whole time.
     </Text>
     {error ? (
       <Text style={styles.error} accessibilityRole="alert">
@@ -150,12 +150,12 @@ const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Ele
 
 function readyCustodyCopy(custodyMode: VaultActivation['custody_mode']): string {
   if (custodyMode === 'provider_managed') {
-    return 'Storage is encrypted with provider-managed keys. Fly and a sufficiently privileged operator can access stored bytes.';
+    return 'Your vault is locked with keys the hosting company (Fly) holds. Fly, and people with enough access at Adepthood or Creek, can read what is stored there.';
   }
   if (custodyMode === 'wrapped_artifact_only') {
-    return 'This legacy allocation predates the current custody contract. Its old wrapped artifact never controlled Fly storage, so no user-held recovery claim applies.';
+    return 'This vault was set up under an older arrangement. Any key from that time never actually locked its storage, so there is no key of yours to recover.';
   }
-  return 'Custody details are unavailable, so Adepthood makes no confidentiality claim for this allocation.';
+  return 'Adepthood cannot tell right now who holds the keys to this vault, so it will not promise you anything about who can read it.';
 }
 
 const Ready = ({ activation }: { activation: VaultActivation }): React.JSX.Element => (
@@ -163,8 +163,8 @@ const Ready = ({ activation }: { activation: VaultActivation }): React.JSX.Eleme
     <Text style={styles.sectionTitle}>Your managed vault is ready.</Text>
     <Text style={styles.body}>{readyCustodyCopy(activation.custody_mode)}</Text>
     <Text style={styles.body}>
-      This is not confidential compute. INTIMATE entries remain in Adepthood and are skipped by the
-      managed vault.
+      This vault is not sealed off from the people who run it. Entries you mark Intimate stay in
+      Adepthood and never go there.
     </Text>
   </View>
 );
@@ -189,18 +189,18 @@ const Failed = ({
   <View style={styles.errorCard} testID="activation-failed">
     <Text style={styles.sectionTitle}>Your managed vault is not ready yet.</Text>
     <Text style={styles.body}>
-      Your journal still works. INTIMATE entries still stay in Adepthood and out of the managed
-      vault.
+      Your journal still works. Entries you mark Intimate still stay in Adepthood, out of the
+      managed vault.
     </Text>
     {recoveryAvailable ? (
       <Text style={styles.body}>
-        Creek must remove the failed allocation before creating a fresh one. No old credential or
-        storage is reused.
+        The vault that did not finish has to be cleared away before a fresh one is made. Nothing
+        from the old one is kept or reused.
       </Text>
     ) : !retryable ? (
       <Text style={styles.body}>
-        Creek could not finish cleanup automatically. Contact support before trying again; the
-        failed allocation remains preserved.
+        We could not clear away the unfinished vault on our own. Get in touch with support before
+        trying again; nothing has been thrown out.
       </Text>
     ) : null}
     {error ? (
@@ -216,12 +216,7 @@ const Failed = ({
         testID="recover-vault-activation"
       />
     ) : retryable ? (
-      <Button
-        label="Try activation again"
-        onPress={onRetry}
-        busy={busy}
-        testID="retry-vault-activation"
-      />
+      <Button label="Try again" onPress={onRetry} busy={busy} testID="retry-vault-activation" />
     ) : null}
   </View>
 );
@@ -241,7 +236,7 @@ const ManagedVaultUnavailable = ({ onBack }: { onBack: () => void }): React.JSX.
     </Text>
     <Text style={styles.body}>
       We are opening managed vaults gradually. Your journal is complete without it, and you can
-      still connect a vault you run yourself under Advanced in Where your corpus lives.
+      still connect a vault you run yourself under Advanced in Where your writing lives.
     </Text>
     <Button label="Back to settings" onPress={onBack} testID="unavailable-vault-back" />
   </View>
@@ -311,14 +306,14 @@ function useActivationCommands(
   );
   const retry = useCallback(
     () =>
-      run(() => vaultActivation.retry(), 'The retry did not reach Creek. Try again when ready.'),
+      run(() => vaultActivation.retry(), 'That did not go through. Try again when you are ready.'),
     [run],
   );
   const recover = useCallback(
     () =>
       run(
         () => vaultActivation.recover(),
-        'Cleanup did not reach Creek. The failed allocation is still preserved.',
+        'Clearing it away did not go through. Nothing has been thrown out; you can try again.',
       ),
     [run],
   );
@@ -401,7 +396,7 @@ const PrivateVaultActivationScreen = ({ navigation }: Props): React.JSX.Element 
         eyebrow="Optional storage"
         title="Create managed vault"
         titleHidden
-        lead="An account-scoped managed cloud vault, activated only when you choose."
+        lead="A managed vault in the cloud, just for your account, set up only when you choose."
       />
       <View style={styles.content}>
         <ActivationContent controller={controller} onCancel={goBack} />

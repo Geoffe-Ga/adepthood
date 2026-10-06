@@ -89,6 +89,14 @@ per-phase manifestation copy are pulled from two different sources:
   reads the seven fields from the generated artifact, see "Consumers"); this
   dataset's copy of the seven fields is an unread mirror until #2666 retires
   it, and the full comparison against the CSV waits on #2667.
+- `free_will_descriptions_source` — Stages 1, 3, 4, 6, 7, 8 and 10 carry the
+  `free_will_description` (and Stage 8 the `growing_up_stage`) that the
+  generated `stage_correspondence.json` ships: verbatim spans of the vendored
+  relationship-to-free-will chapters, recorded as supersessions of the Complete
+  Map CSV in `stage_correspondence_supersessions.json`. The CSV sentences read
+  as textbook third person on the Map, and Stage 8's named Teal as nonduality,
+  which the course says Teal is not (Teal is True Self connection); chapter
+  text wins over the CSV (owner ruling 2026-09-16).
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the

@@ -22,7 +22,7 @@ const RepCounterForm = ({ value, onChange }: Props): React.JSX.Element => {
           testID="rep-counter-target"
         />
       </LabeledRow>
-      <LabeledRow label="Unit label">
+      <LabeledRow label="What you're counting">
         <TextField
           value={value.unit_label}
           onChange={(unit_label) => update({ unit_label })}

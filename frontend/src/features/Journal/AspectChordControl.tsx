@@ -21,7 +21,6 @@ import styles from './JournalEntry.styles';
 
 import { RadioGroup } from '@/components/RadioOption';
 import { STAGE_ORDER, readableGlyphOn, resolveStageColor } from '@/design/tokens';
-import { STAGE_DISPLAY } from '@/features/Map/mapLayout';
 
 /** The controlled chord value: a primary Aspect and an optional secondary. */
 export interface AspectChordValue {
@@ -61,21 +60,27 @@ export interface AspectChordControlProps {
   disabled?: boolean;
 }
 
-/** One offered Aspect: its stage number and the persona label to show. */
+/** One offered Aspect: its stage number and the Aspect name to show. */
 interface AspectOption {
   stage: number;
   label: string;
 }
 
-/** The stages offered as Aspects, ascending (1..10), labelled by persona. */
-const ASPECT_OPTIONS: readonly AspectOption[] = Object.entries(STAGE_DISPLAY)
-  .map(([key, display]) => ({ stage: Number(key), label: display.persona }))
-  .sort((a, b) => a.stage - b.stage);
+/**
+ * The stages offered as Aspects, ascending (1..10), labelled by the Aspect's
+ * own name ("Beige", "Purple", "Blue" …) — never by the archetype persona. The
+ * persona is what a capacity looks like when it runs the show unexamined, so a
+ * chip reading "Victim" would have the writer tag their own words with the
+ * shadow instead of the note they are naming.
+ */
+const ASPECT_OPTIONS: readonly AspectOption[] = STAGE_ORDER.map((name, index) => ({
+  stage: index + 1,
+  label: name,
+}));
 
-/** The persona a stage is offered under, or an empty label if it has none. */
-function personaFor(stage: number): string {
-  const display = STAGE_DISPLAY[stage];
-  return display === undefined ? '' : display.persona;
+/** The Aspect name a stage is offered under, or an empty label if it has none. */
+function aspectNameFor(stage: number): string {
+  return STAGE_ORDER[stage - 1] ?? '';
 }
 
 /**
@@ -106,7 +111,7 @@ interface AspectChipProps {
  * Deliberately not a {@link RadioOption}: that primitive's adoption criteria
  * exclude an option whose look carries a runtime-injected colour, and say to
  * keep such a control local rather than bend it. Its a11y contract is mirrored
- * exactly — the visible persona is the accessible name, and selection is
+ * exactly — the visible Aspect name is the accessible name, and selection is
  * announced through ``accessibilityState.selected``.
  *
  * Chosen chips take the stage's own fill with a foreground the shared resolver
@@ -121,7 +126,7 @@ function AspectChip({
   testID,
 }: AspectChipProps): React.JSX.Element {
   const fill = stageFill(stage);
-  const label = personaFor(stage);
+  const label = aspectNameFor(stage);
   const container = selected
     ? [styles.aspectChordChip, styles.aspectChordChipSelected, { backgroundColor: fill }]
     : [styles.aspectChordChip, { borderColor: fill }];
@@ -271,9 +276,9 @@ function AspectStep({
 function triggerLabel(value: AspectChordValue): string {
   const { primary, secondary } = value;
   if (primary === null) return TRIGGER_LABEL;
-  const named = personaFor(primary);
+  const named = aspectNameFor(primary);
   if (secondary === null) return `Aspect: ${named}`;
-  return `Aspect: ${named}${CHORD_SEPARATOR}${personaFor(secondary)}`;
+  return `Aspect: ${named}${CHORD_SEPARATOR}${aspectNameFor(secondary)}`;
 }
 
 /**

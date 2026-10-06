@@ -89,7 +89,9 @@ describe('RandomIntervalBellView — rendering', () => {
     const h = harness();
     const { element, rerender, getByTestId } = renderView(h);
     rerender(element(fakeState({ status: 'running', elapsedMs: 0 })));
-    expect(getByTestId('random-interval-bell-next').props.children).toBe('Next bell in ~15s');
+    expect(getByTestId('random-interval-bell-next').props.children).toBe(
+      'Next bell in about 15 seconds',
+    );
   });
 
   it('hides the "next bell" hint when not running', () => {

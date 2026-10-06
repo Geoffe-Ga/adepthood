@@ -391,7 +391,7 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
     const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
     await waitFor(async () =>
       expect((await findByTestId('essay-ask-cost')).props.children).toBe(
-        'This letter spends one of your 20 BotMason messages for the month. Add your own API key in Settings to bill that key instead.',
+        'This letter spends one of your 20 BotMason messages for the month. Add your own API key in Settings and it pays instead.',
       ),
     );
   });
@@ -401,7 +401,7 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
     const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
     await waitFor(async () =>
       expect((await findByTestId('essay-ask-cost')).props.children).toBe(
-        'This letter spends one BotMason offering. Add your own API key in Settings to bill that key instead.',
+        'This letter spends one BotMason offering. Add your own API key in Settings and it pays instead.',
       ),
     );
   });
@@ -473,7 +473,7 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
   const BUSY_COPY =
     'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.';
   const DAILY_COPY =
-    "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.";
+    "You've hit today's limit for new readings and letters, and nothing was charged. A fresh day's worth opens at midnight UTC — that's evening in the Americas.";
 
   it('announces the in-progress refusal and still lets the writer ask again', async () => {
     mockEssay.mockRejectedValue(new ApiError(429, 'generation_in_progress'));

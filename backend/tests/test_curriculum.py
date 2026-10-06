@@ -86,7 +86,7 @@ _CANONICAL_STAGE_ONTOLOGY: dict[int, dict[str, str]] = {
         "category": "Wisdom",
         "aspect": "True Self Connection",
         "spiral_dynamics_color": "Teal",
-        "growing_up_stage": "Nonduality",
+        "growing_up_stage": "True Self Connection",
         "divine_gender_polarity": "Divine Feminine",
         "relationship_to_free_will": "True Self Embodier",
     },
@@ -170,7 +170,7 @@ def test_stage_curriculum_returns_beige_survival() -> None:
     rising = stage.manifestations[0]
     assert rising.phase == WavelengthPhase.RISING
     assert rising.integrated.name == "Commitment"
-    assert rising.shadow.name == "Over-commitment"
+    assert rising.shadow.name == "Overcommitment"
 
 
 def test_stage_attributes_match_canonical_ontology() -> None:
@@ -195,7 +195,7 @@ def test_manifestation_returns_beige_rising() -> None:
     result = manifestation(1, WavelengthPhase.RISING)
     assert result.phase == WavelengthPhase.RISING
     assert result.integrated.name == "Commitment"
-    assert result.shadow.name == "Over-commitment"
+    assert result.shadow.name == "Overcommitment"
 
 
 def test_stage_curriculum_unknown_stage_number_raises() -> None:

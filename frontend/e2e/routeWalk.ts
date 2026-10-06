@@ -270,7 +270,7 @@ export const ROUTES: readonly Route[] = [
   },
   {
     // The walking account has no vault, so since #3017 the hub's seed row
-    // opens Where your corpus lives and the screen shows an invitation in
+    // opens Where your writing lives and the screen shows an invitation in
     // place of its picker. To keep measuring the picker, the vault read is
     // answered with the managed shape (connected, no address -- which reads
     // unknown) for this one open only: the real response is still fetched so

@@ -190,6 +190,6 @@ describe('deleting one journal entry from the shelf', () => {
 
     const notice = await findByTestId('journal-delete-error');
     expect(notice.props.children).toMatch(/still on your shelf/i);
-    expect(notice.props.children).toMatch(/Creek.*online.*delete .*again/i);
+    expect(notice.props.children).toMatch(/Creek.*open your Creek vault.*delete this page again/i);
   });
 });

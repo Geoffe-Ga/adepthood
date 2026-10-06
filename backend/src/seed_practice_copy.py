@@ -65,7 +65,10 @@ _S4 = (
 
 #: Stage 5 — Wim Hof method (meditation_timer).
 _S5 = (
-    "Twenty minutes of cyclic hyperventilation with retention rounds, followed by quiet rest.",
+    (
+        "Twenty minutes of Wim Hof breathing: three rounds of big, fast breaths, "
+        "a breath-hold after each round, then quiet rest."
+    ),
     (
         "Take 30-40 deep, full breaths in through the nose or mouth, exhaling "
         "passively. After the final exhale, hold without breath until the "
@@ -105,7 +108,7 @@ _S8 = (
         "Walk without a destination. Notice what catches your attention — a "
         "bird, a license plate, a colour, a phrase overheard. Treat each as a "
         "message worth holding lightly. End when you feel complete; the timer "
-        "counts up to honour the open container."
+        "counts up because this one has no set length."
     ),
 )
 
@@ -121,7 +124,10 @@ _S9 = (
 
 #: Stage 10 — Insight practice (meditation_timer).
 _S10 = (
-    "Forty-five minutes of open awareness, watching the three characteristics arise and pass.",
+    (
+        "Forty-five minutes of open awareness, watching how everything that shows "
+        "up is passing, unsatisfying to cling to, and not quite yours."
+    ),
     (
         "Begin grounded in the body. Open the field to whatever is present — "
         "sensation, sound, thought — and notice how each arises, persists, "
@@ -133,9 +139,8 @@ _S10 = (
 #: Stage 1 alternative — Touch Grass (mindful_anchor mode).
 _TOUCH_GRASS = (
     (
-        "A single-action grounding practice: stand barefoot on a natural "
-        "surface and let its texture and temperature draw you into the "
-        "present moment."
+        "One simple act: stand barefoot on grass, soil, sand, or stone and let "
+        "its texture and temperature pull you into the present."
     ),
     (
         "Find a patch of grass, soil, sand, or stone where you can safely "
@@ -149,8 +154,8 @@ _TOUCH_GRASS = (
 #: Stage 1 alternative — Mindful Eating (mindful_anchor mode).
 _MINDFUL_EATING = (
     (
-        "A single-action mindful-presence practice: eat one small portion of "
-        "a grounding food slowly, giving full attention to every sense."
+        "One simple act: eat a small portion of something grounding, slowly, "
+        "with every sense paying attention."
     ),
     (
         "Choose one small portion of a grounding food and sit down with it. "
@@ -230,8 +235,8 @@ _TENSE_AND_RELEASE = (
 #: Stage 1 alternative — Contact Points (meditation_timer mode).
 _CONTACT_POINTS = (
     (
-        "A five-minute somatic inventory of every point where your body "
-        "meets a surface, from soles to seat to skin against fabric."
+        "Five minutes of noticing every place your body touches something, "
+        "from soles to seat to skin against fabric."
     ),
     (
         "Sit or lie in any comfortable position. Without moving, scan "
@@ -1109,8 +1114,8 @@ _CHANNELING_WRITING = (
 #: Stage 8 alternative — Active Imagination Dialogue (meditation_timer mode).
 _ACTIVE_IMAGINATION = (
     (
-        "Thirty minutes of Jung's Active Imagination — inviting an inner "
-        "figure to appear and dialoguing with it as a distinct other."
+        "Thirty minutes of Jung's Active Imagination: invite an inner figure "
+        "to show up and talk with it as if it were someone else in the room."
     ),
     (
         "Sit upright with the eyes closed. Invite a figure, animal, or "

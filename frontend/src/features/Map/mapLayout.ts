@@ -285,7 +285,7 @@ export const STAGE_DISPLAY: Readonly<Record<number, StageDisplay>> = {
   8: {
     stageNumber: 8,
     persona: 'True Self Embodier',
-    descriptor: 'Nondual',
+    descriptor: 'True Self Connection',
     practice: "Dog Walkin' Shamanism",
     arrowLabel: 'True Self',
     textColor: '#6d92a6',

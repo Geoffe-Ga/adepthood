@@ -146,8 +146,7 @@ const handleLogUnitFailure = (
     // of leaving them stuck until an app restart.
     void habitManager.loadHabits(tz);
     showToast({
-      message:
-        'Your habits were out of sync with the server — we just refreshed them. Tap to log that unit again.',
+      message: 'We just refreshed your habits — tap once more to log that one.',
       icon: SYNC_ERROR_ICON,
       color: colors.danger,
       duration: SYNC_ERROR_TOAST_DURATION_MS,
@@ -157,7 +156,7 @@ const handleLogUnitFailure = (
   showToast({
     message: formatApiError(err, {
       fallback:
-        "We couldn't save that check-in. Your local copy was restored — check your connection and tap to log again.",
+        "We couldn't save that check-in, so it's back to where it was — check your connection and tap to log again.",
     }),
     icon: SYNC_ERROR_ICON,
     color: colors.danger,

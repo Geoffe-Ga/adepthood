@@ -447,7 +447,9 @@ describe('VaultSettingsScreen — managed private vault', () => {
 
     const view = await renderWithFormOpen(NOT_CONNECTED);
 
-    expect(view.getByText('Managed vault availability could not be checked')).toBeTruthy();
+    expect(
+      view.getByText('Adepthood could not check whether a managed vault is on offer'),
+    ).toBeTruthy();
     expect(view.getByTestId('vault-address-input')).toBeTruthy();
   });
 });
@@ -920,7 +922,7 @@ describe('VaultSettingsScreen — the gain sits directly above the floor', () =>
 
     expect(
       within(view.getByTestId('managed-vault-offer')).getByText(
-        /Fly and privileged Adepthood or Creek operators can access its stored bytes; Intimate writing stays local\./u,
+        /Fly and the people who run Adepthood and Creek can read what is stored there; anything you mark Intimate never goes there\./u,
       ),
     ).toBeTruthy();
   });

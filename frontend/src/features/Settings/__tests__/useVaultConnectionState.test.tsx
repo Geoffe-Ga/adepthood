@@ -12,7 +12,7 @@ import {
  * The one read of `GET /vault/connection` every surface shares (#3017).
  *
  * The hub, the band, the drawer and the seeding screen all gate "Bring in your
- * writing" on it, and Where your corpus lives renders from it, so its answer
+ * writing" on it, and Where your writing lives renders from it, so its answer
  * has to mean the same thing everywhere: unknown until the server says
  * otherwise, and unknown again when the server could not be reached -- never
  * "nothing attached", which would send somebody with a vault off to set one up.

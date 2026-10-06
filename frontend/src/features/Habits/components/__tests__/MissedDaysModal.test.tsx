@@ -141,13 +141,13 @@ describe('MissedDaysModal visibility guards', () => {
 describe('MissedDaysModal message content', () => {
   it('names the habit and pluralizes the missed-day count', () => {
     const { getByText } = renderMissedDaysModal();
-    getByText("We missed 2 days for 'Journaling'.");
+    getByText("'Journaling' has gone 2 days without a check-in.");
     getByText("Did you keep up with 'Journaling' while you were gone?");
   });
 
   it('does not pluralize a single missed day', () => {
     const { getByText } = renderMissedDaysModal({ missedDays: [missedDays[0]!] });
-    getByText("We missed 1 day for 'Journaling'.");
+    getByText("'Journaling' has gone 1 day without a check-in.");
   });
 });
 

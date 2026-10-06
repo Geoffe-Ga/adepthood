@@ -44,7 +44,7 @@ export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 export const RESONANCE_EXPLAINER_WHAT =
   'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry, up to three other pieces of your own writing, short excerpts of your earlier letters, and the names and units of your habits and practices are sent to an AI model.';
 
-const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
+const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
 
 /** What a resonance pass is called in its price line. */
 const READING = 'reading';

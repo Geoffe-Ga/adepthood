@@ -289,7 +289,7 @@ describe('MapDrawer', () => {
     );
     const unlockLine = tree.root.findByProps({ testID: 'map-drawer-unlock-8' });
     expect(unlockLine.props.children).toBe(unlockTimeline(1));
-    expect(unlockLine.props.children).toBe('Unlocks in 1 day');
+    expect(unlockLine.props.children).toBe('Opens in 1 day');
   });
 
   it('falls back to the no-anchor copy when no days-until value is set', () => {
@@ -304,7 +304,7 @@ describe('MapDrawer', () => {
     );
     const unlockLine = tree.root.findByProps({ testID: 'map-drawer-unlock-9' });
     expect(unlockLine.props.children).toBe(unlockTimeline(null));
-    expect(unlockLine.props.children).toBe('Unlocks as your journey reaches it');
+    expect(unlockLine.props.children).toBe('Opens when the course reaches it');
   });
 
   it('fires onSelectStage with the stage number when an unlocked row is tapped', () => {

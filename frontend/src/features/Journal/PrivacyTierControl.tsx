@@ -26,7 +26,7 @@ export const DEFAULT_TIER: PrivacyTier = 'personal';
 
 /** One-line copy shown under the control when ``intimate`` is selected. */
 const INTIMATE_EXPLAINER =
-  'Intimate entries are never sent to AI. Any mirrored Creek copy is withdrawn; if your vault is offline, keep Intimate selected. When it is online, choose Intimate again.';
+  'Intimate entries are never sent to AI, and any copy already in your vault is pulled back. If your vault can’t be reached right now, keep Intimate chosen — once it’s back, choose Intimate again so the copy comes out.';
 
 interface TierOption {
   tier: PrivacyTier;

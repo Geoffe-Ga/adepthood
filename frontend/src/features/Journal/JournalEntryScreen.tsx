@@ -190,7 +190,7 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
-  'Intimate here. Creek has not confirmed removal yet — bring your vault online, then choose Intimate again.';
+  'Intimate here. Your vault hasn’t confirmed it dropped its copy yet — once it’s back online, choose Intimate again.';
 
 /**
  * The state the save hint should show while a quote is being folded in.

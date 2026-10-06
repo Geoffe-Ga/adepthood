@@ -1,5 +1,5 @@
 /**
- * ``VaultSettingsScreen`` — "Where your corpus lives", reached from the Your
+ * ``VaultSettingsScreen`` — "Where your writing lives", reached from the Your
  * corpus group in Settings, and the only place a person can attach a space of
  * their own to their account.
  *
@@ -793,9 +793,9 @@ const ManagedActivationOffer = ({
       {continuing ? 'Continue managed vault setup' : 'Let Adepthood create one'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Start an optional, provider-managed Creek vault. Fly and privileged Adepthood or Creek
-      operators can access its stored bytes; Intimate writing stays local. Setup happens after
-      signup, and your journal remains available throughout.
+      Ask Adepthood to set up an optional vault for you, kept on Fly's servers. Fly and the people
+      who run Adepthood and Creek can read what is stored there; anything you mark Intimate never
+      goes there. Your journal stays open the whole time it is being set up.
     </Text>
     <Button
       label={continuing ? 'Continue setup' : 'Create a managed vault'}
@@ -816,7 +816,7 @@ const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.
   >
     <Text style={styles.formHeading}>
       {unknown
-        ? 'Managed vault availability could not be checked'
+        ? 'Adepthood could not check whether a managed vault is on offer'
         : 'Managed vaults are opening gradually'}
     </Text>
     <Text style={settingsFormStyles.body}>

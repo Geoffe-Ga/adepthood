@@ -14,6 +14,11 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
+const PRODUCTION_GUIDANCE =
+  'Try closing and reopening the app. If this keeps happening, let us know what you were doing when it broke so we can fix it.';
+const DEVELOPMENT_GUIDANCE =
+  'Try closing and reopening the app. If this keeps happening, copy the details below and send them to support so we can fix it.';
+
 /**
  * Top-level boundary that renders a visible error screen instead of a blank
  * page when a child throws during render. Essential for production web builds
@@ -29,9 +34,10 @@ interface ErrorBoundaryState {
  *
  * The fallback UI surfaces a "Try again" button that resets ``error`` to
  * ``null`` so the subtree remounts without forcing the user to kill and
- * relaunch the app.  The exception message is intentionally kept on the
- * page so a support handoff can copy it verbatim — it is not raw user
- * input.
+ * relaunch the app.  The exception message and stack render in development
+ * builds only: a thrown error's text can carry library names and internal
+ * detail that a production reader cannot use, so there they get plain guidance
+ * instead (the full report still reaches Sentry via ``componentDidCatch``).
  */
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
@@ -70,13 +76,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             retryStyle={styles.retrySpacing}
           >
             <Text style={styles.guidance}>
-              Try closing and reopening the app. If this keeps happening, copy the details below and
-              send them to support so we can fix it.
+              {__DEV__ ? DEVELOPMENT_GUIDANCE : PRODUCTION_GUIDANCE}
             </Text>
-            <Text style={styles.message}>{this.state.error.message}</Text>
             {/* Issue #272: the verbatim JS stack leaks file paths and internal
-                function names — development builds only. Production users get
-                the message plus the copy-to-support guidance above. */}
+                function names, and the raw message can carry the same kind of
+                internals — both are development-only. Production users get
+                the plain guidance above. */}
+            {__DEV__ ? <Text style={styles.message}>{this.state.error.message}</Text> : null}
             {__DEV__ && this.state.error.stack ? (
               <Text style={styles.stack} testID="error-boundary-stack">
                 {this.state.error.stack}

@@ -45,7 +45,7 @@ const MissedDaysText = ({ habitName, missedCount }: { habitName: string; missedC
     <>
       <Text style={styles.missedDaysTitle}>Missed you!</Text>
       <Text style={styles.missedDaysSubtitle}>
-        {`We missed ${missedCount} day${pluralSuffix} for '${habitName}'.`}
+        {`'${habitName}' has gone ${missedCount} day${pluralSuffix} without a check-in.`}
       </Text>
       <Text style={styles.missedDaysQuestion}>
         {`Did you keep up with '${habitName}' while you were gone?`}

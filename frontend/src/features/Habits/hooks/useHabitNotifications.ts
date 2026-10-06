@@ -103,7 +103,7 @@ const scheduleOne = async (
   Notifications.scheduleNotificationAsync({
     content: {
       title: `Time for: ${habit.name}`,
-      body: `Continue your ${habit.streak}-day streak! 💪`,
+      body: 'A reminder, if today has room for it.',
       data: { habitId: habit.id },
     },
     trigger,

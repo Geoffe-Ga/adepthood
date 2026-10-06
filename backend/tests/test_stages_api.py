@@ -954,9 +954,7 @@ async def test_stage_correspondence_serves_every_field_of_a_stage(
         "divine_gender_polarity": "Divine Feminine",
         "relationship_to_free_will": "Victim",
         "free_will_description": (
-            "Behavior is determined by the attempt to meet the expectations of the "
-            "relationships that the individual is embedded within; we are defined by roles: "
-            "partners, parents, children, coworkers, friends, pupils, etc"
+            "At Blue, you do what you're told. You follow the rules. You meet the expectations."
         ),
     }
     reconciled_at = provenance.pop("reconciled_at")

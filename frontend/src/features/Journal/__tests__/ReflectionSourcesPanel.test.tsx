@@ -431,7 +431,7 @@ describe('ReflectionSourcesPanel -- the two empty feeds', () => {
     expect(queryByTestId('reflection-sources-unrecorded')).toBeNull();
   });
 
-  it('says the period cannot be reconstructed when that cycle lost its anchor', () => {
+  it('says it can’t tell which dates were covered when that cycle lost its anchor', () => {
     const { getByTestId, queryByTestId } = render(
       <ReflectionSourcesPanel
         items={[]}
@@ -441,7 +441,7 @@ describe('ReflectionSourcesPanel -- the two empty feeds', () => {
       />,
     );
     const copy = getByTestId('reflection-sources-unrecorded').props.children;
-    expect(copy).toMatch(/cannot be reconstructed/i);
+    expect(copy).toMatch(/can’t tell which dates/i);
     // Warm and specific: it must say the writing itself is safe, and it must not
     // pretend the period was simply empty.
     expect(copy).toMatch(/still in your journal/i);

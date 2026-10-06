@@ -926,13 +926,13 @@ describe('MapScreen center-cell overlay layout', () => {
 
     // Stage 8 hugs the right corner: the countdown, then the padlock at the edge.
     const right = textOrder('stage-hotspot-8-1');
-    const rightCountdown = right.findIndex((text) => text.startsWith('Unlocks'));
+    const rightCountdown = right.findIndex((text) => text.startsWith('Opens'));
     expect(rightCountdown).toBeGreaterThanOrEqual(0);
     expect(rightCountdown).toBeLessThan(right.indexOf('🔒'));
     // Stage 7 hugs the left corner: the padlock at the edge, then the countdown.
     const left = textOrder('stage-hotspot-7-1');
     expect(left.indexOf('🔒')).toBeGreaterThanOrEqual(0);
-    expect(left.indexOf('🔒')).toBeLessThan(left.findIndex((text) => text.startsWith('Unlocks')));
+    expect(left.indexOf('🔒')).toBeLessThan(left.findIndex((text) => text.startsWith('Opens')));
   });
 
   it('groups stage 1 (Agency) label in the left corner, unlocked with no countdown', () => {

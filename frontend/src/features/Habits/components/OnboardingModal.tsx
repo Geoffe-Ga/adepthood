@@ -629,8 +629,8 @@ const TemplateStep = ({
     <ScrollView ref={scrollRef}>
       <Text style={styles.onboardingTitle}>Goal Templates</Text>
       <Text style={styles.onboardingSubtitle}>
-        Optionally assign a goal group template to each habit. Templates pre-fill low, clear, and
-        stretch goal tiers.
+        If you like, pick a ready-made set of goals for each habit. Each set fills in a low, clear,
+        and stretch goal you can change later.
       </Text>
       {habits.map((habit, index) => (
         <TemplatePickerTile

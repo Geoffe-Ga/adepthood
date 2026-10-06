@@ -146,10 +146,10 @@ async function expectOrigins(
       `Screen: ${origin.screen}`,
     );
     await expect(preview.getByTestId('feedback-attached-control'), origin.path).toHaveText(
-      `Control: ${origin.control}`,
+      `Button you used: ${origin.control}`,
     );
     await expect(preview.getByTestId('feedback-attached-viewport_class'), origin.path).toHaveText(
-      `Viewport class: ${viewportClass}`,
+      `Screen size: ${viewportClass}`,
     );
   }
 }
@@ -180,7 +180,7 @@ test('keyboard-only at 1280x720: open, report something broken, read back the re
   await expect(preview.getByTestId('feedback-attached-screen')).toHaveText('Screen: journal.shelf');
   await expect(preview.getByTestId('feedback-attached-platform')).toHaveText('Platform: web');
   await expect(preview.getByTestId('feedback-attached-viewport_class')).toHaveText(
-    'Viewport class: expanded',
+    'Screen size: expanded',
   );
 
   await tabTo(page, page.getByTestId('feedback-send'));
@@ -237,7 +237,7 @@ test('at 390x844: find the control by name and send a report', async ({ page }) 
   await page.getByTestId('feedback-field-summary').fill('The journal shelf');
   await page.getByTestId('feedback-field-actual').fill('How calm it feels to open');
   await expect(page.getByTestId('feedback-attached-viewport_class')).toHaveText(
-    'Viewport class: compact',
+    'Screen size: compact',
   );
   await page.getByTestId('feedback-send').click();
 
@@ -273,7 +273,7 @@ test('at 390x844 a failed Journal is reported once, with exactly the context sho
   const preview = page.getByTestId('feedback-attached-preview');
   await expect(preview.getByTestId('feedback-attached-screen')).toHaveText('Screen: journal.shelf');
   await expect(preview.getByTestId('feedback-attached-viewport_class')).toHaveText(
-    'Viewport class: compact',
+    'Screen size: compact',
   );
   const shown = await readPreviewContext(page);
 
@@ -318,7 +318,7 @@ test('keyboard-only at 1280x720: report something confusing from the Map', async
   const preview = page.getByTestId('feedback-attached-preview');
   await expect(preview.getByTestId('feedback-attached-screen')).toHaveText('Screen: map.stages');
   await expect(preview.getByTestId('feedback-attached-viewport_class')).toHaveText(
-    'Viewport class: expanded',
+    'Screen size: expanded',
   );
 
   await tabTo(page, page.getByTestId('feedback-send'));

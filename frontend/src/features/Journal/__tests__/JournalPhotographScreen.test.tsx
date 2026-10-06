@@ -622,7 +622,7 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
     expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      /this month's free allotment/,
+      /this month's free BotMason messages/,
     );
     expect(getByTestId('photograph-block-1-retry')).toBeTruthy();
   });
@@ -734,7 +734,7 @@ describe('JournalPhotographScreen — terminal model-lacks-vision failure', () =
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
     expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      "Reading photos isn't available with the configured AI model. You can still write this page by hand.",
+      'The AI that reads pages here can’t see photos. You can still type this page in by hand.',
     );
     expect(getByTestId('photograph-run-progress')).toHaveTextContent(
       '0 of 1 read · 1 need attention',

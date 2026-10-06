@@ -235,9 +235,9 @@ export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive
       style={styles.energyScaffoldingButton}
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel="Perform Energy Scaffolding"
+      accessibilityLabel="Start Energy Scaffolding"
     >
-      <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
+      <Text style={styles.energyScaffoldingButtonText}>Start Energy Scaffolding</Text>
     </TouchableOpacity>
     <TouchableOpacity
       testID="archive-energy-cta"

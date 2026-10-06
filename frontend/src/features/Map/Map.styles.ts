@@ -820,9 +820,10 @@ const styles = StyleSheet.create({
     marginLeft: spacing(0.5),
   },
   goalBadge: {
-    width: BADGE_DIAMETER,
+    minWidth: BADGE_DIAMETER,
     height: BADGE_DIAMETER,
     borderRadius: BADGE_DIAMETER / 2,
+    paddingHorizontal: spacing(0.5),
     alignItems: CENTER,
     justifyContent: CENTER,
   },

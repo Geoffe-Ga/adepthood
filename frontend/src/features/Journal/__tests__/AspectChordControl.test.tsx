@@ -94,12 +94,22 @@ describe('AspectChordControl — expanding', () => {
     }
   });
 
-  it('uses STAGE_DISPLAY labels for the primary chips, not invented copy', () => {
+  it('labels the primary chips by Aspect name from STAGE_ORDER, not invented copy', () => {
     const { getByTestId, getByText } = renderControl();
     fireEvent.press(getByTestId('aspect-chord-trigger'));
-    const stageOne = STAGE_DISPLAY[1];
-    if (stageOne === undefined) throw new Error('STAGE_DISPLAY[1] missing');
-    expect(getByText(stageOne.persona)).toBeTruthy();
+    for (const name of STAGE_ORDER) {
+      expect(getByText(name)).toBeTruthy();
+    }
+  });
+
+  it('never labels a chip by the archetype persona (chords, not shadows)', () => {
+    // The persona is the capacity running unexamined; a writer naming an
+    // Aspect must not end up tagging their words "Victim" or "Dominator".
+    const { getByTestId, queryByText } = renderControl();
+    fireEvent.press(getByTestId('aspect-chord-trigger'));
+    for (const display of Object.values(STAGE_DISPLAY)) {
+      expect(queryByText(display.persona)).toBeNull();
+    }
   });
 });
 
@@ -267,14 +277,12 @@ describe('AspectChordControl — collapse affordance', () => {
   });
 
   it('collapses with a chord still set, and names that chord on the trigger', () => {
-    const primary = STAGE_DISPLAY[5];
-    const secondary = STAGE_DISPLAY[2];
-    if (primary === undefined || secondary === undefined) throw new Error('STAGE_DISPLAY missing');
     const { getByTestId } = renderControl({ primary: 5, secondary: 2 });
     fireEvent.press(getByTestId('aspect-chord-collapse'));
     const trigger = getByTestId('aspect-chord-trigger');
-    expect(trigger.props.accessibilityLabel).toContain(primary.persona);
-    expect(trigger.props.accessibilityLabel).toContain(secondary.persona);
+    expect(trigger.props.accessibilityLabel).toBe('Aspect: Orange · Purple');
+    expect(STAGE_ORDER[4]).toBe('Orange');
+    expect(STAGE_ORDER[1]).toBe('Purple');
   });
 
   it('reopens on the trigger after collapsing', () => {
@@ -471,14 +479,14 @@ describe('AspectChordControl — stage colour', () => {
   });
 
   it('marks the chosen chip by more than colour', () => {
-    const persona = STAGE_DISPLAY[5];
-    if (persona === undefined) throw new Error('STAGE_DISPLAY[5] missing');
+    const name = STAGE_ORDER[4];
+    if (name === undefined) throw new Error('STAGE_ORDER[4] missing');
     const { getByTestId } = renderControl({ primary: 5, secondary: null });
     const chip = getByTestId('aspect-primary-5');
     expect(chip.props.accessibilityState.selected).toBe(true);
     // A reader who cannot tell the ten hues apart still sees the mark, and the
-    // accessible name stays the persona alone.
-    expect(getByTestId('aspect-primary-5-label').props.children).toBe(`✓ ${persona.persona}`);
-    expect(chip.props.accessibilityLabel).toBe(persona.persona);
+    // accessible name stays the Aspect name alone.
+    expect(getByTestId('aspect-primary-5-label').props.children).toBe(`✓ ${name}`);
+    expect(chip.props.accessibilityLabel).toBe(name);
   });
 });

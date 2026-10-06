@@ -6,12 +6,14 @@
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
     "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' and free_will_description follow the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md (the description is paraphrased from it) and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype and habits/personalities description carried over from backup/2.PURPLE.md (issue #2915). APTITUDE Complete Map.csv is not vendored; its own description sentence replaces this one when #2664 vendors the CSV",
+    "free_will_descriptions_source": "Stages 1, 3, 4, 6, 7, 8 and 10 carry the free_will_description (and Stage 8 the growing_up_stage) that the generated stage_correspondence.json ships: verbatim spans of the vendored relationship-to-free-will chapters, recorded as supersessions of the Complete Map CSV in stage_correspondence_supersessions.json, since the CSV sentences read as textbook third person and Stage 8's named Teal as nonduality (chapter text wins over the CSV, owner ruling 2026-09-16)",
     "refresh_doc": "docs/curriculum.md",
     "supersessions": [
       {"stage_number": 4, "field": "aspect", "value": "Community Love"},
       {"stage_number": 8, "field": "spiral_dynamics_color", "value": "Teal"},
       {"stage_number": 8, "field": "aspect", "value": "True Self Connection"},
-      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"}
+      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"},
+      {"stage_number": 8, "field": "growing_up_stage", "value": "True Self Connection"}
     ]
   },
   "phases": ["Rising", "Peaking", "Withdrawal", "Diminishing", "Bottoming Out", "Restoration"],
@@ -26,12 +28,12 @@
       "growing_up_stage": "Survival",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Biological Machine",
-      "free_will_description": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "free_will_description": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about.",
       "manifestations": [
         {
           "phase": "Rising",
           "integrated": {"name": "Commitment", "description": "A grounded promise to begin showing up."},
-          "shadow": {"name": "Over-commitment", "description": "Taking on too much too fast."}
+          "shadow": {"name": "Overcommitment", "description": "Taking on too much too fast."}
         },
         {
           "phase": "Peaking",
@@ -50,7 +52,7 @@
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Stability", "description": "Deep stillness that anchors your nervous system."},
+          "integrated": {"name": "Planning", "description": "Resting deeply while gently naming what comes next."},
           "shadow": {"name": "Overwhelm", "description": "Flooded by unmet needs or collapsing structure."}
         },
         {
@@ -75,12 +77,12 @@
         {
           "phase": "Rising",
           "integrated": {"name": "Inspiration", "description": "Guided by subtle symbols, dreams, or intuitive nudges."},
-          "shadow": {"name": "Self-aggrandizement", "description": "Mistaking inspiration for spiritual superiority or specialness."}
+          "shadow": {"name": "Grandiosity", "description": "Mistaking inspiration for spiritual superiority or specialness."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Attunement", "description": "In sync with feelings, symbols, and unseen rhythms."},
-          "shadow": {"name": "Intoxication", "description": "Overwhelmed by meaning, chasing mystical highs."}
+          "integrated": {"name": "Joy", "description": "The full crescendo of feeling, in sync with symbols and unseen rhythms."},
+          "shadow": {"name": "Ecstasy", "description": "Overwhelmed by meaning, chasing mystical highs."}
         },
         {
           "phase": "Withdrawal",
@@ -89,12 +91,12 @@
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Coziness", "description": "Soft retreat into comfort, nesting, and gentle beauty."},
+          "integrated": {"name": "Tranquility", "description": "Soft retreat into comfort, nesting, and gentle beauty."},
           "shadow": {"name": "Self-doubt", "description": "Losing confidence, questioning intuition and worth."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Fallow state", "description": "Restful emptiness, receptive to future renewal."},
+          "integrated": {"name": "Convalescence", "description": "Restful emptiness, receptive to future renewal."},
           "shadow": {"name": "Self-loathing", "description": "Turning symbolic failure inward as shame."}
         },
         {
@@ -114,7 +116,7 @@
       "growing_up_stage": "Ego-centrism",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Dominator",
-      "free_will_description": "Behavior is driven by a subconscious urge to alleviate the pain of emotions (that may or may not even be consciously noticed) that tell us that we are not enough. Without self-love toward these aversion based feelings, the tendency is to forge dominator \"power over others.\"",
+      "free_will_description": "APTITUDE teaches that Free Will only becomes real when you learn to express power differently. The Dominator believes they are acting freely, but in truth, they are ruled by fear and shame. Their \"choices\" are reactions. Their \"power\" is armor.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -133,7 +135,7 @@
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Humility", "description": "Recognizing your limits without shame."},
+          "integrated": {"name": "Self-Acceptance", "description": "Recognizing your limits without shame."},
           "shadow": {"name": "Shame", "description": "Believing your worth depends on dominance or perfection."}
         },
         {
@@ -151,14 +153,14 @@
     {
       "stage_number": 4,
       "title": "Conformity",
-      "subtitle": "Universal Love",
+      "subtitle": "Community Love",
       "category": "Love",
       "aspect": "Community Love",
       "spiral_dynamics_color": "Blue",
       "growing_up_stage": "Conformity",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Victim",
-      "free_will_description": "Behavior is determined by the attempt to meet the expectations of the relationships that the individual is embedded within; we are defined by roles: partners, parents, children, coworkers, friends, pupils, etc",
+      "free_will_description": "At Blue, you do what you're told. You follow the rules. You meet the expectations.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -246,7 +248,7 @@
       "growing_up_stage": "Pluralistic",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Shadow Glorifier",
-      "free_will_description": "Behavior is driven by a desire to be virtuous, to apply rules fairly, to reduce the influence of hierarchy, and to respect everyone's perspectives. Free Will is still absent as behavior follows predictably from a set of pluralistic heuristics.",
+      "free_will_description": "Here's the truth: recognizing that you've been conditioned is not the same as freeing yourself from that conditioning. Naming your trauma is not the same as healing it. Understanding why you're afraid doesn't make you brave.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -290,7 +292,7 @@
       "growing_up_stage": "Integrative",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Despairing Analyst",
-      "free_will_description": "The ability to reflect on all the influences of stages prior to Yellow develops and the individual becomes convinced that Free Will is essentially an illusion.",
+      "free_will_description": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -326,15 +328,15 @@
     },
     {
       "stage_number": 8,
-      "title": "Nondual",
+      "title": "True Self Connection",
       "subtitle": "True Self Wisdom",
       "category": "Wisdom",
       "aspect": "True Self Connection",
       "spiral_dynamics_color": "Teal",
-      "growing_up_stage": "Nonduality",
+      "growing_up_stage": "True Self Connection",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "True Self Embodier",
-      "free_will_description": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
+      "free_will_description": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -382,7 +384,7 @@
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Ascending", "description": "The natural deepening that comes from sustained practice."},
+          "integrated": {"name": "Deepening", "description": "The natural deepening that comes from sustained practice."},
           "shadow": {"name": "Transcending", "description": "Spiritual bypass that escapes rather than includes life."}
         },
         {
@@ -422,7 +424,7 @@
       "growing_up_stage": "Pure Awareness",
       "divine_gender_polarity": "Divine Hermaphrodite",
       "relationship_to_free_will": "Whole Adept",
-      "free_will_description": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds.",
       "manifestations": [
         {
           "phase": "Rising",
