@@ -37,6 +37,7 @@ from domain.dates import (
     to_user_date_bucket,
     today_in_tz,
 )
+from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
@@ -1901,7 +1902,13 @@ async def _contraction_reflection(
     detects a sustained contraction, and — only when flagged — gates the copy by
     the highest stage the user has ever reached. It never writes and never touches
     progression, so it is safe to run on the resonance happy path.
+
+    It names a thinning *habit* foundation, so a user who declined the habits
+    ring is never shown it (#3073): the read-only ring check runs first and
+    short-circuits before any habit signal is gathered.
     """
+    if DepthRing.HABITS not in await load_enabled_rings(session, user_id):
+        return None
     user_timezone = await get_user_timezone(session, user_id)
     aggregates = await gather_contraction_aggregates(session, user_id, user_timezone)
     signal = detect_contraction(aggregates)
