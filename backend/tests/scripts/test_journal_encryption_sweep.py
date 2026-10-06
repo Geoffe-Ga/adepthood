@@ -28,7 +28,7 @@ from typing import NoReturn
 
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.journal_entry import JournalEntry
@@ -405,3 +405,42 @@ def test_batch_size_must_be_a_positive_integer(bad: str) -> None:
     with pytest.raises(SystemExit) as excinfo:
         sweep.parse_args(["audit", "--batch-size", bad])
     assert excinfo.value.code == sweep.EXIT_USAGE
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_cli_session")
+async def test_an_applied_sweep_that_skips_a_concurrent_edit_exits_rows_remain(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A row a user rewrote mid-sweep is skipped, kept, counted, and the run exits 1.
+
+    Exit 0 is what an operator scripts key retirement on, so a sweep that left a
+    row behind must never report clean.
+    """
+    row_id = await insert_row(db_session, "journalentry", _texts("race", "journalentry"))
+    await db_session.commit()
+    _keys(monkeypatch, Fernet.generate_key().decode())
+    edited = je.encrypt("the user's newer sentence")
+    real_apply = sweep.apply_rewrites
+
+    async def _user_edits_first(
+        session: AsyncSession, target: EncryptedColumn, rewrites: Sequence[sweep.Rewrite]
+    ) -> int:
+        if target == _MESSAGE:
+            raw = raw_table(target)
+            await session.execute(
+                update(raw).where(raw.c[ROW_ID_COLUMN] == row_id).values({target.column: edited})
+            )
+        return await real_apply(session, target, rewrites)
+
+    monkeypatch.setattr(sweep, "apply_rewrites", _user_edits_first)
+    capsys.readouterr()
+
+    assert await sweep.run(["reencrypt", "--apply"]) == sweep.EXIT_ROWS_REMAIN
+
+    out = capsys.readouterr().out
+    message_line = next(line for line in out.splitlines() if f" {_MESSAGE.qualified} " in line)
+    assert "skipped=1" in message_line
+    assert (await _raw(db_session, _MESSAGE))[row_id] == edited
