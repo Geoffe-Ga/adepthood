@@ -264,8 +264,6 @@ export interface HabitsActions {
   addHabit: (_input: AddHabitInput, _isCarryover?: boolean) => Promise<void>;
   /** Resolves once the reorder is durably persisted, or rolled back (#2755). */
   saveHabitOrder: (_orderedHabits: Habit[]) => Promise<void>;
-  backfillMissedDays: (_habitId: number, _days: Date[]) => void;
-  setNewStartDate: (_habitId: number, _newDate: Date) => void;
   /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
   onboardingSave: (_input: readonly OnboardingHabit[] | HabitMergePlan) => Promise<void>;
   iconPress: (_index: number) => void;

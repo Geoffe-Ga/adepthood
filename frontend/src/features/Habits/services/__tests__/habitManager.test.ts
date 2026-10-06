@@ -19,7 +19,6 @@ jest.mock('../../../../api', () => ({
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
-    clearCompletions: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
     updateGoalUnits: jest.fn(() => Promise.resolve([])),
   },
@@ -2912,295 +2911,6 @@ describe('habitManager', () => {
     });
   });
 
-  describe('backfillMissedDays', () => {
-    it('adds backfill completions and bumps the streak', () => {
-      useHabitStore.setState({ habits: [makeHabit({ streak: 2 })] });
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02'), new Date('2025-01-03')]);
-
-      const habit = useHabitStore.getState().habits[0]!;
-      expect(habit.streak).toBe(4);
-      expect(habit.completions).toHaveLength(2);
-      // #783: must persist or the backfill is lost on the next cold rehydrate.
-      expect(saveHabits).toHaveBeenLastCalledWith([expect.objectContaining({ streak: 4 })]);
-    });
-
-    // The bug this whole suite pins: a backfill that only ever touches the
-    // Zustand store is silently erased the moment loadHabits() re-fetches,
-    // because handleApiSuccess trusts the server as the source of truth.
-    it('survives the next loadHabits reload once the completions are posted', async () => {
-      const habit = makeHabit({ id: 1, streak: 0 });
-      useHabitStore.setState({ habits: [habit] });
-      // Fixed, unambiguously-past calendar days — no system-time anchor needed.
-      const dayOne = new Date('2020-06-10T00:00:00.000Z');
-      const dayTwo = new Date('2020-06-11T00:00:00.000Z');
-
-      // Stand in for the server: what it returns is only what actually got
-      // posted, so a fix that forgets the POST reloads back to nothing.
-      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => {
-        const posted = (goalCompletionsApi.create as jest.Mock).mock.calls.map(
-          (call) => call[0] as { completed_on?: string },
-        );
-        return Promise.resolve([
-          {
-            id: 1,
-            name: habit.name,
-            icon: habit.icon,
-            start_date: '2020-01-01',
-            energy_cost: 1,
-            energy_return: 2,
-            stage: 'Beige',
-            streak: posted.length,
-            milestone_notifications: false,
-            revealed: true,
-            goals: [
-              {
-                ...freshServerGoal(1, 'Low', 'low', 1),
-                completions: posted.map((p, i) => ({
-                  id: i + 1,
-                  timestamp: `${p.completed_on ?? '2020-06-12'}T00:00:00.000Z`,
-                  completed_units: 1,
-                })),
-              },
-              freshServerGoal(2, 'Clear', 'clear', 2),
-              freshServerGoal(3, 'Stretch', 'stretch', 3),
-            ],
-          },
-        ] as never);
-      });
-
-      habitManager.backfillMissedDays(1, [dayOne, dayTwo], 'UTC');
-      // Flush the fire-and-forget POST fan-out before reloading.
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      await habitManager.loadHabits('UTC');
-
-      const reloaded = useHabitStore.getState().habits.find((h) => h.id === 1)!;
-      const dayKeys = (reloaded.completions ?? []).map((c) => dayKeyInTZ(c.timestamp, 'UTC'));
-      expect(dayKeys).toEqual(expect.arrayContaining(['2020-06-10', '2020-06-11']));
-    });
-
-    it('POSTs one completion per missed day against the low-tier goal', async () => {
-      useHabitStore.setState({ habits: [makeHabit({ id: 1, streak: 0 })] });
-      const dayOne = new Date('2020-06-10T00:00:00.000Z');
-      const dayTwo = new Date('2020-06-11T00:00:00.000Z');
-
-      habitManager.backfillMissedDays(1, [dayOne, dayTwo], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: '2020-06-10',
-      });
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: '2020-06-11',
-      });
-    });
-
-    it('buckets completed_on using the supplied IANA zone, not UTC', async () => {
-      useHabitStore.setState({ habits: [makeHabit({ id: 1, streak: 0 })] });
-      const day = new Date('2020-06-10T03:00:00.000Z');
-      const expectedAnchorageKey = dayKeyInTZ(day, 'America/Anchorage');
-      // Sanity check the fixture actually straddles the UTC/Anchorage
-      // boundary — otherwise the assertion below would pass by accident.
-      expect(expectedAnchorageKey).not.toBe(dayKeyInTZ(day, 'UTC'));
-
-      habitManager.backfillMissedDays(1, [day], 'America/Anchorage');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: expectedAnchorageKey,
-      });
-    });
-
-    it('rolls back the store and disk, and alerts the user, when a completion POST rejects', async () => {
-      const habit = makeHabit({ id: 1, streak: 2, completions: [] });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02'), new Date('2025-01-03')], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const rolledBack = useHabitStore.getState().habits[0]!;
-      expect(rolledBack.streak).toBe(2);
-      expect(rolledBack.completions).toHaveLength(0);
-      expect(saveHabits).toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalled();
-    });
-
-    it('skips the network call but still applies the optimistic update when the low goal has no id', async () => {
-      const habit = makeHabit({ streak: 1 });
-      habit.goals = habit.goals.map((g) => (g.tier === 'low' ? { ...g, id: undefined } : g));
-      useHabitStore.setState({ habits: [habit] });
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02')], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(2);
-      expect(updated.completions).toHaveLength(1);
-      expect(saveHabits).toHaveBeenLastCalledWith([expect.objectContaining({ streak: 2 })]);
-      expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('setNewStartDate', () => {
-    it('resets streak and completions when the start date changes, and PUTs it', async () => {
-      const habit = makeHabit({
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-
-      const newDate = new Date('2025-06-01');
-      habitManager.setNewStartDate(1, newDate);
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(0);
-      expect(updated.completions).toEqual([]);
-      expect(updated.start_date).toEqual(newDate);
-      // #783: must persist or the reset start date is lost on the next rehydrate.
-      expect(saveHabits).toHaveBeenLastCalledWith([
-        expect.objectContaining({ start_date: newDate }),
-      ]);
-      // Must reach the server too — otherwise the next loadHabits() GET
-      // returns the stale start_date and silently reverts the reset.
-      expect(habitsApi.update).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({ start_date: '2025-06-01' }),
-      );
-      // The PUT alone does not delete completion rows server-side; clearing
-      // them is a separate call so the reset survives the next refetch.
-      expect(habitsApi.clearCompletions).toHaveBeenCalledWith(1);
-    });
-
-    it('reflects a cleared server state on the next loadHabits refetch, with no resurrected rows', async () => {
-      const habit = makeHabit({
-        id: 1,
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-      // Stand in for the server: the refetch only comes back cleared if the
-      // clear-completions call actually reached it, so a fix that forgets
-      // the DELETE reloads pre-reset rows straight back.
-      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => {
-        const cleared = (habitsApi.clearCompletions as jest.Mock).mock.calls.length > 0;
-        return Promise.resolve([
-          {
-            id: 1,
-            name: habit.name,
-            icon: habit.icon,
-            start_date: '2025-06-01',
-            energy_cost: 1,
-            energy_return: 2,
-            stage: 'Beige',
-            streak: cleared ? 0 : 10,
-            milestone_notifications: false,
-            revealed: true,
-            goals: [
-              {
-                ...freshServerGoal(1, 'Low', 'low', 1),
-                completions: cleared
-                  ? []
-                  : [{ id: 1, timestamp: '2025-05-01T00:00:00.000Z', completed_units: 1 }],
-              },
-              { ...freshServerGoal(2, 'Clear', 'clear', 2), completions: [] },
-              { ...freshServerGoal(3, 'Stretch', 'stretch', 3), completions: [] },
-            ],
-          },
-        ] as never);
-      });
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      await habitManager.loadHabits('UTC');
-
-      const reloaded = useHabitStore.getState().habits.find((h) => h.id === 1)!;
-      expect(reloaded.streak).toBe(0);
-      expect(reloaded.completions).toEqual([]);
-    });
-
-    it('keeps the durably-saved start date and only warns when clearCompletions rejects', async () => {
-      const habit = makeHabit({
-        id: 1,
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (habitsApi.clearCompletions as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      // The PUT resolved, so the new start date is already durable server-side.
-      // A failed clear must not roll the store back to the stale start date;
-      // the optimistic reset holds and the user is told the clear failed.
-      const after = useHabitStore.getState().habits[0]!;
-      expect(after.streak).toBe(0);
-      expect(after.completions).toEqual([]);
-      expect(saveHabits).not.toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalledWith(
-        "Couldn't sync",
-        expect.stringContaining('old check-ins'),
-      );
-    });
-
-    it('skips both network calls for an id-less habit but still applies the optimistic reset', async () => {
-      const habit = makeHabit({
-        id: 0,
-        streak: 5,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-
-      habitManager.setNewStartDate(0, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(0);
-      expect(updated.completions).toEqual([]);
-      expect(habitsApi.update).not.toHaveBeenCalled();
-      expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-    });
-
-    it('rolls back the store and disk, and alerts the user, when the start-date PUT rejects', async () => {
-      const habit = makeHabit({
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (habitsApi.update as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const rolledBack = useHabitStore.getState().habits[0]!;
-      expect(rolledBack.streak).toBe(10);
-      expect(rolledBack.completions).toHaveLength(1);
-      expect(saveHabits).toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalled();
-    });
-  });
-
   describe('onboardingSave', () => {
     it('builds goal tiers and calls the API for each habit', async () => {
       const newHabits: OnboardingHabit[] = [
@@ -4748,57 +4458,6 @@ describe('habitManager', () => {
       });
     });
 
-    describe('setNewStartDate', () => {
-      const NEW_START = new Date('2026-03-01T00:00:00Z');
-
-      const withHistory = (habit: Habit): Habit => ({
-        ...habit,
-        streak: 5,
-        completions: [{ timestamp: new Date('2025-02-01T00:00:00Z'), completed_units: 1 }],
-      });
-
-      it('resets a demo tile locally without a PUT and without clearing server check-ins', async () => {
-        useHabitStore.setState({ habits: [withHistory(demoTile())] });
-
-        habitManager.setNewStartDate(DEMO_TILE_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
-      });
-
-      it('resets a pre-sync added habit locally without a PUT and without clearing check-ins', async () => {
-        useHabitStore.setState({ habits: [withHistory(makeSyntheticHabit())] });
-
-        habitManager.setNewStartDate(SYNTHETIC_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
-      });
-
-      it('PUTs then clears check-ins only for the server-backed row', async () => {
-        useHabitStore.setState({ habits: [demoTile(), withHistory(makeServerHabit())] });
-
-        habitManager.setNewStartDate(SERVER_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).toHaveBeenCalledTimes(1);
-        expect(habitsApi.update).toHaveBeenCalledWith(
-          SERVER_HABIT_ID,
-          expect.objectContaining({ start_date: '2026-03-01' }),
-        );
-        expect(habitsApi.clearCompletions).toHaveBeenCalledTimes(1);
-        expect(habitsApi.clearCompletions).toHaveBeenCalledWith(SERVER_HABIT_ID);
-      });
-    });
-
     describe('updateGoalUnits', () => {
       const MINUTES = ['minutes', 'minutes', 'minutes'];
 
@@ -4934,45 +4593,6 @@ describe('habitManager', () => {
       });
     });
 
-    describe('backfillMissedDays', () => {
-      const MISSED_DAY = new Date('2025-06-01T12:00:00Z');
-
-      it('keeps a demo tile backfill local and posts no completions', () => {
-        useHabitStore.setState({ habits: [demoTile()] });
-
-        habitManager.backfillMissedDays(DEMO_TILE_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
-      });
-
-      it('keeps a pre-sync added habit backfill local and posts no completions', () => {
-        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
-
-        habitManager.backfillMissedDays(SYNTHETIC_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
-      });
-
-      it('posts one completion against the low goal of the server-backed row', () => {
-        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
-
-        habitManager.backfillMissedDays(SERVER_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
-        expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-          goal_id: SERVER_GOAL_IDS[0],
-          did_complete: true,
-          completed_on: '2025-06-01',
-        });
-      });
-    });
-
     describe('syncRevealState', () => {
       it('unlocks a pre-sync added habit locally without PUTting its negative id', () => {
         useHabitStore.setState({ habits: [makeSyntheticHabit({ revealed: false })] });
@@ -5021,8 +4641,6 @@ describe('habitManager', () => {
     });
 
     describe('an onboarding scaffold row whose positive ids this device minted', () => {
-      const NEW_START = new Date('2026-03-01T00:00:00Z');
-      const MISSED_DAY = new Date('2025-06-01T12:00:00Z');
       const MINUTES_UNIT = 'minutes';
       const ALL_MINUTES = [MINUTES_UNIT, MINUTES_UNIT, MINUTES_UNIT];
       const NEW_TARGET = 42;
@@ -5049,26 +4667,6 @@ describe('habitManager', () => {
 
         expect(habitsApi.delete).toHaveBeenCalledTimes(1);
         expect(habitsApi.delete).toHaveBeenCalledWith(SERVER_HABIT_ID);
-      });
-
-      it('resets the start date locally without a PUT and without clearing check-ins', async () => {
-        useHabitStore.setState({
-          habits: [
-            makeScaffoldHabit({
-              streak: 5,
-              completions: [{ timestamp: new Date('2025-02-01T00:00:00Z'), completed_units: 1 }],
-            }),
-          ],
-        });
-
-        habitManager.setNewStartDate(SCAFFOLD_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
       });
 
       it('renames locally without PUTting its device-minted id', async () => {
@@ -5132,17 +4730,6 @@ describe('habitManager', () => {
         const stored = useHabitStore.getState().habits;
         expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
         expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
-      });
-
-      it("keeps a backfill locally and posts no completion against a stranger's goal", () => {
-        useHabitStore.setState({ habits: [makeScaffoldHabit()] });
-
-        habitManager.backfillMissedDays(SCAFFOLD_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
       });
 
       it("rejects a unit log instead of posting it against the caller's real goal", async () => {

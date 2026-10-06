@@ -222,32 +222,6 @@ const buildLogConfirmationToast = (habitName: string, amount: number): ToastConf
   color: colors.success,
 });
 
-const backfillHabit = (habit: Habit, days: Date[], timezone: string): Habit => {
-  const newCompletions = days.map((day) => ({
-    id: uuidv4(),
-    timestamp: day,
-    local_day: dayKeyInTZ(day, timezone),
-    completed_units: 1,
-  }));
-  const updatedCompletions = habit.completions
-    ? [...habit.completions, ...newCompletions]
-    : newCompletions;
-  return {
-    ...habit,
-    streak: habit.streak + days.length,
-    last_completion_date: new Date(),
-    completions: updatedCompletions,
-  };
-};
-
-const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
-  ...habit,
-  start_date: newDate,
-  streak: 0,
-  last_completion_date: undefined,
-  completions: [],
-});
-
 /**
  * Where the program's ladder starts, for a row about to be laid on it. The
  * stored anchor when there is one; otherwise the same lossy inverse
@@ -944,18 +918,6 @@ const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => vo
 };
 
 /**
- * Build a rejection handler that only alerts, leaving local state untouched.
- * Used when an earlier write already succeeded durably (e.g. the start-date
- * PUT) so a later step's failure must not roll the durable change back — it
- * only surfaces that the follow-up step did not complete.
- */
-const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
-  return (err: unknown) => {
-    Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
-  };
-};
-
-/**
  * Optimistically apply a new unlock (``revealed``) state and PUT each affected
  * row to the API. Shared by the bulk reveal/re-lock affordances and the
  * single-habit unlock so all three persist the flag server-side rather than
@@ -1150,32 +1112,6 @@ const hydrateRealHabitCache = async (cached: Habit[] | null): Promise<Habit[]> =
     setLoading(false);
   }
   return real;
-};
-
-/**
- * Build one goal-completion POST per backfilled day, bucketing each day into
- * the user's IANA zone. A day that resolves to "today" omits ``completed_on``
- * so the server stamps real wall-clock time — the same genuine-backfill rule
- * the online log path uses; any earlier day sends its ``YYYY-MM-DD`` key so
- * the completion lands on the calendar day the user actually missed, not on
- * the wall-clock day the request happened to fire. Extracted so the caller
- * stays a flat, low-complexity sequence of guarded steps.
- */
-const postBackfillCompletions = (
-  lowGoalId: number,
-  days: Date[],
-  zone: string,
-): Array<Promise<unknown>> => {
-  const today = todayInUserTZ(zone);
-  return days.map((day) => {
-    const dayKey = dayKeyInTZ(day, zone);
-    const completedOn = dayKey !== today ? dayKey : undefined;
-    return goalCompletionsApi.create({
-      goal_id: lowGoalId,
-      did_complete: true,
-      completed_on: completedOn,
-    });
-  });
 };
 
 // ---------------------------------------------------------------------------
@@ -1883,91 +1819,6 @@ export const habitManager = {
       ctx.nextGoal,
     );
     return milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount);
-  },
-
-  /**
-   * Backfill missed days: bump the local streak + completions, persist the
-   * optimistic state, then POST one goal completion per day against the
-   * habit's LOW-tier goal so the backfill survives the next ``loadHabits``
-   * reload (which trusts the server as the source of truth). A single
-   * ``Promise.all`` rejection rolls the store AND the on-disk snapshot back
-   * to ``prev`` and alerts the user — the same deterministic single-rollback
-   * pattern as ``saveHabitOrder``. When the habit is a demo tile, or it or its
-   * low goal carries an id no server issued, we keep the optimistic update but
-   * skip the network call: a pre-sync habit still shows the backfill locally,
-   * and no fabricated id can trigger the rollback that would erase it.
-   *
-   * ``tz`` is the user's stored IANA zone forwarded by the hook; direct
-   * service callers without auth context fall back to the device zone.
-   */
-  backfillMissedDays: (habitId: number, days: Date[], tz?: string): void => {
-    const zone = tz ?? detectDeviceTimezone();
-    const prev = getHabits();
-    const next = prev.map((h) => (h.id === habitId ? backfillHabit(h, days, zone) : h));
-    setHabits(next);
-    void persistHabits(next);
-    const parent = prev.find((h) => h.id === habitId);
-    if (!isServerBackedHabit(parent)) return;
-    const lowGoalId = parent.goals.find((g) => g.tier === 'low')?.id;
-    if (!isServerIssuedId(lowGoalId)) return;
-    const updates = postBackfillCompletions(lowGoalId, days, zone);
-    Promise.all(updates).catch(
-      revertOnFailure(
-        prev,
-        "We couldn't save those backfilled days. Your previous state was restored — check your connection and try again.",
-      ),
-    );
-  },
-
-  /**
-   * Reset a habit's start date: clear the streak + completions locally,
-   * persist, then run two server writes in sequence — first PUT the new start
-   * date, and only once that resolves bulk-clear the habit's server-side
-   * goal-completion rows via the clear-completions endpoint. Clearing
-   * server-side means a later ``loadHabits`` refetch shows no stale
-   * completions rather than rebuilding a streak from rows the reset was meant
-   * to wipe. Without the PUT even the new start date would revert to the stale
-   * server value. Sequencing matters because the clear is irreversible: if it
-   * ran concurrently and the PUT failed, the rollback would restore the local
-   * completions while the server had already dropped them, silently losing
-   * history behind a "previous state was restored" message. Ordering the
-   * reversible PUT first means a PUT failure never reaches the clear.
-   *
-   * The two stages fail differently and are handled separately. A PUT failure
-   * changes nothing durably, so it fully rolls the store + on-disk snapshot
-   * back to the previous state. A clear failure happens only after the PUT has
-   * already persisted the new start date, so a full rollback would wrongly
-   * revert that durable date; instead the optimistic reset is kept and the
-   * user is told only the check-in clear failed, so retrying re-runs the
-   * idempotent reset.
-   */
-  setNewStartDate: (habitId: number, newDate: Date, tz?: string): void => {
-    const prev = getHabits();
-    const next = prev.map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
-    setHabits(next);
-    void persistHabits(next);
-    const updated = next.find((h) => h.id === habitId);
-    // Suppresses the PUT *and* the chained clear: a demo tile's fabricated id
-    // would point the irreversible clear-completions call at whichever real
-    // habit of the user's happens to carry that number.
-    if (!isServerBackedHabit(updated)) return;
-    const updatedId = updated.id;
-    habitsApi
-      .update(updatedId, toApiPayload(updated, tz ?? detectDeviceTimezone()))
-      .then(
-        () =>
-          habitsApi
-            .clearCompletions(updatedId)
-            .catch(
-              warnOnFailure(
-                "Your new start date was saved, but we couldn't clear the old check-ins. Try the reset again.",
-              ),
-            ),
-        revertOnFailure(
-          prev,
-          "We couldn't save the new start date. Your previous state was restored — check your connection and try again.",
-        ),
-      );
   },
 
   /**
