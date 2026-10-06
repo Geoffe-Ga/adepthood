@@ -427,16 +427,21 @@ def _harden_library_loggers() -> None:
     Runs after uvicorn configured its loggers (it does so before loading the
     app), and touches nothing else when the app runs under another server.
     """
-    for name in _SERVER_LOGGERS:
-        for handler in logging.getLogger(name).handlers:
-            if not isinstance(handler.formatter, ContentFreeFormatter):
-                handler.setFormatter(ContentFreeFormatter(_SERVER_LOG_FORMAT))
+    _harden_server_handlers()
     logging.getLogger(_SERVER_ACCESS_LOGGER).disabled = True
     limiter_logger = logging.getLogger(_RATE_LIMITER_LOGGER)
     if not any(isinstance(f, RateLimitRecordFilter) for f in limiter_logger.filters):
         limiter_logger.addFilter(RateLimitRecordFilter())
     for name in _OUTBOUND_CLIENT_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def _harden_server_handlers() -> None:
+    """Give every handler uvicorn installed the content-free formatter (idempotent)."""
+    for name in _SERVER_LOGGERS:
+        for handler in logging.getLogger(name).handlers:
+            if not isinstance(handler.formatter, ContentFreeFormatter):
+                handler.setFormatter(ContentFreeFormatter(_SERVER_LOG_FORMAT))
 
 
 def remove_app_log_handlers_for_tests() -> None:
