@@ -22,6 +22,7 @@ import json
 import logging
 import sys
 from collections.abc import Callable, Iterator
+from http import HTTPStatus
 from typing import ClassVar, NoReturn
 
 import pytest
@@ -879,6 +880,46 @@ def test_outbound_request_urls_stay_out_of_the_info_stream(
     output = app_stream.getvalue()
     assert_no_canary(output, SHORT_CANARY)
     assert "client_failure_still_visible" in output
+
+
+# ── The rate limiter's own log line ────────────────────────────────────────
+
+_SHARE_REDEEM_LIMIT = 30
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_share_token_never_reaches_the_log(
+    async_client: AsyncClient, app_stream: io.StringIO, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The rate limiter's "exceeded" warning names the raw path and throttle key; both withheld.
+
+    The share route carries a per-route limit, so a client hammering one token
+    trips it -- and slowapi's own WARNING would otherwise write the token (a
+    credential) and the caller's address to the host's logs.
+    """
+    signup = await async_client.post(
+        "/auth/signup",
+        json={
+            "email": "limited@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+
+    with caplog.at_level(logging.INFO, logger="slowapi"):
+        statuses = [
+            (
+                await async_client.get(f"/practices/share/{SHORT_CANARY}", headers=headers)
+            ).status_code
+            for _ in range(_SHARE_REDEEM_LIMIT + 1)
+        ]
+
+    assert HTTPStatus.TOO_MANY_REQUESTS in statuses, "the limit was actually tripped"
+    exceeded = [r for r in caplog.records if r.name == "slowapi" and "exceeded" in r.getMessage()]
+    assert exceeded, "slowapi still records that a limit was exceeded"
+    assert_no_canary(_emitted(exceeded), SHORT_CANARY)
+    assert "127.0.0.1" not in _emitted(exceeded)
+    assert_no_canary(app_stream.getvalue(), SHORT_CANARY)
 
 
 # ── Query strings: only uvicorn's access line ever carried them ────────────

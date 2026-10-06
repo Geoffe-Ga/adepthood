@@ -184,6 +184,27 @@ def _resolve_log_level() -> int:
     return level if level is not None else _DEFAULT_LOG_LEVEL
 
 
+#: The rate limiter's logger and the template of its per-request warning,
+#: ``ratelimit <limit> (<throttle key>) exceeded at endpoint: <raw path>``. The
+#: key is the caller's address and the path can hold a share token, so the
+#: record is rewritten to name only the limit (#3064). The app's own access
+#: record already carries the 429, the route template and the trace id.
+_RATE_LIMITER_LOGGER = "slowapi"
+_RATE_LIMIT_EXCEEDED_TEMPLATE = "ratelimit %s (%s) exceeded at endpoint: %s"
+_RATE_LIMIT_EXCEEDED_SAFE = "ratelimit %s exceeded"
+
+
+class RateLimitRecordFilter(logging.Filter):
+    """Rewrite slowapi's "limit exceeded" record to drop the throttle key and raw path."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Keep the record, reduced to the limit that was exceeded."""
+        if record.msg == _RATE_LIMIT_EXCEEDED_TEMPLATE and isinstance(record.args, tuple):
+            record.msg = _RATE_LIMIT_EXCEEDED_SAFE
+            record.args = record.args[:1]
+        return True
+
+
 #: Format for the uvicorn server's own handlers, which carry no trace filter.
 _SERVER_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
@@ -401,7 +422,8 @@ def _harden_library_loggers() -> None:
 
     uvicorn's handlers get :class:`ContentFreeFormatter`; its access logger --
     whose line is the raw request line, query string included -- is switched
-    off; and the HTTP clients' per-request URL lines are raised out of INFO.
+    off; the HTTP clients' per-request URL lines are raised out of INFO; and
+    the rate limiter's "exceeded" record loses its throttle key and raw path.
     Runs after uvicorn configured its loggers (it does so before loading the
     app), and touches nothing else when the app runs under another server.
     """
@@ -410,6 +432,9 @@ def _harden_library_loggers() -> None:
             if not isinstance(handler.formatter, ContentFreeFormatter):
                 handler.setFormatter(ContentFreeFormatter(_SERVER_LOG_FORMAT))
     logging.getLogger(_SERVER_ACCESS_LOGGER).disabled = True
+    limiter_logger = logging.getLogger(_RATE_LIMITER_LOGGER)
+    if not any(isinstance(f, RateLimitRecordFilter) for f in limiter_logger.filters):
+        limiter_logger.addFilter(RateLimitRecordFilter())
     for name in _OUTBOUND_CLIENT_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
