@@ -450,9 +450,10 @@ jobs:
           cache-dependency-glob: backend/requirements*.txt
 
       - name: Install drift-check deps
-        # The checks need only the sync_content and build_stage_correspondence
-        # imports, not the app (tests/scripts/test_stage_correspondence_drift_gate.py
-        # fails when either script grows an import this line does not install).
+        # The checks need only the sync_content, build_stage_correspondence and
+        # content_completeness imports, not the app
+        # (tests/scripts/test_stage_correspondence_drift_gate.py fails when any
+        # of the three grows an import this line does not install).
         run: uv pip install --system httpx 'jsonschema>=4.0'
 
       - name: Verify vendored content matches CONTENT_VERSION
@@ -465,3 +466,12 @@ jobs:
       - name: Verify stage_correspondence.json is current
         working-directory: backend
         run: python -m scripts.build_stage_correspondence --check
+
+      # Issue #3070: the served Course is complete (every stage has an intro and
+      # chapters, no thin chapter or numbering gap outside the reviewed
+      # src/curriculum/content_gaps.json, no broken link, anchor, http or
+      # google.com/url wrapper), and the generated source-reference and
+      # practice-recommendation inventories match the vendored tree.
+      - name: Verify Course content completeness and inventories
+        working-directory: backend
+        run: python -m scripts.content_completeness --check
