@@ -35,6 +35,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import ClassVar
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Text, TypeDecorator
@@ -89,6 +90,10 @@ _legacy_reads = _LegacyReadSignal()
 
 class JournalEncryptionError(RuntimeError):
     """Encryption/decryption could not be performed as configured."""
+
+    #: Content-free reason telemetry reports in place of the message (#3064):
+    #: a key misconfiguration is worth grouping by, and its message is withheld.
+    safe_code: ClassVar[str] = "journal_encryption_failed"
 
 
 def _normalised(value: str | None) -> str:

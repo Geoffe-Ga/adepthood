@@ -40,6 +40,7 @@ from models.llm_usage_log import LLMUsageLog
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from sentry import SentryContext
 from services.botmason import ImagePayload, LLMProviderError, generate_response
+from tests.helpers.log_lines import records_for
 from tests.transcription_helpers import (
     JPEG_BYTES,
     REFUSAL_MARKER_TEXT,
@@ -386,7 +387,7 @@ async def test_access_log_extras_stay_within_allowlist_and_leak_nothing(
         resp = await async_client.post(_ENDPOINT, json=payload(_MARKED_JPEG_BYTES), headers=headers)
 
     assert resp.status_code == 200
-    completed = [r for r in caplog.records if r.message == "request_completed"]
+    completed = records_for(caplog.records, "request_completed")
     assert completed, "expected a request_completed record from RequestLoggingMiddleware"
     record = completed[-1]
     extra_keys = set(record.__dict__) - _BASELINE_LOG_RECORD_KEYS

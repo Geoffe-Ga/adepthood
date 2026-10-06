@@ -482,15 +482,27 @@ def test_the_policy_describes_every_source_the_context_can_come_from() -> None:
 def test_the_error_monitor_never_receives_a_journal_body() -> None:
     """Scrubbing removes the channels a journal body could ride out on.
 
-    Driven through the real ``before_send`` hook with a body planted in all four
-    of them, so a channel that stopped being scrubbed fails here rather than in
-    a vendor's dashboard.
+    Driven through the real ``before_send`` hook with a body planted in every
+    one of them -- including the exception message, the log entry, and a key no
+    SDK has invented yet (#3079) -- so a channel that stopped being scrubbed
+    fails here rather than in a vendor's dashboard.
     """
     event: dict[str, object] = {
         "request": {"data": {"message": _SENTINEL_BODY}},
         "extra": {"body": _SENTINEL_BODY},
         "breadcrumbs": [{"message": _SENTINEL_BODY}],
-        "exception": {"values": [{"stacktrace": {"frames": [{"vars": {"body": _SENTINEL_BODY}}]}}]},
+        "message": _SENTINEL_BODY,
+        "logentry": {"formatted": _SENTINEL_BODY},
+        "unknown_future_key": _SENTINEL_BODY,
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": _SENTINEL_BODY,
+                    "stacktrace": {"frames": [{"vars": {"body": _SENTINEL_BODY}}]},
+                }
+            ]
+        },
     }
 
     scrubbed = json.dumps(scrub_event(event, {}))
