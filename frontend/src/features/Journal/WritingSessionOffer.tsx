@@ -45,7 +45,8 @@
  * the switch and the gate: which branch is open, and whether the offer is.
  *
  * Only the depths the writer has kept are offered (#3073). A declined habits
- * ring drops "Keep this as a habit" and its prompt; a declined practices ring
+ * ring drops "Keep this as a habit" and swaps its prompt for a practice-worded
+ * one, so the note always says what it offers; a declined practices ring
  * drops "Keep this as a practice"; with both declined there is nothing to
  * offer and the note carries no invitation at all. The decline stays beside
  * whichever accept remains.
@@ -88,7 +89,11 @@ import {
   savedHabitConfirmation,
   stagePreviewLabel,
 } from './saveAsHabitCopy';
-import { SAVE_AS_PRACTICE_ACCEPT, SAVE_AS_PRACTICE_ACCEPT_A11Y } from './saveAsPracticeCopy';
+import {
+  SAVE_AS_PRACTICE_ACCEPT,
+  SAVE_AS_PRACTICE_ACCEPT_A11Y,
+  SAVE_AS_PRACTICE_PROMPT,
+} from './saveAsPracticeCopy';
 import SaveAsPracticeStep from './SaveAsPracticeStep';
 import WritingHabitPicker from './WritingHabitPicker';
 import type { WritingSessionResult } from './writingSession';
@@ -256,7 +261,9 @@ function Invitation({
 }): React.JSX.Element {
   return (
     <View style={styles.offer} testID="save-as-habit-offer">
-      {offers.habit ? <Text style={styles.prompt}>{SAVE_AS_HABIT_PROMPT}</Text> : null}
+      <Text style={styles.prompt}>
+        {offers.habit ? SAVE_AS_HABIT_PROMPT : SAVE_AS_PRACTICE_PROMPT}
+      </Text>
       <View style={styles.actions}>
         {offers.habit ? (
           <OfferAction

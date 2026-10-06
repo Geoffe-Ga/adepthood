@@ -12,7 +12,7 @@ import {
   SAVE_AS_HABIT_DECLINE_A11Y,
   SAVE_AS_HABIT_PROMPT,
 } from '../saveAsHabitCopy';
-import { SAVE_AS_PRACTICE_ACCEPT_A11Y } from '../saveAsPracticeCopy';
+import { SAVE_AS_PRACTICE_ACCEPT_A11Y, SAVE_AS_PRACTICE_PROMPT } from '../saveAsPracticeCopy';
 import WritingSessionOffer from '../WritingSessionOffer';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
@@ -183,6 +183,8 @@ describe('WritingSessionOffer — only the depths the writer kept (#3073)', () =
     await waitFor(() => expect(view.queryByTestId('save-as-practice-accept')).not.toBeNull());
     expect(view.queryByTestId('save-as-habit-accept')).toBeNull();
     expect(view.queryByText(SAVE_AS_HABIT_PROMPT)).toBeNull();
+    // The note still says what it offers: a practice-worded prompt replaces it.
+    expect(view.getByText(SAVE_AS_PRACTICE_PROMPT)).toBeTruthy();
     expect(view.getByLabelText(SAVE_AS_PRACTICE_ACCEPT_A11Y)).toBeTruthy();
     expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
   });
@@ -192,6 +194,8 @@ describe('WritingSessionOffer — only the depths the writer kept (#3073)', () =
     const view = await renderOffer();
 
     expect(view.queryByTestId('save-as-practice-accept')).toBeNull();
+    expect(view.getByText(SAVE_AS_HABIT_PROMPT)).toBeTruthy();
+    expect(view.queryByText(SAVE_AS_PRACTICE_PROMPT)).toBeNull();
     expect(view.getByLabelText(SAVE_AS_HABIT_ACCEPT_A11Y)).toBeTruthy();
     expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
   });

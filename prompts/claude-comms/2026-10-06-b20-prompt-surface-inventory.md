@@ -30,7 +30,7 @@ dismissed in both states.
 | Surface | Component | Gate after #3073 | Decline persistence |
 |---|---|---|---|
 | Return (soft-landing offer, arc, resting habits) | `features/Return/ReturnStack.tsx`, mounted on the shelf | habits (mount gated) | device: `@adepthood/return_offer_dismissed` |
-| Keep a finished writing session as a habit or a practice | `features/Journal/WritingSessionOffer.tsx` | habits for the habit accept, practices for the practice accept; no offer when both are off | device: `@adepthood/writing_habit_offer_answered` (plus the server writing-habit link as an answer) |
+| Keep a finished writing session as a habit or a practice | `features/Journal/WritingSessionOffer.tsx` | habits for the habit accept, practices for the practice accept; no offer when both are off | device: `@adepthood/writing_habit_offer_answered` (plus the server writing-habit link as an answer). One flag answers the whole note, so declining the practice-only offer (habits off) also answers the habit offer: turning habits back on later does not bring "Keep this as a habit" back |
 | Link-a-habit pointer after a session | `features/Journal/LinkHabitNudge.tsx` | habits (both mounts gated) | device: `@adepthood/link_habit_nudge_never_offer` |
 | Contraction reflection note | `features/Journal/ContractionReflectionNote.tsx` | habits (mount gated) | none |
 | Stat tiles | `features/Journal/StatTileRow.tsx` | habits / practices (already gated before #3073) | n/a |
