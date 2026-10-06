@@ -1571,15 +1571,22 @@
   },
   {
     "id": "practice.quick-launch-a-saved-journaling-practice",
-    "description": "Someone whose Journaling practice is saved taps one button in the Practice player and lands on a blank journal page with the practice's own length already running; when the page's session ends it is recorded against that selection, and the \"keep this as a practice?\" offer is not put to them again. Uncovered because the one claim this adds over journal.timed-writing-session-becomes-a-practice is the COMPLEMENT of what that spec pins: that spec deliberately stands its account at Beige and proves POST /practice-sessions/ answers 403 stage_locked against a forward-planned Journaling selection at Green, which is why the launch sends nothing there. What is unproven end-to-end is the same request SUCCEEDING once Green has actually opened -- and reaching that state needs backend/tests/e2e/program_anchor.py to move the account's program anchor five stages back and a read of GET /stages/program-calendar to make the record catch up, then its own spec file, its own account via freshLicenseKey(), and e2eLaneGuard registration. Pinned meanwhile on the client side by src/features/Practice/__tests__/PracticeScreenQuickLaunch.test.tsx (the button exists only for a saved Journaling practice, and navigates with the override-aware length and the selection id) and src/features/Journal/__tests__/useQuickLaunchedSession.test.tsx (the finished session is recorded once, for the length actually written, and never sent when the stage is still ahead) -- both of which agree with themselves about a server that is not there.",
+    "description": "Someone whose Journaling practice is saved taps one button in the Practice player and lands on a blank journal page with the practice's own length already running; when the page's session ends it is recorded against that selection, and the \"keep this as a practice?\" offer is not put to them again. This is the complement of journal.timed-writing-session-becomes-a-practice, which stands its account at Beige and pins POST /practice-sessions/ answering 403 stage_locked against a forward-planned Journaling selection at Green: here the same request SUCCEEDS once Green has actually opened. The spec moves the account's program anchor mid-way into Green's calendar window through backend/tests/e2e/program_anchor.py (faking only elapsed time, in the lane database), selects Journaling at Green over the wire, and reloads so the stage store is seeded from GET /stages/program-calendar -- the client decides whether a session is countable from that store, and a store left at stage 1 sends nothing. It then proves: the button is offered by its accessible name with no waiting note; the page opens with the twenty-minute timer already running; a session stopped early posts exactly one POST /practice-sessions/, answered 201, whose window and server-derived length are the minutes written, not the practice's twenty; a second session run to its length on the same page posts exactly once more and draws the session note with the link-a-habit note in the offer's slot and no keep-this offer; and GET /practice-sessions/stats reports exactly those two sessions and their minutes. 'Once' is counted on the wire because the quick-launch POST carries no Idempotency-Key. The browser clock is installed behind the server's so the session's ended_at stays inside the server's one-minute future-skew bound. Client-side halves stay pinned by src/features/Practice/__tests__/PracticeScreenQuickLaunch.test.tsx and src/features/Journal/__tests__/useQuickLaunchedSession.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
-      "client": ["practices", "userPractices", "practiceSessions"],
-      "routes": ["GET /practices/", "GET /user-practices/", "POST /practice-sessions/"],
+      "client": ["practices", "userPractices", "practiceSessions", "stages"],
+      "routes": [
+        "GET /practices/",
+        "GET /user-practices/",
+        "POST /user-practices/",
+        "GET /stages/program-calendar",
+        "POST /practice-sessions/",
+        "GET /practice-sessions/stats"
+      ],
       "tables": ["practice", "userpractice", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 2734
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-quick-launch-green.browser.e2e.test.ts"
   },
   {
     "id": "journal.set-a-stage-prompt-aside-and-bring-it-back",
