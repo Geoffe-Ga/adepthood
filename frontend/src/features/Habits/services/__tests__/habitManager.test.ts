@@ -5638,6 +5638,21 @@ describe('habitManager', () => {
         expect(mockReplayState).toBeNull();
       });
 
+      it('forgets the given-up entry even when the drain then stops behind it', async () => {
+        const head = queued(125, '2025-04-01');
+        const pending = [head, queued(126, '2025-04-02')];
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+        rejectOnce(new ApiError(503, 'unavailable'));
+
+        await replay(pending);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[1]!]);
+        // The record named a check-in that has left the queue; it leaves too.
+        expect(mockReplayState).toBeNull();
+      });
+
       it.each([
         ['a fetch TypeError', () => new TypeError('Network request failed')],
         ['a client timeout', () => new ApiTimeoutError('/goal_completions/', 1000)],
