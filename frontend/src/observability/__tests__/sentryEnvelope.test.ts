@@ -2,13 +2,42 @@
 /* global describe, it, expect */
 
 import { buildEvent, parseDsn, redactCredentials, serializeEnvelope } from '../sentryEnvelope';
-import { MAX_MESSAGE_CHARS, REDACTED } from '../sentryEnvelope';
+import { MESSAGE_WITHHELD, REDACTED, UNKNOWN_ERROR_TYPE } from '../sentryEnvelope';
 
 const DSN = 'https://examplepublickey@o0.ingest.sentry.io/42';
 
 // Stands in for what a user wrote. A crash report that carries this is a
 // privacy failure worse than the invisibility the reporter exists to fix.
 const JOURNAL_SENTINEL = 'sat with the grief about my father and did not look away';
+
+// Synthetic canaries standing in for what a user wrote, in every shape a
+// serialiser could treat differently (#3064). Mirrors the backend set in
+// backend/tests/helpers/telemetry_canaries.py.
+const SENTINELS = [
+  'SYNTHETIC_JOURNAL_CANARY_20261005',
+  `SYNTHETIC_LONG_CANARY_${'x'.repeat(600)}`,
+  'SYNTHETIC_UNICODE_CANARY_u\u0308n\u0301i_日本語',
+  'SYNTHETIC_MULTILINE_CANARY line one\nline two\r\nline three',
+  'SYNTHETIC_RTL_CANARY \u05e9\u05dc\u05d5\u05dd \u0645\u0631\u062d\u0628\u0627',
+  'SYNTHETIC_EMOJI_CANARY \u{1F56F}\uFE0F\u{1F9E1}',
+];
+
+const PROBE_CHARS = 40;
+const SENT_AT = '2026-08-14T12:00:01.000Z';
+
+/** Every fragment of a canary whose presence in a payload means it leaked. */
+function probes(canary: string): string[] {
+  return canary
+    .split(/\r?\n/)
+    .map((line) => line.trim().slice(0, PROBE_CHARS))
+    .filter(Boolean)
+    .flatMap((head) => [head, JSON.stringify(head).slice(1, -1)]);
+}
+
+/** What actually goes on the wire for one thrown value. */
+function wire(thrown: unknown): string {
+  return serializeEnvelope(buildEvent(thrown, undefined, META), DSN, SENT_AT);
+}
 
 const META = {
   eventId: 'aaaaaaaabbbbccccddddeeeeeeeeeeee',
@@ -84,11 +113,23 @@ describe('buildEvent', () => {
     ]);
   });
 
-  it('carries the exception type and message so the report is actionable', () => {
+  it.each(['Error', 'TypeError', 'ApiValidationError', 'AbortError', 'DOMException'])(
+    'keeps the class-shaped type %s',
+    (name) => {
+      const error = new Error('boom');
+      error.name = name;
+
+      expect(buildEvent(error, undefined, META).exception).toEqual({
+        values: [{ type: name, value: MESSAGE_WITHHELD }],
+      });
+    },
+  );
+
+  it('carries the exception type and withholds the message', () => {
     const event = buildEvent(new TypeError('cannot read property of undefined'), undefined, META);
 
     expect(event.exception).toEqual({
-      values: [{ type: 'TypeError', value: 'cannot read property of undefined' }],
+      values: [{ type: 'TypeError', value: MESSAGE_WITHHELD }],
     });
   });
 
@@ -117,34 +158,32 @@ describe('buildEvent', () => {
     expect(event).not.toHaveProperty('user');
   });
 
-  it('redacts a credential that reached the exception message', () => {
-    const event = buildEvent(new Error('refresh failed: Bearer abcdef0123456789'), undefined, META);
+  it('ships no credential that reached the exception message', () => {
+    const payload = wire(new Error('refresh failed: Bearer abcdef0123456789'));
 
-    expect(JSON.stringify(event)).not.toContain('abcdef0123456789');
-    expect(JSON.stringify(event)).toContain(REDACTED);
+    expect(payload).not.toContain('abcdef0123456789');
+    expect(payload).toContain(MESSAGE_WITHHELD);
   });
 
-  it('caps a message long enough to have swallowed an entry body', () => {
-    const overlong = JOURNAL_SENTINEL.repeat(40);
+  it('ships none of a message long enough to have swallowed an entry body', () => {
+    const payload = wire(new Error(JOURNAL_SENTINEL.repeat(40)));
 
-    const event = buildEvent(new Error(overlong), undefined, META);
-    const serialised = JSON.stringify(event);
-
-    expect(serialised.length).toBeLessThan(overlong.length);
-    expect(serialised).toContain('[truncated]');
+    expect(payload).not.toContain(JOURNAL_SENTINEL);
+    expect(payload).not.toContain('[truncated]');
   });
 
-  it('leaves a short message whole', () => {
-    const event = buildEvent(new Error('render failed'), undefined, META);
+  it('withholds even a short, harmless-looking message', () => {
+    const payload = wire(new Error('render failed'));
 
-    expect(JSON.stringify(event)).toContain('render failed');
+    expect(payload).not.toContain('render failed');
+    expect(payload).toContain(MESSAGE_WITHHELD);
   });
 
-  it('reports a thrown non-Error without inventing a type', () => {
+  it('reports a thrown non-Error by a fixed type, never by its text', () => {
     const event = buildEvent('a string was thrown', undefined, META);
 
     expect(event.exception).toEqual({
-      values: [{ type: 'UnknownError', value: 'a string was thrown' }],
+      values: [{ type: UNKNOWN_ERROR_TYPE, value: MESSAGE_WITHHELD }],
     });
   });
 
@@ -155,12 +194,52 @@ describe('buildEvent', () => {
     expect(event.release).toBe('rel-9');
   });
 
-  it('caps the message at the documented length', () => {
-    const event = buildEvent(new Error('y'.repeat(MAX_MESSAGE_CHARS + 100)), undefined, META);
-    const { values } = event.exception as { values: [{ value: string }] };
-    const value = values[0].value;
+  it.each([
+    ['spaces', 'my father said'],
+    ['a newline', 'Error\nentry text'],
+    ['an empty string', ''],
+    ['a single word', 'grief'],
+  ])('reports a name with %s as plain Error, since `name` is writable', (_label, name) => {
+    const error = new Error('boom');
+    error.name = name;
 
-    expect(value.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS + '…[truncated]'.length);
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
+  });
+});
+
+describe('the wire payload carries no user content (#3064)', () => {
+  it.each(SENTINELS)('never ships a canary thrown as an Error message %#', (canary) => {
+    const payload = wire(new Error(canary));
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+  });
+
+  it.each(SENTINELS)('never ships a canary thrown bare %#', (canary) => {
+    const thrown: unknown[] = [canary, { toString: () => canary }, [canary]];
+
+    thrown.forEach((value) => {
+      const payload = wire(value);
+      probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+    });
+  });
+
+  it.each(SENTINELS)('never ships a canary assigned to an Error name %#', (canary) => {
+    const error = new Error('boom');
+    error.name = canary;
+
+    const payload = wire(error);
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+  });
+
+  it.each([42, null, undefined])('reports a thrown %p as UnknownError', (thrown) => {
+    const [, , payload = ''] = wire(thrown).split('\n');
+
+    expect(JSON.parse(payload)).toMatchObject({
+      exception: { values: [{ type: UNKNOWN_ERROR_TYPE, value: MESSAGE_WITHHELD }] },
+    });
   });
 });
 
