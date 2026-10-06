@@ -214,6 +214,15 @@ def _exception_entries(event: dict[str, object]) -> list[dict[str, object]]:
     return [_string_keyed(entry) for entry in values if isinstance(entry, dict)]
 
 
+def _hinted_exception(hint: Mapping[str, object]) -> BaseException | None:
+    """Return the exception a ``before_send`` hint carries, if it is a real one."""
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or len(exc_info) != _EXC_INFO_ARITY:
+        return None
+    exc = exc_info[1]
+    return exc if isinstance(exc, BaseException) else None
+
+
 def _declared_codes(hint: Mapping[str, object]) -> dict[str, str]:
     """Map each exception type name in the hint's chain to the code it declares.
 
@@ -221,23 +230,25 @@ def _declared_codes(hint: Mapping[str, object]) -> dict[str, str]:
     A name two classes in the chain share, with different codes, is left out:
     the entry then reports the marker rather than a guess.
     """
-    exc_info = hint.get("exc_info")
-    if not isinstance(exc_info, tuple) or len(exc_info) != _EXC_INFO_ARITY:
+    exc = _hinted_exception(hint)
+    if exc is None:
         return {}
-    exc = exc_info[1]
-    if not isinstance(exc, BaseException):
-        return {}
-    candidates: dict[str, set[str]] = {}
-    for linked in exception_chain(exc):
-        reason = exception_reason(linked)
-        for name in {type(linked).__name__, type(linked).__qualname__}:
-            candidates.setdefault(name, set()).add(reason)
+    candidates = _reasons_by_type_name(exception_chain(exc))
     return {name: reasons.pop() for name, reasons in candidates.items() if len(reasons) == 1}
 
 
-def _rebuild_event(event: dict[str, object], codes: dict[str, str]) -> dict[str, object]:
-    """Construct the outgoing event from the allowlist alone."""
-    rebuilt = _pick(event, _TOP_LEVEL_FIELDS)
+def _reasons_by_type_name(chain: list[BaseException]) -> dict[str, set[str]]:
+    """Collect, per type name (bare and qualified), every reason the chain reports for it."""
+    candidates: dict[str, set[str]] = {}
+    for linked in chain:
+        reason = exception_reason(linked)
+        for name in {type(linked).__name__, type(linked).__qualname__}:
+            candidates.setdefault(name, set()).add(reason)
+    return candidates
+
+
+def _rebuilt_sections(event: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Return the allowlisted ``sdk``, ``tags`` and ``contexts`` sections, empty ones dropped."""
     request_context = _pick(
         _string_keyed(event.get("contexts")).get(REQUEST_CONTEXT_KEY), _REQUEST_CONTEXT_FIELDS
     )
@@ -246,7 +257,13 @@ def _rebuild_event(event: dict[str, object], codes: dict[str, str]) -> dict[str,
         "tags": _pick(event.get("tags"), _TAG_FIELDS),
         "contexts": {REQUEST_CONTEXT_KEY: request_context} if request_context else {},
     }
-    rebuilt.update({name: section for name, section in sections.items() if section})
+    return {name: section for name, section in sections.items() if section}
+
+
+def _rebuild_event(event: dict[str, object], codes: dict[str, str]) -> dict[str, object]:
+    """Construct the outgoing event from the allowlist alone."""
+    rebuilt = _pick(event, _TOP_LEVEL_FIELDS)
+    rebuilt.update(_rebuilt_sections(event))
     entries = [_rebuild_entry(entry, codes) for entry in _exception_entries(event)]
     rebuilt["exception"] = {"values": entries or [_unreportable_entry()]}
     return rebuilt
@@ -267,12 +284,17 @@ def _minimal_event() -> dict[str, object]:
     }
 
 
+def _redacted_mapping(node: dict[object, object], secrets: tuple[str, ...]) -> dict[object, object]:
+    """Return a mapping with every string value redacted, recursively."""
+    return {key: _redacted(value, secrets) for key, value in node.items()}
+
+
 def _redacted(node: object, secrets: tuple[str, ...]) -> object:
     """Return ``node`` with every string passed through :func:`redact_text`."""
     if isinstance(node, str):
         return redact_text(node, secrets)
     if isinstance(node, dict):
-        return {key: _redacted(value, secrets) for key, value in node.items()}
+        return _redacted_mapping(node, secrets)
     if isinstance(node, list):
         return [_redacted(item, secrets) for item in node]
     return node
