@@ -380,13 +380,16 @@ def validate_journal_encryption_config() -> None:
     healthy, and the column an operator believed was encrypted is readable by
     anyone who reaches the database. Nothing in the running system says so.
 
-    So production requires the key and non-production does not. The environment
-    gate is ``ENV``, the same explicit variable the rest of this module's
-    startup checks read, rather than anything inferred from an incidental
-    setting. Staging is deliberately left with development: it is a deploy for
-    material nobody has promised to protect, and taking one down over an unset
-    variable would only teach operators to set it to a throwaway key that then
-    rides to production.
+    So production requires the key and non-production does not. The gate is
+    ``journal_encryption.production_in_force`` -- the same decision the codec
+    itself uses to refuse a plaintext write -- which reads ``ENV`` *and* the
+    environment name Railway injects. ``ENV`` is typed by a person and can be
+    missing or wrong; the platform's own name for the environment cannot be
+    forgotten, so either one saying production is enough, and a platform deploy
+    that names no environment at all is treated as production. Staging is
+    deliberately left with development: it is a deploy for material nobody has
+    promised to protect, and taking one down over an unset variable would only
+    teach operators to set it to a throwaway key that then rides to production.
 
     The order of the two checks matters and is tested. ``is_enabled`` is
     consulted first, so a configured-but-invalid key raises out of the
@@ -400,7 +403,7 @@ def validate_journal_encryption_config() -> None:
     """
     if journal_encryption.is_enabled():
         return
-    if os.getenv("ENV", "development") != "production":
+    if not journal_encryption.production_in_force():
         return
     msg = (
         f"{journal_encryption.KEYS_ENV_VAR} must be set in production. Without it "
@@ -976,6 +979,13 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+    if journal_encryption.is_enabled():
+        # Non-secret: the operator sweep refuses to write under any other key0
+        # (``--primary-fingerprint``), so this is the value it is checked against.
+        logger.info(
+            "journal_encryption_primary_fingerprint=%s",
+            journal_encryption.primary_key_fingerprint(),
+        )
 
     # ...and in production, refuse the boot outright: an unset key there is a
     # deploy that stores every user's journal in plaintext, which the log line

@@ -38,9 +38,8 @@ from http import HTTPStatus
 import pytest
 from cryptography.fernet import Fernet
 from httpx import AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel
 
 from models.completion_suggestion import CompletionSuggestion, CompletionTargetType
 from models.feedback import FeedbackReport
@@ -54,7 +53,13 @@ from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from services import journal_encryption as je
-from services.journal_encryption import EncryptedString
+from services.encryption_inventory import (
+    ROW_ID_COLUMN,
+    EncryptedColumn,
+    encrypted_columns,
+    raw_table,
+)
+from tests.support.encrypted_rows import ROW_FACTORIES, insert_row
 
 # The literal marker real ciphertext carries. Spelled out rather than imported
 # from ``journal_encryption._PREFIX`` so this file pins the on-disk format
@@ -172,13 +177,12 @@ def _keyed(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _encrypted_columns() -> frozenset[str]:
-    """Every ``table.column`` in the live schema typed as ``EncryptedString``."""
-    return frozenset(
-        f"{table.name}.{column.name}"
-        for table in SQLModel.metadata.tables.values()
-        for column in table.columns
-        if isinstance(column.type, EncryptedString)
-    )
+    """Every ``table.column`` in the live schema typed as ``EncryptedString``.
+
+    Read from the shared inventory, the same derivation the operator audit and
+    re-encrypt sweep use, so this pin and those tools cannot disagree.
+    """
+    return frozenset(target.qualified for target in encrypted_columns())
 
 
 async def _user(session: AsyncSession, email: str = "atrest@example.com") -> int:
@@ -595,3 +599,44 @@ async def test_a_report_filed_without_the_optional_answers_stores_null(
 
     for column in ("feedbackreport.intent", "feedbackreport.expected", "feedbackreport.actual"):
         assert await _raw(db_session, column) is None, column
+
+
+# ---------------------------------------------------------------------------
+# Schema-driven raw canary (#3058): one case per encrypted column, generated
+# from the inventory rather than written by hand, so a column added tomorrow is
+# read raw the day it lands.
+# ---------------------------------------------------------------------------
+
+_SCHEMA_ENCRYPTED = encrypted_columns()
+
+
+def _canary(target: EncryptedColumn) -> str:
+    """A per-column sentence, so a value copied into the wrong column is visible."""
+    return f"canary for {target.qualified}: what I would not say aloud"
+
+
+def test_every_encrypted_table_has_a_row_factory() -> None:
+    """A new encrypted table must teach the canary how to build a row, or fail here."""
+    assert set(ROW_FACTORIES) == {target.table for target in _SCHEMA_ENCRYPTED}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+@pytest.mark.parametrize("target", _SCHEMA_ENCRYPTED, ids=lambda target: target.qualified)
+async def test_every_encrypted_column_stores_ciphertext(
+    db_session: AsyncSession, target: EncryptedColumn
+) -> None:
+    """Written through the ORM, the stored bytes are marked ciphertext of the canary."""
+    row_id = await insert_row(
+        db_session,
+        target.table,
+        lambda column: _canary(EncryptedColumn(target.table, column)),
+    )
+    await db_session.commit()
+
+    raw = raw_table(target)
+    stored = (
+        await db_session.execute(select(raw.c[target.column]).where(raw.c[ROW_ID_COLUMN] == row_id))
+    ).scalar_one()
+
+    _assert_ciphertext_of(stored, _canary(target), target.qualified)
