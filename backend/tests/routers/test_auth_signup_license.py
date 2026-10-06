@@ -1261,3 +1261,73 @@ async def test_throttled_license_path_consumes_a_dummy_bcrypt_verify(
     assert throttled.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert throttled.json()["detail"] == DETAIL_THROTTLED
     assert password_verify_spy.await_count == awaits_while_uncapped + 1
+
+
+# ---------------------------------------------------------------------------
+# The $0 floor (#1938, B21) and ended memberships (ADR 0008 Decision 1)
+# ---------------------------------------------------------------------------
+# Gumroad reports ``price`` in cents. The APTITUDE membership's floor is zero,
+# and nothing in the claim path may treat a free purchase as less of a claim.
+ZERO_PRICE_CENTS = 0
+ZERO_PRICE_SALE_ID = "S-zero"
+ENDED_MEMBERSHIP_TIMESTAMP = "2026-09-01T00:00:00Z"
+FAILED_PAYMENT_TIMESTAMP = "2026-09-02T00:00:00Z"
+# The two membership-terminal fields ADR 0008 D1 refuses on. Gumroad also
+# reports ``subscription_failed_at``, deliberately left out: a failed renewal
+# is a payment retry, not a membership the buyer ended.
+TERMINAL_MEMBERSHIP_FIELDS = ("subscription_ended_at", "subscription_cancelled_at")
+
+
+def _membership_result(**subscription_fields: str | None) -> GumroadLicenseResult:
+    """A verify result for a live $0 monthly membership, shaped like Gumroad's JSON.
+
+    Built from a raw dict through ``model_validate`` so the fields Gumroad sends
+    beyond the four reversal flags arrive the way production parses them.
+    """
+    raw: dict[str, object] = {
+        "success": True,
+        "uses": LICENSE_USES,
+        "purchase": {
+            "email": SIGNUP_EMAIL,
+            "product_id": ALLOWED_PRODUCT_ALPHA,
+            "sale_id": ZERO_PRICE_SALE_ID,
+            "price": ZERO_PRICE_CENTS,
+            "currency": "usd",
+            "quantity": 1,
+            "recurrence": "monthly",
+            "subscription_id": "sub-zero",
+            "refunded": False,
+            "disputed": False,
+            "dispute_won": False,
+            "chargebacked": False,
+            "subscription_ended_at": None,
+            "subscription_cancelled_at": None,
+            "subscription_failed_at": None,
+            **subscription_fields,
+        },
+    }
+    return GumroadLicenseResult.model_validate(raw)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("allowlisted_products")
+async def test_zero_price_membership_license_creates_exactly_one_account(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A $0 membership key is a full claim: one user, one live entitlement, one binding."""
+    calls: list[tuple[str, str]] = []
+    results = {ALLOWED_PRODUCT_ALPHA: _membership_result()}
+    monkeypatch.setattr(VERIFY_SEAM, _make_verify_stub(results, calls))
+
+    response = await async_client.post(SIGNUP_PATH, json=_signup_payload())
+
+    assert response.status_code == HTTPStatus.OK
+    assert calls == [(ALLOWED_PRODUCT_ALPHA, LICENSE_KEY)]
+    assert await _count_users(db_session) == 1
+    assert await _count_entitlements(db_session) == 1
+    assert await _count_bindings(db_session) == 1
+    entitlement = (await db_session.execute(select(Entitlement))).scalars().one()
+    assert entitlement.revoked_at is None
+    assert entitlement.product_id == ALLOWED_PRODUCT_ALPHA
