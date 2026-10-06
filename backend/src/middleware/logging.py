@@ -39,6 +39,14 @@ _ORIGINAL_HOST_FIELD = "original_host"
 # bump to ``error`` so they show up in the same alerting bucket as panics
 # from inner middleware layers.
 _WARNING_STATUS = 400
+
+# The rendered access line. The app's log format prints only the message, so the
+# fields an operator (and the nightly DAST evidence gate,
+# ``scripts/dast/scan_evidence.py``) reads must be in it. Every value is
+# content-free: the method token, the route *template*, the status and the
+# latency -- never the raw path or its query string (#3064). The event name
+# stays the first word, so ``records_for``-style matching keeps working.
+_COMPLETED_LINE = "request_completed method=%s route=%s status=%d elapsed_ms=%.2f"
 _ERROR_STATUS = 500
 
 
@@ -105,5 +113,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         original_host = request.scope.get(ORIGINAL_HOST_SCOPE_KEY)
         if original_host is not None:
             fields[_ORIGINAL_HOST_FIELD] = original_host
-        logger.log(_level_for_status(response.status_code), "request_completed", extra=fields)
+        logger.log(
+            _level_for_status(response.status_code),
+            _COMPLETED_LINE,
+            method,
+            fields["http_path"],
+            response.status_code,
+            fields["elapsed_ms"],
+            extra=fields,
+        )
         return response
