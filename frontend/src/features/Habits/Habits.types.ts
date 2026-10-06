@@ -210,15 +210,6 @@ export interface HabitSettingsModalProps {
   allHabits: Habit[];
 }
 
-export interface MissedDaysModalProps {
-  visible: boolean;
-  habit: Habit | null;
-  missedDays: Date[];
-  onClose: () => void;
-  onBackfill: (_habitId: number, _days: Date[]) => void;
-  onNewStartDate: (_habitId: number, _newStartDate: Date) => void;
-}
-
 export interface OnboardingModalProps {
   visible: boolean;
   onClose: () => void;

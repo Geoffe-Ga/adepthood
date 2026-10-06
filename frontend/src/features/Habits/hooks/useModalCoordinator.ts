@@ -1,21 +1,13 @@
 import { useCallback, useState } from 'react';
 
 export type ModalName =
-  | 'goal'
-  | 'stats'
-  | 'settings'
-  | 'reorder'
-  | 'missedDays'
-  | 'onboarding'
-  | 'addHabit'
-  | 'emojiPicker';
+  'goal' | 'stats' | 'settings' | 'reorder' | 'onboarding' | 'addHabit' | 'emojiPicker';
 
 interface ModalState {
   goal: boolean;
   stats: boolean;
   settings: boolean;
   reorder: boolean;
-  missedDays: boolean;
   onboarding: boolean;
   addHabit: boolean;
   emojiPicker: boolean;
@@ -26,7 +18,6 @@ const INITIAL_STATE: ModalState = {
   stats: false,
   settings: false,
   reorder: false,
-  missedDays: false,
   onboarding: false,
   addHabit: false,
   emojiPicker: false,

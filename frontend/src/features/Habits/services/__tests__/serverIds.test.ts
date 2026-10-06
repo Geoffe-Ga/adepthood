@@ -3,7 +3,6 @@ import { describe, expect, it } from '@jest/globals';
 import type { Goal, Habit } from '../../Habits.types';
 import {
   isNotDemoSeed,
-  namesStoreRow,
   isServerBackedGoal,
   isServerBackedHabit,
   isServerIssuedId,
@@ -57,27 +56,6 @@ const idCases: IdCase[] = [
 describe('isServerIssuedId', () => {
   it.each(idCases)('%s', (_label, id, expected) => {
     expect(isServerIssuedId(id)).toBe(expected);
-  });
-});
-
-describe('namesStoreRow', () => {
-  it('accepts the negative placeholder a pre-sync row carries', () => {
-    // The wire rejects this id; the store still finds the row it names.
-    expect(namesStoreRow(SYNTHETIC_ID)).toBe(true);
-  });
-
-  it('accepts a server-issued id', () => {
-    expect(namesStoreRow(42)).toBe(true);
-  });
-
-  it.each([
-    ['zero', 0],
-    ['a fractional id', 1.5],
-    ['NaN', Number.NaN],
-    ['undefined', undefined],
-    ['null', null],
-  ])('rejects %s, which names no row', (_label, id) => {
-    expect(namesStoreRow(id as number | null | undefined)).toBe(false);
   });
 });
 
