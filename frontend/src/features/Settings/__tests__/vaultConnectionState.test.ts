@@ -33,14 +33,10 @@ describe('readConnectionState', () => {
     expect(readConnectionState(connection)).toEqual({ kind: 'connected', address: VAULT_URL });
   });
 
-  it('reads a connection with no address as unknown rather than as none', () => {
-    // The security-relevant branch. The server cannot produce this pair, but
-    // the type can, and reading it as "nothing attached" would render the empty
-    // state and let one press replace a binding without asking -- the exact
-    // defect the third state exists to remove.
+  it('recognizes a managed connection without disclosing an address', () => {
     const connection: VaultConnection = { connected: true, vault_url: null };
 
-    expect(readConnectionState(connection)).toEqual({ kind: 'unknown' });
+    expect(readConnectionState(connection)).toEqual({ kind: 'managed' });
   });
 
   it('lets the connected flag decide, even when an address rides along with it', () => {
