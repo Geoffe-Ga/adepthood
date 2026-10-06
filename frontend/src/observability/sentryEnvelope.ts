@@ -146,7 +146,10 @@ function errorType(error: unknown): string {
   if (!(error instanceof Error)) {
     return UNKNOWN_ERROR_TYPE;
   }
-  return ERROR_TYPE_PATTERN.test(error.name) ? error.name : FALLBACK_ERROR_TYPE;
+  // `typeof` first: `RegExp.test` coerces its argument, so a non-string name
+  // whose string form is class-shaped would pass and then ship as itself.
+  const name: unknown = error.name;
+  return typeof name === 'string' && ERROR_TYPE_PATTERN.test(name) ? name : FALLBACK_ERROR_TYPE;
 }
 
 /** Copy across only the contexts the interface declares. */

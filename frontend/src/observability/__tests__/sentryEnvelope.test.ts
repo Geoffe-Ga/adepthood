@@ -199,6 +199,8 @@ describe('buildEvent', () => {
     ['a newline', 'Error\nentry text'],
     ['an empty string', ''],
     ['a single word', 'grief'],
+    ['prose that merely ends in Error', 'my father said there was an Error'],
+    ['a lowercase word ending in Error', 'griefError'],
   ])('reports a name with %s as plain Error, since `name` is writable', (_label, name) => {
     const error = new Error('boom');
     error.name = name;
@@ -232,6 +234,23 @@ describe('the wire payload carries no user content (#3064)', () => {
     const payload = wire(error);
 
     probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+  });
+
+  it.each(SENTINELS)('never ships a canary riding on a non-string name %#', (canary) => {
+    const error = new Error('boom');
+    // `name` is typed as a string but is an ordinary writable property; an
+    // object whose string form is class-shaped would pass a coerced check
+    // and then serialise its own fields.
+    Object.defineProperty(error, 'name', {
+      value: { toString: () => 'XError', note: canary },
+    });
+
+    const payload = wire(error);
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
   });
 
   it.each([42, null, undefined])('reports a thrown %p as UnknownError', (thrown) => {
