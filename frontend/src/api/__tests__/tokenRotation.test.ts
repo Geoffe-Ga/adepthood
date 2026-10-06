@@ -175,7 +175,7 @@ describe('reset and the epoch', () => {
     rotation.reset();
     network.resolve({ token: 'b' });
 
-    await expect(stale).resolves.toEqual({ kind: 'failed' });
+    await expect(stale).resolves.toEqual({ kind: 'orphaned' });
     expect(rotation.forward('a')).toBe('a');
     expect(onRotated).not.toHaveBeenCalled();
   });
@@ -197,6 +197,19 @@ describe('reset and the epoch', () => {
 
     await expect(second).resolves.toEqual({ kind: 'refreshed', response: { token: 'b' } });
     await expect(third).resolves.toEqual({ kind: 'refreshed', response: { token: 'b' } });
+    expect(performRefresh).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('a failed refresh frees its slot', () => {
+  test('the next refresh of the same token reaches the network again', async () => {
+    performRefresh.mockResolvedValueOnce(null);
+
+    await expect(rotation.refresh('a')).resolves.toEqual({ kind: 'failed' });
+    await expect(rotation.refresh('a')).resolves.toEqual({
+      kind: 'refreshed',
+      response: { token: 'a+' },
+    });
     expect(performRefresh).toHaveBeenCalledTimes(2);
   });
 });
@@ -241,6 +254,28 @@ describe('recover', () => {
   test('a stranger token is superseded without the network', async () => {
     await expect(rotation.recover('stranger')).resolves.toEqual({ kind: 'superseded' });
     expect(performRefresh).not.toHaveBeenCalled();
+  });
+
+  test('a refresh orphaned by a reset is superseded even while the getter still lags', async () => {
+    const network = deferred();
+    performRefresh.mockReturnValueOnce(network.promise);
+    const recovering = rotation.recover('a');
+    // Sign-out or sign-in began: the rotations are forgotten, but the getter
+    // has not caught up and still answers 'a'.
+    rotation.reset();
+    network.resolve({ token: 'b' });
+
+    await expect(recovering).resolves.toEqual({ kind: 'superseded' });
+  });
+
+  test('an orphaned refresh that failed is superseded, not expired', async () => {
+    const network = deferred();
+    performRefresh.mockReturnValueOnce(network.promise);
+    const recovering = rotation.recover('a');
+    rotation.reset();
+    network.resolve(null);
+
+    await expect(recovering).resolves.toEqual({ kind: 'superseded' });
   });
 
   test('a successor the session no longer holds is never handed out', async () => {

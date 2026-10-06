@@ -41,8 +41,16 @@ export type RefreshAttempt<R> =
   | { kind: 'rotated'; token: string }
   /** The token is neither the session's current one nor a known predecessor. */
   | { kind: 'refused' }
-  /** The network refresh failed, or resolved for a session that has since ended. */
-  | { kind: 'failed' };
+  /** The network refresh failed for the session that asked for it. */
+  | { kind: 'failed' }
+  /**
+   * A reset (sign-out or sign-in) ended the session while the refresh was in
+   * flight. Whatever the network said, the result belongs to no one: it is
+   * neither recorded nor published, and it is never a reason to sign out —
+   * the getter may still lag the reset by a render, so comparing against it
+   * would mistake a deliberate boundary for an expired session.
+   */
+  | { kind: 'orphaned' };
 
 /** What a 401 on a request that carried ``sent`` should do next. */
 export type SessionRecovery =
@@ -137,7 +145,8 @@ function performIn<R extends RotatedToken>(
 ): Promise<RefreshAttempt<R>> {
   const startedIn = state.epoch;
   const attempt = state.deps.performRefresh(from).then((response): RefreshAttempt<R> => {
-    if (response === null || startedIn !== state.epoch) return { kind: 'failed' };
+    if (startedIn !== state.epoch) return { kind: 'orphaned' };
+    if (response === null) return { kind: 'failed' };
     // Record BEFORE publishing and before any awaiting caller resumes, so a
     // request built in the very next tick already carries the successor.
     recordIn(state, from, response.token);
@@ -178,6 +187,16 @@ function refreshIn<R extends RotatedToken>(
   return performIn(state, from);
 }
 
+/** Refresh ``sent``, or in ``'join-only'`` mode only ride what is known or underway. */
+function attemptFor<R extends RotatedToken>(
+  state: RotationState<R>,
+  sent: string,
+  mode: RecoveryMode,
+): Promise<RefreshAttempt<R>> {
+  if (mode === 'refresh') return refreshIn(state, sent);
+  return joinIn(state, sent) ?? Promise.resolve({ kind: 'refused' });
+}
+
 async function recoverIn<R extends RotatedToken>(
   state: RotationState<R>,
   sent: string | null,
@@ -188,10 +207,7 @@ async function recoverIn<R extends RotatedToken>(
     // is none; if a sign-in landed meanwhile it is simply out of date.
     return currentIn(state) === null ? { kind: 'no-session' } : { kind: 'superseded' };
   }
-  const attempt =
-    mode === 'refresh'
-      ? await refreshIn(state, sent)
-      : await (joinIn(state, sent) ?? Promise.resolve<RefreshAttempt<R>>({ kind: 'refused' }));
+  const attempt = await attemptFor(state, sent, mode);
   const live = currentIn(state);
   if (attempt.kind === 'refreshed' || attempt.kind === 'rotated') {
     // Only a successor the session still holds may carry the retry: after a
@@ -202,7 +218,10 @@ async function recoverIn<R extends RotatedToken>(
       ? { kind: 'rotated', token: successor }
       : { kind: 'superseded' };
   }
-  return sent === live ? { kind: 'expired' } : { kind: 'superseded' };
+  // Only a genuine failure of the token the session still holds is expiry.
+  return attempt.kind !== 'orphaned' && sent === live
+    ? { kind: 'expired' }
+    : { kind: 'superseded' };
 }
 
 export function createTokenRotation<R extends RotatedToken>(

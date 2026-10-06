@@ -104,6 +104,7 @@ function installServer() {
     rateLimited: 0,
     revoked: new Set<string>(),
     successor: '',
+    signedIn: mintToken('signed-in'),
     release: (): void => {},
   };
   const fetchMock = jest.fn((url: string, init?: RequestInit): Promise<FakeResponse> => {
@@ -129,7 +130,14 @@ function installServer() {
     }
     return Promise.resolve(reply(HTTP_OK, []));
   });
-  global.fetch = fetchMock as unknown as typeof fetch;
+  // A sign-in mints a fresh session token; everything else is the race above.
+  const withLogin = (url: string, init?: RequestInit): Promise<FakeResponse> =>
+    url.endsWith('/auth/login')
+      ? Promise.resolve(
+          reply(HTTP_OK, { token: state.signedIn, user_id: USER_ID, timezone: SERVER_ZONE }),
+        )
+      : fetchMock(url, init);
+  global.fetch = jest.fn(withLogin) as unknown as typeof fetch;
   return state;
 }
 
@@ -246,6 +254,51 @@ describe('a resumed session refreshes its token exactly once (#3034)', () => {
     });
 
     expectSurvived(run);
+  });
+});
+
+describe('a session boundary orphans an in-flight refresh without signing out (#3034)', () => {
+  test('a sign-in that lands while the resume refresh is in flight keeps the new session', async () => {
+    const server = installServer();
+    mockAuthStorage.loadToken.mockResolvedValue(mintToken('stored'));
+    mockAuthStorage.loadUserTimezone.mockResolvedValue(null); // the backfill refreshes
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await settle();
+    expect(server.refreshCalls).toBe(1);
+
+    // A read 401s on the revoked token and joins the pending refresh.
+    const read = habits.list();
+    await settle();
+
+    // The user signs in again; the new token's write is still on its way to disk.
+    let finishSave: () => void = () => {};
+    mockAuthStorage.saveToken.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    let signIn: Promise<void> = Promise.resolve();
+    await act(async () => {
+      signIn = result.current.login('writer@example.com', 'phrase'); // pragma: allowlist secret
+    });
+    await settle();
+
+    // Only now does the orphaned refresh answer, while the getter still holds
+    // the resumed token.
+    await act(async () => {
+      server.release();
+      await Promise.allSettled([read]);
+    });
+    await act(async () => {
+      finishSave();
+      await signIn;
+    });
+    await settle();
+
+    expect(mockAuthStorage.clearToken).not.toHaveBeenCalled();
+    expect(result.current.authStatus).toBe('authenticated');
+    expect(result.current.token).toBe(server.signedIn);
   });
 });
 

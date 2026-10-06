@@ -672,4 +672,83 @@ describe('token rotation memory (#3034)', () => {
     expect(server.state.dataAuth).toEqual(['Bearer manual-token']);
     expect(mockOnUnauthorized).not.toHaveBeenCalled();
   });
+
+  test('a refresh orphaned by sign-out or sign-in never signs the session out', async () => {
+    const orphanJwt = fixtureJwt('orphan');
+    const refreshReply = deferredReply();
+    mockFetch.mockImplementation((url: string) =>
+      url.includes('/auth/refresh')
+        ? refreshReply.promise
+        : jsonResponse({ detail: 'unauthorized' }, 401),
+    );
+
+    const pending = habits.list();
+    pending.catch(() => {});
+    await flushMicrotasks();
+    // The boundary forgets the rotations first; the getter still answers the
+    // old token until React re-renders.
+    resetTokenRotations();
+    refreshReply.release({ token: orphanJwt, user_id: 1 });
+
+    await expect(pending).rejects.toThrow(ApiError);
+    expect(mockOnUnauthorized).not.toHaveBeenCalled();
+    expect(mockOnTokenRefreshed).not.toHaveBeenCalled();
+    const sent = mockFetch.mock.calls.map(([, init]) => authOf(init as RequestInit));
+    expect(sent).not.toContain(`Bearer ${orphanJwt}`);
+  });
+
+  test('a failed refresh does not stick: a later 401 refreshes again', async () => {
+    const rotated = fixtureJwt('afterfail');
+    let refreshCalls = 0;
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/auth/refresh')) {
+        refreshCalls += 1;
+        return refreshCalls === 1
+          ? jsonResponse({ detail: 'boom' }, 500)
+          : jsonResponse({ token: rotated, user_id: 1 });
+      }
+      return authOf(init) === `Bearer ${rotated}`
+        ? jsonResponse([])
+        : jsonResponse({ detail: 'unauthorized' }, 401);
+    });
+
+    await expect(habits.list()).rejects.toThrow(ApiError);
+    await expect(habits.list()).resolves.toEqual([]);
+
+    expect(refreshCalls).toBe(2);
+  });
+
+  test('a 401 is recovered for the token the request carried, not the getter', async () => {
+    const second = fixtureJwt('second');
+    const third = fixtureJwt('third');
+    const successors: Record<string, string> = { 'original-token': second, [second]: third };
+    const refreshAuth: (string | undefined)[] = [];
+    const dataAuth: (string | undefined)[] = [];
+    mockFetch.mockImplementation((url: string, init?: RequestInit) => {
+      const bearer = authOf(init)?.replace('Bearer ', '') ?? '';
+      if (url.includes('/auth/refresh')) {
+        refreshAuth.push(authOf(init));
+        const next = successors[bearer];
+        return next === undefined
+          ? jsonResponse({ detail: 'unauthorized' }, 401)
+          : jsonResponse({ token: next, user_id: 1 });
+      }
+      dataAuth.push(authOf(init));
+      // Only the newest token reads data; ``second`` must itself be refreshed.
+      return bearer === third ? jsonResponse([]) : jsonResponse({ detail: 'unauthorized' }, 401);
+    });
+
+    // original -> second, with the getter left on 'original-token'.
+    await expect(habits.list()).rejects.toThrow(ApiError);
+    expect(mockOnUnauthorized).toHaveBeenCalledTimes(1); // second is refused on data
+    mockOnUnauthorized.mockClear();
+    refreshAuth.length = 0;
+    dataAuth.length = 0;
+
+    await expect(habits.list()).resolves.toEqual([]);
+
+    expect(dataAuth).toEqual([`Bearer ${second}`, `Bearer ${third}`]);
+    expect(refreshAuth).toEqual([`Bearer ${second}`]);
+    expect(mockOnUnauthorized).not.toHaveBeenCalled();
+  });
 });
