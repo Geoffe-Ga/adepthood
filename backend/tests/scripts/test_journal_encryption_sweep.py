@@ -24,11 +24,12 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager
-from typing import NoReturn
+from typing import NoReturn, cast
 
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.journal_entry import JournalEntry
@@ -444,3 +445,86 @@ async def test_an_applied_sweep_that_skips_a_concurrent_edit_exits_rows_remain(
     message_line = next(line for line in out.splitlines() if f" {_MESSAGE.qualified} " in line)
     assert "skipped=1" in message_line
     assert (await _raw(db_session, _MESSAGE))[row_id] == edited
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_cli_session")
+async def test_a_database_error_mid_sweep_reports_no_content(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed write is reported by class, column and resume point -- never by value.
+
+    SQLAlchemy renders a DBAPI error with its bind parameters, and the
+    compare-and-swap's ``old`` parameter is the stored value: for a legacy row,
+    the user's own plaintext. A lock timeout or dropped connection must not
+    print it.
+    """
+    row_id = await insert_row(db_session, "journalentry", _texts("dberror", "journalentry"))
+    await db_session.execute(
+        text(
+            "CREATE TRIGGER refuse_sweep BEFORE UPDATE ON journalentry "
+            "BEGIN SELECT RAISE(ABORT, 'simulated lock timeout'); END"
+        )
+    )
+    await db_session.commit()
+    _keys(monkeypatch, Fernet.generate_key().decode())
+
+    exit_code = await sweep.run(
+        ["reencrypt", "--apply", "--start-after", f"{_MESSAGE.qualified}:0"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == sweep.EXIT_DATABASE
+    _assert_no_content(captured.out + captured.err + caplog.text)
+    assert _MESSAGE.qualified in captured.err
+    assert f"--start-after {_MESSAGE.qualified}:0" in captured.err
+    assert "IntegrityError" in captured.err or "OperationalError" in captured.err
+    # Nothing was written: the plaintext row is exactly as it was.
+    assert (await _raw(db_session, _MESSAGE))[row_id] == _canary("dberror", _MESSAGE.qualified)
+
+
+def test_the_sweep_engine_hides_bind_parameters() -> None:
+    """Belt and braces: even an uncaught error from this engine cannot render values."""
+    assert sweep.engine.sync_engine.hide_parameters is True
+
+
+@pytest.mark.asyncio
+async def test_a_database_error_outside_the_sweep_loop_is_named_by_class_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An audit-time failure is reduced to its class name; its message never prints."""
+    _keys(monkeypatch, Fernet.generate_key().decode())
+    leaked = _canary("audit", "params")
+
+    async def _fail(*_args: object) -> NoReturn:
+        raise OperationalError("SELECT ...", (leaked,), Exception("timeout"))
+
+    monkeypatch.setattr(sweep, "_audit", _fail)
+
+    assert await sweep.run(["audit"]) == sweep.EXIT_DATABASE
+
+    captured = capsys.readouterr()
+    assert "OperationalError" in captured.err
+    _assert_no_content(captured.out + captured.err)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rollback_still_reports_the_resume_point(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With the connection gone, rollback itself fails; the resume line still prints."""
+
+    class _DeadSession:
+        async def rollback(self) -> NoReturn:
+            raise OperationalError("ROLLBACK", None, Exception("connection lost"))
+
+    report = sweep.ColumnSweep(_MESSAGE, apply=True, last_id=7)
+    await sweep.stop_batch(cast("AsyncSession", _DeadSession()), report)
+
+    err = capsys.readouterr().err
+    assert "rollback failed" in err
+    assert f"--start-after {_MESSAGE.qualified}:7" in err

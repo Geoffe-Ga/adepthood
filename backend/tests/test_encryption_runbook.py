@@ -71,6 +71,7 @@ def test_the_section_states_the_sweep_exit_codes(section: str) -> None:
         journal_encryption_sweep.EXIT_CLEAN,
         journal_encryption_sweep.EXIT_ROWS_REMAIN,
         journal_encryption_sweep.EXIT_INTEGRITY,
+        journal_encryption_sweep.EXIT_DATABASE,
     ):
         assert re.search(rf"`{code}`", section), f"exit code {code} is not documented"
 

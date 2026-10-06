@@ -41,6 +41,9 @@ Exit codes:
     2 -- usage error (argparse).
     3 -- integrity stop: no key configured, a malformed key, or a value no
          configured key decrypts. Nothing in the failing batch was written.
+    4 -- database stop: the database failed mid-run (timeout, deadlock, lost
+         connection). Reported by error class, column and resume point only;
+         the batch in flight was rolled back.
 """
 
 from __future__ import annotations
@@ -53,10 +56,11 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from sqlalchemy import CursorResult, and_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.sql.expression import TableClause
 
-from database import async_session_factory
+from database import DATABASE_URL
 from services import journal_encryption as je
 from services.encryption_inventory import (
     ROW_ID_COLUMN,
@@ -72,6 +76,9 @@ EXIT_USAGE = 2
 #: Distinct from argparse's 2: "you typed it wrong" and "the data or keys are
 #: not what they must be" call for different responses.
 EXIT_INTEGRITY = 3
+#: The database failed under the sweep (lock or statement timeout, deadlock,
+#: dropped connection). The batch in flight was rolled back; rerun or resume.
+EXIT_DATABASE = 4
 
 #: Rows read, planned, written and committed together. Small enough that a
 #: batch's row locks are brief beside live traffic; large enough that a big
@@ -80,12 +87,23 @@ DEFAULT_BATCH_SIZE = 500
 
 _CURSOR_SEPARATOR = ":"
 
+# The sweep's own engine, with bind parameters hidden from every error it can
+# raise: the compare-and-swap's ``old`` parameter is the stored value, which for
+# a legacy row is the user's plaintext. ``run`` also catches database errors and
+# reports them by class name only; this keeps an uncaught one content-free too.
+engine = create_async_engine(DATABASE_URL, echo=False, hide_parameters=True)
+async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
 Row = tuple[int, str | None]
 Rewrite = tuple[int, str, str]
 
 
 class SweepIntegrityError(RuntimeError):
     """A value no configured key decrypts; its batch was not written."""
+
+
+class SweepDatabaseError(RuntimeError):
+    """The database failed mid-sweep; named by class and column, never by value."""
 
 
 @dataclass
@@ -265,19 +283,39 @@ async def reencrypt_column(
 ) -> ColumnSweep:
     """Move every plaintext and old-key value of ``target`` to the primary key."""
     report = ColumnSweep(target, apply=apply, last_id=after)
-    while rows := await _batch(session, target, report.last_id, batch_size):
-        try:
-            rewrites = _plan(target, rows, report)
-        except (SweepIntegrityError, je.JournalEncryptionError):
-            await session.rollback()
-            resume = f"{target.qualified}{_CURSOR_SEPARATOR}{report.last_id}"
-            _warn(f"stopped at {target.qualified}: resume with --start-after {resume}")
-            raise
-        if apply:
-            report.skipped += len(rewrites) - await apply_rewrites(session, target, rewrites)
-            _warn(f"committed {target.qualified} through id={rows[-1][0]}")
-        report.last_id = rows[-1][0]
+    try:
+        while rows := await _batch(session, target, report.last_id, batch_size):
+            await _sweep_batch(session, target, rows, report)
+            report.last_id = rows[-1][0]
+    except SQLAlchemyError as exc:
+        await stop_batch(session, report)
+        # ``from None``: the original carries the bind parameters in its str.
+        msg = f"{type(exc).__name__} while sweeping {target.qualified}"
+        raise SweepDatabaseError(msg) from None
+    except (SweepIntegrityError, je.JournalEncryptionError):
+        await stop_batch(session, report)
+        raise
     return report
+
+
+async def _sweep_batch(
+    session: AsyncSession, target: EncryptedColumn, rows: list[Row], report: ColumnSweep
+) -> None:
+    """Plan one batch in full, then (applied) write and commit it."""
+    rewrites = _plan(target, rows, report)
+    if report.apply:
+        report.skipped += len(rewrites) - await apply_rewrites(session, target, rewrites)
+        _warn(f"committed {target.qualified} through id={rows[-1][0]}")
+
+
+async def stop_batch(session: AsyncSession, report: ColumnSweep) -> None:
+    """Roll back the batch in flight and say where to resume."""
+    try:
+        await session.rollback()
+    except SQLAlchemyError:
+        _warn("rollback failed; the connection is gone and its transaction with it")
+    resume = f"{report.target.qualified}{_CURSOR_SEPARATOR}{report.last_id}"
+    _warn(f"stopped at {report.target.qualified}: resume with --start-after {resume}")
 
 
 def _columns_from(start: StartAfter | None) -> list[tuple[EncryptedColumn, int]]:
@@ -352,6 +390,16 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+async def _dispatch(args: argparse.Namespace) -> int:
+    """Refuse without keys, then run the chosen command."""
+    if je.key_count() == 0:
+        _warn(f"{je.KEYS_ENV_VAR} is not configured; nothing can be verified or encrypted")
+        return EXIT_INTEGRITY
+    if args.command == "audit":
+        return await _audit(args.batch_size)
+    return await _reencrypt(apply=args.apply, batch_size=args.batch_size, start=args.start_after)
+
+
 async def run(argv: Sequence[str] | None = None) -> int:
     """Run one command and return its exit code.
 
@@ -360,17 +408,17 @@ async def run(argv: Sequence[str] | None = None) -> int:
     """
     args = parse_args(argv)
     try:
-        if je.key_count() == 0:
-            _warn(f"{je.KEYS_ENV_VAR} is not configured; nothing can be verified or encrypted")
-            return EXIT_INTEGRITY
-        if args.command == "audit":
-            return await _audit(args.batch_size)
-        return await _reencrypt(
-            apply=args.apply, batch_size=args.batch_size, start=args.start_after
-        )
+        return await _dispatch(args)
     except (SweepIntegrityError, je.JournalEncryptionError) as exc:
         _warn(f"integrity stop: {exc}")
         return EXIT_INTEGRITY
+    except SweepDatabaseError as exc:
+        _warn(f"database stop: {exc}")
+        return EXIT_DATABASE
+    except SQLAlchemyError as exc:
+        # Class name only: the message can carry bind parameters.
+        _warn(f"database stop: {type(exc).__name__}")
+        return EXIT_DATABASE
 
 
 def main(argv: Sequence[str] | None = None) -> int:

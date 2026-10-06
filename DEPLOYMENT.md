@@ -773,7 +773,10 @@ only copy. So a rotation is finished by a sweep, run from `backend/` with
 Exit codes, for both commands: `0` clean; `1` rows remain (plaintext or
 old-key values, or rows a user edited during the sweep — run it again); `2` a
 malformed command line; `3` an integrity stop (no key, a malformed key, or a
-value no listed key can read).
+value no listed key can read); `4` a database stop (a timeout, deadlock or lost
+connection mid-run — the batch in flight is rolled back, and the error is
+reported by class, column and resume point only, never with the values it was
+writing).
 
 Only once the audit exits `0` with the old key still listed is that key no
 longer needed by the **live** database. It is still needed by every backup taken
