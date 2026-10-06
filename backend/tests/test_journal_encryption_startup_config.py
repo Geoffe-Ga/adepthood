@@ -127,6 +127,18 @@ def test_platform_production_refuses_boot_whatever_env_says(
         validate_journal_encryption_config()
 
 
+def test_typed_production_is_not_overridden_by_a_platform_staging_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ENV=production`` on a service Railway calls staging still requires the key."""
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+    _set_keys(monkeypatch, None)
+
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        validate_journal_encryption_config()
+
+
 def test_platform_deploy_without_an_environment_name_refuses_boot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

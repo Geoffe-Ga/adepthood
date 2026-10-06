@@ -154,6 +154,14 @@ def _clear_production_signals(monkeypatch: pytest.MonkeyPatch) -> None:
         ({"RAILWAY_SERVICE_ID": "s"}, True),
         ({"RAILWAY_PUBLIC_DOMAIN": "api.example.com"}, True),
         ({"RAILWAY_PROJECT_ID": "p", "RAILWAY_ENVIRONMENT_NAME": "staging"}, False),
+        # Production wins from either side: a typed ENV=production is not
+        # overridden by a platform name of staging, and two platform names that
+        # disagree resolve to production.
+        ({"ENV": "production", "RAILWAY_ENVIRONMENT_NAME": "staging"}, True),
+        ({"RAILWAY_ENVIRONMENT_NAME": "staging", "RAILWAY_ENVIRONMENT": "production"}, True),
+        ({"RAILWAY_ENVIRONMENT_NAME": "production", "RAILWAY_ENVIRONMENT": "staging"}, True),
+        # The platform names are normalised the way ENV is.
+        ({"RAILWAY_ENVIRONMENT_NAME": " Production "}, True),
         # Blank values are absent values.
         ({"RAILWAY_ENVIRONMENT_NAME": "  ", "ENV": "development"}, False),
     ],
