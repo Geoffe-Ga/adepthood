@@ -59,8 +59,10 @@ def test_the_section_gives_the_sweep_commands_as_the_code_spells_them(section: s
     for command in (
         f"python -m {_SWEEP_MODULE} audit",
         f"python -m {_SWEEP_MODULE} reencrypt",
-        f"python -m {_SWEEP_MODULE} reencrypt --apply",
+        f"python -m {_SWEEP_MODULE} reencrypt --apply --primary-fingerprint",
         "--start-after",
+        # Where the fingerprint comes from: the deployed service's boot log.
+        "journal_encryption_primary_fingerprint=",
     ):
         assert command in section, f"the runbook does not give `{command}`"
 
@@ -87,3 +89,8 @@ def test_retired_claims_do_not_return(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     found = [pattern.pattern for pattern in _RETIRED_CLAIMS if pattern.search(text)]
     assert found == []
+
+
+def test_the_section_requires_key0_deployed_and_escrowed_before_apply(section: str) -> None:
+    """A key that exists only in an operator's shell must never receive the corpus."""
+    assert re.search(r"deployed\s+and\s+escrowed\s+before", section)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 
 import pytest
 from cryptography.fernet import Fernet
@@ -387,3 +389,31 @@ def test_plaintext_read_without_a_key_is_silent(
 
     assert je.legacy_plaintext_reads() == 0
     assert caplog.records == []
+
+
+def test_primary_key_fingerprint_identifies_key0_without_revealing_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Short, stable, key0-only, domain-separated -- and never the key itself."""
+    first, second = _key(), _key()
+    monkeypatch.setenv(_ENV, f"{first},{second}")
+    je.reset_cache()
+    fingerprint = je.primary_key_fingerprint()
+
+    assert re.fullmatch(r"[0-9a-f]{12}", fingerprint)
+    assert fingerprint not in first
+    # A bare hash of the key is not the fingerprint: the label separates them.
+    assert fingerprint != hashlib.sha256(first.encode()).hexdigest()[:12]
+
+    monkeypatch.setenv(_ENV, f"{first},{_key()}")
+    je.reset_cache()
+    assert je.primary_key_fingerprint() == fingerprint, "only key0 contributes"
+
+    monkeypatch.setenv(_ENV, f"{second},{first}")
+    je.reset_cache()
+    assert je.primary_key_fingerprint() != fingerprint
+
+    monkeypatch.delenv(_ENV, raising=False)
+    je.reset_cache()
+    with pytest.raises(je.JournalEncryptionError, match=_ENV):
+        je.primary_key_fingerprint()

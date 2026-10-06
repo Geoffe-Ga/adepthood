@@ -256,3 +256,40 @@ async def test_boot_completes_in_development_with_no_key(
 
     async with _isolated_factory_patch(), lifespan(app):
         assert journal_encryption.is_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_boot_logs_the_primary_key_fingerprint_and_never_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The deployed key0 is identifiable from the boot log, for the sweep to confirm."""
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv(ENV_VAR, "development")
+    _set_keys(monkeypatch, key)
+    caplog.set_level(logging.INFO, logger=MAIN_LOGGER)
+
+    async with _isolated_factory_patch(), lifespan(app):
+        pass
+
+    expected = (
+        f"journal_encryption_primary_fingerprint={journal_encryption.primary_key_fingerprint()}"
+    )
+    assert expected in caplog.text
+    assert key not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_boot_without_a_key_logs_no_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No key, no fingerprint line -- and no crash computing one."""
+    monkeypatch.setenv(ENV_VAR, "development")
+    _set_keys(monkeypatch, None)
+    caplog.set_level(logging.INFO, logger=MAIN_LOGGER)
+
+    async with _isolated_factory_patch(), lifespan(app):
+        pass
+
+    assert "journal_encryption_primary_fingerprint" not in caplog.text

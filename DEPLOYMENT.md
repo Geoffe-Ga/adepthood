@@ -753,15 +753,24 @@ read raises. There is no recovery from a discarded key: the ciphertext is the
 only copy. So a rotation is finished by a sweep, run from `backend/` with
 `DATABASE_URL` and `JOURNAL_ENCRYPTION_KEYS` set exactly as the service has them:
 
-1. Generate a new key, prepend it, redeploy.
-2. `PYTHONPATH=src python -m scripts.journal_encryption_sweep audit` — prints,
-   per `table.column`, how many values are NULL, plaintext, readable by each key
+1. Generate a new key, put it in escrow, prepend it, redeploy. The new key0
+   must be **deployed and escrowed before** `--apply`: the sweep encrypts the
+   whole corpus under it, and a key that exists only in an operator's shell is
+   a corpus production cannot read and nobody can recover. Each worker's boot
+   log then carries `journal_encryption_primary_fingerprint=<12 hex>` — a
+   non-secret fingerprint of key0, never the key.
+2. `PYTHONPATH=src python -m scripts.journal_encryption_sweep audit` — prints
+   `primary_key_fingerprint=<12 hex>` for the key0 in *your* shell, then, per
+   `table.column`, how many values are NULL, plaintext, readable by each key
    position (`key0` is the new primary), and readable by none. Counts and names
-   only: never a value, a hash or a key.
+   only: never a value or a key. The fingerprint must equal the boot log's; if
+   it does not, your shell does not hold the deployed keys — stop.
 3. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt` — a dry
    run that reports what would be rewritten and writes nothing.
-4. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply`
-   — rewrites every plaintext and old-key value under the primary key, in
+4. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply --primary-fingerprint <12 hex>`,
+   passing the fingerprint from the deployed service's boot log — the command
+   refuses (exit `3`, nothing written) unless it matches this shell's key0. It
+   rewrites every plaintext and old-key value under the primary key, in
    batches committed one at a time. Each write is compare-and-swap, so a value a
    user edits meanwhile is skipped rather than overwritten. A value no listed key
    can read stops the run before anything in its batch is written; plaintext is
@@ -772,8 +781,9 @@ only copy. So a rotation is finished by a sweep, run from `backend/` with
 
 Exit codes, for both commands: `0` clean; `1` rows remain (plaintext or
 old-key values, or rows a user edited during the sweep — run it again); `2` a
-malformed command line; `3` an integrity stop (no key, a malformed key, or a
-value no listed key can read); `4` a database stop (a timeout, deadlock or lost
+malformed command line; `3` an integrity stop (no key, a malformed key, a
+missing or mismatched `--primary-fingerprint` on `--apply`, or a value no
+listed key can read); `4` a database stop (a timeout, deadlock or lost
 connection mid-run — the batch in flight is rolled back, and the error is
 reported by class, column and resume point only, never with the values it was
 writing).

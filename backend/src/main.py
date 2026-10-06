@@ -979,6 +979,13 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+    if journal_encryption.is_enabled():
+        # Non-secret: the operator sweep refuses to write under any other key0
+        # (``--primary-fingerprint``), so this is the value it is checked against.
+        logger.info(
+            "journal_encryption_primary_fingerprint=%s",
+            journal_encryption.primary_key_fingerprint(),
+        )
 
     # ...and in production, refuse the boot outright: an unset key there is a
     # deploy that stores every user's journal in plaintext, which the log line

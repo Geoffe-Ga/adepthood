@@ -10,8 +10,10 @@ finishes it.
 ``audit`` reads every encrypted column without decrypting it into output and
 prints, per ``table.column``, how many values are NULL, plaintext, decryptable
 by each configured key position (``key0`` is the primary), and decryptable by
-none. It prints counts and names only -- never a value, a length, a hash, a row
-owner, or a key.
+none. It prints counts and names only -- never a value, a length, a hash of a value,
+a row owner, or a key. Its first line names the primary key only by
+``primary_key_fingerprint`` -- a short, domain-separated hash of key0 that the
+service also logs at boot.
 
 ``reencrypt`` rewrites every plaintext and non-primary value under the primary
 key. It is a dry run unless ``--apply`` is given. It pages each column by ``id``
@@ -21,7 +23,10 @@ run (a plain rerun is also safe: rows already on the primary key are skipped).
 Each write is compare-and-swap -- ``UPDATE ... WHERE id = :id AND col = :old``
 -- so a value a user rewrote meanwhile is skipped, not clobbered. A value no
 configured key decrypts stops the run *before* anything in its batch is
-written; plaintext is never written.
+written; plaintext is never written. ``--apply`` also requires
+``--primary-fingerprint`` naming key0's fingerprint as the deployed service
+logged it: nothing in the data can prove key0 before a first rotation, and a
+key that lives only in the operator's shell must never receive the corpus.
 
 The columns come from ``services.encryption_inventory``, derived from the
 schema, so a column added later is covered without editing this file.
@@ -31,7 +36,8 @@ set exactly as the service has them::
 
     PYTHONPATH=src python -m scripts.journal_encryption_sweep audit
     PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt
-    PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply
+    PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply \
+        --primary-fingerprint <journal_encryption_primary_fingerprint from the boot log>
 
 Exit codes:
     0 -- clean: no plaintext, every token on the primary key (``audit``), or
@@ -39,7 +45,8 @@ Exit codes:
     1 -- rows remain: plaintext or old-key values exist (``audit`` or a dry
          run), or an applied sweep skipped rows a user rewrote meanwhile.
     2 -- usage error (argparse).
-    3 -- integrity stop: no key configured, a malformed key, or a value no
+    3 -- integrity stop: no key configured, a malformed key, a missing or
+         mismatched ``--primary-fingerprint`` on ``--apply``, or a value no
          configured key decrypts. Nothing in the failing batch was written.
     4 -- database stop: the database failed mid-run (timeout, deadlock, lost
          connection). Reported by error class, column and resume point only;
@@ -50,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -385,9 +393,33 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     audit.add_argument("--batch-size", type=_positive, default=DEFAULT_BATCH_SIZE)
     sweep = commands.add_parser("reencrypt", help="move every value to the primary key")
     sweep.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    sweep.add_argument(
+        "--primary-fingerprint",
+        default=None,
+        help="required with --apply: the deployed key0 fingerprint from the boot log",
+    )
     sweep.add_argument("--batch-size", type=_positive, default=DEFAULT_BATCH_SIZE)
     sweep.add_argument("--start-after", type=_start_after, default=None, metavar="TABLE.COLUMN:ID")
     return parser.parse_args(argv)
+
+
+def _primary_confirmed(expected: str | None) -> bool:
+    """Whether the operator named the fingerprint of the key0 about to be used.
+
+    Nothing in the data can prove key0 before a first rotation, so the operator
+    supplies the fingerprint the deployed service logged at boot. A mismatch
+    means this shell would encrypt under a key production may not hold.
+    """
+    actual = je.primary_key_fingerprint()
+    if expected is not None and hmac.compare_digest(expected, actual):
+        return True
+    _warn(
+        f"refusing --apply: this shell's primary key has fingerprint {actual}, and "
+        "--primary-fingerprint must name it. Take the value from the deployed "
+        "service's journal_encryption_primary_fingerprint boot log line; if they "
+        "differ, the deploy does not hold this key and nothing may be written under it."
+    )
+    return False
 
 
 async def _dispatch(args: argparse.Namespace) -> int:
@@ -396,7 +428,10 @@ async def _dispatch(args: argparse.Namespace) -> int:
         _warn(f"{je.KEYS_ENV_VAR} is not configured; nothing can be verified or encrypted")
         return EXIT_INTEGRITY
     if args.command == "audit":
+        _say(f"primary_key_fingerprint={je.primary_key_fingerprint()}")
         return await _audit(args.batch_size)
+    if args.apply and not _primary_confirmed(args.primary_fingerprint):
+        return EXIT_INTEGRITY
     return await _reencrypt(apply=args.apply, batch_size=args.batch_size, start=args.start_after)
 
 

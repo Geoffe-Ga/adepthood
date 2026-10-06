@@ -55,6 +55,11 @@ def _canary(phase: str, column: str) -> str:
     return f"canary-{phase}-{column}: the thing I have never told anyone"
 
 
+def _apply(*extra: str) -> list[str]:
+    """``reencrypt --apply`` confirming the primary key the current keys hold."""
+    return ["reencrypt", "--apply", "--primary-fingerprint", je.primary_key_fingerprint(), *extra]
+
+
 def _texts(phase: str, table: str) -> Callable[[str], str]:
     """The canary writer for one table: column name -> that column's canary."""
     return lambda column: _canary(phase, f"{table}.{column}")
@@ -207,7 +212,7 @@ async def test_sweep_moves_everything_to_the_new_key_so_the_old_one_can_go(
     assert "committed" not in dry.err, "a dry run committed a batch"
     assert "mode=dry-run" in dry.out
 
-    assert await sweep.run(["reencrypt", "--apply"]) == sweep.EXIT_CLEAN
+    assert await sweep.run(_apply()) == sweep.EXIT_CLEAN
     assert await sweep.run(["audit"]) == sweep.EXIT_CLEAN
 
     # The restart without the old key: every row still reads, through the ORM too.
@@ -226,7 +231,7 @@ async def test_sweep_moves_everything_to_the_new_key_so_the_old_one_can_go(
     assert entry.message == _canary("legacy", _MESSAGE.qualified)
 
     capsys.readouterr()
-    assert await sweep.run(["reencrypt", "--apply"]) == sweep.EXIT_CLEAN
+    assert await sweep.run(_apply()) == sweep.EXIT_CLEAN
     rerun = capsys.readouterr().out
     assert "encrypted=0 rotated=0" in rerun
     assert "encrypted=1" not in rerun
@@ -290,7 +295,7 @@ async def test_a_wrong_key_stops_the_sweep_before_any_write_in_the_batch(
     # Dry, too: a token nothing can read is not "would rotate".
     assert await sweep.run(["reencrypt"]) == sweep.EXIT_INTEGRITY
     dry = capsys.readouterr()
-    assert await sweep.run(["reencrypt", "--apply"]) == sweep.EXIT_INTEGRITY
+    assert await sweep.run(_apply()) == sweep.EXIT_INTEGRITY
     refusal = capsys.readouterr()
 
     assert await _raw_everything(db_session) == before
@@ -322,7 +327,7 @@ async def test_an_interrupted_sweep_resumes_and_finishes_on_rerun(
         return real_rotate(value)
 
     monkeypatch.setattr(sweep.je, "rotate", _fail_second)
-    args = ["reencrypt", "--apply", "--batch-size", "1", "--start-after", f"{_MESSAGE.qualified}:0"]
+    args = _apply("--batch-size", "1", "--start-after", f"{_MESSAGE.qualified}:0")
     assert await sweep.run(args) == sweep.EXIT_INTEGRITY
     after_crash = sorted(await _raw(db_session, _MESSAGE))
     stored = await _raw(db_session, _MESSAGE)
@@ -333,7 +338,7 @@ async def test_an_interrupted_sweep_resumes_and_finishes_on_rerun(
     ]
 
     monkeypatch.setattr(sweep.je, "rotate", real_rotate)
-    assert await sweep.run(["reencrypt", "--apply", "--batch-size", "1"]) == sweep.EXIT_CLEAN
+    assert await sweep.run(_apply("--batch-size", "1")) == sweep.EXIT_CLEAN
     assert await sweep.run(["audit"]) == sweep.EXIT_CLEAN
 
 
@@ -350,7 +355,7 @@ async def test_start_after_skips_earlier_columns_and_rows(
     _keys(monkeypatch, Fernet.generate_key().decode())
 
     start = f"{_MESSAGE.qualified}:{ids['journalentry']}"
-    assert await sweep.run(["reencrypt", "--apply", "--start-after", start]) == sweep.EXIT_CLEAN
+    assert await sweep.run(_apply("--start-after", start)) == sweep.EXIT_CLEAN
 
     message = await _raw(db_session, _MESSAGE)
     assert message[ids["journalentry"]] == _canary("first", _MESSAGE.qualified)
@@ -439,7 +444,7 @@ async def test_an_applied_sweep_that_skips_a_concurrent_edit_exits_rows_remain(
     monkeypatch.setattr(sweep, "apply_rewrites", _user_edits_first)
     capsys.readouterr()
 
-    assert await sweep.run(["reencrypt", "--apply"]) == sweep.EXIT_ROWS_REMAIN
+    assert await sweep.run(_apply()) == sweep.EXIT_ROWS_REMAIN
 
     out = capsys.readouterr().out
     message_line = next(line for line in out.splitlines() if f" {_MESSAGE.qualified} " in line)
@@ -472,9 +477,7 @@ async def test_a_database_error_mid_sweep_reports_no_content(
     await db_session.commit()
     _keys(monkeypatch, Fernet.generate_key().decode())
 
-    exit_code = await sweep.run(
-        ["reencrypt", "--apply", "--start-after", f"{_MESSAGE.qualified}:0"]
-    )
+    exit_code = await sweep.run(_apply("--start-after", f"{_MESSAGE.qualified}:0"))
 
     captured = capsys.readouterr()
     assert exit_code == sweep.EXIT_DATABASE
@@ -528,3 +531,54 @@ async def test_a_failed_rollback_still_reports_the_resume_point(
     err = capsys.readouterr().err
     assert "rollback failed" in err
     assert f"--start-after {_MESSAGE.qualified}:7" in err
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_cli_session")
+@pytest.mark.parametrize(
+    "confirmation",
+    [[], ["--primary-fingerprint", "000000000000"]],
+    ids=["missing", "mismatched"],
+)
+async def test_apply_refuses_a_primary_key_it_was_not_told_to_expect(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    confirmation: list[str],
+) -> None:
+    """An all-plaintext column under a shell-only key0 is not encrypted at all.
+
+    Nothing in the data can prove key0 here -- no existing ciphertext to try --
+    so the operator must name the fingerprint the deployed service logged.
+    """
+    ids = await _seed_every_table(db_session, "unconfirmed")
+    _keys(monkeypatch, Fernet.generate_key().decode())
+    before = await _raw_everything(db_session)
+
+    exit_code = await sweep.run(["reencrypt", "--apply", *confirmation])
+
+    assert exit_code == sweep.EXIT_INTEGRITY
+    assert await _raw_everything(db_session) == before
+    assert not je.is_ciphertext((await _raw(db_session, _MESSAGE))[ids["journalentry"]] or "")
+    err = capsys.readouterr().err
+    assert "--primary-fingerprint" in err
+    assert je.primary_key_fingerprint() in err
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_cli_session")
+async def test_audit_prints_the_primary_key_fingerprint(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The audit names key0 by fingerprint, so the operator can match it to the deploy."""
+    key = Fernet.generate_key().decode()
+    _keys(monkeypatch, key)
+    await _seed_every_table(db_session, "fp")
+
+    await sweep.run(["audit"])
+
+    out = capsys.readouterr().out
+    assert f"primary_key_fingerprint={je.primary_key_fingerprint()}" in out
+    assert key not in out

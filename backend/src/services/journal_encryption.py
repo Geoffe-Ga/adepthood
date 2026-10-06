@@ -29,6 +29,7 @@ process restart to take effect (rotation is a deploy-time operation); tests call
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections.abc import Mapping
@@ -169,6 +170,29 @@ def reset_cache() -> None:
     _registry.cache_clear()
     _legacy_reads.count = 0
     _legacy_reads.warned = False
+
+
+# Domain separation for the fingerprint: a hash of the bare key would collide in
+# meaning with any other place that hashes the same bytes.
+_FINGERPRINT_LABEL = b"adepthood/journal-encryption/primary-key-fingerprint/v1\x00"
+#: 12 hex digits (48 bits): enough to tell keys apart by eye, far too few to
+#: help recover a 256-bit key.
+FINGERPRINT_HEX_DIGITS = 12
+
+
+def primary_key_fingerprint() -> str:
+    """A short, non-secret identifier of the primary (first) key.
+
+    Logged at boot and printed by the audit so an operator can confirm the key
+    a sweep will encrypt under is the key the deployed service holds, without
+    either side ever showing the key.
+
+    Raises:
+        JournalEncryptionError: no key is configured, or a key is invalid.
+    """
+    _require_registry()
+    primary = _configured_keys()[0].encode()
+    return hashlib.sha256(_FINGERPRINT_LABEL + primary).hexdigest()[:FINGERPRINT_HEX_DIGITS]
 
 
 def key_count() -> int:
