@@ -80,6 +80,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
+  'journal-only.browser.e2e.test.ts',
   'journal-promote-explainer.browser.e2e.test.ts',
   'journal-promote-quote-long-entry.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
