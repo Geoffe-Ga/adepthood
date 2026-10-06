@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from datetime import date
 from http import HTTPStatus
 
@@ -33,7 +33,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -59,6 +59,7 @@ from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.email import RecordingEmailSender
 from services.oidc import OIDCIdentity
+from services.reflection_boundary import REFLECTION_SOURCE_UNAVAILABLE, ReflectionBoundary
 from tests.helpers.password_reset import extract_reset_token
 from tests.support.outbound_boundary import (
     ConnectionHeldAcrossOutboundCallError,
@@ -112,6 +113,8 @@ _REFLECT = "CreekVaultClient.reflect"
 _WHEEL = "CreekVaultClient.wheel"
 _UPLOAD = "CreekVaultClient.upload"
 _SEND = "EmailSender.send"
+_DETECTION_TASK = "detection"
+_REFLECTION_TASK = "reflection"
 
 
 @pytest.fixture
@@ -422,9 +425,14 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Clear route: POST /journal/{entry_id}/resonance, at the capability probe."""
+    """Clear route: POST /journal/{entry_id}/resonance, at the capability probe.
+
+    The caller is vault-bound -- the only caller whose pass probes a vault at
+    all (#3061) -- and the vault advertises no REFLECT, so the probe is the one
+    dial the pass makes before it fails closed with a refunded 503.
+    """
     vault = _ScriptedVault(capabilities=frozenset())
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    _bind_to_vault(vault)
     headers, _user_id = await _signup(async_client, "resonance_handshake")
     entry_id = await _create_entry(async_client, headers)
 
@@ -445,7 +453,8 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
     assert_dialled_off_the_pool(_at(outbound_boundary, _HANDSHAKE), what="the vault handshake")
 
 
@@ -465,7 +474,7 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
             routed_tier=VaultTierCeiling.PERSONAL,
         ),
     )
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    _bind_to_vault(vault)
     headers, _user_id = await _signup(async_client, "resonance_reflect")
     entry_id = await _create_entry(async_client, headers)
     outbound_boundary.reset()
@@ -474,6 +483,12 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _REFLECT), what="the vault reflection pass")
+
+
+def _bind_to_vault(vault: object) -> None:
+    """Serve ``vault`` and bind the caller's AI operations to it (#3061)."""
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.VAULT_BOUND
 
 
 async def _seed_habit_with_goal(db_session: AsyncSession, user_id: int) -> None:
@@ -508,6 +523,37 @@ async def _seed_habit_with_goal(db_session: AsyncSession, user_id: int) -> None:
     await db_session.commit()
 
 
+def _llm_answering_by_task(calls: list[str]) -> Callable[..., Awaitable[LLMResponse]]:
+    """A Botmason-seam fake that records which task each call was, and answers it.
+
+    The detection task names its ``"hits"`` contract in the prompt, the
+    reflection names ``"notes"``; recording which is which is what lets a test
+    tell the detection dial apart from the reflection dial at the same leaf.
+    """
+
+    async def _complete(
+        prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del history, api_key
+        task = f"{system_prompt or ''}\n{prompt}"
+        is_detection = '"hits"' in task or "COMPLETED" in task
+        calls.append(_DETECTION_TASK if is_detection else _REFLECTION_TASK)
+        payload = (
+            {"hits": [{"index": 0, "quote": _QUOTE}]}
+            if is_detection
+            else {"notes": [{"kind": "theme", "quote": _QUOTE, "note": "It holds."}]}
+        )
+        return LLMResponse(
+            text=json.dumps(payload),
+            provider="stub",
+            model=STUB_MODEL_NAME,
+            prompt_tokens=0,
+            completion_tokens=0,
+        )
+
+    return _complete
+
+
 @pytest.mark.asyncio
 async def test_the_completion_detection_is_dialled_off_the_pool(
     async_client: AsyncClient,
@@ -515,46 +561,57 @@ async def test_the_completion_detection_is_dialled_off_the_pool(
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Clear route: POST /journal/{entry_id}/resonance, at the completion-detection dial.
+    """Clear route: POST /journal/{entry_id}/suggestions/detect, at the detection dial.
 
-    The vault serves the reflection, so the Botmason seam answers exactly one
-    call on this request -- the detection pass -- and the observation at that
-    leaf isolates the dial this row is about.
+    Standalone detection makes exactly one outbound call -- the detection pass
+    -- so the single observation at the Botmason leaf is that dial and no
+    other. A route that skipped detection would record none and fail the
+    non-emptiness check inside ``assert_dialled_off_the_pool``.
     """
-    vault = _ScriptedVault(
-        capabilities=frozenset({CreekCapability.REFLECT}),
-        reflect_result=VaultReflection(
-            status=VaultReflectionStatus.OK,
-            notes=(VaultReflectionNote(kind="theme", quote=_QUOTE, note="You return to water."),),
-            essay=None,
-            essay_grounded=False,
-            routed_tier=VaultTierCeiling.PERSONAL,
-        ),
-    )
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "standalone_detection")
+    entry_id = await _create_entry(async_client, headers)
+    await _seed_habit_with_goal(db_session, user_id)
+    calls: list[str] = []
+    monkeypatch.setattr(marginalia_service, "generate_response", _llm_answering_by_task(calls))
+    outbound_boundary.reset()
+
+    resp = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["checked"] is True
+    assert calls == [_DETECTION_TASK]
+    observed = _at(outbound_boundary, _LLM)
+    assert len(observed) == 1
+    assert_dialled_off_the_pool(observed, what="the standalone completion-detection dial")
+
+
+@pytest.mark.asyncio
+async def test_the_resonance_pass_detection_dial_is_dialled_off_the_pool(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    outbound_boundary: OutboundBoundaryObserver,
+) -> None:
+    """Clear route: POST /journal/{entry_id}/resonance, at its in-pass detection dial.
+
+    With no vault the app provider answers both the reflection and detection,
+    so the Botmason leaf sees exactly two calls; the fake records which task
+    each was, so the detection dial is identified rather than assumed.
+    """
     headers, user_id = await _signup(async_client, "resonance_detection")
     entry_id = await _create_entry(async_client, headers)
     await _seed_habit_with_goal(db_session, user_id)
-
-    async def _detect(
-        prompt: str, history: object, *, system_prompt: object, api_key: object
-    ) -> LLMResponse:
-        del prompt, history, system_prompt, api_key
-        return LLMResponse(
-            text=json.dumps({"hits": [{"index": 0, "quote": _QUOTE}]}),
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
-
-    monkeypatch.setattr(marginalia_service, "generate_response", _detect)
+    calls: list[str] = []
+    monkeypatch.setattr(marginalia_service, "generate_response", _llm_answering_by_task(calls))
     outbound_boundary.reset()
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
     assert resp.status_code == HTTPStatus.OK, resp.text
-    assert_dialled_off_the_pool(_at(outbound_boundary, _LLM), what="the completion-detection dial")
+    assert calls == [_REFLECTION_TASK, _DETECTION_TASK]
+    observed = _at(outbound_boundary, _LLM)
+    assert len(observed) == len(calls)
+    assert_dialled_off_the_pool(observed, what="the in-pass completion-detection dial")
 
 
 @pytest.mark.asyncio
