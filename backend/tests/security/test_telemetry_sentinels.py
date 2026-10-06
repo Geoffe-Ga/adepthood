@@ -21,7 +21,6 @@ import io
 import json
 import logging
 from collections.abc import Callable, Iterator
-from pathlib import Path
 from typing import ClassVar, NoReturn
 
 import pytest
@@ -29,6 +28,7 @@ import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
+from pydantic import BaseModel
 
 import sentry as error_monitoring
 import telemetry_safety
@@ -37,9 +37,12 @@ from middleware import CorrelationIdMiddleware
 from observability import (
     TRACE_ID_HEADER,
     UNMATCHED_ROUTE,
+    ContentFreeFormatter,
     configure_logging,
     remove_app_log_handlers_for_tests,
 )
+from services.journal_encryption import JournalEncryptionError
+from tests.helpers.dockerfile_cmd import runtime_cmd_flag_names, runtime_cmd_tokens
 from tests.helpers.sentry_capture import (
     TEST_ENVIRONMENT,
     TEST_RELEASE,
@@ -268,6 +271,17 @@ def test_scrub_event_withholds_a_code_two_same_named_classes_disagree_on() -> No
     assert _exception_entries(scrubbed)[0]["value"] == telemetry_safety.MESSAGE_WITHHELD
 
 
+_DEEP_NESTING = 1000
+
+
+def _nested(leaf: object, depth: int) -> object:
+    """Return ``leaf`` wrapped in ``depth`` levels of single-key mappings."""
+    node = leaf
+    for _ in range(depth):
+        node = {"adepthood_request": node}
+    return node
+
+
 _MALFORMED_SHAPES: list[tuple[str, object]] = [
     ("exception_is_text", {"exception": SHORT_CANARY}),
     ("values_is_a_mapping", {"exception": {"values": {"value": SHORT_CANARY}}}),
@@ -286,6 +300,7 @@ _MALFORMED_SHAPES: list[tuple[str, object]] = [
     ("non_text_key", {1: SHORT_CANARY, "exception": {"values": []}}),
     ("event_is_a_list", [SHORT_CANARY]),
     ("event_is_text", SHORT_CANARY),
+    ("deeply_nested_contexts", {"contexts": _nested(SHORT_CANARY, _DEEP_NESTING)}),
 ]
 
 
@@ -329,6 +344,8 @@ def test_scrub_event_ships_a_minimal_event_when_the_rebuild_fails(
         raise RuntimeError(SHORT_CANARY)
 
     monkeypatch.setattr(error_monitoring, "exception_chain", explode)
+    monkeypatch.setenv(error_monitoring.ENVIRONMENT_ENV_VAR, "production")
+    monkeypatch.setenv(error_monitoring.SENTRY_RELEASE_ENV_VAR, "rel-minimal")
     exc = ValueError(SHORT_CANARY)
     event = _event_carrying(SHORT_CANARY)
 
@@ -336,6 +353,9 @@ def test_scrub_event_ships_a_minimal_event_when_the_rebuild_fails(
 
     assert scrubbed == {
         "level": "error",
+        "platform": "python",
+        "environment": "production",
+        "release": "rel-minimal",
         "exception": {
             "values": [
                 {
@@ -358,6 +378,17 @@ def test_no_sdk_integration_is_installed() -> None:
             disarm_sentry()
 
     assert installed == error_monitoring.APPROVED_INTEGRATIONS == frozenset()
+
+
+def test_a_journal_encryption_failure_reports_its_declared_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real app exception opts in to a code, so a key misconfiguration still groups."""
+    with capturing_sentry(monkeypatch) as events:
+        error_monitoring.capture_exception(JournalEncryptionError(SHORT_CANARY))
+
+    assert_no_canary(_dump(events), SHORT_CANARY)
+    assert _exception_entries(events[0])[0]["value"] == "journal_encryption_failed"
 
 
 # ── Backend Sentry: end to end through the real client ─────────────────────
@@ -389,10 +420,37 @@ def _raise_group(canary: str) -> None:
     raise ExceptionGroup(canary, [RuntimeError(canary), KeyError(canary)])
 
 
+class _ServiceInput(BaseModel):
+    """A service-layer model, validated from text a user supplied."""
+
+    count: int
+
+
+def _raise_validation_error(canary: str) -> None:
+    """Raise pydantic's ValidationError, whose ``str()`` quotes ``input_value``."""
+    _ServiceInput.model_validate({"count": canary})
+
+
 _RAISERS = {
     "raise_from": _raise_from,
     "implicit_context": _raise_in_handler,
     "exception_group": _raise_group,
+    "pydantic_validation_error": _raise_validation_error,
+}
+
+# Per shape: how many exception entries the chain yields, and the type of the
+# outermost one -- asserted so a pass cannot come from an event that lost links.
+_CHAIN_LINKS = {
+    "raise_from": 2,
+    "implicit_context": 2,
+    "exception_group": 3,
+    "pydantic_validation_error": 1,
+}
+_OUTER_TYPE = {
+    "raise_from": "ValueError",
+    "implicit_context": "ValueError",
+    "exception_group": "ExceptionGroup",
+    "pydantic_validation_error": "ValidationError",
 }
 
 
@@ -411,7 +469,8 @@ def test_captured_chain_ships_no_message(
     assert len(events) == 1
     assert_no_canary(_dump(events[0]), canary)
     entries = _exception_entries(events[0])
-    assert len(entries) >= 2, "every chain link is still reported, by type"
+    assert len(entries) == _CHAIN_LINKS[shape], "every chain link is still reported, by type"
+    assert entries[-1]["type"] == _OUTER_TYPE[shape]
     assert {entry["value"] for entry in entries} == {telemetry_safety.MESSAGE_WITHHELD}
 
 
@@ -537,6 +596,13 @@ def app_stream() -> Iterator[io.StringIO]:
         remove_app_log_handlers_for_tests()
 
 
+def _app_handlers() -> list[logging.Handler]:
+    """Return the root handlers ``configure_logging`` installed."""
+    return [
+        h for h in logging.getLogger().handlers if isinstance(h.formatter, ContentFreeFormatter)
+    ]
+
+
 def _caught(raiser: Callable[[str], None], canary: str) -> BaseException:
     """Return the exception ``raiser`` raises, with its real traceback attached."""
     try:
@@ -562,9 +628,7 @@ def test_an_exc_info_record_prints_types_and_frames_but_no_message(
     assert "[-]" in output, "the trace-id bracket is still stamped"
     assert "Traceback (most recent call last):" in output
     assert f'{_THIS_FILE}", line ' in output
-    assert (
-        f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output or shape == "exception_group"
-    )
+    assert f"{_OUTER_TYPE[shape]}: {telemetry_safety.MESSAGE_WITHHELD}" in output
 
 
 def test_a_chain_keeps_its_cause_separator_and_every_type(app_stream: io.StringIO) -> None:
@@ -672,7 +736,9 @@ def uvicorn_stream() -> Iterator[io.StringIO]:
         remove_app_log_handlers_for_tests()
 
 
-def test_uvicorns_own_traceback_is_content_free(uvicorn_stream: io.StringIO) -> None:
+def test_uvicorns_own_traceback_is_content_free(
+    uvicorn_stream: io.StringIO, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The server's "Exception in ASGI application" line keeps types, loses messages."""
     exc = _caught(_raise_from, SHORT_CANARY)
 
@@ -682,6 +748,30 @@ def test_uvicorns_own_traceback_is_content_free(uvicorn_stream: io.StringIO) -> 
     assert_no_canary(output, SHORT_CANARY)
     assert "Exception in ASGI application" in output
     assert f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    # uvicorn's handlers carry no trace filter; a format needing one would fail
+    # into ``handleError``, which prints the raw record to stderr.
+    assert "Logging error" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("canary", SENTINELS, ids=SENTINEL_IDS)
+def test_an_unformattable_record_prints_a_fixed_line_and_nothing_else(
+    app_stream: io.StringIO, capsys: pytest.CaptureFixture[str], canary: str
+) -> None:
+    """A ``%`` mismatch must not fall through to ``handleError``'s raw-record dump."""
+    record = _LOGGER.makeRecord(
+        _LOGGER.name, logging.ERROR, __file__, 0, "two placeholders %s %s", (canary,), None
+    )
+    # Handed to the app's own handlers only: pytest's capture handler would
+    # (rightly) raise on the malformed record before the app handler saw it.
+    for handler in _app_handlers():
+        handler.handle(record)
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, canary)
+    assert f"<unformattable log record: ERROR {_LOGGER.name}>" in output
+    stderr = capsys.readouterr().err
+    assert "Logging error" not in stderr
+    assert_no_canary(stderr, canary)
 
 
 def test_uvicorns_access_logger_is_switched_off(uvicorn_stream: io.StringIO) -> None:
@@ -707,15 +797,7 @@ def test_outbound_request_urls_stay_out_of_the_info_stream(
 
 # ── Query strings: only uvicorn's access line ever carried them ────────────
 
-_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 _NO_ACCESS_LOG_FLAG = "--no-access-log"
-
-
-def _runtime_cmd_tokens() -> list[str]:
-    """Return the runtime CMD of the backend Dockerfile, split into tokens."""
-    commands = [line for line in _DOCKERFILE.read_text().splitlines() if line.startswith("CMD ")]
-    assert len(commands) == 1, "expected exactly one CMD directive in backend/Dockerfile"
-    return [token.strip('[],"') for token in commands[0].split()]
 
 
 def test_the_runtime_cmd_disables_uvicorns_access_log() -> None:
@@ -725,11 +807,13 @@ def test_the_runtime_cmd_disables_uvicorns_access_log() -> None:
     app's own ``adepthood.access`` record already covers method, route,
     status and latency without it.
     """
-    tokens = _runtime_cmd_tokens()
+    tokens = runtime_cmd_tokens()
 
     assert _NO_ACCESS_LOG_FLAG in tokens
     assert "--access-log" not in tokens
-    assert "--log-config" not in {token.split("=")[0] for token in tokens}
+    # A log config would replace uvicorn's loggers wholesale, out from under
+    # the content-free formatter configure_logging installs on them.
+    assert "--log-config" not in runtime_cmd_flag_names()
 
 
 _TEST_CLIENT_LOGGER = "httpx"

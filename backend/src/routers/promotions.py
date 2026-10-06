@@ -29,6 +29,7 @@ from error_responses import build_router
 from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote
+from observability import route_template
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, count_query_total, page_has_more
@@ -314,7 +315,11 @@ async def list_all_promotions(
     # keeps the read observable beside the write events above.
     logger.info(
         "promoted_quotes_listed",
-        extra={"user_id": current_user, "status": params.status.value, "path": request.url.path},
+        extra={
+            "user_id": current_user,
+            "status": params.status.value,
+            "path": route_template(request),
+        },
     )
     return PromotedQuoteListResponse(
         items=[_list_item(*row) for row in page.all()],

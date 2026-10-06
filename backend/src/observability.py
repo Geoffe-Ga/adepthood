@@ -209,6 +209,12 @@ _CAUSE_SEPARATOR = "\nThe above exception was the direct cause of the following 
 _CONTEXT_SEPARATOR = "\nDuring handling of the above exception, another exception occurred:\n\n"
 _GROUP_MEMBER_HEADER = "+---- exception group member {index} ----\n"
 
+#: What a record that cannot be formatted is reduced to: level and logger only.
+_UNFORMATTABLE_RECORD = "<unformattable log record: {level} {logger}>"
+
+#: What a ``%``-format mismatch or a missing format field raises.
+_FORMAT_FAILURES = (TypeError, ValueError, KeyError, AttributeError)
+
 
 def _neutralised(value: object) -> object:
     """Return an exception as its content-free label; anything else unchanged."""
@@ -286,7 +292,21 @@ class ContentFreeFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format a content-free copy of ``record``."""
+        """Format a content-free copy of ``record``; never raise.
+
+        A formatter that raises hands the record to ``Handler.handleError``,
+        which prints the raw ``msg`` and ``args`` to stderr -- the very text
+        this class withholds. A record that cannot be formatted (a ``%``
+        mismatch, a missing format field) is therefore reduced to a fixed line
+        naming only its level and logger.
+        """
+        try:
+            return self._format_content_free(record)
+        except _FORMAT_FAILURES:
+            return _UNFORMATTABLE_RECORD.format(level=record.levelname, logger=record.name)
+
+    def _format_content_free(self, record: logging.LogRecord) -> str:
+        """Format a copy of ``record`` with every exception text replaced by its label."""
         safe = copy.copy(record)
         safe.msg = _neutralised(record.msg)
         safe.args = _neutralised_args(record.args)

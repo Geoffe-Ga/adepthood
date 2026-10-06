@@ -253,8 +253,18 @@ def _rebuild_event(event: dict[str, object], codes: dict[str, str]) -> dict[str,
 
 
 def _minimal_event() -> dict[str, object]:
-    """Return the event shipped when the rebuild itself failed."""
-    return {"level": "error", "exception": {"values": [_unreportable_entry()]}}
+    """Return the event shipped when the rebuild itself failed.
+
+    Built from this deployment's configuration, never from the event, so the
+    operator still learns which environment and release failed to report.
+    """
+    return {
+        "level": "error",
+        "platform": "python",
+        "environment": os.getenv(ENVIRONMENT_ENV_VAR) or DEFAULT_ENVIRONMENT,
+        "release": _configured_release(),
+        "exception": {"values": [_unreportable_entry()]},
+    }
 
 
 def _redacted(node: object, secrets: tuple[str, ...]) -> object:
@@ -326,8 +336,8 @@ def init_error_monitoring(transport: Transport | None = None) -> bool:
     """Initialise error monitoring if a DSN is configured; report whether it is.
 
     Never raises.  An unset DSN is a supported way to run this app, and a
-    mistyped one must not cost a deploy: both degrade to "no vendor, full local
-    logs" and say so once, mirroring ``validate_creek_vault_url_config``.
+    mistyped one must not cost a deploy: both degrade to "no vendor, local
+    logs only" and say so once, mirroring ``validate_creek_vault_url_config``.
 
     ``transport`` is an injection seam for the tests, which drive *this*
     function — DSN handling, option set and all — with events landing in a list

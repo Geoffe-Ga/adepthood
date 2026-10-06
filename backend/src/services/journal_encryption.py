@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from typing import ClassVar
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy import Text, TypeDecorator
@@ -35,6 +36,10 @@ _PREFIX = "enc::v1::"
 
 class JournalEncryptionError(RuntimeError):
     """Encryption/decryption could not be performed as configured."""
+
+    #: Content-free reason telemetry reports in place of the message (#3064):
+    #: a key misconfiguration is worth grouping by, and its message is withheld.
+    safe_code: ClassVar[str] = "journal_encryption_failed"
 
 
 def _configured_keys() -> list[str]:
