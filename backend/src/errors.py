@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, truncate_log_path
+from observability import NO_TRACE, TRACE_ID_HEADER, get_trace_id, route_template
 from security.pg_text_guard import UnstorableTextError
 from sentry import capture_exception
 from services.journal_encryption import JournalEncryptionError
@@ -229,20 +229,20 @@ def _sanitized_500(
     without that ambient coupling.
     """
     request_id = getattr(request.state, "request_id", None) or get_trace_id() or NO_TRACE
-    truncated_path = truncate_log_path(request.url.path)
+    request_route = route_template(request)
     logger.error(
         log_event,
         exc_info=exc,
         extra={
             "request_id": request_id,
-            "request_path": truncated_path,
+            "request_path": request_route,
             "request_method": request.method,
         },
     )
     capture_exception(
         exc,
         request_id=request_id,
-        request_path=truncated_path,
+        request_path=request_route,
         request_method=request.method,
     )
     return JSONResponse(

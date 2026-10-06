@@ -18,18 +18,20 @@ the exception type, the frames and the route.
 from __future__ import annotations
 
 import json
+import logging
 from typing import ClassVar, NoReturn
 
 import pytest
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import AsyncClient
 
 import sentry as error_monitoring
 import telemetry_safety
 from errors import install_exception_handlers
 from middleware import CorrelationIdMiddleware
-from observability import TRACE_ID_HEADER
+from observability import TRACE_ID_HEADER, UNMATCHED_ROUTE
 from tests.helpers.sentry_capture import (
     TEST_ENVIRONMENT,
     TEST_RELEASE,
@@ -443,3 +445,67 @@ def test_route_raising_a_canary_ships_a_clean_but_diagnosable_event(
     assert isinstance(request_context, dict)
     assert request_context["request_id"] == _REQUEST_ID
     assert request_context["request_method"] == "GET"
+
+
+# ── Paths: the route template, never the raw path ──────────────────────────
+
+_SHARE_ROUTE = "/practices/share/{token}"
+_ACCESS_LOGGER = "adepthood.access"
+
+
+def _access_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return the access-log records the request produced."""
+    return [record for record in caplog.records if record.name == _ACCESS_LOGGER]
+
+
+@pytest.mark.asyncio
+async def test_share_token_never_reaches_the_access_log(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC9: a share token is a credential in the path; the access log keeps the template."""
+    with caplog.at_level(logging.INFO, logger=_ACCESS_LOGGER):
+        await async_client.get(f"/practices/share/{SHORT_CANARY}")
+
+    records = _access_records(caplog)
+    assert records, "the request still produced its access record"
+    assert getattr(records[-1], "http_path", None) == _SHARE_ROUTE
+    assert_no_canary(_emitted(records), SHORT_CANARY)
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_path_logs_the_marker(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A path no route matched is logged as a fixed marker, not as typed."""
+    with caplog.at_level(logging.INFO, logger=_ACCESS_LOGGER):
+        await async_client.get(f"/no-such-route/{SHORT_CANARY}")
+
+    records = _access_records(caplog)
+    assert getattr(records[-1], "http_path", None) == UNMATCHED_ROUTE
+    assert_no_canary(_emitted(records), SHORT_CANARY)
+
+
+def test_sentry_and_the_error_log_report_the_route_template(
+    sentinel_app: FastAPI, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC9/AC12: the unhandled-exception record and event name the route, not the path."""
+    with capturing_sentry(monkeypatch) as events, caplog.at_level(logging.ERROR, logger="errors"):
+        client = TestClient(sentinel_app, raise_server_exceptions=False)
+        client.get(f"/__sentinel__/{SHORT_CANARY}", headers={TRACE_ID_HEADER: _REQUEST_ID})
+
+    assert len(events) == 1
+    assert_no_canary(_dump(events[0]), SHORT_CANARY)
+    contexts = events[0]["contexts"]
+    assert isinstance(contexts, dict)
+    assert contexts[error_monitoring.REQUEST_CONTEXT_KEY] == {
+        "request_id": _REQUEST_ID,
+        "request_path": _SENTINEL_ROUTE,
+        "request_method": "GET",
+    }
+    record = next(r for r in caplog.records if r.getMessage() == "unhandled_exception")
+    assert getattr(record, "request_path", None) == _SENTINEL_ROUTE
+
+
+def _emitted(records: list[logging.LogRecord]) -> str:
+    """Every record's message and attributes, as one searchable string."""
+    return "\n".join(f"{record.getMessage()} {record.__dict__}" for record in records)

@@ -264,3 +264,27 @@ def truncate_log_path(path: str) -> str:
     if len(path) <= LOG_PATH_TRUNCATE_CHARS:
         return path
     return path[: LOG_PATH_TRUNCATE_CHARS - 1] + "…"
+
+
+#: Logged in place of a path no route matched (a 404 probe, a panic in a
+#: middleware layer below the router). The raw path is never logged: it is
+#: whatever the caller typed.
+UNMATCHED_ROUTE = "<unmatched>"
+
+
+def route_template(request: Request) -> str:
+    """Return the matched route's template (``/practices/share/{token}``) for logging.
+
+    The raw path carries the values a route was called with -- a share token is
+    a credential, an entry id is a pointer at someone's writing -- so every
+    telemetry record names the *template* instead (#3064). Starlette's router
+    stores the matched route on the shared ``scope`` while dispatching, so a
+    middleware reads it after ``call_next`` and an exception handler reads it
+    after the endpoint raised. Anything that never reached a route is
+    :data:`UNMATCHED_ROUTE`. Truncated like any other logged path, so a
+    mounted sub-application's template stays bounded too.
+    """
+    template = getattr(request.scope.get("route"), "path_format", None)
+    if not isinstance(template, str):
+        return UNMATCHED_ROUTE
+    return truncate_log_path(template)

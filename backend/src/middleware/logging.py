@@ -24,7 +24,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from observability import truncate_log_path
+from observability import route_template
 from request_host import ORIGINAL_HOST_SCOPE_KEY
 
 logger = logging.getLogger("adepthood.access")
@@ -54,8 +54,9 @@ def _level_for_status(status: int) -> int:
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Emit one structured log line per request, even on inner-middleware errors.
 
-    The line carries the request method, truncated path, response status,
-    and elapsed milliseconds.  ``trace_id`` is injected automatically by
+    The line carries the request method, the matched route *template* (never
+    the raw path or its query string -- both carry what the caller typed),
+    response status, and elapsed milliseconds.  ``trace_id`` is injected automatically by
     the :class:`~observability.TraceIdLogFilter` that
     :func:`observability.configure_logging` attaches to the app log
     handler, so every line is correlatable end-to-end without explicit
@@ -65,7 +66,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         start = time.perf_counter()
         method = request.method
-        path = truncate_log_path(request.url.path)
+        # The path is read after dispatch, not before: the route template it
+        # logs is only on the scope once the router has matched (#3064).
         try:
             response = await call_next(request)
         except Exception:
@@ -84,7 +86,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 "request_failed",
                 extra={
                     "http_method": method,
-                    "http_path": path,
+                    "http_path": route_template(request),
                     "elapsed_ms": round(elapsed_ms, 2),
                 },
             )
@@ -92,7 +94,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         elapsed_ms = (time.perf_counter() - start) * 1000
         fields: dict[str, object] = {
             "http_method": method,
-            "http_path": path,
+            "http_path": route_template(request),
             "http_status": response.status_code,
             "elapsed_ms": round(elapsed_ms, 2),
         }

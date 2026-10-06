@@ -27,7 +27,7 @@ from middleware import (
     SecurityHeadersMiddleware,
     UnhandledExceptionMiddleware,
 )
-from observability import TRACE_ID_HEADER
+from observability import TRACE_ID_HEADER, UNMATCHED_ROUTE
 
 client = TestClient(app)
 
@@ -244,4 +244,6 @@ def test_request_logging_middleware_logs_inner_middleware_panic(
     failed = [r for r in caplog.records if r.message == "request_failed"]
     assert failed, "expected one request_failed record from the panic branch"
     assert getattr(failed[-1], "http_method", None) == "GET"
-    assert getattr(failed[-1], "http_path", None) == "/probe"
+    # The panic fires before routing, so no template exists: the marker is
+    # logged rather than the raw path the caller typed (#3064).
+    assert getattr(failed[-1], "http_path", None) == UNMATCHED_ROUTE
