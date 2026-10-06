@@ -135,6 +135,16 @@ describe('retry-after-refresh on 401', () => {
     expect(mockOnUnauthorized).toHaveBeenCalled();
   });
 
+  test('a retry that fails with a non-401 surfaces that error without a sign-out', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
+    mockFetch.mockReturnValueOnce(jsonResponse({ token: fixtureJwt('retry500'), user_id: 1 }));
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'boom' }, 500));
+
+    await expect(habits.list()).rejects.toMatchObject({ name: 'ApiError', status: 500 });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockOnUnauthorized).not.toHaveBeenCalled();
+  });
+
   test('does not retry for auth endpoints (avoids infinite loops)', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'invalid_credentials' }, 401));
 

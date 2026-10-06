@@ -123,9 +123,10 @@ function recordIn<R extends RotatedToken>(state: RotationState<R>, from: string,
   // re-issues a revoked token, so refuse rather than trust it.
   if (to === from || state.ledger.has(to)) return;
   state.ledger.set(from, to);
-  while (state.ledger.size > MAX_REMEMBERED_ROTATIONS) {
-    const oldest = state.ledger.keys().next().value;
-    if (oldest === undefined) break;
+  // Oldest first: a Map iterates in insertion order, and deleting the key
+  // being visited is safe mid-iteration.
+  for (const oldest of state.ledger.keys()) {
+    if (state.ledger.size <= MAX_REMEMBERED_ROTATIONS) break;
     state.ledger.delete(oldest);
   }
 }
