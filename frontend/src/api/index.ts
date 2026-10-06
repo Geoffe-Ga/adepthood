@@ -121,6 +121,7 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
+import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 
 import { API_BASE_URL } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
@@ -424,7 +425,13 @@ export function idempotencyKey(intent: string, ...parts: (string | number)[]): s
   return parts.length === 0 ? intent : `${intent}:${parts.join(':')}`;
 }
 
+/**
+ * Install (or clear) the session token getter. Installing one means a new
+ * session owner, so every remembered rotation is forgotten first: a rotation
+ * learned under one owner must never forward another owner's requests (#3034).
+ */
 export function setTokenGetter(getter: (() => string | null) | null) {
+  rotation.reset();
   tokenGetter = getter;
 }
 
@@ -499,8 +506,27 @@ interface RequestOptions<TResponse = unknown> {
   responseType?: ResponseType;
 }
 
+/**
+ * The bearer token a request carries. An explicit override is sent verbatim;
+ * the session token is forwarded through every rotation the client already
+ * knows about, so a request built before React re-renders with the refreshed
+ * token never re-sends the one the server just revoked (#3034).
+ */
 function resolveToken(token?: string): string | null {
-  return token ?? tokenGetter?.() ?? null;
+  if (token === undefined) return rotation.current();
+  // Screens that pass the session token explicitly (read from the auth
+  // context, which lags a rotation by a render) get the same forwarding; a
+  // genuinely foreign override never reaches the session's chain.
+  return isSessionLineage(token) ? rotation.current() : token;
+}
+
+/**
+ * Whether ``token`` is the session's current token or one the session rotated
+ * away from: its remembered chain reaches the token the session holds now.
+ */
+function isSessionLineage(token: string): boolean {
+  const live = rotation.current();
+  return live !== null && rotation.forward(token) === live;
 }
 
 function buildHeaders(
@@ -808,20 +834,13 @@ async function parseResponse<T>(
   return data as T;
 }
 
-/** Outcome of a refresh attempt; ``hadToken`` separates "no session" from "refresh failed". */
-type RefreshResult = { token: string | null; hadToken: boolean };
-
 /**
- * Shared in-flight refresh (audit-contracts-05). When several requests 401 at
- * once — the common cold-start / expired-token case — each used to call
- * ``attemptTokenRefresh`` independently, firing a storm of concurrent refreshes
- * against the same token. We now keep a single promise so N concurrent callers
- * await exactly one network refresh; it is cleared on settle so a later,
- * genuine refresh still fires.
+ * One network refresh of ``currentToken``. Resolves the validated response, or
+ * ``null`` on any failure — a non-ok status (including the limiter's 429), a
+ * timeout, or a malformed body — so the caller decides what a failure means.
+ * Publishing the new token is the rotation module's job, not this function's.
  */
-let inFlightRefresh: Promise<RefreshResult> | null = null;
-
-async function performTokenRefresh(currentToken: string): Promise<RefreshResult> {
+async function performTokenRefresh(currentToken: string): Promise<AuthResponse | null> {
   try {
     // Route through ``fetchWithTimeout`` so a hung refresh aborts instead of
     // pinning the 401-retry loop; the ApiTimeoutError it throws on the clock
@@ -833,7 +852,7 @@ async function performTokenRefresh(currentToken: string): Promise<RefreshResult>
       undefined,
       '/auth/refresh',
     );
-    if (!refreshRes.ok) return { token: null, hadToken: true };
+    if (!refreshRes.ok) return null;
     const raw: unknown = await refreshRes.json();
     // BUG-API-007 / BUG-API-017: the prior cast (``as AuthResponse``)
     // accepted any JSON shape -- a ``{}`` body would set ``data.token``
@@ -850,40 +869,60 @@ async function performTokenRefresh(currentToken: string): Promise<RefreshResult>
       console.warn('[api] /auth/refresh response failed validation', {
         issues: parsed.error.issues,
       });
-      return { token: null, hadToken: true };
+      return null;
     }
-    const data = parsed.data;
-    // Forward the server's stored timezone so the AuthContext can keep
-    // ``userTimezone`` in sync after a cold-start refresh.  Without
-    // this, ``userTimezone`` would stay at its ``"UTC"`` default until
-    // the user manually re-authenticated.
-    onTokenRefreshedCallback?.(data.token, data.timezone, currentToken);
-    return { token: data.token, hadToken: true };
+    return parsed.data;
   } catch {
-    return { token: null, hadToken: true };
+    return null;
   }
 }
 
 /**
- * Try to refresh the current token. Returns the new token on success, or
- * null if the refresh itself fails (e.g. the token is fully expired).
+ * The session's single refresh path (audit-contracts-05, #3034). Every refresh
+ * — a 401 retry, the proactive refresh, the resumed-session timezone backfill
+ * — goes through it, keyed by the token being refreshed: concurrent callers
+ * share one network call, a token already rotated is answered from memory,
+ * and a token the session no longer holds is never sent to the server, which
+ * revokes it on refresh and allows one refresh a minute.
  *
- * Returns ``null`` immediately when the session has no token at all so
- * an anonymous request that hit a protected endpoint (BUG-API-018) does
- * NOT issue a doomed POST to /auth/refresh that would 401 again.  The
- * caller distinguishes "no token" from "refresh failed" via the second
- * tuple element.
+ * A rotation fires ``onTokenRefreshedCallback`` once, with the server's stored
+ * timezone (so the AuthContext keeps ``userTimezone`` in sync after a
+ * cold-start refresh) and the prior token (so it can identity-guard the write).
  */
-async function attemptTokenRefresh(): Promise<RefreshResult> {
-  const currentToken = tokenGetter?.();
-  if (!currentToken) return { token: null, hadToken: false };
+const rotation = createTokenRotation<AuthResponse>({
+  performRefresh: performTokenRefresh,
+  currentToken: () => tokenGetter?.() ?? null,
+  onRotated: (response, from) => {
+    onTokenRefreshedCallback?.(response.token, response.timezone, from);
+  },
+});
 
-  // Coalesce concurrent 401s onto a single refresh; clear on settle.
-  if (inFlightRefresh) return inFlightRefresh;
-  inFlightRefresh = performTokenRefresh(currentToken).finally(() => {
-    inFlightRefresh = null;
-  });
-  return inFlightRefresh;
+/** Status and detail of a {@link refreshSessionToken} that rotated nothing. */
+const HTTP_UNAUTHORIZED = 401;
+const REFRESH_FAILED_DETAIL = 'refresh_failed';
+
+/**
+ * Forget every remembered rotation. Session teardown and every fresh sign-in
+ * call this so one session can never forward a request to another session's
+ * token (#3034).
+ */
+export function resetTokenRotations(): void {
+  rotation.reset();
+}
+
+/**
+ * Refresh the session token ``from`` through the shared coalescer (#3034).
+ *
+ * Resolves the server's response when this call — or the in-flight refresh of
+ * the same token it joined — rotated the token. Rejects with a 401
+ * ``ApiError`` otherwise: the refresh failed, ``from`` was already rotated (the
+ * rotation was published when it happened), or ``from`` is not this session's
+ * token at all, in which case nothing reached the network.
+ */
+export async function refreshSessionToken(from: string): Promise<AuthResponse> {
+  const attempt = await rotation.refresh(from);
+  if (attempt.kind === 'refreshed') return attempt.response;
+  throw new ApiError(HTTP_UNAUTHORIZED, REFRESH_FAILED_DETAIL);
 }
 
 function doFetch(
@@ -924,6 +963,12 @@ interface RefreshRetryContext<T> {
   initialDetail: string | null;
   /** Whether this request may be attempted more than once (see RequestOptions.retry). */
   canRetry: boolean;
+  /**
+   * The bearer token the latest attempt actually carried. A 401 is about
+   * THAT token, not whatever the session holds by the time it lands, so the
+   * refresh path keys on it (#3034).
+   */
+  sentToken: string | null;
 }
 
 /**
@@ -948,20 +993,12 @@ function reasonForUnauthorized(detail: string | null, hadToken: boolean): Unauth
 }
 
 /**
- * Attempt a token refresh and retry the original request once. Returns the
- * parsed response on success, or null if refresh/retry is not applicable.
+ * Re-send the request once with ``token``. A 401 on this retry signs the
+ * session out only while ``token`` is still the session's current one; a
+ * session that moved on meanwhile is not this request's to end (#3034).
  */
-async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | null> {
-  const refresh = await attemptTokenRefresh();
-  if (refresh.token === null) {
-    // Only fire the global "you are no longer authenticated" callback
-    // when there *was* a session to begin with; an anonymous caller
-    // hitting a protected endpoint is ``not_authenticated``, not
-    // session-expired (BUG-API-018).
-    onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, refresh.hadToken));
-    return null;
-  }
-  const retryHeaders = buildHeaders(refresh.token, ctx.body, ctx.extraHeaders);
+async function retryOnce<T>(ctx: RefreshRetryContext<T>, token: string): Promise<T> {
+  const retryHeaders = buildHeaders(token, ctx.body, ctx.extraHeaders);
   const retryInit = buildFetchInit(ctx.method, ctx.body, retryHeaders);
   const retryRes = await doFetch(ctx.url, retryInit, {
     path: ctx.path,
@@ -971,7 +1008,9 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
   if (!retryRes.ok) {
     if (retryRes.status === 401) {
       const retryDetail = await extractErrorDetail(retryRes);
-      onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+      if (token === rotation.current()) {
+        onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+      }
       // Return the new ApiError below using the freshly-read detail so
       // the caller surfaces the post-retry server message rather than a
       // generic "Request failed".
@@ -980,6 +1019,37 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
     return handleErrorResponse(retryRes, ctx.path);
   }
   return parseResponse<T>(retryRes, ctx.path, ctx.schema, ctx.responseType);
+}
+
+/**
+ * Recover from a 401 on the token the request carried, then retry it once.
+ * Returns the parsed response on success, or null when there is nothing to
+ * retry with — in which case the caller throws the original 401.
+ *
+ * Only a session whose CURRENT token cannot be refreshed is signed out. A 401
+ * on a token the client already rotated is retried with the successor and no
+ * second refresh; a failure for a token the session has moved past is not a
+ * sign-out at all (#3034).
+ */
+async function retryWithRefresh<T>(
+  ctx: RefreshRetryContext<T>,
+  mode: RecoveryMode,
+): Promise<T | null> {
+  const recovery = await rotation.recover(ctx.sentToken, mode);
+  switch (recovery.kind) {
+    case 'rotated':
+      return retryOnce(ctx, recovery.token);
+    case 'no-session':
+      // An anonymous caller hitting a protected endpoint is
+      // ``not_authenticated``, not session-expired (BUG-API-018).
+      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, false));
+      return null;
+    case 'expired':
+      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
+      return null;
+    case 'superseded':
+      return null;
+  }
 }
 
 async function handleUnauthorizedRetry<T>(
@@ -999,20 +1069,16 @@ async function handleUnauthorizedRetry<T>(
   // surface as ``session_expired`` / ``not_authenticated``.
   if (ctx.initialDetail === 'invalid_credentials') return null;
 
-  if (!token) {
-    const retried = await retryWithRefresh<T>(ctx);
-    if (retried !== null) return retried;
-  } else {
-    // Caller passed an explicit token override (e.g. probing with a
-    // known-bad token from a settings screen).  Treat it as a session
-    // expiration only when the explicit token came from the live
-    // ``tokenGetter`` -- otherwise the global session is unaffected.
-    const sessionToken = tokenGetter?.() ?? null;
-    if (sessionToken !== null && sessionToken === token) {
-      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
-    }
-  }
-  return null;
+  if (!token) return retryWithRefresh<T>(ctx, 'refresh');
+  // Caller passed an explicit token override. A foreign one (e.g. probing
+  // with a known-bad token from a settings screen) leaves the global session
+  // alone. The session's own token -- which many stores pass explicitly, read
+  // from the auth context -- is the session: it rides a refresh already in
+  // flight or a rotation already known, so a 401 that only means "this token
+  // was just rotated" is retried on the successor instead of signing the user
+  // out (#3034). It never starts a refresh of its own; with none underway the
+  // session's current token was refused, and that is a session expiration.
+  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'join-only') : null;
 }
 
 /**
@@ -1026,6 +1092,7 @@ async function attemptRequest<T>(
   token: string | undefined,
 ): Promise<{ kind: 'ok'; value: T } | { kind: 'transient'; error: ApiError }> {
   const resolved = resolveToken(token);
+  ctx.sentToken = resolved;
   const headers = buildHeaders(resolved, ctx.body, ctx.extraHeaders);
   const init = buildFetchInit(ctx.method, ctx.body, headers);
   const res = await doFetch(ctx.url, init, {
@@ -1109,6 +1176,7 @@ async function request<T>(
     responseType,
     initialDetail: null,
     canRetry,
+    sentToken: null,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying

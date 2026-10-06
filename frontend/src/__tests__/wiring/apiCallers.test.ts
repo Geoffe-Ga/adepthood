@@ -28,6 +28,8 @@ const CALLER_ALLOWLIST: Record<string, string> = {
     'Deliberately retained beside listAll as the request-machinery test vehicle and bare-array wire-contract guard, per its own docstring in src/api/index.ts.',
   'feedback.receipt':
     "No screen calls it (#2898): submit's 201 is Zod-validated as the receipt the reporter shows, so a second read would add a round trip whose failure could misreport a stored report. It stays because the journey ledger requires GET /feedback/{public_id}/receipt to be issuable from this module, and the feedback-composer browser spec resolves a reference through it.",
+  'auth.refresh':
+    'The raw POST /auth/refresh, kept for the session-lifetime e2e spec, which rotates an explicit token and then proves the server refuses the one rotated away. Production refreshes go through refreshSessionToken (#3034), whose coalescer must be the only caller so a token the client knows was revoked is never refreshed again.',
   idempotencyKey:
     'Called inside the API layer to key suggestion-accept, invitation-dismiss and return-start; exported for unit coverage, and its caller-supplied seam on the habit check-in wrapper is still unadopted by any screen.',
 };
