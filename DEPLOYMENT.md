@@ -166,7 +166,7 @@ In the backend service's **Variables** tab, add:
 |----------|-------|-----------|
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
-| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
+| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it (production meaning `ENV=production` *or* Railway's `RAILWAY_ENVIRONMENT_NAME=production`) |
 | `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
 | `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
@@ -427,15 +427,21 @@ So key custody is part of backup custody, and it cuts both ways:
   dies with the Railway account. There must be a second copy of every key ever
   used — current *and* rotated-out — held somewhere the platform outage cannot
   reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
-  establishing that escrow is not something a deploy can do for you, and it is
-  tracked in issue #2319 until it is.
+  establishing that escrow is not something a deploy can do for you. Issue
+  #2319, which tracked it, is closed with its escrow items checked; nothing in
+  this repository can confirm the escrow, so re-check that it holds every key in
+  `JOURNAL_ENCRYPTION_KEYS` — current *and* retired — whenever the list changes.
 - **Keys must never be stored with the backup.** A dump and its keys in the same
   bucket, archive, or download folder is one compromise away from being
   plaintext, which defeats the encryption entirely. Different system, different
   credentials.
-- **Keep retired keys.** Rows re-encrypt lazily, so a restored backup can carry
-  rows written under a key that production stopped using months ago. Discarding
-  a key discards every un-rewritten row that needed it.
+- **Keep retired keys.** A rotation re-encrypts a column only when a write
+  modifies it; every other value keeps the token of the key it was written
+  under until the sweep (see [Rotation](#journal-encryption-at-rest)) moves it.
+  And a restored backup carries whatever tokens the database held when the
+  backup was taken, so it can need a key that production stopped using months
+  ago. Discarding a key discards every row — live or in a backup — that still
+  needs it.
 
 `SECRET_KEY` is in the same category, with a smaller blast radius: losing it
 invalidates every issued JWT (everyone is logged out) but destroys no data.
@@ -458,8 +464,9 @@ Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
 
 `[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
 service → **Backups** → set schedule to Daily → confirm a backup appears within
-24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
-it until someone does.
+24 hours. Nothing in this repository can turn it on for you. Issue #2319, which
+tracked this, closed without the Daily schedule being confirmed, so treat the
+platform leg as unverified until someone has seen a Daily backup appear (#3058).
 
 **Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
 in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
@@ -677,12 +684,44 @@ copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
 the copy a stolen dump yields, so the set is pinned by a test rather than by this
 list. **Key presence is the switch**: with no key configured the columns are
 plaintext, which is the right default on a laptop and unacceptable on a server.
-So a boot with `ENV=production` and no key **fails**, naming the variable — the
-deploy never goes live rather than quietly storing every user's writing in the
-clear.
+So a production boot with no key **fails**, naming the variable — the deploy
+never goes live rather than quietly storing every user's writing in the clear.
+
+"Production" is decided by two signals, either of which is enough: `ENV` set to
+`production`, or the environment name Railway injects
+(`RAILWAY_ENVIRONMENT_NAME`, or the legacy `RAILWAY_ENVIRONMENT`) equal to
+`production`. `ENV` is typed by a person and can be missing or wrong; the
+platform's name for the environment cannot be forgotten. A process that carries
+Railway's deploy markers (`RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`,
+`RAILWAY_PUBLIC_DOMAIN`) but no environment name is treated as production too.
+The check also runs at the write itself, not only at boot: wherever production
+is in force and no key is configured, writing an encrypted column raises instead
+of storing plaintext — so a script, a migration or a worker that never ran the
+boot check cannot store prose in the clear either. Note that this assumes the
+Railway production environment is literally named `production`; if it is named
+otherwise, only `ENV` protects it.
 
 Outside production an empty value is normal and silent: requiring a key to run a
 local server or the test suite would be friction with no security benefit.
+Staging (`RAILWAY_ENVIRONMENT_NAME=staging`) counts as outside production.
+
+**What is not encrypted.** Encryption covers the columns typed `EncryptedString`,
+listed by `backend/src/services/encryption_inventory.py`. Every other column that
+can hold text is classified, with a reason, in
+`backend/tests/test_column_classification.py`, and a new unclassified column
+fails the suite. Some of those plaintext columns are derived from encrypted
+writing — `corpusfragment.embedding` and `frequency_weights`, and
+`journalentry.vault_tags`, `classification` and `tag` — and some are short text
+a person typed: goal, habit and group names, a renamed practice, a display name.
+They are stored in the clear today.
+
+**Who can read it.** The keys live in the same Railway project as the database.
+Anyone who can read the service's variables and reach the database can read
+every encrypted column; anyone who can reach the database alone can read every
+plaintext column above. Encryption at rest protects a stolen disk, dump or
+backup that travels without the keys
+([ADR 0005](docs/adr/0005-operator-side-ontologization.md)); it does not keep
+the operator out.
 
 **Generate a key:**
 ```bash
@@ -701,17 +740,49 @@ compromises both.
 JOURNAL_ENCRYPTION_KEYS=<new-key>,<previous-key>
 ```
 
-The **first** key encrypts every new write; **every** listed key can decrypt. So
-a rotation is: generate a new key, prepend it, redeploy. The registry is cached
-per worker, so the change takes effect on restart — rotation is a deploy-time
-operation, not a runtime one.
+The **first** key encrypts every new write; **every** listed key can decrypt. The
+registry is cached per worker, so a change takes effect on restart — rotation is
+a deploy-time operation, not a runtime one.
 
-Rows re-encrypt lazily, on their next write. Nothing rewrites the corpus for
-you, so **keep the previous key listed** until you are willing to lose whatever
-has not been rewritten under the new one. Dropping a key that some row still
-needs does not degrade to plaintext and does not return the ciphertext as if it
-were the user's text — the read raises. There is no recovery from a discarded
-key: the ciphertext is the only copy.
+Prepending a key does **not** re-encrypt existing rows. A write re-encrypts only
+the columns it modifies, so a value nobody edits keeps the token of the key it
+was written under indefinitely, and a row written before any key was configured
+stays plaintext. Dropping a key that some row still needs does not degrade to
+plaintext and does not return the ciphertext as if it were the user's text — the
+read raises. There is no recovery from a discarded key: the ciphertext is the
+only copy. So a rotation is finished by a sweep, run from `backend/` with
+`DATABASE_URL` and `JOURNAL_ENCRYPTION_KEYS` set exactly as the service has them:
+
+1. Generate a new key, prepend it, redeploy.
+2. `PYTHONPATH=src python -m scripts.journal_encryption_sweep audit` — prints,
+   per `table.column`, how many values are NULL, plaintext, readable by each key
+   position (`key0` is the new primary), and readable by none. Counts and names
+   only: never a value, a hash or a key.
+3. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt` — a dry
+   run that reports what would be rewritten and writes nothing.
+4. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply`
+   — rewrites every plaintext and old-key value under the primary key, in
+   batches committed one at a time. Each write is compare-and-swap, so a value a
+   user edits meanwhile is skipped rather than overwritten. A value no listed key
+   can read stops the run before anything in its batch is written; plaintext is
+   never written. An interrupted run can be rerun (rows already on the primary
+   key are skipped) or resumed from the last line it printed with
+   `--start-after table.column:ID`.
+5. Repeat the audit until it exits `0`.
+
+Exit codes, for both commands: `0` clean; `1` rows remain (plaintext or
+old-key values, or rows a user edited during the sweep — run it again); `2` a
+malformed command line; `3` an integrity stop (no key, a malformed key, or a
+value no listed key can read).
+
+Only once the audit exits `0` with the old key still listed is that key no
+longer needed by the **live** database. It is still needed by every backup taken
+before the sweep (see [Backups and Restore](#backups-and-restore)), so it stays
+in escrow until the last such backup has aged out.
+
+Reads of legacy plaintext from an encrypted column while a key is configured
+are also signalled at runtime: each worker logs one `journal_plaintext_read`
+warning (no content, no row) the first time it sees one.
 
 **A malformed key fails fast in every environment**, production or not. A typo
 is never re-read as "encryption is off".
@@ -722,8 +793,9 @@ is never re-read as "encryption is off".
 journal_encryption_enabled=True
 ```
 
-`False` in a production log means the deploy predates this check or `ENV` is not
-`production` — either way, journals are being written in the clear.
+`False` in a production log means the deploy predates this check, or neither
+`ENV` nor Railway's environment name says `production` — either way, journals
+are being written in the clear.
 
 ## Environment Variables Reference
 
@@ -733,7 +805,7 @@ journal_encryption_enabled=True
 |----------|----------|---------|-------------|
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
+| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so production without it refuses to boot and refuses encrypted-column writes (production is `ENV=production` or `RAILWAY_ENVIRONMENT_NAME=production`); outside production empty is the normal local state. Rotation is finished by `scripts.journal_encryption_sweep`, not by later writes. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
