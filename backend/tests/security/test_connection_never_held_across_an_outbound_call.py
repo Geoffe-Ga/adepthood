@@ -33,7 +33,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -59,6 +59,7 @@ from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.email import RecordingEmailSender
 from services.oidc import OIDCIdentity
+from services.reflection_boundary import REFLECTION_SOURCE_UNAVAILABLE, ReflectionBoundary
 from tests.helpers.password_reset import extract_reset_token
 from tests.support.outbound_boundary import (
     ConnectionHeldAcrossOutboundCallError,
@@ -422,9 +423,14 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
     monkeypatch: pytest.MonkeyPatch,
     outbound_boundary: OutboundBoundaryObserver,
 ) -> None:
-    """Clear route: POST /journal/{entry_id}/resonance, at the capability probe."""
+    """Clear route: POST /journal/{entry_id}/resonance, at the capability probe.
+
+    The caller is vault-bound -- the only caller whose pass probes a vault at
+    all (#3061) -- and the vault advertises no REFLECT, so the probe is the one
+    dial the pass makes before it fails closed with a refunded 503.
+    """
     vault = _ScriptedVault(capabilities=frozenset())
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    _bind_to_vault(vault)
     headers, _user_id = await _signup(async_client, "resonance_handshake")
     entry_id = await _create_entry(async_client, headers)
 
@@ -445,7 +451,8 @@ async def test_the_resonance_vault_handshake_is_dialled_off_the_pool(
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
     assert_dialled_off_the_pool(_at(outbound_boundary, _HANDSHAKE), what="the vault handshake")
 
 
@@ -465,7 +472,7 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
             routed_tier=VaultTierCeiling.PERSONAL,
         ),
     )
-    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    _bind_to_vault(vault)
     headers, _user_id = await _signup(async_client, "resonance_reflect")
     entry_id = await _create_entry(async_client, headers)
     outbound_boundary.reset()
@@ -474,6 +481,12 @@ async def test_the_resonance_reflection_pass_is_dialled_off_the_pool(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert_dialled_off_the_pool(_at(outbound_boundary, _REFLECT), what="the vault reflection pass")
+
+
+def _bind_to_vault(vault: object) -> None:
+    """Serve ``vault`` and bind the caller's AI operations to it (#3061)."""
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.VAULT_BOUND
 
 
 async def _seed_habit_with_goal(db_session: AsyncSession, user_id: int) -> None:

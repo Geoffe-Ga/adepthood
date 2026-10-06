@@ -93,6 +93,7 @@ from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import vault_url_host
+from services.reflection_boundary import ReflectionBoundary
 from services.user_vault_config import has_vault_config, load_vault_config
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,45 @@ async def account_has_configured_vault(session: AsyncSession, current_user: int)
     return await has_vault_config(session, current_user) or deployment_vault_belongs_to(
         current_user
     )
+
+
+async def resolve_reflection_boundary(
+    session: AsyncSession, current_user: int
+) -> ReflectionBoundary:
+    """Whether this caller's AI operations are bound to their vault, from local state only.
+
+    :attr:`~ReflectionBoundary.VAULT_BOUND` whenever the account owns a vault by
+    :func:`account_has_configured_vault`'s rule: a stored connection row of any
+    state -- ready, provisioned but not yet ready, or with a host that currently
+    resolves somewhere this server must not dial -- or the deployment-wide vault's
+    bound owner. Those first two still get
+    :class:`LocalFallbackCreekVaultClient` from :func:`resolve_creek_vault_client`,
+    which is exactly why the boundary cannot be read off the client: "chose a
+    vault and it is not usable right now" and "has no vault" look identical
+    there, and only the first forbids answering from the app provider.
+
+    The deployment owner counts as vault-bound because it is the more restrictive
+    reading of a binding an operator made on that user's behalf.
+
+    Never client-supplied and never dials: one indexed read, so it holds no
+    connection across anything and answers during a vault outage.
+    """
+    if await account_has_configured_vault(session, current_user):
+        return ReflectionBoundary.VAULT_BOUND
+    return ReflectionBoundary.APP_PROVIDER
+
+
+async def get_reflection_boundary(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReflectionBoundary:
+    """Resolve the request caller's AI-operation boundary (see :func:`resolve_reflection_boundary`).
+
+    A dependency of its own, beside :func:`get_creek_vault_client` rather than
+    folded into it, so every consumer of the vault client keeps its type and a
+    test can pin either one independently.
+    """
+    return await resolve_reflection_boundary(session, current_user)
 
 
 async def get_creek_vault_client(

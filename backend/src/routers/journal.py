@@ -17,7 +17,7 @@ from sqlmodel import col, select
 
 from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -173,6 +173,14 @@ from services.marginalia import (
     reanchor_entry_suggestions,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
+from services.reflection_boundary import (
+    REFLECTION_SOURCE_UNAVAILABLE,
+    ReflectionBoundary,
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
+    app_provider_llm,
+    require_app_provider_llm,
+)
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
@@ -1262,11 +1270,16 @@ async def _detect_hits_with_status(
     message: str,
     *,
     inputs: DetectionInputs,
-    llm: BotmasonResonanceLLM,
+    llm: BotmasonResonanceLLM | None,
     user_id: int,
     entry_id: int,
 ) -> _DetectionAttempt:
     """Best-effort completion detection against the pre-read candidates.
+
+    ``llm`` is ``None`` when the caller's boundary is vault-bound: a vault has no
+    detection capability, so detection is skipped and reported unchecked rather
+    than sent to the app provider (#3061). This is the one place that decision
+    is read, for both routes that detect.
 
     Runs with no transaction open — the candidates were read and committed
     before the first dial, so the provider round trip holds no pooled
@@ -1277,6 +1290,8 @@ async def _detect_hits_with_status(
     is permanent where a dropped socket is transient, and the account is the
     only thing an operator can act on.
     """
+    if llm is None:
+        return _DetectionAttempt(hits=[], checked=False)
     if not inputs.candidates:
         return _DetectionAttempt(hits=[], checked=True)
     try:
@@ -1670,11 +1685,12 @@ async def _pass_context_under_hold(
 async def _care_only_response(
     session: AsyncSession, user_id: int, care: CareResponse
 ) -> ResonanceResponse:
-    """Care surface with no reflection, for the two paths that reach care instead of one.
+    """Care surface with no reflection, for the paths that reach care instead of one.
 
-    Used when an elevated entry's LLM pass fails, and when a connected vault
-    answers with its care escalation. Either way the marginalia charge has
-    has already been settled — by a compensating credit when BotMason paid, or
+    Used when an elevated entry's LLM pass fails, when a connected vault
+    answers with its care escalation, and when a vault-bound entry is flagged
+    locally and so asks no model at all. Every time, the marginalia charge has
+    already been settled — by a compensating credit when BotMason paid, or
     with no wallet work for BYOK — so the fresh read below reports unchanged
     balances. We surface the human + professional pointers regardless, because
     care must never depend on the reflection succeeding (NORTH-STAR §10).
@@ -1691,10 +1707,23 @@ async def _refresh_persisted(
         await session.refresh(row)
 
 
-async def _escalated_care_response(
+@dataclass(frozen=True, slots=True)
+class _CareInstead:
+    """A pass that ended in care rather than a reflection, already settled.
+
+    Returned rather than answered by the helper that decided it, so the handler
+    reads the fresh balances and returns in one place -- with the read on the
+    path that leaves, never on one a static walk could believe continues to a
+    dial.
+    """
+
+    care: CareResponse
+
+
+async def _escalated_care(
     session: AsyncSession, user_id: int, spent: SpendResult | None, trace: _FailedGeneration
-) -> ResonanceResponse:
-    """Answer a vault care escalation with adepthood's own care surface, uncharged.
+) -> _CareInstead:
+    """Settle a vault care escalation and answer it with adepthood's own care surface.
 
     The vault's care guard declined to produce a reflection because the writing
     signalled acute distress, so what the caller gets back is a way to reach a
@@ -1707,14 +1736,15 @@ async def _escalated_care_response(
     no BotMason charge, and the same helper safely performs only its rollback.
 
     The care payload is built fresh rather than threaded in from the handler's own
-    screen, and that is provably right: an entry adepthood flagged locally
-    short-circuits in ``select_reflection_llm`` and never reaches the vault, so
-    ``care`` is always ``None`` on this path. The copy is adepthood's own reviewed
+    screen, and that is provably right: a vault-bound entry adepthood flagged
+    locally is answered with care before the vault is selected, and an
+    app-provider-bound one never selects the vault at all, so ``care`` is always
+    ``None`` on this path. The copy is adepthood's own reviewed
     surface — Creek's reason, message, and resource list are Creek's writing and
     are dropped at the adapter.
     """
     await _refund_failed_pass(session, user_id, spent, trace=trace)
-    return await _care_only_response(session, user_id, _care_surface(build_care_payload()))
+    return _CareInstead(_care_surface(build_care_payload()))
 
 
 async def _resonance_pass_or_care(
@@ -1739,6 +1769,100 @@ async def _resonance_pass_or_care(
         if context.care is not None:
             return None
         raise
+
+
+@dataclass(frozen=True, slots=True)
+class _ReflectionRequest:
+    """One admitted pass's body and the other writing it carries, all read under the hold."""
+
+    entry_id: int
+    message: str
+    classification: str
+    prior: list[str]
+    prior_letters: list[str]
+
+
+def _metered_usage(app_llm: BotmasonResonanceLLM | None) -> Sequence[LLMResponse]:
+    """The live usage list a pass settles with: the app provider's, or nothing.
+
+    Live rather than copied, so a failure settled midway reports every call that
+    had returned. A vault-bound pass dials no app provider and meters nothing.
+    """
+    return () if app_llm is None else app_llm.usage
+
+
+async def _reflection_source(
+    vault_client: CreekVaultClient,
+    app_llm: BotmasonResonanceLLM | None,
+    request: _ReflectionRequest,
+) -> ResonanceLLM:
+    """The one source this pass may be answered by, chosen by the boundary alone.
+
+    The app provider when the boundary allowed one (``app_llm`` present), and
+    then the vault is not even probed. Otherwise the vault, through
+    :func:`select_reflection_llm`, which raises rather than ever answering with
+    anything else.
+    """
+    if app_llm is not None:
+        return app_llm
+    return await select_reflection_llm(
+        vault_client, body=request.message, classification=request.classification
+    )
+
+
+async def _fail_closed_unavailable(
+    context: _ResonancePassContext, *, entry_id: int, reason: VaultSourceUnavailableReason
+) -> HTTPException:
+    """Settle a vault-bound pass its vault could not answer, and name the refusal.
+
+    The committed deduction is refunded (BYOK only rolls back) and the pass
+    settles as failed, exactly as a provider failure does -- but it answers a
+    retryable 503 under its own token rather than the provider's 502, because
+    nothing upstream of a model failed: the one source this writer's pass may
+    use was not there, and no other was asked.
+
+    One WARNING, in a closed vocabulary: ids and this module's own reason word,
+    never the body, a prompt, a key, or anything the vault said.
+    """
+    await _refund_failed_pass(context.session, context.user_id, context.spent, trace=context.trace)
+    logger.warning(
+        REFLECTION_SOURCE_UNAVAILABLE,
+        extra={"user_id": context.user_id, "entry_id": entry_id, "reason": reason.value},
+    )
+    return service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
+async def _reflect_or_answer(
+    request: _ReflectionRequest,
+    vault_client: CreekVaultClient,
+    app_llm: BotmasonResonanceLLM | None,
+    context: _ResonancePassContext,
+) -> tuple[MarginaliaOutcome, ResonanceLLM] | _CareInstead:
+    """Run the literary pass on its one source, or settle it as care instead.
+
+    Returns the outcome and the source that produced it, or the care surface to
+    answer with when the pass ended in care (already settled). A vault-bound
+    pass whose vault cannot answer raises the settled 503 from
+    :func:`_fail_closed_unavailable`; it is never re-asked of the app provider
+    (#3061).
+    """
+    try:
+        reflection_llm = await _reflection_source(vault_client, app_llm, request)
+        anchored = await _resonance_pass_or_care(
+            request.message, reflection_llm, request.prior, context, request.prior_letters
+        )
+    except CreekVaultCareEscalationError:
+        # The vault's care guard fired: answer with adepthood's own care
+        # surface instead of a reflection, and settle any committed charge.
+        return await _escalated_care(context.session, context.user_id, context.spent, context.trace)
+    except VaultSourceUnavailableError as exc:
+        raise await _fail_closed_unavailable(
+            context, entry_id=request.entry_id, reason=exc.reason
+        ) from None
+    if anchored is None:
+        # The reflection failed but the entry is flagged: surface care anyway.
+        return _CareInstead(cast("CareResponse", context.care))
+    return anchored, reflection_llm
 
 
 @dataclass(frozen=True, slots=True)
@@ -1998,31 +2122,36 @@ async def _settle_empty_pass(
 
 @dataclass(frozen=True)
 class _ReflectionClients:
-    """The two reflection backends the resonance handler selects between.
+    """The two reflection backends, and the server-derived boundary choosing between them.
 
-    ``api_key`` is the caller's optional BYOK key for the local cloud LLM;
-    ``vault_client`` is the optional Creek Vault client. Bundling the pair into
-    one injected value keeps the handler's dependency signature small while the
-    routing choice between them stays in :func:`select_reflection_llm`.
+    ``api_key`` is the caller's optional BYOK key for the app provider;
+    ``vault_client`` is the optional Creek Vault client; ``boundary`` is which of
+    them this caller's AI operations may use (see
+    :func:`~dependencies.creek_vault.resolve_reflection_boundary`), never taken
+    from the request. Bundling them into one injected value keeps the handler's
+    dependency signature small.
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultClient
+    boundary: ReflectionBoundary
 
 
 def _reflection_clients(
     vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
     x_llm_api_key: Annotated[
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
 ) -> _ReflectionClients:
-    """Bundle the BYOK key and the vault client for the resonance handler.
+    """Bundle the BYOK key, the vault client and the boundary for the resonance handler.
 
     A thin dependency that resolves both reflection backends together. The nested
-    :func:`get_creek_vault_client` dependency stays independently overridable, so
-    a test can still swap the vault client through ``dependency_overrides``.
+    :func:`get_creek_vault_client` and :func:`get_reflection_boundary`
+    dependencies stay independently overridable, so a test can swap either
+    through ``dependency_overrides``.
     """
-    return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client)
+    return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client, boundary=boundary)
 
 
 async def _resonance_payment(
@@ -2074,15 +2203,21 @@ async def run_resonance(
     only on this non-intimate happy path — never for an intimate entry, whose
     privacy floor returns above — and never mutates progression.
 
-    When a vault is connected and the entry is neither intimate nor
-    distress-flagged, the reflection routes to that vault's own corpus; otherwise
-    it is generated by the local cloud LLM exactly as before.
+    Which model may answer is decided once, server-side, by the caller's
+    boundary (#3061). With no vault, the app provider answers the reflection and
+    completion detection exactly as before. With a vault -- connected, still
+    provisioning, or currently undialable -- the vault answers the reflection or
+    nothing does: a vault with nothing to say is a refunded zero-note pass, a
+    vault that cannot answer is a refunded, retryable 503
+    ``reflection_source_unavailable``, a locally flagged entry gets the care
+    surface alone, and completion detection is skipped (``checked`` false on the
+    standalone route). None of those reaches the app provider, whatever key the
+    request carries.
 
     The context that accompanies the entry is chosen by
     :func:`~services.higher_self_grounding.gather_grounding` — the account's own
     ontologized corpus where it holds anything, the recency window where it does
-    not. It is gathered on every pass, vault or not: a vault that degrades hands
-    the prompt to the cloud fallback, which is the path this context is for.
+    not. Only the app provider's prompt carries it; a vault builds its own.
 
     A vault may answer that request with its own care escalation, meaning its
     care guard read acute distress in writing adepthood's local screen did not
@@ -2137,8 +2272,11 @@ async def _run_admitted_resonance(
     # spend for the slot's rollback to discard.
     consume_generation_minute(current_user)
     detection = await _detection_inputs(session, entry=entry)
-    llm = BotmasonResonanceLLM(byok_key)
-    trace = _FailedGeneration(feature=GenerationFeature.RESONANCE, key=key, usage=llm.usage)
+    # The only app-provider adapter this pass may hold, and none at all when the
+    # caller is vault-bound: a BYOK key pays for a call, it does not consent to one.
+    app_llm = app_provider_llm(clients.boundary, byok_key)
+    usage = _metered_usage(app_llm)
+    trace = _FailedGeneration(feature=GenerationFeature.RESONANCE, key=key, usage=usage)
     # Any deduction is durable: release the pooled connection before waiting.
     await session.commit()
     # The account barrier opens here rather than at the top of the handler: the
@@ -2159,38 +2297,36 @@ async def _run_admitted_resonance(
                 session, current_user, _care_response(_care_for(entry.message))
             )
         message, care = await _body_under_hold(session, entry, spent=spent, trace=trace)
+        if app_llm is None and care is not None:
+            # Vault-bound and flagged locally: adepthood's care surface alone. No
+            # vault and no model is asked, and the committed charge is refunded.
+            await _refund_failed_pass(session, current_user, spent, trace=trace)
+            return await _care_only_response(session, current_user, care)
         grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
-        reflection_llm = await select_reflection_llm(
+        reflected = await _reflect_or_answer(
+            _ReflectionRequest(
+                entry_id=entry_id,
+                message=message,
+                classification=entry.classification,
+                prior=list(grounding.bodies),
+                prior_letters=prior_letters,
+            ),
             clients.vault_client,
-            body=message,
-            classification=entry.classification,
-            care_flagged=care is not None,
-            fallback=llm,
+            app_llm,
+            _ResonancePassContext(
+                session=session,
+                care=care,
+                byok=byok_key is not None,
+                user_id=current_user,
+                spent=spent,
+                trace=trace,
+            ),
         )
-        try:
-            anchored = await _resonance_pass_or_care(
-                message,
-                reflection_llm,
-                list(grounding.bodies),
-                _ResonancePassContext(
-                    session=session,
-                    care=care,
-                    byok=byok_key is not None,
-                    user_id=current_user,
-                    spent=spent,
-                    trace=trace,
-                ),
-                prior_letters,
-            )
-        except CreekVaultCareEscalationError:
-            # The vault's care guard fired: answer with adepthood's own care
-            # surface instead of a reflection, and settle any committed charge.
-            return await _escalated_care_response(session, current_user, spent, trace)
-        if anchored is None:
-            # The reflection failed but the entry is flagged: surface care anyway.
-            return await _care_only_response(session, current_user, cast("CareResponse", care))
+        if isinstance(reflected, _CareInstead):
+            return await _care_only_response(session, current_user, reflected.care)
+        anchored, reflection_llm = reflected
         attempt = await _detect_hits_with_status(
-            message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
+            message, inputs=detection, llm=app_llm, user_id=current_user, entry_id=entry_id
         )
         settled = await _persist_settle_commit(
             session,
@@ -2200,7 +2336,7 @@ async def _run_admitted_resonance(
                 spent=spent,
                 anchored=anchored,
                 hits=attempt.hits,
-                usage=llm.usage,
+                usage=usage,
                 key=key,
             ),
         )
@@ -2401,7 +2537,7 @@ async def _detect_fresh_suggestions(
     *,
     entry: JournalEntry,
     inputs: DetectionInputs,
-    api_key_header: str | None,
+    caller: _DetectionCaller,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset.
 
@@ -2426,9 +2562,13 @@ async def _detect_fresh_suggestions(
     practices, and answers ``checked: false``; a deleted row answers the uniform
     404; otherwise the body dialled is the refreshed one. The re-read commits,
     so no connection is held across the dial (#3008).
+
+    Reached only for an app-provider-bound caller: the route answered a
+    vault-bound one before reading any candidate. The adapter is still taken
+    through :func:`~services.reflection_boundary.require_app_provider_llm`, so
+    losing that check would refuse here rather than dial (#3061).
     """
-    api_key = resolve_chat_api_key(api_key_header)
-    llm = BotmasonResonanceLLM(api_key)
+    llm = require_app_provider_llm(caller.boundary, resolve_chat_api_key(caller.api_key))
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
@@ -2470,6 +2610,33 @@ async def _detect_and_persist(
     )
 
 
+@dataclass(frozen=True)
+class _DetectionCaller:
+    """Who is asking for standalone detection: their optional BYOK key and their boundary.
+
+    Bundled for the same argument-budget reason as :class:`_ReflectionClients`.
+    ``boundary`` is server-derived, never taken from the request.
+    """
+
+    api_key: str | None = field(repr=False)
+    boundary: ReflectionBoundary
+
+
+def _detection_caller(
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> _DetectionCaller:
+    """Bundle the BYOK header and the caller's boundary for the detection handler.
+
+    The header is carried unvalidated: it is resolved only once the route knows
+    it is going to dial, so a vault-bound caller or an entry with nothing new to
+    offer never needs a key.
+    """
+    return _DetectionCaller(api_key=x_llm_api_key, boundary=boundary)
+
+
 @router.post("/{entry_id}/suggestions/detect", response_model=CompletionDetectionResponse)
 @limiter.limit("10/minute")
 async def detect_entry_suggestions(
@@ -2477,9 +2644,7 @@ async def detect_entry_suggestions(
     entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[
-        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
-    ] = None,
+    caller: Annotated[_DetectionCaller, Depends(_detection_caller)],
 ) -> CompletionDetectionResponse:
     """Check an entry for completed habits independently of literary resonance.
 
@@ -2491,6 +2656,10 @@ async def detect_entry_suggestions(
 
     The INTIMATE check here is only the cheap fast path: the authoritative
     floor is re-read under the account hold, just before the dial (#3008).
+
+    A vault-bound caller answers ``checked: false`` before any candidate is
+    read: a vault has no detection capability, and the app provider is not
+    theirs to be sent to (#3061).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
@@ -2500,6 +2669,9 @@ async def detect_entry_suggestions(
     # re-derived from the row re-read under the hold.
     _sanitize_message(entry.message)
     if entry.classification == JournalClassification.INTIMATE:
+        return CompletionDetectionResponse(items=[], checked=False)
+    if caller.boundary is ReflectionBoundary.VAULT_BOUND:
+        await session.commit()
         return CompletionDetectionResponse(items=[], checked=False)
 
     inputs = await _detection_inputs(session, entry=entry)
@@ -2513,7 +2685,7 @@ async def detect_entry_suggestions(
         session,
         entry=entry,
         inputs=inputs,
-        api_key_header=x_llm_api_key,
+        caller=caller,
     )
 
 
