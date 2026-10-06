@@ -17,8 +17,11 @@ the exception type, the frames and the route.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import ClassVar, NoReturn
 
 import pytest
@@ -31,7 +34,12 @@ import sentry as error_monitoring
 import telemetry_safety
 from errors import install_exception_handlers
 from middleware import CorrelationIdMiddleware
-from observability import TRACE_ID_HEADER, UNMATCHED_ROUTE
+from observability import (
+    TRACE_ID_HEADER,
+    UNMATCHED_ROUTE,
+    configure_logging,
+    remove_app_log_handlers_for_tests,
+)
 from tests.helpers.sentry_capture import (
     TEST_ENVIRONMENT,
     TEST_RELEASE,
@@ -509,3 +517,238 @@ def test_sentry_and_the_error_log_report_the_route_template(
 def _emitted(records: list[logging.LogRecord]) -> str:
     """Every record's message and attributes, as one searchable string."""
     return "\n".join(f"{record.getMessage()} {record.__dict__}" for record in records)
+
+
+# ── The root log stream: exception types and frames, never messages ────────
+
+_LOGGER = logging.getLogger("tests.telemetry_sentinels")
+_THIS_FILE = "test_telemetry_sentinels.py"
+
+
+@pytest.fixture
+def app_stream() -> Iterator[io.StringIO]:
+    """The deployed root handler, writing into a buffer instead of stderr."""
+    remove_app_log_handlers_for_tests()
+    stream = io.StringIO()
+    configure_logging(stream=stream)
+    try:
+        yield stream
+    finally:
+        remove_app_log_handlers_for_tests()
+
+
+def _caught(raiser: Callable[[str], None], canary: str) -> BaseException:
+    """Return the exception ``raiser`` raises, with its real traceback attached."""
+    try:
+        raiser(canary)
+    except (ValueError, ExceptionGroup) as exc:
+        return exc
+    raise AssertionError("the raiser did not raise")
+
+
+@pytest.mark.parametrize("shape", list(_RAISERS))
+@pytest.mark.parametrize("canary", SENTINELS, ids=SENTINEL_IDS)
+def test_an_exc_info_record_prints_types_and_frames_but_no_message(
+    app_stream: io.StringIO, shape: str, canary: str
+) -> None:
+    """AC11: the traceback an operator reads keeps its shape and loses its text."""
+    exc = _caught(_RAISERS[shape], canary)
+
+    _LOGGER.error("request_failed", exc_info=exc)
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, canary)
+    assert "request_failed" in output
+    assert "[-]" in output, "the trace-id bracket is still stamped"
+    assert "Traceback (most recent call last):" in output
+    assert f'{_THIS_FILE}", line ' in output
+    assert (
+        f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output or shape == "exception_group"
+    )
+
+
+def test_a_chain_keeps_its_cause_separator_and_every_type(app_stream: io.StringIO) -> None:
+    """The cause, the separator, and the outer exception all still read in order."""
+    _LOGGER.error("boom", exc_info=_caught(_raise_from, SHORT_CANARY))
+
+    output = app_stream.getvalue()
+    cause = output.index(f"KeyError: {telemetry_safety.MESSAGE_WITHHELD}")
+    separator = output.index("The above exception was the direct cause")
+    outer = output.index(f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}")
+    assert cause < separator < outer
+
+
+def test_a_group_prints_every_member_type(app_stream: io.StringIO) -> None:
+    """An exception group's members are listed by type, without their messages."""
+    _LOGGER.error("boom", exc_info=_caught(_raise_group, SHORT_CANARY))
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert f"ExceptionGroup: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    assert f"RuntimeError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    assert f"KeyError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+
+
+def test_a_declared_safe_code_is_printed(app_stream: io.StringIO) -> None:
+    """An exception class that declares a code keeps it in the log, too."""
+    _LOGGER.error("boom", exc_info=_DeclaredFailureError(SHORT_CANARY))
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert "_DeclaredFailureError: journal_save_failed" in output
+
+
+@pytest.mark.parametrize("canary", SENTINELS, ids=SENTINEL_IDS)
+def test_an_exception_interpolated_as_an_argument_is_neutralised(
+    app_stream: io.StringIO, canary: str
+) -> None:
+    """``logger.warning("...: %s", exc)`` prints the type, not the message."""
+    _LOGGER.warning("content_manifest_unusable: %s", ValueError(canary))
+    _LOGGER.warning("keyed: %(error)s", {"error": KeyError(canary)})
+    _LOGGER.error(RuntimeError(canary))
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, canary)
+    assert f"content_manifest_unusable: ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    assert f"keyed: KeyError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    assert f"RuntimeError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+
+
+def test_a_traceback_cached_by_another_handler_is_not_reused(app_stream: io.StringIO) -> None:
+    """A plain formatter elsewhere caches the full text on the record; it must not leak here.
+
+    ``logging.Formatter.format`` stores ``exc_text`` on the shared record and
+    every later handler reuses it. A second handler with the standard
+    formatter, attached first, would otherwise decide what the app stream says.
+    """
+    root = logging.getLogger()
+    plain = logging.StreamHandler(io.StringIO())
+    root.handlers.insert(0, plain)
+    try:
+        _LOGGER.error("boom", exc_info=_caught(_raise_from, SHORT_CANARY))
+    finally:
+        root.removeHandler(plain)
+
+    assert_no_canary(app_stream.getvalue(), SHORT_CANARY)
+
+
+def test_the_unhandled_exception_line_is_content_free(
+    sentinel_app: FastAPI, app_stream: io.StringIO
+) -> None:
+    """AC11 end to end: ``errors._sanitized_500``'s record, as the host would read it."""
+    client = TestClient(sentinel_app, raise_server_exceptions=False)
+    client.get(f"/__sentinel__/{SHORT_CANARY}", headers={TRACE_ID_HEADER: _REQUEST_ID})
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert "unhandled_exception" in output
+    assert f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+    assert f'{_THIS_FILE}", line ' in output
+
+
+@pytest.fixture
+def uvicorn_stream() -> Iterator[io.StringIO]:
+    """A handler on the ``uvicorn`` logger, as uvicorn's own dictConfig installs one.
+
+    Starlette's ``ServerErrorMiddleware`` re-raises after answering, and uvicorn
+    then logs "Exception in ASGI application" with the traceback on
+    ``uvicorn.error``, which propagates only as far as ``uvicorn``'s handler --
+    never to the root handler. Restores the loggers afterwards.
+    """
+    server = logging.getLogger("uvicorn")
+    access = logging.getLogger("uvicorn.access")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    server.addHandler(handler)
+    access_disabled = access.disabled
+    remove_app_log_handlers_for_tests()
+    configure_logging(stream=io.StringIO())
+    try:
+        yield stream
+    finally:
+        server.removeHandler(handler)
+        access.disabled = access_disabled
+        remove_app_log_handlers_for_tests()
+
+
+def test_uvicorns_own_traceback_is_content_free(uvicorn_stream: io.StringIO) -> None:
+    """The server's "Exception in ASGI application" line keeps types, loses messages."""
+    exc = _caught(_raise_from, SHORT_CANARY)
+
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application\n", exc_info=exc)
+
+    output = uvicorn_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert "Exception in ASGI application" in output
+    assert f"ValueError: {telemetry_safety.MESSAGE_WITHHELD}" in output
+
+
+def test_uvicorns_access_logger_is_switched_off(uvicorn_stream: io.StringIO) -> None:
+    """In code, behind the CMD flag: uvicorn's request line carries the query string."""
+    assert uvicorn_stream is not None
+    assert logging.getLogger("uvicorn.access").disabled is True
+
+
+@pytest.mark.parametrize("client_logger", ["httpx", "httpx2"])
+def test_outbound_request_urls_stay_out_of_the_info_stream(
+    app_stream: io.StringIO, client_logger: str
+) -> None:
+    """An HTTP client's per-request INFO line carries the URL; it no longer prints."""
+    logger = logging.getLogger(client_logger)
+
+    logger.info("HTTP Request: GET https://vault.example/v1/journal-entries/%s", SHORT_CANARY)
+    logger.warning("client_failure_still_visible")
+
+    output = app_stream.getvalue()
+    assert_no_canary(output, SHORT_CANARY)
+    assert "client_failure_still_visible" in output
+
+
+# ── Query strings: only uvicorn's access line ever carried them ────────────
+
+_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
+_NO_ACCESS_LOG_FLAG = "--no-access-log"
+
+
+def _runtime_cmd_tokens() -> list[str]:
+    """Return the runtime CMD of the backend Dockerfile, split into tokens."""
+    commands = [line for line in _DOCKERFILE.read_text().splitlines() if line.startswith("CMD ")]
+    assert len(commands) == 1, "expected exactly one CMD directive in backend/Dockerfile"
+    return [token.strip('[],"') for token in commands[0].split()]
+
+
+def test_the_runtime_cmd_disables_uvicorns_access_log() -> None:
+    """AC10: uvicorn's access line is the request line *with* its query string.
+
+    ``?search=`` is a journal search term -- the user's own words -- and the
+    app's own ``adepthood.access`` record already covers method, route,
+    status and latency without it.
+    """
+    tokens = _runtime_cmd_tokens()
+
+    assert _NO_ACCESS_LOG_FLAG in tokens
+    assert "--access-log" not in tokens
+    assert "--log-config" not in {token.split("=")[0] for token in tokens}
+
+
+_TEST_CLIENT_LOGGER = "httpx"
+
+
+@pytest.mark.asyncio
+async def test_a_search_query_string_reaches_no_log(
+    async_client: AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC10, in process: no record the app emits for a search request carries the term.
+
+    The uvicorn leg is the CMD flag and the disabled logger above; this pins
+    the app's own records (which name the route template, not the URL).
+    """
+    with caplog.at_level(logging.DEBUG):
+        await async_client.get("/journal/", params={"search": SHORT_CANARY})
+
+    # The test's own HTTP client logs the URL it sent, on the ``httpx`` logger;
+    # that line is the caller's, not the server's, so it is set aside here.
+    server_records = [r for r in caplog.records if not r.name.startswith(_TEST_CLIENT_LOGGER)]
+    assert _access_records(caplog), "the request was logged at all"
+    assert_no_canary(_emitted(server_records), SHORT_CANARY)

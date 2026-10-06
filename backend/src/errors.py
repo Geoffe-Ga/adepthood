@@ -27,8 +27,9 @@ ERROR_KEY = "error"
 REQUEST_ID_KEY = "request_id"
 
 # Generic detail strings — never include the raw exception message in the
-# HTTP body (BUG-OBS-003 / security).  The full traceback goes to logs and
-# Sentry; the client only sees a stable token they can show the user.
+# HTTP body (BUG-OBS-003 / security).  The traceback -- frames and exception
+# types, with every message withheld (#3064) -- goes to logs and Sentry; the
+# client only sees a stable token they can show the user.
 INTERNAL_ERROR = "internal_error"
 # Distinct code for a journal decrypt/encrypt failure (key misconfigured or
 # rotated out with un-migrated rows) so logs/clients can tell it apart from a

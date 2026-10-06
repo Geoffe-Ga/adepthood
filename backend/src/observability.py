@@ -18,15 +18,20 @@ tasks and Celery / RQ workers without modification.
 from __future__ import annotations
 
 import contextvars
+import copy
 import logging
 import os
 import re
+import traceback
 import uuid
+from collections.abc import Mapping
 from typing import IO
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
+
+from telemetry_safety import exception_label
 
 # Header used by upstream load balancers / browser clients to propagate a
 # trace identifier.  We honour whatever value the caller supplied as long as
@@ -178,6 +183,119 @@ def _resolve_log_level() -> int:
     return level if level is not None else _DEFAULT_LOG_LEVEL
 
 
+#: Format for the uvicorn server's own handlers, which carry no trace filter.
+_SERVER_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+
+#: Loggers uvicorn installs its own handlers on. ``uvicorn.error`` propagates
+#: only as far as ``uvicorn``, never to the root handler, and it is where the
+#: server prints "Exception in ASGI application" with the traceback of anything
+#: Starlette's ``ServerErrorMiddleware`` re-raised.
+_SERVER_LOGGERS = ("uvicorn", "uvicorn.error")
+
+#: uvicorn's per-request line: the request line *with* its query string, so a
+#: journal ``?search=`` term (#3064). The app's own ``adepthood.access`` record
+#: replaces it. Off in code as well as by ``--no-access-log`` in the Dockerfile,
+#: so a host that starts uvicorn some other way is covered too.
+_SERVER_ACCESS_LOGGER = "uvicorn.access"
+
+#: HTTP client libraries that log every outbound request line at INFO, URL
+#: included -- a user's self-hosted vault address and the entry id in its path.
+#: Raised to WARNING so only their failures reach the host's logs; the app's own
+#: records already name each outbound call by capability.
+_OUTBOUND_CLIENT_LOGGERS = ("httpx", "httpx2")
+
+_TRACEBACK_HEADER = "Traceback (most recent call last):\n"
+_CAUSE_SEPARATOR = "\nThe above exception was the direct cause of the following exception:\n\n"
+_CONTEXT_SEPARATOR = "\nDuring handling of the above exception, another exception occurred:\n\n"
+_GROUP_MEMBER_HEADER = "+---- exception group member {index} ----\n"
+
+
+def _neutralised(value: object) -> object:
+    """Return an exception as its content-free label; anything else unchanged."""
+    return exception_label(value) if isinstance(value, BaseException) else value
+
+
+def _neutralised_args(
+    args: tuple[object, ...] | Mapping[str, object] | None,
+) -> tuple[object, ...] | Mapping[str, object] | None:
+    """Replace every exception among a record's ``%``-arguments with its label."""
+    if args is None:
+        return None
+    if isinstance(args, Mapping):
+        return {key: _neutralised(value) for key, value in args.items()}
+    return tuple(_neutralised(arg) for arg in args)
+
+
+def _render_one(exc: BaseException) -> str:
+    """Render one exception's frames and its ``Type: reason`` line."""
+    frames = "".join(traceback.format_list(traceback.extract_tb(exc.__traceback__)))
+    return f"{_TRACEBACK_HEADER}{frames}{exception_label(exc)}\n"
+
+
+def _render_predecessor(exc: BaseException, seen: set[int]) -> str:
+    """Render the cause (or unsuppressed context) ``exc`` was raised from, with its separator."""
+    if exc.__cause__ is not None:
+        predecessor, separator = exc.__cause__, _CAUSE_SEPARATOR
+    elif exc.__context__ is not None and not exc.__suppress_context__:
+        predecessor, separator = exc.__context__, _CONTEXT_SEPARATOR
+    else:
+        return ""
+    rendered = render_exception(predecessor, seen)
+    return rendered + separator if rendered else ""
+
+
+def render_exception(exc: BaseException, seen: set[int] | None = None) -> str:
+    """Render ``exc`` like a standard traceback, with every message withheld.
+
+    Same order and separators as :func:`traceback.format_exception` -- the
+    cause or context first, then the exception, then an exception group's
+    members -- so an operator reads a familiar traceback. The final line of
+    each block is :func:`telemetry_safety.exception_label`, never ``str(exc)``.
+    ``seen`` guards against a context cycle, which Python permits.
+    """
+    seen = set() if seen is None else seen
+    if id(exc) in seen:
+        return ""
+    seen.add(id(exc))
+    parts = [_render_predecessor(exc, seen), _render_one(exc)]
+    if isinstance(exc, BaseExceptionGroup):
+        for index, member in enumerate(exc.exceptions, start=1):
+            parts.append(_GROUP_MEMBER_HEADER.format(index=index))
+            parts.append(render_exception(member, seen))
+    return "".join(parts)
+
+
+class ContentFreeFormatter(logging.Formatter):
+    """A formatter that prints an exception's type and frames, never its message.
+
+    The standard formatter's traceback ends in ``Type: message``, and the
+    message is authored at the raise site: a validation error quoting its
+    input, a database error quoting a row, a provider error quoting a prompt.
+    Every unhandled exception reaches the host's log collection through this
+    formatter, so it withholds the message on all three routes one can take
+    into a line (#3064):
+
+    * ``exc_info`` -- rendered by :func:`render_exception`;
+    * an exception passed as a ``%``-argument or as the message itself --
+      replaced by its label before interpolation;
+    * ``record.exc_text`` -- the full text another handler's standard
+      formatter may already have cached on the shared record -- ignored.
+
+    Works on a copy, so the record other handlers (and ``caplog``) see is
+    untouched.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format a content-free copy of ``record``."""
+        safe = copy.copy(record)
+        safe.msg = _neutralised(record.msg)
+        safe.args = _neutralised_args(record.args)
+        exc = record.exc_info[1] if record.exc_info else None
+        safe.exc_info = None
+        safe.exc_text = render_exception(exc).rstrip("\n") if exc is not None else None
+        return super().format(safe)
+
+
 def _build_app_handler(stream: IO[str] | None, level: int) -> logging.Handler:
     """Construct the marked app stream handler ``configure_logging`` installs.
 
@@ -188,7 +306,7 @@ def _build_app_handler(stream: IO[str] | None, level: int) -> logging.Handler:
     """
     handler = logging.StreamHandler(stream)
     handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(_APP_LOG_FORMAT))
+    handler.setFormatter(ContentFreeFormatter(_APP_LOG_FORMAT))
     handler.addFilter(TraceIdLogFilter())
     setattr(handler, _APP_HANDLER_MARKER, True)
     return handler
@@ -229,6 +347,25 @@ def configure_logging(stream: IO[str] | None = None) -> None:
         handlers = [_build_app_handler(stream, level)]
         root.addHandler(handlers[0])
     _apply_log_level(root, handlers, level)
+    _harden_library_loggers()
+
+
+def _harden_library_loggers() -> None:
+    """Make the server's and HTTP clients' own log output content-free (idempotent).
+
+    uvicorn's handlers get :class:`ContentFreeFormatter`; its access logger --
+    whose line is the raw request line, query string included -- is switched
+    off; and the HTTP clients' per-request URL lines are raised out of INFO.
+    Runs after uvicorn configured its loggers (it does so before loading the
+    app), and touches nothing else when the app runs under another server.
+    """
+    for name in _SERVER_LOGGERS:
+        for handler in logging.getLogger(name).handlers:
+            if not isinstance(handler.formatter, ContentFreeFormatter):
+                handler.setFormatter(ContentFreeFormatter(_SERVER_LOG_FORMAT))
+    logging.getLogger(_SERVER_ACCESS_LOGGER).disabled = True
+    for name in _OUTBOUND_CLIENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def remove_app_log_handlers_for_tests() -> None:
