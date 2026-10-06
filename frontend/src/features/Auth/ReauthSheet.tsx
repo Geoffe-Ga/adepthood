@@ -93,7 +93,7 @@ function ReauthForm(props: ReauthFormProps): React.JSX.Element {
     <View style={localStyles.card}>
       <Text style={localStyles.title}>Sign back in</Text>
       <Text style={localStyles.subtitle}>
-        Your session expired. Enter your credentials to keep going where you left off.
+        You got signed out. Sign back in and you’ll pick up right where you left off.
       </Text>
       <EmailField
         accessibilityLabel="Email"
