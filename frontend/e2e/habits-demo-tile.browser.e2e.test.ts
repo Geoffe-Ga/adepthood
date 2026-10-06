@@ -57,10 +57,11 @@ import { backendUrl, openHabits, signUp } from './journalHabitsBrowserSupport';
  * still open; this spec takes no side on it.
  *
  * One action the ledger lists has no reachable control on web: the habit
- * settings' start-date picker renders nothing there, and the missed-days
- * modal that offers "set a new start date" (and its chained check-in clear) is
- * never opened by anything. The start date is reset instead through the one web
- * control that sets it, the reorder modal's "First habit start date".
+ * settings' start-date picker renders nothing there. The start date is moved
+ * instead through the one web control that sets it, the reorder modal's "First
+ * habit start date". DELETE /habits/{id}/completions has no client caller; it
+ * stays in FORBIDDEN_DEMO_WIRE on purpose, as a free absence check while the
+ * server still serves the route.
  */
 
 const DEMO_ORIGIN = `http://127.0.0.1:${DEMO_FRONTEND_PORT}`;
