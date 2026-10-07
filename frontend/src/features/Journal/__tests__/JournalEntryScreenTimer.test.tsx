@@ -72,6 +72,13 @@ const { useWritingHabitLinkStore } = require('@/store/useWritingHabitLinkStore')
   };
 };
 
+const { useDepthPreferencesStore } = require('@/store/useDepthPreferencesStore') as {
+  useDepthPreferencesStore: {
+    getState: () => { reset: () => void };
+    setState: (_state: { enable_habits: boolean }) => void;
+  };
+};
+
 const JournalEntryScreen = require('../JournalEntryScreen').default;
 
 /** The timer's default length, in milliseconds — long enough to run one out. */
@@ -307,6 +314,48 @@ describe('JournalEntryScreen — an unlinked timer points to Settings', () => {
 
     expect(queryByTestId('save-as-habit-offer')).toBeNull();
     expect(queryByTestId('save-as-habit-accept')).toBeNull();
+  });
+
+  describe('with the habits ring declined (#3073)', () => {
+    beforeEach(() => {
+      useDepthPreferencesStore.setState({ enable_habits: false });
+    });
+
+    afterEach(() => {
+      useDepthPreferencesStore.getState().reset();
+    });
+
+    it('leaves the quick-launched note without the link-a-habit pointer', async () => {
+      const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
+
+      await settle(TWENTY_MINUTES_MS);
+
+      expect(getByTestId('writing-session-banner')).toBeTruthy();
+      expect(queryByTestId('link-habit-nudge')).toBeNull();
+    });
+
+    it('leaves an answered ordinary page without the link-a-habit pointer', async () => {
+      await saveWritingOfferAnswered(true);
+      const { getByTestId, queryByTestId } = renderScreen();
+
+      fireEvent.press(getByTestId('writing-timer-start'));
+      await settle(TWENTY_MINUTES_MS);
+
+      expect(getByTestId('writing-session-banner')).toBeTruthy();
+      expect(queryByTestId('link-habit-nudge')).toBeNull();
+    });
+
+    it('offers only the practice on an unanswered ordinary page', async () => {
+      const { getByTestId, findByTestId, queryByTestId } = renderScreen();
+
+      fireEvent.press(getByTestId('writing-timer-start'));
+      await settle(TWENTY_MINUTES_MS);
+
+      await findByTestId('save-as-practice-accept');
+      expect(getByTestId('save-as-habit-decline')).toBeTruthy();
+      expect(queryByTestId('save-as-habit-accept')).toBeNull();
+      expect(queryByTestId('link-habit-nudge')).toBeNull();
+    });
   });
 
   it('shows the note on an ordinary page once the offer has been answered', async () => {

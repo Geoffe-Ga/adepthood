@@ -1027,6 +1027,30 @@
     "coveredBy": "frontend/e2e/depth.e2e.test.ts"
   },
   {
+    "id": "journal.journal-only-with-every-depth-declined",
+    "description": "A writer who declines every optional depth keeps a whole journal and is never invited back into a ring they turned off (#3073). On a fresh account (no corpus consent, no vault of their own, not the deployment vault's owner) Habits, Practices and Course are switched off through the real Settings switches and Sangha over PATCH /depth-preferences (its switch ships only in a build with a Sangha invite URL), and the stored state is read back. The drawer then lists no Habits, Practice or Course destination. The writer writes a page and runs a timed writing session to its end -- the finished-session note is the offer that used to show with habits off. The spec waits for the note's withheld marker, which renders only once the offer has read its stored answer and found both depths declined, and only then asserts no keep-as-habit or keep-as-practice offer, so the absence cannot be read during the offer's loading window. The page is found by search, reopened, exported (both export routes, and the Export screen renders) and deleted, and GET /invitations answers [] on the all-off path. Return cards, invitation cards, the contraction reflection and the link-a-habit pointer cannot appear on a fresh account, so they are pinned below rather than asserted absent here. Finally the lane's fake language-model provider and fake Creek vault counters are unchanged, so nothing left the box. The server-side gates are pinned in backend/tests: routers/test_invitations.py (a declined ring's pending invitations are hidden and return on re-enable, a course-off listing never reads the vault wheel, all-off generates nothing), services/test_invitations_service.py, routers/test_contraction_reflection.py (habits off -> contraction null) and routers/test_journal_journal_only.py (a fresh account's save at every tier and with every ring off builds no real vault client, calls no provider and opens no outbound request). Jest pins each client gate: DepthGate.test.tsx, JournalShelfScreen.test.tsx (Return hidden with habits off), InvitationStack.test.tsx (a declined ring's cards drop live, with no remount), WritingSessionOffer.test.tsx (only the kept depths' accepts beside the decline; nothing with both off), JournalEntryScreenTimer.test.tsx and JournalEntryScreenContraction.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "depthPreferences", "journal", "invitations", "users"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "GET /depth-preferences",
+        "PATCH /depth-preferences",
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /invitations",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md"
+      ],
+      "tables": ["userdepthpreferences", "journalentry", "invitationsignal", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-only.browser.e2e.test.ts"
+  },
+  {
     "id": "seed.upload-document",
     "description": "A person who HAS connected a vault chooses a document from their device and seeds it there -- since #3017 the picker is offered only to an account the server does not say has nothing attached, so an account with no vault is shown where its corpus lives first (corpus.bring-in-your-writing-needs-a-vault-first); the import forwards to the vault rather than persisting locally, so authentication is the only table it crosses. One route serves every account -- POST /corpus/import decides per account -- and this entry is the vault half of that decision; the no-vault half, answered vault_required with nothing stored (#3016), is corpus.import-without-a-vault. The lane now has a vault to reach: a loopback process answering Creek's published GET /v1/capabilities and POST /v1/uploads, reached through adepthood's own production CREEK_VAULT_URL and bound to one pre-provisioned account by CREEK_VAULT_OWNER_USER_ID. That binding is what closed the last blocker -- the variable is read from the server's environment and so names an id fixed before any account exists, which globalSetup settles by signing that account up as the lane's first request and refusing the whole run if the id it gets back is not the one already named. The deployment-wide value is also the only one that may name loopback: a user-supplied vault URL is refused unless it names a globally routable destination, which is why the connect-your-own path cannot serve this. The spec proves the seam end to end -- accepted with a ref, a re-send reported as one fragment edited in place rather than a second, and an Intimate document withheld before the vault is contacted at all, asserted against the vault's own record of what arrived.",
     "crosses": {

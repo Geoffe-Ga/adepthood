@@ -129,6 +129,39 @@ def _present(source: Mapping[str, str], variables: tuple[str, ...]) -> set[str]:
     return {_normalised(source.get(var)) for var in variables} - {""}
 
 
+def _normalised(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def production_in_force(env: Mapping[str, str] | None = None) -> bool:
+    """Whether this process must be treated as a production deploy.
+
+    True when ``ENV`` says production, when the platform names this environment
+    production, or when a platform marker is present but no environment name
+    is -- a deploy that cannot say where it is has not proven it is not
+    production. Staging (``RAILWAY_ENVIRONMENT_NAME=staging``) stays exempt.
+    Not cached: the live environment is read on every call.
+
+    Args:
+        env: The environment to judge; ``None`` reads ``os.environ``.
+
+    Returns:
+        ``True`` when production rules apply.
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    if _normalised(source.get(ENV_VAR)) == PRODUCTION:
+        return True
+    names = _present(source, PLATFORM_ENVIRONMENT_NAME_ENV_VARS)
+    if names:
+        return PRODUCTION in names
+    return bool(_present(source, PLATFORM_MARKER_ENV_VARS))
+
+
+def _present(source: Mapping[str, str], variables: tuple[str, ...]) -> set[str]:
+    """The non-blank, normalised values of ``variables`` in ``source``."""
+    return {_normalised(source.get(var)) for var in variables} - {""}
+
+
 def _configured_keys() -> list[str]:
     return [k.strip() for k in os.getenv(KEYS_ENV_VAR, "").split(",") if k.strip()]
 
