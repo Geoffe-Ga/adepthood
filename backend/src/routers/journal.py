@@ -408,11 +408,24 @@ async def _record_vault_outcome(
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
+    await _after_vault_write(session, entry, vault_client, outcome)
+
+
+async def _after_vault_write(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultClient,
+    outcome: VaultWriteOutcome,
+) -> None:
+    """Shadow-count a write that dialled, then drive the pipeline after one that stored.
+
+    The shadow (#3059) fires whenever the ingest was dialled: a DEGRADED write
+    -- a lost acknowledgement, or ``stored=False`` -- has still handed the body
+    to the vault. ``_NOTHING_SENT`` is the same predicate that decides whether
+    the staged destination is kept. It commits straight away so nothing is held
+    across what follows; the pipeline runs only on a durable INGESTED write.
+    """
     if outcome.status not in _NOTHING_SENT:
-        # Shadow only (#3059), whenever the ingest was dialled -- a DEGRADED
-        # write (a lost acknowledgement, or ``stored=False``) has still handed
-        # the body to the vault. The same predicate decides whether the staged
-        # destination is kept. Committed so nothing is held across what follows.
         await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
         await session.commit()
     if outcome.status is VaultWriteStatus.INGESTED:
