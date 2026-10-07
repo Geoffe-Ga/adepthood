@@ -29,7 +29,7 @@
     build is honest.
   - Until phase (a), BYOK is relayed through our server, and without BYOK
     the app's own key pays.
-- **Keys are user-held, with no operator escrow.**
+- **Target: keys will be user-held, with no operator escrow.**
   - Recovery is a written-down recovery phrase plus the person's passphrase.
   - Losing both means the data is gone, and the person agrees to that up
     front.

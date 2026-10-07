@@ -102,7 +102,7 @@ answers to this record's follow-up questions, given the same evening.
    runtime while that processing runs (item 4). The derivatives are the
    in-scope `EncryptedString` columns (item 9) and the `DERIVED_FROM_PROSE`
    plaintext.
-2. **Keys are user-held, with no operator escrow.**
+2. **Decided: keys are to be user-held, with no operator escrow.**
    (`owner:2026-10-07#B12-premise`) Under the target, keys are generated on
    the person's device and the server stores ciphertext and public
    parameters only. No operator-held decrypt capability will exist in the
@@ -263,7 +263,7 @@ history and future content stand or fall together.
 
 *User-held keys with client-side encryption.*
 
-- **Boundary:** Stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext. (`issue:#3067`)
+- **Boundary:** Under this option's target, stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext. (`issue:#3067`)
 - **Key custody:** Keys generated on the person's device; no operator escrow; AEAD bound to owner, object and version. (`issue:#3067`)
 - **Recovery:** **unknown; owner input required.** See D03 below.
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels and network metadata remain visible. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
@@ -291,7 +291,7 @@ history and future content stand or fall together.
 - **Threat actors:** Defeats host and operator under the hardware threat model; vendor flaws and compelled updates remain. (`creek-vault:creek-tools/docs/architecture/ADR/0006-enclave-attestation-trust-model.md`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Reopen if confidential compute becomes a cheap way to give the runtime we control an operator-blind property. (`issue:#3068`)
+- **Reopen triggers:** Reopen if confidential compute becomes a cheap way to reach an operator-blind target for the runtime we control. (`issue:#3068`)
 
 ### Option D
 
@@ -523,8 +523,8 @@ for B13. They need the cryptography review and user testing.
 ## Confidential compute (D05)
 
 D05 is not pursued. C is rejected for now (see below). It reopens only if
-the owner wants the managed runtime's processing to become operator-blind,
-which Decision item 4 currently says it is not. In that case D05's conditions apply in full: real hardware,
+the owner sets an operator-blind target for the managed runtime's processing.
+Decision item 4 says that processing is not operator-blind today. In that case D05's conditions apply in full: real hardware,
 a vendor attestation chain, nonce freshness, user-authorized key release,
 and a hostile-host lab. Creek-Vault ADR 0006's operator-provisioned trust
 root is not evidence.
@@ -709,8 +709,8 @@ The B13 epic body that carries this plan is drafted at
   `test_server_env_keys_alone_recover_every_in_scope_journal_column` fails.
   That is expected: it is the signal to update this record's Context and
   invert the tests.
-- Confidential compute becomes affordable enough that it could make the
-  runtime-we-control path operator-blind, if D05 is proven (C).
+- Confidential compute becomes affordable enough to set an operator-blind
+  target for the runtime-we-control path, once D05 is proven (C).
 - The owner's budget for any phase is exceeded.
 
 ## Open owner questions

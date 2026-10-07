@@ -227,7 +227,7 @@
     },
     "B": {
       "boundary": {
-        "value": "Stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext.",
+        "value": "Under this option's target, stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext.",
         "source": "issue:#3067"
       },
       "key_custody": {
@@ -321,7 +321,7 @@
         "owner_input_required": true
       },
       "reopen_triggers": {
-        "value": "Reopen if confidential compute becomes a cheap way to give the runtime we control an operator-blind property.",
+        "value": "Reopen if confidential compute becomes a cheap way to reach an operator-blind target for the runtime we control.",
         "source": "issue:#3068"
       }
     },

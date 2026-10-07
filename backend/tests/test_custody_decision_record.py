@@ -855,43 +855,74 @@ def test_decision_three_does_not_invent_byok_consent_granularity() -> None:
 # catches the phrasings this record family has actually used to overclaim and
 # the plain-English forms a reviewer would read as a promise, sentence by
 # sentence. A determined writer can still phrase around it; review remains
-# the real check.
+# the real check. Only an anchored scope (the decided target or a named phase)
+# excuses a sentence; bare future or conditional words do not.
 #
+# "user-held" counts when predicated of something ("keys are user-held"); the
+# attributive "the user-held key" names the design rather than asserting it.
 # Affirmative custody terms. A sentence using one is excused by an explicit
 # target or condition marker, or by a negation directly in front of the term
 # ("is not operator-blind"), never by a stray "no" elsewhere in the sentence.
 _AFFIRMATIVE_CLAIM = re.compile(
-    r"operator-blind|end-to-end|end to end|\bE2EE\b|already user-held",
+    r"operator-blind|end-to-end|end to end|\bE2EE\b|\b(?:is|are|already)\s+user-held\b",
     re.IGNORECASE,
 )
-# Custody claims that carry their own negation ("cannot read", "never
-# carries"). A preceding "not" cannot excuse these, because the negative word
-# is the claim; only an explicit target or condition marker can.
+# Custody claims that carry their own negation or exclusivity ("cannot read",
+# "never relayed", "the only way ... reaches"). A preceding "not" cannot
+# excuse these, because that word is the claim; only an anchored scope can.
 _NEGATIVE_FORM_CLAIM = re.compile(
     r"\bcan(?:not|'t) (?:read|decrypt|see)\b|\bnever carr(?:y|ies)\b|"
     r"\bnone of (?:their|your|the person's) data reaches\b|\bnever reach(?:es)?\b|"
-    r"\bnever pass(?:es)? through\b|\bholds? no (?:key|escrow)\b",
+    r"\bnever pass(?:es)? through\b|\bholds? no (?:key|escrow)\b|\bnever relayed\b|"
+    r"\bnever sees?\b|\bhas no access\b|\bnobody\b.{0,40}?\bcan read\b|"
+    r"\bonly\W+way\b.{0,60}?\breach(?:es)?\b|\bfunds? only non-cloud\b",
     re.IGNORECASE,
 )
-# Explicit scope: the sentence speaks of the decided target, a future, or a
-# condition. Bare "not", "no" and "never" are deliberately absent.
-_TARGET_OR_CONDITION = re.compile(
-    r"\b(?:target|decided|under the decision|will|until phase|once|when B13|"
-    r"not yet|not implemented|if|unless|would|could)\b",
+# Anchored scope: the sentence names the decided target or a named phase.
+# Unanchored "will", "if", "once", "would", "could" and "unless" do not
+# count, because they excuse a flat claim from anywhere in the sentence
+# ("Adepthood is operator-blind, if you ask us").
+_ANCHORED_SCOPE = re.compile(
+    r"\b(?:under the decision|under the target|target|decided|until phase|"
+    r"once phase|once B13|when B13|not yet|not implemented)\b",
     re.IGNORECASE,
 )
 # A negation that governs the affirmative term right after it, allowing up to
 # three words between ("is not described as operator-blind").
 _NEGATION_BEFORE = re.compile(r"\b(?:not|never|no|neither|nor)\b(?:\W+\w+){0,3}\W*$", re.IGNORECASE)
-# A term in double quotes is mentioned, not used ("before any copy says
-# \"end-to-end\""), so quoted spans are removed before the scan.
-_QUOTED = re.compile(r'"[^"]*"|“[^”]*”')
+# A double-quoted span is a mention only when a mention verb or noun stands
+# just before it (allowing a short list of quoted terms), as in: before any
+# copy says "end-to-end" or "operator-blind". A bare quote is still a claim:
+# We are "operator-blind".
+_QUOTED = re.compile(r'"[^"]*"')
+_MENTION_BEFORE = re.compile(
+    r"\b(?:says?|said|saying|phrase|term|terms|word|words|claim|claims|call|called|"
+    r"advertise|advertises|label|labelled)\b(?:\W+\w+){0,4}\W*$",
+    re.IGNORECASE,
+)
+
+
+# A sentence ends at terminal punctuation, including inside bold markup, so a
+# bold heading cannot borrow the scope of the sentence after it.
+_SENTENCE_END = re.compile(r"(?<=[.;!?])\s+|(?<=[.;!?]\*\*)\s+")
 
 
 def _sentences(text: str) -> list[str]:
     """Split prose, bullets and table cells into sentences, each flattened."""
     blocks = re.split(r"\n\s*\n|\n(?=\s*(?:[-*] |#))|\|", text)
-    return [sentence for block in blocks for sentence in re.split(r"(?<=[.;!?])\s+", _flat(block))]
+    return [sentence for block in blocks for sentence in re.split(_SENTENCE_END, _flat(block))]
+
+
+def _without_mentions(sentence: str) -> str:
+    """``sentence`` with each quoted span that is a mention replaced by ``Q``."""
+    out = ""
+    cursor = 0
+    for match in _QUOTED.finditer(sentence):
+        prefix = out + sentence[cursor : match.start()]
+        mention = _MENTION_BEFORE.search(prefix) is not None
+        out = prefix + ("Q" if mention else match.group(0))
+        cursor = match.end()
+    return out + sentence[cursor:]
 
 
 def _affirmative_is_negated(sentence: str) -> bool:
@@ -903,8 +934,8 @@ def _affirmative_is_negated(sentence: str) -> bool:
 
 
 def _is_unscoped_claim(sentence: str) -> bool:
-    """Whether ``sentence`` states a custody property with no target, condition or negation."""
-    if _TARGET_OR_CONDITION.search(sentence):
+    """Whether ``sentence`` states custody with no anchored scope or governing negation."""
+    if _ANCHORED_SCOPE.search(sentence):
         return False
     if _NEGATIVE_FORM_CLAIM.search(sentence):
         return True
@@ -914,7 +945,7 @@ def _is_unscoped_claim(sentence: str) -> bool:
 def _unscoped_custody_claims(text: str) -> list[str]:
     """Sentences that state a custody property flatly (heuristic; see above)."""
     return [
-        sentence for sentence in _sentences(text) if _is_unscoped_claim(_QUOTED.sub("", sentence))
+        sentence for sentence in _sentences(text) if _is_unscoped_claim(_without_mentions(sentence))
     ]
 
 
@@ -964,6 +995,15 @@ _PLANTED_CLAIMS = (
     "The journal is encrypted end to end.",
     "Adepthood is operator-blind.",
     "Journal content is already user-held.",
+    # Round-3 bypasses: bare user-held, unanchored will/if, quoting a claim,
+    # and the relay, exclusivity and credits phrasings.
+    "Journal keys are user-held today.",
+    "Adepthood is operator-blind, so we will never see it.",
+    "Adepthood is operator-blind, if you ask us.",
+    'We are "operator-blind".',
+    "BYOK plaintext is never relayed by our server.",
+    "It is the only way any of a person's content reaches a cloud model.",
+    "Credits fund only non-cloud inference.",
 )
 # Scoped or negated statements the scan must let through.
 _SCOPED_STATEMENTS = (
@@ -972,7 +1012,7 @@ _SCOPED_STATEMENTS = (
     "Under the decision, the app's own cloud key will never carry journal content.",
     "Once phase (c) lands, the operator cannot decrypt stored content.",
     "It is decided to become user-held.",
-    "It could become operator-blind if D05 is proven.",
+    "Keys are not user-held yet.",
     "Neither is operator-blind during processing.",
     'No copy may say "operator-blind" before B24 certifies it.',
 )
