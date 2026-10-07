@@ -60,8 +60,10 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   `uservaultconfig.api_key`.
 - **Content-derived plaintext sits beside them.** The `DERIVED_FROM_PROSE`
   group of `_PLAINTEXT_COLUMNS` in `backend/tests/test_column_classification.py`
-  lists the columns that hold it: embeddings, frequency weights and detected
-  facts.
+  lists the columns that hold it. Among them are the corpus embedding and
+  frequency weights, and the entry's tier, classification, tag, vault tags and
+  reflection scope. Completion detection output is a separate, non-textual
+  derived store (`completionsuggestion.completed_units` and `completed_on`).
 - **Server AI reads plaintext.** `services/botmason.py::resolve_chat_api_key`
   uses the person's own key (BYOK) when one is sent, and otherwise **the
   server's own `LLM_API_KEY`**. BotMason credits therefore pay for cloud calls
@@ -335,25 +337,33 @@ key, withdrawn, or expired" before an account may be labelled protected:
      which are written *to* the operator to be read, and
      `uservaultconfig.api_key`, a credential the server must present on the
      person's behalf.
-2. **`DERIVED_FROM_PROSE` plaintext** (`_PLAINTEXT_COLUMNS`): embeddings,
-   frequency weights and detected facts. These are never written by the
-   server for a protected account. They are recomputed on the device or in
-   the vault, or dropped.
-3. **Backups and snapshots.** B08 ([#3063](https://github.com/Geoffe-Ga/adepthood/issues/3063))
+2. **`DERIVED_FROM_PROSE` plaintext** (`_PLAINTEXT_COLUMNS` in
+   `backend/tests/test_column_classification.py`). The members are
+   `corpusfragment.embedding`, `corpusfragment.frequency_weights`,
+   `corpusfragment.tier`, `journalentry.classification`,
+   `journalentry.reflection_scope_key`, `journalentry.tag` and
+   `journalentry.vault_tags`. For a protected account these are recomputed on
+   the device or in the vault, dropped, or kept only where the owner decides
+   they may stay readable (B02 owner decision: disclose, do not encrypt,
+   embeddings, frequency weights and vault tags).
+3. **Completion detection output.** `completionsuggestion.completed_units` and
+   `completionsuggestion.completed_on` are non-textual values derived from
+   prose by detection. They follow the same rule as item 2.
+4. **Backups and snapshots.** B08 ([#3063](https://github.com/Geoffe-Ga/adepthood/issues/3063))
    owns the store inventory and retention values. Its store inventory has
    not landed on this branch, so the list of non-database stores is still to
    be consumed from B08 when it merges. Backup expiry deadlines are open
    question MIGRATION.
-4. **Creek copies.** These are withdrawn through B04's destination-bound
+5. **Creek copies.** These are withdrawn through B04's destination-bound
    machinery (`services/creek_vault_withdraw.py`, voice-draft retraction),
    which has landed. Creek-side deletion has to be idempotent and purge
    derived copies ([Creek-Vault#1854](https://github.com/Geoffe-Ga/Creek-Vault/issues/1854)).
-5. **Vendor copies.** These are whatever already reached a model vendor,
+6. **Vendor copies.** These are whatever already reached a model vendor,
    listed per recipient in `backend/src/privacy/recipients.py` (B11,
    [#3065](https://github.com/Geoffe-Ga/adepthood/issues/3065)). They cannot
    be recalled. They expire under each vendor's retention terms, which stay
    `UNVERIFIED` until the owner supplies receipts.
-6. **Logs and telemetry.** These hold no content by design. B10
+7. **Logs and telemetry.** These hold no content by design. B10
    ([#3064](https://github.com/Geoffe-Ga/adepthood/issues/3064)) owns the
    proof.
 
@@ -542,7 +552,8 @@ and `test_server_env_keys_alone_recover_every_in_scope_journal_column`.
 - **Gates:** the application-security hostile-admin review and B08's
   retention values.
 - **Exit tests:** for a migrated account, no server-key ciphertext and no
-  `DERIVED_FROM_PROSE` row remain, and Creek reports a confirmed withdrawal.
+  `DERIVED_FROM_PROSE` row or completion detection value remains (except
+  values the owner kept readable), and Creek reports a confirmed withdrawal.
   The downgrade path refuses to restore operator-held keys.
 
 ### Phase (d): server features that need plaintext move to the device or vault

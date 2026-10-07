@@ -868,3 +868,26 @@ def test_adr_0007_amendment_adds_no_condition_for_lifting_intimate_skip_only() -
     assert "skip-only for inference until" not in amendment
     assert "adds no condition for lifting it" in amendment
     assert "INTIMATE-DEVICE" in questions
+
+
+def test_removal_inventory_names_the_real_derived_plaintext() -> None:
+    """The derived-plaintext inventory is the registry's members, not a paraphrase.
+
+    ``DERIVED_FROM_PROSE`` holds no "detected facts"; completion detection
+    output (``completionsuggestion.completed_units`` and ``completed_on``) is a
+    separate, non-textual derived store and must be listed on its own.
+    """
+    text = _flat(_adr_text())
+    removal = text[text.index("## Primary-copy and derivative removal") :]
+    removal = removal[: removal.index("## Migration of existing")]
+    registry = (_REPO_ROOT / "backend" / "tests" / "test_column_classification.py").read_text(
+        encoding="utf-8"
+    )
+    group = registry[registry.index('"DERIVED_FROM_PROSE": frozenset(') :]
+    members = re.findall(r'"([a-z_]+\.[a-z_]+)"', group[: group.index(")")])
+
+    assert members
+    assert "detected facts" not in text
+    assert [member for member in members if f"`{member}`" not in removal] == []
+    assert "`completionsuggestion.completed_units`" in removal
+    assert "`completionsuggestion.completed_on`" in removal

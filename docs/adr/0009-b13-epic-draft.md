@@ -97,7 +97,9 @@ Context section there too.
 ### (c) Migration and plaintext retirement
 
 - Enrolment re-encrypts history on the device. Then the server-key
-  ciphertext and the `DERIVED_FROM_PROSE` plaintext are deleted.
+  ciphertext, the `DERIVED_FROM_PROSE` plaintext and the completion
+  detection output (`completed_units`, `completed_on`) are deleted, except
+  values the owner keeps readable.
 - Creek copies are withdrawn with destination-bound receipts (B04, #3095).
   Backups expire on B08's schedule (#3063).
 - There is no plaintext dual-write after enrolment.
