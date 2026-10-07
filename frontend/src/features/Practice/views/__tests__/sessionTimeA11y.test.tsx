@@ -29,12 +29,30 @@ const SPOKEN =
 
 const running: RitualState = fakeState({
   status: 'running',
-  elapsedMs: 3 * MIN,
-  remainingMs: 7 * MIN,
+  // Half-minutes, so a readout spoken in the wrong direction (or rounded the
+  // wrong way) names a different number than the right one.
+  elapsedMs: 3.5 * MIN,
+  remainingMs: 7.5 * MIN,
   nextCueAtMs: 5 * MIN,
 });
 
 const noop = (): void => undefined;
+
+/**
+ * What each readout must say for {@link running}: a countdown rounds up, a
+ * count-up rounds down, the next bell is 5 - 3.5 = 1.5 min away, and the rep
+ * time cap has 10 - 3.5 = 6.5 min left.
+ */
+const EXPECTED_LABELS: Record<string, string> = {
+  'meditation-time-remaining': '8 minutes remaining',
+  'count-up-elapsed': '3 minutes elapsed',
+  'metronome-mini-timer': '3 minutes elapsed',
+  'random-interval-bell-elapsed': '3 minutes elapsed',
+  'interval-bell-next': '2 minutes until the next bell',
+  'rep-counter-time-cap': '7 minutes remaining',
+  'mindful-anchor-elapsed-time': '3 minutes elapsed',
+  'tarot-time-remaining': '8 minutes remaining',
+};
 
 const READOUTS: readonly (readonly [string, string, () => React.JSX.Element])[] = [
   [
@@ -146,6 +164,7 @@ describe('session time readouts are accessible timers', () => {
     const readout = screen.getByTestId(testID);
     expect(readout.props.accessibilityRole).toBe('timer');
     expect(readout.props.accessibilityLabel).toMatch(SPOKEN);
+    expect(readout.props.accessibilityLabel).toBe(EXPECTED_LABELS[testID]);
     expect(screen.getAllByRole('timer').length).toBeGreaterThan(0);
   });
 
