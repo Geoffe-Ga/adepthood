@@ -339,13 +339,25 @@ async def test_classify_error_after_successful_ingest_still_returns_ingested() -
 
 
 @pytest.mark.asyncio
-async def test_unknown_classification_raises_value_error_without_touching_client() -> None:
-    """An unrecognized classification fails closed via tier_ceiling_for, before any vault call."""
+@pytest.mark.parametrize("classification", ["bogus", "", "INTIMATE", "Personal"])
+async def test_unknown_classification_skips_closed_without_touching_client(
+    classification: str,
+) -> None:
+    """A tier outside the egress allowlist is withheld before any vault call (#3059).
+
+    The egress predicate is the first gate, so an unknown, empty or wrongly
+    spelled tier is *skipped* -- nothing sent, nothing raised -- exactly as
+    intimate is, rather than relying on the ceiling map to raise. It used to
+    raise ``ValueError`` from ``tier_ceiling_for``; both are closed, and the skip
+    is the one a caller can persist an entry through.
+    """
     client = RecordingVaultClient()
-    with pytest.raises(ValueError, match="bogus"):
-        await store_and_classify(
-            client, body=_BODY, classification="bogus", created_at=_CREATED_AT, entry_id=101
-        )
+    outcome = await store_and_classify(
+        client, body=_BODY, classification=classification, created_at=_CREATED_AT, entry_id=101
+    )
+    assert outcome == VaultWriteOutcome(
+        status=VaultWriteStatus.SKIPPED_INTIMATE, vault_ref=None, tags=()
+    )
     assert client.calls == []
 
 
