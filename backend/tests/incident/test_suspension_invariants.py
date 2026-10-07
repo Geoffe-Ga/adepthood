@@ -44,12 +44,17 @@ _CLASSIFICATION_DEGRADES: Final = (
 )
 #: AI-reaching routes that deliberately do not admit through the switch. Each
 #: reaches the model only through frequency classification, which the leaf
-#: guard refuses and the classifier degrades on, so the request still succeeds
-#: with nothing sent. Shrink this; never grow it without reading the route.
+#: guard refuses, so the request still succeeds with nothing sent. Each reason
+#: says what the route does instead. Shrink this; never grow it without reading
+#: the route.
 AI_EXCLUSIONS: Final[dict[Route, str]] = {
     Route("POST", "/journal/"): _CLASSIFICATION_DEGRADES,
     Route("PATCH", "/journal/{entry_id}"): _CLASSIFICATION_DEGRADES,
-    Route("PUT", "/corpus/consent/{source}"): _CLASSIFICATION_DEGRADES,
+    Route("PUT", "/corpus/consent/{source}"): (
+        "the grant's backfill sweep stops before its first dial while suspended "
+        "(corpus_backfill._offer_one), leaving every entry unmarked for the next grant; "
+        "the consent decision itself is recorded"
+    ),
 }
 
 

@@ -462,6 +462,31 @@ async def test_classification_degrades_under_suspension(
     assert stub.request_count >= 1
 
 
+@pytest.mark.asyncio
+async def test_consent_grant_under_suspension_records_and_leaves_backlog_unmarked(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grant is recorded; its backfill sweep stops without demoting any entry."""
+    stub = arm_anthropic(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "suspended_grant")
+    entry_id = await seed_entry(db_session, user_id)
+    suspend_ai(monkeypatch)
+
+    granted = await async_client.put(
+        f"/corpus/consent/{CorpusSource.JOURNAL.value}", json={"granted": True}, headers=headers
+    )
+
+    assert granted.status_code == HTTPStatus.OK, granted.text
+    assert stub.request_count == 0
+    await db_session.rollback()
+    entry = await db_session.get(JournalEntry, entry_id)
+    assert entry is not None
+    await db_session.refresh(entry)
+    assert entry.corpus_attempted_at is None
+
+
 # --- T6: parsing fails closed ----------------------------------------------------
 
 

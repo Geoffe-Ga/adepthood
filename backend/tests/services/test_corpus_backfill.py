@@ -46,6 +46,7 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import pytest_asyncio
@@ -64,6 +65,10 @@ from services import frequency_classification as fc
 from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
+from services.privacy_suspension import EXTERNAL_AI_SUSPEND_ENV_VAR
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 _OWNER = 1
 
@@ -565,6 +570,38 @@ async def test_a_refusal_that_never_reached_a_provider_does_not_mark_the_entry_a
     assert [await _offered_at(db_session, i) for i in (first, second, third)] == [None, None, None]
     assert outcome.entries_considered == 0
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_operator_ai_suspension_stops_the_sweep_without_marking(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A suspension is a refusal no provider saw, so it must not spend the queue (#3075).
+
+    ``PRIVACY_SUSPEND_EXTERNAL_AI`` refuses every classification before a client
+    is built. Left to the classifier, that refusal degrades to "unclassified"
+    and the sweep would stamp, and so demote, every entry in the batch in one
+    pass that reached nobody. It stops instead, exactly as a spent balance does.
+    """
+    real = cast("Callable[..., Awaitable[object]]", fc.generate_response)
+    calls: list[str] = []
+
+    async def counting(*args: object, **kwargs: object) -> object:
+        calls.append("dial")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(fc, "generate_response", counting)
+    monkeypatch.setenv(EXTERNAL_AI_SUSPEND_ENV_VAR, "true")
+    first = await _entry(db_session, body=_FIRST)
+    second = await _entry(db_session, body=_SECOND)
+    third = await _entry(db_session, body=_THIRD)
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert [await _offered_at(db_session, i) for i in (first, second, third)] == [None, None, None]
+    assert outcome.entries_considered == 0
+    assert outcome.entries_remaining == 3
+    assert calls == []
 
 
 @pytest.mark.asyncio
