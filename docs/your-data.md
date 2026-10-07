@@ -146,9 +146,11 @@ Deleting a page does not touch anything else about your account.
 **Settings → Delete account.** You retype the email address you sign in with,
 and the account is erased.
 
-It is **immediate and irreversible**. There is no grace period, no
-deactivation, and no support path to get any of it back. If you want a copy of
-your writing, [take it first](#taking-a-copy-of-your-writing).
+It takes effect on the live service **immediately**, and it **cannot be
+undone**. There is no grace period, no deactivation, and no support path to get
+any of it back. Backups taken before you delete still hold a copy until they
+age out, within about 97 days (see "Backups" below). If you want a copy of your
+writing, [take it first](#taking-a-copy-of-your-writing).
 
 You are signed out everywhere: the app on every device stops working at its
 next request.
@@ -208,6 +210,16 @@ Three things, each for a stated reason:
 The wallet ledger for your own account goes with the account. Ledger rows
 recording something you did to *another* account's wallet stay, with you
 cleared off them.
+
+### Backups
+
+Deleting your account does not reach into backups. The database is backed up
+on two schedules: the hosting platform keeps each daily backup for 6 days, and
+a weekly copy kept off the platform, itself encrypted, is kept for 90 days. A
+backup taken before you deleted still holds what your account held then, with
+your writing encrypted in it as it is in the database. No backup is edited to
+remove one account; each is deleted when its retention runs out, so the last
+copy holding your data is gone within about 97 days of your deletion.
 
 ### If you use a Creek Vault
 

@@ -444,11 +444,11 @@ might want it.
 ## Deleting your account
 
 **Settings → Delete account.** You retype your email address and the
-account is erased. It is immediate and irreversible: no grace period, no
-deactivation, no support path to recover any of it. Your session stops
-working on every device.
+account is erased from the live service straight away. It cannot be undone:
+no grace period, no deactivation, no support path to recover any of it. Your
+session stops working on every device.
 
-Everything of yours goes — entries at every tier, margin notes, habits,
+Removed from the live service: entries at every tier, margin notes, habits,
 goals, practices, course progress, beta feedback reports, sign-in records,
 the account row itself.
 
@@ -459,6 +459,14 @@ address on it, because that address is how something you paid for is
 matched back to you, and because retaining a payment record is the ordinary
 carve-out in data-protection law; and a note that a deletion happened —
 date, counts, and an internal id that now names nobody.
+
+**Backups age out; they are not edited.** The database is backed up, and a
+backup taken before you deleted still holds what your account held then,
+with your writing encrypted in it as it is in the database. No backup is
+altered to remove one account. Each is deleted when its retention runs out —
+6 days for the hosting platform's daily backups, 90 days for the weekly
+encrypted copies kept off the platform — so the last copy holding your data
+is gone within about 97 days of your deletion.
 
 [Your data](../your-data.md) says all of this at greater length, including
 what happens to a Creek Vault.
@@ -479,8 +487,8 @@ about your use of the app, and content that was never yours to take.
 happened is noted — your account id and how many records went, and not a
 line of what they said.
 
-Because deletion is immediate and total, **take a copy before you delete**.
-Nothing here can undo it afterwards.
+Because deletion takes effect at once and cannot be undone, **take a copy
+before you delete**. Nothing here can undo it afterwards.
 
 ## Children
 
