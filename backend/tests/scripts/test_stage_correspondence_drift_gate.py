@@ -12,7 +12,10 @@ no longer matched its inputs, and every check stayed green.
 The gate lives in the ``content-drift`` job of ``backend-ci.yml``, after the
 step that proves the vendored tree matches ``CONTENT_VERSION`` -- the artifact
 is generated *from* that tree, so checking it first would grade the output of
-an input nobody had verified yet. The job installs only the drift scripts'
+an input nobody had verified yet. Issue #3070 adds a second gate to the same
+job, ``content_completeness --check``, graded by the same predicates over
+``_GATES`` and ordered after the same verification. The job installs only the
+drift scripts'
 third-party imports, so this module also walks those imports and fails when
 one of them is missing from the install step: an ``ImportError`` exits 1 too,
 and a gate that is red for the wrong reason teaches people to ignore it.
@@ -51,6 +54,13 @@ _SYNC_COMMAND = "python -m scripts.sync_content --check"
 _GATE_STEP = "Verify stage_correspondence.json is current"
 _GATE_COMMAND = "python -m scripts.build_stage_correspondence --check"
 _GATE_WORKING_DIRECTORY = "working-directory: backend"
+# Issue #3070: the Course completeness gate and its generated inventories run
+# in the same job, also after the vendored tree is verified.
+_COMPLETENESS_STEP = "Verify Course content completeness and inventories"
+_COMPLETENESS_COMMAND = "python -m scripts.content_completeness --check"
+
+# Every gate the job must run, armed, after the vendored-content check.
+_GATES = ((_GATE_STEP, _GATE_COMMAND), (_COMPLETENESS_STEP, _COMPLETENESS_COMMAND))
 
 # Anything that lets a step fail without failing the job. Searched for in the
 # comment-stripped job only, so the header explaining why none of these are
@@ -67,6 +77,7 @@ _DISARMING_FRAGMENTS = (
 # The scripts the job runs, whose third-party imports the install step owns.
 _DRIFT_SCRIPTS = (
     _BACKEND / "scripts" / "build_stage_correspondence.py",
+    _BACKEND / "scripts" / "content_completeness.py",
     _BACKEND / "scripts" / "sync_content.py",
 )
 
@@ -85,33 +96,35 @@ def _content_drift_job(workflow_text: str) -> str:
     return found[_JOB]
 
 
-def _gate_problems(workflow_text: str) -> list[str]:
-    """Return why the job's stage-correspondence step does not run the gate, if it does not."""
+def _gate_problems(
+    workflow_text: str, *, step: str = _GATE_STEP, command: str = _GATE_COMMAND
+) -> list[str]:
+    """Return why the job's ``step`` does not run the gate ``command``, if it does not."""
     job = _content_drift_job(workflow_text)
     names = [line.strip() for line in without_comment_lines(job).splitlines()]
-    if f"- name: {_GATE_STEP}" not in names:
-        return [f"{_JOB} has no step named {_GATE_STEP!r}"]
+    if f"- name: {step}" not in names:
+        return [f"{_JOB} has no step named {step!r}"]
     problems = []
-    command = step_run_command(job, _GATE_STEP)
-    if command != _GATE_COMMAND:
-        problems.append(f"{_GATE_STEP!r} runs {command!r}, not {_GATE_COMMAND!r}")
-    live = [line.strip() for line in step_body(without_comment_lines(job), _GATE_STEP)]
+    found = step_run_command(job, step)
+    if found != command:
+        problems.append(f"{step!r} runs {found!r}, not {command!r}")
+    live = [line.strip() for line in step_body(without_comment_lines(job), step)]
     if _GATE_WORKING_DIRECTORY not in live:
-        problems.append(f"{_GATE_STEP!r} does not set {_GATE_WORKING_DIRECTORY!r}")
+        problems.append(f"{step!r} does not set {_GATE_WORKING_DIRECTORY!r}")
     return problems
 
 
-def _ordering_problems(workflow_text: str) -> list[str]:
-    """Return why the gate does not run after the vendored-content check, if it does not."""
+def _ordering_problems(workflow_text: str, *, step: str = _GATE_STEP) -> list[str]:
+    """Return why ``step`` does not run after the vendored-content check, if it does not."""
     lines = [
         line.strip()
         for line in without_comment_lines(_content_drift_job(workflow_text)).splitlines()
     ]
-    sync, gate = f"- name: {_SYNC_STEP}", f"- name: {_GATE_STEP}"
+    sync, gate = f"- name: {_SYNC_STEP}", f"- name: {step}"
     if sync not in lines or gate not in lines:
-        return [f"{_JOB} lacks {_SYNC_STEP!r} or {_GATE_STEP!r}"]
+        return [f"{_JOB} lacks {_SYNC_STEP!r} or {step!r}"]
     if lines.index(sync) > lines.index(gate):
-        return [f"{_GATE_STEP!r} runs before {_SYNC_STEP!r}, so it grades unverified input"]
+        return [f"{step!r} runs before {_SYNC_STEP!r}, so it grades unverified input"]
     return []
 
 
@@ -180,6 +193,18 @@ def test_the_gate_runs_after_the_vendored_content_check() -> None:
     assert _ordering_problems(_real_workflow()) == []
 
 
+@pytest.mark.parametrize(("step", "command"), _GATES, ids=[step for step, _ in _GATES])
+def test_content_drift_job_runs_every_gate(step: str, command: str) -> None:
+    """Each gate step runs exactly its ``--check`` command from ``backend/``."""
+    assert _gate_problems(_real_workflow(), step=step, command=command) == []
+
+
+@pytest.mark.parametrize("step", [step for step, _ in _GATES])
+def test_every_gate_runs_after_the_vendored_content_check(step: str) -> None:
+    """No gate grades a tree nobody has verified against CONTENT_VERSION yet."""
+    assert _ordering_problems(_real_workflow(), step=step) == []
+
+
 def test_the_job_is_not_disarmed() -> None:
     """Nothing in the job lets the gate's exit code be swallowed, or the gate be skipped."""
     assert _disarming_fragments(_real_workflow()) == []
@@ -220,6 +245,13 @@ _GATE = f"""\
 _FULL_INSTALL = "uv pip install --system httpx 'jsonschema>=4.0'"
 
 
+_COMPLETENESS = f"""\
+      - name: {_COMPLETENESS_STEP}
+        working-directory: backend
+        run: {_COMPLETENESS_COMMAND}
+"""
+
+
 def _fixture(*steps: str, install: str = _FULL_INSTALL) -> str:
     """Return a minimal workflow whose ``content-drift`` job runs ``steps`` in order."""
     return _FIXTURE_HEAD.format(install=install) + "".join(steps)
@@ -233,6 +265,46 @@ def test_the_predicates_accept_a_well_formed_job() -> None:
     assert _disarming_fragments(good) == []
     assert _job_conditions(good) == []
     assert _install_problems(good, set(_DISTRIBUTION_FOR_IMPORT)) == []
+
+
+def test_the_predicates_accept_a_well_formed_completeness_step() -> None:
+    """The completeness fixture is sound, so its failures below are the mutation's."""
+    good = _fixture(_SYNC, _GATE, _COMPLETENESS)
+    kwargs = {"step": _COMPLETENESS_STEP, "command": _COMPLETENESS_COMMAND}
+    assert _gate_problems(good, **kwargs) == []
+    assert _ordering_problems(good, step=_COMPLETENESS_STEP) == []
+    assert _disarming_fragments(good) == []
+
+
+def test_a_job_without_the_completeness_step_fails() -> None:
+    """Deleting the completeness step is caught."""
+    missing = _fixture(_SYNC, _GATE)
+    assert _gate_problems(missing, step=_COMPLETENESS_STEP, command=_COMPLETENESS_COMMAND) == [
+        f"{_JOB} has no step named {_COMPLETENESS_STEP!r}"
+    ]
+
+
+def test_a_swallowed_completeness_exit_code_fails() -> None:
+    """``--check || true`` on the completeness step is a changed command and a disarm."""
+    swallowed = _fixture(
+        _SYNC,
+        _GATE,
+        _COMPLETENESS.replace(_COMPLETENESS_COMMAND, f"{_COMPLETENESS_COMMAND} || true"),
+    )
+    assert _gate_problems(swallowed, step=_COMPLETENESS_STEP, command=_COMPLETENESS_COMMAND) == [
+        (
+            f"{_COMPLETENESS_STEP!r} runs {_COMPLETENESS_COMMAND + ' || true'!r}, "
+            f"not {_COMPLETENESS_COMMAND!r}"
+        )
+    ]
+    assert _disarming_fragments(swallowed) == ["|| true"]
+
+
+def test_a_completeness_step_before_the_vendored_content_check_fails() -> None:
+    """The completeness gate is ordered after the tree it grades is verified."""
+    assert _ordering_problems(_fixture(_COMPLETENESS, _SYNC, _GATE), step=_COMPLETENESS_STEP) == [
+        f"{_COMPLETENESS_STEP!r} runs before {_SYNC_STEP!r}, so it grades unverified input"
+    ]
 
 
 def test_a_job_without_the_gate_step_fails() -> None:
