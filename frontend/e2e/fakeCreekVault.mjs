@@ -19,15 +19,18 @@ import { createServer } from 'node:http';
  * would prove the routing and assume the protocol, and the protocol is the half
  * only a live server can exercise.
  *
- * **It advertises five capabilities and no more.** The upload journey needs
+ * **It advertises six capabilities and no more.** The upload journey needs
  * `capabilities` and `upload`; the withdrawal journey needs `journal-upsert`,
- * `journal-withdraw`, and `voice-drafts`. The deployment binding still keeps
+ * `journal-withdraw`, `voice-drafts`, and `reflections` -- the bound owner is
+ * vault-bound (#3061), so its resonance pass is answered by this vault or not at
+ * all, and a vault that never advertised reflect is a refunded 503, never a
+ * quiet hand-off to the app's model provider. The deployment binding still keeps
  * every other lane account on Adepthood's local fallback, so only the two specs
  * that deliberately log in as the bound owner can send traffic here.
  *
  * Shapes come from the vendored bundle at `backend/tests/fixtures/creek_v1/`:
  * capability, upload, journal upsert/withdrawal, Voice Draft upsert/deletion,
- * and error envelopes. The refusals are real refusals -- a missing
+ * reflection, and error envelopes. The refusals are real refusals -- a missing
  * contract-version header is a 409, an unrecognised bearer is a 401, a field
  * adepthood invented is a 400 -- so a mis-wired lane fails loudly instead of
  * quietly serving something that looks like success.
@@ -61,7 +64,7 @@ const CEILING_HEADER = 'x-creek-tier-ceiling';
 /**
  * Everything this vault says it can do.
  *
- * Five names, and the shortness is the safety property rather than an economy:
+ * Six names, and the shortness is the safety property rather than an economy:
  * adepthood consults this list before every capability call, so a name added
  * here is a new class of traffic aimed at this process from journeys that have
  * nothing to do with seeding.
@@ -72,6 +75,7 @@ const ADVERTISED_CAPABILITIES = [
   'journal-upsert',
   'journal-withdraw',
   'voice-drafts',
+  'reflections',
 ];
 
 /** The only two tiers `/v1` can express; anything else is not a tier, it is a leak. */
@@ -81,6 +85,10 @@ const ADMITTED_TIERS = ['open', 'personal'];
 const UPLOAD_REQUEST_FIELDS = ['filename', 'content_base64', 'external_id', 'timestamp', 'tier'];
 const JOURNAL_REQUEST_FIELDS = ['content', 'timestamp', 'tier'];
 const VOICE_DRAFT_REQUEST_FIELDS = ['content', 'tier'];
+/** `ReflectionRequest` as adepthood sends it: inline content and a note budget, nothing else. */
+const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes'];
+/** What this vault says about the writer's words; a lane sentinel, never real advice. */
+const LANE_REFLECTION_NOTE = 'The lane vault reads this line back to you.';
 
 const ONTOLOGY_VERSION = 'aptitude-wavelength/2026-05-23';
 
@@ -326,6 +334,53 @@ function voiceDraftDelete(request, response, externalId) {
   });
 }
 
+/**
+ * The writer's own first sentence, verbatim, so the note anchors for real.
+ *
+ * A note whose quote is not in the body is dropped by adepthood's anchor check,
+ * and a reflection with no surviving note is a zero-note pass -- so quoting the
+ * body is what lets this vault produce the margin note the journey expands.
+ */
+function firstSentence(content) {
+  const sentence = content.trim().split(/(?<=[.!?])\s/u)[0] ?? '';
+  return sentence.replace(/[.!?]+$/u, '');
+}
+
+/** Answer a reflection with one note quoting the writer, recording only a digest. */
+async function reflect(request, response) {
+  if (!hasContract(request, response)) return;
+  const body = await readJson(request);
+  const keys = body !== null && typeof body === 'object' ? Object.keys(body).sort() : [];
+  const ceiling = request.headers[CEILING_HEADER] ?? null;
+  if (
+    keys.join() !== [...REFLECTION_REQUEST_FIELDS].sort().join() ||
+    typeof body.content !== 'string' ||
+    body.content.trim() === '' ||
+    !ADMITTED_TIERS.includes(ceiling)
+  ) {
+    refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return;
+  }
+  received.push({
+    method: 'POST',
+    path: '/v1/reflections',
+    externalId: null,
+    tier: null,
+    ceiling,
+    digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
+  });
+  send(response, HTTP_OK, {
+    essay: null,
+    essay_grounded: false,
+    notes: [{ kind: 'pattern', note: LANE_REFLECTION_NOTE, quote: firstSentence(body.content) }],
+    related_eddies: [],
+    related_praxis: [],
+    routed_tier: ceiling,
+    status: 'ok',
+    tier_ceiling: ceiling,
+  });
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
   if (request.method === 'GET' && pathname === '/v1/capabilities') {
@@ -335,6 +390,10 @@ async function capability(request, response, pathname) {
   }
   if (request.method === 'POST' && pathname === '/v1/uploads') {
     await uploads(request, response);
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/v1/reflections') {
+    await reflect(request, response);
     return;
   }
   const journalMatch = /^\/v1\/journal-entries\/([^/]+)$/u.exec(pathname);
