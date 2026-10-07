@@ -303,6 +303,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "wanted offered, meaningless once there is nobody to offer them to.",
     ),
     "promptresponse": _erase("user_id", "Answers to the weekly prompts."),
+    "restoremarker": _retain(
+        "Content-free record that a restored database had its deletions "
+        "reapplied: an operator restore id, a state and counts. It names no "
+        "account, and it is what stops a completed restore being reapplied twice.",
+    ),
     "revokedtoken": _retain(
         "Opaque JWT ids with an expiry and nothing else — no account column "
         "exists to sweep on, and the rows age out on their own.",

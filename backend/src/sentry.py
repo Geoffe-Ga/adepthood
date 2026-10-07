@@ -354,6 +354,11 @@ def _configured_release() -> str:
     )
 
 
+def configured_release() -> str:
+    """The build version, for content-free operator logs and receipts outside this module."""
+    return _configured_release()
+
+
 def init_error_monitoring(transport: Transport | None = None) -> bool:
     """Initialise error monitoring if a DSN is configured; report whether it is.
 

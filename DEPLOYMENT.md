@@ -494,17 +494,41 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 # Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
 read -rs PGURL && export PGURL
 
-pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
-
+# DUMP_OK is set only if the dump, its verification and its encryption all
+# succeed. pg_dump creates its file before it connects, so a failed dump can
+# leave an empty or truncated archive that gpg would still encrypt; the
+# pg_restore --list step reads the archive and fails on one.
 # Encrypt before it leaves the machine. Passphrase lives in the password
 # manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
-gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
+DUMP_OK=0
+pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump" && \
+  pg_restore --list "adepthood-$STAMP.dump" >/dev/null && \
+  gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump" && \
+  DUMP_OK=1
 shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
 ```
 
 Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
 custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
 and it lets you restore selectively.
+
+**Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
+where the off-host copies live is still undecided.* "Kept 90 days" is only true
+if someone deletes the older ones. Once this run's dump is verified, delete every
+dump older than 90 days, locally and at the off-host destination:
+```bash
+# Local copies older than the 90-day retention, to the minute: an age in whole
+# days would round down and keep a dump a day too long. Runs only when this
+# run's dump verified and encrypted (DUMP_OK=1 above); a failed run deletes
+# nothing.
+[ "$DUMP_OK" = 1 ] && \
+  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
+```
+Then, only once the new copy is confirmed present at the off-host destination,
+remove the same-aged `adepthood-*.dump.gpg` files there with that store's own
+tooling. The journal-entry purge's minimum
+window (`POST /admin/maintenance/journal-entries`) assumes this happens: a dump
+kept longer can still hold a purged page undeleted.
 
 > This leg is **manual today**. It is written down honestly rather than
 > described as automated: a weekly calendar reminder is the current mechanism,
@@ -547,11 +571,36 @@ costs.
    read this database, listing **every key that could have encrypted a row in
    this dump**, newest first. The current production key alone is not enough if
    the dump predates a rotation.
-8. **Verify before cutting over** (next section). A restore is not finished when
+8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
+   a ratified step of this procedure.* A backup taken before an account or a
+   journal page was deleted still holds it, and the deletion's own record is
+   restored away with it, so the deleted account could sign in again. Before
+   cutting over, reapply the deletion tombstones to the restored database:
+   ```bash
+   # From backend/, with DATABASE_URL pointing at the RESTORED database.
+   # TOMBSTONES is the content-free file exported with `export --out` from the
+   # live database before the restore (or from wherever it is kept -- where it
+   # lives is undecided, #3063 AC17; without one, deletions made after the
+   # backup cannot be suppressed and must be treated as resurrected).
+   # RESTORE_ID names THIS restore. Choose it once (e.g. after the backup you
+   # restored) and paste the same value on any rerun: a completed id is refused,
+   # which is what stops a second reapply after cutover.
+   TOMBSTONES=tombstones.json; RESTORE_ID=restore-of-backup-YYYYMMDD
+   PYTHONPATH=src python -m scripts.restore_suppression reapply \
+     --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
+   ```
+   Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
+   already marked complete -- never rerun a completed restore after cutover);
+   exit 2 is an unreadable file. Before the restored service starts at all,
+   set `RESTORE_SUPPRESSION_REQUIRED=1` and `RESTORE_ID` (the same value) on
+   it: the app then refuses to boot until that restore's reapply completed, so
+   nothing writes to a resurrected page first. Both are unset by default in the
+   code and change nothing until set here.
+9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
-9. **Point the app at it** and bring the backend service back up. Watch the boot
-   log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected", ...}`.
+10. **Point the app at it** and bring the backend service back up. Watch the boot
+    log for `journal_encryption_enabled=True` and `/health` for
+    `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 

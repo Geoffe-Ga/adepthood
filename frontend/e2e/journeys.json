@@ -2001,5 +2001,22 @@
     },
     "status": "uncovered",
     "issue": 3072
+  },
+  {
+    "id": "account.restore-does-not-resurrect-deleted-data",
+    "description": "Someone deletes their account, or one journal page, and later the operator restores a database backup taken before that deletion. The deleted account must still be unable to sign in, and the deleted page must stay unreadable, unlisted and out of the export, because the operator exported content-free deletion tombstones before the restore and reapplied them (scripts/restore_suppression.py) before cutover. Uncovered as a seam: the hermetic drill in backend/tests/test_restore_suppression.py snapshots and restores a file-backed SQLite database in process and proves both resurrection and its suppression, but no spec restores a real Postgres backup behind the production client, and the live Railway restore drill is still owed (#3063 AC20).",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "users"],
+      "routes": [
+        "POST /auth/login",
+        "DELETE /users/me",
+        "DELETE /journal/{entry_id}",
+        "GET /journal/"
+      ],
+      "tables": ["user", "journalentry", "accountdeletionaudit", "restoremarker"]
+    },
+    "status": "uncovered",
+    "issue": 3063
   }
 ]
