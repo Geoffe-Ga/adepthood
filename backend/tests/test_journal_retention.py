@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col
 
 from domain.retention import PurgeAction, entry_dependants
-from domain.retention_stores import OFFHOST_DUMP_RETENTION_DAYS, RAILWAY_PLATFORM_BACKUP_DAYS
+from domain.retention_stores import BACKUP_LEGS
 from models.journal_entry import JournalEntry
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
@@ -40,7 +40,7 @@ from tests.helpers.telemetry_canaries import SHORT_CANARY, assert_no_canary
 
 _PURGE = "/admin/maintenance/journal-entries"
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
-# The shortest window the purge accepts: the longest backup's lifetime.
+# The shortest window the purge accepts: the age of the oldest live backup copy.
 _WINDOW_DAYS = PURGE_MIN_RETENTION_DAYS
 _OLD = timedelta(days=PURGE_MIN_RETENTION_DAYS + 2)
 _RECENT = timedelta(days=PURGE_MIN_RETENTION_DAYS - 1)
@@ -293,10 +293,21 @@ async def test_purge_log_is_content_free(
         assert_no_canary(f"{record.getMessage()} {record.__dict__!r}", SHORT_CANARY)
 
 
-def test_purge_floor_tracks_the_longest_backup() -> None:
-    """The floor is the longest backup lifetime the inventory states, never a literal."""
+def test_purge_floor_covers_every_backup_legs_oldest_live_copy() -> None:
+    """The property the floor rests on, for every backup leg the inventory names.
+
+    A leg's oldest live copy can be as old as its retention plus one interval:
+    a copy is only pruned on the next run after it passes the retention. A
+    purged entry was soft-deleted more than the floor ago, so if the floor
+    covers that age for every leg, every live copy was taken after the soft
+    delete and holds the entry deleted.
+    """
+    assert BACKUP_LEGS, "no backup leg is inventoried -- this property is vacuous"
+    for leg in BACKUP_LEGS:
+        assert leg.retention_days + leg.interval_days <= PURGE_MIN_RETENTION_DAYS, leg.key
     assert (
-        max(RAILWAY_PLATFORM_BACKUP_DAYS, OFFHOST_DUMP_RETENTION_DAYS) == PURGE_MIN_RETENTION_DAYS
+        max(leg.retention_days + leg.interval_days for leg in BACKUP_LEGS)
+        == PURGE_MIN_RETENTION_DAYS
     )
 
 

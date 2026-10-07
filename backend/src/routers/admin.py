@@ -466,9 +466,10 @@ async def purge_journal_entries(
     Removes their margin notes, promoted passages, completion suggestions and
     corpus fragments, and clears the metering link, as ``domain.retention``
     derives from the schema. Entries still owing a remote withdrawal are kept
-    and counted as ``blocked``. The window is at least the longest backup
-    retention, so no live backup can hold a purged entry undeleted. It is
-    required -- there is no default,
+    and counted as ``blocked``. The window is at least the age of the oldest
+    live backup copy (retention plus one backup interval), so -- provided
+    backups are expired as DEPLOYMENT.md says -- no live backup holds a purged
+    entry undeleted. It is required -- there is no default,
     because how long a deleted page is kept is the owner's promise to make
     (#3063) -- and nothing schedules this route.
     """

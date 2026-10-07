@@ -17,16 +17,22 @@ An entry with an unsettled obligation (:data:`domain.retention.ENTRY_PURGE_BLOCK
 -- an essay whose remote withdrawal is not confirmed) is skipped and counted:
 purging it would cascade away the only record that a withdrawal is owed.
 
-**The window has a floor: the longest backup lifetime.** A purge removes the
-entry's only tombstone (its ``deleted_at`` stamp), so restore suppression can
-no longer re-delete it. That is safe only when no backup still alive holds the
-entry *undeleted*. A backup alive at purge time was taken at most
-:data:`~domain.retention_stores.LONGEST_BACKUP_RETENTION_DAYS` ago; an entry
-soft-deleted more than that long ago was therefore already stamped deleted in
-every such backup, and restoring any of them brings it back hidden. The
-argument rests on the backup retention the inventory states (pinned to
-DEPLOYMENT.md by a drift test): keeping a backup longer than that, or raising
-it without raising the constant, breaks it. Below the floor the purge refuses.
+**The window has a floor: the age of the oldest live backup copy.** A purge
+removes the entry's only tombstone (its ``deleted_at`` stamp), so restore
+suppression can no longer re-delete it. That is safe only when no backup still
+alive holds the entry *undeleted*. Each backup leg keeps a copy for its
+retention and prunes it on a later run, so its oldest live copy is at most
+retention plus one interval old
+(:data:`~domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS`, today 90 + 7 for the
+weekly off-host dump). An entry soft-deleted longer ago than that was already
+stamped deleted in every copy still alive, and restoring any of them brings it
+back hidden.
+
+This is a **condition, not a guarantee**: it holds only while backups are
+expired as DEPLOYMENT.md says -- Railway's own expiry for the platform leg and
+the manual weekly prune for the off-host leg. A dump kept past its retention,
+or a retention raised without raising the constants (pinned to DEPLOYMENT.md
+by a drift test), breaks it. Below the floor the purge refuses.
 
 There is no schedule and no default window: when, and how old beyond the
 floor, are owner decisions (#3063 AC15, AC18). Logs carry counts only.
@@ -55,12 +61,12 @@ from domain.retention import (
     entry_dependant_gaps,
     entry_dependants,
 )
-from domain.retention_stores import LONGEST_BACKUP_RETENTION_DAYS
+from domain.retention_stores import OLDEST_LIVE_BACKUP_DAYS
 
 logger = logging.getLogger(__name__)
 
 #: The shortest window the purge accepts (see the module docstring).
-PURGE_MIN_RETENTION_DAYS: Final = LONGEST_BACKUP_RETENTION_DAYS
+PURGE_MIN_RETENTION_DAYS: Final = OLDEST_LIVE_BACKUP_DAYS
 
 #: Entries purged per transaction, so one sweep never holds a long write lock.
 PURGE_BATCH_SIZE: Final = 200
@@ -166,15 +172,15 @@ async def purge_soft_deleted_entries(
 ) -> EntryPurgeResult:
     """Hard-delete entries soft-deleted more than ``older_than_days`` ago.
 
-    Refuses a window shorter than the longest backup retention (see the
+    Refuses a window shorter than the oldest live backup copy (see the
     module docstring) and refuses outright while any reference into an entry lacks a stated
     action. Commits per batch; returns counts only.
     """
     if older_than_days < PURGE_MIN_RETENTION_DAYS:
         msg = (
-            f"older_than_days must be at least {PURGE_MIN_RETENTION_DAYS}, the longest "
-            "backup retention; a shorter window could purge an entry a live backup "
-            "still holds undeleted"
+            f"older_than_days must be at least {PURGE_MIN_RETENTION_DAYS}, the age of the "
+            "oldest live backup copy; a shorter window could purge an entry a live "
+            "backup still holds undeleted"
         )
         raise ValueError(msg)
     gaps = entry_dependant_gaps(SQLModel.metadata)

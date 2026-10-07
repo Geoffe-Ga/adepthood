@@ -22,8 +22,11 @@ import pytest
 
 from domain import retention_stores
 from domain.retention_stores import (
+    BACKUP_LEGS,
+    OFFHOST_DUMP_INTERVAL_DAYS,
     OFFHOST_DUMP_RETENTION_DAYS,
     RAILWAY_PLATFORM_BACKUP_DAYS,
+    RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS,
     STORES,
     Days,
     Store,
@@ -39,7 +42,13 @@ _RETENTION_CELL = re.compile(r"^(\d+) days?$")
 
 # Columns of the backup table: Leg | Mechanism | Schedule | Retention | Survives.
 _LEG_COLUMN = 0
+_SCHEDULE_COLUMN = 2
 _RETENTION_COLUMN = 3
+# The runbook names a schedule; the inventory needs it as days between copies.
+_SCHEDULE_DAYS = {"Daily": 1, "Weekly": 7}
+_DUMP_HEADING = "### Taking an off-host dump"
+_BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+_DRAFT_MARKER = "DRAFT for owner review (#3063)"
 
 _EXPECTED_STORES = frozenset(
     {
@@ -157,3 +166,44 @@ def test_day_count_must_be_positive() -> None:
     """A zero-day deadline is a typo, not a store that deletes instantly."""
     with pytest.raises(ValueError, match="positive"):
         Days(0)
+
+
+def _section(text: str, heading: str) -> str:
+    start = text.find(heading)
+    assert start != -1, f"{_DEPLOYMENT_DOC} has no '{heading}' section"
+    rest = text[start + len(heading) :]
+    end = _NEXT_HEADING.search(rest)
+    return rest[: end.start()] if end else rest
+
+
+def test_deployment_backup_schedule_matches_the_leg_intervals() -> None:
+    """Each leg's interval is the schedule the runbook states for it."""
+    rows = _backup_rows(_DEPLOYMENT_DOC.read_text(encoding="utf-8"))
+    assert _SCHEDULE_DAYS[rows["Platform"][_SCHEDULE_COLUMN]] == (
+        RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS
+    )
+    assert _SCHEDULE_DAYS[rows["Off-host"][_SCHEDULE_COLUMN]] == OFFHOST_DUMP_INTERVAL_DAYS
+
+
+def test_backup_legs_are_the_backup_stores() -> None:
+    """Every backup store is a leg with the same retention, and each leg cites evidence."""
+    by_key = {store.key: store for store in STORES}
+    assert {leg.key for leg in BACKUP_LEGS} == {"railway_platform_backup", "offhost_pg_dump"}
+    for leg in BACKUP_LEGS:
+        assert by_key[leg.key].deadline == Days(leg.retention_days)
+        assert leg.interval_days > 0
+        assert leg.evidence.strip()
+
+
+def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
+    """The 90 days is an operation someone performs, not a number on a page.
+
+    The weekly dump procedure deletes dumps older than the retention the
+    inventory states; the purge floor depends on that happening.
+    """
+    section = _section(_DEPLOYMENT_DOC.read_text(encoding="utf-8"), _DUMP_HEADING)
+    assert _DRAFT_MARKER in section
+    shell = "\n".join(_BASH_BLOCK.findall(section))
+    prune = re.search(r"find\b[^\n]*\.dump\.gpg[^\n]*-mtime \+(\d+)[^\n]*-delete", shell)
+    assert prune, "the off-host procedure never deletes expired .gpg dumps"
+    assert int(prune.group(1)) == OFFHOST_DUMP_RETENTION_DAYS

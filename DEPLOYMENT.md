@@ -506,6 +506,19 @@ Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
 custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
 and it lets you restore selectively.
 
+**Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
+where the off-host copies live is still undecided.* "Kept 90 days" is only true
+if someone deletes the older ones. After copying the new dump, delete every dump
+older than 90 days, locally and at the off-host destination:
+```bash
+# Local copies past the 90-day retention.
+find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mtime +90 -delete
+```
+Then remove the same-aged `adepthood-*.dump.gpg` files at the off-host
+destination with that store's own tooling. The journal-entry purge's minimum
+window (`POST /admin/maintenance/journal-entries`) assumes this happens: a dump
+kept longer can still hold a purged page undeleted.
+
 > This leg is **manual today**. It is written down honestly rather than
 > described as automated: a weekly calendar reminder is the current mechanism,
 > and automating it needs a credential store and a destination bucket that do

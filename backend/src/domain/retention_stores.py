@@ -30,11 +30,52 @@ RAILWAY_PLATFORM_BACKUP_DAYS: Final = 6
 #: The encrypted off-host ``pg_dump`` is kept this long (DEPLOYMENT.md).
 OFFHOST_DUMP_RETENTION_DAYS: Final = 90
 
-#: The longest any backup of the database lives. Anything soft-deleted longer
-#: ago than this is held *deleted* by every backup still alive.
-LONGEST_BACKUP_RETENTION_DAYS: Final = max(
-    RAILWAY_PLATFORM_BACKUP_DAYS, OFFHOST_DUMP_RETENTION_DAYS
+#: Railway's platform backup runs Daily (DEPLOYMENT.md).
+RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS: Final = 1
+#: The off-host dump is taken Weekly, by hand (DEPLOYMENT.md).
+OFFHOST_DUMP_INTERVAL_DAYS: Final = 7
+
+
+@dataclass(frozen=True)
+class BackupLeg:
+    """One leg of the database backup: how long a copy is kept, and how often one is made.
+
+    A copy is pruned only on a run after it passes its retention, so the
+    oldest copy alive can be up to ``retention_days + interval_days`` old.
+    """
+
+    key: str
+    retention_days: int
+    interval_days: int
+    evidence: str
+
+    @property
+    def oldest_live_copy_days(self) -> int:
+        """The greatest age a copy of this leg can reach before it is pruned."""
+        return self.retention_days + self.interval_days
+
+
+BACKUP_LEGS: tuple[BackupLeg, ...] = (
+    BackupLeg(
+        key="railway_platform_backup",
+        retention_days=RAILWAY_PLATFORM_BACKUP_DAYS,
+        interval_days=RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS,
+        evidence="DEPLOYMENT.md 'What is backed up': Platform, Daily, 6 days; "
+        "Railway expires its own backups",
+    ),
+    BackupLeg(
+        key="offhost_pg_dump",
+        retention_days=OFFHOST_DUMP_RETENTION_DAYS,
+        interval_days=OFFHOST_DUMP_INTERVAL_DAYS,
+        evidence="DEPLOYMENT.md 'What is backed up': Off-host, Weekly, 90 days; pruned "
+        "by hand on each weekly run ('Taking an off-host dump', DRAFT prune step)",
+    ),
 )
+
+#: The oldest any live backup copy can be, provided each leg is pruned as
+#: DEPLOYMENT.md says. Anything soft-deleted longer ago than this is held
+#: *deleted* by every backup still alive.
+OLDEST_LIVE_BACKUP_DAYS: Final = max(leg.oldest_live_copy_days for leg in BACKUP_LEGS)
 
 #: The invalid-licence throttle evicts a key once its hourly window rolls off.
 INVALID_LICENSE_THROTTLE_HOURS: Final = 1
