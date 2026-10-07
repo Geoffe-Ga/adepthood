@@ -16,6 +16,7 @@
 // never reached and the failure was invisible in the logs as well as the room.
 
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { Platform } from 'react-native';
 
 import type { AudioAdapter, CueKind, IntervalBellTone } from '../types';
 
@@ -148,6 +149,23 @@ interface PlayableSound {
   seekTo: (seconds: number) => Promise<void>;
   play: () => void;
   remove: () => void;
+  /** expo-audio's paused state; on web it mirrors the media element synchronously. */
+  readonly paused?: boolean;
+}
+
+/**
+ * Whether the browser refused the play just requested.
+ *
+ * expo-audio's web player calls the media element's `play()` and drops the
+ * promise it returns, and its `seekTo` never rejects, so a blocked autoplay
+ * (NotAllowedError) never reaches a catch. It is still observable without a
+ * timer: the HTML `play()` algorithm refuses *before* it clears `paused`, and
+ * an allowed play clears it before returning, so an element still paused
+ * straight after `play()` was refused. Native players settle `paused`
+ * asynchronously, so the check is web-only.
+ */
+function playbackRefused(sound: PlayableSound): boolean {
+  return Platform.OS === 'web' && sound.paused === true;
 }
 
 interface SoundEntry {
@@ -167,26 +185,53 @@ export function createNoopAudioAdapter(): AudioAdapter {
   };
 }
 
+/** Reports, at most once per adapter, that a bell genuinely failed to play. */
+type UnavailableReporter = () => void;
+
+/**
+ * Wrap the caller's optional callback so it fires at most once, and never
+ * synchronously: a player can fail during the caller's own render (adapters
+ * are built in a `useState` initializer), where a state update is illegal.
+ */
+function onceDeferred(onUnavailable?: () => void): UnavailableReporter {
+  let reported = false;
+  return () => {
+    if (reported || onUnavailable === undefined) return;
+    reported = true;
+    void Promise.resolve().then(onUnavailable);
+  };
+}
+
 /**
  * expo-audio-backed adapter. Sound loading is fire-and-forget; if a cue has no
  * timbre, renders inaudible, or fails to construct a player, that cue degrades
  * to a no-op and a single warning is emitted (subsequent plays do not re-warn).
+ *
+ * `onUnavailable` is told (once) when a bell *fails* — the player cannot be
+ * built, a play throws, or the browser refuses the play (blocked web autoplay,
+ * see {@link playbackRefused}) — so the session can say so. A cue that is silent by design (the metronome tick) is not a failure and
+ * never reports.
  */
-export function createExpoAudioAdapter(): AudioAdapter {
+export function createExpoAudioAdapter(onUnavailable?: () => void): AudioAdapter {
   configureAudioSessionOnce();
+  const report = onceDeferred(onUnavailable);
   const entries = new Map<SoundKey, SoundEntry>();
   for (const key of Object.keys(SOUND_TIMBRES) as SoundKey[]) {
     entries.set(key, makeEntry());
-    void loadCue(key, entries);
+    void loadCue(key, entries, report);
   }
 
   return {
-    play: (kind, tone) => playCue(soundKeyFor(kind, tone), entries),
+    play: (kind, tone) => playCue(soundKeyFor(kind, tone), entries, report),
     dispose: () => disposeAll(entries),
   };
 }
 
-async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promise<void> {
+async function loadCue(
+  key: SoundKey,
+  entries: Map<SoundKey, SoundEntry>,
+  report: UnavailableReporter,
+): Promise<void> {
   const timbre = SOUND_TIMBRES[key];
   const entry = entries.get(key);
   if (!entry) return;
@@ -207,6 +252,7 @@ async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
     entry.sound = createAudioPlayer(bellSources()[timbre]) as unknown as PlayableSound;
   } catch (err) {
     markFailed(entry, key, err);
+    report();
   }
 }
 
@@ -216,14 +262,22 @@ function markFailed(entry: SoundEntry, key: SoundKey, reason: unknown): void {
   console.warn(`[ritual-audio] cue "${key}" unavailable — falling back to silent:`, reason);
 }
 
-async function playCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promise<void> {
+async function playCue(
+  key: SoundKey,
+  entries: Map<SoundKey, SoundEntry>,
+  report: UnavailableReporter,
+): Promise<void> {
   const entry = entries.get(key);
   if (!entry || entry.failed || !entry.sound) return;
   try {
     await entry.sound.seekTo(0);
     entry.sound.play();
+    // Not marked failed: a refused autoplay can be allowed on a later play
+    // (after a user gesture), so the cue keeps trying.
+    if (playbackRefused(entry.sound)) report();
   } catch (err) {
     markFailed(entry, key, err);
+    report();
   }
 }
 

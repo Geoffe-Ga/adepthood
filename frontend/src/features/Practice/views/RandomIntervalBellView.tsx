@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 
-import { createExpoAudioAdapter } from '../engine/adapters/audio';
 import type {
   AudioAdapter,
   IntervalBellTone,
@@ -13,7 +12,7 @@ import type {
 } from '../engine/types';
 import { MS_PER_SECOND, RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
 import { SESSION_BIG_TIME, SESSION_CAPTION_LABEL, SessionContainer } from './shared';
@@ -26,8 +25,13 @@ interface Props {
   controls: RitualControls;
   /** Injectable RNG for deterministic tests; defaults to `Math.random`. */
   random?: () => number;
-  /** Injectable audio adapter for tests; defaults to the bundled bell audio. */
-  audio?: AudioAdapter;
+  /**
+   * The session's audio adapter. Required: this mode's bells are played here
+   * (the engine schedules none), so they must go through the adapter whose
+   * failures raise the session's "bells unavailable" notice. The adapter
+   * belongs to the session, which disposes it; this view never does.
+   */
+  audio: AudioAdapter;
   /** Lifts session metadata up so the parent can harvest it on save. */
   onMetadataChange?: (metadata: RandomIntervalBellMetadata) => void;
 }
@@ -61,13 +65,6 @@ export function generateSchedule(config: RandomIntervalBellConfig, random: () =>
   return { offsets, deltas };
 }
 
-/** Resolve the audio adapter once; an injected one is honoured for tests. */
-function useBellAudio(injected?: AudioAdapter): AudioAdapter {
-  const [adapter] = useState<AudioAdapter>(() => injected ?? createExpoAudioAdapter());
-  useEffect(() => () => adapter.dispose?.(), [adapter]);
-  return adapter;
-}
-
 /** Generate the schedule on `idle → running`; clear it back on `→ idle`. */
 function useSessionSchedule(
   config: RandomIntervalBellConfig,
@@ -86,7 +83,10 @@ function useSessionSchedule(
   return schedule;
 }
 
-/** Play the start bell once per session and the end bell once on completion. */
+/**
+ * Play the start bell once per session and the end bell once on completion.
+ * A resume (`paused → running`) is not a new session and rings nothing.
+ */
 function useBoundaryBells(
   config: RandomIntervalBellConfig,
   status: RitualState['status'],
@@ -96,7 +96,8 @@ function useBoundaryBells(
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
-    if (prev !== 'running' && status === 'running' && (config.start_bell ?? true)) {
+    const sessionBegan = (prev === 'idle' || prev === 'complete') && status === 'running';
+    if (sessionBegan && (config.start_bell ?? true)) {
       audio.play('start_bell');
     }
     if (prev !== 'complete' && status === 'complete' && (config.end_bell ?? true)) {
@@ -105,7 +106,11 @@ function useBoundaryBells(
   }, [status, config.start_bell, config.end_bell, audio]);
 }
 
-/** Strike the configured-tone bell for every newly-passed scheduled offset. */
+/**
+ * Strike the configured-tone bell when a scheduled offset passes. Several
+ * offsets passing at once means the app was backgrounded past them: they
+ * strike as one bell, never a burst of every bell missed.
+ */
 function useIntervalBells(
   schedule: Schedule | null,
   struckCount: number,
@@ -119,11 +124,26 @@ function useIntervalBells(
       playedRef.current = 0;
       return;
     }
-    for (let i = playedRef.current; i < struckCount; i++) {
-      audio.play('interval_bell', tone);
-    }
+    if (struckCount > playedRef.current) audio.play('interval_bell', tone);
     playedRef.current = struckCount;
   }, [schedule, struckCount, status, audio, tone]);
+}
+
+/** Lift the live schedule metadata to the parent so it can harvest it on save. */
+function useReportedMetadata(
+  schedule: Schedule | null,
+  struckCount: number,
+  onMetadataChange: Props['onMetadataChange'],
+): void {
+  useEffect(() => {
+    if (onMetadataChange === undefined) return;
+    const intervals = schedule === null ? [] : schedule.deltas.slice(0, struckCount);
+    onMetadataChange({
+      mode: 'random_interval_bell',
+      bells_struck: struckCount,
+      interval_seconds: intervals,
+    });
+  }, [onMetadataChange, schedule, struckCount]);
 }
 
 const RandomIntervalBellView = ({
@@ -136,7 +156,6 @@ const RandomIntervalBellView = ({
 }: Props): React.JSX.Element => {
   // Stabilise so a fresh `random` prop identity can't retrigger the schedule effect.
   const rng = useMemo(() => random ?? Math.random, [random]);
-  const adapter = useBellAudio(audio);
   const schedule = useSessionSchedule(config, state.status, rng);
 
   const struckCount = useMemo(() => {
@@ -144,18 +163,10 @@ const RandomIntervalBellView = ({
     return schedule.offsets.filter((offset) => offset * MS_PER_SECOND <= state.elapsedMs).length;
   }, [schedule, state.elapsedMs]);
 
-  useBoundaryBells(config, state.status, adapter);
-  useIntervalBells(schedule, struckCount, state.status, adapter, config.bell_tone);
+  useBoundaryBells(config, state.status, audio);
+  useIntervalBells(schedule, struckCount, state.status, audio, config.bell_tone);
 
-  useEffect(() => {
-    if (onMetadataChange === undefined) return;
-    const intervals = schedule === null ? [] : schedule.deltas.slice(0, struckCount);
-    onMetadataChange({
-      mode: 'random_interval_bell',
-      bells_struck: struckCount,
-      interval_seconds: intervals,
-    });
-  }, [onMetadataChange, schedule, struckCount]);
+  useReportedMetadata(schedule, struckCount, onMetadataChange);
 
   const surface = useSessionSurface();
   const total = schedule?.offsets.length ?? 0;
@@ -163,7 +174,13 @@ const RandomIntervalBellView = ({
   return (
     <SessionContainer testID="random-interval-bell-view" style={styles.fill}>
       <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
-      <Text style={[styles.time, { color: surface.text }]} testID="random-interval-bell-elapsed">
+      <Text
+        style={[styles.time, { color: surface.text }]}
+        testID="random-interval-bell-elapsed"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(state.elapsedMs, 'elapsed')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(state.elapsedMs)}
       </Text>
       <Text style={[styles.count, { color: surface.text }]} testID="random-interval-bell-count">

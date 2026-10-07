@@ -1,0 +1,1228 @@
+[
+  {
+    "canonical": true,
+    "mode": "sense_grounding",
+    "mode_config": {
+      "mode": "sense_grounding",
+      "prompts": [
+        {
+          "label": "Name 5 things you can see",
+          "sense": "sight"
+        },
+        {
+          "label": "Name 4 things you can touch",
+          "sense": "touch"
+        },
+        {
+          "label": "Name 3 things you can hear",
+          "sense": "hearing"
+        },
+        {
+          "label": "Name 2 things you can smell",
+          "sense": "smell"
+        },
+        {
+          "label": "Name 1 thing you can taste",
+          "sense": "taste"
+        }
+      ]
+    },
+    "name": "5-4-3-2-1 grounding",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Body Scan",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Box Breathing",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Contact Points",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Crystal Charging",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "tallied_grounding",
+    "mode_config": {
+      "categories": [
+        {
+          "key": "red",
+          "label": "something red",
+          "target_count": 1
+        },
+        {
+          "key": "orange",
+          "label": "something orange",
+          "target_count": 1
+        },
+        {
+          "key": "yellow",
+          "label": "something yellow",
+          "target_count": 1
+        },
+        {
+          "key": "green",
+          "label": "something green",
+          "target_count": 1
+        },
+        {
+          "key": "blue",
+          "label": "something blue",
+          "target_count": 1
+        },
+        {
+          "key": "indigo",
+          "label": "something indigo",
+          "target_count": 1
+        },
+        {
+          "key": "violet",
+          "label": "something violet",
+          "target_count": 1
+        }
+      ],
+      "mode": "tallied_grounding",
+      "rounds": 3
+    },
+    "name": "Find Colors",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "tallied_grounding",
+    "mode_config": {
+      "categories": [
+        {
+          "key": "squares",
+          "label": "a square",
+          "target_count": 3
+        },
+        {
+          "key": "triangles",
+          "label": "a triangle",
+          "target_count": 3
+        },
+        {
+          "key": "circles",
+          "label": "a circle",
+          "target_count": 3
+        }
+      ],
+      "mode": "tallied_grounding",
+      "rounds": 3
+    },
+    "name": "Find Shapes",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "mindful_anchor",
+    "mode_config": {
+      "instruction": "Eat one small portion slowly. Notice texture, temperature, aroma, and flavor with each bite. Pause between bites.",
+      "min_duration_seconds": 180,
+      "mode": "mindful_anchor",
+      "options": [
+        {
+          "description": "Almonds, walnuts, pumpkin seeds.",
+          "key": "nuts_seeds",
+          "label": "Nuts or seeds"
+        },
+        {
+          "description": "Carrot, beet, sweet potato.",
+          "key": "root_vegetable",
+          "label": "Root vegetable"
+        },
+        {
+          "description": "Dense, hearty, a slow chew.",
+          "key": "whole_grain",
+          "label": "Whole-grain bread"
+        },
+        {
+          "description": "A single square, savored.",
+          "key": "dark_chocolate",
+          "label": "Dark chocolate"
+        },
+        {
+          "description": "Apple, pear, berries.",
+          "key": "fresh_fruit",
+          "label": "Fresh fruit"
+        }
+      ],
+      "require_option_choice": true
+    },
+    "name": "Mindful Eating",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Progressive Muscle Relaxation",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Tense and Release",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 3,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Toe Wiggling",
+    "stage_number": 1
+  },
+  {
+    "canonical": false,
+    "mode": "mindful_anchor",
+    "mode_config": {
+      "instruction": "Stand barefoot on the earth. Notice the texture, temperature, and pressure under your feet. Stay until you feel settled.",
+      "min_duration_seconds": 120,
+      "mode": "mindful_anchor",
+      "options": [
+        {
+          "description": "A lawn, a park, a meadow.",
+          "key": "grass",
+          "label": "Grass"
+        },
+        {
+          "description": "Garden bed, forest floor, planter.",
+          "key": "soil",
+          "label": "Soil"
+        },
+        {
+          "description": "A beach or a sandbox.",
+          "key": "sand",
+          "label": "Sand"
+        },
+        {
+          "description": "Bare rock, a flagstone path.",
+          "key": "stone",
+          "label": "Stone"
+        }
+      ],
+      "require_option_choice": true
+    },
+    "name": "Touch Grass",
+    "stage_number": 1
+  },
+  {
+    "canonical": true,
+    "mode": "tarot",
+    "mode_config": {
+      "deck": "major_arcana",
+      "hide_timer_during_meditation": true,
+      "mode": "tarot",
+      "per_card_minutes": 5
+    },
+    "name": "Tarot meditation",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Archetypal Mantra",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Bibliomancy",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Dream Recollection",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "I Ching Toss",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Synchronicity Sweep",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Totem Meditation",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Traffic Lights",
+    "stage_number": 2
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Trataka Candle Gazing",
+    "stage_number": 2
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Belly breathing",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Fire Gazing",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Hand Energy Sensing",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Mini TED Talk",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Mountain Pose Sit",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Power Posture",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Red Sphere Visualization",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Warrior Stillness",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Water Charging",
+    "stage_number": 3
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Windhorse Breathwork",
+    "stage_number": 3
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Metta",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Ancestral Connection",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Animist Gratitude",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Blessing Strangers",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Heart Centered Breath",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Heart Imagery",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Hug Visualization",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "I Am Love Through",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Just Like Me",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Love to Past Selves",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Relational Gratitude",
+    "stage_number": 4
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Tonglen",
+    "stage_number": 4
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Wim Hof method",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Breath of Fire + Silence",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Chanting or Kirtan",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Kapalabhati Skull Shining",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 10,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Lion's Breath",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Middle Pillar",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Reality Selection Visualization",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Sigil Dhyana",
+    "stage_number": 5
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Single Instrument Listening",
+    "stage_number": 5
+  },
+  {
+    "canonical": true,
+    "mode": "metronome",
+    "mode_config": {
+      "bpm": 60,
+      "mode": "metronome",
+      "timer": {
+        "duration_minutes": 30,
+        "end_bell": true,
+        "halfway_bell": true,
+        "mode": "meditation_timer",
+        "start_bell": true
+      }
+    },
+    "name": "Shadow work",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Chair Work",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Emotion Transmutation",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Journaling",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Letter to the Repressed Self",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Pain Body Meditation",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "REACH Inward",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Shadow Drawing",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Wilber 3-2-1",
+    "stage_number": 6
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Wording Through It",
+    "stage_number": 6
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Blissy meditation",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Chanting / Kirtan",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Free-Writing",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Noting Practice",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Subtle Energy Scanning",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Walking Meditation",
+    "stage_number": 7
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Yoga Practice",
+    "stage_number": 7
+  },
+  {
+    "canonical": true,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Dog Walkin' Shamanism",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 30,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Active Imagination Dialogue",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Aura Scanning",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Channeling Writing",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 20,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Clairaudient Listening",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Freedom Log",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "count_up",
+    "mode_config": {
+      "mode": "count_up",
+      "soft_cap_minutes": null
+    },
+    "name": "Hierarchical Re-Feeling",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Reflective Tarot Draw",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 5,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Sacred Pause",
+    "stage_number": 8
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 15,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Sangha Field Tuning",
+    "stage_number": 8
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": true,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Concentration practice",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Body Scanning for Jhana",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Channeling Writing (45 min)",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Kasina Practice",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Mantra Repetition",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Metta Jhanas",
+    "stage_number": 9
+  },
+  {
+    "canonical": false,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Vipassana Noting",
+    "stage_number": 9
+  },
+  {
+    "canonical": true,
+    "mode": "meditation_timer",
+    "mode_config": {
+      "duration_minutes": 45,
+      "end_bell": true,
+      "halfway_bell": false,
+      "mode": "meditation_timer",
+      "start_bell": true
+    },
+    "name": "Insight practice",
+    "stage_number": 10
+  }
+]

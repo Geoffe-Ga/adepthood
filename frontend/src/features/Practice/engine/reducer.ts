@@ -51,7 +51,7 @@ export function ritualReducer(
     case 'CANCEL':
       return handleCancel(state, config);
     case 'COMPLETE':
-      return handleComplete(state, action.now);
+      return handleComplete(state, action.now, config);
     case 'TICK':
       return handleTick(state, action.now, config);
     case 'TAP':
@@ -115,24 +115,45 @@ function handleResume(state: EngineState, now: number): EngineState {
     ...state,
     status: 'running',
     pauseStartedAtMs: null,
-    pausedTotalMs: state.pausedTotalMs + (now - state.pauseStartedAtMs),
+    // A clock that stepped backwards while paused must not credit negative
+    // pause time (which would inflate elapsed past the real sitting).
+    pausedTotalMs: state.pausedTotalMs + Math.max(0, now - state.pauseStartedAtMs),
   };
 }
 
-function handleComplete(state: EngineState, now: number): EngineState {
+/**
+ * Wall-clock elapsed for a running session, made safe against the clock.
+ *
+ * Floored at the previous elapsed (monotonic: a backwards clock jump never
+ * rewinds the countdown behind cues already struck, and never goes negative)
+ * and, for a timed mode, capped at the planned total (a device that slept
+ * past the end records the sitting it planned, not the overshoot).
+ */
+function elapsedAt(
+  state: EngineState,
+  startedAtMs: number,
+  now: number,
+  totalMs: number | null,
+): number {
+  const raw = now - startedAtMs - state.pausedTotalMs;
+  const capped = totalMs === null ? raw : Math.min(raw, totalMs);
+  return Math.max(state.elapsedMs, 0, capped);
+}
+
+function handleComplete(state: EngineState, now: number, config: ModeConfig): EngineState {
   if (state.status === 'idle' || state.status === 'complete') return state;
   // Freeze elapsedMs from the wall clock; pause time is already excluded.
   const elapsedMs =
     state.status === 'running' && state.startedAtMs !== null
-      ? now - state.startedAtMs - state.pausedTotalMs
+      ? elapsedAt(state, state.startedAtMs, now, getTotalMs(config))
       : state.elapsedMs;
   return { ...state, status: 'complete', elapsedMs };
 }
 
 function handleTick(state: EngineState, now: number, config: ModeConfig): EngineState {
   if (state.status !== 'running' || state.startedAtMs === null) return state;
-  const elapsedMs = now - state.startedAtMs - state.pausedTotalMs;
   const totalMs = getTotalMs(config);
+  const elapsedMs = elapsedAt(state, state.startedAtMs, now, totalMs);
   const advanced = advanceCues(
     {
       ...state,
