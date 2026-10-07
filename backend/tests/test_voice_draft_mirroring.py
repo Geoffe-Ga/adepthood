@@ -1030,3 +1030,40 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
         obligation = await _obligation(session, note_id)
     assert obligation is not None
     assert obligation.state == VoiceDraftRetractionState.CONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_message_edit_on_an_intimate_entry_never_waits_on_owed_withdrawals(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Only choosing Intimate (or deleting) retries owed withdrawals; an edit saves and returns.
+
+    A legacy Intimate essay whose withdrawal can never confirm (#3060 escalation
+    1) must not turn every autosave and Finish into a 503; the sweep keeps
+    retrying it in the background.
+    """
+    headers, user_id = await _signup(async_client, "draft_intimate_edit")
+    entry_id, note_id = await _seed_note(
+        db_session,
+        user_id,
+        classification=JournalClassification.INTIMATE,
+        essay="Legacy draft",
+    )
+    obligation = await _obligation(db_session, note_id)
+    assert obligation is not None
+    obligation.state = VoiceDraftRetractionState.PENDING
+    db_session.add(obligation)
+    await db_session.commit()
+    vault = _RecordingDraftVault(db_session, fail_delete=True)
+    _wire_vault(vault)
+
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "An edited page."}, headers=headers
+    )
+
+    assert edited.status_code == HTTPStatus.OK
+    assert vault.deletes == []
+    still_owed = await _obligation(db_session, note_id)
+    assert still_owed is not None
+    assert still_owed.state == VoiceDraftRetractionState.PENDING

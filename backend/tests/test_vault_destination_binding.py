@@ -8,6 +8,8 @@ These tests pin the binding for the journal copy and for mirrored essays.
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from http import HTTPStatus
 
 import pytest
@@ -18,6 +20,7 @@ from sqlmodel import col, select
 from dependencies.creek_vault import get_creek_vault_client, vault_destination_fingerprint
 from domain.creek_vault import (
     CreekCapability,
+    CreekVaultClient,
     CreekVaultUnavailableError,
     VaultIngestRequest,
     VaultIngestResult,
@@ -28,7 +31,9 @@ from main import app
 from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
+from routers import journal as journal_router
 from services.creek_vault_voice_drafts import record_mirror_intent
+from services.creek_vault_write import VaultWriteOutcome
 from services.user_vault_config import clear_vault_config, store_vault_config
 from tests.test_journal_vault_write import SequencedVaultClient
 
@@ -296,3 +301,198 @@ async def test_reconnected_vault_never_confirms_old_essay(
     assert obligation.state == VoiceDraftRetractionState.PENDING
     assert obligation.safe_failure_code == "destination_changed"
     assert obligation.destination == destination_a
+
+
+async def _create_intimate_entry(client: AsyncClient, headers: dict[str, str]) -> int:
+    created = await client.post(
+        "/journal/",
+        json={"message": "A private confession.", "classification": "intimate"},
+        headers=headers,
+    )
+    assert created.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}, created.text
+    return int(created.json()["id"])
+
+
+@pytest.mark.asyncio
+async def test_never_sent_intimate_entry_is_unbound_and_deletes_after_disconnect(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An Intimate page that never left the server owes no vault anything."""
+    headers, user_id = await _signup(async_client, "dest_intimate_disconnect")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_intimate_entry(async_client, headers)
+
+    assert vault.ingest_calls == []
+    assert (await _entry(db_session, entry_id)).vault_destination is None
+
+    await clear_vault_config(db_session, user_id)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert vault.withdraw_calls == []
+
+
+@pytest.mark.asyncio
+async def test_never_sent_intimate_entry_deletes_on_a_vault_without_withdraw(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A vault that cannot withdraw is never asked to, for a page it never received."""
+    headers, user_id = await _signup(async_client, "dest_intimate_no_withdraw")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient(capabilities=frozenset({CreekCapability.JOURNAL}))
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_intimate_entry(async_client, headers)
+
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert vault.withdraw_calls == []
+
+
+@pytest.mark.asyncio
+async def test_never_sent_intimate_entry_edits_while_the_vault_is_offline(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Autosave and Finish on an Intimate page never depend on a vault being reachable."""
+    headers, user_id = await _signup(async_client, "dest_intimate_offline_edit")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_intimate_entry(async_client, headers)
+    vault.handshake_error = CreekVaultUnavailableError("offline")
+
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "A revised confession."}, headers=headers
+    )
+    finished = await async_client.patch(
+        f"/journal/{entry_id}",
+        json={"message": "A revised confession.", "status": "finished"},
+        headers=headers,
+    )
+
+    assert edited.status_code == HTTPStatus.OK
+    assert finished.status_code == HTTPStatus.OK
+    assert vault.withdraw_calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_vault_never_received_is_left_unbound(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A write the handshake turned away dialled no ingest, so it binds no destination."""
+    headers, user_id = await _signup(async_client, "dest_unavailable_write")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    # A vault that does not ingest journals: the handshake turns the write away.
+    vault = SequencedVaultClient(capabilities=frozenset({CreekCapability.JOURNAL_WITHDRAW}))
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_public_entry(async_client, headers)
+
+    assert vault.ingest_calls == []
+    assert (await _entry(db_session, entry_id)).vault_destination is None
+
+    await clear_vault_config(db_session, user_id)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_reconnected_vault_never_confirms_old_copy_on_delete(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """DELETE after a reconnect stays pending, names destination_changed, and dials nobody.
+
+    Escalation 5 (#3060): the old vault still holds the copy and no stored
+    credential reaches it, so the honest answer is a standing 503 until the
+    owner decides the reconnect policy. This pins that behaviour deliberately.
+    """
+    headers, user_id = await _signup(async_client, "dest_delete_swap")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_public_entry(async_client, headers)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
+    caplog.set_level(logging.WARNING)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert deleted.json() == _PENDING_DETAIL
+    assert vault.withdraw_calls == []
+    row = await _entry(db_session, entry_id)
+    assert row.deleted_at is None
+    assert row.vault_ref == "vault-ref-1"
+    assert row.vault_destination == destination_a
+    assert any(
+        getattr(record, "reason", None) == "destination_changed" for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_unbound_marker_is_withdrawn_from_the_current_vault(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Known pre-migration limit: a NULL-destination ref still trusts whichever vault is connected.
+
+    Rows ingested before destination binding carry no fingerprint, so there is
+    nothing to compare. Pinned so that closing this (#3060 finding 13) is a
+    deliberate change rather than an accident.
+    """
+    headers, user_id = await _signup(async_client, "dest_legacy_unbound")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
+    entry = JournalEntry(
+        sender="user", user_id=user_id, message="A legacy page.", vault_ref="legacy-ref"
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+
+    status, _body = await _patch_intimate(async_client, entry_id, headers)
+
+    assert status == HTTPStatus.OK
+    assert vault.withdraw_calls == [entry_id]
+
+
+@pytest.mark.asyncio
+async def test_intimate_create_never_stages_a_destination_even_transiently(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No destination is committed before the (skipped) write, so a crash there owes nothing."""
+    headers, user_id = await _signup(async_client, "dest_intimate_transient")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    staged: list[str | None] = []
+    real_store = journal_router.store_and_classify
+
+    async def _observing_store(
+        client: CreekVaultClient,
+        *,
+        entry_id: int,
+        body: str,
+        classification: str,
+        created_at: datetime,
+    ) -> VaultWriteOutcome:
+        staged.append((await _entry(db_session, entry_id)).vault_destination)
+        return await real_store(
+            client,
+            entry_id=entry_id,
+            body=body,
+            classification=classification,
+            created_at=created_at,
+        )
+
+    monkeypatch.setattr(journal_router, "store_and_classify", _observing_store)
+    await _create_intimate_entry(async_client, headers)
+
+    assert staged == [None]

@@ -59,6 +59,7 @@ _T0 = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
 _INSIDE_BACKOFF = timedelta(seconds=1)
 _PAST_BACKOFF = timedelta(hours=2)
 _TWO_ATTEMPTS = 2
+_STUCK_ENTRIES = 51
 
 #: Attributes every ``logging.LogRecord`` carries; anything else came from ``extra``.
 _STANDARD_RECORD_KEYS = frozenset(
@@ -110,19 +111,26 @@ def _factory(session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(session.bind, class_=AsyncSession, expire_on_commit=False)
 
 
-async def _sweep(session: AsyncSession, vault: _DraftVault, moment: datetime) -> None:
+async def _sweep(
+    session: AsyncSession,
+    vault: LocalFallbackCreekVaultClient,
+    moment: datetime,
+    *,
+    destination: str | None = None,
+    schedule: JournalRetrySchedule | None = None,
+) -> None:
     async def _client(_session: AsyncSession, _user_id: int) -> CreekVaultPipelineClient:
         return vault
 
     async def _destination(_session: AsyncSession, _user_id: int) -> str | None:
-        return None
+        return destination
 
     await resume_voice_draft_retractions(
         _factory(session),
         _client,
         _destination,
         now=moment,
-        journal_retries=JournalRetrySchedule(),
+        journal_retries=schedule if schedule is not None else JournalRetrySchedule(),
     )
 
 
@@ -142,6 +150,7 @@ async def _seed_pending(
     *,
     state: VoiceDraftRetractionState = VoiceDraftRetractionState.PENDING,
     classification: JournalClassification = JournalClassification.INTIMATE,
+    destination: str | None = None,
 ) -> tuple[int, int]:
     """Seed an entry, an expanded note, and its obligation row in ``state``."""
     entry = JournalEntry(
@@ -170,6 +179,7 @@ async def _seed_pending(
             journal_entry_id=entry.id,
             marginalia_id=note.id,
             state=state.value,
+            destination=destination,
         )
     )
     await session.commit()
@@ -386,8 +396,12 @@ async def test_retraction_telemetry_is_content_free(
 # ``test_vault_destination_binding.py::test_ingest_ack_lost_still_leaves_a_withdrawal_marker``.
 
 
-class _CrashError(RuntimeError):
-    """A process death injected at one commit boundary."""
+class _CrashError(BaseException):
+    """A process death injected at one commit boundary.
+
+    A ``BaseException`` so that, like a real crash, no per-entry fault
+    isolation in the sweep can absorb it.
+    """
 
 
 @pytest.mark.asyncio
@@ -558,3 +572,142 @@ async def test_stale_mirror_cannot_republish_over_an_owed_withdrawal(
     row = await _row(db_session, note_id)
     assert row.state == VoiceDraftRetractionState.PENDING
     assert row.attempt_count == 0
+
+
+_DESTINATION_A = "a" * 32
+_DESTINATION_B = "b" * 32
+
+
+@pytest.mark.asyncio
+async def test_sweep_never_confirms_against_a_fallback_for_a_bound_vault(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A connected vault that briefly resolves to the local fallback is unavailable, not empty."""
+    _headers, user_id = await _signup(async_client, "recovery_fallback_bound")
+    _entry_id, note_id = await _seed_pending(db_session, user_id, destination=_DESTINATION_A)
+
+    await _sweep(db_session, LocalFallbackCreekVaultClient(), _T0, destination=_DESTINATION_A)
+
+    row = await _row(db_session, note_id)
+    assert row.state == VoiceDraftRetractionState.PENDING
+    assert row.safe_failure_code == "vault_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sweep_never_dials_a_replaced_vault(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A row owed to vault A is never sent to vault B; it backs off as destination_changed."""
+    _headers, user_id = await _signup(async_client, "recovery_replaced_vault")
+    _entry_id, note_id = await _seed_pending(db_session, user_id, destination=_DESTINATION_A)
+    vault = _DraftVault()
+
+    await _sweep(db_session, vault, _T0, destination=_DESTINATION_B)
+
+    assert vault.deletes == []
+    row = await _row(db_session, note_id)
+    assert row.state == VoiceDraftRetractionState.PENDING
+    assert row.safe_failure_code == "destination_changed"
+    assert row.next_attempt_at is not None
+
+
+async def _seed_marked_intimate(session: AsyncSession, user_id: int) -> int:
+    entry = JournalEntry(
+        sender="user",
+        user_id=user_id,
+        message=_BODY,
+        classification=JournalClassification.INTIMATE,
+        vault_ref="vault-ref-legacy",
+    )
+    session.add(entry)
+    await session.commit()
+    assert entry.id is not None
+    return entry.id
+
+
+@pytest.mark.asyncio
+async def test_sweep_backs_off_a_failing_journal_copy(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A vault refusing the journal withdrawal is retried once per backoff window."""
+    _headers, user_id = await _signup(async_client, "recovery_journal_backoff")
+    entry_id = await _seed_marked_intimate(db_session, user_id)
+    vault = _DraftVault(fail=True)
+    schedule = JournalRetrySchedule()
+
+    await _sweep(db_session, vault, _T0, schedule=schedule)
+    await _sweep(db_session, vault, _T0 + _INSIDE_BACKOFF, schedule=schedule)
+
+    assert vault.withdrawals == [entry_id]
+
+    await _sweep(db_session, vault, _T0 + _PAST_BACKOFF, schedule=schedule)
+
+    assert vault.withdrawals == [entry_id, entry_id]
+
+
+class _SelectiveWithdrawVault(_DraftVault):
+    """Refuse the journal withdrawal for a fixed set of stuck entries only."""
+
+    def __init__(self, stuck: set[int]) -> None:
+        super().__init__()
+        self.stuck = stuck
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        self.withdrawals.append(entry_id)
+        if entry_id in self.stuck:
+            raise CreekVaultUnavailableError("synthetic refusal")
+        return VaultJournalWithdrawResult(withdrawn=True)
+
+
+@pytest.mark.asyncio
+async def test_backed_off_journal_copies_never_starve_a_healthy_one(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """More stuck entries than one batch cannot hide a later, healthy entry from the sweep."""
+    _headers, user_id = await _signup(async_client, "recovery_journal_starve")
+    stuck = {await _seed_marked_intimate(db_session, user_id) for _ in range(_STUCK_ENTRIES)}
+    healthy = await _seed_marked_intimate(db_session, user_id)
+    vault = _SelectiveWithdrawVault(stuck)
+    schedule = JournalRetrySchedule()
+
+    await _sweep(db_session, vault, _T0, schedule=schedule)
+    await _sweep(db_session, vault, _T0 + _INSIDE_BACKOFF, schedule=schedule)
+
+    assert healthy in vault.withdrawals
+
+
+@pytest.mark.asyncio
+async def test_one_unreadable_account_never_aborts_the_pass(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A resolver fault for one account is logged and skipped; the next account completes."""
+    _headers_x, broken_id = await _signup(async_client, "recovery_poison")
+    _headers_y, live_id = await _signup(async_client, "recovery_after_poison")
+    _broken_entry, broken_note = await _seed_pending(db_session, broken_id)
+    _live_entry, live_note = await _seed_pending(db_session, live_id)
+    vault = _DraftVault()
+
+    async def _client(_session: AsyncSession, user_id: int) -> CreekVaultPipelineClient:
+        if user_id == broken_id:
+            raise _UnreadableConfigError
+        return vault
+
+    async def _destination(_session: AsyncSession, _user_id: int) -> str | None:
+        return None
+
+    await resume_voice_draft_retractions(
+        _factory(db_session),
+        _client,
+        _destination,
+        now=_T0,
+        journal_retries=JournalRetrySchedule(),
+    )
+
+    assert vault.deletes == [voice_draft_external_id(live_id, live_note)]
+    broken = await _row(db_session, broken_note)
+    assert broken.state == VoiceDraftRetractionState.PENDING
+    assert broken.next_attempt_at is not None, "a failing account is backed off, not retried first"
+
+
+class _UnreadableConfigError(RuntimeError):
+    """Stands in for a vault credential that can no longer be decrypted."""

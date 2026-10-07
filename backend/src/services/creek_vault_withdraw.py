@@ -12,6 +12,17 @@ and the background retry use (#3060): ``vault_destination`` records which vault
 was offered the entry, and only that vault's confirmation clears the marker. A
 replaced connection answers "unknown id, withdrawn" for an id it never saw, so
 trusting it would report a withdrawal while the old vault still holds the copy.
+
+Known pre-migration limit: an entry ingested before ``vault_destination``
+existed carries ``vault_ref`` with a NULL destination. Nothing records which
+vault received it, so its withdrawal is still trusted from whichever vault is
+connected now -- after a reconnect that is the old false confirmation. It is
+pinned by ``test_legacy_unbound_marker_is_withdrawn_from_the_current_vault``
+and left for an owner decision rather than widened here.
+
+After a reconnect or disconnect, a copy bound to the old vault is never
+dialled and never confirmed: the Intimate transition and DELETE answer a
+standing 503 and log ``destination_changed`` (#3060 escalation 5).
 """
 
 from __future__ import annotations

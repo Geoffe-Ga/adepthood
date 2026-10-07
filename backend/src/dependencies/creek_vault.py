@@ -460,6 +460,12 @@ async def vault_destination_fingerprint(session: AsyncSession, current_user: int
     of an existing copy is trusted only when this matches the fingerprint
     recorded when the copy was offered (#3060). Local only; never dials, and
     commits its read so no pooled connection is held past it.
+
+    Read separately from the request's client, so a reconnect committing
+    between the two reads can pair one vault's dial with the other's
+    fingerprint. The window is one request long and needs a concurrent
+    reconnect by the same account; closing it means deriving both from one
+    config read (#3060 review finding 4).
     """
     connection = await load_vault_config(session, current_user)
     fingerprint: str | None = None

@@ -32,7 +32,7 @@ from typing import Final
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, func, or_, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
@@ -515,6 +515,7 @@ async def _attempt_and_settle(
         owner_user_id=attempt.target.user_id,
         marginalia_id=marginalia_id,
         bound_elsewhere=recorded not in {None, attempt.destination},
+        destination_connected=attempt.destination is not None,
     )
     await _settle(
         session,
@@ -558,10 +559,19 @@ async def _attempt_one(
     owner_user_id: int,
     marginalia_id: int,
     bound_elsewhere: bool,
+    destination_connected: bool,
 ) -> RetractionFailureCode | None:
-    """Dial one owed DELETE, unless the copy lives in a vault other than this one."""
+    """Dial one owed DELETE, unless the copy lives in a vault other than this one.
+
+    "A local fallback means absent" holds only when the account has no vault
+    at all. A connected vault that resolves to the fallback right now -- a DNS
+    blip, a managed vault not yet ready -- may still hold the copy, so it is
+    unavailable, never a confirmation.
+    """
     if bound_elsewhere:
         return RetractionFailureCode.DESTINATION_CHANGED
+    if destination_connected and type(client) is LocalFallbackCreekVaultClient:
+        return RetractionFailureCode.VAULT_UNAVAILABLE
     return await retraction_failure(
         client, owner_user_id=owner_user_id, marginalia_id=marginalia_id
     )
@@ -607,6 +617,12 @@ class JournalRetrySchedule:
         """Whether ``entry_id``'s backoff has elapsed by ``moment``."""
         record = self._failures.get(entry_id)
         return record is None or record[1] <= moment
+
+    def backed_off(self, moment: datetime) -> frozenset[int]:
+        """Entry ids still inside their backoff window at ``moment``."""
+        return frozenset(
+            entry_id for entry_id, (_attempts, due) in self._failures.items() if due > moment
+        )
 
     def record(self, entry_id: int, moment: datetime, *, confirmed: bool) -> None:
         """Forget a confirmed entry, or push a failed one's next attempt out."""
@@ -654,12 +670,13 @@ async def _due_entries(session: AsyncSession, sweep: _SweepPass) -> tuple[tuple[
             JournalEntry.classification == JournalClassification.INTIMATE,
             col(JournalEntry.deleted_at).is_(None),
             _journal_marker_present(),
+            col(JournalEntry.id).not_in(sweep.journal_retries.backed_off(sweep.moment)),
         )
         .order_by(col(JournalEntry.id))
         .limit(_SWEEP_BATCH)
     )
     for user_id, entry_id in journals.all():
-        if entry_id is not None and sweep.journal_retries.due(entry_id, sweep.moment):
+        if entry_id is not None:
             pairs.setdefault((user_id, entry_id))
     await session.commit()
     return tuple(pairs)
@@ -764,5 +781,46 @@ async def resume_voice_draft_retractions(
         targets = await _due_entries(session, sweep)
         await _log_backlog(session, sweep.moment)
     for user_id, entry_id in targets:
+        await _resume_isolated(factory, sweep, EntryRef(user_id=user_id, entry_id=entry_id))
+
+
+#: Faults one account's work may raise that must not end the pass for everyone
+#: else: an undecryptable stored credential, a database error, a socket error.
+_ENTRY_FAULTS = (RuntimeError, SQLAlchemyError, OSError)
+
+
+async def _resume_isolated(
+    factory: async_sessionmaker[AsyncSession], sweep: _SweepPass, target: EntryRef
+) -> None:
+    """Resume one entry; a fault there is logged, backed off, and never ends the pass.
+
+    Without this, one account whose vault credential can no longer be
+    decrypted would raise out of the loop on every pass, and -- its rows never
+    settled, so always due and always first -- starve every other account.
+    """
+    try:
         async with factory() as session:
-            await _resume_entry(session, sweep, EntryRef(user_id=user_id, entry_id=entry_id))
+            await _resume_entry(session, sweep, target)
+    except _ENTRY_FAULTS:
+        _LOGGER.warning(_SWEEP_SKIPPED_EVENT, extra={"reason": "entry_failed"})
+        await _defer_entry(factory, sweep, target)
+
+
+async def _defer_entry(
+    factory: async_sessionmaker[AsyncSession], sweep: _SweepPass, target: EntryRef
+) -> None:
+    """Push a faulting entry's due rows (and journal retry) out by their backoff."""
+    sweep.journal_retries.record(target.entry_id, sweep.moment, confirmed=False)
+    try:
+        async with factory() as session:
+            rows = await _owed_rows(session, target, sweep.moment)
+            for obligation_id, _marginalia_id, _recorded, attempt_count in rows:
+                await _settle(
+                    session,
+                    obligation_id=obligation_id,
+                    attempt_count=attempt_count,
+                    failure=RetractionFailureCode.VAULT_UNAVAILABLE,
+                    now=sweep.moment,
+                )
+    except _ENTRY_FAULTS:
+        _LOGGER.warning(_SWEEP_SKIPPED_EVENT, extra={"reason": "defer_failed"})

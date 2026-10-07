@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Sequence
 from contextlib import suppress
@@ -34,6 +35,8 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultPipelineClient,
+    VaultTierCeiling,
+    tier_ceiling_for,
 )
 from domain.dates import (
     MAX_BACKFILL_DAYS,
@@ -387,7 +390,8 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
-    if not await _bind_vault_destination(session, entry, vault_client):
+    binding = await _bind_vault_destination(session, entry, vault_client)
+    if binding is _Binding.WITHHOLD:
         return
     await session.commit()
     outcome = await store_and_classify(
@@ -397,7 +401,7 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
-    if _apply_vault_outcome(entry, outcome):
+    if _apply_vault_outcome(entry, outcome) | _unbind_if_nothing_sent(entry, binding, outcome):
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
@@ -410,30 +414,75 @@ async def _record_vault_outcome(
         )
 
 
+class _Binding(enum.Enum):
+    """What staging a vault destination decided about one write."""
+
+    WITHHOLD = "withhold"  # an earlier copy is owed to another vault: do not offer
+    UNCHANGED = "unchanged"  # proceed; the recorded destination is already right
+    BOUND = "bound"  # proceed; this write staged a new destination
+
+
+#: Write outcomes that provably dialled no ingest: nothing reached any vault.
+_NOTHING_SENT = frozenset({VaultWriteStatus.SKIPPED_INTIMATE, VaultWriteStatus.UNAVAILABLE})
+
+
 async def _bind_vault_destination(
     session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
-) -> bool:
-    """Record which vault is about to be offered this entry; ``False`` withholds the offer.
+) -> _Binding:
+    """Record which vault is about to be offered this entry, or withhold the offer.
 
     Staged before the ingest dial (and committed with the caller's pre-dial
     commit), so a crash or a lost acknowledgement after Creek stores the entry
-    still leaves a durable withdrawal marker bound to that vault. A local
-    fallback dials nothing and records nothing. An entry whose earlier copy is
-    owed to a *different* vault keeps that marker and is not offered to the
-    new one: a single marker cannot describe two copies, and the owed one wins.
+    still leaves a durable withdrawal marker bound to that vault. Nothing is
+    staged when nothing can be sent: a local fallback dials nothing, and an
+    Intimate entry is withheld from the wire before any dial. An entry whose
+    earlier copy is owed to a *different* vault keeps that marker and is not
+    offered to the new one: a single marker cannot describe two copies, and
+    the owed one wins.
+
+    Known limit: the fingerprint is read here, after the request resolved its
+    client, so a reconnect committing between the two reads could bind this
+    write to the new vault while it dials the old. Closing that needs the
+    client and fingerprint from one config read (#3060 review finding 4).
     """
-    if type(vault_client) is LocalFallbackCreekVaultClient:
-        return entry.vault_destination is None
+    undialled = _binding_without_a_dial(entry, vault_client)
+    if undialled is not None:
+        return undialled
     destination = await vault_destination_fingerprint(session, entry.user_id)
     if entry.vault_destination not in {None, destination}:
         logger.warning(
             "journal_vault_write_withheld",
             extra={"entry_id": entry.id, "reason": "destination_changed"},
         )
+        return _Binding.WITHHOLD
+    if entry.vault_destination is not None or destination is None:
+        return _Binding.UNCHANGED
+    entry.vault_destination = destination
+    session.add(entry)
+    return _Binding.BOUND
+
+
+def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:
+    """Decide the writes that can send nothing, so they stage nothing; ``None`` otherwise."""
+    if type(vault_client) is LocalFallbackCreekVaultClient:
+        return _Binding.UNCHANGED if entry.vault_destination is None else _Binding.WITHHOLD
+    if tier_ceiling_for(entry.classification) is VaultTierCeiling.INTIMATE:
+        return _Binding.UNCHANGED
+    return None
+
+
+def _unbind_if_nothing_sent(
+    entry: JournalEntry, binding: _Binding, outcome: VaultWriteOutcome
+) -> bool:
+    """Drop a destination this write staged when the write provably sent nothing.
+
+    A handshake that turned the write away, or an Intimate skip, dialled no
+    ingest; leaving the marker would make the entry owe a withdrawal for a
+    copy that does not exist. A degraded ingest *was* dialled and keeps it.
+    """
+    if binding is not _Binding.BOUND or outcome.status not in _NOTHING_SENT:
         return False
-    if entry.vault_destination is None and destination is not None:
-        entry.vault_destination = destination
-        session.add(entry)
+    entry.vault_destination = None
     return True
 
 
@@ -1064,26 +1113,43 @@ async def update_journal_entry(
                 session,
             )
             if entry.classification == JournalClassification.INTIMATE:
-                # Every Intimate PATCH -- including a repeat of the same value --
-                # owes and retries every withdrawal, so "choose Intimate again"
-                # is a real retry. The tier is committed first and never
-                # reverted; a 503 reports only that remote cleanup is pending.
-                await withdraw_local_journal_entry(
+                await _apply_intimate_update(
                     session,
-                    user_id=current_user,
-                    entry_id=entry_id,
+                    entry,
+                    vault_client,
+                    chose_intimate="classification" in payload.model_fields_set,
                 )
-                await mark_entry_retractions_pending(
-                    session, user_id=current_user, entry_id=entry_id
-                )
-                await session.commit()
-                if not await _withdraw_remote_copies(session, entry, vault_client):
-                    raise service_unavailable("vault_withdrawal_pending")
             else:
                 await _record_vault_outcome(session, entry, vault_client)
                 await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry
+
+
+async def _apply_intimate_update(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+    *,
+    chose_intimate: bool,
+) -> None:
+    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+
+    Every PATCH that sets Intimate -- including a repeat of the same value --
+    owes and retries every withdrawal, so "choose Intimate again" is a real
+    retry. The tier is committed first and never reverted; a 503 reports only
+    that remote cleanup is pending. A body edit or Finish on an entry that is
+    already Intimate never dials: it saves, and any owed withdrawal is left to
+    the background sweep, so a vault that can never confirm (#3060 escalation
+    1) cannot hold the writer's own page hostage.
+    """
+    entry_id = cast("int", entry.id)
+    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
+    if chose_intimate:
+        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
+    await session.commit()
+    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
+        raise service_unavailable("vault_withdrawal_pending")
 
 
 async def _persist_entry_update(
