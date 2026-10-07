@@ -804,6 +804,11 @@ def test_custody_adr_records_the_server_proxied_byok_gap() -> None:
     assert "Known gap until phase (a) lands" in text
     assert "BYOK calls go from the person's device straight to the vendor" in text
     assert "Move BYOK inference client-side" in phase_a
+    # The relay path, named hop by hop: the header is validated, then the
+    # vendor call resolves the key and dials the provider from the server.
+    assert "`resolve_chat_api_key` (validates and returns the key)" in text
+    assert "`_resolve_api_key`" in text
+    assert "`_call_openai` / `_call_anthropic`" in text
     assert "no `X-LLM-API-Key` header" in phase_a
 
 

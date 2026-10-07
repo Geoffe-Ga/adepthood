@@ -124,9 +124,11 @@ answers to this record's follow-up questions, given the same evening.
 
    **Known gap until phase (a) lands:** today the client sends the person's
    key to our backend in the `X-LLM-API-Key` header
-   (`frontend/src/api/index.ts`). The server then calls the vendor itself
-   (`services/botmason.py::resolve_chat_api_key`), so it sees both the key
-   and the plaintext on every BYOK call.
+   (`frontend/src/api/index.ts`). The relay path in
+   `services/botmason.py` is: the header, then `resolve_chat_api_key`
+   (validates and returns the key), then `_resolve_api_key`, then the
+   server-side vendor call in `_call_openai` / `_call_anthropic`. So the
+   server sees both the key and the plaintext on every BYOK call.
 4. **BotMason credits pay for non-cloud inference only.**
    (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
    That means the vault-local model (B05,
