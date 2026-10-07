@@ -1088,3 +1088,17 @@ def test_b13_epic_draft_carries_the_per_platform_caveat() -> None:
     assert "rests on trusting the code we serve until signed builds ship" in draft
     assert "only while the signed build is honest" in draft
     assert "future-capture" not in draft
+
+
+def test_adr_0002_amendment_scopes_the_cloud_rule_and_names_the_app_key_gap() -> None:
+    """The 0002 amendment states BYOK-only and credits-non-cloud as targets, with the gap."""
+    text = (_ADR_DIR / "0002-intimate-content-local-routing.md").read_text(encoding="utf-8")
+    amendment = _flat(text[text.index(_AMENDMENT_HEADING) :])
+
+    assert "It is the **only** way any of a person's content reaches" not in amendment
+    assert "BotMason credits fund only non-cloud inference." not in amendment
+    assert "is decided to be the **only** way any of a person's content will reach" in amendment
+    assert "Under the decision, BotMason credits will fund only non-cloud inference" in amendment
+    assert "known gap: the app-key fallback" in amendment
+    assert "ADR 0009 Decision item 4" in amendment
+    assert "#3096" in amendment

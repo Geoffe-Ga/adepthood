@@ -205,16 +205,21 @@ changes.
   only. **Until B13 phases (b) and (c) land for an account, its journal stays
   under today's server-held keys and is operator-readable.**
 - **Decision 3, routing.** BYOK is no longer a supplement to an app-paid
-  cloud path. It is the **only** way any of a person's content reaches a
-  cloud model. Under the decision, without their own key none of their data
-  will reach one. A
+  cloud path. BYOK is decided to be the **only** way any of a person's
+  content will reach a cloud model. Under the decision, without their own key
+  none of their data will reach one. A
   BYOK call is decided to go **from the person's device straight to the
   vendor**, so neither the key nor the content passes through Adepthood's
   server. Today the call is relayed through the server (the `X-LLM-API-Key`
   header), which is a known gap until ADR 0009 phase (a). Within
   BYOK, the decided tier rule is unchanged: INTIMATE never reaches the cloud, and
   Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
-  BotMason credits fund only non-cloud inference.
+  Under the decision, BotMason credits will fund only non-cloud inference.
+  There is also a known gap: the app-key fallback. Today, when no BYOK key is
+  sent, the server falls back to its own `LLM_API_KEY`, so content still
+  reaches a cloud vendor on the app's account. ADR 0009 Decision item 4
+  records this gap; phase (a) closes it together with
+  [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096).
 - **Decision 4, recovery.** "No operator escrow and no operator-assisted
   recovery reset" is kept and is decided to apply to the journal. On
   2026-10-07 the owner chose the factors: a recovery phrase the person
