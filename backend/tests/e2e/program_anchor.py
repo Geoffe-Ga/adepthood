@@ -229,7 +229,8 @@ async def _require_progress(session: AsyncSession, email: str) -> StageProgress:
     if row is None:
         msg = (
             f"{email!r} has no stage progress row; it is created on first "
-            f"course access, or by the anchor subcommand"
+            f"course access, on a habits read with a laddered habit awaiting "
+            f"its ring, or by the anchor subcommand"
         )
         raise ProgramAnchorError(msg)
     return row
