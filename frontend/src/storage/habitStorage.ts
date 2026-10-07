@@ -68,7 +68,17 @@ export interface DroppedCheckIn {
   status: number;
   /** ISO instant the replay dropped the entry. */
   dropped_at: string;
+  /**
+   * Why it was dropped: ``'rejected'`` when the server refused it outright,
+   * ``'gave_up'`` when an unclassified rejection kept recurring past the
+   * replay's attempt cap and age floor (#2473). Records written before the
+   * field existed carry none, and read as ``'rejected'``.
+   */
+  reason?: DroppedCheckInReason;
 }
+
+/** The two ways a replay drops a check-in; see ``DroppedCheckIn.reason``. */
+export type DroppedCheckInReason = 'rejected' | 'gave_up';
 
 /**
  * Rehydrate Date fields that JSON.parse leaves as strings.

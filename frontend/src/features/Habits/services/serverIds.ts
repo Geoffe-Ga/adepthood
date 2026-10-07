@@ -32,17 +32,6 @@ export const isServerIssuedId = (id: number | null | undefined): id is number =>
   typeof id === 'number' && Number.isInteger(id) && id > 0;
 
 /**
- * Whether this id names a row the store can find, whoever minted it. Local,
- * id-keyed actions -- a backfill, a start-date reset -- are offered on
- * client-minted rows too, so they ask this rather than `isServerIssuedId`: a
- * pre-sync row's negative placeholder still matches its own row. Only `0` and a
- * missing id name nothing at all, and acting on those would dismiss a modal
- * having done nothing.
- */
-export const namesStoreRow = (id: number | null | undefined): id is number =>
-  typeof id === 'number' && Number.isInteger(id) && id !== 0;
-
-/**
  * Demo tiles are in-memory placeholders: their ids and start dates are
  * fabricated, so they must never reach the cache on disk (where the next
  * launch would read them back as real data) nor the server.

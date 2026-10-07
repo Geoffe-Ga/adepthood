@@ -22,6 +22,7 @@ import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../../constants';
 import type { Goal, Habit } from '../../Habits.types';
 import { describeCadence, GoalModal } from '../GoalModal';
+import { GOAL_CLOSE_LABEL, MODAL_CLOSE_LABEL } from '../modalCloseLabels';
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', overrides: Partial<Goal> = {}): Goal => ({
   id: tier === 'low' ? 1 : tier === 'clear' ? 2 : 3,
@@ -1030,5 +1031,21 @@ describe('GoalModal chip-row scroll affordance', () => {
     for (const unit of FREQUENCY_UNITS) {
       expect(getByTestId(`goal-frequency-unit-${unit}`)).toBeTruthy();
     }
+  });
+});
+
+describe('GoalModal header close button', () => {
+  it('carries a name of its own, distinct from the backdrop that is already "Close"', () => {
+    const { getAllByRole, getByRole, props } = renderModal();
+    expect(getAllByRole('button', { name: GOAL_CLOSE_LABEL })).toHaveLength(1);
+    const close = getByRole('button', { name: GOAL_CLOSE_LABEL });
+    expect(close.props.testID).not.toBe('goal-modal-backdrop');
+    // RNTL matches a string name exactly, so this resolves only the backdrop.
+    expect(getByRole('button', { name: MODAL_CLOSE_LABEL }).props.testID).toBe(
+      'goal-modal-backdrop',
+    );
+
+    fireEvent.press(close);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 });
