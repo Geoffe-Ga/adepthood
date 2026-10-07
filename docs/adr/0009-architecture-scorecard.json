@@ -48,7 +48,7 @@
     }
   ],
   "journal_scope_proposal": {
-    "status": "proposal; open owner question SCOPE",
+    "status": "decided: owner:2026-10-07#followup-scope",
     "in_scope": [
       "completionsuggestion.anchor_text",
       "completionsuggestion.label",
@@ -97,39 +97,15 @@
   "open_owner_questions": [
     {
       "id": "D03",
-      "question": "Recovery, account reset, device pairing, revocation, double loss, death or incapacity, and malicious support requests."
+      "question": "Pairing, revocation, death or incapacity, malicious support requests, shared devices and offline export. Recovery factors and double loss are decided."
     },
     {
-      "id": "RUNTIME",
-      "question": "Is credit-funded inference on a no-retention runtime we control, or on an ordinary-Fly vault, compatible with the premise, and how is it labelled?"
-    },
-    {
-      "id": "WEB-ANCHOR",
-      "question": "Which signed or pinned web delivery mechanism, and may web accounts enrol before it ships?"
-    },
-    {
-      "id": "SCOPE",
-      "question": "Which encrypted columns are journal content (practice reflections, prompt responses, feedback, the vault credential)?"
-    },
-    {
-      "id": "MIGRATION",
-      "question": "Opt-in or required enrolment, the retirement date for server-held keys, dormant accounts, and backup expiry values."
-    },
-    {
-      "id": "FEATURE-LOSS",
-      "question": "What enrolled accounts are told about server features that stop until phase d moves them."
+      "id": "MIGRATION-RETIREMENT",
+      "question": "The retirement date for server-held keys, dormant accounts, backup expiry values, and whether the protected label waits for backup expiry."
     },
     {
       "id": "D02-PRIMITIVES",
-      "question": "Which reviewed primitives, envelope format and library."
-    },
-    {
-      "id": "NATIVE",
-      "question": "Whether and when to ship native apps (store and signing accounts)."
-    },
-    {
-      "id": "BYOK-WEB",
-      "question": "Whether web may keep a person's provider key in localStorage."
+      "question": "Reviewer confirmation of the proposed libsodium sealed boxes and XChaCha20-Poly1305, and the envelope format."
     },
     {
       "id": "BYOK-CONSENT",
@@ -459,23 +435,23 @@
         "source": "owner:2026-10-07#B12-premise"
       },
       "recovery": {
-        "status": "unknown",
-        "owner_input_required": true
+        "value": "A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open.",
+        "source": "owner:2026-10-07#followup-recovery"
       },
       "metadata_leakage": {
         "value": "Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not.",
         "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
       },
       "inference_location": {
-        "value": "Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
+        "value": "Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
         "source": "owner:2026-10-07#B12-cloud-byok"
       },
       "supported_platforms": {
-        "value": "Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds.",
+        "value": "Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later.",
         "source": "owner:2026-10-07#B12-web"
       },
       "update_trust": {
-        "value": "Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today.",
+        "value": "Native: store-signed builds (later). Web: enforced CSP plus SRI now, signed builds later; the CSP is report-only today, and CSP plus SRI cannot stop us serving a different bundle.",
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {
@@ -483,7 +459,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until WEB-ANCHOR ships. A compromised device remains; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext.",
+        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext.",
         "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "budget_usd_per_active_account_month": {

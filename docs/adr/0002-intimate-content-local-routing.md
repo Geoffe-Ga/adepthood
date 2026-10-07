@@ -215,10 +215,12 @@ changes.
   Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
   BotMason credits fund only non-cloud inference.
 - **Decision 4, recovery.** "No operator escrow and no operator-assisted
-  recovery reset" is kept and now applies to the journal. The specific
-  passphrase plus one-time recovery-key mechanism is **no longer decided**. It
-  is reopened as D03 (an open owner question in ADR 0009), with this text as
-  prior art. Account and password reset cannot recover the data key.
+  recovery reset" is kept and is decided to apply to the journal. On
+  2026-10-07 the owner chose the factors: a recovery phrase the person
+  writes down, plus their passphrase. Losing both means the data is gone,
+  agreed up front (ADR 0009 Decision item 11). That replaces the one-time
+  recovery key above. Pairing, revocation and the rest of D03 stay open.
+  Account and password reset cannot recover the data key.
 - **Decision 1 and the INTIMATE skip-only interim** are unchanged.
 
 Nothing here is a public claim. Each claim waits for B24

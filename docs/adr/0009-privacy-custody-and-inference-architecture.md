@@ -91,26 +91,30 @@ hard line to start now rather than as a deferral after the beta.
 **Selected: Option BD**: user-held keys (B) plus device-side and
 vault-local inference (D), with BYOK cloud as an explicit opt-in.
 
+Items 1-5 are the owner's 2026-10-07 decision. Items 6-14 are the owner's
+answers to this record's follow-up questions, given the same evening.
+
 1. **The operator cannot read people's journal entries.**
-   (`owner:2026-10-07#B12-premise`) This premise governs. It covers stored journal content and every prose derivative of
-   it. The derivatives are the journal-derived `EncryptedString` columns
-   above and the `DERIVED_FROM_PROSE` plaintext. Which non-journal columns
-   fall inside the premise is open question SCOPE.
+   (`owner:2026-10-07#B12-premise`) This premise governs **stored** journal
+   content and every prose derivative of it, and the BYOK and device paths
+   of inference. It does **not** cover credit-funded processing in a managed
+   runtime while that processing runs (item 4). The derivatives are the
+   in-scope `EncryptedString` columns (item 9) and the `DERIVED_FROM_PROSE`
+   plaintext.
 2. **Keys are user-held, with no operator escrow.**
-   (`owner:2026-10-07#B12-premise`) Keys are generated on the
-   person's device. The server stores ciphertext and public parameters only.
-   No operator-held decrypt capability exists in the protected path, and
-   there is no operator-assisted recovery. It follows directly that **an
-   account or password reset cannot recover the data key**. Every other
-   recovery, pairing and revocation semantic belongs to D03, which is still
-   open.
+   (`owner:2026-10-07#B12-premise`) Under the target, keys are generated on
+   the person's device and the server stores ciphertext and public
+   parameters only. No operator-held decrypt capability will exist in the
+   protected path, and there will be no operator-assisted recovery. It
+   follows directly that **an account or password reset cannot recover the
+   data key**. Recovery itself is item 11.
 3. **Cloud models are used only with the person's own key.**
-   (`owner:2026-10-07#B12-cloud-byok`) Anthropic,
-   OpenAI and any other cloud model are reached only when the person adds
-   their own key in Settings (BYOK). Without such a key, **none of their
-   data reaches a cloud model**. How finely BYOK consent is granted (per key,
-   per feature or per call) is not decided; see open question BYOK-CONSENT. The app's own cloud key never carries a person's journal
-   content.
+   (`owner:2026-10-07#B12-cloud-byok`) Anthropic, OpenAI and any other cloud
+   model are reached only when the person adds their own key in Settings
+   (BYOK). Without such a key, **none of their data reaches a cloud model**.
+   How finely BYOK consent is granted (per key, per feature or per call) is
+   not decided; see open question BYOK-CONSENT. The app's own cloud key never
+   carries a person's journal content.
 
    **BYOK calls go from the person's device straight to the vendor.** This
    follows directly from the premise. If the server relayed a BYOK call, it
@@ -123,18 +127,68 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
    (`services/botmason.py::resolve_chat_api_key`), so it sees both the key
    and the plaintext on every BYOK call.
 4. **BotMason credits pay for non-cloud inference only.**
-   (`owner:2026-10-07#B12-credits`) That means the
-   vault-local model (B05, [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
-   or a no-retention runtime we control. Credits never pay for a call made
-   with the app's cloud key. See "BotMason credits" below.
+   (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
+   That means the vault-local model (B05,
+   [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
+   or a **managed no-retention runtime** we run. Credits never pay for a call
+   made with the app's cloud key.
+
+   **Honest limit, decided by the owner:** processing in that managed
+   runtime is **not operator-blind while it runs**. The runtime sees the
+   plaintext it processes and stores none of it. The same holds for a
+   vault-local model on an ordinary-Fly managed vault. Every such use is
+   **labelled clearly each time**, for example "processed on Adepthood's
+   private server, not stored". The per-use label is a phase (a) requirement.
 5. **The web caveat is stated per platform.** (`owner:2026-10-07#B12-web`)
-   User-held keys apply on every
-   platform. The guarantee is strongest on native apps. On web it rests on
-   trusting the code we serve, mitigated by signed or pinned builds. Public
-   claims are scoped per platform (see "Per-platform claim scoping").
-6. **Nothing is claimed yet.** This record approves an architecture. It
-   unlocks no public privacy claim, and every claim still passes B24
-   ([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).
+   User-held keys apply on every platform. The guarantee is strongest on
+   native apps. On web it rests on trusting the code we serve, mitigated by
+   signed or pinned builds. Public claims are scoped per platform (see
+   "Per-platform claim scoping").
+6. **Web protection: CSP plus SRI now, signed builds later.**
+   (`owner:2026-10-07#followup-web-anchor`) The web client moves from a
+   report-only CSP to an **enforced** CSP with Subresource Integrity. Signed
+   builds come later. CSP and SRI narrow injected and third-party script,
+   but both are served by us. They do **not** stop the operator from serving
+   a different bundle, so until signed builds ship, operator protection on
+   web still rests on trusting the served code.
+7. **No web enrolment until the web protection ships.**
+   (`owner:2026-10-07#followup-web-enrol`) A web account may not enrol in
+   user-held keys until enforced CSP plus SRI is live.
+8. **Web first; native later.** (`owner:2026-10-07#followup-native`)
+9. **Scope: the proposed split.** (`owner:2026-10-07#followup-scope`)
+   In scope: journal entries and titles, reflections (marginalia notes and
+   essays), practice reflections, prompt responses, and the corpus
+   fragments, completion suggestions and promoted quotes derived from them.
+   Out of scope: feedback notes and reports, and the stored vault API key.
+   The scorecard's `journal_scope_proposal` holds the exact columns.
+10. **Migration is opt-in for everyone, for now.**
+    (`owner:2026-10-07#followup-migration`) No account is moved without
+    choosing to be. The retirement date for server-held keys stays open
+    (MIGRATION-RETIREMENT).
+11. **Recovery: a recovery phrase plus the person's passphrase.**
+    (`owner:2026-10-07#followup-recovery`) The person writes the recovery
+    phrase down. Either factor unlocks the data key. **Losing both means the
+    data is gone**, and the person agrees to that up front at enrolment.
+    Pairing, revocation, death or incapacity, and what support may do on a
+    malicious request stay open under D03.
+12. **Feature loss: ship phase (a) now and tell people plainly.**
+    (`owner:2026-10-07#followup-feature-loss`)
+13. **The BYOK provider key on web is kept encrypted under the user-held
+    key.** (`owner:2026-10-07#followup-byok-web`) Until an account enrols,
+    there is no user-held key to wrap it with. That is one more reason
+    phase (b) puts web protection first.
+14. **Primitives are proposed, not final.**
+    (`owner:2026-10-07#followup-primitives`) The proposal is libsodium
+    sealed boxes and XChaCha20-Poly1305. The cryptography reviewer has to
+    confirm it before phase (b) enrols anyone.
+15. **Nothing is claimed yet.** This record approves an architecture. It
+    unlocks no public privacy claim, and every claim still passes B24
+    ([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).
+
+**Consequence the owner asked to surface.** Migration is opt-in (item 10),
+web may not enrol before CSP plus SRI (item 7), and native comes later
+(item 8). Together these mean **nobody can enrol in user-held keys until the
+CSP and SRI work ships**. Phase (b) therefore starts with that work.
 
 ## Threat actors
 
@@ -147,7 +201,7 @@ history and future content stand or fall together.
 |---|---|---|---|---|---|---|---|
 | Database thief (no env keys) | blocked | blocked | blocked | blocked | blocked | blocked | blocked |
 | Backup holder (with env keys) | reads | reads | blocked | blocked | blocked | reads | blocked |
-| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until WEB-ANCHOR ships | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until WEB-ANCHOR ships**; sees runtime-we-control inputs while they run |
+| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until signed builds ship | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until signed builds ship** (enforced CSP plus SRI does not stop this); sees managed-runtime inputs while they run (labelled on each use) |
 | Hosting provider (Fly, DB host) | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; same runtime caveat |
 | Malicious or compelled client update | reads | reads | reads all stored history (captured key); harder on signed native | reads on web | reads all stored history (captured key); harder on signed native | reads | reads all stored history once the key is captured: on web until signed or pinned builds ship, on native through a malicious signed build |
 | XSS in the web client | reads | reads | reads open sessions | reads open sessions | reads open sessions | reads | reads open sessions; CSP enforcement narrows it |
@@ -268,13 +322,13 @@ history and future content stand or fall together.
 
 - **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
-- **Recovery:** **unknown; owner input required.** See D03 below.
+- **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
-- **Supported platforms:** Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds. (`owner:2026-10-07#B12-web`)
-- **Client delivery and update trust:** Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today. (`repo:frontend/nginx.conf`)
+- **Inference location:** Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
+- **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
+- **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now, signed builds later; the CSP is report-only today, and CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until WEB-ANCHOR ships. A compromised device remains; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07#B12-premise`)
@@ -292,10 +346,10 @@ attackers (who control the code the person runs).
 
 | Platform | Passive: DB, backup or host-storage thief | Active: operator or update channel (stored history and future content alike) | Inference | What the claim rests on |
 |---|---|---|---|---|
-| Native iOS and Android (store-signed) | Ciphertext only | Protected **only while the signed build is honest**. A malicious or compelled signed build could capture the key and decrypt stored history and future content alike | Device-first; vault or credits runtime only with consent; cloud only with BYOK, device to vendor | OS keystore, store signing, and reproducible-build evidence once it exists |
-| Web (served by us) | Ciphertext only | **Rests on trusting the code we serve**, for stored history and future content alike. A malicious or compelled bundle could capture the key at the next load and decrypt everything stored. This stays true until WEB-ANCHOR ships | Same routing as native, with browser runtime limits | Enforced CSP and signed or pinned builds (open question WEB-ANCHOR) |
+| Native iOS and Android (store-signed; later, after web) | Ciphertext only | Protected **only while the signed build is honest**. A malicious or compelled signed build could capture the key and decrypt stored history and future content alike | Device-first; vault or credits runtime only with consent; cloud only with BYOK, device to vendor | OS keystore, store signing, and reproducible-build evidence once it exists |
+| Web (served by us) | Ciphertext only | **Rests on trusting the code we serve**, for stored history and future content alike. A malicious or compelled bundle could capture the key at the next load and decrypt everything stored. This stays true until signed builds ship: enforced CSP plus SRI narrows injected script but cannot stop us serving a different bundle. Web accounts may not enrol before CSP plus SRI is live | Same routing as native, with browser runtime limits | Enforced CSP plus SRI now; signed builds later (owner decision, items 6-7) |
 | Person's own vault (self-hosted) | Theirs to protect | Theirs to protect | Vault-local model | The person's own machine |
-| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference sees plaintext while it runs; this is not operator-blind (open question RUNTIME) | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
+| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference sees plaintext while it runs; this is not operator-blind, and each use is labelled (Decision item 4) | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
 
 No platform may advertise "end-to-end" or "operator-blind" until B24
 certifies that claim for that platform.
@@ -308,17 +362,21 @@ certifies that claim for that platform.
   out-of-band lets a person check the code they ran. Under BD this is the
   weakest link: a served bundle can capture the key and so read stored
   history as well as future content. That is why the web claim is scoped.
-- **Mitigations to choose from (open question WEB-ANCHOR):** an enforced CSP
-  with `script-src 'self'` and Subresource Integrity; a signed release
-  manifest, verified by a pinned service worker or browser extension;
-  reproducible builds with a public transparency log; or limiting protected
-  enrolment to native. These options can be combined.
+- **Decided (Decision items 6-7):** enforce the CSP, with `script-src
+  'self'`, and add Subresource Integrity now. Web accounts may not enrol
+  until both are live. Signed builds come later. The mechanism for that
+  later step (a signed release manifest verified by a pinned service worker
+  or extension, or reproducible builds with a public transparency log) is
+  not chosen yet. CSP and SRI are served by us, so they do not protect
+  against us; only the signed-build step addresses the operator.
 - **Native:** store-signed builds from `frontend/eas.json` profiles are not
-  shipped today (open question NATIVE). Shipping them needs store and signing
-  accounts, which means spend, and the owner decides that.
+  shipped today. The owner decided web first and native later (Decision
+  item 8). Shipping native needs store and signing accounts, which means
+  spend.
 - **The BYOK key on web:** `secureStringStore.ts` falls back to localStorage,
-  so script compromise can read a person's provider key (open question
-  BYOK-WEB).
+  so script compromise can read a person's provider key today. Decided
+  (Decision item 13): once an account enrols, the provider key is kept
+  encrypted under the user-held key.
 
 ## Primary-copy and derivative removal
 
@@ -328,12 +386,12 @@ key, withdrawn, or expired" before an account may be labelled protected:
 1. **The 18 `EncryptedString` columns.** These are held by B02's inventory
    (`encrypted_columns()`) and pinned by
    `test_every_encrypted_column_stores_ciphertext`. The default proposal,
-   pending open question SCOPE:
+   per the owner's scope split (Decision item 9):
    - **Journal content, in scope:** `journalentry.*`, `marginalia.*`,
      `promotedquote.anchor_text`, `corpusfragment.content`,
      `completionsuggestion.*`, `promptresponse.response`,
      `practicesession.insight` and `practicesession.reflection`.
-   - **Proposed out of scope:** `feedbacknote.body` and `feedbackreport.*`,
+   - **Out of scope:** `feedbacknote.body` and `feedbackreport.*`,
      which are written *to* the operator to be read, and
      `uservaultconfig.api_key`, a credential the server must present on the
      person's behalf.
@@ -352,8 +410,8 @@ key, withdrawn, or expired" before an account may be labelled protected:
 4. **Backups and snapshots.** B08 ([#3063](https://github.com/Geoffe-Ga/adepthood/issues/3063))
    owns the store inventory and retention values. Its store inventory has
    not landed on this branch, so the list of non-database stores is still to
-   be consumed from B08 when it merges. Backup expiry deadlines are open
-   question MIGRATION.
+   be consumed from B08 when it merges. Backup expiry deadlines are part of
+   open question MIGRATION-RETIREMENT.
 5. **Creek copies.** These are withdrawn through B04's destination-bound
    machinery (`services/creek_vault_withdraw.py`, voice-draft retraction),
    which has landed. Creek-side deletion has to be idempotent and purge
@@ -391,7 +449,7 @@ stores. This record consumes them and does not rebuild them.
   (owner decision on B04 esc6, [#3095](https://github.com/Geoffe-Ga/adepthood/issues/3095)).
 - **Backups.** Legacy backups expire on B08's schedule. The protected label
   either waits for that expiry or names the date it completes. Which of the
-  two is open question MIGRATION.
+  two is part of open question MIGRATION-RETIREMENT.
 - **No plaintext dual-write after enrolment.** From the moment an account
   enrols, every write for it is ciphertext, including autosave.
 - **The irreversible part.** Key destruction and legacy deletion cannot be
@@ -404,52 +462,58 @@ stores. This record consumes them and does not rebuild them.
   `LLM_API_KEY`, so a credit-funded message reaches a cloud vendor on the
   app's account.
 - **Decided:** credits fund **non-cloud** inference only. That means the
-  person's vault-local model (B05) or a no-retention runtime we control. A
+  person's vault-local model (B05) or a managed no-retention runtime we run. A
   BYOK call pays its own vendor and debits no credits. With neither credits
   routed to a non-cloud runtime nor BYOK, the request is **refused**, with no
   fallback to the app's cloud key. This composes with
   [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096) (B07: refuse
   without credits or BYOK) and with B07's inference provenance, so every
   receipt names who paid and where the call ran.
-- **Honest limit.** A no-retention runtime we control still sees plaintext
-  while it runs. The same holds for a vault-local model on an ordinary-Fly
-  vault. Neither stores anything, but neither is operator-blind during
-  processing. Open question RUNTIME asks whether that runtime must be
-  attested, device-only, or labelled per use.
-- **Until B05 ships a working local model**, a person without BYOK has no
-  credit-funded inference. That is a feature loss, and it is disclosed rather
-  than papered over.
+- **Honest limit (owner decision, Decision item 4).** The managed runtime
+  sees plaintext while it runs and stores none of it. The same holds for a
+  vault-local model on an ordinary-Fly vault. Neither is operator-blind
+  during processing. Each use is labelled clearly, for example "processed on
+  Adepthood's private server, not stored". The label is a phase (a)
+  requirement.
+- **Feature loss, said plainly (Decision item 12).** Until the managed
+  runtime or B05's local model is live, a person without BYOK has no
+  credit-funded inference. Phase (a) ships anyway, and people are told so in
+  plain words.
 
-## Recovery, reset and pairing (D03): open owner questions
+## Recovery, reset and pairing (D03): decided parts and open owner questions
 
-The owner decided **no operator escrow**. One consequence follows and is
-recorded as decided: account and password reset cannot recover a lost data
-key. Nothing else here is decided. ADR 0002 Decision 4 and Creek-Vault ADR
-0005 (a passphrase plus a one-time recovery key) are prior art, not a choice.
+**Decided** (`owner:2026-10-07#followup-recovery`, Decision item 11):
 
-1. **Recovery factors.** Passphrase plus recovery key, device keys only, or
-   another scheme. Who generates them, how often they are shown, and their
-   format.
-2. **Lost device.** Recovery from another paired device, from the recovery
-   factor, or not at all.
-3. **Pairing.** How a new device joins (out-of-band code, QR code, recovery
-   factor), and how a wrong-account sync is refused.
-4. **Revocation.** What a revoked device loses, and whether key rotation
+- **Recovery factors.** A recovery phrase that the person writes down, plus
+  their passphrase. Either one unlocks the data key.
+- **Double loss.** Losing both means the data is gone. The person agrees to
+  that up front, at enrolment.
+- **Reset.** Account and password reset cannot recover the data key. This
+  follows from no escrow.
+- **Lost device.** The recovery phrase or the passphrase restores access on
+  a new device.
+
+Format, wording and how often the phrase is shown are implementation detail
+for B13. They need the cryptography review and user testing.
+
+**Still open (D03):**
+
+1. **Pairing.** How a new device joins (out-of-band code, QR code, a
+   recovery factor), and how a wrong-account sync is refused.
+2. **Revocation.** What a revoked device loses, and whether key rotation
    re-wraps everything.
-5. **Double loss.** Whether permanent loss is accepted, and the exact
-   consent shown at enrolment. User testing comes before adoption.
-6. **Death or incapacity.** Whether there is any delegated access, and if
+3. **Death or incapacity.** Whether there is any delegated access, and if
    so, with which user-held mechanism.
-7. **Malicious support requests.** What support may and must not do when
+4. **Malicious support requests.** What support may and must not do when
    someone claims to be the account holder.
-8. **Shared devices and offline export.** Local key lifetime, and how a
+5. **Shared devices and offline export.** Local key lifetime, and how a
    person exports a decrypted copy.
 
 ## Confidential compute (D05)
 
 D05 is not pursued. C is rejected for now (see below). It reopens only if
-the RUNTIME question needs a runtime-we-control inference path that is
-operator-blind. In that case D05's conditions apply in full: real hardware,
+the owner wants the managed runtime's processing to become operator-blind,
+which Decision item 4 currently says it is not. In that case D05's conditions apply in full: real hardware,
 a vendor attestation chain, nonce freshness, user-authorized key release,
 and a hostile-host lab. Creek-Vault ADR 0006's operator-provisioned trust
 root is not evidence.
@@ -486,7 +550,8 @@ None has been consulted yet. Four reviews are owed, each before a named phase
   It is kept only as a reopen trigger.
 - **E (managed vault, no operator blindness):** provider-managed custody is
   not operator-blind. Only its vault-local inference survives, inside BD and
-  under the RUNTIME question.
+  under Decision item 4: labelled on each use, and not operator-blind while
+  it runs.
 
 B and D are not rejected. Together they are the selection.
 
@@ -506,32 +571,54 @@ content of a BYOK call reaches our server. Whether a browser can call each
 vendor directly is checked in this phase. Where it cannot, that feature is
 unavailable on web; it does not fall back to a server relay.
 
-Route credit-funded requests only to the vault-local model or a no-retention
-runtime we control. Refuse otherwise, with no fallback. Label every receipt
+Route credit-funded requests only to the vault-local model or a managed
+no-retention runtime we run. Refuse otherwise, with no fallback. Every use of
+the managed runtime is **labelled on each use** in the product, for example
+"processed on Adepthood's private server, not stored". Label every receipt
 with payer and location (B07). This composes with #3096.
 
 - **Shippable on its own:** yes, without crypto. It only narrows where
-  content may go. It removes cloud AI for people without BYOK until B05 ships.
+  content may go. Ship it now (Decision item 12). Until the managed runtime
+  or B05's local model is live, it removes cloud AI for people without BYOK,
+  and people are told that plainly.
 - **Exit tests:** a provider-factory and socket spy records zero cloud calls
   without BYOK on every route (chat, marginalia, essays, detection,
   classification, transcription). A credit debit is present only beside a
   non-cloud receipt. A BYOK request recorded at the Adepthood server carries
   no synthetic canary and no `X-LLM-API-Key` header, because the BYOK call
-  went from the device to the vendor.
+  went from the device to the vendor. Every managed-runtime response reaches
+  the person with its per-use label.
 - **Owed before release:** the privacy and vendor-terms review, and B01's
   copy.
 
 ### Phase (b): client key generation and the encrypted-sync envelope
 
-Generate keys on the device. Use an AEAD envelope bound to owner, object type,
-object id and version, with rollback defence. Add a ciphertext column and
-version to each in-scope table. Enrolled accounts write ciphertext only,
-autosave included. Unenrolled accounts are unchanged.
+**First slice: enforce the CSP and add SRI** on the web client. Change
+`frontend/nginx.conf` from `Content-Security-Policy-Report-Only` to an
+enforced `Content-Security-Policy`, and add Subresource Integrity to the
+served bundles. This comes first because of the consequence in the Decision
+section: enrolment is opt-in, web may not enrol before CSP plus SRI, and
+native comes later, so **nobody can enrol until this slice ships**.
+`test_custody_adr_names_enforcement_that_exists` pins the report-only header;
+rewrite it in the same change.
 
-- **Shippable on its own:** yes, as an opt-in cohort. Synthetic accounts come
-  first, then a reviewed cohort. Web enrolment carries the web caveat.
-- **Gates:** D02 primitives and envelope (open question D02-PRIMITIVES), the
-  D03 answers, and the cryptography review.
+Then: Generate keys on the device. Use an AEAD envelope bound to owner,
+object type, object id and version, with rollback defence. The proposed
+primitives are libsodium sealed boxes and XChaCha20-Poly1305, pending the
+reviewer. Wrap the data key under the passphrase and under the recovery
+phrase (Decision item 11). Add a ciphertext column and version to each
+in-scope table. Enrolled accounts write ciphertext only, autosave included,
+and keep their BYOK provider key encrypted under the user-held key
+(Decision item 13). Unenrolled accounts are unchanged.
+
+- **Shippable on its own:** yes. The CSP and SRI slice ships alone. After
+  it, enrolment opens as an opt-in cohort: synthetic accounts first, then a
+  reviewed cohort. Web enrolment carries the web caveat until signed builds
+  ship.
+- **Gates:** the cryptography reviewer confirms the proposed primitives and
+  envelope (D02-PRIMITIVES) before any real account enrols. Pairing and
+  revocation (open under D03) must be answered before multi-device sync
+  ships.
 - **Exit tests:** B13's hostile-server canary test (DB dump, env keys and
   logs recover zero canaries). A swapped-row or cross-account ciphertext fails
   to open. A replayed old version is refused. A request spy shows autosave
@@ -548,7 +635,8 @@ and `test_server_env_keys_alone_recover_every_in_scope_journal_column`.
 - **Shippable on its own:** yes, per account. Each enrolled account is done
   when its legacy copies are gone. The server key path is retired only after
   the last in-scope account migrates, or on the owner's retirement date (open
-  question MIGRATION).
+  question MIGRATION-RETIREMENT). Enrolment is opt-in for everyone for now
+  (Decision item 10), so no account is migrated without choosing to be.
 - **Gates:** the application-security hostile-admin review and B08's
   retention values.
 - **Exit tests:** for a migrated account, no server-key ciphertext and no
@@ -590,7 +678,8 @@ The B13 epic body that carries this plan is drafted at
   describing and governing that account's journal content, which stays
   operator-readable. Provider-managed custody stays for operational state
   (credentials, job state, configuration). Inference that sees plaintext falls
-  under the RUNTIME question.
+  under Decision item 4: labelled on each use, and not operator-blind while
+  it runs.
 
 ## Reopen triggers
 
@@ -615,22 +704,18 @@ The B13 epic body that carries this plan is drafted at
 
 ## Open owner questions
 
-Mirrored in the scorecard's `open_owner_questions`. None is decided here.
+Mirrored in the scorecard's `open_owner_questions`. On 2026-10-07 the owner
+answered RUNTIME, WEB-ANCHOR, WEB-ENROL, SCOPE, MIGRATION (opt-in), the D03
+recovery factors, FEATURE-LOSS, NATIVE and BYOK-WEB, and proposed the
+primitives. Those answers are Decision items 4 and 6-14. What is still open:
 
-- **D03:** recovery, account reset, device pairing, revocation, double loss,
-  death or incapacity, malicious support requests (detailed above).
-- **RUNTIME:** is credit-funded inference on a no-retention runtime we
-  control, or on an ordinary-Fly vault, compatible with the premise, and how
-  is it labelled?
-- **WEB-ANCHOR:** which signed or pinned web delivery mechanism, and may web
-  accounts enrol before it ships?
-- **SCOPE:** which encrypted columns are journal content?
-- **MIGRATION:** opt-in or required enrolment, the retirement date for
-  server-held keys, dormant accounts, and backup expiry values.
-- **FEATURE-LOSS:** what enrolled accounts are told before phase (d).
-- **D02-PRIMITIVES:** which reviewed primitives, envelope format and library.
-- **NATIVE:** whether and when to ship native apps.
-- **BYOK-WEB:** whether web may keep a person's provider key in localStorage.
+- **D03:** pairing, revocation, death or incapacity, malicious support
+  requests, shared devices and offline export (detailed above).
+- **MIGRATION-RETIREMENT:** the retirement date for server-held keys,
+  dormant accounts, backup expiry values, and whether the protected label
+  waits for backup expiry.
+- **D02-PRIMITIVES:** reviewer confirmation of the proposed libsodium sealed
+  boxes and XChaCha20-Poly1305, and the envelope format.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
   per feature, or per call?
 - **INTIMATE-DEVICE:** may device-side inference, which is never remote,

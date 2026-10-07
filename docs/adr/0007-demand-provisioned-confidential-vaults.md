@@ -223,8 +223,10 @@ the launch service. This section states exactly what changes.
   person's user-held key. **Until B13 phases (b) and (c) complete for an
   account, this Decision 4 keeps describing and governing that account's
   journal content, which stays operator-readable.** Provider-managed custody
-  stays for operational state (credentials, job state, configuration). Any vault-local inference that sees plaintext falls under
-  ADR 0009's open RUNTIME question.
+  stays for operational state (credentials, job state, configuration).
+  Vault-local inference that sees plaintext is governed by ADR 0009 Decision
+  item 4: it is labelled on each use and is not operator-blind while it
+  runs.
 - **Decision 6, what a VM is not.** Items 1 and 2 (a user-held key with no
   escrow, and client-side ciphertext through Adepthood) are **decided as
   requirements for all journal content**, not only INTIMATE. Neither is

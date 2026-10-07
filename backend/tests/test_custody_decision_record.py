@@ -81,7 +81,25 @@ _OWNER_SOURCE_PREFIX = "owner:"
 # anything else is laundered provenance. Each anchor must also appear in ADR
 # 0009 beside the decision text it labels.
 _OWNER_DECISIONS: dict[str, frozenset[str]] = {
-    "2026-10-07": frozenset({"B12-premise", "B12-cloud-byok", "B12-credits", "B12-web"}),
+    "2026-10-07": frozenset(
+        {
+            "B12-premise",
+            "B12-cloud-byok",
+            "B12-credits",
+            "B12-web",
+            # The owner's answers to ADR 0009's follow-up questions, same day.
+            "followup-runtime",
+            "followup-web-anchor",
+            "followup-web-enrol",
+            "followup-scope",
+            "followup-migration",
+            "followup-recovery",
+            "followup-feature-loss",
+            "followup-native",
+            "followup-byok-web",
+            "followup-primitives",
+        }
+    ),
 }
 # Anchors under which the owner has actually supplied a budget or staffing
 # figure. None exist yet, so no money cell can be owner-sourced until the
@@ -113,7 +131,7 @@ _REQUIRED_SECTIONS = (
     "## Primary-copy and derivative removal",
     "## Migration of existing server-readable data",
     "## BotMason credits",
-    "## Recovery, reset and pairing (D03): open owner questions",
+    "## Recovery, reset and pairing (D03): decided parts and open owner questions",
     "## Confidential compute (D05)",
     "## Budget and staffing",
     "## Reviewers",
@@ -564,14 +582,45 @@ def test_custody_scorecard_review_entries_are_done_or_owed() -> None:
     )
 
 
-def test_recovery_for_the_selection_stays_an_open_owner_question() -> None:
-    """D03 is the owner's; the record must not invent recovery semantics."""
+# Questions the owner answered on 2026-10-07; none may linger as "open".
+_ANSWERED_QUESTIONS = frozenset(
+    {"RUNTIME", "WEB-ANCHOR", "SCOPE", "MIGRATION", "FEATURE-LOSS", "NATIVE", "BYOK-WEB"}
+)
+
+
+def test_recovery_is_the_owners_and_the_rest_of_d03_stays_open() -> None:
+    """The owner chose the recovery factors; pairing and the rest of D03 stay open."""
     card = _card()
     selected = _as_dict(_as_dict(card["options"])[_SELECTED])
-    questions = [_as_dict(entry).get("id") for entry in _as_list(card["open_owner_questions"])]
+    questions = {_as_dict(entry).get("id") for entry in _as_list(card["open_owner_questions"])}
 
-    assert selected["recovery"] == _UNKNOWN
+    assert _owner_anchor(_as_dict(selected["recovery"]).get("source")) == "followup-recovery"
     assert "D03" in questions
+    assert questions.isdisjoint(_ANSWERED_QUESTIONS)
+
+
+def test_owner_answers_are_recorded_as_decisions() -> None:
+    """Each answered question is a numbered decision, and the runtime limit is honest."""
+    text = _adr_text()
+    decision = _flat(text[text.index("## Decision\n") : text.index("## Threat actors")])
+
+    assert "not operator-blind while it runs" in decision
+    assert "labelled clearly each time" in decision
+    assert "nobody can enrol in user-held keys until the CSP and SRI work ships" in decision
+    assert "proposed, not final" in decision
+    scope = _as_dict(_card()["journal_scope_proposal"])
+    assert scope.get("status") == "decided: owner:2026-10-07#followup-scope"
+
+
+def test_phase_plan_puts_web_protection_first_and_labels_runtime_use() -> None:
+    """Nobody can enrol before CSP and SRI ship, so phase (b) starts there."""
+    text = _flat(_adr_text())
+    phase_a = text[text.index("### Phase (a)") : text.index("### Phase (b)")]
+    phase_b = text[text.index("### Phase (b)") : text.index("### Phase (c)")]
+
+    assert "labelled on each use" in phase_a
+    assert "First slice: enforce the CSP and add SRI" in phase_b
+    assert phase_b.index("First slice") < phase_b.index("Generate keys on the device")
 
 
 def test_custody_adr_names_enforcement_that_exists() -> None:
