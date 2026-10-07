@@ -11,13 +11,22 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from http import HTTPStatus
+from typing import Annotated
 
 import pytest
+from fastapi import Depends
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from dependencies.creek_vault import get_creek_vault_client, vault_destination_fingerprint
+from database import get_session
+from dependencies import creek_vault as creek_vault_dependency
+from dependencies.creek_vault import (
+    get_creek_vault_client,
+    resolve_creek_vault_client,
+    resolved_vault_destination,
+    vault_destination_fingerprint,
+)
 from domain.creek_vault import (
     CreekCapability,
     CreekVaultClient,
@@ -32,6 +41,7 @@ from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from routers import journal as journal_router
+from routers.auth import get_current_user
 from services.creek_vault_voice_drafts import record_mirror_intent
 from services.creek_vault_write import VaultWriteOutcome
 from services.user_vault_config import clear_vault_config, store_vault_config
@@ -496,3 +506,91 @@ async def test_intimate_create_never_stages_a_destination_even_transiently(
     await _create_intimate_entry(async_client, headers)
 
     assert staged == [None]
+
+
+@pytest.mark.parametrize("lost_ack", [False, True], ids=["ingested", "ack_lost"])
+@pytest.mark.asyncio
+async def test_offline_edit_of_a_sent_entry_keeps_its_withdrawal_marker(
+    async_client: AsyncClient, db_session: AsyncSession, *, lost_ack: bool
+) -> None:
+    """An edit the vault turns away never erases the marker of a copy it already holds."""
+    headers, user_id = await _signup(async_client, f"dest_offline_edit_{lost_ack}")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+    first = _AckLostVault(db_session) if lost_ack else SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: first
+    entry_id = await _create_public_entry(async_client, headers)
+    assert (await _entry(db_session, entry_id)).vault_destination == destination_a
+
+    offline = SequencedVaultClient(capabilities=frozenset({CreekCapability.JOURNAL_WITHDRAW}))
+    app.dependency_overrides[get_creek_vault_client] = lambda: offline
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "An edit while A is away."}, headers=headers
+    )
+
+    assert edited.status_code == HTTPStatus.OK
+    assert offline.ingest_calls == []
+    assert (await _entry(db_session, entry_id)).vault_destination == destination_a
+
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert offline.withdraw_calls == []
+    assert first.withdraw_calls == []
+
+
+@pytest.fixture
+def dialable_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Judge every stored host dialable without a DNS lookup (no dial ever happens here)."""
+
+    async def _never_undialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(creek_vault_dependency, "_stored_host_is_undialable", _never_undialable)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("dialable_hosts")
+async def test_destination_comes_from_the_same_read_as_the_client(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A reconnect after the client was resolved cannot rebind the write to the new vault."""
+    headers, user_id = await _signup(async_client, "dest_same_read")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+    vault = SequencedVaultClient()
+
+    async def _resolve_then_reconnect(
+        current_user: Annotated[int, Depends(get_current_user)],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> CreekVaultClient:
+        await resolve_creek_vault_client(session, current_user)
+        await store_vault_config(session, current_user, vault_url=_VAULT_B, api_key=_KEY_B)
+        return vault
+
+    app.dependency_overrides[get_creek_vault_client] = _resolve_then_reconnect
+    entry_id = await _create_public_entry(async_client, headers)
+
+    assert (await _entry(db_session, entry_id)).vault_destination == destination_a
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("dialable_hosts")
+async def test_resolved_destination_is_scoped_to_the_resolved_account(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The captured fingerprint answers only for the account it was read for."""
+    _headers_a, first_user = await _signup(async_client, "dest_scope_first")
+    _headers_b, second_user = await _signup(async_client, "dest_scope_second")
+    await store_vault_config(db_session, first_user, vault_url=_VAULT_A, api_key=_KEY_A)
+    await store_vault_config(db_session, second_user, vault_url=_VAULT_B, api_key=_KEY_B)
+    first_a = await vault_destination_fingerprint(db_session, first_user)
+
+    await resolve_creek_vault_client(db_session, first_user)
+    await store_vault_config(db_session, first_user, vault_url=_VAULT_B, api_key=_KEY_B)
+
+    assert await resolved_vault_destination(db_session, first_user) == first_a
+    assert await resolved_vault_destination(
+        db_session, second_user
+    ) == await vault_destination_fingerprint(db_session, second_user)

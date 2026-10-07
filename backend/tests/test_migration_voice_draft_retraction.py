@@ -46,7 +46,10 @@ _PERSONAL_ESSAY = 11
 _INTIMATE_ESSAY = 12
 _DELETED_ESSAY = 13
 _NO_ESSAY = 14
-_FIXTURE_NOTES = 4
+_VAULTLESS_ESSAY = 15
+_DEPLOYMENT_ESSAY = 16
+_DEPLOYMENT_OWNER = 3
+_FIXTURE_NOTES = 6
 
 
 @contextmanager
@@ -75,12 +78,17 @@ def _seed_legacy_schema(connection: Connection) -> None:
             "journal_entry_id INTEGER NOT NULL, essay TEXT, essay_generated_at DATETIME)"
         )
     )
-    connection.execute(text("INSERT INTO user (id) VALUES (1)"))
+    connection.execute(
+        text("CREATE TABLE uservaultconfig (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL)")
+    )
+    connection.execute(text("INSERT INTO user (id) VALUES (1), (2), (3)"))
+    connection.execute(text("INSERT INTO uservaultconfig (id, user_id) VALUES (1, 1)"))
     connection.execute(
         text(
             "INSERT INTO journalentry (id, user_id, classification, deleted_at) VALUES "
             "(1, 1, 'personal', NULL), (2, 1, 'intimate', NULL), "
-            "(3, 1, 'personal', '2026-10-01 00:00:00'), (4, 1, 'personal', NULL)"
+            "(3, 1, 'personal', '2026-10-01 00:00:00'), (4, 1, 'personal', NULL), "
+            "(5, 2, 'intimate', NULL), (6, 3, 'personal', NULL)"
         )
     )
     connection.execute(
@@ -89,7 +97,9 @@ def _seed_legacy_schema(connection: Connection) -> None:
             "VALUES (11, 1, 1, 'ciphertext', '2026-10-01 00:00:00'), "
             "(12, 1, 2, 'ciphertext', '2026-10-01 00:00:00'), "
             "(13, 1, 3, 'ciphertext', '2026-10-01 00:00:00'), "
-            "(14, 1, 4, NULL, NULL)"
+            "(14, 1, 4, NULL, NULL), "
+            "(15, 2, 5, 'ciphertext', '2026-10-01 00:00:00'), "
+            "(16, 3, 6, 'ciphertext', '2026-10-01 00:00:00')"
         )
     )
 
@@ -99,6 +109,8 @@ def migration_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     """Build legacy journal/marginalia tables stamped at the prior migration head."""
     async_url = f"sqlite+aiosqlite:///{tmp_path / 'voice_draft_retraction.sqlite'}"
     monkeypatch.setenv("DATABASE_URL", async_url)
+    monkeypatch.setenv("CREEK_VAULT_URL", "https://deployment-vault.example.com")
+    monkeypatch.setenv("CREEK_VAULT_OWNER_USER_ID", str(_DEPLOYMENT_OWNER))
     with _connect(async_url) as connection:
         _seed_legacy_schema(connection)
     config = Config(str(Path(__file__).parent.parent / "alembic.ini"))
@@ -127,7 +139,14 @@ def test_retraction_migration_chains_from_its_authored_head(migration_config: Co
 def test_backfill_treats_every_existing_essay_as_possibly_mirrored(
     migration_config: Config,
 ) -> None:
-    """Personal → intent, Intimate → pending, soft-deleted → confirmed, no essay → no row."""
+    """Personal → intent, Intimate → pending, soft-deleted → confirmed, no essay → no row.
+
+    Only accounts that had a vault at migration time -- a stored connection, or
+    the deployment vault's bound owner -- could have mirrored an essay. An
+    account with neither owes nothing, so it gets no row: a row there could
+    never confirm (the local fallback confirms nothing) and would block
+    deleting that writer's own pages.
+    """
     command.upgrade(migration_config, _REVISION)
     engine = create_engine(_url(migration_config).replace("+aiosqlite", ""))
     try:
@@ -145,8 +164,10 @@ def test_backfill_treats_every_existing_essay_as_possibly_mirrored(
         _PERSONAL_ESSAY: (1, "mirror_intent", 0, None, False),
         _INTIMATE_ESSAY: (2, "pending", 0, None, False),
         _DELETED_ESSAY: (3, "confirmed", 0, None, True),
+        _DEPLOYMENT_ESSAY: (6, "mirror_intent", 0, None, False),
     }
     assert _NO_ESSAY not in by_note
+    assert _VAULTLESS_ESSAY not in by_note
 
 
 def test_upgrade_adds_a_nullable_journal_destination(migration_config: Config) -> None:

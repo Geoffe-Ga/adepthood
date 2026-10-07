@@ -713,3 +713,44 @@ async def test_one_unreadable_account_never_aborts_the_pass(
 
 class _UnreadableConfigError(RuntimeError):
     """Stands in for a vault credential that can no longer be decrypted."""
+
+
+@pytest.mark.asyncio
+async def test_a_faulting_account_backs_off_its_journal_copy_too(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A fault defers the journal copy as well, so its entries cannot refill the batch."""
+    _headers, broken_id = await _signup(async_client, "recovery_poison_journal")
+    broken_entry = await _seed_marked_intimate(db_session, broken_id)
+    schedule = JournalRetrySchedule()
+
+    async def _client(_session: AsyncSession, _user_id: int) -> CreekVaultPipelineClient:
+        raise _UnreadableConfigError
+
+    async def _destination(_session: AsyncSession, _user_id: int) -> str | None:
+        return None
+
+    await resume_voice_draft_retractions(
+        _factory(db_session), _client, _destination, now=_T0, journal_retries=schedule
+    )
+
+    assert broken_entry in schedule.backed_off(_T0 + _INSIDE_BACKOFF)
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_unbound_row_is_never_confirmed_through_the_fallback(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A pre-migration essay row with no vault connected now is unknown, not withdrawn.
+
+    The row cannot say which vault received the essay, and the local fallback
+    dials nothing, so "absent" would be a guess (#3060 escalation 2).
+    """
+    _headers, user_id = await _signup(async_client, "recovery_legacy_fallback")
+    _entry_id, note_id = await _seed_pending(db_session, user_id)
+
+    await _sweep(db_session, LocalFallbackCreekVaultClient(), _T0)
+
+    row = await _row(db_session, note_id)
+    assert row.state == VoiceDraftRetractionState.PENDING
+    assert row.safe_failure_code == "vault_unavailable"

@@ -515,7 +515,6 @@ async def _attempt_and_settle(
         owner_user_id=attempt.target.user_id,
         marginalia_id=marginalia_id,
         bound_elsewhere=recorded not in {None, attempt.destination},
-        destination_connected=attempt.destination is not None,
     )
     await _settle(
         session,
@@ -559,18 +558,20 @@ async def _attempt_one(
     owner_user_id: int,
     marginalia_id: int,
     bound_elsewhere: bool,
-    destination_connected: bool,
 ) -> RetractionFailureCode | None:
     """Dial one owed DELETE, unless the copy lives in a vault other than this one.
 
-    "A local fallback means absent" holds only when the account has no vault
-    at all. A connected vault that resolves to the fallback right now -- a DNS
-    blip, a managed vault not yet ready -- may still hold the copy, so it is
-    unavailable, never a confirmation.
+    A row exists only because a copy was (or, for a pre-migration essay, may
+    have been) offered to a vault, so the local fallback -- which dials
+    nothing -- can never confirm one. A connected vault that resolves to the
+    fallback right now (a DNS blip, a managed vault not yet ready) may still
+    hold the copy. A legacy row with no recorded destination, on an account
+    with no vault today, cannot say which vault received it. Both stay pending
+    as ``vault_unavailable``; the legacy case joins owner escalation 2 (#3060).
     """
     if bound_elsewhere:
         return RetractionFailureCode.DESTINATION_CHANGED
-    if destination_connected and type(client) is LocalFallbackCreekVaultClient:
+    if type(client) is LocalFallbackCreekVaultClient:
         return RetractionFailureCode.VAULT_UNAVAILABLE
     return await retraction_failure(
         client, owner_user_id=owner_user_id, marginalia_id=marginalia_id

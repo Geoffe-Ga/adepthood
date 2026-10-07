@@ -74,6 +74,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from contextvars import ContextVar
 from typing import Annotated
 from urllib.parse import urlsplit, urlunsplit
 
@@ -83,6 +84,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_session
 from domain.creek_vault import CreekVaultPipelineClient, resolve_vault_owner
 from models.journal_entry import VAULT_DESTINATION_WIDTH
+from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
 from services.creek_provisioning import load_vault_activation
@@ -334,6 +336,7 @@ async def resolve_creek_vault_client(
     ``get_current_user``'s revocation read and this function's own.
     """
     connection = await load_vault_config(session, current_user)
+    _RESOLVED_DESTINATION.set((current_user, _fingerprint_of(connection, current_user)))
     if connection is None:
         client: CreekVaultPipelineClient = deployment_vault_client(current_user)
     elif connection.provisioned and not await _provisioned_connection_is_ready(
@@ -450,6 +453,26 @@ def _destination_digest(user_id: int, source: str, vault_url: str) -> str:
     return hashlib.sha256(identity.encode()).hexdigest()[:VAULT_DESTINATION_WIDTH]
 
 
+#: The fingerprint read alongside the client by the latest
+#: :func:`resolve_creek_vault_client` call in this context, keyed by account.
+#: A request resolves its client once, in a dependency that runs in the same
+#: context as the handler; the background sweep resolves it in its own task.
+_RESOLVED_DESTINATION: ContextVar[tuple[int, str | None] | None] = ContextVar(
+    "adepthood_resolved_vault_destination", default=None
+)
+
+
+def _fingerprint_of(connection: UserVaultConfig | None, current_user: int) -> str | None:
+    """Fingerprint the destination one config read resolves to, by the resolver's priority."""
+    if connection is not None:
+        source = _SOURCE_MANAGED if connection.provisioned else _SOURCE_CONNECTED
+        return _destination_digest(current_user, source, connection.vault_url)
+    if deployment_vault_belongs_to(current_user):
+        deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
+        return _destination_digest(current_user, _SOURCE_DEPLOYMENT, deployment_url)
+    return None
+
+
 async def vault_destination_fingerprint(session: AsyncSession, current_user: int) -> str | None:
     """Fingerprint the vault this caller's copies currently go to, or ``None`` for none.
 
@@ -461,19 +484,26 @@ async def vault_destination_fingerprint(session: AsyncSession, current_user: int
     recorded when the copy was offered (#3060). Local only; never dials, and
     commits its read so no pooled connection is held past it.
 
-    Read separately from the request's client, so a reconnect committing
-    between the two reads can pair one vault's dial with the other's
-    fingerprint. The window is one request long and needs a concurrent
-    reconnect by the same account; closing it means deriving both from one
-    config read (#3060 review finding 4).
+    This is a fresh read. Code that is about to dial a client should use
+    :func:`resolved_vault_destination`, which answers from the same read that
+    built the client.
     """
     connection = await load_vault_config(session, current_user)
-    fingerprint: str | None = None
-    if connection is not None:
-        source = _SOURCE_MANAGED if connection.provisioned else _SOURCE_CONNECTED
-        fingerprint = _destination_digest(current_user, source, connection.vault_url)
-    elif deployment_vault_belongs_to(current_user):
-        deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
-        fingerprint = _destination_digest(current_user, _SOURCE_DEPLOYMENT, deployment_url)
+    fingerprint = _fingerprint_of(connection, current_user)
     await session.commit()
     return fingerprint
+
+
+async def resolved_vault_destination(session: AsyncSession, current_user: int) -> str | None:
+    """Fingerprint the vault the client resolved for ``current_user`` will dial.
+
+    Taken from the same config read as that client, so a reconnect committing
+    after the client was resolved cannot pair one vault's dial with the other's
+    fingerprint (#3060 review). When no client was resolved for this account in
+    this context -- a caller that supplies its own client -- it falls back to a
+    fresh read.
+    """
+    captured = _RESOLVED_DESTINATION.get()
+    if captured is not None and captured[0] == current_user:
+        return captured[1]
+    return await vault_destination_fingerprint(session, current_user)

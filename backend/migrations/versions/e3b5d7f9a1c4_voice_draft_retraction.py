@@ -15,7 +15,15 @@ Two additive, content-free changes:
   entry was offered to, so a withdrawal is trusted only from that vault.
 
 The backfill is conservative because nothing local recorded which existing
-essays reached a vault: every expanded note is treated as possibly mirrored.
+essays reached a vault: every expanded note of an account that had a vault at
+migration time -- a stored connection, or the deployment vault's bound owner
+(read from the environment as the application reads it) -- is treated as
+possibly mirrored. An account with neither could not have mirrored anything
+and gets no row; a row there could never confirm, because the local fallback
+confirms nothing, and would block deleting that writer's own pages. An account
+that disconnected its vault before this revision is the one gap: its earlier
+mirrors are not recorded (the pre-revision code would equally have treated
+them as absent).
 It reads ``essay_generated_at`` (paired with ``essay`` by a CHECK) so the
 encrypted essay column is never touched. Rows land as ``confirmed`` for a
 soft-deleted entry (deletion completes only after confirmed withdrawal),
@@ -27,6 +35,7 @@ whichever vault is connected, exactly as before this revision.
 ``downgrade`` drops the table and the column; no other row changes.
 """
 
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -130,8 +139,25 @@ _BACKFILL_SQL = (
     "0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
     "CASE WHEN j.deleted_at IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END "
     "FROM marginalia m JOIN journalentry j ON j.id = m.journal_entry_id "
-    "WHERE m.essay_generated_at IS NOT NULL"
+    "WHERE m.essay_generated_at IS NOT NULL "
+    "AND (m.user_id IN (SELECT user_id FROM uservaultconfig) OR m.user_id = :deployment_owner)"
 )
+
+# The deployment-wide vault's owner binding, read as the application reads it.
+# Frozen here as names rather than imported from ``src`` so this revision means
+# the same thing forever.
+_VAULT_URL_ENV = "CREEK_VAULT_URL"
+_OWNER_ENV = "CREEK_VAULT_OWNER_USER_ID"
+#: Matches no account: ids are positive.
+_NO_OWNER = -1
+
+
+def _deployment_owner() -> int:
+    """The account the deployment-wide vault belongs to at migration time, if any."""
+    raw_owner = os.environ.get(_OWNER_ENV, "").strip()
+    if not os.environ.get(_VAULT_URL_ENV, "").strip() or not raw_owner.isdigit():
+        return _NO_OWNER
+    return int(raw_owner)
 
 
 def _backfill() -> None:
@@ -143,6 +169,7 @@ def _backfill() -> None:
             "pending": "pending",
             "mirror_intent": "mirror_intent",
             "intimate": _INTIMATE,
+            "deployment_owner": _deployment_owner(),
         },
     )
 

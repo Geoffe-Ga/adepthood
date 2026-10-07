@@ -21,7 +21,7 @@ from database import get_session
 from dependencies.creek_vault import (
     get_creek_vault_client,
     get_reflection_boundary,
-    vault_destination_fingerprint,
+    resolved_vault_destination,
 )
 from dependencies.ownership import (
     require_owned_journal_entry,
@@ -440,15 +440,14 @@ async def _bind_vault_destination(
     offered to the new one: a single marker cannot describe two copies, and
     the owed one wins.
 
-    Known limit: the fingerprint is read here, after the request resolved its
-    client, so a reconnect committing between the two reads could bind this
-    write to the new vault while it dials the old. Closing that needs the
-    client and fingerprint from one config read (#3060 review finding 4).
+    The fingerprint comes from the same config read that built the request's
+    client (:func:`resolved_vault_destination`), so a reconnect landing after
+    that read cannot bind this write to a vault it does not dial.
     """
     undialled = _binding_without_a_dial(entry, vault_client)
     if undialled is not None:
         return undialled
-    destination = await vault_destination_fingerprint(session, entry.user_id)
+    destination = await resolved_vault_destination(session, entry.user_id)
     if entry.vault_destination not in {None, destination}:
         logger.warning(
             "journal_vault_write_withheld",
@@ -501,7 +500,7 @@ async def _withdraw_remote_copies(
     writer nothing but a stable 503 and a retry.
     """
     entry_id = cast("int", entry.id)
-    destination = await vault_destination_fingerprint(session, entry.user_id)
+    destination = await resolved_vault_destination(session, entry.user_id)
     drafts_withdrawn = await retract_pending_voice_drafts(
         session,
         vault_client,
@@ -3342,7 +3341,7 @@ async def _mirror_cached_essay(
         if entry.deleted_at is not None:
             return cached
         marginalia_id = cast("int", cached.id)
-        destination = await vault_destination_fingerprint(session, entry.user_id)
+        destination = await resolved_vault_destination(session, entry.user_id)
 
         async def _record_intent() -> bool:
             return await record_mirror_intent(
