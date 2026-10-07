@@ -118,6 +118,7 @@ from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
 )
+from services.privacy_suspension import log_suspension_state
 from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
 
 logger = logging.getLogger(__name__)
@@ -1035,6 +1036,8 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+    # Which operator privacy suspensions this worker booted under, by name (#3075).
+    log_suspension_state()
     if journal_encryption.is_enabled():
         # Non-secret: the operator sweep refuses to write under any other key0
         # (``--primary-fingerprint``), so this is the value it is checked against.

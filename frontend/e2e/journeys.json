@@ -1965,5 +1965,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-reveal-without-course.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.external-ai-suspended",
+    "description": "While an operator has set PRIVACY_SUSPEND_EXTERNAL_AI during a privacy incident, a writer asks for a resonance pass, a first essay letter, completion detection and a page transcription. Each answers 503 ai_suspended, charges nothing and dials no provider. Journal create, read, edit, export and account deletion keep working, and a cached letter and an intimate entry's care surface are still served (#3075). Uncovered because the e2e lane's provider environment is lane-wide, so a spec cannot flip the switch for one journey, and the client has no copy of its own for this code: the suspended-state wording is the owner's decision. Pinned meanwhile by backend/tests/incident/test_privacy_suspension.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "journal"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/transcribe-page"
+      ],
+      "tables": ["journalentry", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3075
   }
 ]

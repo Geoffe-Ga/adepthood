@@ -203,6 +203,7 @@ from services.marginalia import (
     receipt_since,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
+from services.privacy_suspension import require_external_ai_available
 from services.reflection_boundary import (
     REFLECTION_SOURCE_UNAVAILABLE,
     ReflectionBoundary,
@@ -2381,6 +2382,7 @@ async def run_resonance(
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
+    require_external_ai_available()
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)
@@ -2853,6 +2855,7 @@ async def detect_entry_suggestions(
         # empty candidate set is a completed check, not a provider failure.
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=True)
+    require_external_ai_available()
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
@@ -3322,6 +3325,7 @@ async def _expand_essay(
     # while the request waits for it — see ``_cache_and_mirror_essay``.
     if entry.classification == JournalClassification.INTIMATE:
         return note
+    require_external_ai_available()
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
     # admit it only now, after the cached, intimate, 404 and 409 exits above.
