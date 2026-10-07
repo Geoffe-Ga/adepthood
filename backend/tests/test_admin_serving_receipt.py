@@ -20,7 +20,16 @@ from domain.creek_vault import CONTRACT_VERSION
 from models.user import User
 from schemas.admin import ServingReceipt
 from services.account_egress_barrier import ACCOUNT_EGRESS_BARRIER_ENABLED_ENV_VAR
-from services.managed_vault_rollout import ManagedVaultRolloutState
+from services.managed_vault_activation_config import (
+    HANDOFF_AUTH_FILE_ENV_VAR,
+    MANAGED_VAULT_ENABLED_ENV_VAR,
+    PROVISIONING_AUTH_FILE_ENV_VAR,
+)
+from services.managed_vault_rollout import (
+    MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+    ManagedVaultRolloutState,
+    load_managed_vault_rollout,
+)
 from services.serving_receipt import (
     SERVING_RECEIPT_FIELDS,
     build_serving_receipt,
@@ -187,6 +196,49 @@ async def test_barrier_state_reports_disabled_when_env_false(
     monkeypatch.delenv(ACCOUNT_EGRESS_BARRIER_ENABLED_ENV_VAR, raising=False)
     unset = await async_client.get(_RECEIPT_PATH, headers=headers)
     assert unset.json()["egress_barrier"] == "incomplete"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        # Unset reads as switched off: the rollout is disabled, not ready.
+        ({}, ManagedVaultRolloutState.DISABLED),
+        ({MANAGED_VAULT_ENABLED_ENV_VAR: "false"}, ManagedVaultRolloutState.DISABLED),
+        # Switched on with a pilot list but no mounted bearer files.
+        (
+            {
+                MANAGED_VAULT_ENABLED_ENV_VAR: "true",
+                MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR: _PILOT_ID_SENTINEL,
+            },
+            ManagedVaultRolloutState.INCOMPLETE,
+        ),
+        # A malformed switch is a defect, never quietly "ready".
+        ({MANAGED_VAULT_ENABLED_ENV_VAR: "maybe"}, ManagedVaultRolloutState.INCOMPLETE),
+    ],
+)
+@pytest.mark.asyncio
+async def test_managed_rollout_reports_the_live_state(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    expected: ManagedVaultRolloutState,
+) -> None:
+    """The receipt serves the rollout state the admission gate itself would read."""
+    for name in (
+        MANAGED_VAULT_ENABLED_ENV_VAR,
+        MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+        PROVISIONING_AUTH_FILE_ENV_VAR,
+        HANDOFF_AUTH_FILE_ENV_VAR,
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    body = await _receipt(async_client, db_session)
+
+    assert body["managed_vault_rollout"] == expected.value
+    assert body["managed_vault_rollout"] == load_managed_vault_rollout().state.value
 
 
 @pytest.mark.asyncio
