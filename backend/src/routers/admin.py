@@ -128,6 +128,7 @@ async def get_stuck_vault_teardowns(
             attempts=row.attempts,
             retryable=row.retryable,
             failure_reason=row.failure_reason,
+            pending_since=row.requested_at,
         )
         for row in result.scalars()
     ]

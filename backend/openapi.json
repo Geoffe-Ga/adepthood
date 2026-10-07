@@ -8937,7 +8937,7 @@
         "type": "string"
       },
       "VaultTeardownStatus": {
-        "description": "Content-free reconciliation state visible only to operations.",
+        "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
         "properties": {
           "attempts": {
             "title": "Attempts",
@@ -8965,6 +8965,11 @@
             ],
             "title": "Failure Reason"
           },
+          "pending_since": {
+            "format": "date-time",
+            "title": "Pending Since",
+            "type": "string"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -8984,7 +8989,8 @@
           "state",
           "attempts",
           "retryable",
-          "failure_reason"
+          "failure_reason",
+          "pending_since"
         ],
         "title": "VaultTeardownStatus",
         "type": "object"
