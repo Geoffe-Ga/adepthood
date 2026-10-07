@@ -22,12 +22,29 @@ interface VaultFragment {
 }
 
 interface VaultLedger {
+  received: Array<{
+    method: string;
+    path: string;
+    externalId: string | null;
+    action?: string;
+  }>;
   fragments: VaultFragment[];
+}
+
+async function draftDeleteActions(externalId: string): Promise<Array<string | undefined>> {
+  const { received } = await vaultLedger();
+  return received
+    .filter(
+      (request) => request.method === 'DELETE' && request.path === `/v1/voice-drafts/${externalId}`,
+    )
+    .map((request) => request.action);
 }
 
 const HTTP_OK = 200;
 const HTTP_SERVICE_UNAVAILABLE = 503;
 const RETRYABLE_WITHDRAWAL = 'vault_withdrawal_pending';
+/** How many draft DELETEs in a row the lane vault refuses after `fail-next-voice-draft-delete`. */
+const VAULT_FAILING_DELETES = 3;
 const PAGE =
   'The cedar held the rain all night. By morning I could hear each drop arrive and leave.';
 
@@ -105,7 +122,8 @@ describe('Intimate reclassification withdraws every connected-vault copy', () =>
     await journal.update(entryId, { status: 'finished' });
     const pass = await resonance.generate(entryId);
     const note = required(pass.marginalia[0], 'marginalia');
-    await resonance.essay(note.id, { priceAcknowledged: true });
+    const expanded = await resonance.essay(note.id, { priceAcknowledged: true });
+    expect((expanded.essay ?? '').trim()).not.toBe('');
 
     const draft = required(
       (await vaultLedger()).fragments.find(
@@ -128,6 +146,9 @@ describe('Intimate reclassification withdraws every connected-vault copy', () =>
       id: entryId,
       classification: 'intimate',
     });
+    const attempts = await draftDeleteActions(voiceDraftExternalId);
+    expect(attempts.length).toBeGreaterThan(0);
+    expect(attempts.every((action) => action === 'failed')).toBe(true);
     const { fragments } = await vaultLedger();
     expect(
       fragments.some(
@@ -137,12 +158,30 @@ describe('Intimate reclassification withdraws every connected-vault copy', () =>
     ).toBe(true);
   });
 
-  it('choosing Intimate again retries and confirms every replica absent', async () => {
+  it('each further choice of Intimate retries the owed DELETE while the vault stays down', async () => {
+    // The lane vault refuses VAULT_FAILING_DELETES draft DELETEs in a row (sized
+    // for the API client's idempotent DELETE retries). A PATCH is never retried
+    // by the client, so each choice of Intimate is exactly one more attempt.
+    for (let attempt = 2; attempt <= VAULT_FAILING_DELETES; attempt += 1) {
+      const failure = await rejection(journal.update(entryId, { classification: 'intimate' }));
+
+      expect((failure as ApiError).detail).toBe(RETRYABLE_WITHDRAWAL);
+      expect(await draftDeleteActions(voiceDraftExternalId)).toEqual(
+        Array.from({ length: attempt }, () => 'failed'),
+      );
+    }
+  });
+
+  it('choosing Intimate once the vault recovers confirms every replica absent', async () => {
     await expect(journal.update(entryId, { classification: 'intimate' })).resolves.toMatchObject({
       id: entryId,
       classification: 'intimate',
     });
 
+    expect(await draftDeleteActions(voiceDraftExternalId)).toEqual([
+      ...Array.from({ length: VAULT_FAILING_DELETES }, () => 'failed'),
+      'deleted',
+    ]);
     const { fragments } = await vaultLedger();
     expect(
       fragments.some(
@@ -155,5 +194,15 @@ describe('Intimate reclassification withdraws every connected-vault copy', () =>
         (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),
       ),
     ).toBe(false);
+  });
+
+  it('is idempotent once confirmed: a further choice sends nothing', async () => {
+    const before = (await draftDeleteActions(voiceDraftExternalId)).length;
+
+    await expect(journal.update(entryId, { classification: 'intimate' })).resolves.toMatchObject({
+      classification: 'intimate',
+    });
+
+    expect(await draftDeleteActions(voiceDraftExternalId)).toHaveLength(before);
   });
 });
