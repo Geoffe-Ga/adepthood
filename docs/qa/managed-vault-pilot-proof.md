@@ -159,10 +159,14 @@ sanitized artifact. A drifted served release may be recorded as the exact SHA
 that answered, never as a label.
 
 Two limits apply to schema v3. The frontend build receipt is not shipped yet
-(#2871 AC23), so `frontend_receipt_present` cannot be observed and no record
-can pass until it is. And `local_model_claim` stays `unknown` until a model
-digest and inference probe exist (B05/B07); claiming local-model readiness
-needs a later schema version.
+(#2871 AC23), so there is nothing to observe for `frontend_receipt_present` or
+`frontend_served_release`. Until it ships, record both as `null` and do not
+mark the record passed. The validator requires both on a passed record but
+cannot tell whether a frontend receipt exists, so copying the backend SHA would
+satisfy it without being true; this is an operator obligation, not a check.
+And `local_model_claim` stays `unknown` until a model digest and inference
+probe exist (B05/B07); claiming local-model readiness needs a later schema
+version.
 
 ## Consumed Creek prerequisite
 
