@@ -143,4 +143,26 @@ describe('ActiveRitualSession completion window', () => {
     expect(ended).toBeLessThanOrEqual(Date.now());
     expect(ended).toBeGreaterThanOrEqual(started);
   });
+
+  it('never posts an ended_at before started_at when the clock steps back past the start', async () => {
+    const { getByTestId } = renderSession({ mode: 'count_up' });
+    act(() => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    clockTo(T0 + 10 * MIN);
+    // Corrected to five minutes *before* the sitting began: capping the end at
+    // "now" alone would put it before the start, which the server refuses (422).
+    act(() => {
+      jest.setSystemTime(T0 - 5 * MIN);
+    });
+    act(() => {
+      fireEvent.press(getByTestId('count-up-end'));
+    });
+
+    await skipInsight(getByTestId);
+
+    const { started, ended } = postedWindow();
+    expect(started).toBe(T0);
+    expect(ended).toBe(started);
+  });
 });

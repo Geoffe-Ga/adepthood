@@ -395,7 +395,9 @@ interface CompletionWindow {
  * `running`), never on a resume, so pausing mid-sit cannot truncate the
  * record. `end` is `start + active elapsed` — pause time is excluded, so
  * `end - start` is exactly the time spent practising — capped at "now" so a
- * clock stepped backwards mid-sit can never post a future `ended_at`.
+ * clock stepped backwards mid-sit can never post a future `ended_at`, and
+ * floored at `start` so a step back past the start never posts an end the
+ * server refuses as earlier than the start.
  */
 function useCompletionWindow(status: RitualState['status'], elapsedMs: number): CompletionWindow {
   const [completedWindow, setCompletedWindow] = useState<{ start: Date; end: Date } | null>(null);
@@ -408,7 +410,8 @@ function useCompletionWindow(status: RitualState['status'], elapsedMs: number): 
     }
     if (prev !== 'complete' && status === 'complete') {
       const started = startedAtRef.current ?? new Date();
-      const end = new Date(Math.min(started.getTime() + elapsedMs, Date.now()));
+      const startMs = started.getTime();
+      const end = new Date(Math.max(startMs, Math.min(startMs + elapsedMs, Date.now())));
       setCompletedWindow({ start: started, end });
     }
     if (status === 'idle' && prev !== 'idle') {
