@@ -1796,5 +1796,26 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-deep-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "auth.zero-payment-newcomer-core-access",
+    "description": "A newcomer claims a $0 APTITUDE membership license and, with no AI allowance on any axis (BOTMASON_MONTHLY_CAP=0, an empty offering balance, BOTMASON_DAILY_GENERATION_CEILING=0), writes, edits and deletes journal entries, exports everything as JSON and Markdown, creates a habit, logs a practice session and finally deletes the account -- none of it charging the wallet or calling Gumroad, and all of it still working after a refund revokes the entitlement (#1938, B21). Uncovered because the e2e lane's Gumroad stub (backend/tests/e2e/server.py _stub_license_check) replaces verification wholesale with a price-less purchase and the lane's allowance env is lane-wide, so a spec cannot set a zero price or a zero allowance for one journey. Pinned meanwhile by backend/tests/test_free_core_access_invariants.py and test_auth_signup_license.py::test_zero_price_membership_license_creates_exactly_one_account.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SignupScreen.tsx",
+      "client": ["auth", "journal", "users", "habits"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md",
+        "POST /habits/",
+        "DELETE /users/me"
+      ],
+      "tables": ["user", "entitlement", "licensebinding", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 1938
   }
 ]
