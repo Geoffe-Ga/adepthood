@@ -24,9 +24,11 @@ import inspect
 
 import pytest
 
+from domain.depth_preferences import ALL_RINGS, DepthRing
 from domain.invitations import (
     CORPUS_THEME_FULLNESS_THRESHOLD,
     HIGH_ENGAGEMENT_ACTIVE_DAYS,
+    RING_FOR_TARGET,
     SUSTAINED_HABIT_STREAK_DAYS,
     SUSTAINED_PRACTICE_WEEKS,
     CorpusThemeSignal,
@@ -35,6 +37,8 @@ from domain.invitations import (
     PracticeSignal,
     ReadinessAggregates,
     compute_invitation_candidates,
+    filter_candidates_by_depth,
+    target_types_for_rings,
 )
 from models.invitation_signal import InvitationKind, InvitationTargetType
 
@@ -380,3 +384,67 @@ def test_readiness_aggregates_default_corpus_themes_is_empty_and_backward_compat
     types = {c.target_type for c in candidates}
     assert types == {"habit", "practice", "embodied_community"}
     assert not any(c.target_type == "course" for c in candidates)
+
+
+# ---------------------------------------------------------------------------
+# Depth gating: a declined ring is never offered (#3073)
+# ---------------------------------------------------------------------------
+
+
+def _one_candidate_per_target_type() -> list[InvitationCandidate]:
+    """One candidate for every target type, in enum order, for filter tests."""
+    return [
+        InvitationCandidate(target_type=t.value, target_id=index, kind="readiness")
+        for index, t in enumerate(InvitationTargetType)
+    ]
+
+
+def test_ring_for_target_is_total_and_exact() -> None:
+    """Every target type maps to exactly the ring that owns it — no type ships ungated."""
+    assert set(RING_FOR_TARGET) == set(InvitationTargetType)
+    assert dict(RING_FOR_TARGET) == {
+        InvitationTargetType.HABIT: DepthRing.HABITS,
+        InvitationTargetType.PRACTICE: DepthRing.PRACTICES,
+        InvitationTargetType.COURSE: DepthRing.COURSE,
+        InvitationTargetType.SANGHA: DepthRing.SANGHA,
+        InvitationTargetType.EMBODIED_COMMUNITY: DepthRing.SANGHA,
+    }
+
+
+@pytest.mark.parametrize("declined", list(DepthRing))
+def test_filter_candidates_by_depth_drops_exactly_the_declined_ring(declined: DepthRing) -> None:
+    """Declining one ring removes exactly its target types and keeps the rest in order."""
+    candidates = _one_candidate_per_target_type()
+    enabled = ALL_RINGS - {declined}
+
+    kept = filter_candidates_by_depth(candidates, enabled)
+
+    assert kept == [
+        c for c in candidates if RING_FOR_TARGET[InvitationTargetType(c.target_type)] != declined
+    ]
+    assert {c.target_type for c in candidates} - {c.target_type for c in kept} == {
+        t.value for t, ring in RING_FOR_TARGET.items() if ring == declined
+    }
+
+
+def test_filter_candidates_all_on_is_identity() -> None:
+    """With every ring enabled nothing is filtered."""
+    candidates = _one_candidate_per_target_type()
+    assert filter_candidates_by_depth(candidates, ALL_RINGS) == candidates
+
+
+def test_filter_candidates_all_off_is_empty() -> None:
+    """With every ring declined no candidate survives."""
+    assert filter_candidates_by_depth(_one_candidate_per_target_type(), frozenset()) == []
+
+
+def test_target_types_for_rings_exact() -> None:
+    """The listing predicate names exactly the stored target types of the enabled rings."""
+    assert target_types_for_rings(ALL_RINGS) == frozenset(t.value for t in InvitationTargetType)
+    assert target_types_for_rings(frozenset()) == frozenset()
+    assert target_types_for_rings(frozenset({DepthRing.SANGHA})) == frozenset(
+        {"sangha", "embodied_community"}
+    )
+    assert target_types_for_rings(frozenset({DepthRing.COURSE, DepthRing.HABITS})) == frozenset(
+        {"course", "habit"}
+    )
