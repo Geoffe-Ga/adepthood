@@ -393,7 +393,6 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
-    await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
     binding = await _bind_vault_destination(session, entry, vault_client)
     if binding is _Binding.WITHHOLD:
         return
@@ -410,6 +409,10 @@ async def _record_vault_outcome(
         await session.commit()
         await session.refresh(entry)
     if outcome.status is VaultWriteStatus.INGESTED:
+        # Shadow only (#3059), and only once the body has actually reached the
+        # vault. ``drive_vault_pipeline`` commits before it dials, so this read
+        # holds no connection across its network calls.
+        await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
         await drive_vault_pipeline(
             session,
             vault_client,
@@ -547,7 +550,6 @@ async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) ->
     """
     if entry.id is None:
         return
-    await observe_entry_lineage(session, LineageOperation.CORPUS_INGEST, entry)
     with suppress(LLMCreditExhaustedError):
         await ingest_journal_entry(session, entry)
     await session.commit()
@@ -2655,6 +2657,10 @@ async def _detect_fresh_suggestions(
         await ensure_account_live(session, entry.user_id)
         if await _withdrawn_under_hold(session, entry, spent=None, trace=None):
             return CompletionDetectionResponse(items=[], checked=False)
+        # Shadow only (#3059): the pass will dial. Committed straight away so
+        # the read holds no connection across that dial.
+        await observe_entry_lineage(session, LineageOperation.DETECT, entry)
+        await session.commit()
         return await _detect_and_persist(
             session,
             entry=entry,
@@ -2755,7 +2761,6 @@ async def detect_entry_suggestions(
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=False)
 
-    await observe_entry_lineage(session, LineageOperation.DETECT, entry)
     inputs = await _detection_inputs(session, entry=entry)
     if not inputs.candidates:
         # There is nothing new to send and therefore no reason to require a key,
@@ -3357,7 +3362,6 @@ async def _mirror_cached_essay(
     ):
         await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
-        await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
         await session.commit()
         if entry.deleted_at is not None:
             return cached
@@ -3365,13 +3369,19 @@ async def _mirror_cached_essay(
         destination = await resolved_vault_destination(session, entry.user_id)
 
         async def _record_intent() -> bool:
-            return await record_mirror_intent(
+            recorded = await record_mirror_intent(
                 session,
                 user_id=entry.user_id,
                 entry_id=cast("int", entry.id),
                 marginalia_id=marginalia_id,
                 destination=destination,
             )
+            if recorded:
+                # Shadow only (#3059): the mirror was admitted and its PUT is
+                # next. Committed so no connection is held across that PUT.
+                await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+                await session.commit()
+            return recorded
 
         await mirror_voice_draft(
             clients.vault_client,

@@ -14,12 +14,14 @@ pass, so the marker has to be removed by the change that closes the gap.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from http import HTTPStatus
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,10 +29,24 @@ from httpx import AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dependencies.creek_vault import get_creek_vault_client
+from domain.creek_vault import (
+    CreekCapability,
+    VaultIngestAction,
+    VaultTierCeiling,
+    VaultVoiceDraftDeleteResult,
+    VaultVoiceDraftRequest,
+    VaultVoiceDraftResult,
+)
+from domain.frequencies import Frequency
+from main import app
 from models.corpus_fragment import CorpusSource
+from models.goal import Goal
+from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.promoted_quote import PromotedQuote
+from services import frequency_classification
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.corpus_store import FragmentDraft, record_fragment
@@ -50,8 +66,11 @@ from tests.support.lineage_canaries import (
     FoldedLineage,
     seed_folded_lineage,
 )
+from tests.support.reflecting_vault import DEFAULT_REFLECT_CAPABILITIES, ReflectingVaultClient
 
 _SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+
+_CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9})
 
 _SHADOW_FIELDS = frozenset(
     {"operation", "user_id", "entry_id", "count", "withdrawn_count", "policy_version"}
@@ -410,6 +429,86 @@ async def _drive_every_operation(
     assert essay.status_code == HTTPStatus.OK, essay.text
 
 
+class _DiallingVault(ReflectingVaultClient):
+    """A connected vault that takes journal writes and Voice Drafts, so both really dial."""
+
+    def __init__(self) -> None:
+        super().__init__(capabilities=DEFAULT_REFLECT_CAPABILITIES | {CreekCapability.VOICE_DRAFTS})
+        self.draft_upserts: list[VaultVoiceDraftRequest] = []
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        """Record and accept the draft."""
+        self.draft_upserts.append(request)
+        return VaultVoiceDraftResult(
+            stored=True, vault_ref="voice-draft-1", action=VaultIngestAction.CREATED
+        )
+
+    async def delete_voice_draft(
+        self, external_id: str, tier_ceiling: VaultTierCeiling, /
+    ) -> VaultVoiceDraftDeleteResult:
+        """Accept any retraction."""
+        del external_id, tier_ceiling
+        return VaultVoiceDraftDeleteResult(deleted=True)
+
+
+def _wire_dialling_vault() -> _DiallingVault:
+    vault = _DiallingVault()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    return vault
+
+
+def _fake_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the corpus classifier's provider call, so a consented ingest really classifies."""
+
+    async def classified(**_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(frequency_classification, "generate_response", classified)
+
+
+async def _grant_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> None:
+    resp = await client.put(
+        f"/corpus/consent/{CorpusSource.JOURNAL.value}", json={"granted": True}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+
+async def _seed_detection_candidate(session: AsyncSession, user_id: int) -> None:
+    """One habit goal, so completion detection has a candidate and really dials."""
+    habit = Habit(
+        name="Meditation",
+        icon="🧘",
+        start_date=date(2025, 1, 1),
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    session.add(habit)
+    await session.commit()
+    await session.refresh(habit)
+    session.add(
+        Goal(
+            habit_id=habit.id,
+            title="clear",
+            tier="clear",
+            target=1.0,
+            target_unit="x",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=True,
+        )
+    )
+    await session.commit()
+
+
+def _shadowed_operations(caplog: pytest.LogCaptureFixture, entry_id: int) -> list[str]:
+    return sorted(
+        str(op)
+        for op, subject, _ in map(_shadow_summary, _shadow_records(caplog))
+        if subject == entry_id
+    )
+
+
 @pytest.mark.asyncio
 async def test_each_egress_operation_on_a_tainted_review_emits_its_shadow(
     async_client: AsyncClient,
@@ -417,21 +516,22 @@ async def test_each_egress_operation_on_a_tainted_review_emits_its_shadow(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Every wired operation reports, once, with the review's count."""
+    """With every destination really dialled, each operation reports once with the count."""
     monkeypatch.setattr(marginalia_service, "generate_response", _CapturingLLM())
+    _fake_classifier(monkeypatch)
+    vault = _wire_dialling_vault()
     headers, user_id = await _signup(async_client, "lineage_every_op")
+    await _grant_corpus_consent(async_client, headers)
+    await _seed_detection_candidate(db_session, user_id)
     chain = await seed_folded_lineage(db_session, user_id=user_id)
 
     caplog.clear()
     with caplog.at_level(logging.INFO):
         await _drive_every_operation(async_client, db_session, (headers, user_id), chain)
 
-    seen = sorted(
-        str(op)
-        for op, entry_id, _ in map(_shadow_summary, _shadow_records(caplog))
-        if entry_id == chain.review_id
-    )
-    assert seen == sorted(
+    assert vault.ingest_calls, "the vault write never dialled"
+    assert vault.draft_upserts, "the voice-draft mirror never dialled"
+    assert _shadowed_operations(caplog, chain.review_id) == sorted(
         op.value
         for op in (
             LineageOperation.RESONANCE,
@@ -443,6 +543,33 @@ async def test_each_egress_operation_on_a_tainted_review_emits_its_shadow(
         )
     )
     _assert_no_canary_in_logs(caplog)
+
+
+@pytest.mark.asyncio
+async def test_operations_that_send_nothing_emit_no_shadow(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No consent, no connected vault, no detection candidate: nothing leaves, nothing is counted.
+
+    The default account has no vault (a local fallback that sends nothing), has
+    agreed to no corpus ingest, and has no habit for detection to check -- so a
+    body edit, a detection press and a first letter dial none of those three
+    destinations, and only the model-bound operations report.
+    """
+    monkeypatch.setattr(marginalia_service, "generate_response", _CapturingLLM())
+    headers, user_id = await _signup(async_client, "lineage_sends_nothing_ops")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _drive_every_operation(async_client, db_session, (headers, user_id), chain)
+
+    assert _shadowed_operations(caplog, chain.review_id) == sorted(
+        op.value for op in (LineageOperation.RESONANCE, LineageOperation.ESSAY)
+    )
 
 
 @pytest.mark.asyncio
